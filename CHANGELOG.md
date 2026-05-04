@@ -2,6 +2,10 @@
 
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
+## [Unreleased]
+### Fixed
+- OpenCode session continuation creates empty session instead of resuming. Root cause: `POST /session` ignores `sessionID` payload and always creates a new empty session. Fix: verify existing session via `GET /session/{id}` before POST; if found, return it directly. Attach then connects to the existing session with full history.
+
 ## [0.0.49] - 2026-05-04
 ### Added
 - Descriptor-driven startup pipeline. CommandDescriptor catalog classifies all CLI commands at parse time — startup class, state requirements, telemetry mode, output format. Thin entrypoint handles `--help`/`--version` in ~16ms without importing the full CLI tree (11.6× faster).
@@ -25,11 +29,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `_resolve_command_path()` and manual command routing in main.py — replaced by catalog classification.
 
 ### Fixed
-- OpenCode session continuation creates empty session instead of resuming. Root cause: `POST /session` ignores `sessionID` payload and always creates a new empty session. Fix: verify existing session via `GET /session/{id}` before POST; if found, return it directly. Attach then connects to the existing session with full history.
 - Sandbox permission gaps: 5 code paths that wrote to unprojected `~/.meridian/` root in sandboxed agents now gate/wrap correctly. No new sandbox projection needed.
 - O(N²) spawn scanning in telemetry retention cleanup.
 - Startup token scanner: unknown flags no longer greedily consume next positional token.
 - Spawn event reducer hardened against missing fields in malformed JSONL.
+
 
 ## [0.0.48] - 2026-05-03
 ### Added
