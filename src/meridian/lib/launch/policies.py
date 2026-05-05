@@ -8,7 +8,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, ModelPolicyRule
-from meridian.lib.catalog.model_aliases import AliasEntry
+from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache
 from meridian.lib.catalog.models import load_merged_aliases
 from meridian.lib.catalog.models import resolve_model as resolve_model_entry
 from meridian.lib.config.settings import MeridianConfig
@@ -50,6 +50,7 @@ class ResolvedPolicies:
     resolved_overrides: RuntimeOverrides
     model_selection: ModelSelectionContext | None = None
     warning: str | None = None
+    alias_catalog: dict[str, AliasEntry] | None = None
 
 
 def _resolve_final_model(
@@ -59,6 +60,7 @@ def _resolve_final_model(
     harness_id: HarnessId,
     config: MeridianConfig,
     project_root: Path,
+    cache: MarsResultCache | None = None,
 ) -> tuple[str, AliasEntry | None]:
     """Resolve final model string after harness is known."""
 
@@ -72,7 +74,7 @@ def _resolve_final_model(
     if not fallback_model:
         return "", None
     try:
-        entry = resolve_model_entry(fallback_model, project_root=project_root)
+        entry = _resolve_model_entry(fallback_model, project_root=project_root, cache=cache)
         return str(entry.model_id), entry
     except ValueError:
         return fallback_model, None
@@ -103,6 +105,27 @@ def _to_alias_map(entries: list[AliasEntry]) -> dict[str, AliasEntry]:
             continue
         by_alias[alias] = item
     return by_alias
+
+
+def _resolve_model_entry(
+    name_or_alias: str,
+    *,
+    project_root: Path,
+    cache: MarsResultCache | None,
+) -> AliasEntry:
+    if cache is None:
+        return resolve_model_entry(name_or_alias, project_root=project_root)
+    return resolve_model_entry(name_or_alias, project_root=project_root, cache=cache)
+
+
+def _load_merged_aliases(
+    project_root: Path,
+    *,
+    cache: MarsResultCache | None,
+) -> list[AliasEntry]:
+    if cache is None:
+        return load_merged_aliases(project_root)
+    return load_merged_aliases(project_root, cache=cache)
 
 
 def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
@@ -211,9 +234,10 @@ def _fallback_entry_for_token(
     *,
     project_root: Path,
     harness_registry: HarnessRegistry,
+    cache: MarsResultCache | None = None,
 ) -> tuple[str, HarnessId, AliasEntry | None] | None:
     try:
-        entry = resolve_model_entry(token, project_root=project_root)
+        entry = _resolve_model_entry(token, project_root=project_root, cache=cache)
     except ValueError:
         return None
     try:
@@ -232,6 +256,7 @@ def _try_harness_availability_fallback(
     profile: AgentProfile | None,
     model_explicit: bool,
     project_root: Path,
+    cache: MarsResultCache | None = None,
 ) -> tuple[str, HarnessId, AliasEntry | None] | None:
     """Attempt fallback when harness is unavailable. Returns None if no fallback found."""
 
@@ -244,6 +269,7 @@ def _try_harness_availability_fallback(
             fallback_token,
             project_root=project_root,
             harness_registry=harness_registry,
+            cache=cache,
         )
         if fallback is not None:
             return fallback
@@ -255,6 +281,7 @@ def _try_harness_availability_fallback(
             rule.match_value,
             project_root=project_root,
             harness_registry=harness_registry,
+            cache=cache,
         )
         if fallback is not None:
             return fallback
@@ -388,6 +415,7 @@ def resolve_policies(
     harness_registry: HarnessRegistry,
     configured_default_harness: str = "claude",
     skills_readonly: bool = True,
+    cache: MarsResultCache | None = None,
 ) -> ResolvedPolicies:
     """Resolve launch policies (model/harness/skills/profile) for one request."""
 
@@ -407,7 +435,11 @@ def resolve_policies(
     model_resolution_error: ValueError | None = None
     if resolved.model:
         try:
-            resolved_entry = resolve_model_entry(resolved.model, project_root=project_root)
+            resolved_entry = _resolve_model_entry(
+                resolved.model,
+                project_root=project_root,
+                cache=cache,
+            )
         except ValueError as exc:
             model_resolution_error = exc
 
@@ -450,6 +482,7 @@ def resolve_policies(
         profile=profile,
         model_explicit=model_explicit,
         project_root=project_root,
+        cache=cache,
     )
     if fallback is not None:
         fallback_model, harness_id, resolved_entry = fallback
@@ -492,6 +525,7 @@ def resolve_policies(
         harness_id=harness_id,
         config=config,
         project_root=project_root,
+        cache=cache,
     )
 
     if final_model and user_explicit_same_precedence:
@@ -525,7 +559,7 @@ def resolve_policies(
             harness_provenance=harness_provenance or "",
         )
 
-    alias_catalog = _to_alias_map(load_merged_aliases(project_root))
+    alias_catalog = _to_alias_map(_load_merged_aliases(project_root, cache=cache))
     selected_model_token = (
         model_selection.selected_model_token if model_selection is not None else ""
     )
@@ -611,6 +645,7 @@ def resolve_policies(
         resolved_overrides=resolved,
         model_selection=model_selection,
         warning=_merge_warnings(profile_warning, model_warning),
+        alias_catalog=alias_catalog,
     )
 
 
