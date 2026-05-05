@@ -156,6 +156,70 @@ def test_background_worker_main_uses_spawn_id_as_logical_owner(
     assert captured == {"runtime_root": runtime_root, "logical_owner": "p77"}
 
 
+def test_background_worker_main_backstop_finalizes_uncaught_helper_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    log_dir = project_root / ".meridian" / "spawns" / "p88"
+    log_dir.mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        spawn_execute,
+        "prepare_for_runtime_write",
+        lambda _root: SimpleNamespace(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            config=SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(spawn_execute, "register_spawn_telemetry_observer", lambda: None)
+    monkeypatch.setattr(
+        telemetry_bootstrap,
+        "install",
+        lambda _plan: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        spawn_execute,
+        "resolve_project_config_paths",
+        lambda *, project_root: SimpleNamespace(project_root=project_root),
+    )
+    monkeypatch.setattr(spawn_execute, "resolve_spawn_log_dir", lambda *_a, **_kw: log_dir)
+    monkeypatch.setattr(spawn_execute, "_load_bg_worker_request", lambda _log_dir: object())
+    monkeypatch.setattr(
+        spawn_execute,
+        "_execute_existing_spawn",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("helper escaped")),
+    )
+    monkeypatch.setattr(
+        spawn_execute,
+        "create_lifecycle_service",
+        lambda *_a, **_kw: "lifecycle-service",
+    )
+
+    def _capture_complete(**kwargs):
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(spawn_execute, "_complete_spawn_sync", _capture_complete)
+
+    result = spawn_execute._background_worker_main(
+        ["--spawn-id", "p88", "--project-root", project_root.as_posix()]
+    )
+
+    assert result == 1
+    assert captured["runtime_root"] == runtime_root
+    assert captured["lifecycle_service"] == "lifecycle-service"
+    assert str(captured["spawn_id"]) == "p88"
+    assert captured["status"] == "failed"
+    assert captured["exit_code"] == 1
+    assert captured["origin"] == "launch_failure"
+    assert captured["error"] == "background_worker_crash"
+
+
 def test_run_chat_server_uses_prepared_runtime_write_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -30,9 +30,13 @@ from meridian.lib.ops.spawn.execute import (
     _execute_existing_spawn,
     _SessionExecutionContext,
     _write_params_json,
+    execute_spawn_blocking,
+    launch_prepared_spawn,
 )
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state import spawn_store
+from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.repository import FileSpawnRepository
 
 
 def _resolver() -> TieredPermissionResolver:
@@ -397,3 +401,270 @@ def test_execute_existing_spawn_allows_empty_model(
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     assert record is not None
     assert record.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_terminalizes_prerun_exception_as_launch_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p1")
+    service = create_lifecycle_service(tmp_path, runtime_root)
+    service.start(
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="",
+        skills=(),
+        skill_paths=(),
+        harness="codex",
+        kind="child",
+        prompt="stored prompt",
+        spawn_id=str(spawn_id),
+        status="queued",
+    )
+
+    class _HarnessRegistry:
+        def get_subprocess_harness(self, _harness_id: object) -> OpenCodeAdapter:
+            return OpenCodeAdapter()
+
+    @contextmanager
+    def fake_session_execution_context(**_kwargs: object) -> Iterator[_SessionExecutionContext]:
+        yield _SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        )
+
+    def fake_build_launch_context(**_kwargs: object) -> SimpleNamespace:
+        raise RuntimeError("boom before runner entry")
+
+    async def fail_if_called(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("execute_with_streaming should not run after pre-run failure")
+
+    monkeypatch.setattr(
+        execute_module,
+        "_session_execution_context",
+        fake_session_execution_context,
+    )
+    monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
+    monkeypatch.setattr(execute_module, "execute_with_streaming", fail_if_called)
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=spawn_id)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime_request=LaunchRuntime(
+            runtime_root=runtime_root.as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast(
+            "Any",
+            SimpleNamespace(harness_registry=_HarnessRegistry(), artifacts=None),
+        ),
+        runtime_root=runtime_root,
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    events = FileSpawnRepository(RuntimePaths.from_root_dir(runtime_root)).read_events()
+    finalize_events = [
+        event
+        for event in events
+        if event.event == "finalize" and event.id == str(spawn_id)
+    ]
+    assert result == 1
+    assert record is not None
+    assert record.status == "failed"
+    assert record.terminal_origin == "launch_failure"
+    assert record.error == "boom before runner entry"
+    assert len(finalize_events) == 1
+    assert finalize_events[0].origin == "launch_failure"
+
+
+def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    spawn_id = SpawnId("p123")
+    captured: dict[str, object] = {}
+    real_asyncio_run = asyncio.run
+
+    def fake_init_spawn(**_kwargs: object) -> Any:
+        return SimpleNamespace(
+            spawn=SimpleNamespace(spawn_id=spawn_id),
+            runtime_root=tmp_path / ".runtime",
+            current_depth=0,
+            work_id=None,
+        )
+
+    async def fake_launch_prepared_spawn(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_project_config_paths",
+        lambda *, project_root: ProjectConfigPaths(
+            project_root=Path(project_root),
+            execution_cwd=Path(project_root),
+        ),
+    )
+    monkeypatch.setattr(execute_module, "resolve_child_execution_cwd", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr(execute_module, "_write_params_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", fake_launch_prepared_spawn)
+    monkeypatch.setattr(execute_module.asyncio, "run", lambda coro: real_asyncio_run(coro))
+    monkeypatch.setattr(
+        execute_module,
+        "read_spawn_row",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="succeeded",
+            duration_secs=1.25,
+            input_tokens=3,
+            output_tokens=5,
+        ),
+    )
+
+    result = execute_spawn_blocking(
+        payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
+    )
+
+    assert result.status == "succeeded"
+    assert captured["spawn"].spawn_id == spawn_id
+    assert cast("Any", captured["request"]).prompt == "run it"
+    assert cast("Any", captured["project_paths"]).project_root == tmp_path
+    assert captured["execution_cwd"] == tmp_path.as_posix()
+
+
+def test_execute_spawn_blocking_backstop_finalizes_uncaught_helper_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    spawn_id = SpawnId("p124")
+    runtime_root = tmp_path / ".runtime"
+    captured: dict[str, object] = {}
+    real_asyncio_run = asyncio.run
+
+    def fake_init_spawn(**_kwargs: object) -> Any:
+        return SimpleNamespace(
+            spawn=SimpleNamespace(spawn_id=spawn_id),
+            runtime_root=runtime_root,
+            current_depth=0,
+            work_id=None,
+        )
+
+    async def exploding_launch_prepared_spawn(**_kwargs: object) -> int:
+        raise RuntimeError("helper escaped")
+
+    def fake_complete_spawn_sync(**kwargs: object) -> bool:
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_project_config_paths",
+        lambda *, project_root: ProjectConfigPaths(
+            project_root=Path(project_root),
+            execution_cwd=Path(project_root),
+        ),
+    )
+    monkeypatch.setattr(execute_module, "resolve_child_execution_cwd", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr(execute_module, "_write_params_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        execute_module,
+        "launch_prepared_spawn",
+        exploding_launch_prepared_spawn,
+    )
+    monkeypatch.setattr(execute_module.asyncio, "run", lambda coro: real_asyncio_run(coro))
+    monkeypatch.setattr(
+        execute_module,
+        "create_lifecycle_service",
+        lambda *_args, **_kwargs: "lifecycle-service",
+    )
+    monkeypatch.setattr(execute_module, "_complete_spawn_sync", fake_complete_spawn_sync)
+
+    result = execute_spawn_blocking(
+        payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
+    )
+
+    assert result.status == "failed"
+    assert result.error == "execution_crash"
+    assert result.exit_code == 1
+    assert captured["runtime_root"] == runtime_root
+    assert captured["lifecycle_service"] == "lifecycle-service"
+    assert captured["spawn_id"] == spawn_id
+    assert captured["status"] == "failed"
+    assert captured["exit_code"] == 1
+    assert captured["origin"] == "launch_failure"
+    assert captured["error"] == "helper escaped"
+
+
+@pytest.mark.asyncio
+async def test_execute_existing_spawn_routes_through_launch_prepared_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p1")
+    _start_background_spawn_row(
+        tmp_path=tmp_path,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+        model="stored-model",
+        harness="codex",
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_launch_prepared_spawn(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", fake_launch_prepared_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_runtime_root",
+        lambda _project_root: runtime_root,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "build_runtime",
+        lambda _project_root, *, sink=None: SimpleNamespace(
+            harness_registry=SimpleNamespace(),
+            artifacts=None,
+        ),
+    )
+
+    result = await _execute_existing_spawn(
+        spawn_id=spawn_id,
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        launch_request=_background_launch_request(
+            tmp_path=tmp_path,
+            prompt="run it",
+            harness="codex",
+            model="gpt-5.4",
+        ),
+    )
+
+    assert result == 0
+    assert captured["spawn"].spawn_id == spawn_id
+    assert cast("Any", captured["request"]).prompt == "run it"
+    assert cast("Any", captured["request"]).harness == "codex"
+    assert cast("Any", captured["project_paths"]).project_root == tmp_path
+    assert captured["execution_cwd"] == tmp_path.as_posix()

@@ -5,6 +5,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 ### Added
 - Per-harness token usage extraction. Claude, Codex, and OpenCode each have dedicated extractors that parse their native event shapes (camelCase modelUsage, thread/tokenUsage/updated, session.idle) instead of relying on a generic snake_case scanner.
+
+### Fixed
+- Spawn finalization ownership (R4-R6): streaming runner now owns finalization from function entry via sentinel locals + outer try/finally. Eliminates gap where early setup exceptions escaped without terminal events. `launch_prepared_spawn()` extracted as shared helper for both foreground/background paths — structural ownership replaces `pre_launch_complete` boolean flag. Surface-level panic backstops added as last-resort around entire post-row sections.
 - TokenUsage expanded with cache_read_input_tokens, cache_creation_input_tokens, reasoning_tokens, cost_is_estimate.
 - Catalog-based cost estimation for harnesses that don't expose pricing (Codex). Reads mars models cache pricing (cost_input, cost_output, cost_cache_read, cost_reasoning) and applies per-token formula. Falls back to 10% heuristic when cache pricing is missing.
 - CLI spawn show displays cached/reasoning tokens and prefixes estimated costs with `~`.

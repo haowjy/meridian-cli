@@ -194,15 +194,38 @@ async def test_complete_spawn_returns_false_after_terminal_transition(
     service = SpawnApplicationService(tmp_path, lifecycle)
     spawn_id = _start_running_spawn(lifecycle)
 
-    first = await service.complete_spawn(spawn_id, "succeeded", 0, origin="runner")
-    second = await service.complete_spawn(spawn_id, "failed", 1, origin="cancel")
+    first = await service.complete_spawn(
+        spawn_id,
+        "succeeded",
+        0,
+        origin="runner",
+        duration_secs=1.5,
+        total_cost_usd=0.25,
+        input_tokens=10,
+        output_tokens=20,
+    )
+    second = await service.complete_spawn(
+        spawn_id,
+        "failed",
+        1,
+        origin="cancel",
+        duration_secs=9.9,
+        total_cost_usd=4.25,
+        input_tokens=999,
+        output_tokens=888,
+    )
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert first is True
     assert second is False
     assert record is not None
     assert record.status == "succeeded"
+    assert record.exit_code == 0
     assert record.terminal_origin == "runner"
+    assert record.duration_secs == 1.5
+    assert record.total_cost_usd == 0.25
+    assert record.input_tokens == 10
+    assert record.output_tokens == 20
 
 
 @pytest.mark.asyncio
