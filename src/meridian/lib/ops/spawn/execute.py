@@ -987,30 +987,61 @@ def execute_spawn_blocking(
     warning = request.warning
     context_from_resolved = request.context_from
 
-    exit_code = asyncio.run(
-        launch_prepared_spawn(
-            spawn=spawn,
-            request=request,
-            runtime_request=LaunchRuntime(
-                argv_intent=LaunchArgvIntent.SPEC_ONLY,
+    try:
+        exit_code = asyncio.run(
+            launch_prepared_spawn(
+                spawn=spawn,
+                request=request,
+                runtime_request=LaunchRuntime(
+                    argv_intent=LaunchArgvIntent.SPEC_ONLY,
+                    debug=payload.debug,
+                    runtime_root=context.runtime_root.as_posix(),
+                    project_paths_project_root=project_paths.project_root.as_posix(),
+                    project_paths_execution_cwd=project_paths.execution_cwd.as_posix(),
+                ),
+                runtime=runtime,
+                runtime_root=context.runtime_root,
+                project_paths=project_paths,
+                execution_cwd=execution_cwd_str,
+                work_id=context.work_id,
+                autocompact=autocompact,
+                stream_stdout_to_terminal=stream_stdout_to_terminal,
+                stream_stderr_to_terminal=payload.stream,
+                event_observer=event_observer,
                 debug=payload.debug,
-                runtime_root=context.runtime_root.as_posix(),
-                project_paths_project_root=project_paths.project_root.as_posix(),
-                project_paths_execution_cwd=project_paths.execution_cwd.as_posix(),
-            ),
-            runtime=runtime,
-            runtime_root=context.runtime_root,
-            project_paths=project_paths,
-            execution_cwd=execution_cwd_str,
-            work_id=context.work_id,
-            autocompact=autocompact,
-            stream_stdout_to_terminal=stream_stdout_to_terminal,
-            stream_stderr_to_terminal=payload.stream,
-            event_observer=event_observer,
-            debug=payload.debug,
-            ctx=resolved_context,
+                ctx=resolved_context,
+            )
         )
-    )
+    except Exception as exc:
+        lifecycle_service = create_lifecycle_service(
+            project_paths.project_root,
+            context.runtime_root,
+        )
+        _complete_spawn_sync(
+            runtime_root=context.runtime_root,
+            lifecycle_service=lifecycle_service,
+            spawn_id=spawn.spawn_id,
+            status="failed",
+            exit_code=1,
+            origin="launch_failure",
+            error=str(exc),
+        )
+        logger.exception("Foreground spawn crashed.", spawn_id=str(spawn.spawn_id))
+        return SpawnActionOutput(
+            command="spawn.create",
+            status="failed",
+            spawn_id=str(spawn.spawn_id),
+            message=f"Spawn execution failed: {exc}",
+            error="execution_crash",
+            model=request.model or "",
+            harness_id=request.harness or "",
+            warning=warning,
+            agent=request.agent,
+            reference_files=request.reference_files,
+            template_vars=request.template_vars,
+            context_from_resolved=context_from_resolved,
+            exit_code=1,
+        )
 
     duration = time.monotonic() - started
     row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
@@ -1124,6 +1155,19 @@ def _background_worker_main(
                 prepared=prepared,
             )
         )
+    except Exception:
+        lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+        _complete_spawn_sync(
+            runtime_root=runtime_root,
+            lifecycle_service=lifecycle_service,
+            spawn_id=spawn_id,
+            status="failed",
+            exit_code=1,
+            origin="launch_failure",
+            error="background_worker_crash",
+        )
+        logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
+        return 1
     finally:
         _cleanup_background_runtime_artifacts(log_dir)
 
