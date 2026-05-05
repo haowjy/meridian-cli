@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 LIFECYCLE_EVENT_TYPES = {TURN_COMPLETED, CHAT_EXITED}
+PostPersistHook = Callable[[ChatEvent], list[ChatEvent] | None]
 
 
 class ChatEventIndex(Protocol):
@@ -58,6 +59,7 @@ class ChatEventPipeline:
         self._index = event_index
         self._fanout = fanout if fanout is not None else NoopChatEventFanOut()
         self._turn_completed_callback = turn_completed_callback
+        self._post_persist_hooks: list[PostPersistHook] = []
         self._queue: asyncio.Queue[ChatEvent | None] = asyncio.Queue(maxsize=max_queue)
         self._task: asyncio.Task[None] | None = None
 
@@ -74,6 +76,17 @@ class ChatEventPipeline:
         callback: Callable[[ChatEvent], Awaitable[None]] | None,
     ) -> None:
         self._turn_completed_callback = callback
+
+    def add_post_persist_hook(self, hook: PostPersistHook) -> None:
+        """Register a synchronous hook for inline synthetic events.
+
+        Hooks run in the consumer loop after the causative event is persisted,
+        indexed, and broadcast. Hooks must treat the causative event as
+        read-only. Returned events are appended inline without re-entering
+        ``ingest()`` or the queue.
+        """
+
+        self._post_persist_hooks.append(hook)
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -129,13 +142,8 @@ class ChatEventPipeline:
             if event is None:
                 self._queue.task_done()
                 break
-            persisted = self._log.append(event)
-            if self._index is not None:
-                try:
-                    self._index.upsert(persisted)
-                except Exception:
-                    logger.warning("Chat event index upsert failed", exc_info=True)
-            await self._fanout.broadcast(persisted)
+            persisted = await self._persist_index_and_broadcast(event)
+            await self._emit_post_persist_events(persisted)
             if persisted.type == TURN_COMPLETED and self._turn_completed_callback is not None:
                 try:
                     await self._turn_completed_callback(persisted)
@@ -146,6 +154,24 @@ class ChatEventPipeline:
             self._queue.task_done()
             if persisted.type == CHAT_EXITED:
                 break
+
+    async def _persist_index_and_broadcast(self, event: ChatEvent) -> ChatEvent:
+        persisted = self._log.append(event)
+        if self._index is not None:
+            try:
+                self._index.upsert(persisted)
+            except Exception:
+                logger.warning("Chat event index upsert failed", exc_info=True)
+        await self._fanout.broadcast(persisted)
+        return persisted
+
+    async def _emit_post_persist_events(self, persisted: ChatEvent) -> None:
+        for hook in self._post_persist_hooks:
+            events = hook(persisted)
+            if events is None:
+                continue
+            for event in events:
+                await self._persist_index_and_broadcast(event)
 
     async def on_execution_complete(self, execution_generation: int | None = None) -> None:
         self._session.on_execution_died(execution_generation)
