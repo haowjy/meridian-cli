@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
+from meridian.lib.catalog.agent import scan_agent_profiles
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.context_config import (
@@ -506,6 +507,12 @@ def _resolve_surface_request(
         explicit_project_root=project_paths.project_root,
         explicit_runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
     ).work_dir
+    agent_profiles = sorted(
+        scan_agent_profiles(project_root=project_paths.project_root),
+        key=lambda profile: profile.name,
+    )
+    context_config = load_context_config(project_paths.project_root) or ContextConfig()
+    resolved_context = resolve_context_paths(project_paths.project_root, context_config)
 
     route_warning = None
     prompt_policy = harness.run_prompt_policy()
@@ -563,6 +570,7 @@ def _resolve_surface_request(
             build_agent_inventory_prompt(
                 project_root=project_paths.project_root,
                 alias_catalog=policies.alias_catalog,
+                agents=agent_profiles,
             )
             or ""
         )
@@ -570,6 +578,8 @@ def _resolve_surface_request(
             build_context_prompt(
                 project_root=project_paths.project_root,
                 active_work_dir=active_work_dir,
+                context_config=context_config,
+                resolved_context=resolved_context,
             )
             or ""
         )
@@ -637,10 +647,13 @@ def _resolve_surface_request(
             inventory_prompt = build_agent_inventory_prompt(
                 project_root=project_paths.project_root,
                 alias_catalog=policies.alias_catalog,
+                agents=agent_profiles,
             )
             context_prompt_primary = build_context_prompt(
                 project_root=project_paths.project_root,
                 active_work_dir=active_work_dir,
+                context_config=context_config,
+                resolved_context=resolved_context,
             )
 
         seed = harness.seed_session(

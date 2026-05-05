@@ -10,6 +10,12 @@ from meridian.lib.catalog.agent import AgentProfile, scan_agent_profiles
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.catalog.models import load_merged_aliases
 from meridian.lib.catalog.skill import SkillRegistry
+from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.context.resolver import (
+    ResolvedContextPaths,
+    render_context_lines,
+    resolve_context_paths,
+)
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.reference import (
@@ -236,7 +242,11 @@ def _render_agent_line(
 
 
 def build_context_prompt(
-    *, project_root: Path, active_work_dir: Path | None = None
+    *,
+    project_root: Path,
+    active_work_dir: Path | None = None,
+    context_config: ContextConfig | None = None,
+    resolved_context: ResolvedContextPaths | None = None,
 ) -> str | None:
     """Render resolved context paths for launch system context.
 
@@ -245,12 +255,12 @@ def build_context_prompt(
     Returns None when no context is resolvable.
     """
 
-    from meridian.lib.config.context_config import ContextConfig
-    from meridian.lib.context.resolver import render_context_lines, resolve_context_paths
-    from meridian.lib.state.paths import load_context_config
+    if resolved_context is None:
+        if context_config is None:
+            from meridian.lib.state.paths import load_context_config
 
-    context_config = load_context_config(project_root) or ContextConfig()
-    resolved = resolve_context_paths(project_root, context_config)
+            context_config = load_context_config(project_root) or ContextConfig()
+        resolved_context = resolve_context_paths(project_root, context_config)
 
     header = [
         "# Meridian Context",
@@ -259,7 +269,7 @@ def build_context_prompt(
         "",
     ]
     context_lines = render_context_lines(
-        resolved,
+        resolved_context,
         check_env=False,
         active_work_dir=active_work_dir,
     )
@@ -268,14 +278,18 @@ def build_context_prompt(
 
 
 def build_agent_inventory_prompt(
-    *, project_root: Path, alias_catalog: dict[str, AliasEntry] | None = None
+    *,
+    project_root: Path,
+    alias_catalog: dict[str, AliasEntry] | None = None,
+    agents: list[AgentProfile] | None = None,
 ) -> str | None:
     """Render installed agent inventory grouped by mode."""
 
-    agents = sorted(
-        scan_agent_profiles(project_root=project_root),
-        key=lambda profile: profile.name,
-    )
+    if agents is None:
+        agents = sorted(
+            scan_agent_profiles(project_root=project_root),
+            key=lambda profile: profile.name,
+        )
 
     if not agents:
         return None
