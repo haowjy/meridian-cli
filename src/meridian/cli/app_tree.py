@@ -3,7 +3,6 @@
 from cyclopts import App
 
 from meridian import __version__
-from meridian.cli.ext_cmd import ext_app
 
 # Curated help for agent mode: only commands useful for subagent callers.
 # Not auto-generated — update when adding agent-facing commands.
@@ -175,6 +174,11 @@ telemetry_app = App(
     help_formatter="plain",
 )
 completion_app = App(name="completion", help="Shell completion helpers", help_formatter="plain")
+ext_app = App(
+    name="ext",
+    help="Extension command discovery and invocation.",
+    help_formatter="plain",
+)
 
 app.command(spawn_app, name="spawn")
 spawn_app.command(report_app, name="report")

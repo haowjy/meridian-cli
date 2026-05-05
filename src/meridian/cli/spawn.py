@@ -10,7 +10,6 @@ from typing import Annotated, Any, cast, get_args
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
-from meridian.cli.main import agent_mode_enabled, current_output_sink, get_global_options
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import missing_fork_session_error, parse_csv_list
 from meridian.lib.bootstrap.services import (
@@ -52,10 +51,6 @@ from meridian.lib.ops.spawn.api import (
 from meridian.lib.ops.spawn.query import resolve_spawn_reference
 from meridian.lib.state import spawn_store
 
-# In agent mode (MERIDIAN_DEPTH > 0), hide human-only flags from --help.
-# Flags still work when passed — show only affects help text.
-_HUMAN_ONLY = not agent_mode_enabled()
-
 Emitter = Callable[[Any], None]
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
     "tuple[SpawnStatus, ...]", get_args(SpawnStatus)
@@ -63,6 +58,18 @@ _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
 _ACTIVE_VIEW_STATUSES: tuple[SpawnStatus, ...] = tuple(
     status for status in _SPAWN_STATUS_VALUES if status in ACTIVE_SPAWN_STATUSES
 )
+
+
+def _get_global_options() -> Any:
+    from meridian.cli.main import get_global_options
+
+    return get_global_options()
+
+
+def _current_output_sink() -> Any:
+    from meridian.cli.main import current_output_sink
+
+    return current_output_sink()
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
@@ -233,11 +240,11 @@ def _spawn_create(
     ] = False,
     verbose: Annotated[
         bool,
-        Parameter(name="--verbose", help="Enable verbose spawn logging.", show=_HUMAN_ONLY),
+        Parameter(name="--verbose", help="Enable verbose spawn logging.", show=True),
     ] = False,
     quiet: Annotated[
         bool,
-        Parameter(name="--quiet", help="Reduce non-essential command output.", show=_HUMAN_ONLY),
+        Parameter(name="--quiet", help="Reduce non-essential command output.", show=True),
     ] = False,
     stream: Annotated[
         bool,
@@ -322,8 +329,8 @@ def _spawn_create(
 ) -> None:
     # Passthrough lives on GlobalOptions, not a function parameter — see
     # _split_passthrough_args() for why cyclopts can't handle ``--`` correctly.
-    passthrough = get_global_options().passthrough_args
-    global_harness = get_global_options().harness
+    passthrough = _get_global_options().passthrough_args
+    global_harness = _get_global_options().harness
     resolved_continue_from = (continue_from or "").strip() or None
 
     # Resolve --yolo / --approval interaction.
@@ -397,7 +404,7 @@ def _spawn_create(
                     source_execution_cwd=resolved_reference.source_execution_cwd,
                 ),
             ),
-            sink=current_output_sink(),
+            sink=_current_output_sink(),
             prepared=prepared,
         )
     elif resolved_continue_from is not None:
@@ -417,7 +424,7 @@ def _spawn_create(
                 passthrough_args=passthrough,
                 approval=resolved_approval,
             ),
-            sink=current_output_sink(),
+            sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
         )
     else:
@@ -446,7 +453,7 @@ def _spawn_create(
                 passthrough_args=passthrough,
                 debug=debug,
             ),
-            sink=current_output_sink(),
+            sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
         )
     emit(result)
@@ -534,7 +541,7 @@ def _spawn_list(
             limit=limit,
             failed=False,
         ),
-        sink=current_output_sink(),
+        sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
     emit(result)
@@ -602,7 +609,7 @@ def _spawn_show(
         ),
     ] = True,
 ) -> None:
-    sink = current_output_sink()
+    sink = _current_output_sink()
     results = tuple(
         spawn_show_sync(
             SpawnShowInput(
@@ -619,7 +626,7 @@ def _spawn_show(
         emit(results[0])
         return
 
-    if get_global_options().output.format == "json":
+    if _get_global_options().output.format == "json":
         emit(list(results))
         return
 
@@ -648,7 +655,7 @@ def _spawn_stats(
                 session=session,
                 flat=flat,
             ),
-            sink=current_output_sink(),
+            sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_read(),
         )
     )
@@ -668,7 +675,7 @@ def _spawn_cancel(
         SpawnCancelInput(
             spawn_id=resolved_spawn_id,
         ),
-        sink=current_output_sink(),
+        sink=_current_output_sink(),
         prepared=prepared,
     )
     emit(result)
@@ -701,11 +708,11 @@ def _spawn_wait(
     ] = None,
     verbose: Annotated[
         bool,
-        Parameter(name="--verbose", help="Enable verbose wait status output.", show=_HUMAN_ONLY),
+        Parameter(name="--verbose", help="Enable verbose wait status output.", show=True),
     ] = False,
     quiet: Annotated[
         bool,
-        Parameter(name="--quiet", help="Suppress wait progress output.", show=_HUMAN_ONLY),
+        Parameter(name="--quiet", help="Suppress wait progress output.", show=True),
     ] = False,
     report: Annotated[
         bool,
@@ -725,7 +732,7 @@ def _spawn_wait(
             quiet=quiet,
             include_report_body=report,
         ),
-        sink=current_output_sink(),
+        sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
     emit(result)
@@ -745,7 +752,7 @@ def _spawn_files(
 ) -> None:
     result = spawn_files_sync(
         SpawnWrittenFilesInput(spawn_id=spawn_id),
-        sink=current_output_sink(),
+        sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
     if null and result.written_files:
@@ -766,7 +773,7 @@ def _spawn_cancel_all(
 ) -> None:
     result = spawn_cancel_all_sync(
         SpawnCancelAllInput(work=work),
-        sink=current_output_sink(),
+        sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
     emit(result)

@@ -10,6 +10,7 @@ from typing import Annotated, Any, cast
 
 from cyclopts import App, Parameter
 
+from meridian.cli.app_tree import ext_app
 from meridian.cli.output import OutputFormat
 from meridian.lib.extensions.context import (
     ExtensionCommandServices,
@@ -21,12 +22,6 @@ from meridian.lib.extensions.types import ExtensionErrorResult, ExtensionSurface
 
 type Emitter = Callable[[object], None]
 type OutputFormatResolver = Callable[[], OutputFormat]
-
-ext_app = App(
-    name="ext",
-    help="Extension command discovery and invocation.",
-    help_formatter="plain",
-)
 
 _emit: Emitter | None = None
 _resolve_global_format: OutputFormatResolver | None = None
