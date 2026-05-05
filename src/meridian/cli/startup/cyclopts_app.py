@@ -6,6 +6,7 @@ from cyclopts import App
 
 from meridian import __version__
 from meridian.cli.startup.catalog import COMMAND_CATALOG, CommandDescriptor
+from meridian.cli.startup.lazy_dispatch import make_lazy_command
 
 
 def _command_summary(path: tuple[str, ...]) -> str:
@@ -70,7 +71,8 @@ def build_lazy_app() -> App:
             apps_by_path[path] = sub_app
             continue
         parent = apps_by_path[path[:-1]]
-        parent.command(descriptor.lazy_target, name=path[-1], help=descriptor.summary)
+        handler = make_lazy_command(descriptor.lazy_target)
+        parent.command(handler, name=path[-1], help=descriptor.summary)
 
     return root
 
