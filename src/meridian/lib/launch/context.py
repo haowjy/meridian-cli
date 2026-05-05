@@ -260,15 +260,19 @@ def merge_env_overrides(
 def _build_composition_warnings(
     *,
     request_warning: str | None,
-    policy_warning: str | None,
+    policy_warnings: tuple[CompositionWarning, ...] = (),
     route_warning: str | None,
     missing_skills_warning: str | None,
     continuation_warning: str | None,
 ) -> tuple[CompositionWarning, ...]:
     warnings: list[CompositionWarning] = []
+    for code, message in (("request_warning", request_warning),):
+        normalized = (message or "").strip()
+        if not normalized:
+            continue
+        warnings.append(CompositionWarning(code=code, message=normalized))
+    warnings.extend(policy_warnings)
     for code, message in (
-        ("request_warning", request_warning),
-        ("policy_warning", policy_warning),
         ("route_warning", route_warning),
         ("missing_skills", missing_skills_warning),
         ("continuation_warning", continuation_warning),
@@ -728,7 +732,7 @@ def _resolve_surface_request(
     )
     composition_warnings = _build_composition_warnings(
         request_warning=request.warning,
-        policy_warning=policies.warning,
+        policy_warnings=policies.warnings,
         route_warning=route_warning,
         missing_skills_warning=missing_skills_warning,
         continuation_warning=continuation_warning,
@@ -869,7 +873,7 @@ def _build_launch_context_impl(
         harness = harness_registry.get_subprocess_harness(harness_id)
         composition_warnings = _build_composition_warnings(
             request_warning=resolved_request.warning,
-            policy_warning=None,
+            policy_warnings=(),
             route_warning=None,
             missing_skills_warning=None,
             continuation_warning=None,

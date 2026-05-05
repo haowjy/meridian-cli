@@ -15,6 +15,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 
+from .launch_types import CompositionWarning
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -47,7 +48,7 @@ class ResolvedPolicies:
     resolved_skills: ResolvedSkills
     resolved_overrides: RuntimeOverrides
     model_selection: ModelSelectionContext | None = None
-    warning: str | None = None
+    warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
 
 
@@ -87,11 +88,21 @@ def _first_set_layer_index(
     return None
 
 
-def _merge_warnings(*warnings: str | None) -> str | None:
-    normalized = [warning.strip() for warning in warnings if warning and warning.strip()]
-    if not normalized:
-        return None
-    return "\n".join(normalized)
+def _policy_warnings(
+    *,
+    profile_warning: str | None,
+    model_warning: str | None,
+) -> tuple[CompositionWarning, ...]:
+    warnings: list[CompositionWarning] = []
+    for code, message in (
+        ("profile_warning", profile_warning),
+        ("model_warning", model_warning),
+    ):
+        normalized = (message or "").strip()
+        if not normalized:
+            continue
+        warnings.append(CompositionWarning(code=code, message=normalized))
+    return tuple(warnings)
 
 
 def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
@@ -600,7 +611,10 @@ def resolve_policies(
         resolved_skills=resolved_skills,
         resolved_overrides=resolved,
         model_selection=model_selection,
-        warning=_merge_warnings(profile_warning, model_warning),
+        warnings=_policy_warnings(
+            profile_warning=profile_warning,
+            model_warning=model_warning,
+        ),
         alias_catalog=alias_catalog,
     )
 

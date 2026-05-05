@@ -230,8 +230,8 @@ def test_resolve_policies_warns_and_uses_no_profile_when_config_agent_is_missing
     )
 
     assert policies.profile is None
-    assert policies.warning is not None
-    assert "missing-config-agent" in policies.warning
+    assert [warning.code for warning in policies.warnings] == ["profile_warning"]
+    assert "missing-config-agent" in policies.warnings[0].message
 
 
 def test_primary_launch_context_has_no_profile_when_agent_is_unset(tmp_path: Path) -> None:
@@ -1314,8 +1314,8 @@ def test_resolve_policies_models_fallback_matches_model_id_and_warns_on_multiple
     )
 
     assert policies.resolved_overrides.effort == "medium"
-    assert policies.warning is not None
-    assert "ignoring: gpt-latest" in policies.warning
+    assert [warning.code for warning in policies.warnings] == ["model_warning"]
+    assert "ignoring: gpt-latest" in policies.warnings[0].message
 
 
 def test_resolve_policies_exact_alias_match_beats_model_id_fallback(
@@ -1357,7 +1357,7 @@ def test_resolve_policies_exact_alias_match_beats_model_id_fallback(
     )
 
     assert policies.resolved_overrides.effort == "medium"
-    assert policies.warning is None
+    assert policies.warnings == ()
 
 
 def test_resolve_policies_unmatched_models_entry_logs_debug_and_uses_profile_defaults(
@@ -1400,7 +1400,7 @@ def test_resolve_policies_unmatched_models_entry_logs_debug_and_uses_profile_def
         )
 
     assert policies.resolved_overrides.effort == "high"
-    assert policies.warning is None
+    assert policies.warnings == ()
     assert "generic model-policy defaults but no matching models entry" in caplog.text
 
 
