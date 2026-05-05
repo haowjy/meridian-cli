@@ -279,7 +279,9 @@ def build_context_prompt(
     return "\n".join([*header, *context_lines]).strip()
 
 
-def build_agent_inventory_prompt(*, project_root: Path) -> str | None:
+def build_agent_inventory_prompt(
+    *, project_root: Path, alias_catalog: dict[str, AliasEntry] | None = None
+) -> str | None:
     """Render installed agent inventory grouped by mode."""
 
     agents = sorted(
@@ -290,11 +292,12 @@ def build_agent_inventory_prompt(*, project_root: Path) -> str | None:
     if not agents:
         return None
 
-    alias_catalog = {
-        alias.alias: alias
-        for alias in load_merged_aliases(project_root=project_root)
-        if alias.alias.strip()
-    }
+    if alias_catalog is None:
+        alias_catalog = {
+            alias.alias: alias
+            for alias in load_merged_aliases(project_root=project_root)
+            if alias.alias.strip()
+        }
 
     lines = [
         "# Meridian Agents",

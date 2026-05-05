@@ -557,7 +557,11 @@ def _resolve_surface_request(
             )
             agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
         inventory_prompt = (
-            build_agent_inventory_prompt(project_root=project_paths.project_root) or ""
+            build_agent_inventory_prompt(
+                project_root=project_paths.project_root,
+                alias_catalog=None,
+            )
+            or ""
         )
         context_prompt = (
             build_context_prompt(
@@ -628,7 +632,8 @@ def _resolve_surface_request(
         context_prompt_primary: str | None = None
         if session_mode != "resume":
             inventory_prompt = build_agent_inventory_prompt(
-                project_root=project_paths.project_root
+                project_root=project_paths.project_root,
+                alias_catalog=None,
             )
             context_prompt_primary = build_context_prompt(
                 project_root=project_paths.project_root,
