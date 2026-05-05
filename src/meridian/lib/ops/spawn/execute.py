@@ -952,42 +952,47 @@ def execute_spawn_blocking(
         ctx=resolved_context,
     )
     spawn = context.spawn
-    execution_cwd_str = str(
-        resolve_child_execution_cwd(
-            project_root=project_paths.project_root,
-            spawn_id=str(spawn.spawn_id),
-            harness_id=request.harness or "",
-        )
-    )
-    if execution_cwd_str != str(project_paths.project_root):
-        # Pre-compute execution CWD for immediate visibility.
-        # runner.py writes the authoritative value right before execution.
-        spawn_store.update_spawn(
-            context.runtime_root,
-            spawn.spawn_id,
-            execution_cwd=execution_cwd_str,
-        )
-    try:
-        _write_params_json(
-            project_paths,
-            spawn.spawn_id,
-            request,
-            desc=payload.desc,
-            work_id=context.work_id,
-        )
-    except Exception:
-        logger.warning("Failed to write params.json", spawn_id=str(spawn.spawn_id), exc_info=True)
-    # Emit spawn ID immediately so the caller can reference it while blocking.
-    print(json.dumps({"spawn_id": str(spawn.spawn_id), "status": "running"}), flush=True)
-    started = time.monotonic()
-    stream_stdout_to_terminal = payload.stream
-    event_observer = None
-    # Spawn execution stays silent unless --stream is explicitly enabled.
 
     warning = request.warning
     context_from_resolved = request.context_from
 
     try:
+        execution_cwd_str = str(
+            resolve_child_execution_cwd(
+                project_root=project_paths.project_root,
+                spawn_id=str(spawn.spawn_id),
+                harness_id=request.harness or "",
+            )
+        )
+        if execution_cwd_str != str(project_paths.project_root):
+            # Pre-compute execution CWD for immediate visibility.
+            # runner.py writes the authoritative value right before execution.
+            spawn_store.update_spawn(
+                context.runtime_root,
+                spawn.spawn_id,
+                execution_cwd=execution_cwd_str,
+            )
+        try:
+            _write_params_json(
+                project_paths,
+                spawn.spawn_id,
+                request,
+                desc=payload.desc,
+                work_id=context.work_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write params.json",
+                spawn_id=str(spawn.spawn_id),
+                exc_info=True,
+            )
+        # Emit spawn ID immediately so the caller can reference it while blocking.
+        print(json.dumps({"spawn_id": str(spawn.spawn_id), "status": "running"}), flush=True)
+        started = time.monotonic()
+        stream_stdout_to_terminal = payload.stream
+        event_observer = None
+        # Spawn execution stays silent unless --stream is explicitly enabled.
+
         exit_code = asyncio.run(
             launch_prepared_spawn(
                 spawn=spawn,
@@ -1112,18 +1117,20 @@ def _background_worker_main(
     if prepared.runtime_root is None:
         raise ValueError("Prepared runtime write context is missing runtime root.")
     runtime_root = prepared.runtime_root
-    from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
-
-    install(
-        TelemetryPlan(
-            mode=TelemetryMode.SEGMENT,
-            runtime_root=runtime_root,
-            logical_owner=str(spawn_id),
-        )
-    )
-    register_spawn_telemetry_observer()
-    log_dir = resolve_spawn_log_dir(project_paths.project_root, spawn_id)
+    log_dir: Path | None = None
     try:
+        from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
+
+        install(
+            TelemetryPlan(
+                mode=TelemetryMode.SEGMENT,
+                runtime_root=runtime_root,
+                logical_owner=str(spawn_id),
+            )
+        )
+        register_spawn_telemetry_observer()
+        log_dir = resolve_spawn_log_dir(project_paths.project_root, spawn_id)
+
         try:
             launch_request = _load_bg_worker_request(log_dir)
         except Exception as exc:
@@ -1169,7 +1176,8 @@ def _background_worker_main(
         logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
         return 1
     finally:
-        _cleanup_background_runtime_artifacts(log_dir)
+        if log_dir is not None:
+            _cleanup_background_runtime_artifacts(log_dir)
 
 
 if __name__ == "__main__":
