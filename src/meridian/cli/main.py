@@ -684,6 +684,7 @@ def _register_commands_for_invocation(
         "doctor": ("doctor", _register_doctor),
         "bootstrap": ("bootstrap", _register_bootstrap),
         "completion": ("misc", _register_misc),
+        "context": ("misc", _register_misc),
         "streaming": ("misc", _register_misc),
         "test": ("misc", _register_misc),
         "chat": ("chat", _register_chat),
@@ -694,6 +695,9 @@ def _register_commands_for_invocation(
 
     registration = registrations.get(first_token or "")
     if registration is None:
+        if any(arg in {"--help", "-h"} for arg in argv):
+            for group_name, register_fn in set(registrations.values()):
+                _register_once(group_name, register_fn)
         # Root/default commands and decorator-registered commands (mars, serve, init)
         # do not need group registration. Unknown commands are rejected earlier.
         return
