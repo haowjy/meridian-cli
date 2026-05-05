@@ -78,12 +78,15 @@ def test_opencode_session_error_and_request_events_keep_no_runtime_hitl_explicit
     n = OpenCodeNormalizer("c1", "s1")
 
     started, reasoning = n.normalize(event("agent_thought_chunk", {"text": "hmm"}))
-    error = n.normalize(event("session.error", {"error": "boom"}))[0]
+    runtime_error, completed = n.normalize(event("session.error", {"error": "boom"}))
 
     assert started.type == "turn.started"
     assert reasoning.payload == {"stream_kind": "reasoning_text", "text": "hmm"}
-    assert error.type == "runtime.error"
-    assert error.payload == {"error": "boom", "supports_runtime_hitl": False}
+    assert runtime_error.type == "runtime.error"
+    assert runtime_error.payload == {"error": "boom", "supports_runtime_hitl": False}
+    assert completed.type == "turn.completed"
+    assert completed.turn_id == started.turn_id
+    assert completed.payload == {"status": "error", "error": "boom"}
     assert n.normalize(event("request.opened", {"request_id": "r1"})) == []
     assert n.normalize(event("user_input.requested", {"request_id": "r2"})) == []
     assert n.normalize(event("surprise", {})) == []

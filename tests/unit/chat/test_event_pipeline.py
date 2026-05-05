@@ -4,7 +4,12 @@ import pytest
 
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.event_pipeline import ChatEventPipeline
-from meridian.lib.chat.protocol import RUNTIME_WARNING, ChatEvent, utc_now_iso
+from meridian.lib.chat.protocol import (
+    CHAT_STATE_CHANGED,
+    RUNTIME_WARNING,
+    ChatEvent,
+    utc_now_iso,
+)
 
 
 class Session:
@@ -17,6 +22,20 @@ class Session:
 
     def on_execution_died(self, generation=None):
         self.died.append(generation)
+
+    def consume_state_transitions(self):
+        return []
+
+
+class TransitionSession(Session):
+    def __init__(self):
+        super().__init__()
+        self.transitions = [("idle", "active")]
+
+    def consume_state_transitions(self):
+        transitions = self.transitions
+        self.transitions = []
+        return transitions
 
 
 class Fanout:
@@ -127,6 +146,24 @@ async def test_post_persist_hook_appends_synthetic_event_inline(tmp_path):
         "content.delta",
         "extension.synthetic",
     ]
+
+
+@pytest.mark.asyncio
+async def test_state_changed_hook_appends_after_causative_event_inline(tmp_path):
+    log_path = tmp_path / "events.jsonl"
+    session = TransitionSession()
+    fanout = Fanout()
+    pipeline = ChatEventPipeline("c1", ChatEventLog(log_path), session, fanout=fanout)
+    pipeline.start()
+
+    await pipeline.ingest(event("user.prompt"))
+    await pipeline.drain()
+    await pipeline.stop()
+
+    stored_events = list(ChatEventLog(log_path).read_all())
+    assert [stored.type for stored in stored_events] == ["user.prompt", CHAT_STATE_CHANGED]
+    assert stored_events[1].payload == {"previous_state": "idle", "state": "active"}
+    assert [event.type for event in fanout.events] == ["user.prompt", CHAT_STATE_CHANGED]
 
 
 @pytest.mark.asyncio

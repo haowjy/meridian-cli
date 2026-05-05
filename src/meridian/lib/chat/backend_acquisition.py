@@ -12,6 +12,7 @@ from meridian.lib.chat.backend_handle import BackendHandle
 from meridian.lib.chat.event_observer import ChatEventObserver
 from meridian.lib.chat.event_pipeline import ChatEventPipeline
 from meridian.lib.chat.normalization.base import EventNormalizer
+from meridian.lib.chat.protocol import CHAT_CONFIGURED, ChatEvent, utc_now_iso
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
@@ -35,6 +36,7 @@ class BackendAcquisition(Protocol):
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> BackendHandle:
         """Acquire a backend and send the initial prompt as part of startup."""
         ...
@@ -112,6 +114,7 @@ class ColdSpawnAcquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> BackendHandle:
         """Start a cold backend with the first prompt and return its handle."""
 
@@ -134,6 +137,25 @@ class ColdSpawnAcquisition:
                 config,
                 spec,
                 drain_policy=PersistentDrainPolicy(),
+            )
+            await pipeline.ingest(
+                ChatEvent(
+                    type=CHAT_CONFIGURED,
+                    seq=0,
+                    chat_id=chat_id,
+                    execution_id=execution_id,
+                    timestamp=utc_now_iso(),
+                    payload=_configuration_payload(
+                        harness=config.harness_id.value,
+                        model=spec.model,
+                        state=chat_state,
+                        supports_hitl=connection.capabilities.supports_runtime_hitl,
+                        supports_checkpoints=True,
+                        supports_model_swap=connection.capabilities.runtime_model_switch,
+                        supports_effort_swap=False,
+                    ),
+                    harness_id=config.harness_id.value,
+                )
             )
             await self._spawn_manager.start_heartbeat(config.spawn_id)
         except Exception:
@@ -205,6 +227,27 @@ class ColdSpawnAcquisition:
 
 def _spawn_id() -> SpawnId:
     return SpawnId(f"chat-{uuid4()}")
+
+
+def _configuration_payload(
+    *,
+    harness: str,
+    model: str | None,
+    state: str,
+    supports_hitl: bool,
+    supports_checkpoints: bool,
+    supports_model_swap: bool,
+    supports_effort_swap: bool,
+) -> dict[str, object]:
+    return {
+        "harness": harness,
+        "model": model or "",
+        "state": state,
+        "supports_hitl": supports_hitl,
+        "supports_checkpoints": supports_checkpoints,
+        "supports_model_swap": supports_model_swap,
+        "supports_effort_swap": supports_effort_swap,
+    }
 
 
 __all__ = ["BackendAcquisition", "BackendAcquisitionFactory", "ColdSpawnAcquisition"]

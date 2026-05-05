@@ -2,7 +2,7 @@ import pytest
 
 from meridian.lib.chat.command_handler import ChatCommandHandler
 from meridian.lib.chat.commands import ChatCommand
-from meridian.lib.chat.protocol import CHAT_EXITED
+from meridian.lib.chat.protocol import CHAT_EXITED, USER_PROMPT
 from meridian.lib.chat.session_service import ChatSessionService
 from meridian.lib.core.types import SpawnId
 
@@ -39,8 +39,15 @@ class FakeAcquisition:
     def __init__(self):
         self.handle = FakeHandle()
 
-    async def acquire(self, chat_id, initial_prompt, *, execution_generation=0):
-        _ = (chat_id, initial_prompt, execution_generation)
+    async def acquire(
+        self,
+        chat_id,
+        initial_prompt,
+        *,
+        execution_generation=0,
+        chat_state="active",
+    ):
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return self.handle
 
 
@@ -81,6 +88,21 @@ async def test_prompt_and_concurrent_prompt_dispatch():
 
     assert result.status == "rejected"
     assert result.error == "concurrent_prompt"
+
+
+@pytest.mark.asyncio
+async def test_accepted_prompt_emits_user_prompt_event_once():
+    acquisition = FakeAcquisition()
+    session = ChatSessionService("c1", acquisition)
+    pipeline = FakePipeline()
+    handler = ChatCommandHandler({"c1": session}, pipelines={"c1": pipeline})
+
+    result = await handler.dispatch(command("prompt", {"text": "hi"}))
+
+    assert result.status == "accepted"
+    assert [event.type for event in pipeline.events] == [USER_PROMPT]
+    assert pipeline.events[0].payload == {"text": "hi"}
+    assert pipeline.events[0].execution_id == "s1"
 
 
 @pytest.mark.asyncio

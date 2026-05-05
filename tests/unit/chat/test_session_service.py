@@ -45,8 +45,15 @@ class FakeAcquisition:
         self.prompts = []
         self._counter = 0
 
-    async def acquire(self, chat_id, initial_prompt, *, execution_generation=0):
-        self.prompts.append((chat_id, initial_prompt, execution_generation))
+    async def acquire(
+        self,
+        chat_id,
+        initial_prompt,
+        *,
+        execution_generation=0,
+        chat_state="active",
+    ):
+        self.prompts.append((chat_id, initial_prompt, execution_generation, chat_state))
         if self.fail_attempts > 0:
             self.fail_attempts -= 1
             raise RuntimeError("acquire failed")
@@ -54,6 +61,16 @@ class FakeAcquisition:
         handle = FakeHandle(spawn_id=f"s{self._counter}")
         self.handles.append(handle)
         return handle
+
+
+def test_transition_to_returns_none_for_same_state_and_tuple_for_change():
+    session = ChatSessionService("c1", FakeAcquisition())
+
+    assert session._transition_to("idle") is None
+    assert session.state == "idle"
+
+    assert session._transition_to("active") == ("idle", "active")
+    assert session.state == "active"
 
 
 @pytest.mark.asyncio
@@ -64,7 +81,7 @@ async def test_first_prompt_acquires_backend_and_sets_active():
     await session.prompt("hello")
 
     assert session.state == "active"
-    assert acquisition.prompts == [("c1", "hello", 1)]
+    assert acquisition.prompts == [("c1", "hello", 1, "active")]
     assert session.execution_generation == 1
     assert session.current_execution is acquisition.handles[0]
 
@@ -86,8 +103,8 @@ async def test_failed_acquisition_rolls_back_to_idle_and_allows_retry():
     assert session.state == "active"
     assert session.execution_generation == 1
     assert acquisition.prompts == [
-        ("c1", "first", 1),
-        ("c1", "second", 1),
+        ("c1", "first", 1, "active"),
+        ("c1", "second", 1, "active"),
     ]
 
 
@@ -117,6 +134,27 @@ async def test_stale_generation_callbacks_are_ignored():
     assert session.current_execution is handle
 
 
+def test_stale_turn_completed_does_not_transition_from_draining():
+    session = ChatSessionService("c1", FakeAcquisition())
+    session._transition_to("draining")
+
+    session.on_turn_completed(1)
+
+    assert session.state == "draining"
+
+
+def test_stale_execution_died_does_not_clear_handle_or_transition():
+    session = ChatSessionService("c1", FakeAcquisition())
+    handle = FakeHandle()
+    session._current_execution = handle
+    session._transition_to("active")
+
+    session.on_execution_died(1)
+
+    assert session.state == "active"
+    assert session.current_execution is handle
+
+
 @pytest.mark.asyncio
 async def test_cancel_drains_and_completion_returns_idle():
     session = ChatSessionService("c1", FakeAcquisition())
@@ -138,6 +176,16 @@ async def test_idle_cancel_is_success_without_side_effect():
     await session.cancel()
 
     assert session.state == "idle"
+
+
+@pytest.mark.asyncio
+async def test_closed_cancel_is_no_op():
+    session = ChatSessionService("c1", FakeAcquisition())
+    await session.close()
+
+    await session.cancel()
+
+    assert session.state == "closed"
 
 
 @pytest.mark.asyncio
@@ -203,3 +251,51 @@ async def test_close_blocks_prompts():
 
     with pytest.raises(ChatClosedError):
         await session.prompt("no")
+
+
+@pytest.mark.asyncio
+async def test_close_on_closed_session_is_no_op_without_pipeline_event():
+    session = ChatSessionService("c1", FakeAcquisition())
+    pipeline = FakePipeline()
+
+    await session.close(pipeline)
+    await session.close(pipeline)
+
+    assert session.state == "closed"
+    assert len(pipeline.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_acquisition_failure_rolls_back_state_and_generation():
+    session = ChatSessionService("c1", FakeAcquisition(fail_attempts=1))
+
+    with pytest.raises(RuntimeError, match="acquire failed"):
+        await session.prompt("hello")
+
+    assert session.state == "idle"
+    assert session.execution_generation == 0
+    assert session.current_execution is None
+
+
+@pytest.mark.asyncio
+async def test_state_paths_flow_through_expected_lifecycle_values():
+    acquisition = FakeAcquisition()
+    session = ChatSessionService("c1", acquisition)
+
+    await session.prompt("hello")
+    assert session.state == "active"
+
+    await session.cancel()
+    assert session.state == "draining"
+
+    session.on_turn_completed(session.execution_generation)
+    assert session.state == "idle"
+
+    await session.prompt("again")
+    assert session.state == "active"
+
+    session.on_execution_died(session.execution_generation)
+    assert session.state == "idle"
+
+    await session.close()
+    assert session.state == "closed"

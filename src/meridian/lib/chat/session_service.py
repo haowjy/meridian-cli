@@ -42,6 +42,7 @@ class ChatSessionService:
         self._state_lock = asyncio.Lock()
         self._current_execution: BackendHandle | None = None
         self._execution_generation = 0
+        self._pending_state_transitions: list[StateTransition] = []
 
     @property
     def chat_id(self) -> str:
@@ -66,7 +67,21 @@ class ChatSessionService:
         if previous_state == new_state:
             return None
         self._state = new_state
-        return previous_state, new_state
+        transition = (previous_state, new_state)
+        self._pending_state_transitions.append(transition)
+        return transition
+
+    def consume_state_transitions(self) -> list[StateTransition]:
+        """Return and clear state transitions awaiting publication."""
+
+        transitions = list(self._pending_state_transitions)
+        self._pending_state_transitions.clear()
+        return transitions
+
+    def clear_state_transitions(self) -> None:
+        """Drop unpublished transitions for an operation that did not accept."""
+
+        self._pending_state_transitions.clear()
 
     async def prompt(self, text: str) -> None:
         """Send a prompt, acquiring or re-acquiring the backend if needed."""
@@ -88,10 +103,12 @@ class ChatSessionService:
                         self._chat_id,
                         text,
                         execution_generation=self._execution_generation,
+                        chat_state=self._state,
                     )
                 except Exception:
                     self._transition_to("idle")
                     self._execution_generation -= 1
+                    self.clear_state_transitions()
                     raise
                 return
 
@@ -100,6 +117,7 @@ class ChatSessionService:
                 await self._current_execution.send_message(text)
             except Exception:
                 self._transition_to("idle")
+                self.clear_state_transitions()
                 raise
 
     async def cancel(self) -> None:

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.chat.command_invariants import NoActiveExecutionError, require_active_execution
 from meridian.lib.chat.commands import COMMAND_APPROVE, ChatCommand, CommandResult
-from meridian.lib.chat.protocol import ChatEvent, utc_now_iso
+from meridian.lib.chat.protocol import USER_PROMPT, ChatEvent, utc_now_iso
 from meridian.lib.chat.session_service import (
     ChatClosedError,
     ChatSessionService,
@@ -70,6 +70,7 @@ class ChatCommandHandler:
                         error="invalid_command:missing_text",
                     )
                 await session.prompt(text)
+                await self._emit_user_prompt_event(session, command, text)
             case "cancel":
                 await session.cancel()
             case "approve":
@@ -104,6 +105,27 @@ class ChatCommandHandler:
                     error=f"unknown_command_type:{command.type}",
                 )
         return CommandResult(status="accepted")
+
+    async def _emit_user_prompt_event(
+        self,
+        session: ChatSessionService,
+        command: ChatCommand,
+        text: str,
+    ) -> None:
+        pipeline = self._pipelines.get(command.chat_id)
+        handle = session.current_execution
+        if pipeline is None or handle is None:
+            return
+        await pipeline.ingest(
+            ChatEvent(
+                type=USER_PROMPT,
+                seq=0,
+                chat_id=command.chat_id,
+                execution_id=str(handle.spawn_id),
+                timestamp=utc_now_iso(),
+                payload={"text": text},
+            )
+        )
 
     async def _handle_approve(self, session: ChatSessionService, command: ChatCommand) -> None:
         handle = require_active_execution(session)

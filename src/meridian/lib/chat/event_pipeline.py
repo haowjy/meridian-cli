@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.protocol import (
     CHAT_EXITED,
+    CHAT_STATE_CHANGED,
     RUNTIME_WARNING,
     TURN_COMPLETED,
     ChatEvent,
@@ -62,6 +63,7 @@ class ChatEventPipeline:
         self._post_persist_hooks: list[PostPersistHook] = []
         self._queue: asyncio.Queue[ChatEvent | None] = asyncio.Queue(maxsize=max_queue)
         self._task: asyncio.Task[None] | None = None
+        self.add_post_persist_hook(self._state_changed_events)
 
     @property
     def task(self) -> asyncio.Task[None] | None:
@@ -193,6 +195,20 @@ class ChatEventPipeline:
         generation = _execution_generation(event)
         if event.type == TURN_COMPLETED:
             self._session.on_turn_completed(generation)
+
+    def _state_changed_events(self, persisted: ChatEvent) -> list[ChatEvent]:
+        return [
+            ChatEvent(
+                type=CHAT_STATE_CHANGED,
+                seq=0,
+                chat_id=self._chat_id,
+                execution_id=persisted.execution_id,
+                timestamp=utc_now_iso(),
+                payload={"previous_state": previous, "state": new},
+                harness_id=persisted.harness_id,
+            )
+            for previous, new in self._session.consume_state_transitions()
+        ]
 
 
 def _execution_generation(event: ChatEvent) -> int | None:

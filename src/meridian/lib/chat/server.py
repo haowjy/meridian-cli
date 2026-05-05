@@ -99,8 +99,9 @@ class _UnavailableAcquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ):
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         raise RuntimeError("chat backend acquisition is not configured")
 
 

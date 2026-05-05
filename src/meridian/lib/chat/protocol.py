@@ -21,6 +21,9 @@ EVENT_FAMILY_EXTENSION: Final = "extension"
 
 CHAT_STARTED: Final = "chat.started"
 CHAT_EXITED: Final = "chat.exited"
+CHAT_CONFIGURED: Final = "chat.configured"
+CHAT_STATE_CHANGED: Final = "chat.state_changed"
+USER_PROMPT: Final = "user.prompt"
 TURN_STARTED: Final = "turn.started"
 TURN_COMPLETED: Final = "turn.completed"
 CONTENT_DELTA: Final = "content.delta"
@@ -67,8 +70,10 @@ class ChatEvent:
 
 
 __all__ = [
+    "CHAT_CONFIGURED",
     "CHAT_EXITED",
     "CHAT_STARTED",
+    "CHAT_STATE_CHANGED",
     "CONTENT_DELTA",
     "EVENT_FAMILIES",
     "EVENT_FAMILY_CHAT",
@@ -86,6 +91,7 @@ __all__ = [
     "RUNTIME_WARNING",
     "TURN_COMPLETED",
     "TURN_STARTED",
+    "USER_PROMPT",
     "ChatEvent",
     "utc_now_iso",
 ]

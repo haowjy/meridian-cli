@@ -39,7 +39,11 @@ class OpenCodeNormalizer:
             case "session.idle":
                 return [*self._ensure_turn_started(event), self._turn_completed(event)]
             case "session.error":
-                return [self._runtime_error(event)]
+                return [
+                    *self._ensure_turn_started(event),
+                    self._runtime_error(event),
+                    self._turn_completed_error(event),
+                ]
             case "agent_message_chunk":
                 return [
                     *self._ensure_turn_started(event),
@@ -82,6 +86,19 @@ class OpenCodeNormalizer:
         if self._turn_id is None:
             self._turn_id = _str(event.payload.get("turn_id")) or f"turn-{uuid4()}"
         payload: dict[str, Any] = {"status": "succeeded"}
+        for key in ("usage", "duration_ms"):
+            if key in event.payload:
+                payload[key] = event.payload[key]
+        chat_event = self._event(TURN_COMPLETED, event, payload=payload)
+        self._turn_id = None
+        self._started_for_turn = False
+        return chat_event
+
+    def _turn_completed_error(self, event: HarnessEvent) -> ChatEvent:
+        if self._turn_id is None:
+            self._turn_id = _str(event.payload.get("turn_id")) or f"turn-{uuid4()}"
+        payload: dict[str, Any] = {"status": "error"}
+        payload["error"] = event.payload.get("error") or event.payload.get("message") or "unknown"
         for key in ("usage", "duration_ms"):
             if key in event.payload:
                 payload[key] = event.payload[key]
