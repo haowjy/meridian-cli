@@ -325,6 +325,56 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
     assert row.terminal_origin == "runner"
 
 
+def test_losing_authoritative_finalize_does_not_overwrite_winner_metrics(
+    tmp_path: Path,
+) -> None:
+    """CR2.2: rejected terminal events do not affect the projected row."""
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    first = finalize_spawn(
+        runtime_root,
+        spawn_id,
+        status="succeeded",
+        exit_code=0,
+        origin="runner",
+        duration_secs=30.0,
+        total_cost_usd=2.0,
+        input_tokens=100,
+        output_tokens=50,
+        finished_at="2026-01-01T00:01:00Z",
+    )
+    second = finalize_spawn(
+        runtime_root,
+        spawn_id,
+        status="failed",
+        exit_code=1,
+        origin="launcher",
+        duration_secs=99.0,
+        total_cost_usd=99.0,
+        input_tokens=999,
+        output_tokens=999,
+        error="wrong",
+        finished_at="2026-01-01T00:02:00Z",
+    )
+
+    assert first.wrote is True
+    assert second.wrote is False
+    assert _count_finalize_events(runtime_root, spawn_id) == 1
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.exit_code == 0
+    assert row.terminal_origin == "runner"
+    assert row.duration_secs == 30.0
+    assert row.total_cost_usd == 2.0
+    assert row.input_tokens == 100
+    assert row.output_tokens == 50
+    assert row.finished_at == "2026-01-01T00:01:00Z"
+    assert row.error is None
+
+
 def test_finalize_allows_authoritative_to_replace_reconciler_terminal(
     tmp_path: Path,
 ) -> None:

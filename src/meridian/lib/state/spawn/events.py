@@ -206,24 +206,20 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
             incoming_origin=incoming_origin,
         )
         if terminal_decision.disposition == "reject":
-            resolved_status = current.status
-            resolved_exit_code = current.exit_code
-            resolved_error = current.error
-            resolved_terminal_origin = current.terminal_origin
-        else:
-            event_status = (
-                finalize_event.status
-                if finalize_event.status is not None
-                else current.status
-            )
-            resolved_status = event_status
-            resolved_exit_code = (
-                finalize_event.exit_code
-                if finalize_event.exit_code is not None
-                else current.exit_code
-            )
-            resolved_error = finalize_event.error
-            resolved_terminal_origin = incoming_origin
+            continue
+        event_status = (
+            finalize_event.status
+            if finalize_event.status is not None
+            else current.status
+        )
+        resolved_status = event_status
+        resolved_exit_code = (
+            finalize_event.exit_code
+            if finalize_event.exit_code is not None
+            else current.exit_code
+        )
+        resolved_error = finalize_event.error
+        resolved_terminal_origin = incoming_origin
         records[spawn_id] = current.model_copy(
             update={
                 "status": resolved_status,
