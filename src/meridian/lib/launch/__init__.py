@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
-from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     )
     from meridian.lib.launch.context import (
         PreparedLaunchSurface,
+        RuntimeBindings,
+        bind_launch_context,
         build_launch_context,
         prepare_launch_surface,
     )
@@ -56,14 +58,14 @@ def launch_primary(
 ) -> LaunchResult:
     """Launch the primary agent process and wait for exit."""
 
-    from meridian.lib.catalog.model_aliases import MarsResultCache
+    from meridian.lib.catalog.catalog_session import CatalogSession
+    from meridian.lib.core.resolved_context import ResolvedContext
 
-    from .context import build_launch_context
+    from .context import RuntimeBindings, bind_launch_context, prepare_launch_surface
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
     from .process import run_harness_process
     from .types import LaunchResult
 
-    cache = MarsResultCache()
     runtime = build_primary_launch_runtime(project_root=project_root, execution_cwd=project_root)
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
@@ -81,14 +83,39 @@ def launch_primary(
     if not request.dry_run:
         resolved_work_id = _resolve_work_id_for_launch(project_root, request)
 
-    preview_context = build_launch_context(
-        spawn_id="dry-run-primary",
+    resolved_project_root = Path(runtime.project_paths_project_root).expanduser().resolve()
+    runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    active_work_dir = (
+        resolve_work_scratch_dir(
+            resolve_project_paths(resolved_project_root).root_dir,
+            resolved_work_id,
+        )
+        if resolved_work_id is not None
+        else ResolvedContext.from_environment(
+            explicit_project_root=resolved_project_root,
+            explicit_runtime_root=runtime_root,
+        ).work_dir
+    )
+    prepared = prepare_launch_surface(
         request=build_primary_spawn_request(request=request),
         runtime=runtime,
+        project_root=resolved_project_root,
         harness_registry=harness_registry,
+        catalog=CatalogSession(resolved_project_root),
+        active_work_dir=active_work_dir,
         dry_run=True,
-        runtime_work_id=resolved_work_id,
-        cache=cache,
+    )
+    preview_context = bind_launch_context(
+        prepared=prepared,
+        bindings=RuntimeBindings(
+            spawn_id="dry-run-primary",
+            report_output_path=Path(runtime.report_output_path or "report.md"),
+            runtime_work_id=resolved_work_id,
+            dry_run=True,
+        ),
+        runtime=runtime,
+        project_root=resolved_project_root,
+        harness_registry=harness_registry,
     )
     warning = summarize_composition_warnings(preview_context.warnings)
 
@@ -100,7 +127,7 @@ def launch_primary(
             warning=warning,
         )
 
-    outcome = run_harness_process(preview_context, harness_registry, cache=cache)
+    outcome = run_harness_process(preview_context, harness_registry, prepared=prepared)
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 
     return LaunchResult(
@@ -122,8 +149,10 @@ def __getattr__(name: str) -> Any:
         "PreparedLaunchSurface": (".context", "PreparedLaunchSurface"),
         "ResolvedPolicies": (".policies", "ResolvedPolicies"),
         "ResolvedSkills": (".resolve", "ResolvedSkills"),
+        "RuntimeBindings": (".context", "RuntimeBindings"),
         "SessionIntent": (".types", "SessionIntent"),
         "SessionMode": (".types", "SessionMode"),
+        "bind_launch_context": (".context", "bind_launch_context"),
         "build_launch_context": (".context", "build_launch_context"),
         "build_primary_prompt": (".types", "build_primary_prompt"),
         "load_agent_profile_with_fallback": (".resolve", "load_agent_profile_with_fallback"),
@@ -158,8 +187,10 @@ __all__ = [
     "ProcessOutcome",
     "ResolvedPolicies",
     "ResolvedSkills",
+    "RuntimeBindings",
     "SessionIntent",
     "SessionMode",
+    "bind_launch_context",
     "build_launch_context",
     "build_primary_prompt",
     "launch_primary",

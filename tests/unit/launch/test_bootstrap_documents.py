@@ -7,12 +7,18 @@ from meridian.lib.launch import context as launch_context
 
 def _capture_launch_request(monkeypatch):
     captured = {}
+    prepared = SimpleNamespace()
 
-    def fake_build_launch_context(**kwargs):
+    def fake_prepare_launch_surface(**kwargs):
         captured['request'] = kwargs['request']
+        return prepared
+
+    def fake_bind_launch_context(**kwargs):
+        assert kwargs['prepared'] is prepared
         return SimpleNamespace(warnings=(), argv=('fake-harness',))
 
-    monkeypatch.setattr(launch_context, 'build_launch_context', fake_build_launch_context)
+    monkeypatch.setattr(launch_context, 'prepare_launch_surface', fake_prepare_launch_surface)
+    monkeypatch.setattr(launch_context, 'bind_launch_context', fake_bind_launch_context)
     return captured
 
 

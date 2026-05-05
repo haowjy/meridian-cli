@@ -115,12 +115,14 @@ def run_harness_process(
     launch_context: Any,
     harness_registry: Any,
     *,
+    prepared: Any = None,
     cache: Any = None,
 ) -> Any:
     # Preserve monkeypatch seams currently exercised in tests.
     return _run_harness_process_impl(
         launch_context,
         harness_registry,
+        prepared=prepared,
         cache=cache,
         run_primary_process_with_capture_fn=_compat_run_primary,
         run_primary_attach_fn=_compat_run_primary_attach,

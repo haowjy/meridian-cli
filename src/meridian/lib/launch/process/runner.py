@@ -48,7 +48,13 @@ from meridian.lib.state.session_store import (
 )
 from meridian.lib.state.spawn_store import FOREGROUND_LAUNCH_MODE
 
-from ..context import LaunchContext, build_launch_context
+from ..context import (
+    LaunchContext,
+    PreparedLaunchSurface,
+    RuntimeBindings,
+    bind_launch_context,
+    build_launch_context,
+)
 from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
@@ -432,6 +438,7 @@ def run_harness_process(
     launch_context: LaunchContext,
     harness_registry: HarnessRegistry,
     *,
+    prepared: PreparedLaunchSurface | None = None,
     cache: MarsResultCache | None = None,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture = (
         run_primary_process_with_capture
@@ -528,6 +535,7 @@ def run_harness_process(
                         status="queued",
                     )
                 )
+                forked_session_id: str | None = None
                 if should_fork:
                     source_session_id = (
                         preview_request.session.requested_harness_session_id or ""
@@ -538,16 +546,17 @@ def run_harness_process(
                         runtime_root=runtime_root,
                         spawn_id=primary_spawn_id,
                     )
-                    spawn_request = spawn_request.model_copy(
-                        update={
-                            "session": spawn_request.session.model_copy(
-                                update={
-                                    "requested_harness_session_id": forked_session_id,
-                                    "continue_fork": False,
-                                }
-                            )
-                        }
-                    )
+                    if prepared is None:
+                        spawn_request = spawn_request.model_copy(
+                            update={
+                                "session": spawn_request.session.model_copy(
+                                    update={
+                                        "requested_harness_session_id": forked_session_id,
+                                        "continue_fork": False,
+                                    }
+                                )
+                            }
+                        )
                     resolved_harness_session_id = forked_session_id
                 initial_persisted_harness_session_id = resolved_harness_session_id
                 log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id)
@@ -575,15 +584,32 @@ def run_harness_process(
                     plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
                         runtime_request.autocompact
                     )
-                runtime_context = build_launch_context(
-                    spawn_id=str(primary_spawn_id),
-                    request=runtime_request,
-                    runtime=runtime,
-                    harness_registry=harness_registry,
-                    plan_overrides=plan_overrides,
-                    runtime_work_id=attached_work_id,
-                    cache=cache,
-                )
+                if prepared is not None:
+                    runtime_context = bind_launch_context(
+                        prepared=prepared,
+                        bindings=RuntimeBindings(
+                            spawn_id=str(primary_spawn_id),
+                            report_output_path=log_dir / "report.md",
+                            runtime_work_id=attached_work_id,
+                            chat_id=chat_id,
+                            forked_harness_session_id=forked_session_id,
+                            continue_fork_override=False if should_fork else None,
+                            plan_overrides=plan_overrides,
+                        ),
+                        runtime=runtime,
+                        project_root=project_root,
+                        harness_registry=harness_registry,
+                    )
+                else:
+                    runtime_context = build_launch_context(
+                        spawn_id=str(primary_spawn_id),
+                        request=runtime_request,
+                        runtime=runtime,
+                        harness_registry=harness_registry,
+                        plan_overrides=plan_overrides,
+                        runtime_work_id=attached_work_id,
+                        cache=cache,
+                    )
                 write_projection_artifacts(
                     log_dir=log_dir,
                     launch_context=runtime_context,
