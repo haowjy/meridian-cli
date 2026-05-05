@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from meridian.lib.chat.event_pipeline import ChatEventPipeline
 
 ChatState = Literal["idle", "active", "draining", "closed"]
+StateTransition = tuple[ChatState, ChatState]
 
 
 class ChatSessionError(RuntimeError):
@@ -57,6 +58,15 @@ class ChatSessionService:
     @property
     def execution_generation(self) -> int:
         return self._execution_generation
+
+    def _transition_to(self, new_state: ChatState) -> StateTransition | None:
+        """Move to ``new_state`` and return the observed transition, if any."""
+
+        previous_state = self._state
+        if previous_state == new_state:
+            return None
+        self._state = new_state
+        return previous_state, new_state
 
     async def prompt(self, text: str) -> None:
         """Send a prompt, acquiring or re-acquiring the backend if needed."""
