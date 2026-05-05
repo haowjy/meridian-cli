@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -250,6 +250,23 @@ class PreparedLaunchSurface:
     agent_inventory_prompt: str | None = None
     context_prompt: str | None = None
     seed_session_args: tuple[str, ...] = ()
+    # Original launch request preserved for LaunchContext.request compatibility.
+    # `request` carries the resolved request used by bind.
+    launch_request: SpawnRequest | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeBindings:
+    """Runtime-only values for the bind phase."""
+
+    spawn_id: str
+    report_output_path: Path
+    runtime_work_id: str | None = None
+    chat_id: str | None = None
+    forked_harness_session_id: str | None = None
+    continue_fork_override: bool | None = None
+    plan_overrides: dict[str, str] = field(default_factory=lambda: {})
+    dry_run: bool = False
 
 
 def merge_env_overrides(
@@ -683,7 +700,7 @@ def prepare_launch_surface(
             harness_session_id=resolved_continue_harness_session_id or "",
             passthrough_args=request.extra_args,
         )
-        seed_harness_session_id = seed.session_id
+        seed_harness_session_id = seed.session_id or resolved_continue_harness_session_id
         seed_session_args = seed.session_args
         seeded_passthrough_args = (*request.extra_args, *seed.session_args)
 
@@ -832,6 +849,7 @@ def prepare_launch_surface(
         agent_inventory_prompt=agent_inventory_prompt,
         context_prompt=context_prompt,
         seed_session_args=seed_session_args,
+        launch_request=request,
     )
 
 
@@ -875,27 +893,26 @@ def _build_direct_surface(
         agent_inventory_prompt=None,
         context_prompt=None,
         seed_session_args=(),
+        launch_request=request,
     )
 
 
-def _build_launch_context_impl(
+def bind_launch_context(
     *,
-    spawn_id: str,
-    request: SpawnRequest,
+    prepared: PreparedLaunchSurface,
+    bindings: RuntimeBindings,
     runtime: LaunchRuntime,
+    project_root: Path,
     harness_registry: HarnessRegistry,
-    dry_run: bool = False,
-    plan_overrides: Mapping[str, str] | None = None,
-    runtime_work_id: str | None = None,
-    cache: MarsResultCache | None = None,
 ) -> LaunchContext:
-    """Build deterministic launch context from raw request/runtime inputs."""
+    """Cheap materialization: env, cwd, spec, argv, permissions."""
+
+    _ = (harness_registry, bindings.chat_id, bindings.dry_run)
 
     project_paths = ProjectConfigPaths(
-        project_root=Path(runtime.project_paths_project_root).expanduser().resolve(),
+        project_root=project_root.expanduser().resolve(),
         execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
     )
-    catalog = CatalogSession(project_paths.project_root, cache=cache)
     workspace_snapshot = resolve_workspace_snapshot_for_launch(project_paths.project_root)
     workspace_roots = get_projectable_roots(workspace_snapshot)
     context_config = load_context_config(project_paths.project_root)
@@ -905,42 +922,21 @@ def _build_launch_context_impl(
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     system_temp_root = Path(tempfile.gettempdir()).resolve()
-    if runtime.composition_surface != LaunchCompositionSurface.DIRECT:
-        surface = prepare_launch_surface(
-            request=request,
-            runtime=runtime,
-            project_root=project_paths.project_root,
-            harness_registry=harness_registry,
-            catalog=catalog,
-            dry_run=dry_run,
-        )
-    else:
-        surface = _build_direct_surface(
-            request=request,
-            project_root=project_paths.project_root,
-            harness_registry=harness_registry,
-        )
-
-    resolved_request = surface.request
-    harness = surface.harness
-    seed_harness_session_id = surface.seed_harness_session_id
-    composition_warnings = surface.composition_warnings
-    loaded_references = surface.loaded_references
-    profile_tools_for_deny_optout = surface.profile_tools_for_deny_optout
-    has_profile_for_deny_optout = surface.has_profile_for_deny_optout
-    projected_content = surface.projected_content
-    seed_harness_session_args = surface.seed_session_args
-    model_selection = surface.model_selection
-
-    report_output_path = _resolve_report_output_path(
-        runtime=runtime,
-        project_paths=project_paths,
-        spawn_id=spawn_id,
-    )
+    resolved_request = prepared.request
+    harness = prepared.harness
+    effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
+    composition_warnings = prepared.composition_warnings
+    loaded_references = prepared.loaded_references
+    profile_tools_for_deny_optout = prepared.profile_tools_for_deny_optout
+    has_profile_for_deny_optout = prepared.has_profile_for_deny_optout
+    projected_content = prepared.projected_content
+    seed_harness_session_args = prepared.seed_session_args
+    model_selection = prepared.model_selection
+    report_output_path = bindings.report_output_path
     execution_cwd = project_paths.execution_cwd
     child_cwd = resolve_child_execution_cwd(
         project_root=execution_cwd,
-        spawn_id=spawn_id,
+        spawn_id=bindings.spawn_id,
         harness_id=harness.id.value,
     )
     try:
@@ -990,12 +986,9 @@ def _build_launch_context_impl(
         "usage",
         "usage.model.selected",
         scope="core.launch",
-        ids={"spawn_id": spawn_id},
+        ids={"spawn_id": bindings.spawn_id},
         data={"model_family": model_family, "harness": harness.id.value},
     )
-    requested_harness_session_id = (
-        resolved_request.session.requested_harness_session_id or ""
-    ).strip() or None
     if projected_content is not None:
         appended_system_prompt = projected_content.system_prompt.strip() or None
         user_turn_content = projected_content.user_turn_content.strip() or None
@@ -1016,8 +1009,12 @@ def _build_launch_context_impl(
         project_root=child_cwd.as_posix(),
         mcp_tools=resolved_request.mcp_tools,
         interactive=is_primary_launch,
-        continue_harness_session_id=requested_harness_session_id,
-        continue_fork=resolved_request.session.continue_fork,
+        continue_harness_session_id=effective_session_id,
+        continue_fork=(
+            bindings.continue_fork_override
+            if bindings.continue_fork_override is not None
+            else resolved_request.session.continue_fork
+        ),
         report_output_path=report_output_path.as_posix(),
         appended_system_prompt=appended_system_prompt,
         context_from_payload=resolved_request.context_from,
@@ -1068,17 +1065,19 @@ def _build_launch_context_impl(
         project_paths=project_paths,
         runtime_root=runtime_root,
     )
-    effective_work_id = (runtime_work_id or resolved_request.work_id_hint or "").strip() or None
+    effective_work_id = (
+        bindings.runtime_work_id or resolved_request.work_id_hint or ""
+    ).strip() or None
     increment_depth = runtime.composition_surface != LaunchCompositionSurface.PRIMARY
     runtime_overrides = runtime_ctx.child_context(
-        child_spawn_id=spawn_id,
+        child_spawn_id=bindings.spawn_id,
         increment_depth=increment_depth,
     )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     runtime_overrides["MERIDIAN_HARNESS"] = harness.id.value
     merged_overrides = merge_env_overrides(
-        plan_overrides=plan_overrides or {},
+        plan_overrides=bindings.plan_overrides,
         runtime_overrides=runtime_overrides,
         preflight_overrides=preflight.extra_env,
     )
@@ -1092,7 +1091,7 @@ def _build_launch_context_impl(
     )
 
     return LaunchContext(
-        request=request,
+        request=prepared.launch_request or prepared.request,
         runtime=runtime,
         project_root=project_paths.project_root,
         execution_cwd=execution_cwd,
@@ -1109,10 +1108,65 @@ def _build_launch_context_impl(
         harness=harness,
         resolved_request=resolved_request,
         projected_content=projected_content,
-        seed_harness_session_id=seed_harness_session_id,
+        seed_harness_session_id=effective_session_id,
         seed_harness_session_args=seed_harness_session_args,
         warnings=composition_warnings,
         model_selection=model_selection,
+    )
+
+
+def _build_launch_context_impl(
+    *,
+    spawn_id: str,
+    request: SpawnRequest,
+    runtime: LaunchRuntime,
+    harness_registry: HarnessRegistry,
+    dry_run: bool = False,
+    plan_overrides: Mapping[str, str] | None = None,
+    runtime_work_id: str | None = None,
+    cache: MarsResultCache | None = None,
+) -> LaunchContext:
+    """Build deterministic launch context from raw request/runtime inputs."""
+
+    project_paths = ProjectConfigPaths(
+        project_root=Path(runtime.project_paths_project_root).expanduser().resolve(),
+        execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
+    )
+    if runtime.composition_surface != LaunchCompositionSurface.DIRECT:
+        catalog = CatalogSession(project_paths.project_root, cache=cache)
+        prepared = prepare_launch_surface(
+            request=request,
+            runtime=runtime,
+            project_root=project_paths.project_root,
+            harness_registry=harness_registry,
+            catalog=catalog,
+            dry_run=dry_run,
+        )
+    else:
+        prepared = _build_direct_surface(
+            request=request,
+            project_root=project_paths.project_root,
+            harness_registry=harness_registry,
+        )
+
+    bindings = RuntimeBindings(
+        spawn_id=spawn_id,
+        report_output_path=_resolve_report_output_path(
+            runtime=runtime,
+            project_paths=project_paths,
+            spawn_id=spawn_id,
+        ),
+        runtime_work_id=runtime_work_id,
+        plan_overrides=dict(plan_overrides or {}),
+        dry_run=dry_run,
+    )
+
+    return bind_launch_context(
+        prepared=prepared,
+        bindings=bindings,
+        runtime=runtime,
+        project_root=project_paths.project_root,
+        harness_registry=harness_registry,
     )
 
 
@@ -1146,6 +1200,8 @@ __all__ = [
     "ChildEnvContext",
     "LaunchContext",
     "PreparedLaunchSurface",
+    "RuntimeBindings",
+    "bind_launch_context",
     "build_launch_context",
     "merge_env_overrides",
     "normalize_usage_model_family",
