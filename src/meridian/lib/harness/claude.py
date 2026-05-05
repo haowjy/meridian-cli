@@ -22,10 +22,10 @@ from meridian.lib.harness.adapter import (
 )
 from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
 from meridian.lib.harness.claude_preflight import build_claude_preflight_result
+from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import (
     extract_claude_report,
     extract_session_id_from_artifacts_with_patterns,
-    extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
@@ -95,31 +95,8 @@ def _claude_project_dir(project_root: Path) -> Path:
 
 
 def _candidate_claude_project_dirs(project_root: Path) -> list[Path]:
-    projects_root = _claude_projects_root()
-    root_slug = project_slug(project_root)
-    candidates: list[Path] = [projects_root / root_slug]
-
-    if not projects_root.is_dir():
-        return candidates
-
-    try:
-        project_dirs = sorted(projects_root.iterdir(), key=lambda path: path.name)
-    except OSError:
-        logger.debug(
-            "Failed to list Claude project directories %s",
-            projects_root,
-            exc_info=True,
-        )
-        return candidates
-
-    for project_dir in project_dirs:
-        if not project_dir.is_dir():
-            continue
-        if project_dir.name == root_slug or not project_dir.name.startswith(root_slug):
-            continue
-        candidates.append(project_dir)
-
-    return candidates
+    """Return the exact Claude project directory for this project root."""
+    return [_claude_projects_root() / project_slug(project_root)]
 
 
 def _read_claude_session_id(path: Path) -> str | None:
@@ -144,25 +121,44 @@ def _read_claude_session_id(path: Path) -> str | None:
     return path.stem.strip() or None
 
 
-def _detect_primary_session_id(project_root: Path, started_at_epoch: float) -> str | None:
-    project_dir = _claude_project_dir(project_root)
-    if not project_dir.is_dir():
+def _detect_primary_session_id(
+    project_root: Path,
+    started_at_epoch: float,
+    *,
+    expected_session_id: str | None = None,
+) -> str | None:
+    """Detect Claude primary session ID by verifying a known session file only."""
+    if not expected_session_id:
+        logger.debug("No expected session ID for primary detection; skipping heuristic scan")
         return None
 
-    candidates: list[tuple[float, Path]] = []
-    for candidate in project_dir.glob("*.jsonl"):
-        try:
-            modified_at = candidate.stat().st_mtime
-        except OSError:
-            continue
-        if modified_at + 1 < started_at_epoch:
-            continue
-        candidates.append((modified_at, candidate))
+    project_dir = _claude_project_dir(project_root)
+    if not project_dir.is_dir():
+        logger.warning(
+            "Expected Claude session directory not found",
+            extra={"session_id": expected_session_id, "project_dir": str(project_dir)},
+        )
+        return None
 
-    for _, candidate in sorted(candidates, key=lambda item: item[0], reverse=True):
+    candidate = project_dir / f"{expected_session_id}.jsonl"
+    try:
+        if not candidate.is_file():
+            logger.warning(
+                "Expected Claude session file not found",
+                extra={"session_id": expected_session_id, "project_dir": str(project_dir)},
+            )
+            return None
+        if candidate.stat().st_mtime + 1 < started_at_epoch:
+            return None
         resolved = _read_claude_session_id(candidate)
-        if resolved:
-            return resolved
+        if resolved == expected_session_id:
+            return expected_session_id
+        logger.warning(
+            "Claude session file exists but embedded ID mismatches",
+            extra={"expected": expected_session_id, "found": resolved},
+        )
+    except OSError:
+        logger.debug("Failed to verify Claude session file", exc_info=True)
     return None
 
 
@@ -287,6 +283,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
                 "xhigh": "max",
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
+        effective_extra_args = run.extra_args
+        if (
+            not run.interactive
+            and continue_session_id is None
+            and extract_session_id_from_args(run.extra_args) is None
+        ):
+            effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
+
         # Prefer the spawn log directory (from report_output_path) for system-prompt.md.
         # Keep project_root fallback for compatibility with contexts that do not set
         # report_output_path.
@@ -307,7 +311,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
             permission_resolver=perms,
-            extra_args=run.extra_args,
+            extra_args=effective_extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
             appended_system_prompt=run.appended_system_prompt,
@@ -352,7 +356,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         return frozenset({"CLAUDECODE"})
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return extract_usage_from_artifacts(artifacts, spawn_id)
+        return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return extract_session_id_from_artifacts_with_patterns(artifacts, spawn_id)
@@ -464,9 +468,14 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         project_root: Path,
         started_at_epoch: float,
         started_at_local_iso: str | None,
+        expected_session_id: str | None = None,
     ) -> str | None:
         _ = started_at_local_iso
-        return _detect_primary_session_id(project_root, started_at_epoch)
+        return _detect_primary_session_id(
+            project_root,
+            started_at_epoch,
+            expected_session_id=expected_session_id,
+        )
 
     def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
         normalized_session_id = session_id.strip()

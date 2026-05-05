@@ -35,6 +35,20 @@ def _write_minimal_mars_config(project_root: Path) -> None:
     )
 
 
+def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    execution_cwd = project_root / "subdir"
+    execution_cwd.mkdir(parents=True)
+
+    runtime = build_primary_launch_runtime(
+        project_root=project_root,
+        execution_cwd=execution_cwd,
+    )
+
+    assert runtime.project_paths_project_root == project_root.resolve().as_posix()
+    assert runtime.project_paths_execution_cwd == execution_cwd.resolve().as_posix()
+
+
 @pytest.mark.parametrize(
     ("model", "peer_name", "peer_model", "skill_name", "skill_description"),
     [

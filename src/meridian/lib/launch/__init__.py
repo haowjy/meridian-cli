@@ -57,7 +57,7 @@ def launch_primary(
     from .process import run_harness_process
     from .types import LaunchResult
 
-    runtime = build_primary_launch_runtime(project_root=project_root)
+    runtime = build_primary_launch_runtime(project_root=project_root, execution_cwd=project_root)
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
 

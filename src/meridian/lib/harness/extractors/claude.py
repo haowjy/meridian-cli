@@ -11,7 +11,12 @@ from typing import cast
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
+from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import (
+    OUTPUT_FILENAME,
+    _coerce_optional_int,
+    _iter_json_lines_artifact,
+    coerce_optional_float,
     extract_claude_report,
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
@@ -85,12 +90,18 @@ class ClaudeHarnessExtractor(HarnessExtractor[ClaudeLaunchSpec]):
         child_cwd: Path,
         runtime_root: Path,
     ) -> str | None:
-        _ = runtime_root
+        _ = runtime_root, launch_env, child_cwd
         if spec.continue_session_id and spec.continue_session_id.strip():
             return spec.continue_session_id.strip()
-        return _detect_primary_session_id(child_cwd=child_cwd, launch_env=launch_env)
+        seeded_session_id = extract_session_id_from_args(spec.extra_args)
+        if seeded_session_id:
+            return seeded_session_id
+        return None
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+        specific = _extract_claude_usage(artifacts, spawn_id)
+        if specific != TokenUsage():
+            return specific
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
@@ -103,3 +114,55 @@ class ClaudeHarnessExtractor(HarnessExtractor[ClaudeLaunchSpec]):
 CLAUDE_EXTRACTOR = ClaudeHarnessExtractor()
 
 __all__ = ["CLAUDE_EXTRACTOR", "ClaudeHarnessExtractor"]
+
+
+def _extract_claude_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+    input_tokens = output_tokens = cache_read = cache_creation = 0
+    cost: float | None = None
+    found = False
+    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+        if str(payload.get("type", payload.get("event", ""))).strip().lower() != "result":
+            continue
+        found = True
+        # Prefer payload-level exact total cost when available
+        payload_cost = coerce_optional_float(payload.get("total_cost_usd"))
+        if payload_cost is not None:
+            cost = payload_cost
+        # Real Claude events use camelCase modelUsage; test fixtures use snake_case usage
+        model_usage = payload.get("modelUsage")
+        if isinstance(model_usage, dict):
+            for item in model_usage.values():
+                if not isinstance(item, dict):
+                    continue
+                input_tokens += _coerce_optional_int(item.get("inputTokens")) or 0
+                output_tokens += _coerce_optional_int(item.get("outputTokens")) or 0
+                cache_read += _coerce_optional_int(item.get("cacheReadInputTokens")) or 0
+                cache_creation += _coerce_optional_int(item.get("cacheCreationInputTokens")) or 0
+                # Only sum per-model costs if no payload-level total was provided
+                if cost is None:
+                    item_cost = coerce_optional_float(item.get("costUSD"))
+                    if item_cost is not None:
+                        cost = (cost or 0.0) + item_cost
+        # Also support test fixture format with snake_case "usage" field
+        usage = payload.get("usage")
+        if isinstance(usage, dict) and not isinstance(model_usage, dict):
+            for item in usage.values():
+                if not isinstance(item, dict):
+                    continue
+                input_tokens += _coerce_optional_int(item.get("input_tokens")) or 0
+                output_tokens += _coerce_optional_int(item.get("output_tokens")) or 0
+                cache_read += _coerce_optional_int(item.get("cache_read_input_tokens")) or 0
+                cache_creation += _coerce_optional_int(item.get("cache_creation_input_tokens")) or 0
+            if cost is None:
+                payload_cost = coerce_optional_float(payload.get("total_cost_usd"))
+                if payload_cost is not None:
+                    cost = payload_cost
+    if not found:
+        return TokenUsage()
+    return TokenUsage(
+        input_tokens=input_tokens or None,
+        output_tokens=output_tokens or None,
+        cache_read_input_tokens=cache_read or None,
+        cache_creation_input_tokens=cache_creation or None,
+        total_cost_usd=cost,
+    )

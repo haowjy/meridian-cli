@@ -8,14 +8,15 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.bundle import HarnessBundle
-from meridian.lib.harness.claude import ClaudeAdapter
+from meridian.lib.harness.claude import ClaudeAdapter, project_slug
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.extractors.base import HarnessExtractor
+from meridian.lib.harness.extractors.claude import ClaudeHarnessExtractor
 from meridian.lib.harness.ids import TransportId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec, ResolvedLaunchSpec
+from meridian.lib.harness.launch_spec import ClaudeLaunchSpec, CodexLaunchSpec, ResolvedLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.launch.extract import enrich_finalize
 from meridian.lib.launch.report import extract_or_fallback_report
@@ -253,8 +254,7 @@ def test_harness_extract_report_uses_last_useful_assistant_output() -> None:
         ),
     )
     assert (
-        OpenCodeAdapter().extract_report(artifacts, wrapped_opencode)
-        == "wrapped opencode report"
+        OpenCodeAdapter().extract_report(artifacts, wrapped_opencode) == "wrapped opencode report"
     )
 
 
@@ -482,3 +482,193 @@ def test_observe_session_id_prefers_current_session_before_primary_detection() -
     )
 
     assert observed == "seeded-session-id"
+
+
+def test_claude_detect_primary_strict_verify_only(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    claude_config = tmp_path / "claude-config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_config))
+
+    project_dir = claude_config / "projects" / project_slug(project_root)
+    project_dir.mkdir(parents=True)
+    session_file = project_dir / "expected-claude-session.jsonl"
+    session_file.write_text('{"sessionId":"expected-claude-session"}\n', encoding="utf-8")
+
+    observed = ClaudeAdapter().detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=0.0,
+        started_at_local_iso=None,
+        expected_session_id="expected-claude-session",
+    )
+
+    assert observed == "expected-claude-session"
+
+
+def test_claude_detect_primary_no_expected_returns_none(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    claude_config = tmp_path / "claude-config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_config))
+
+    project_dir = claude_config / "projects" / project_slug(project_root)
+    project_dir.mkdir(parents=True)
+    session_file = project_dir / "unrelated-claude-session.jsonl"
+    session_file.write_text('{"sessionId":"unrelated-claude-session"}\n', encoding="utf-8")
+
+    observed = ClaudeAdapter().detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=0.0,
+        started_at_local_iso=None,
+    )
+
+    assert observed is None
+
+
+def test_claude_detect_primary_embedded_mismatch_returns_none(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    claude_config = tmp_path / "claude-config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_config))
+
+    project_dir = claude_config / "projects" / project_slug(project_root)
+    project_dir.mkdir(parents=True)
+    session_file = project_dir / "expected-claude-session.jsonl"
+    session_file.write_text('{"sessionId":"different-claude-session"}\n', encoding="utf-8")
+
+    observed = ClaudeAdapter().detect_primary_session_id(
+        project_root=project_root,
+        started_at_epoch=0.0,
+        started_at_local_iso=None,
+        expected_session_id="expected-claude-session",
+    )
+
+    assert observed is None
+
+
+def test_claude_extractor_no_scan_when_ids_absent(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    home = tmp_path / "home"
+    project_dir = home / ".claude" / "projects" / project_slug(project_root)
+    project_dir.mkdir(parents=True)
+    session_file = project_dir / "heuristic-claude-session.jsonl"
+    session_file.write_text('{"sessionId":"heuristic-claude-session"}\n', encoding="utf-8")
+    spec = ClaudeLaunchSpec(
+        prompt="hello",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    observed = ClaudeHarnessExtractor().detect_session_id_from_artifacts(
+        spec=spec,
+        launch_env={"HOME": str(home)},
+        child_cwd=project_root,
+        runtime_root=tmp_path,
+    )
+
+    assert observed is None
+
+
+def test_claude_extractor_trusts_seeded_session_id() -> None:
+    spec = ClaudeLaunchSpec(
+        prompt="hello",
+        extra_args=("--session-id", "seeded-claude-session"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    assert (
+        ClaudeHarnessExtractor().detect_session_id_from_artifacts(
+            spec=spec,
+            launch_env={},
+            child_cwd=Path("/tmp/nonexistent-meridian-claude-project"),
+            runtime_root=Path.cwd(),
+        )
+        == "seeded-claude-session"
+    )
+
+
+def test_claude_extractor_prefers_continue_session_id() -> None:
+    spec = ClaudeLaunchSpec(
+        prompt="hello",
+        continue_session_id="continued-claude-session",
+        extra_args=("--session-id", "seeded-claude-session"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    assert (
+        ClaudeHarnessExtractor().detect_session_id_from_artifacts(
+            spec=spec,
+            launch_env={},
+            child_cwd=Path("/tmp/nonexistent-meridian-claude-project"),
+            runtime_root=Path.cwd(),
+        )
+        == "continued-claude-session"
+    )
+
+
+def test_claude_result_usage_sums_per_model_cache_and_exact_cost() -> None:
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-claude-specific")
+    artifacts.put(
+        make_artifact_key(spawn_id, "history.jsonl"),
+        (
+            b'{"type":"result","total_cost_usd":0.123,"usage":{'
+            b'"claude-sonnet-4-5":{"input_tokens":10,"output_tokens":4,'
+            b'"cache_read_input_tokens":100,"cache_creation_input_tokens":20},'
+            b'"claude-haiku-4-5":{"input_tokens":2,"output_tokens":1,'
+            b'"cache_read_input_tokens":30,"cache_creation_input_tokens":5}}}\n'
+        ),
+    )
+
+    usage = ClaudeAdapter().extract_usage(artifacts, spawn_id)
+
+    assert usage.input_tokens == 12
+    assert usage.output_tokens == 5
+    assert usage.cache_read_input_tokens == 130
+    assert usage.cache_creation_input_tokens == 25
+    assert usage.total_cost_usd == 0.123
+    assert usage.cost_is_estimate is False
+
+
+def test_codex_turn_completed_uses_last_cumulative_usage() -> None:
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-codex-specific")
+    artifacts.put(
+        make_artifact_key(spawn_id, "history.jsonl"),
+        (
+            b'{"event_type":"turn/completed","usage":{"input_tokens":10,'
+            b'"output_tokens":2,"cached_input_tokens":3,"reasoning_output_tokens":1}}\n'
+            b'{"event_type":"turn/completed","usage":{"input_tokens":20,'
+            b'"output_tokens":5,"cached_input_tokens":7,"reasoning_output_tokens":4}}\n'
+        ),
+    )
+
+    usage = CodexAdapter().extract_usage(artifacts, spawn_id)
+
+    assert usage.input_tokens == 20
+    assert usage.output_tokens == 5
+    assert usage.cache_read_input_tokens == 7
+    assert usage.reasoning_tokens == 4
+
+
+def test_opencode_usage_reads_session_idle_info_and_cost() -> None:
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-opencode-specific")
+    artifacts.put(
+        make_artifact_key(spawn_id, "history.jsonl"),
+        (
+            b'{"event":"message.updated","info":{"input_tokens":5,"output_tokens":1}}\n'
+            b'{"event":"session.idle","info":{"input_tokens":9,"output_tokens":3,'
+            b'"cache_read_input_tokens":11},"cost":{"total_cost_usd":0.015}}\n'
+        ),
+    )
+
+    usage = OpenCodeAdapter().extract_usage(artifacts, spawn_id)
+
+    assert usage.input_tokens == 9
+    assert usage.output_tokens == 3
+    assert usage.cache_read_input_tokens == 11
+    assert usage.total_cost_usd == 0.015

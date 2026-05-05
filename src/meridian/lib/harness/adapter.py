@@ -216,6 +216,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         project_root: Path,
         started_at_epoch: float,
         started_at_local_iso: str | None,
+        expected_session_id: str | None = None,
     ) -> str | None: ...
 
     def observe_session_id(
@@ -228,6 +229,7 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
         project_root: Path | None = None,
         started_at_epoch: float | None = None,
         started_at_local_iso: str | None = None,
+        expected_session_id: str | None = None,
     ) -> str | None:
         """Return the best available session ID observed after one execution.
 
@@ -338,8 +340,9 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         project_root: Path,
         started_at_epoch: float,
         started_at_local_iso: str | None,
+        expected_session_id: str | None = None,
     ) -> str | None:
-        _ = project_root, started_at_epoch, started_at_local_iso
+        _ = project_root, started_at_epoch, started_at_local_iso, expected_session_id
         return None
 
     def observe_session_id(
@@ -352,6 +355,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
         project_root: Path | None = None,
         started_at_epoch: float | None = None,
         started_at_local_iso: str | None = None,
+        expected_session_id: str | None = None,
     ) -> str | None:
         """Return the best observed session ID after one execution.
 
@@ -386,6 +390,7 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
                     project_root=project_root,
                     started_at_epoch=started_at_epoch,
                     started_at_local_iso=started_at_local_iso,
+                    expected_session_id=expected_session_id,
                 )
             )
             if detected:
@@ -413,4 +418,3 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
         _ = project_root, session_id
         return None
-

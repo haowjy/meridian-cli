@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from meridian.lib.core.types import ModelId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.claude import ClaudeAdapter
+from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.launch_spec import (
     ClaudeLaunchSpec,
@@ -312,6 +313,52 @@ def test_continue_fork_valid_combinations_pass(
     assert spec.continue_session_id == continue_session_id
     assert spec.continue_fork is continue_fork
 
+
+def test_fresh_child_spawn_gets_seeded_session_id() -> None:
+    spec = ClaudeAdapter().resolve_launch_spec(
+        SpawnParams(prompt="test prompt"),
+        _resolver(),
+    )
+
+    seeded_id = extract_session_id_from_args(spec.extra_args)
+
+    assert seeded_id is not None
+    assert spec.extra_args[-2:] == ("--session-id", seeded_id)
+
+
+def test_continuation_spawn_no_seed() -> None:
+    spec = ClaudeAdapter().resolve_launch_spec(
+        SpawnParams(
+            prompt="test prompt",
+            continue_harness_session_id="claude-session",
+        ),
+        _resolver(),
+    )
+
+    assert spec.continue_session_id == "claude-session"
+    assert extract_session_id_from_args(spec.extra_args) is None
+
+
+def test_user_supplied_session_id_not_duplicated() -> None:
+    spec = ClaudeAdapter().resolve_launch_spec(
+        SpawnParams(
+            prompt="test prompt",
+            extra_args=("--session-id", "user-session"),
+        ),
+        _resolver(),
+    )
+
+    assert spec.extra_args == ("--session-id", "user-session")
+    assert extract_session_id_from_args(spec.extra_args) == "user-session"
+
+
+def test_interactive_spawn_no_seed() -> None:
+    spec = ClaudeAdapter().resolve_launch_spec(
+        SpawnParams(prompt="test prompt", interactive=True),
+        _resolver(),
+    )
+
+    assert extract_session_id_from_args(spec.extra_args) is None
 
 def test_opencode_explicit_harness_allows_raw_provider_model() -> None:
     """When harness is explicit, raw provider/model IDs pass through unchanged."""

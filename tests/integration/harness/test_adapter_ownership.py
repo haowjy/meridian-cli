@@ -8,7 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from meridian.lib.harness.claude import ClaudeAdapter, project_slug
+from meridian.lib.harness.claude import (
+    ClaudeAdapter,
+    _candidate_claude_project_dirs,
+    project_slug,
+)
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
@@ -54,7 +58,7 @@ def _write_opencode_log(logs_dir: Path, project_root: Path, session_id: str, ts:
     return log_path
 
 
-def test_claude_adapter_detects_latest_project_session(
+def test_claude_adapter_detects_expected_project_session(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -89,6 +93,7 @@ def test_claude_adapter_detects_latest_project_session(
             project_root=project_root,
             started_at_epoch=now - 1,
             started_at_local_iso=None,
+            expected_session_id=new_session_id,
         )
         == new_session_id
     )
@@ -99,7 +104,26 @@ def test_claude_adapter_detects_latest_project_session(
     assert infer_harness_from_untracked_session_ref(project_root, new_session_id) == "claude"
 
 
-def test_claude_adapter_resolves_session_from_prefixed_child_project_slug(
+def test_candidate_dirs_returns_exact_slug_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    child_cwd = project_root / ".meridian" / "spawns" / "p1"
+    child_cwd.mkdir(parents=True)
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+
+    exact_dir = fake_home / ".claude" / "projects" / project_slug(project_root)
+    prefixed_child_dir = fake_home / ".claude" / "projects" / project_slug(child_cwd)
+    exact_dir.mkdir(parents=True)
+    prefixed_child_dir.mkdir(parents=True)
+
+    assert _candidate_claude_project_dirs(project_root) == [exact_dir]
+
+
+def test_claude_adapter_does_not_resolve_session_from_prefixed_child_project_slug(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -120,11 +144,12 @@ def test_claude_adapter_resolves_session_from_prefixed_child_project_slug(
     )
 
     adapter = ClaudeAdapter()
+    assert adapter.resolve_session_file(project_root=project_root, session_id=session_id) is None
     assert (
-        adapter.resolve_session_file(project_root=project_root, session_id=session_id)
-        == child_session_path
+        adapter.owns_untracked_session(project_root=project_root, session_ref=session_id)
+        is False
     )
-    assert adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is True
+    assert child_session_path.exists()
 
 
 def test_claude_adapter_resolve_prefers_project_root_project_slug(
@@ -202,6 +227,7 @@ def test_claude_adapter_uses_claude_config_dir_override(
             project_root=project_root,
             started_at_epoch=now - 10,
             started_at_local_iso=None,
+            expected_session_id=override_session_id,
         )
         == override_session_id
     )

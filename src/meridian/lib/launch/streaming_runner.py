@@ -28,6 +28,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
+from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
@@ -751,9 +752,7 @@ async def execute_with_streaming(
         report_path = launch_context.report_output_path
 
         timeout_seconds = (
-            float(request.budget.timeout_secs)
-            if request.budget.timeout_secs is not None
-            else None
+            float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None
         )
         max_retries = max(request.retry.max_attempts - 1, 0)
         retry_backoff_seconds = request.retry.backoff_secs
@@ -824,9 +823,19 @@ async def execute_with_streaming(
 
         materialized_session_id = (spec.continue_session_id or "").strip()
         observed_harness_session_id: str | None = None
-        if (
-            materialized_session_id
-            and materialized_session_id != (request.session.requested_harness_session_id or "")
+        if resolved_harness_id == HarnessId.CLAUDE and not materialized_session_id:
+            seeded_session_id = extract_session_id_from_args(spec.extra_args)
+            if seeded_session_id:
+                spawn_store.update_spawn(
+                    runtime_root,
+                    run.spawn_id,
+                    harness_session_id=seeded_session_id,
+                )
+                observed_harness_session_id = seeded_session_id
+                if harness_session_id_observer is not None:
+                    harness_session_id_observer(seeded_session_id)
+        if materialized_session_id and materialized_session_id != (
+            request.session.requested_harness_session_id or ""
         ):
             spawn_store.update_spawn(
                 runtime_root,
@@ -957,6 +966,7 @@ async def execute_with_streaming(
                         ),
                         project_root=project_root,
                         started_at_epoch=started_at_epoch,
+                        expected_session_id=observed_harness_session_id,
                     )
                     or ""
                 )
@@ -1015,9 +1025,8 @@ async def execute_with_streaming(
                 # the spawn has already written a durable report. Treat that as terminal
                 # success here so the retry classifier never turns the synthetic exit code
                 # from `stop_spawn()` back into another failed attempt.
-                if (
-                    attempt.terminated_by_report_watchdog
-                    and has_durable_report_completion(extracted.report.content)
+                if attempt.terminated_by_report_watchdog and has_durable_report_completion(
+                    extracted.report.content
                 ):
                     exit_code = 0
                     failure_reason = None
@@ -1160,12 +1169,9 @@ async def execute_with_streaming(
         durable_report_completion = extracted is not None and has_durable_report_completion(
             extracted.report.content
         )
-        cancelled = (
-            not final_attempt_terminal_observed
-            and (
-                failure_reason in {"cancelled", "terminated"}
-                or received_signal[0] in {signal.SIGINT, signal.SIGTERM}
-            )
+        cancelled = not final_attempt_terminal_observed and (
+            failure_reason in {"cancelled", "terminated"}
+            or received_signal[0] in {signal.SIGINT, signal.SIGTERM}
         )
         status, exit_code, failure_reason = resolve_execution_terminal_state(
             exit_code=exit_code,
@@ -1193,11 +1199,23 @@ async def execute_with_streaming(
                 total_cost_usd=(
                     finalized_usage.total_cost_usd if finalized_usage is not None else None
                 ),
-                input_tokens=finalized_usage.input_tokens
-                if finalized_usage is not None
-                else None,
+                input_tokens=finalized_usage.input_tokens if finalized_usage is not None else None,
                 output_tokens=(
                     finalized_usage.output_tokens if finalized_usage is not None else None
+                ),
+                cache_read_input_tokens=(
+                    finalized_usage.cache_read_input_tokens if finalized_usage is not None else None
+                ),
+                cache_creation_input_tokens=(
+                    finalized_usage.cache_creation_input_tokens
+                    if finalized_usage is not None
+                    else None
+                ),
+                reasoning_tokens=(
+                    finalized_usage.reasoning_tokens if finalized_usage is not None else None
+                ),
+                cost_is_estimate=(
+                    finalized_usage.cost_is_estimate if finalized_usage is not None else False
                 ),
                 error=failure_reason,
             )

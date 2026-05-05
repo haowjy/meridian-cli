@@ -31,7 +31,6 @@ from meridian.lib.harness.codex_rollout import (
 from meridian.lib.harness.common import (
     extract_codex_report,
     extract_session_id_from_artifacts_with_patterns,
-    extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
@@ -333,7 +332,7 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
         return {}
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return extract_usage_from_artifacts(artifacts, spawn_id)
+        return CODEX_EXTRACTOR.extract_usage(artifacts, spawn_id)
 
     def detect_primary_session_id(
         self,
@@ -341,8 +340,9 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
         project_root: Path,
         started_at_epoch: float,
         started_at_local_iso: str | None,
+        expected_session_id: str | None = None,
     ) -> str | None:
-        _ = started_at_local_iso
+        _ = started_at_local_iso, expected_session_id
         return _detect_primary_session_id(project_root, started_at_epoch)
 
     def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:

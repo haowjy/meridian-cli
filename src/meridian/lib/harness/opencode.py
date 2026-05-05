@@ -432,7 +432,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
         project_root: Path,
         started_at_epoch: float,
         started_at_local_iso: str | None,
+        expected_session_id: str | None = None,
     ) -> str | None:
+        _ = expected_session_id
         local_iso = (
             started_at_local_iso
             if started_at_local_iso is not None
