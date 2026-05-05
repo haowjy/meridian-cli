@@ -65,3 +65,12 @@ class RuntimeContext(BaseModel):
                     self.work_id,
                 ).as_posix()
         return overrides
+
+
+def resolve_runtime_context(*, project_root: Path, runtime_root: Path) -> ResolvedContext:
+    """Resolve runtime context with explicit roots and no environment mutation."""
+
+    return ResolvedContext.from_environment(
+        explicit_project_root=project_root,
+        explicit_runtime_root=runtime_root,
+    )

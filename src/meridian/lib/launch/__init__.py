@@ -59,7 +59,7 @@ def launch_primary(
     """Launch the primary agent process and wait for exit."""
 
     from meridian.lib.catalog.catalog_session import CatalogSession
-    from meridian.lib.core.resolved_context import ResolvedContext
+    from meridian.lib.core.context import resolve_runtime_context
 
     from .context import RuntimeBindings, bind_launch_context, prepare_launch_surface
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
@@ -91,9 +91,9 @@ def launch_primary(
             resolved_work_id,
         )
         if resolved_work_id is not None
-        else ResolvedContext.from_environment(
-            explicit_project_root=resolved_project_root,
-            explicit_runtime_root=runtime_root,
+        else resolve_runtime_context(
+            project_root=resolved_project_root,
+            runtime_root=runtime_root,
         ).work_dir
     )
     prepared = prepare_launch_surface(
@@ -103,7 +103,7 @@ def launch_primary(
         harness_registry=harness_registry,
         catalog=CatalogSession(resolved_project_root),
         active_work_dir=active_work_dir,
-        dry_run=True,
+        dry_run=request.dry_run,
     )
     preview_context = bind_launch_context(
         prepared=prepared,
