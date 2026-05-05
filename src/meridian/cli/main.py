@@ -3,7 +3,7 @@
 import os
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
@@ -48,12 +48,6 @@ from meridian.cli.bootstrap import (
 from meridian.cli.bootstrap import (
     validate_top_level_command as _bootstrap_validate_top_level_command,
 )
-from meridian.cli.chat_cmd import register_chat_command
-from meridian.cli.config_cmd import register_config_commands
-from meridian.cli.doctor_cmd import register_doctor_command
-from meridian.cli.ext_cmd import register_ext_commands
-from meridian.cli.hooks_commands import register_hooks_commands
-from meridian.cli.misc_commands import register_misc_commands
 from meridian.cli.output import (
     CLIOutputProtocol,
     OutputConfig,
@@ -63,14 +57,10 @@ from meridian.cli.output import (
     normalize_output_format,
 )
 from meridian.cli.output import emit as emit_output
-from meridian.cli.report_cmd import register_report_commands
-from meridian.cli.session_cmd import register_session_commands
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.policy import StartupClass
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
-from meridian.cli.telemetry_cmd import register_telemetry_commands
-from meridian.cli.workspace_cmd import register_workspace_commands
 from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_effect_process
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
@@ -101,6 +91,7 @@ class GlobalOptions(BaseModel):
 
 
 _GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
+_registered_command_groups: set[str] = set()
 _group_commands_registered = False
 
 
@@ -539,60 +530,180 @@ def init_alias(
     _run_mars_passthrough(mars_args, output_format=output_format)
 
 
-def _register_group_commands(*, agent_mode: bool = False) -> None:
+def _first_command_token(argv: Sequence[str]) -> str | None:
+    for arg in argv:
+        if not arg.startswith("-"):
+            return arg
+    return None
+
+
+def _register_commands_for_invocation(
+    argv: Sequence[str],
+    *,
+    agent_mode: bool = False,
+) -> None:
+    """Register only the command group needed for the current invocation."""
+
     global _group_commands_registered
     if _group_commands_registered:
         return
 
-    from meridian.cli.agent_help import agent_help_epilogue
-    from meridian.cli.bootstrap_cmd import register_bootstrap_command
-    from meridian.cli.models_cmd import register_models_commands
-    from meridian.cli.spawn import register_spawn_commands
-    from meridian.cli.work_cmd import register_work_commands
+    first_token = _first_command_token(argv)
 
-    if agent_mode:
-        spawn_app.help_epilogue = agent_help_epilogue("spawn", spawn_app.help_epilogue)
-        session_app.help_epilogue = agent_help_epilogue("session", session_app.help_epilogue)
-        config_app.help_epilogue = agent_help_epilogue("config", config_app.help_epilogue)
-        work_app.help_epilogue = agent_help_epilogue("work", work_app.help_epilogue)
+    def _register_agent_epilogue(command: str) -> None:
+        if not agent_mode:
+            return
+        from meridian.cli.agent_help import agent_help_epilogue
 
-    register_misc_commands(
-        app=app,
-        completion_app=completion_app,
-        streaming_app=streaming_app,
-        test_app=test_app,
-        emit=emit,
-        get_global_options=get_global_options,
-    )
-    register_spawn_commands(spawn_app, emit)
-    register_report_commands(report_app, emit)
-    register_session_commands(session_app, emit)
-    register_work_commands(work_app, emit)
-    register_hooks_commands(hooks_app, emit)
-    register_models_commands(models_app, emit)
-    register_ext_commands(
-        app,
-        emit=emit,
-        resolve_global_format=lambda: get_global_options().output.format,
-    )
-    register_telemetry_commands(telemetry_app, emit)
-    register_config_commands(config_app, emit)
-    register_chat_command(app)
-    register_workspace_commands(workspace_app, emit)
-    register_doctor_command(app, emit, agent_mode=agent_mode)
-    register_bootstrap_command(
-        app,
-        emit,
-        get_passthrough_args=lambda: get_global_options().passthrough_args,
-        get_global_harness=lambda: get_global_options().harness,
-    )
-    # kg commands register via @kg_app.command decorators at import time.
-    import meridian.cli.kg_cmd as _kg_cmd
-    import meridian.cli.mermaid_cmd as _mermaid_cmd
+        if command == "spawn":
+            spawn_app.help_epilogue = agent_help_epilogue("spawn", spawn_app.help_epilogue)
+        elif command == "session":
+            session_app.help_epilogue = agent_help_epilogue("session", session_app.help_epilogue)
+        elif command == "config":
+            config_app.help_epilogue = agent_help_epilogue("config", config_app.help_epilogue)
+        elif command == "work":
+            work_app.help_epilogue = agent_help_epilogue("work", work_app.help_epilogue)
 
-    _ = _kg_cmd
-    _ = _mermaid_cmd
-    _group_commands_registered = True
+    def _register_once(name: str, register: Callable[[], None]) -> None:
+        if name in _registered_command_groups:
+            return
+        register()
+        _registered_command_groups.add(name)
+
+    def _register_spawn() -> None:
+        from meridian.cli.spawn import register_spawn_commands
+
+        _register_agent_epilogue("spawn")
+        register_spawn_commands(spawn_app, emit)
+
+    def _register_session() -> None:
+        from meridian.cli.session_cmd import register_session_commands
+
+        _register_agent_epilogue("session")
+        register_session_commands(session_app, emit)
+
+    def _register_work() -> None:
+        from meridian.cli.work_cmd import register_work_commands
+
+        _register_agent_epilogue("work")
+        register_work_commands(work_app, emit)
+
+    def _register_config() -> None:
+        from meridian.cli.config_cmd import register_config_commands
+
+        _register_agent_epilogue("config")
+        register_config_commands(config_app, emit)
+
+    def _register_hooks() -> None:
+        from meridian.cli.hooks_commands import register_hooks_commands
+
+        register_hooks_commands(hooks_app, emit)
+
+    def _register_models() -> None:
+        from meridian.cli.models_cmd import register_models_commands
+
+        register_models_commands(models_app, emit)
+
+    def _register_ext() -> None:
+        from meridian.cli.ext_cmd import register_ext_commands
+
+        register_ext_commands(
+            app,
+            emit=emit,
+            resolve_global_format=lambda: get_global_options().output.format,
+        )
+
+    def _register_telemetry() -> None:
+        from meridian.cli.telemetry_cmd import register_telemetry_commands
+
+        register_telemetry_commands(telemetry_app, emit)
+
+    def _register_workspace() -> None:
+        from meridian.cli.workspace_cmd import register_workspace_commands
+
+        register_workspace_commands(workspace_app, emit)
+
+    def _register_doctor() -> None:
+        from meridian.cli.doctor_cmd import register_doctor_command
+
+        register_doctor_command(app, emit, agent_mode=agent_mode)
+
+    def _register_bootstrap() -> None:
+        from meridian.cli.bootstrap_cmd import register_bootstrap_command
+
+        register_bootstrap_command(
+            app,
+            emit,
+            get_passthrough_args=lambda: get_global_options().passthrough_args,
+            get_global_harness=lambda: get_global_options().harness,
+        )
+
+    def _register_misc() -> None:
+        from meridian.cli.misc_commands import register_misc_commands
+
+        register_misc_commands(
+            app=app,
+            completion_app=completion_app,
+            streaming_app=streaming_app,
+            test_app=test_app,
+            emit=emit,
+            get_global_options=get_global_options,
+        )
+
+    def _register_chat() -> None:
+        from meridian.cli.chat_cmd import register_chat_command
+
+        register_chat_command(app)
+
+    def _register_kg() -> None:
+        import meridian.cli.kg_cmd as _kg_cmd
+
+        _ = _kg_cmd
+
+    def _register_mermaid() -> None:
+        import meridian.cli.mermaid_cmd as _mermaid_cmd
+
+        _ = _mermaid_cmd
+
+    def _register_report() -> None:
+        from meridian.cli.report_cmd import register_report_commands
+
+        register_report_commands(report_app, emit)
+
+    registrations: dict[str, tuple[str, Callable[[], None]]] = {
+        "spawn": ("spawn", _register_spawn),
+        "session": ("session", _register_session),
+        "work": ("work", _register_work),
+        "config": ("config", _register_config),
+        "hooks": ("hooks", _register_hooks),
+        "models": ("models", _register_models),
+        "ext": ("ext", _register_ext),
+        "telemetry": ("telemetry", _register_telemetry),
+        "workspace": ("workspace", _register_workspace),
+        "doctor": ("doctor", _register_doctor),
+        "bootstrap": ("bootstrap", _register_bootstrap),
+        "completion": ("misc", _register_misc),
+        "streaming": ("misc", _register_misc),
+        "test": ("misc", _register_misc),
+        "chat": ("chat", _register_chat),
+        "kg": ("kg", _register_kg),
+        "mermaid": ("mermaid", _register_mermaid),
+        "report": ("report", _register_report),
+    }
+
+    registration = registrations.get(first_token or "")
+    if registration is None:
+        # Root/default commands and decorator-registered commands (mars, serve, init)
+        # do not need group registration. Unknown commands are rejected earlier.
+        return
+
+    group_name, register_fn = registration
+    _register_once(group_name, register_fn)
+    if first_token == "spawn":
+        _register_once("report", _register_report)
+
+    if {group for group, _ in registrations.values()}.issubset(_registered_command_groups):
+        _group_commands_registered = True
 
 
 def _operation_error_message(exc: Exception) -> str:
@@ -844,7 +955,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     options = options.model_copy(update={"sink": active_sink})
     token = _GLOBAL_OPTIONS.set(options)
     try:
-        _register_group_commands(agent_mode=effective_agent_mode)
+        _register_commands_for_invocation(cleaned_args, agent_mode=effective_agent_mode)
         with temporary_config_env(options.config_file):
             try:
                 app(cleaned_args)
