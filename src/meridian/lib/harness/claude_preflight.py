@@ -32,6 +32,9 @@ def ensure_claude_session_accessible(
     source_session_id: str,
     source_cwd: Path | None,
     child_cwd: Path,
+    *,
+    source_config_root: Path | None = None,
+    target_config_root: Path | None = None,
 ) -> None:
     """Make one source Claude session file accessible in the child's project dir.
 
@@ -53,15 +56,24 @@ def ensure_claude_session_accessible(
     ):
         return
 
-    claude_projects = get_home_path() / ".claude" / "projects"
+    source_projects = (
+        source_config_root / "projects"
+        if source_config_root is not None
+        else get_home_path() / ".claude" / "projects"
+    )
+    target_projects = (
+        target_config_root / "projects"
+        if target_config_root is not None
+        else get_home_path() / ".claude" / "projects"
+    )
     source_slug = project_slug(source_cwd)
     child_slug = project_slug(child_cwd)
 
-    source_file = claude_projects / source_slug / f"{safe_session_id}.jsonl"
+    source_file = source_projects / source_slug / f"{safe_session_id}.jsonl"
     if not source_file.exists():
         return
 
-    child_project = claude_projects / child_slug
+    child_project = target_projects / child_slug
     child_project.mkdir(parents=True, exist_ok=True)
     target_file = child_project / f"{safe_session_id}.jsonl"
 

@@ -26,6 +26,7 @@ class SessionRecord(BaseModel):
     harness: str
     harness_session_id: str
     execution_cwd: str | None = None
+    claude_config_dir: str | None = None
     harness_session_ids: tuple[str, ...]
     model: str
     agent: str
@@ -50,6 +51,7 @@ class SessionStartEvent(BaseModel):
     harness: str
     harness_session_id: str
     execution_cwd: str | None = None
+    claude_config_dir: str | None = None
     model: str
     agent: str = ""
     agent_path: str = ""
@@ -79,6 +81,7 @@ class SessionUpdateEvent(BaseModel):
     chat_id: str
     harness_session_id: str
     session_instance_id: str = ""
+    claude_config_dir: str | None = None
     active_work_id: str | None = None
 
 
@@ -112,6 +115,7 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         harness=event.harness,
         harness_session_id=event.harness_session_id,
         execution_cwd=event.execution_cwd,
+        claude_config_dir=event.claude_config_dir,
         harness_session_ids=(event.harness_session_id,),
         model=event.model,
         agent=event.agent,
@@ -265,6 +269,7 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
         session_ids = existing.harness_session_ids
         harness_session_id = existing.harness_session_id
         updated_work_id = existing.active_work_id
+        claude_config_dir = existing.claude_config_dir
         session_instance_id = existing.session_instance_id
         normalized_harness_session_id = event.harness_session_id.strip()
         if normalized_harness_session_id:
@@ -276,12 +281,16 @@ def _records_by_session(runtime_root: Path) -> dict[str, SessionRecord]:
         if event.active_work_id is not None:
             normalized_work_id = event.active_work_id.strip()
             updated_work_id = normalized_work_id or None
+        if event.claude_config_dir is not None:
+            normalized_config_dir = event.claude_config_dir.strip()
+            claude_config_dir = normalized_config_dir or None
         records[event.chat_id] = existing.model_copy(
             update={
                 "harness_session_id": harness_session_id,
                 "harness_session_ids": session_ids,
                 "session_instance_id": session_instance_id,
                 "active_work_id": updated_work_id,
+                "claude_config_dir": claude_config_dir,
             }
         )
     return records
@@ -419,6 +428,7 @@ def start_session(
     skill_paths: tuple[str, ...] = (),
     forked_from_chat_id: str | None = None,
     execution_cwd: str | None = None,
+    claude_config_dir: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
 ) -> str:
     """Append a session start event and acquire a lifetime session lock."""
@@ -439,6 +449,7 @@ def start_session(
             harness=harness,
             harness_session_id=harness_session_id,
             execution_cwd=execution_cwd,
+            claude_config_dir=claude_config_dir,
             model=model,
             agent=agent,
             agent_path=agent_path,
@@ -512,6 +523,28 @@ def update_session_work_id(runtime_root: Path, chat_id: str, work_id: str | None
         harness_session_id="",
         session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
         active_work_id=normalized_work_id,
+    )
+    append_event(
+        paths.sessions_jsonl,
+        paths.sessions_flock,
+        event,
+        exclude_none=True,
+    )
+
+
+def update_session_claude_config_dir(
+    runtime_root: Path,
+    chat_id: str,
+    claude_config_dir: str,
+) -> None:
+    """Append a session update event carrying the isolated Claude config dir."""
+
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    event = SessionUpdateEvent(
+        chat_id=chat_id,
+        harness_session_id="",
+        session_instance_id=_session_instance_for_event(paths, runtime_root, chat_id),
+        claude_config_dir=claude_config_dir,
     )
     append_event(
         paths.sessions_jsonl,

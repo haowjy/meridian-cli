@@ -1311,6 +1311,7 @@ def spawn_continue_sync(
             continue_chat_id=resolved_reference.source_chat_id,
             forked_from_chat_id=resolved_reference.source_chat_id if payload.fork else None,
             source_execution_cwd=resolved_reference.source_execution_cwd,
+            source_claude_config_dir=resolved_reference.source_claude_config_dir,
         ),
         passthrough_args=payload.passthrough_args,
         approval=payload.approval,

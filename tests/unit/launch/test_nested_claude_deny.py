@@ -245,3 +245,9 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
     assert "Agent" in context.resolved_request.disallowed_tools
     allowed_flag_index = context.argv.index("--allowedTools")
     assert context.argv[allowed_flag_index + 1] == "Bash"
+
+
+def test_claude_blocks_config_dir_from_child_env() -> None:
+    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE)
+
+    assert "CLAUDE_CONFIG_DIR" in adapter.blocked_child_env_vars()

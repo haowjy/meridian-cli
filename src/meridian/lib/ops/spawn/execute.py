@@ -430,6 +430,7 @@ def _resolve_session_continuation(
         continue_fork=resolved_continue_fork,
         forked_from_chat_id=request.session.forked_from_chat_id,
         source_execution_cwd=request.session.source_execution_cwd,
+        source_claude_config_dir=request.session.source_claude_config_dir,
     )
 
 

@@ -32,6 +32,7 @@ def _empty_record(
         work_id=None,
         harness_session_id=None,
         execution_cwd=None,
+        claude_config_dir=None,
         launch_mode=None,
         worker_pid=None,
         runner_pid=None,
@@ -46,6 +47,10 @@ def _empty_record(
         total_cost_usd=None,
         input_tokens=None,
         output_tokens=None,
+        cache_read_input_tokens=None,
+        cache_creation_input_tokens=None,
+        reasoning_tokens=None,
+        cost_is_estimate=False,
         error=None,
         terminal_origin=None,
     )
@@ -89,6 +94,7 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
             work_id = getattr(event, "work_id", None)
             harness_session_id = getattr(event, "harness_session_id", None)
             execution_cwd = getattr(event, "execution_cwd", None)
+            claude_config_dir = getattr(event, "claude_config_dir", None)
             launch_mode = getattr(event, "launch_mode", None)
             worker_pid = getattr(event, "worker_pid", None)
             runner_pid = getattr(event, "runner_pid", None)
@@ -117,6 +123,11 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
                     ),
                     "execution_cwd": (
                         execution_cwd if execution_cwd is not None else current.execution_cwd
+                    ),
+                    "claude_config_dir": (
+                        claude_config_dir
+                        if claude_config_dir is not None
+                        else current.claude_config_dir
                     ),
                     "launch_mode": launch_mode if launch_mode is not None else current.launch_mode,
                     "worker_pid": worker_pid if worker_pid is not None else current.worker_pid,
@@ -153,6 +164,11 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
                         event.execution_cwd
                         if event.execution_cwd is not None
                         else current.execution_cwd
+                    ),
+                    "claude_config_dir": (
+                        event.claude_config_dir
+                        if event.claude_config_dir is not None
+                        else current.claude_config_dir
                     ),
                     "error": event.error if event.error is not None else current.error,
                     "desc": event.desc if event.desc is not None else current.desc,
@@ -235,6 +251,22 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
                     if finalize_event.output_tokens is not None
                     else current.output_tokens
                 ),
+                "cache_read_input_tokens": (
+                    finalize_event.cache_read_input_tokens
+                    if finalize_event.cache_read_input_tokens is not None
+                    else current.cache_read_input_tokens
+                ),
+                "cache_creation_input_tokens": (
+                    finalize_event.cache_creation_input_tokens
+                    if finalize_event.cache_creation_input_tokens is not None
+                    else current.cache_creation_input_tokens
+                ),
+                "reasoning_tokens": (
+                    finalize_event.reasoning_tokens
+                    if finalize_event.reasoning_tokens is not None
+                    else current.reasoning_tokens
+                ),
+                "cost_is_estimate": finalize_event.cost_is_estimate or current.cost_is_estimate,
                 "error": resolved_error,
                 "terminal_origin": resolved_terminal_origin,
             }

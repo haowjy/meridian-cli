@@ -23,6 +23,7 @@ def _seed_session(
     work_id: str | None = None,
     harness: str = "codex",
     execution_cwd: str | None = None,
+    claude_config_dir: str | None = None,
 ) -> str:
     resolved_chat_id = session_store.start_session(
         runtime_root,
@@ -33,6 +34,7 @@ def _seed_session(
         agent="coder",
         skills=("skill-a", "skill-b"),
         execution_cwd=execution_cwd,
+        claude_config_dir=claude_config_dir,
     )
     if work_id is not None:
         session_store.update_session_work_id(runtime_root, resolved_chat_id, work_id)
@@ -52,6 +54,7 @@ def _seed_spawn(
     kind: str = "child",
     execution_cwd: str | None = None,
     started_at: str | None = None,
+    claude_config_dir: str | None = None,
 ) -> None:
     spawn_store.start_spawn(
         runtime_root,
@@ -68,6 +71,8 @@ def _seed_spawn(
         execution_cwd=execution_cwd,
         started_at=started_at,
     )
+    if claude_config_dir is not None:
+        spawn_store.update_spawn(runtime_root, spawn_id, claude_config_dir=claude_config_dir)
 
 
 def test_resolve_session_reference_uses_latest_chat_session_id(tmp_path: Path) -> None:
@@ -99,7 +104,13 @@ def test_resolve_session_reference_for_spawn_id_reads_spawn_metadata(tmp_path: P
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
-    _seed_spawn(runtime_root, spawn_id="p7", chat_id="c7", harness_session_id="spawn-session-7")
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p7",
+        chat_id="c7",
+        harness_session_id="spawn-session-7",
+        claude_config_dir="/tmp/spawn-claude",
+    )
 
     resolved = resolve_session_reference(project_root, "p7")
 
@@ -111,6 +122,7 @@ def test_resolve_session_reference_for_spawn_id_reads_spawn_metadata(tmp_path: P
     assert resolved.source_skills == ("skill-c",)
     assert resolved.source_work_id == "w-spawn"
     assert resolved.tracked is True
+    assert resolved.source_claude_config_dir == "/tmp/spawn-claude"
     assert resolved.warning is None
 
 
@@ -222,11 +234,13 @@ def test_resolve_session_reference_for_chat_uses_recorded_execution_cwd(
         work_id="w-chat",
         harness="claude",
         execution_cwd=execution_cwd,
+        claude_config_dir="/tmp/session-claude",
     )
 
     resolved = resolve_session_reference(project_root, chat_id)
 
     assert resolved.source_execution_cwd == execution_cwd
+    assert resolved.source_claude_config_dir == "/tmp/session-claude"
 
 
 def test_resolve_session_reference_falls_back_to_untracked_raw_reference(

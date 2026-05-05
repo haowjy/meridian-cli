@@ -113,3 +113,35 @@ def test_ensure_claude_session_accessible_rejects_path_traversal_session_ids(
 
     child_project = fake_home / ".claude" / "projects" / project_slug(child_cwd)
     assert not child_project.exists()
+
+
+def test_ensure_claude_session_accessible_uses_explicit_source_and_target_roots(
+    tmp_path: Path,
+) -> None:
+    source_config_root = tmp_path / "source-config"
+    target_config_root = tmp_path / "target-config"
+    source_cwd = tmp_path / "source"
+    child_cwd = tmp_path / "child"
+    source_cwd.mkdir()
+    child_cwd.mkdir()
+
+    source_project = source_config_root / "projects" / project_slug(source_cwd)
+    source_project.mkdir(parents=True)
+    source_file = source_project / "session-1.jsonl"
+    source_file.write_text('{"sessionId":"session-1"}\n', encoding="utf-8")
+
+    ensure_claude_session_accessible(
+        "session-1",
+        source_cwd,
+        child_cwd,
+        source_config_root=source_config_root,
+        target_config_root=target_config_root,
+    )
+
+    target_file = target_config_root / "projects" / project_slug(child_cwd) / "session-1.jsonl"
+    assert target_file.exists()
+    if IS_WINDOWS:
+        assert target_file.read_text(encoding="utf-8") == source_file.read_text(encoding="utf-8")
+    else:
+        assert target_file.is_symlink()
+        assert target_file.resolve() == source_file.resolve()

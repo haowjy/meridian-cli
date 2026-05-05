@@ -46,6 +46,7 @@ class SessionRequest(BaseModel):
     requested_harness_session_id: str | None = None
     continue_fork: bool = False
     source_execution_cwd: str | None = None
+    source_claude_config_dir: str | None = None
     forked_from_chat_id: str | None = None
     continue_harness: str | None = None
     continue_source_tracked: bool = False

@@ -227,6 +227,7 @@ def _build_create_payload_impl(
             ),
             continue_fork=payload.session.continue_fork,
             source_execution_cwd=payload.session.source_execution_cwd,
+            source_claude_config_dir=payload.session.source_claude_config_dir,
             forked_from_chat_id=payload.session.forked_from_chat_id,
             continue_harness=payload.session.continue_harness,
             continue_source_tracked=payload.session.continue_source_tracked,

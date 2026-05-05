@@ -353,7 +353,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session
         # sentinel so child Claude spawns can run under Meridian control.
-        return frozenset({"CLAUDECODE"})
+        return frozenset({"CLAUDECODE", "CLAUDE_CONFIG_DIR"})
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)

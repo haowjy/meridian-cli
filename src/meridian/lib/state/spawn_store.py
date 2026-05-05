@@ -171,6 +171,7 @@ class SpawnRecord(BaseModel):
     work_id: str | None
     harness_session_id: str | None
     execution_cwd: str | None = None
+    claude_config_dir: str | None = None
     launch_mode: LaunchMode | None
     worker_pid: int | None
     runner_pid: int | None
@@ -185,6 +186,10 @@ class SpawnRecord(BaseModel):
     total_cost_usd: float | None
     input_tokens: int | None
     output_tokens: int | None
+    cache_read_input_tokens: int | None
+    cache_creation_input_tokens: int | None
+    reasoning_tokens: int | None
+    cost_is_estimate: bool
     error: str | None
     terminal_origin: SpawnOrigin | None
 
@@ -246,6 +251,7 @@ class SpawnUpdateEvent(BaseModel):
     runner_pid: int | None = None
     harness_session_id: str | None = None
     execution_cwd: str | None = None
+    claude_config_dir: str | None = None
     error: str | None = None
     desc: str | None = None
     work_id: str | None = None
@@ -274,6 +280,10 @@ class SpawnFinalizeEvent(BaseModel):
     total_cost_usd: float | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    cost_is_estimate: bool = False
     error: str | None = None
     origin: SpawnOrigin | None = None
 
@@ -424,6 +434,7 @@ def update_spawn(
     runner_pid: int | None = None,
     harness_session_id: str | None = None,
     execution_cwd: str | None = None,
+    claude_config_dir: str | None = None,
     error: str | None = None,
     desc: str | None = None,
     work_id: str | None = None,
@@ -440,6 +451,7 @@ def update_spawn(
         runner_pid=runner_pid,
         harness_session_id=harness_session_id,
         execution_cwd=execution_cwd,
+        claude_config_dir=claude_config_dir,
         error=error,
         desc=desc,
         work_id=work_id,
@@ -468,6 +480,7 @@ def update_spawn(
                     "runner_pid": runner_pid,
                     "harness_session_id": harness_session_id,
                     "execution_cwd": execution_cwd,
+                    "claude_config_dir": claude_config_dir,
                     "error": error,
                     "desc": desc,
                     "work_id": work_id,
@@ -512,6 +525,10 @@ def finalize_spawn(
     total_cost_usd: float | None = None,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    cache_read_input_tokens: int | None = None,
+    cache_creation_input_tokens: int | None = None,
+    reasoning_tokens: int | None = None,
+    cost_is_estimate: bool = False,
     finished_at: str | None = None,
     error: str | None = None,
     clock: Clock | None = None,
@@ -564,6 +581,10 @@ def finalize_spawn(
             total_cost_usd=total_cost_usd,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            reasoning_tokens=reasoning_tokens,
+            cost_is_estimate=cost_is_estimate,
             error=error,
             origin=origin,
         )
