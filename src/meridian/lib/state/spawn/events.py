@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES as _TERMINAL_SPAWN_STATUSES,
 )
+from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 
 if TYPE_CHECKING:
     from meridian.lib.state.spawn_store import SpawnEvent, SpawnRecord
@@ -199,13 +200,12 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
         incoming_origin = (
             finalize_event.origin if finalize_event.origin is not None else "runner"
         )
-        incoming_authoritative = incoming_origin in spawn_store.AUTHORITATIVE_ORIGINS
-        already_terminal = current.status in _TERMINAL_SPAWN_STATUSES
-        replace_terminal = (
-            not already_terminal
-            or (current.terminal_origin == "reconciler" and incoming_authoritative)
+        terminal_decision = decide_terminal_write(
+            current_status=current.status,
+            current_terminal_origin=current.terminal_origin,
+            incoming_origin=incoming_origin,
         )
-        if not replace_terminal:
+        if terminal_decision.disposition == "reject":
             resolved_status = current.status
             resolved_exit_code = current.exit_code
             resolved_error = current.error
