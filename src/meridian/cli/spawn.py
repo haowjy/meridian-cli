@@ -73,10 +73,16 @@ def _current_output_sink() -> Any:
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
+    opts = _get_global_options()
+    if opts.project_root is not None:
+        return prepare_for_runtime_read(opts.project_root)
     return prepare_for_runtime_read(resolve_project_root())
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
+    opts = _get_global_options()
+    if opts.project_root is not None:
+        return prepare_for_runtime_write(opts.project_root)
     return prepare_for_runtime_write(resolve_project_root())
 
 

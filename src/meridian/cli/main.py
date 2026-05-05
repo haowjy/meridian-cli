@@ -88,6 +88,7 @@ class GlobalOptions(BaseModel):
     passthrough_args: tuple[str, ...] = ()
     sink: OutputSink | None = None
     explicit_format: OutputFormat | None = None
+    project_root: Path | None = None
 
 
 _GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
@@ -952,7 +953,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     _emit_usage_command_invoked(cleaned_args)
 
     active_sink = create_sink(options.output)
-    options = options.model_copy(update={"sink": active_sink})
+    options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
     token = _GLOBAL_OPTIONS.set(options)
     try:
         _register_commands_for_invocation(cleaned_args, agent_mode=effective_agent_mode)
