@@ -22,7 +22,7 @@ from meridian.lib.harness.adapter import (
 )
 from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
 from meridian.lib.harness.claude_preflight import build_claude_preflight_result
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
+from meridian.lib.harness.claude_utils import has_session_identity_in_args
 from meridian.lib.harness.common import (
     extract_claude_report,
     extract_session_id_from_artifacts_with_patterns,
@@ -287,7 +287,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         if (
             not run.interactive
             and continue_session_id is None
-            and extract_session_id_from_args(run.extra_args) is None
+            and not has_session_identity_in_args(run.extra_args)
         ):
             effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
 
@@ -426,12 +426,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         if passthrough_session_id:
             return SessionSeed(session_id=passthrough_session_id)
 
-        session_id = str(uuid4())
-        # Only inject --session-id for truly fresh sessions.
-        return SessionSeed(
-            session_id=session_id,
-            session_args=("--session-id", session_id),
-        )
+        # Claude rejects --session-id for fresh interactive primary launches.
+        # Child/non-interactive runs still get explicit IDs via resolve_launch_spec().
+        return SessionSeed()
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
         """Claude projection: route system content to append-system-prompt.

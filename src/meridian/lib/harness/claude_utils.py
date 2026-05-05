@@ -3,6 +3,13 @@
 Kept separate from claude.py and extractors/claude.py to avoid circular imports.
 """
 
+_SESSION_IDENTITY_LONG_FLAGS = frozenset({
+    "--session-id",
+    "--resume",
+    "--continue",
+})
+_SESSION_IDENTITY_SHORT_FLAGS = frozenset({"-r", "-c"})
+
 
 def extract_session_id_from_args(args: tuple[str, ...]) -> str | None:
     """Extract --session-id value from CLI args, or return None."""
@@ -16,3 +23,15 @@ def extract_session_id_from_args(args: tuple[str, ...]) -> str | None:
             if value:
                 return value
     return None
+
+
+def has_session_identity_in_args(args: tuple[str, ...]) -> bool:
+    """Return True if args contain any Claude session-identity flag."""
+    for token in args:
+        if token in _SESSION_IDENTITY_LONG_FLAGS:
+            return True
+        if token in _SESSION_IDENTITY_SHORT_FLAGS:
+            return True
+        if any(token.startswith(f"{flag}=") for flag in _SESSION_IDENTITY_LONG_FLAGS):
+            return True
+    return False

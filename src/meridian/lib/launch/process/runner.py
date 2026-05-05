@@ -476,6 +476,7 @@ def run_harness_process(
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
     isolated_config_root: Path | None = None
+    effective_config_root: Path | None = None
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     lifecycle_service = create_lifecycle_service(project_root, runtime_root)
 
@@ -628,24 +629,32 @@ def run_harness_process(
                         prepare_isolated_claude_config,
                     )
 
-                    isolated_config_root, _original_claude_config_dir = (
+                    isolated_config_root, original_claude_config_dir = (
                         prepare_isolated_claude_config(
                             runtime_root=runtime_root,
                             spawn_id=str(primary_spawn_id),
                         )
                     )
+                    effective_config_dir = ""
                     if isolated_config_root is not None:
-                        child_env["CLAUDE_CONFIG_DIR"] = str(isolated_config_root)
+                        effective_config_root = isolated_config_root
+                        effective_config_dir = str(isolated_config_root)
+                    elif original_claude_config_dir.strip():
+                        effective_config_root = Path(original_claude_config_dir.strip())
+                        effective_config_dir = original_claude_config_dir.strip()
+
+                    if effective_config_dir:
+                        child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
                         spawn_store.update_spawn(
                             runtime_root,
                             primary_spawn_id,
-                            claude_config_dir=str(isolated_config_root),
+                            claude_config_dir=effective_config_dir,
                         )
                         if managed.chat_id:
                             update_session_claude_config_dir(
                                 runtime_root,
                                 managed.chat_id,
-                                claude_config_dir=str(isolated_config_root),
+                                claude_config_dir=effective_config_dir,
                             )
 
                 if (
@@ -663,7 +672,7 @@ def run_harness_process(
                         source_cwd=Path(preview_request.session.source_execution_cwd),
                         child_cwd=child_cwd,
                         source_config_root=source_config,
-                        target_config_root=isolated_config_root,
+                        target_config_root=effective_config_root,
                     )
 
                 def _record_primary_started(child_pid: int) -> None:

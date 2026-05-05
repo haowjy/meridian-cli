@@ -8,7 +8,7 @@ import re
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import structlog
 
@@ -20,7 +20,8 @@ logger = structlog.get_logger(__name__)
 
 # Internal sentinel consumed by Claude projection; never forwarded to the CLI.
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
-_MUTABLE_PATHS = frozenset({"statsig", "memory", "cached_preferences", "todos"})
+_SKIP_ENTRIES = frozenset({"projects"})
+_COPY_ENTRIES = frozenset({".claude.json", "statsig", "memory", "cached_preferences", "todos"})
 
 
 def _claude_config_root() -> Path:
@@ -32,21 +33,46 @@ def _claude_config_root() -> Path:
     return get_home_path() / ".claude"
 
 
+def _claude_credentials_source(config_root: Path) -> Path | None:
+    """Return the best available source for Claude's credentials file."""
+
+    candidates = (
+        config_root / ".claude.json",
+        get_home_path() / ".claude.json",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def project_slug(project_root: Path) -> str:
     """Map a repo path to Claude's on-disk project slug format."""
 
     return re.sub(r"[^a-zA-Z0-9]", "-", str(project_root.resolve()))
 
 
-def _copy_or_link_claude_config_entry(entry: Path, target: Path) -> None:
-    """Materialize one non-project Claude config entry into an overlay."""
+def _classify_overlay_entry(name: str) -> Literal["skip", "copy", "link"]:
+    """Classify one Claude config overlay entry."""
 
-    if entry.name in _MUTABLE_PATHS:
-        if entry.is_dir():
-            shutil.copytree(entry, target, symlinks=True)
-        else:
-            shutil.copy2(entry, target)
-        return
+    if name in _SKIP_ENTRIES:
+        return "skip"
+    if name in _COPY_ENTRIES:
+        return "copy"
+    return "link"
+
+
+def _copy_entry(entry: Path, target: Path) -> None:
+    """Copy a mutable entry into the overlay."""
+
+    if entry.is_dir():
+        shutil.copytree(entry, target, symlinks=True)
+    else:
+        shutil.copy2(entry, target)
+
+
+def _link_entry(entry: Path, target: Path) -> None:
+    """Link a read-only entry into the overlay."""
 
     if IS_WINDOWS:
         if entry.is_dir():
@@ -80,19 +106,23 @@ def prepare_isolated_claude_config(
         if user_root.is_dir():
             for entry in user_root.iterdir():
                 target = isolated_root / entry.name
-                if target.exists() or target.is_symlink() or entry.name == "projects":
+                if target.exists() or target.is_symlink():
                     continue
-                _copy_or_link_claude_config_entry(entry, target)
+                action = _classify_overlay_entry(entry.name)
+                if action == "skip":
+                    continue
+                if action == "copy":
+                    _copy_entry(entry, target)
+                else:
+                    _link_entry(entry, target)
 
         (isolated_root / "projects").mkdir(exist_ok=True)
 
-        user_credentials = user_root / ".claude.json"
         isolated_credentials = isolated_root / ".claude.json"
-        if user_credentials.is_file() and not isolated_credentials.exists():
-            if IS_WINDOWS:
+        if not isolated_credentials.exists():
+            user_credentials = _claude_credentials_source(user_root)
+            if user_credentials is not None:
                 shutil.copy2(user_credentials, isolated_credentials)
-            else:
-                os.symlink(user_credentials, isolated_credentials)
     except OSError:
         logger.warning(
             "Failed to create isolated Claude config; proceeding without isolation",

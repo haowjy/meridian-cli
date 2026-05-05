@@ -217,11 +217,12 @@ def test_prepare_isolated_claude_config_handles_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user_root = tmp_path / "user-claude"
-    user_root.mkdir()
-    credentials = user_root / ".claude.json"
+    fake_home = tmp_path / "home"
+    user_root = fake_home / ".claude"
+    user_root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+    credentials = fake_home / ".claude.json"
     credentials.write_text('{"auth":true}', encoding="utf-8")
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
 
     isolated_root, _ = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
 
@@ -229,9 +230,27 @@ def test_prepare_isolated_claude_config_handles_credentials(
     isolated_credentials = isolated_root / ".claude.json"
     assert isolated_credentials.exists()
     assert isolated_credentials.read_text(encoding="utf-8") == '{"auth":true}'
-    if not IS_WINDOWS:
-        assert isolated_credentials.is_symlink()
-        assert isolated_credentials.resolve() == credentials.resolve()
+    assert not isolated_credentials.is_symlink()
+
+
+def test_prepare_isolated_claude_config_prefers_config_root_credentials_when_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_home = tmp_path / "home"
+    user_root = tmp_path / "user-claude"
+    user_root.mkdir()
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+    (fake_home / ".claude.json").write_text('{"auth":"home"}', encoding="utf-8")
+    (user_root / ".claude.json").write_text('{"auth":"config"}', encoding="utf-8")
+
+    isolated_root, original_env = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    assert original_env == user_root.as_posix()
+    assert (isolated_root / ".claude.json").read_text(encoding="utf-8") == '{"auth":"config"}'
 
 
 def test_prepare_isolated_claude_config_failure_returns_none(

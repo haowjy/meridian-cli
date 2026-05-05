@@ -352,6 +352,30 @@ def test_user_supplied_session_id_not_duplicated() -> None:
     assert extract_session_id_from_args(spec.extra_args) == "user-session"
 
 
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    (
+        ("--resume", "abc"),
+        ("--resume=abc",),
+        ("-r", "abc"),
+        ("-c",),
+        ("--continue",),
+        ("--continue=abc",),
+        ("--session-id", "xyz"),
+    ),
+)
+def test_claude_passthrough_session_identity_flags_are_not_seeded(
+    extra_args: tuple[str, ...],
+) -> None:
+    spec = ClaudeAdapter().resolve_launch_spec(
+        SpawnParams(prompt="test prompt", extra_args=extra_args),
+        _resolver(),
+    )
+
+    assert spec.extra_args == extra_args
+
 def test_interactive_spawn_no_seed() -> None:
     spec = ClaudeAdapter().resolve_launch_spec(
         SpawnParams(prompt="test prompt", interactive=True),

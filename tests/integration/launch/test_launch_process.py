@@ -886,12 +886,86 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert outcome.exit_code == 0
 
 
+
+
 @pytest.mark.slow
-def test_run_harness_process_reuses_preview_seed_for_runtime_primary_launch(
+def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Fresh primary launch must use the same session ID in command and state."""
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-isolation-fallback"
+    project_root.mkdir()
+    custom_config = tmp_path / "custom-claude"
+    custom_config.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    captured: dict[str, object] = {}
+
+    def fake_prepare_isolated_claude_config(**kwargs: object) -> tuple[Path | None, str]:
+        return None, custom_config.as_posix()
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        captured["claude_config_dir"] = env.get("CLAUDE_CONFIG_DIR")
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(777)
+        return (0, 777)
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert captured["claude_config_dir"] == custom_config.as_posix()
+    events = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "spawns.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event.get("event") == "update"
+        and event.get("claude_config_dir") == custom_config.as_posix()
+        for event in events
+    )
+    sessions = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "sessions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event.get("event") == "update"
+        and event.get("claude_config_dir") == custom_config.as_posix()
+        for event in sessions
+    )
+
+@pytest.mark.slow
+def test_run_harness_process_fresh_claude_primary_does_not_inject_seed_args(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Fresh Claude primary launch must not inject unsupported --session-id args."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     project_root = tmp_path / "seed-reuse"
     project_root.mkdir()
@@ -901,8 +975,6 @@ def test_run_harness_process_reuses_preview_seed_for_runtime_primary_launch(
         model="claude-sonnet-4-5",
     )
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
-    preview_seed = launch_context.seed_harness_session_id
-    assert preview_seed, "Fresh primary must generate a seed"
     captured: dict[str, object] = {}
 
     def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
@@ -927,11 +999,9 @@ def test_run_harness_process_reuses_preview_seed_for_runtime_primary_launch(
 
     outcome = process.run_harness_process(launch_context, harness_registry)
 
-    # Command must use the same seed as preview
-    assert captured["command_session_id"] == preview_seed
-    # Outcome must report the same seed
-    assert outcome.resolved_harness_session_id == preview_seed
-    # Spawn state must record the same seed
+    assert launch_context.seed_harness_session_id in (None, "")
+    assert "command_session_id" not in captured
+    assert outcome.resolved_harness_session_id == ""
     events = [
         json.loads(line)
         for line in (launch_context.runtime_root / "spawns.jsonl")
@@ -941,7 +1011,7 @@ def test_run_harness_process_reuses_preview_seed_for_runtime_primary_launch(
     ]
     start_events = [e for e in events if e.get("event") == "start"]
     assert len(start_events) == 1
-    assert start_events[0]["harness_session_id"] == preview_seed
+    assert start_events[0]["harness_session_id"] in (None, "")
 
 
 @pytest.mark.slow
@@ -959,8 +1029,6 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
         model="claude-sonnet-4-5",
     )
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
-    preview_seed = launch_context.seed_harness_session_id
-    assert preview_seed, "Fresh primary must generate a seed"
     observed_id = "observed-different-session"
 
     def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
