@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from meridian.lib.catalog.agent import scan_agent_profiles
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache
 from meridian.lib.config.context_config import (
     ArbitraryContextConfig,
     ContextConfig,
@@ -229,7 +229,14 @@ class LaunchContext:
 
 
 @dataclass(frozen=True)
-class _SurfaceResolution:
+class PreparedLaunchSurface:
+    """Expensive, spawn-stable launch resolution results.
+
+    This is the public in-memory boundary between launch preparation and
+    runtime binding. It deliberately excludes runtime-only values such as
+    spawn IDs, report paths, environment, argv, and permission outputs.
+    """
+
     request: SpawnRequest
     harness: SubprocessHarness
     seed_harness_session_id: str | None
@@ -239,6 +246,9 @@ class _SurfaceResolution:
     has_profile_for_deny_optout: bool
     projected_content: ProjectedContent | None
     model_selection: ModelSelectionContext | None
+    alias_catalog: dict[str, AliasEntry] | None = None
+    agent_inventory_prompt: str | None = None
+    context_prompt: str | None = None
     seed_session_args: tuple[str, ...] = ()
 
 
@@ -450,15 +460,22 @@ def _resolve_report_output_path(
     return resolve_spawn_log_dir(project_paths.project_root, spawn_id) / "report.md"
 
 
-def _resolve_surface_request(
+def prepare_launch_surface(
     *,
     request: SpawnRequest,
     runtime: LaunchRuntime,
-    project_paths: ProjectConfigPaths,
+    project_root: Path,
     harness_registry: HarnessRegistry,
-    dry_run: bool,
     catalog: CatalogSession,
-) -> _SurfaceResolution:
+    active_work_dir: Path | None = None,
+    dry_run: bool = False,
+) -> PreparedLaunchSurface:
+    """Resolve the expensive, spawn-stable launch surface."""
+
+    project_paths = ProjectConfigPaths(
+        project_root=project_root.expanduser().resolve(),
+        execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
+    )
     config = (
         MeridianConfig.model_validate(runtime.config_snapshot)
         if runtime.config_snapshot
@@ -507,10 +524,11 @@ def _resolve_surface_request(
             ),
         )
 
-    active_work_dir = ResolvedContext.from_environment(
-        explicit_project_root=project_paths.project_root,
-        explicit_runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
-    ).work_dir
+    if active_work_dir is None:
+        active_work_dir = ResolvedContext.from_environment(
+            explicit_project_root=project_paths.project_root,
+            explicit_runtime_root=Path(runtime.runtime_root).expanduser().resolve(),
+        ).work_dir
     agent_profiles = sorted(
         scan_agent_profiles(project_root=project_paths.project_root),
         key=lambda profile: profile.name,
@@ -524,6 +542,8 @@ def _resolve_surface_request(
     prompt = request.prompt
     loaded_references: tuple[ReferenceItem, ...] = ()
     spawn_composed_content: ComposedLaunchContent | None = None
+    agent_inventory_prompt: str | None = None
+    context_prompt: str | None = None
     if (
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
         and not request.prompt_is_composed
@@ -570,7 +590,7 @@ def _resolve_surface_request(
                 resolved_template_variables,
             )
             agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
-        inventory_prompt = (
+        agent_inventory_prompt = (
             build_agent_inventory_prompt(
                 project_root=project_paths.project_root,
                 alias_catalog=policies.alias_catalog,
@@ -592,7 +612,7 @@ def _resolve_surface_request(
             supplemental_documents=supplemental_documents,
             agent_profile_body=agent_profile_body,
             report_instruction=build_report_instruction(),
-            inventory_prompt=inventory_prompt,
+            inventory_prompt=agent_inventory_prompt,
             context_prompt=context_prompt,
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
@@ -645,15 +665,13 @@ def _resolve_surface_request(
         session_mode = (
             (request.session.primary_session_mode or "fresh").strip().lower()
         ) or "fresh"
-        inventory_prompt: str | None = None
-        context_prompt_primary: str | None = None
         if session_mode != "resume":
-            inventory_prompt = build_agent_inventory_prompt(
+            agent_inventory_prompt = build_agent_inventory_prompt(
                 project_root=project_paths.project_root,
                 alias_catalog=policies.alias_catalog,
                 agents=agent_profiles,
             )
-            context_prompt_primary = build_context_prompt(
+            context_prompt = build_context_prompt(
                 project_root=project_paths.project_root,
                 active_work_dir=active_work_dir,
                 context_config=context_config,
@@ -697,8 +715,8 @@ def _resolve_surface_request(
             supplemental_documents=supplemental_documents,
             agent_profile_body=agent_profile_body,
             report_instruction="",
-            inventory_prompt=inventory_prompt or "",
-            context_prompt=context_prompt_primary or "",
+            inventory_prompt=agent_inventory_prompt or "",
+            context_prompt=context_prompt or "",
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
             reference_items=(),
@@ -800,7 +818,7 @@ def _resolve_surface_request(
             **model_selection_update,
         }
     )
-    return _SurfaceResolution(
+    return PreparedLaunchSurface(
         request=resolved_request,
         harness=harness,
         seed_harness_session_id=seed_harness_session_id,
@@ -810,7 +828,53 @@ def _resolve_surface_request(
         has_profile_for_deny_optout=has_profile,
         projected_content=projected_content,
         model_selection=model_selection,
+        alias_catalog=policies.alias_catalog,
+        agent_inventory_prompt=agent_inventory_prompt,
+        context_prompt=context_prompt,
         seed_session_args=seed_session_args,
+    )
+
+
+def _build_direct_surface(
+    *,
+    request: SpawnRequest,
+    project_root: Path,
+    harness_registry: HarnessRegistry,
+) -> PreparedLaunchSurface:
+    """Build the lightweight prepared surface for already-resolved DIRECT launches."""
+
+    resolved_project_root = project_root.expanduser().resolve()
+    harness_id = _resolve_harness_id(request=request)
+    harness = harness_registry.get_subprocess_harness(harness_id)
+    composition_warnings = _build_composition_warnings(
+        request_warning=request.warning,
+        policy_warnings=(),
+        route_warning=None,
+        missing_skills_warning=None,
+        continuation_warning=None,
+    )
+    loaded_references = load_reference_items(
+        request.reference_files,
+        base_dir=resolved_project_root,
+    )
+
+    return PreparedLaunchSurface(
+        request=request,
+        harness=harness,
+        seed_harness_session_id=(
+            request.session.requested_harness_session_id or ""
+        ).strip()
+        or None,
+        composition_warnings=composition_warnings,
+        loaded_references=loaded_references,
+        profile_tools_for_deny_optout=(),
+        has_profile_for_deny_optout=False,
+        projected_content=None,
+        model_selection=None,
+        alias_catalog=None,
+        agent_inventory_prompt=None,
+        context_prompt=None,
+        seed_session_args=(),
     )
 
 
@@ -841,49 +905,32 @@ def _build_launch_context_impl(
     )
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     system_temp_root = Path(tempfile.gettempdir()).resolve()
-    resolved_request = request
-    composition_warnings: tuple[CompositionWarning, ...] = ()
-    profile_tools_for_deny_optout: tuple[str, ...] = ()
-    has_profile_for_deny_optout = False
-    projected_content: ProjectedContent | None = None
-    seed_harness_session_id = (request.session.requested_harness_session_id or "").strip() or None
-    seed_harness_session_args: tuple[str, ...] = ()
-    model_selection: ModelSelectionContext | None = None
     if runtime.composition_surface != LaunchCompositionSurface.DIRECT:
-        surface = _resolve_surface_request(
+        surface = prepare_launch_surface(
             request=request,
             runtime=runtime,
-            project_paths=project_paths,
+            project_root=project_paths.project_root,
             harness_registry=harness_registry,
-            dry_run=dry_run,
             catalog=catalog,
+            dry_run=dry_run,
         )
-        resolved_request = surface.request
-        harness = surface.harness
-        seed_harness_session_id = surface.seed_harness_session_id
-        composition_warnings = surface.composition_warnings
-        loaded_references = surface.loaded_references
-        profile_tools_for_deny_optout = surface.profile_tools_for_deny_optout
-        has_profile_for_deny_optout = surface.has_profile_for_deny_optout
-        projected_content = surface.projected_content
-        seed_harness_session_args = surface.seed_session_args
-        model_selection = surface.model_selection
     else:
-        harness_id = _resolve_harness_id(request=request)
-        harness = harness_registry.get_subprocess_harness(harness_id)
-        composition_warnings = _build_composition_warnings(
-            request_warning=resolved_request.warning,
-            policy_warnings=(),
-            route_warning=None,
-            missing_skills_warning=None,
-            continuation_warning=None,
+        surface = _build_direct_surface(
+            request=request,
+            project_root=project_paths.project_root,
+            harness_registry=harness_registry,
         )
-        loaded_references = load_reference_items(
-            resolved_request.reference_files,
-            base_dir=project_paths.project_root,
-        )
-        profile_tools_for_deny_optout = ()
-        has_profile_for_deny_optout = False
+
+    resolved_request = surface.request
+    harness = surface.harness
+    seed_harness_session_id = surface.seed_harness_session_id
+    composition_warnings = surface.composition_warnings
+    loaded_references = surface.loaded_references
+    profile_tools_for_deny_optout = surface.profile_tools_for_deny_optout
+    has_profile_for_deny_optout = surface.has_profile_for_deny_optout
+    projected_content = surface.projected_content
+    seed_harness_session_args = surface.seed_session_args
+    model_selection = surface.model_selection
 
     report_output_path = _resolve_report_output_path(
         runtime=runtime,
@@ -1098,7 +1145,9 @@ def build_launch_context(
 __all__ = [
     "ChildEnvContext",
     "LaunchContext",
+    "PreparedLaunchSurface",
     "build_launch_context",
     "merge_env_overrides",
     "normalize_usage_model_family",
+    "prepare_launch_surface",
 ]

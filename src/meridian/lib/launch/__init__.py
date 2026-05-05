@@ -13,7 +13,11 @@ if TYPE_CHECKING:
     from meridian.lib.launch.command import (
         normalize_system_prompt_passthrough_args,
     )
-    from meridian.lib.launch.context import build_launch_context
+    from meridian.lib.launch.context import (
+        PreparedLaunchSurface,
+        build_launch_context,
+        prepare_launch_surface,
+    )
     from meridian.lib.launch.policies import ResolvedPolicies, resolve_policies
     from meridian.lib.launch.process import ProcessOutcome, run_harness_process
     from meridian.lib.launch.resolve import (
@@ -115,6 +119,7 @@ def __getattr__(name: str) -> Any:
         "LaunchResult": (".types", "LaunchResult"),
         "PrimarySessionMetadata": (".types", "PrimarySessionMetadata"),
         "ProcessOutcome": (".process", "ProcessOutcome"),
+        "PreparedLaunchSurface": (".context", "PreparedLaunchSurface"),
         "ResolvedPolicies": (".policies", "ResolvedPolicies"),
         "ResolvedSkills": (".resolve", "ResolvedSkills"),
         "SessionIntent": (".types", "SessionIntent"),
@@ -126,6 +131,7 @@ def __getattr__(name: str) -> Any:
             ".command",
             "normalize_system_prompt_passthrough_args",
         ),
+        "prepare_launch_surface": (".context", "prepare_launch_surface"),
         "resolve_harness": (".resolve", "resolve_harness"),
         "resolve_policies": (".policies", "resolve_policies"),
         "resolve_skills_from_profile": (".resolve", "resolve_skills_from_profile"),
@@ -147,6 +153,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "LaunchRequest",
     "LaunchResult",
+    "PreparedLaunchSurface",
     "PrimarySessionMetadata",
     "ProcessOutcome",
     "ResolvedPolicies",
@@ -158,6 +165,7 @@ __all__ = [
     "launch_primary",
     "load_agent_profile_with_fallback",
     "normalize_system_prompt_passthrough_args",
+    "prepare_launch_surface",
     "resolve_harness",
     "resolve_policies",
     "resolve_skills_from_profile",
