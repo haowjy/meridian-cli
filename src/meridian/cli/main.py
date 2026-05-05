@@ -6,13 +6,11 @@ import sys
 from collections.abc import Sequence
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 from cyclopts import Parameter
 from pydantic import BaseModel, ConfigDict
 
-import meridian.cli.mars_passthrough as mars_passthrough
-import meridian.cli.primary_launch as primary_launch
 from meridian.cli.app_tree import (
     AGENT_ROOT_HELP as _AGENT_ROOT_HELP,
 )
@@ -50,14 +48,12 @@ from meridian.cli.bootstrap import (
 from meridian.cli.bootstrap import (
     validate_top_level_command as _bootstrap_validate_top_level_command,
 )
-from meridian.cli.bootstrap_cmd import register_bootstrap_command
 from meridian.cli.chat_cmd import register_chat_command
 from meridian.cli.config_cmd import register_config_commands
 from meridian.cli.doctor_cmd import register_doctor_command
 from meridian.cli.ext_cmd import register_ext_commands
 from meridian.cli.hooks_commands import register_hooks_commands
 from meridian.cli.misc_commands import register_misc_commands
-from meridian.cli.models_cmd import maybe_handle_models_redirect, register_models_commands
 from meridian.cli.output import (
     CLIOutputProtocol,
     OutputConfig,
@@ -79,6 +75,9 @@ from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_eff
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.telemetry import emit_telemetry
+
+if TYPE_CHECKING:
+    from meridian.cli.mars_passthrough import MarsPassthroughRequest, MarsPassthroughResult
 
 
 class GlobalOptions(BaseModel):
@@ -103,8 +102,6 @@ class GlobalOptions(BaseModel):
 
 _GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
 _group_commands_registered = False
-
-PrimaryLaunchOutput = primary_launch.PrimaryLaunchOutput
 
 
 def get_global_options() -> GlobalOptions:
@@ -376,26 +373,21 @@ def serve() -> None:
     run_server()
 
 
-_MarsPassthroughRequest = mars_passthrough.MarsPassthroughRequest
-_MarsPassthroughResult = mars_passthrough.MarsPassthroughResult
-_resolve_mars_executable = mars_passthrough.resolve_mars_executable
-_mars_requested_json = mars_passthrough.mars_requested_json
-_mars_requested_root = mars_passthrough.mars_requested_root
-_mars_subcommand = mars_passthrough.mars_subcommand
-_inject_upgrade_hint_into_sync_json = mars_passthrough.inject_upgrade_hint_into_sync_json
-_decode_json_values = mars_passthrough.decode_json_values
-_parse_mars_passthrough = mars_passthrough.parse_mars_passthrough
+def _execute_mars_passthrough(
+    request: "MarsPassthroughRequest",
+) -> "MarsPassthroughResult":
+    from meridian.cli import mars_passthrough
 
-
-def _execute_mars_passthrough(request: _MarsPassthroughRequest) -> _MarsPassthroughResult:
     return mars_passthrough.execute_mars_passthrough(request, run=subprocess.run, stderr=sys.stderr)
 
 
 def _augment_sync_result(
-    result: _MarsPassthroughResult,
+    result: "MarsPassthroughResult",
     *,
     output_format: str | None = None,
 ) -> None:
+    from meridian.cli import mars_passthrough
+
     return mars_passthrough.augment_sync_result(
         result,
         output_format=output_format,
@@ -411,11 +403,13 @@ def _run_mars_passthrough(
     *,
     output_format: str | None = None,
 ) -> None:
+    from meridian.cli import mars_passthrough
+
     return mars_passthrough.run_mars_passthrough(
         args,
         output_format=output_format,
-        resolve_executable=_resolve_mars_executable,
-        parse_request=_parse_mars_passthrough,
+        resolve_executable=mars_passthrough.resolve_mars_executable,
+        parse_request=mars_passthrough.parse_mars_passthrough,
         execute_request=_execute_mars_passthrough,
         augment_result=lambda result: _augment_sync_result(result, output_format=output_format),
         stdout=sys.stdout,
@@ -455,6 +449,8 @@ def _run_primary_launch(
     dry_run: bool,
     passthrough: tuple[str, ...],
 ) -> None:
+    from meridian.cli import primary_launch
+
     emit(
         primary_launch.run_primary_launch(
             continue_ref=continue_ref,
@@ -474,11 +470,6 @@ def _run_primary_launch(
         )
     )
 
-
-_resolve_init_project_root = mars_passthrough.resolve_init_project_root
-_resolve_init_link_mars_command = mars_passthrough.resolve_init_link_mars_command
-
-
 def _run_init_link_flow_json(
     *,
     executable: str,
@@ -487,6 +478,8 @@ def _run_init_link_flow_json(
     link: str,
     config_result: BaseModel,
 ) -> None:
+    from meridian.cli import mars_passthrough
+
     return mars_passthrough.run_init_link_flow_json(
         executable=executable,
         mars_mode=mars_mode,
@@ -494,9 +487,9 @@ def _run_init_link_flow_json(
         link=link,
         config_result=config_result,
         emit=emit,
-        parse_request=_parse_mars_passthrough,
+        parse_request=mars_passthrough.parse_mars_passthrough,
         execute_request=_execute_mars_passthrough,
-        decode_values=_decode_json_values,
+        decode_values=mars_passthrough.decode_json_values,
     )
 
 
@@ -516,18 +509,19 @@ def init_alias(
 ) -> None:
     """Initialize meridian in the current project or provided path."""
 
+    from meridian.cli import mars_passthrough
     from meridian.lib.ops.config import ConfigInitInput, config_init_sync
 
-    project_root = _resolve_init_project_root(path)
+    project_root = mars_passthrough.resolve_init_project_root(path)
     result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
     if link is None:
         emit(result)
         return
 
-    mars_mode, mars_args = _resolve_init_link_mars_command(project_root, link)
+    mars_mode, mars_args = mars_passthrough.resolve_init_link_mars_command(project_root, link)
     output_format = get_global_options().output.format
     if output_format == "json":
-        executable = _resolve_mars_executable()
+        executable = mars_passthrough.resolve_mars_executable()
         if executable is None:
             print(
                 "error: Failed to execute 'mars'. Install meridian with dependencies and retry.",
@@ -551,6 +545,8 @@ def _register_group_commands(*, agent_mode: bool = False) -> None:
         return
 
     from meridian.cli.agent_help import agent_help_epilogue
+    from meridian.cli.bootstrap_cmd import register_bootstrap_command
+    from meridian.cli.models_cmd import register_models_commands
     from meridian.cli.spawn import register_spawn_commands
     from meridian.cli.work_cmd import register_work_commands
 
@@ -809,7 +805,14 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     _validate_top_level_command(cleaned_args, global_harness=options.harness)
 
-    maybe_handle_models_redirect(cleaned_args)
+    # Handle descriptor-owned redirects before bootstrap work or lazy command registration.
+    if descriptor is not None and descriptor.redirect is not None:
+        print(
+            "`meridian models list` has moved to Mars.\n"
+            "Use `meridian mars models list` instead.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     startup_class = (
         descriptor.startup_class

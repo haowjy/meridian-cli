@@ -7,8 +7,6 @@ from typing import Annotated
 
 from cyclopts import App, Parameter
 
-from meridian.cli import primary_launch
-
 
 def register_bootstrap_command(
     app: App,
@@ -64,6 +62,8 @@ def register_bootstrap_command(
         ] = False,
     ) -> None:
         """Launch a primary agent session with installed bootstrap docs."""
+
+        from meridian.cli import primary_launch
 
         if yolo and approval is not None:
             raise ValueError("Cannot combine --yolo with --approval.")
