@@ -145,12 +145,14 @@ def test_background_worker_main_uses_spawn_id_as_logical_owner(
         "resolve_spawn_log_dir",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(_StopAfterTelemetrySetup()),
     )
+    monkeypatch.setattr(spawn_execute, "create_lifecycle_service", lambda *_a, **_kw: None)
+    monkeypatch.setattr(spawn_execute, "_complete_spawn_sync", lambda **_kw: False)
 
-    with pytest.raises(_StopAfterTelemetrySetup):
-        spawn_execute._background_worker_main(
-            ["--spawn-id", "p77", "--project-root", project_root.as_posix()]
-        )
+    result = spawn_execute._background_worker_main(
+        ["--spawn-id", "p77", "--project-root", project_root.as_posix()]
+    )
 
+    assert result == 1  # backstop catches the injected exception
     assert captured == {"runtime_root": runtime_root, "logical_owner": "p77"}
 
 
