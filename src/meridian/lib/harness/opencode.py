@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
@@ -22,7 +23,6 @@ from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
 from meridian.lib.harness.common import (
     extract_opencode_report,
     extract_session_id_from_artifacts_with_patterns,
-    extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
@@ -51,6 +51,8 @@ from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
 
+# Deprecated legacy log parser retained for older OpenCode installs. Modern
+# OpenCode stores session metadata in opencode.db and no longer emits this shape.
 OPENCODE_SESSION_CREATED_RE = re.compile(
     r"^\w+\s+(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s+\+\d+ms\s+"
     r"service=session\s+id=(?P<session_id>\S+)\s+.*?\bdirectory=(?P<directory>\S+)\b.*\bcreated\b"
@@ -82,7 +84,87 @@ def _opencode_data_root() -> Path:
     return get_home_path() / ".local" / "share"
 
 
-def _detect_primary_session_id(
+def _opencode_db_path() -> Path:
+    return _opencode_data_root() / "opencode" / "opencode.db"
+
+
+def _opencode_session_diff_path(session_id: str) -> Path:
+    return (
+        _opencode_data_root()
+        / "opencode"
+        / "storage"
+        / "session_diff"
+        / f"{session_id}.json"
+    )
+
+
+def _directory_matches_project(directory: str, project_root: Path) -> bool:
+    if not directory.strip():
+        return False
+    try:
+        return Path(directory).expanduser().resolve() == project_root.resolve()
+    except OSError:
+        return False
+
+
+def _timestamp_to_epoch(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        timestamp = float(value)
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            timestamp = float(raw)
+        except ValueError:
+            normalized = raw.removesuffix("Z")
+            try:
+                return datetime.fromisoformat(normalized).timestamp()
+            except ValueError:
+                return None
+    # OpenCode timestamps may be stored as Unix milliseconds.
+    if timestamp > 10_000_000_000:
+        return timestamp / 1000
+    return timestamp
+
+
+def _query_opencode_sessions(project_root: Path) -> list[tuple[str, float]] | None:
+    db_path = _opencode_db_path()
+    if not db_path.is_file():
+        return None
+
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.1) as connection:
+            rows = connection.execute(
+                """
+                SELECT id, directory, time_created, time_updated
+                FROM session
+                ORDER BY COALESCE(time_updated, time_created) DESC
+                """
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        logger.debug("Failed to query OpenCode session database %s", db_path, exc_info=True)
+        return None
+
+    matches: list[tuple[str, float]] = []
+    for session_id, directory, time_created, time_updated in rows:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id or not _directory_matches_project(
+            str(directory or ""),
+            project_root,
+        ):
+            continue
+        updated_at = _timestamp_to_epoch(time_updated)
+        created_at = _timestamp_to_epoch(time_created)
+        session_epoch = updated_at if updated_at is not None else created_at
+        if session_epoch is not None:
+            matches.append((normalized_session_id, session_epoch))
+    return matches
+
+
+def _legacy_detect_primary_session_id(
     project_root: Path,
     started_at_epoch: float,
     started_at_local_iso: str,
@@ -91,7 +173,6 @@ def _detect_primary_session_id(
     if not logs_root.is_dir():
         return None
 
-    resolved_repo = project_root.resolve()
     matches: list[tuple[str, str]] = []
     for candidate in logs_root.glob("*.log"):
         try:
@@ -112,12 +193,7 @@ def _detect_primary_session_id(
             timestamp = match.group("ts")
             if timestamp < started_at_local_iso:
                 continue
-            directory = match.group("directory")
-            try:
-                directory_matches = Path(directory).expanduser().resolve() == resolved_repo
-            except OSError:
-                continue
-            if not directory_matches:
+            if not _directory_matches_project(match.group("directory"), project_root):
                 continue
             session_id = match.group("session_id").strip()
             if session_id:
@@ -129,12 +205,38 @@ def _detect_primary_session_id(
     return matches[0][1]
 
 
-def _owns_session(project_root: Path, session_ref: str) -> bool:
-    normalized = session_ref.strip()
-    if not normalized:
-        return False
+def _detect_primary_session_id(
+    project_root: Path,
+    started_at_epoch: float,
+    started_at_local_iso: str,
+) -> str | None:
+    sessions = _query_opencode_sessions(project_root)
+    if sessions is not None:
+        recent_sessions = [item for item in sessions if item[1] + 1 >= started_at_epoch]
+        if recent_sessions:
+            recent_sessions.sort(key=lambda item: item[1], reverse=True)
+            return recent_sessions[0][0]
+        return None
 
-    resolved_repo = project_root.resolve()
+    diff_root = _opencode_data_root() / "opencode" / "storage" / "session_diff"
+    if diff_root.is_dir():
+        diff_matches: list[tuple[float, str]] = []
+        for candidate in diff_root.glob("ses_*.json"):
+            try:
+                modified_at = candidate.stat().st_mtime
+            except OSError:
+                continue
+            if modified_at + 1 < started_at_epoch:
+                continue
+            diff_matches.append((modified_at, candidate.stem))
+        if diff_matches:
+            diff_matches.sort(key=lambda item: item[0], reverse=True)
+            return diff_matches[0][1]
+
+    return _legacy_detect_primary_session_id(project_root, started_at_epoch, started_at_local_iso)
+
+
+def _legacy_owns_session(project_root: Path, session_ref: str) -> bool:
     opencode_logs = _opencode_data_root() / "opencode" / "log"
     if not opencode_logs.is_dir():
         return False
@@ -148,17 +250,37 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
             match = OPENCODE_SESSION_CREATED_RE.match(line)
             if match is None:
                 continue
-            if match.group("session_id").strip() != normalized:
+            if match.group("session_id").strip() != session_ref:
                 continue
-            directory = match.group("directory")
-            try:
-                directory_matches = Path(directory).expanduser().resolve() == resolved_repo
-            except OSError:
-                continue
-            if directory_matches:
+            if _directory_matches_project(match.group("directory"), project_root):
                 return True
 
     return False
+
+
+def _owns_session(project_root: Path, session_ref: str) -> bool:
+    normalized = session_ref.strip()
+    if not normalized:
+        return False
+
+    db_path = _opencode_db_path()
+    if db_path.is_file():
+        try:
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.1) as connection:
+                row = connection.execute(
+                    "SELECT directory FROM session WHERE id = ?",
+                    (normalized,),
+                ).fetchone()
+        except (OSError, sqlite3.Error):
+            logger.debug("Failed to query OpenCode session database %s", db_path, exc_info=True)
+        else:
+            if row is not None:
+                return _directory_matches_project(str(row[0] or ""), project_root)
+
+    if _opencode_session_diff_path(normalized).is_file():
+        return True
+
+    return _legacy_owns_session(project_root, normalized)
 
 
 class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
@@ -288,7 +410,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
         return overrides
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
-        return extract_usage_from_artifacts(artifacts, spawn_id)
+        return OPENCODE_EXTRACTOR.extract_usage(artifacts, spawn_id)
 
     def seed_session(
         self,
