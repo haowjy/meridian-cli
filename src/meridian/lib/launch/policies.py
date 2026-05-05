@@ -93,16 +93,31 @@ def _policy_warnings(
     profile_warning: str | None,
     model_warning: str | None,
 ) -> tuple[CompositionWarning, ...]:
-    warnings: list[CompositionWarning] = []
-    for code, message in (
-        ("profile_warning", profile_warning),
-        ("model_warning", model_warning),
-    ):
-        normalized = (message or "").strip()
-        if not normalized:
-            continue
-        warnings.append(CompositionWarning(code=code, message=normalized))
-    return tuple(warnings)
+    normalized_profile_warning = (profile_warning or "").strip()
+    normalized_model_warning = (model_warning or "").strip()
+
+    if normalized_profile_warning and normalized_model_warning:
+        return (
+            CompositionWarning(
+                code="policy_warning",
+                message=f"{normalized_profile_warning}\n{normalized_model_warning}",
+            ),
+        )
+    if normalized_profile_warning:
+        return (
+            CompositionWarning(
+                code="profile_warning",
+                message=normalized_profile_warning,
+            ),
+        )
+    if normalized_model_warning:
+        return (
+            CompositionWarning(
+                code="model_warning",
+                message=normalized_model_warning,
+            ),
+        )
+    return ()
 
 
 def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:

@@ -16,6 +16,7 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.policies import (
+    _policy_warnings,
     _resolve_model_policy_overrides,
     match_model_policy,
     validate_harness_compatibility,
@@ -123,6 +124,16 @@ def test_resolve_model_policy_overrides_resolves_full_runtime_policy_fields() ->
     assert resolved.approval == "auto"
     assert resolved.effort == "medium"
     assert resolved.autocompact == 70
+
+
+def test_policy_warnings_preserve_legacy_combined_text_format() -> None:
+    warnings = _policy_warnings(
+        profile_warning="profile missing",
+        model_warning="model ambiguous",
+    )
+
+    assert [warning.code for warning in warnings] == ["policy_warning"]
+    assert warnings[0].message == "profile missing\nmodel ambiguous"
 
 
 def test_match_model_policy_ranks_model_over_alias_over_glob(tmp_path: Path) -> None:
