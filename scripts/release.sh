@@ -264,16 +264,7 @@ main() {
 
   # Pre-release checks
   printf 'Running pre-release checks...\n'
-  printf '  ruff... '
-  uv run ruff check . >/dev/null 2>&1 || die "ruff check failed — fix lint errors first"
-  printf 'pass\n'
-  printf '  pyright... '
-  uv run pyright >/dev/null 2>&1 || die "pyright failed — fix type errors first"
-  printf 'pass\n'
-  printf '  tests... '
-  # Keep pytest output visible so the long-running full suite doesn't look hung.
-  uv run python -m pytest -x -q || die "tests failed — fix failing tests first"
-  printf 'pass\n'
+  "$ROOT_DIR/scripts/preflight.sh" full
   printf '  frontend... '
   if command -v pnpm >/dev/null 2>&1 && [[ -d "$ROOT_DIR/../meridian-web" ]]; then
     make -C "$ROOT_DIR" build-frontend >/dev/null 2>&1 || die "frontend build failed"
