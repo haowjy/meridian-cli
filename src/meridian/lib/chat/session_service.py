@@ -82,7 +82,7 @@ class ChatSessionService:
 
             if self._current_execution is None:
                 self._execution_generation += 1
-                self._state = "active"
+                self._transition_to("active")
                 try:
                     self._current_execution = await self._acquisition.acquire(
                         self._chat_id,
@@ -90,16 +90,16 @@ class ChatSessionService:
                         execution_generation=self._execution_generation,
                     )
                 except Exception:
-                    self._state = "idle"
+                    self._transition_to("idle")
                     self._execution_generation -= 1
                     raise
                 return
 
-            self._state = "active"
+            self._transition_to("active")
             try:
                 await self._current_execution.send_message(text)
             except Exception:
-                self._state = "idle"
+                self._transition_to("idle")
                 raise
 
     async def cancel(self) -> None:
@@ -108,7 +108,7 @@ class ChatSessionService:
         async with self._state_lock:
             if self._state in ("idle", "draining", "closed"):
                 return
-            self._state = "draining"
+            self._transition_to("draining")
             if self._current_execution is not None:
                 await self._current_execution.send_cancel()
 
@@ -118,7 +118,7 @@ class ChatSessionService:
         async with self._state_lock:
             if self._state == "closed":
                 return
-            self._state = "closed"
+            self._transition_to("closed")
             handle = self._current_execution
             self._current_execution = None
             execution_id = ""
@@ -142,7 +142,7 @@ class ChatSessionService:
         if execution_generation is not None and execution_generation != self._execution_generation:
             return
         if self._state in ("active", "draining"):
-            self._state = "idle"
+            self._transition_to("idle")
 
     def on_execution_died(self, execution_generation: int | None = None) -> None:
         """Clear a dead backend and restore idle state unless fenced as stale."""
@@ -151,7 +151,7 @@ class ChatSessionService:
             return
         self._current_execution = None
         if self._state in ("active", "draining"):
-            self._state = "idle"
+            self._transition_to("idle")
 
 
 __all__ = [
