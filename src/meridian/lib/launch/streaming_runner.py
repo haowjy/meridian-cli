@@ -88,6 +88,7 @@ from meridian.lib.state.spawn_store import (
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 
 if TYPE_CHECKING:
+    from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.harness.connections.base import HarnessEvent
 
 _DEFAULT_CONFIG = MeridianConfig()
@@ -724,131 +725,136 @@ async def execute_with_streaming(
 
     _ = stream_stderr_to_terminal
     resolved_clock = clock or RealClock()
+    started_at = resolved_clock.monotonic()
+    started_at_epoch = resolved_clock.time()
     resolved_heartbeat_touch = heartbeat_touch or (
         lambda: _touch_heartbeat_file(
             runtime_root,
             run.spawn_id,
         )
     )
-    log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
-    output_log_path = log_dir / HISTORY_FILENAME
-    report_path = launch_context.report_output_path
+    exit_code = DEFAULT_INFRA_EXIT_CODE
+    failure_reason: str | None = None
+    extracted: FinalizeExtraction | None = None
+    terminated_after_completion = False
+    final_attempt_terminal_observed = False
+    retries_attempted = 0
+    lifecycle_service: SpawnLifecycleService | None = None
+    manager: SpawnManager | None = None
+    installed_signals: list[signal.Signals] = []
+    loop: asyncio.AbstractEventLoop | None = None
+    received_signal: list[signal.Signals | None] = [None]
 
-    timeout_seconds = (
-        float(request.budget.timeout_secs)
-        if request.budget.timeout_secs is not None
-        else None
-    )
-    max_retries = max(request.retry.max_attempts - 1, 0)
-    retry_backoff_seconds = request.retry.backoff_secs
+    try:
+        log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
+        output_log_path = log_dir / HISTORY_FILENAME
+        report_path = launch_context.report_output_path
 
-    resolved_harness_id = launch_context.harness.id
-    child_cwd = launch_context.child_cwd
-    spec = launch_context.spec
-    child_env = dict(launch_context.env)
-    harness = launch_context.harness
-    harness_bundle = get_harness_bundle(resolved_harness_id)
-
-    spawn_store.update_spawn(
-        runtime_root,
-        run.spawn_id,
-        execution_cwd=str(child_cwd),
-    )
-
-    if (
-        harness.id == HarnessId.CLAUDE
-        and request.session.requested_harness_session_id
-        and request.session.source_execution_cwd
-    ):
-        ensure_claude_session_accessible(
-            source_session_id=request.session.requested_harness_session_id,
-            source_cwd=Path(request.session.source_execution_cwd),
-            child_cwd=child_cwd,
+        timeout_seconds = (
+            float(request.budget.timeout_secs)
+            if request.budget.timeout_secs is not None
+            else None
         )
-    tracer: DebugTracer | None = None
-    if debug:
-        from meridian.lib.observability.debug_tracer import DebugTracer
+        max_retries = max(request.retry.max_attempts - 1, 0)
+        retry_backoff_seconds = request.retry.backoff_secs
 
-        tracer = DebugTracer(
-            spawn_id=str(run.spawn_id),
-            debug_path=log_dir / "debug.jsonl",
-            echo_stderr=stream_stdout_to_terminal,
-        )
+        resolved_harness_id = launch_context.harness.id
+        child_cwd = launch_context.child_cwd
+        spec = launch_context.spec
+        child_env = dict(launch_context.env)
+        harness = launch_context.harness
+        harness_bundle = get_harness_bundle(resolved_harness_id)
 
-    config = ConnectionConfig(
-        spawn_id=run.spawn_id,
-        harness_id=resolved_harness_id,
-        prompt=spec.prompt,
-        project_root=child_cwd,
-        env_overrides=child_env,
-        system=getattr(spec, "appended_system_prompt", None),
-        timeout_seconds=timeout_seconds,
-        debug_tracer=tracer,
-    )
-
-    # I-10: spawn row MUST exist before execute_with_streaming is called.
-    # Mid-flight row creation is forbidden — callers must call start_spawn first.
-    spawn_row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    if spawn_row is None:
-        raise RuntimeError(
-            f"execute_with_streaming precondition violated: "
-            f"no spawn row exists for {run.spawn_id!r}. "
-            "Call start_spawn() before execute_with_streaming()."
-        )
-    spawn_store.update_spawn(
-        runtime_root,
-        run.spawn_id,
-        runner_pid=os.getpid(),
-    )
-    resolved_launch_mode: spawn_store.LaunchMode = (
-        BACKGROUND_LAUNCH_MODE
-        if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
-        else FOREGROUND_LAUNCH_MODE
-    )
-
-    materialized_session_id = (spec.continue_session_id or "").strip()
-    observed_harness_session_id: str | None = None
-    if (
-        materialized_session_id
-        and materialized_session_id != (request.session.requested_harness_session_id or "")
-    ):
         spawn_store.update_spawn(
             runtime_root,
             run.spawn_id,
-            harness_session_id=materialized_session_id,
+            execution_cwd=str(child_cwd),
         )
-        observed_harness_session_id = materialized_session_id
-        if harness_session_id_observer is not None:
-            harness_session_id_observer(materialized_session_id)
 
-    budget_tracker = (
-        LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
-        if budget is not None
-        else None
-    )
-    preflight_breach = budget_tracker.check() if budget_tracker is not None else None
-    manager = SpawnManager(
-        runtime_root=runtime_root,
-        project_root=project_root,
-        heartbeat_interval_secs=heartbeat_interval_secs,
-        heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
-    )
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-    retries_attempted = 0
-    started_at = resolved_clock.monotonic()
-    started_at_epoch = resolved_clock.time()
-    exit_code = DEFAULT_INFRA_EXIT_CODE
-    extracted: FinalizeExtraction | None = None
-    failure_reason: str | None = None
-    terminated_after_completion = False
-    final_attempt_terminal_observed = False
+        if (
+            harness.id == HarnessId.CLAUDE
+            and request.session.requested_harness_session_id
+            and request.session.source_execution_cwd
+        ):
+            ensure_claude_session_accessible(
+                source_session_id=request.session.requested_harness_session_id,
+                source_cwd=Path(request.session.source_execution_cwd),
+                child_cwd=child_cwd,
+            )
+        tracer: DebugTracer | None = None
+        if debug:
+            from meridian.lib.observability.debug_tracer import DebugTracer
 
-    loop = asyncio.get_running_loop()
-    shutdown_event = asyncio.Event()
-    received_signal: list[signal.Signals | None] = [None]
-    installed_signals = _install_signal_handlers(loop, shutdown_event, received_signal)
+            tracer = DebugTracer(
+                spawn_id=str(run.spawn_id),
+                debug_path=log_dir / "debug.jsonl",
+                echo_stderr=stream_stdout_to_terminal,
+            )
 
-    try:
+        config = ConnectionConfig(
+            spawn_id=run.spawn_id,
+            harness_id=resolved_harness_id,
+            prompt=spec.prompt,
+            project_root=child_cwd,
+            env_overrides=child_env,
+            system=getattr(spec, "appended_system_prompt", None),
+            timeout_seconds=timeout_seconds,
+            debug_tracer=tracer,
+        )
+
+        # I-10: spawn row MUST exist before execute_with_streaming is called.
+        # Mid-flight row creation is forbidden — callers must call start_spawn first.
+        spawn_row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+        if spawn_row is None:
+            raise RuntimeError(
+                f"execute_with_streaming precondition violated: "
+                f"no spawn row exists for {run.spawn_id!r}. "
+                "Call start_spawn() before execute_with_streaming()."
+            )
+        spawn_store.update_spawn(
+            runtime_root,
+            run.spawn_id,
+            runner_pid=os.getpid(),
+        )
+        resolved_launch_mode: spawn_store.LaunchMode = (
+            BACKGROUND_LAUNCH_MODE
+            if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
+            else FOREGROUND_LAUNCH_MODE
+        )
+
+        materialized_session_id = (spec.continue_session_id or "").strip()
+        observed_harness_session_id: str | None = None
+        if (
+            materialized_session_id
+            and materialized_session_id != (request.session.requested_harness_session_id or "")
+        ):
+            spawn_store.update_spawn(
+                runtime_root,
+                run.spawn_id,
+                harness_session_id=materialized_session_id,
+            )
+            observed_harness_session_id = materialized_session_id
+            if harness_session_id_observer is not None:
+                harness_session_id_observer(materialized_session_id)
+
+        budget_tracker = (
+            LiveBudgetTracker(budget=budget, space_spent_usd=space_spent_usd)
+            if budget is not None
+            else None
+        )
+        preflight_breach = budget_tracker.check() if budget_tracker is not None else None
+        manager = SpawnManager(
+            runtime_root=runtime_root,
+            project_root=project_root,
+            heartbeat_interval_secs=heartbeat_interval_secs,
+            heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
+        )
+        lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+
+        loop = asyncio.get_running_loop()
+        shutdown_event = asyncio.Event()
+        installed_signals = _install_signal_handlers(loop, shutdown_event, received_signal)
+
         try:
             while True:
                 reset_finalize_attempt_artifacts(
@@ -1126,79 +1132,89 @@ async def execute_with_streaming(
             logger.exception(
                 "Streaming spawn execution failed with infrastructure error.",
                 spawn_id=str(run.spawn_id),
-                harness_id=str(harness.id),
+                harness_id=str(launch_context.harness.id),
             )
             exit_code = DEFAULT_INFRA_EXIT_CODE
             failure_reason = "infrastructure_error"
-        finally:
+    except Exception:
+        exit_code = DEFAULT_INFRA_EXIT_CODE
+        failure_reason = "infrastructure_error"
+        logger.exception(
+            "Streaming spawn setup failed.",
+            spawn_id=str(run.spawn_id),
+            harness_id=str(launch_context.harness.id),
+        )
+    finally:
+        if loop is not None and installed_signals:
             _remove_signal_handlers(loop, installed_signals)
+        if manager is not None:
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
-            duration_seconds = resolved_clock.monotonic() - started_at
-            finalized_usage = extracted.usage if extracted is not None else None
-            durable_report_completion = extracted is not None and has_durable_report_completion(
-                extracted.report.content
+        duration_seconds = resolved_clock.monotonic() - started_at
+        if lifecycle_service is None:
+            lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+        finalized_usage = extracted.usage if extracted is not None else None
+        durable_report_completion = extracted is not None and has_durable_report_completion(
+            extracted.report.content
+        )
+        cancelled = (
+            not final_attempt_terminal_observed
+            and (
+                failure_reason in {"cancelled", "terminated"}
+                or received_signal[0] in {signal.SIGINT, signal.SIGTERM}
             )
-            cancelled = (
-                not final_attempt_terminal_observed
-                and (
-                    failure_reason in {"cancelled", "terminated"}
-                    or received_signal[0] in {signal.SIGINT, signal.SIGTERM}
-                )
+        )
+        status, exit_code, failure_reason = resolve_execution_terminal_state(
+            exit_code=exit_code,
+            failure_reason=failure_reason,
+            cancelled=cancelled,
+            durable_report_completion=durable_report_completion,
+            terminated_after_completion=terminated_after_completion,
+        )
+        with signal_coordinator().mask_sigterm():
+            spawn_service = SpawnApplicationService(
+                runtime_root,
+                lifecycle_service,
+                spawn_manager=manager,
             )
-            status, exit_code, failure_reason = resolve_execution_terminal_state(
-                exit_code=exit_code,
-                failure_reason=failure_reason,
-                cancelled=cancelled,
-                durable_report_completion=durable_report_completion,
-                terminated_after_completion=terminated_after_completion,
+            current_record = spawn_service.get_spawn(run.spawn_id)
+            will_mark_finalizing = (
+                current_record is not None and current_record.status != "finalizing"
             )
-            with signal_coordinator().mask_sigterm():
-                spawn_service = SpawnApplicationService(
-                    runtime_root,
-                    lifecycle_service,
-                    spawn_manager=manager,
-                )
-                current_record = spawn_service.get_spawn(run.spawn_id)
-                will_mark_finalizing = (
-                    current_record is not None and current_record.status != "finalizing"
-                )
-                finalized = await spawn_service.complete_spawn(
-                    run.spawn_id,
-                    status,
-                    exit_code,
-                    origin="runner",
-                    duration_secs=duration_seconds,
-                    total_cost_usd=(
-                        finalized_usage.total_cost_usd if finalized_usage is not None else None
-                    ),
-                    input_tokens=finalized_usage.input_tokens
-                    if finalized_usage is not None
-                    else None,
-                    output_tokens=(
-                        finalized_usage.output_tokens if finalized_usage is not None else None
-                    ),
-                    error=failure_reason,
-                )
-                if finalized and will_mark_finalizing:
-                    try:
-                        resolved_heartbeat_touch()
-                    except Exception:
-                        logger.warning(
-                            "Failed to touch heartbeat after entering finalizing; "
-                            "terminal finalize already written.",
-                            spawn_id=str(run.spawn_id),
-                            harness_id=str(harness.id),
-                            exc_info=True,
-                        )
-                elif not finalized:
-                    logger.info(
-                        "Runner finalize skipped; spawn already terminal or missing.",
+            finalized = await spawn_service.complete_spawn(
+                run.spawn_id,
+                status,
+                exit_code,
+                origin="runner",
+                duration_secs=duration_seconds,
+                total_cost_usd=(
+                    finalized_usage.total_cost_usd if finalized_usage is not None else None
+                ),
+                input_tokens=finalized_usage.input_tokens
+                if finalized_usage is not None
+                else None,
+                output_tokens=(
+                    finalized_usage.output_tokens if finalized_usage is not None else None
+                ),
+                error=failure_reason,
+            )
+            if finalized and will_mark_finalizing:
+                try:
+                    resolved_heartbeat_touch()
+                except Exception:
+                    logger.warning(
+                        "Failed to touch heartbeat after entering finalizing; "
+                        "terminal finalize already written.",
                         spawn_id=str(run.spawn_id),
-                        harness_id=str(harness.id),
+                        harness_id=str(launch_context.harness.id),
+                        exc_info=True,
                     )
-    finally:
-        pass
+            elif not finalized:
+                logger.info(
+                    "Runner finalize skipped; spawn already terminal or missing.",
+                    spawn_id=str(run.spawn_id),
+                    harness_id=str(launch_context.harness.id),
+                )
 
     return exit_code
 
