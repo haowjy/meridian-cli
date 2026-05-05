@@ -215,3 +215,72 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
         encoding="utf-8"
     )
     assert "Watchdog fallback completed." in report
+
+
+@pytest.mark.asyncio
+async def test_setup_failure_produces_terminal_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When setup raises, execute_with_streaming still writes a terminal event."""
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id: _ReportThenHangConnection,
+    )
+
+    run = Spawn(
+        spawn_id=SpawnId("r-setup-fail"),
+        prompt="hello",
+        model=ModelId("gpt-5.3-codex"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-setup-fail",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.CODEX.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+
+    original_update = spawn_store.update_spawn
+    call_count = 0
+
+    def _exploding_update(*args: object, **kwargs: object) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise RuntimeError("Injected setup failure")
+        original_update(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_store, "update_spawn", _exploding_update)
+
+    exit_code = await _execute_with_context(
+        run,
+        request=_build_request(),
+        project_root=tmp_path,
+        runtime_root=runtime_root,
+        artifacts=artifacts,
+        registry=registry,
+        clock=fake_clock,
+        heartbeat_touch=fake_heartbeat.touch,
+    )
+
+    assert exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert row is not None
+    assert row.status == "failed"
+    assert row.exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
+    assert row.error is not None
