@@ -71,14 +71,14 @@ def _patch_alias_resolution(
     resolved_entries: dict[str, AliasEntry],
     catalog_entries: list[AliasEntry] | None = None,
 ) -> None:
-    def resolve_entry(name: str, project_root: Path | None = None) -> AliasEntry:
+    def resolve_entry(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
         _ = project_root
         return resolved_entries.get(
             name,
             _mock_alias(alias="", model_id=name),
         )
 
-    def list_entries(project_root: Path | None = None) -> list[AliasEntry]:
+    def list_entries(project_root: Path | None = None, *, cache=None) -> list[AliasEntry]:
         _ = project_root
         return catalog_entries if catalog_entries is not None else list(resolved_entries.values())
 
@@ -287,7 +287,7 @@ def test_spawn_prepare_derives_harness_from_model_before_default_harness(
     )
     monkeypatch.setattr(
         "meridian.lib.ops.spawn.prepare.resolve_model",
-        lambda name, project_root=None: alias,
+        lambda name, project_root=None, cache=None: alias,
     )
     _patch_alias_resolution(
         monkeypatch,
@@ -327,7 +327,9 @@ def test_spawn_validation_preserves_alias_token_for_policy_defaults(
         default_effort="high",
     )
 
-    def prepare_resolve_model(name: str, project_root: Path | None = None) -> AliasEntry:
+    def prepare_resolve_model(
+        name: str, project_root: Path | None = None, *, cache=None
+    ) -> AliasEntry:
         _ = project_root
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
@@ -383,7 +385,9 @@ def test_spawn_create_dry_run_wire_includes_prepared_model_selection(
         mars_provided_harness=HarnessId.CODEX,
     )
 
-    def prepare_resolve_model(name: str, project_root: Path | None = None) -> AliasEntry:
+    def prepare_resolve_model(
+        name: str, project_root: Path | None = None, *, cache=None
+    ) -> AliasEntry:
         _ = project_root
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
@@ -535,7 +539,7 @@ def test_resolve_policies_errors_on_invalid_same_layer_user_model_with_harness(
 ) -> None:
     _write_minimal_mars_config(tmp_path)
 
-    def reject_model(name: str, project_root: Path | None = None) -> AliasEntry:
+    def reject_model(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
         _ = project_root
         raise ValueError(f"Invalid model '{name}'.")
 
@@ -1456,7 +1460,7 @@ def test_resolve_policies_cli_alias_does_not_double_resolve_final_model(
 
     calls: list[str] = []
 
-    def resolve_once(name: str, project_root: Path | None = None) -> AliasEntry:
+    def resolve_once(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
         _ = project_root
         calls.append(name)
         if name == "gpt":
@@ -1465,7 +1469,7 @@ def test_resolve_policies_cli_alias_does_not_double_resolve_final_model(
             return _mock_alias(alias="", model_id="gpt-5.4-mini")
         return _mock_alias(alias="", model_id=name)
 
-    def list_gpt_alias(project_root: Path | None = None) -> list[AliasEntry]:
+    def list_gpt_alias(project_root: Path | None = None, *, cache=None) -> list[AliasEntry]:
         _ = project_root
         return [_mock_alias(alias="gpt", model_id="gpt-5.4")]
 
@@ -1804,7 +1808,7 @@ def test_resolve_policies_fallback_winner_is_not_re_resolved_after_selection(
 
     calls: list[str] = []
 
-    def resolve_once(name: str, project_root: Path | None = None) -> AliasEntry:
+    def resolve_once(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
         _ = project_root
         calls.append(name)
         if name == "claude-choice":
@@ -1824,7 +1828,7 @@ def test_resolve_policies_fallback_winner_is_not_re_resolved_after_selection(
     monkeypatch.setattr("meridian.lib.launch.policies.resolve_model_entry", resolve_once)
     monkeypatch.setattr(
         "meridian.lib.launch.policies.load_merged_aliases",
-        lambda project_root=None: [
+        lambda project_root=None, cache=None: [
             _mock_alias(alias="codex-fanout", model_id="gpt-5.5", harness=HarnessId.CODEX)
         ],
     )

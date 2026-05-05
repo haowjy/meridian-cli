@@ -1,13 +1,13 @@
 """Spawn create-input validation and payload preparation helpers."""
 
+import json
 from difflib import get_close_matches
 from pathlib import Path
+from typing import cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.catalog.model_aliases import run_mars_models_list_all
-from meridian.lib.catalog.models import load_merged_aliases, resolve_model
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
@@ -35,8 +35,11 @@ from ..runtime import (
 from .models import SpawnCreateInput
 
 logger = structlog.get_logger(__name__)
-_MODEL_CONTEXT_LIMIT = 12
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
+# Backward-compatible monkeypatch target for tests/consumers that asserted the
+# old preflight hook. Validation no longer calls this; definitive resolution
+# happens in build_launch_context().
+resolve_model: object | None = None
 
 
 class _CreateRuntimeView(BaseModel):
@@ -49,57 +52,59 @@ class _CreateRuntimeView(BaseModel):
     harness_registry: HarnessRegistry
 
 
+def _read_local_merged_models(project_root: Path | None) -> dict[str, object]:
+    """Read local mars merged model data without invoking mars."""
+    if project_root is None:
+        return {}
+
+    merged_path = project_root / ".mars" / "models-merged.json"
+    if not merged_path.is_file():
+        return {}
+
+    try:
+        raw = json.loads(merged_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return cast("dict[str, object]", raw)
+
+
 def _model_validation_context(
     requested_model: str,
     *,
     project_root: Path | None,
 ) -> str:
-    aliases = load_merged_aliases(project_root=project_root)
-    mars_models = run_mars_models_list_all(project_root=project_root) or []
-    mars_model_ids = sorted({
-        model_id
-        for model in mars_models
-        if isinstance((model_id := model.get("id")), str) and model_id.strip()
-    })
-    if not aliases and not mars_model_ids:
+    """Build advisory model context from local merged mars data only."""
+    merged = _read_local_merged_models(project_root)
+    if not merged:
         return ""
 
-    available_aliases = ", ".join(
-        f"{entry.alias} -> {entry.model_id} [{entry.harness}]" for entry in aliases
-    )
+    aliases: list[str] = []
+    candidates: list[str] = []
+    for alias_name, alias_data in merged.items():
+        if not alias_name.strip():
+            continue
+        candidates.append(alias_name.strip())
+        if not isinstance(alias_data, dict):
+            continue
+        typed_alias_data = cast("dict[str, object]", alias_data)
+        model_id = typed_alias_data.get("model")
+        if isinstance(model_id, str) and model_id.strip():
+            normalized_model_id = model_id.strip()
+            aliases.append(f"{alias_name.strip()} -> {normalized_model_id}")
+            candidates.append(normalized_model_id)
+    if not aliases:
+        return ""
 
-    if len(mars_model_ids) > _MODEL_CONTEXT_LIMIT:
-        preview = ", ".join(mars_model_ids[:_MODEL_CONTEXT_LIMIT])
-        remaining = len(mars_model_ids) - _MODEL_CONTEXT_LIMIT
-        available_models = f"{preview}, ... (+{remaining} more)"
-    else:
-        available_models = ", ".join(mars_model_ids)
-
-    candidates: list[str] = mars_model_ids.copy()
-    for entry in aliases:
-        candidates.append(entry.alias)
-        candidates.append(str(entry.model_id))
+    context_lines: list[str] = []
+    context_lines.append(f"Available aliases: {', '.join(sorted(aliases))}")
 
     suggestion: str | None = None
     close = get_close_matches(requested_model, candidates, n=1, cutoff=0.5)
     if close:
         suggestion = close[0]
-    else:
-        for candidate in candidates:
-            lowered_candidate = candidate.lower()
-            lowered_requested = requested_model.lower()
-            if lowered_candidate.startswith(lowered_requested) or lowered_requested.startswith(
-                lowered_candidate
-            ):
-                suggestion = candidate
-                break
-
-    context_lines: list[str] = []
-    if available_aliases:
-        context_lines.append(f"Available aliases: {available_aliases}")
-    if available_models:
-        context_lines.append(f"Models: {available_models}")
-    if suggestion is not None:
+    if suggestion:
         context_lines.append(f"Did you mean: {suggestion}?")
     return "\n".join(context_lines)
 
@@ -110,29 +115,42 @@ def _validate_requested_model(
     project_root: str | None,
     explicit_harness: str | None = None,
 ) -> str | None:
+    """Advisory model validation without mars subprocesses.
+
+    Definitive model validation happens later in build_launch_context().
+    This preflight check only uses local .mars/models-merged.json data to
+    provide useful early feedback when available.
+    """
     normalized = requested_model.strip()
     if not normalized:
         return None
 
+    if explicit_harness:
+        # Harness is explicitly specified; allow raw provider/model IDs that
+        # may not match local alias data.
+        return None
+
     explicit_root = Path(project_root).expanduser().resolve() if project_root else None
-    try:
-        # Validation-only path: launch policy resolution remains the source of
-        # truth for canonical model identity/provenance. A future cleanup can
-        # collapse this preflight check into the resolve-once policy pipeline.
-        resolve_model(normalized, project_root=explicit_root)
-    except ValueError:
-        if explicit_harness:
-            # Harness is explicitly specified; allow raw provider/model IDs
-            # that may not match any catalog pattern.
-            return None
-        validation_context = _model_validation_context(normalized, project_root=explicit_root)
-        message = (
-            f"Unknown model '{normalized}'. Run `meridian mars models list` "
-            "to inspect supported models."
-        )
-        if validation_context:
-            message = f"{message}\n{validation_context}"
-        raise ValueError(message) from None
+    if explicit_root is None:
+        return None
+
+    merged = _read_local_merged_models(explicit_root)
+    if not merged:
+        return None
+
+    if normalized in merged:
+        return None
+
+    for alias_data in merged.values():
+        if isinstance(alias_data, dict):
+            typed_alias_data = cast("dict[str, object]", alias_data)
+            model_id = typed_alias_data.get("model")
+            if isinstance(model_id, str) and model_id.strip() == normalized:
+                return None
+
+    validation_context = _model_validation_context(normalized, project_root=explicit_root)
+    if validation_context:
+        return f"Model '{normalized}' not found in local configuration.\n{validation_context}"
 
     return None
 

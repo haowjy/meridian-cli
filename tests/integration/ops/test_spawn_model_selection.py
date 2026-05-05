@@ -51,8 +51,12 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
         prepare_calls.append(name)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
-    def policy_resolve_model(name: str, project_root: Path | None = None) -> AliasEntry:
-        _ = project_root
+    def policy_resolve_model(
+        name: str,
+        project_root: Path | None = None,
+        cache: object | None = None,
+    ) -> AliasEntry:
+        _ = (project_root, cache)
         policy_calls.append(name)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
@@ -66,7 +70,7 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
     )
     monkeypatch.setattr(
         "meridian.lib.launch.policies.load_merged_aliases",
-        lambda project_root=None: [alias, canonical],
+        lambda project_root=None, cache=None: [alias, canonical],
     )
 
     result = spawn_api.spawn_create_sync(
@@ -82,7 +86,7 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
     assert result.status == "dry-run"
     assert result.model == "gpt-5.5"
     assert result.harness_id == "codex"
-    assert prepare_calls == ["gpt55"]
+    assert prepare_calls == []
     assert policy_calls == ["gpt55"]
 
     assert result.to_wire()["model_selection"] == {

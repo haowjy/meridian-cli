@@ -120,7 +120,7 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
     monkeypatch.setattr(
         policies_module,
         "resolve_model_entry",
-        lambda token, project_root=None: AliasEntry(
+        lambda token, project_root=None, cache=None: AliasEntry(
             alias="alias-token",
             model_id=ModelId("canonical-id"),
             resolved_harness=HarnessId.CODEX,
@@ -175,7 +175,7 @@ def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_onl
     monkeypatch.setattr(
         policies_module,
         "resolve_model_entry",
-        lambda token, project_root=None: AliasEntry(
+        lambda token, project_root=None, cache=None: AliasEntry(
             alias="alias-token",
             model_id=ModelId("canonical-id"),
             resolved_harness=HarnessId.CODEX,

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
+from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.context_config import (
     ArbitraryContextConfig,
     ContextConfig,
@@ -450,6 +451,7 @@ def _resolve_surface_request(
     project_paths: ProjectConfigPaths,
     harness_registry: HarnessRegistry,
     dry_run: bool,
+    cache: MarsResultCache | None = None,
 ) -> _SurfaceResolution:
     config = (
         MeridianConfig.model_validate(runtime.config_snapshot)
@@ -473,6 +475,7 @@ def _resolve_surface_request(
         harness_registry=harness_registry,
         configured_default_harness=configured_default_harness,
         skills_readonly=dry_run,
+        cache=cache,
     )
     profile = policies.profile
     has_profile = profile is not None
@@ -559,7 +562,7 @@ def _resolve_surface_request(
         inventory_prompt = (
             build_agent_inventory_prompt(
                 project_root=project_paths.project_root,
-                alias_catalog=None,
+                alias_catalog=policies.alias_catalog,
             )
             or ""
         )
@@ -633,7 +636,7 @@ def _resolve_surface_request(
         if session_mode != "resume":
             inventory_prompt = build_agent_inventory_prompt(
                 project_root=project_paths.project_root,
-                alias_catalog=None,
+                alias_catalog=policies.alias_catalog,
             )
             context_prompt_primary = build_context_prompt(
                 project_root=project_paths.project_root,
@@ -803,6 +806,7 @@ def _build_launch_context_impl(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
+    cache: MarsResultCache | None = None,
 ) -> LaunchContext:
     """Build deterministic launch context from raw request/runtime inputs."""
 
@@ -810,6 +814,8 @@ def _build_launch_context_impl(
         project_root=Path(runtime.project_paths_project_root).expanduser().resolve(),
         execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
     )
+    if cache is None:
+        cache = MarsResultCache()
     workspace_snapshot = resolve_workspace_snapshot_for_launch(project_paths.project_root)
     workspace_roots = get_projectable_roots(workspace_snapshot)
     context_config = load_context_config(project_paths.project_root)
@@ -834,6 +840,7 @@ def _build_launch_context_impl(
             project_paths=project_paths,
             harness_registry=harness_registry,
             dry_run=dry_run,
+            cache=cache,
         )
         resolved_request = surface.request
         harness = surface.harness
@@ -1055,6 +1062,7 @@ def build_launch_context(
     dry_run: bool = False,
     plan_overrides: Mapping[str, str] | None = None,
     runtime_work_id: str | None = None,
+    cache: MarsResultCache | None = None,
 ) -> LaunchContext:
     """Build deterministic launch context without leaking library warnings."""
 
@@ -1067,6 +1075,7 @@ def build_launch_context(
             dry_run=dry_run,
             plan_overrides=plan_overrides,
             runtime_work_id=runtime_work_id,
+            cache=cache,
         )
 
 

@@ -52,11 +52,14 @@ def launch_primary(
 ) -> LaunchResult:
     """Launch the primary agent process and wait for exit."""
 
+    from meridian.lib.catalog.model_aliases import MarsResultCache
+
     from .context import build_launch_context
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
     from .process import run_harness_process
     from .types import LaunchResult
 
+    cache = MarsResultCache()
     runtime = build_primary_launch_runtime(project_root=project_root, execution_cwd=project_root)
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
@@ -81,6 +84,7 @@ def launch_primary(
         harness_registry=harness_registry,
         dry_run=True,
         runtime_work_id=resolved_work_id,
+        cache=cache,
     )
     warning = summarize_composition_warnings(preview_context.warnings)
 
@@ -92,7 +96,7 @@ def launch_primary(
             warning=warning,
         )
 
-    outcome = run_harness_process(preview_context, harness_registry)
+    outcome = run_harness_process(preview_context, harness_registry, cache=cache)
     continue_ref = outcome.resolved_harness_session_id.strip() or None
 
     return LaunchResult(

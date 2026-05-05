@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
     has_durable_report_completion,
@@ -431,6 +432,7 @@ def run_harness_process(
     launch_context: LaunchContext,
     harness_registry: HarnessRegistry,
     *,
+    cache: MarsResultCache | None = None,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture = (
         run_primary_process_with_capture
     ),
@@ -580,6 +582,7 @@ def run_harness_process(
                     harness_registry=harness_registry,
                     plan_overrides=plan_overrides,
                     runtime_work_id=attached_work_id,
+                    cache=cache,
                 )
                 write_projection_artifacts(
                     log_dir=log_dir,

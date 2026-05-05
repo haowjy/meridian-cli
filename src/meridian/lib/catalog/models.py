@@ -7,6 +7,9 @@ from pathlib import Path
 
 from meridian.lib.catalog.model_aliases import (
     AliasEntry,
+    MarsResultCache,
+    cached_mars_models_list_all,
+    cached_mars_models_resolve,
     load_mars_aliases,
     run_mars_models_list_all,
     run_mars_models_resolve,
@@ -15,13 +18,22 @@ from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.types import HarnessId, ModelId
 
 
-def load_merged_aliases(project_root: Path | None = None) -> list[AliasEntry]:
+def load_merged_aliases(
+    project_root: Path | None = None,
+    *,
+    cache: MarsResultCache | None = None,
+) -> list[AliasEntry]:
     """Load model aliases from mars packages."""
     resolved_root = resolve_project_root(project_root) if project_root is not None else None
-    return load_mars_aliases(resolved_root)
+    return load_mars_aliases(resolved_root, cache=cache)
 
 
-def resolve_model(name_or_alias: str, project_root: Path | None = None) -> AliasEntry:
+def resolve_model(
+    name_or_alias: str,
+    project_root: Path | None = None,
+    *,
+    cache: MarsResultCache | None = None,
+) -> AliasEntry:
     """Resolve alias to model id, or pass through a direct model identifier.
 
     Resolution: mars resolve -> lazy exact-ID guard -> raw model ID passthrough.
@@ -48,7 +60,12 @@ def resolve_model(name_or_alias: str, project_root: Path | None = None) -> Alias
         )
 
     def find_exact_id_match() -> dict[str, object] | None:
-        for model in run_mars_models_list_all(project_root) or []:
+        models = (
+            cached_mars_models_list_all(project_root, cache=cache)
+            if cache is not None
+            else run_mars_models_list_all(project_root)
+        )
+        for model in models or []:
             model_id = model.get("id")
             if not isinstance(model_id, str) or model_id.strip() != normalized:
                 continue
@@ -90,7 +107,11 @@ def resolve_model(name_or_alias: str, project_root: Path | None = None) -> Alias
 
     # Step 1: Try mars resolve (alias + harness in one call) before the
     # expensive all-models exact-ID guard.
-    mars_result = run_mars_models_resolve(normalized, project_root)
+    mars_result = (
+        cached_mars_models_resolve(normalized, project_root, cache=cache)
+        if cache is not None
+        else run_mars_models_resolve(normalized, project_root)
+    )
     if mars_result is not None:
         model_id = mars_result.get("model_id")
         if isinstance(model_id, str) and model_id.strip():
@@ -115,4 +136,4 @@ def resolve_model(name_or_alias: str, project_root: Path | None = None) -> Alias
     return AliasEntry(alias="", model_id=ModelId(normalized), resolved_harness=None)
 
 
-__all__ = ["AliasEntry", "ModelId", "resolve_model"]
+__all__ = ["AliasEntry", "MarsResultCache", "ModelId", "resolve_model"]

@@ -79,7 +79,6 @@ from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_eff
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.telemetry import emit_telemetry
-from meridian.server.main import run_server
 
 
 class GlobalOptions(BaseModel):
@@ -372,6 +371,7 @@ def root(
 @app.command(name="serve")
 def serve() -> None:
     """Start FastMCP server on stdio."""
+    from meridian.server.main import run_server
 
     run_server()
 

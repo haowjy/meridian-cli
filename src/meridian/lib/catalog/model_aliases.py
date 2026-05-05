@@ -14,6 +14,7 @@ import logging
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -105,6 +106,101 @@ def _coerce_optional_int(value: object) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def _normalize_project_root_key(project_root: Path | None) -> str:
+    """Normalize a project root path into a stable cache key string.
+
+    Returns empty string for None, otherwise the resolved posix path.
+    """
+    if project_root is None:
+        return ""
+    return project_root.resolve().as_posix()
+
+
+def _resolve_cache_key(name: str, project_root: Path | None) -> tuple[str, str]:
+    """Build a cache key for mars models resolve queries."""
+    return (name.strip(), _normalize_project_root_key(project_root))
+
+
+def _list_cache_key(project_root: Path | None) -> str:
+    """Build a cache key for mars models list queries."""
+    return _normalize_project_root_key(project_root)
+
+
+def _list_all_cache_key(project_root: Path | None) -> str:
+    """Build a cache key for mars models list --all queries."""
+    return _normalize_project_root_key(project_root)
+
+
+_SENTINEL = object()
+
+
+@dataclass
+class MarsResultCache:
+    """Operation-scoped cache for mars subprocess results.
+
+    Created at the top of a launch operation and threaded through
+    resolve_model, load_merged_aliases, etc. Prevents redundant
+    mars subprocess calls within a single CLI invocation.
+
+    Safety: scoped to one operation. Transient None results are cached within
+    the operation. Not module-global.
+    """
+
+    _resolve: dict[tuple[str, str], dict[str, object] | None] = field(
+        default_factory=lambda: cast("dict[tuple[str, str], dict[str, object] | None]", {})
+    )
+    _list: dict[str, list[dict[str, object]] | None] = field(
+        default_factory=lambda: cast("dict[str, list[dict[str, object]] | None]", {})
+    )
+    _list_all: dict[str, list[dict[str, object]] | None] = field(
+        default_factory=lambda: cast("dict[str, list[dict[str, object]] | None]", {})
+    )
+
+    def get_resolve(
+        self,
+        name: str,
+        project_root: Path | None,
+    ) -> dict[str, object] | None | object:
+        """Return cached resolve result, or _SENTINEL if not cached."""
+        key = _resolve_cache_key(name, project_root)
+        return self._resolve.get(key, _SENTINEL)
+
+    def put_resolve(
+        self,
+        name: str,
+        project_root: Path | None,
+        result: dict[str, object] | None,
+    ) -> None:
+        key = _resolve_cache_key(name, project_root)
+        self._resolve[key] = result
+
+    def get_list(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
+        """Return cached list result, or _SENTINEL if not cached."""
+        key = _list_cache_key(project_root)
+        return self._list.get(key, _SENTINEL)
+
+    def put_list(
+        self,
+        project_root: Path | None,
+        result: list[dict[str, object]] | None,
+    ) -> None:
+        key = _list_cache_key(project_root)
+        self._list[key] = result
+
+    def get_list_all(self, project_root: Path | None) -> list[dict[str, object]] | None | object:
+        """Return cached list-all result, or _SENTINEL if not cached."""
+        key = _list_all_cache_key(project_root)
+        return self._list_all.get(key, _SENTINEL)
+
+    def put_list_all(
+        self,
+        project_root: Path | None,
+        result: list[dict[str, object]] | None,
+    ) -> None:
+        key = _list_all_cache_key(project_root)
+        self._list_all[key] = result
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +400,55 @@ def run_mars_models_resolve(
     return cast("dict[str, object]", payload)
 
 
+def cached_mars_models_resolve(
+    name: str,
+    project_root: Path | None = None,
+    *,
+    cache: MarsResultCache | None = None,
+) -> dict[str, object] | None:
+    """Resolve a model through mars, using cache if provided."""
+    if cache is not None:
+        cached = cache.get_resolve(name, project_root)
+        if cached is not _SENTINEL:
+            return cast("dict[str, object] | None", cached)
+    result = run_mars_models_resolve(name, project_root)
+    if cache is not None:
+        cache.put_resolve(name, project_root, result)
+    return result
+
+
+def cached_mars_models_list(
+    project_root: Path | None = None,
+    *,
+    cache: MarsResultCache | None = None,
+) -> list[dict[str, object]] | None:
+    """List models through mars, using cache if provided."""
+    if cache is not None:
+        cached = cache.get_list(project_root)
+        if cached is not _SENTINEL:
+            return cast("list[dict[str, object]] | None", cached)
+    result = _run_mars_models_list(project_root)
+    if cache is not None:
+        cache.put_list(project_root, result)
+    return result
+
+
+def cached_mars_models_list_all(
+    project_root: Path | None = None,
+    *,
+    cache: MarsResultCache | None = None,
+) -> list[dict[str, object]] | None:
+    """List all models through mars, using cache if provided."""
+    if cache is not None:
+        cached = cache.get_list_all(project_root)
+        if cached is not _SENTINEL:
+            return cast("list[dict[str, object]] | None", cached)
+    result = run_mars_models_list_all(project_root)
+    if cache is not None:
+        cache.put_list_all(project_root, result)
+    return result
+
+
 def _read_mars_merged_file(project_root: Path | None = None) -> dict[str, object]:
     """Read ``.mars/models-merged.json`` directly (dep-only aliases).
 
@@ -387,7 +532,11 @@ def _mars_merged_to_entries(merged: dict[str, object]) -> list[AliasEntry]:
     return entries
 
 
-def load_mars_aliases(project_root: Path | None = None) -> list[AliasEntry]:
+def load_mars_aliases(
+    project_root: Path | None = None,
+    *,
+    cache: MarsResultCache | None = None,
+) -> list[AliasEntry]:
     """Load model aliases from mars.
 
     Prefers ``mars models list --json`` for the full resolved view
@@ -395,7 +544,7 @@ def load_mars_aliases(project_root: Path | None = None) -> list[AliasEntry]:
     reading ``.mars/models-merged.json`` if the mars binary isn't available.
     """
     # Try mars CLI first — it returns fully resolved aliases
-    mars_list = _run_mars_models_list(project_root)
+    mars_list = cached_mars_models_list(project_root, cache=cache)
     if mars_list is not None:
         entries = _mars_list_to_entries(mars_list)
         if entries:
@@ -450,3 +599,16 @@ def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
             descriptions[model_id.strip()] = description.strip()
 
     return descriptions
+
+
+__all__ = [
+    "AliasEntry",
+    "MarsResultCache",
+    "cached_mars_models_list",
+    "cached_mars_models_list_all",
+    "cached_mars_models_resolve",
+    "load_mars_aliases",
+    "load_mars_descriptions",
+    "run_mars_models_list_all",
+    "run_mars_models_resolve",
+]
