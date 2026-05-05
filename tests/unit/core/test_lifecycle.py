@@ -437,6 +437,22 @@ def test_spawn_finalized_dispatched_when_authoritative_overrides_reconciler(
     assert finalized[0].origin == "runner"
 
 
+def test_spawn_finalized_not_dispatched_for_rejected_authoritative_loser(
+    tmp_path: Path,
+) -> None:
+    """Rejected terminal writes must not emit lifecycle hooks."""
+    hook = RecordingHook()
+    svc = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(svc, status="running")
+
+    svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+    hook.events.clear()
+    transitioned = svc.finalize(spawn_id, "failed", 1, origin="launcher")
+
+    assert transitioned is False
+    assert [event.event_type for event in hook.events] == []
+
+
 # ---------------------------------------------------------------------------
 # 6. Hook exceptions don't block transitions
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.events import reduce_events
+from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 
 logger = structlog.get_logger(__name__)
 
@@ -536,8 +537,7 @@ def finalize_spawn(
 ) -> FinalizeOutcome:
     """Append a finalize event and return write/transition details.
 
-    Always writes the event so metadata is never lost -- the projection
-    merges duration, cost, and token counts from every finalize event.
+    Writes only when the terminal write policy accepts the incoming finalize.
     ``outcome.transitioned`` is True when the spawn was active (queued,
     running, or finalizing) before this call, meaning this writer is the one
     that moved it to a terminal state. It is False when the spawn was already
@@ -554,14 +554,21 @@ def finalize_spawn(
     with lock_file(paths.spawns_flock):
         records = reduce_events(resolved_repository.read_events())
         record = records.get(str(spawn_id))
-        if origin == "reconciler" and (
-            record is None or record.status in _TERMINAL_SPAWN_STATUSES
-        ):
+        decision = decide_terminal_write(
+            current_status=record.status if record is not None else None,
+            current_terminal_origin=record.terminal_origin if record is not None else None,
+            incoming_origin=origin,
+        )
+        if decision.disposition == "reject":
             logger.info(
-                "Reconciler finalize rejected because row was missing or already terminal.",
+                "Finalize rejected by terminal write policy.",
                 spawn_id=str(spawn_id),
                 current_status=record.status if record is not None else None,
+                current_terminal_origin=(
+                    record.terminal_origin if record is not None else None
+                ),
                 attempted_status=status,
+                attempted_origin=origin,
                 attempted_error=error,
             )
             return FinalizeOutcome(transitioned=False, wrote=False, snapshot=record)

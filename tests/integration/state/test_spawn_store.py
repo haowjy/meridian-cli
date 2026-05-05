@@ -34,6 +34,19 @@ def _start_test_spawn(runtime_root: Path) -> str:
     )
 
 
+def _count_finalize_events(runtime_root: Path, spawn_id: str) -> int:
+    count = 0
+    with (runtime_root / "spawns.jsonl").open(encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("event") == "finalize" and payload.get("id") == spawn_id:
+                count += 1
+    return count
+
+
 def _write_mixed_valid_and_malformed_spawns_jsonl(runtime_root: Path) -> None:
     spawns_jsonl = runtime_root / "spawns.jsonl"
     with spawns_jsonl.open("w", encoding="utf-8") as handle:
@@ -271,6 +284,124 @@ def test_projection_authority_reconciler_then_runner_replaces_terminal_tuple(
     assert row.error is None
     assert row.terminal_origin == "runner"
     assert row.duration_secs == 12.5
+
+
+def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) -> None:
+    """CR2.1: A second authoritative finalizer is rejected."""
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    first = finalize_spawn(
+        runtime_root,
+        spawn_id,
+        status="succeeded",
+        exit_code=0,
+        origin="runner",
+    )
+    second = finalize_spawn(
+        runtime_root,
+        spawn_id,
+        status="failed",
+        exit_code=1,
+        origin="launcher",
+        duration_secs=99.0,
+        total_cost_usd=5.0,
+        error="loser",
+    )
+
+    assert first.wrote is True
+    assert first.transitioned is True
+    assert second.wrote is False
+    assert second.transitioned is False
+    assert _count_finalize_events(runtime_root, spawn_id) == 1
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.exit_code == 0
+    assert row.duration_secs is None
+    assert row.total_cost_usd is None
+    assert row.error is None
+    assert row.terminal_origin == "runner"
+
+
+def test_finalize_allows_authoritative_to_replace_reconciler_terminal(
+    tmp_path: Path,
+) -> None:
+    """CR2.3: Authoritative finalize replaces reconciler terminal."""
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    reconciler = finalize_spawn(
+        runtime_root,
+        spawn_id,
+        status="failed",
+        exit_code=1,
+        origin="reconciler",
+        error="orphan_run",
+    )
+    runner = finalize_spawn(
+        runtime_root,
+        spawn_id,
+        status="succeeded",
+        exit_code=0,
+        origin="runner",
+        duration_secs=30.0,
+        total_cost_usd=2.0,
+    )
+
+    assert reconciler.wrote is True
+    assert reconciler.transitioned is True
+    assert runner.wrote is True
+    assert runner.transitioned is False
+    assert _count_finalize_events(runtime_root, spawn_id) == 2
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.exit_code == 0
+    assert row.error is None
+    assert row.terminal_origin == "runner"
+    assert row.duration_secs == 30.0
+    assert row.total_cost_usd == 2.0
+
+
+def test_concurrent_authoritative_finalizers_persist_one_winner(
+    tmp_path: Path,
+) -> None:
+    """CR2.1: store-level flock admits one authoritative terminal writer."""
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    def finalize(attempt: tuple[SpawnStatus, int, float]) -> tuple[bool, bool]:
+        status, exit_code, duration = attempt
+        outcome = finalize_spawn(
+            runtime_root,
+            spawn_id,
+            status=status,
+            exit_code=exit_code,
+            origin="runner",
+            duration_secs=duration,
+        )
+        return outcome.wrote, outcome.transitioned
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(
+            pool.map(
+                finalize,
+                (
+                    ("succeeded", 0, 10.0),
+                    ("failed", 1, 99.0),
+                ),
+            )
+        )
+
+    assert sorted(outcomes) == [(False, False), (True, True)]
+    assert _count_finalize_events(runtime_root, spawn_id) == 1
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status in {"succeeded", "failed"}
+    assert row.duration_secs in {10.0, 99.0}
 
 
 def test_finalize_spawn_reconciler_writes_through_finalizing_row(tmp_path: Path) -> None:
