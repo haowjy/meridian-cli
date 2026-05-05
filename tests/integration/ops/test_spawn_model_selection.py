@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.ops.spawn.models import SpawnCreateInput
@@ -51,12 +52,7 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
         prepare_calls.append(name)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
-    def policy_resolve_model(
-        name: str,
-        project_root: Path | None = None,
-        cache: object | None = None,
-    ) -> AliasEntry:
-        _ = (project_root, cache)
+    def policy_resolve_model(self: CatalogSession, name: str) -> AliasEntry:
         policy_calls.append(name)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
@@ -65,12 +61,14 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
         prepare_resolve_model,
     )
     monkeypatch.setattr(
-        "meridian.lib.launch.policies.resolve_model_entry",
+        CatalogSession,
+        "resolve_model",
         policy_resolve_model,
     )
     monkeypatch.setattr(
-        "meridian.lib.launch.policies.load_merged_aliases",
-        lambda project_root=None, cache=None: [alias, canonical],
+        CatalogSession,
+        "load_aliases",
+        lambda self: [alias, canonical],
     )
 
     result = spawn_api.spawn_create_sync(

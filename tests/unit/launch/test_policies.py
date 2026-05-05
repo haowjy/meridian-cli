@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -17,8 +18,10 @@ from meridian.lib.launch.plan import (
 from meridian.lib.launch.policies import (
     _resolve_model_policy_overrides,
     match_model_policy,
-    resolve_policies,
     validate_harness_compatibility,
+)
+from meridian.lib.launch.policies import (
+    resolve_policies as _resolve_policies_impl,
 )
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -71,24 +74,25 @@ def _patch_alias_resolution(
     resolved_entries: dict[str, AliasEntry],
     catalog_entries: list[AliasEntry] | None = None,
 ) -> None:
-    def resolve_entry(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
-        _ = project_root
+    def resolve_entry(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
         return resolved_entries.get(
             name,
             _mock_alias(alias="", model_id=name),
         )
 
-    def list_entries(project_root: Path | None = None, *, cache=None) -> list[AliasEntry]:
-        _ = project_root
+    def list_entries(self: CatalogSession) -> list[AliasEntry]:
+        _ = self
         return catalog_entries if catalog_entries is not None else list(resolved_entries.values())
 
-    monkeypatch.setattr(
-        "meridian.lib.launch.policies.resolve_model_entry",
-        resolve_entry,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.launch.policies.load_merged_aliases",
-        list_entries,
+    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_entry)
+    monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
+
+
+def resolve_policies(*, project_root: Path, **kwargs):
+    return _resolve_policies_impl(
+        catalog=CatalogSession(project_root),
+        **kwargs,
     )
 
 
@@ -539,11 +543,11 @@ def test_resolve_policies_errors_on_invalid_same_layer_user_model_with_harness(
 ) -> None:
     _write_minimal_mars_config(tmp_path)
 
-    def reject_model(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
-        _ = project_root
+    def reject_model(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
         raise ValueError(f"Invalid model '{name}'.")
 
-    monkeypatch.setattr("meridian.lib.launch.policies.resolve_model_entry", reject_model)
+    monkeypatch.setattr(CatalogSession, "resolve_model", reject_model)
 
     with pytest.raises(ValueError, match="Invalid model 'bad-model'"):
         resolve_policies(
@@ -1460,8 +1464,8 @@ def test_resolve_policies_cli_alias_does_not_double_resolve_final_model(
 
     calls: list[str] = []
 
-    def resolve_once(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
-        _ = project_root
+    def resolve_once(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
         calls.append(name)
         if name == "gpt":
             return _mock_alias(alias="gpt", model_id="gpt-5.4")
@@ -1469,15 +1473,12 @@ def test_resolve_policies_cli_alias_does_not_double_resolve_final_model(
             return _mock_alias(alias="", model_id="gpt-5.4-mini")
         return _mock_alias(alias="", model_id=name)
 
-    def list_gpt_alias(project_root: Path | None = None, *, cache=None) -> list[AliasEntry]:
-        _ = project_root
+    def list_gpt_alias(self: CatalogSession) -> list[AliasEntry]:
+        _ = self
         return [_mock_alias(alias="gpt", model_id="gpt-5.4")]
 
-    monkeypatch.setattr("meridian.lib.launch.policies.resolve_model_entry", resolve_once)
-    monkeypatch.setattr(
-        "meridian.lib.launch.policies.load_merged_aliases",
-        list_gpt_alias,
-    )
+    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_once)
+    monkeypatch.setattr(CatalogSession, "load_aliases", list_gpt_alias)
 
     policies = resolve_policies(
         project_root=tmp_path,
@@ -1808,8 +1809,8 @@ def test_resolve_policies_fallback_winner_is_not_re_resolved_after_selection(
 
     calls: list[str] = []
 
-    def resolve_once(name: str, project_root: Path | None = None, *, cache=None) -> AliasEntry:
-        _ = project_root
+    def resolve_once(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
         calls.append(name)
         if name == "claude-choice":
             return _mock_alias(
@@ -1825,10 +1826,11 @@ def test_resolve_policies_fallback_winner_is_not_re_resolved_after_selection(
             )
         return _mock_alias(alias="", model_id=name)
 
-    monkeypatch.setattr("meridian.lib.launch.policies.resolve_model_entry", resolve_once)
+    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_once)
     monkeypatch.setattr(
-        "meridian.lib.launch.policies.load_merged_aliases",
-        lambda project_root=None, cache=None: [
+        CatalogSession,
+        "load_aliases",
+        lambda self: [
             _mock_alias(alias="codex-fanout", model_id="gpt-5.5", harness=HarnessId.CODEX)
         ],
     )

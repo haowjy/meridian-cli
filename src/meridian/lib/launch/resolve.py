@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -13,7 +14,19 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry
 
-from .prompt import load_skill_contents
+
+def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
+    """Normalize and de-duplicate skill names while preserving first-seen order."""
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in names:
+        normalized = raw.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
+    return tuple(ordered)
 
 
 def load_agent_profile_with_fallback(
@@ -95,6 +108,8 @@ def resolve_skills_from_profile(
     resolved_skill_names = tuple(
         skill_name for skill_name in profile_skills if skill_name in available_skill_names
     )
+    from .prompt import load_skill_contents
+
     loaded_skills = load_skill_contents(
         registry,
         resolved_skill_names,
@@ -206,6 +221,7 @@ def resolve_harness(
 
 __all__ = [
     "ResolvedSkills",
+    "dedupe_skill_names",
     "format_missing_skills_warning",
     "load_agent_profile_with_fallback",
     "resolve_harness",

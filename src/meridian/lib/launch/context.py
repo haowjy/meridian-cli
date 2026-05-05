@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.context_config import (
     ArbitraryContextConfig,
@@ -70,7 +71,6 @@ from .prompt import (
     build_report_instruction,
     compose_skill_injections,
     compose_skill_prompt_documents,
-    dedupe_skill_names,
     sanitize_prior_output,
     strip_stale_report_paths,
 )
@@ -87,6 +87,7 @@ from .request import (
     SpawnRequest,
 )
 from .resolve import (
+    dedupe_skill_names,
     format_missing_skills_warning,
     resolve_profile_path,
     resolve_skill_paths,
@@ -451,7 +452,7 @@ def _resolve_surface_request(
     project_paths: ProjectConfigPaths,
     harness_registry: HarnessRegistry,
     dry_run: bool,
-    cache: MarsResultCache | None = None,
+    catalog: CatalogSession,
 ) -> _SurfaceResolution:
     config = (
         MeridianConfig.model_validate(runtime.config_snapshot)
@@ -468,14 +469,13 @@ def _resolve_surface_request(
         configured_default_harness = config.default_harness
 
     policies = resolve_policies(
-        project_root=project_paths.project_root,
+        catalog=catalog,
         layers=(cli_overrides, env_overrides),
         config_overrides=config_overrides,
         config=config,
         harness_registry=harness_registry,
         configured_default_harness=configured_default_harness,
         skills_readonly=dry_run,
-        cache=cache,
     )
     profile = policies.profile
     has_profile = profile is not None
@@ -814,8 +814,7 @@ def _build_launch_context_impl(
         project_root=Path(runtime.project_paths_project_root).expanduser().resolve(),
         execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
     )
-    if cache is None:
-        cache = MarsResultCache()
+    catalog = CatalogSession(project_paths.project_root, cache=cache)
     workspace_snapshot = resolve_workspace_snapshot_for_launch(project_paths.project_root)
     workspace_roots = get_projectable_roots(workspace_snapshot)
     context_config = load_context_config(project_paths.project_root)
@@ -840,7 +839,7 @@ def _build_launch_context_impl(
             project_paths=project_paths,
             harness_registry=harness_registry,
             dry_run=dry_run,
-            cache=cache,
+            catalog=catalog,
         )
         resolved_request = surface.request
         harness = surface.harness

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-import meridian.lib.launch.policies as policies_module
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -118,9 +118,9 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        policies_module,
-        "resolve_model_entry",
-        lambda token, project_root=None, cache=None: AliasEntry(
+        CatalogSession,
+        "resolve_model",
+        lambda self, token: AliasEntry(
             alias="alias-token",
             model_id=ModelId("canonical-id"),
             resolved_harness=HarnessId.CODEX,
@@ -173,9 +173,9 @@ def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_onl
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        policies_module,
-        "resolve_model_entry",
-        lambda token, project_root=None, cache=None: AliasEntry(
+        CatalogSession,
+        "resolve_model",
+        lambda self, token: AliasEntry(
             alias="alias-token",
             model_id=ModelId("canonical-id"),
             resolved_harness=HarnessId.CODEX,

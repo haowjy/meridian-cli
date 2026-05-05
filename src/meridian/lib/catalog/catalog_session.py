@@ -26,9 +26,9 @@ class CatalogSession:
     _cache: MarsResultCache = field(default_factory=MarsResultCache, init=False)
     _alias_map: dict[str, AliasEntry] | None = field(default=None, init=False)
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, cache: MarsResultCache | None = None) -> None:
         self._project_root = project_root
-        self._cache = MarsResultCache()
+        self._cache = cache or MarsResultCache()
         self._alias_map = None
 
     @property

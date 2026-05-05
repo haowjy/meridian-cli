@@ -2,7 +2,7 @@
 
 import importlib
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +18,8 @@ from meridian.lib.launch.reference import (
     resolve_template_variables,
     substitute_template_variables,
 )
+
+from .resolve import dedupe_skill_names
 
 _CANONICAL_REPORT_BLOCK_RE = re.compile(
     r"""(?ms)
@@ -60,20 +62,6 @@ _PRIOR_OUTPUT_OPEN = "<prior-run-output>"
 _PRIOR_OUTPUT_CLOSE = "</prior-run-output>"
 _ESCAPED_PRIOR_OUTPUT_OPEN = "<\\prior-run-output>"
 _ESCAPED_PRIOR_OUTPUT_CLOSE = "<\\/prior-run-output>"
-
-
-def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
-    """Normalize and de-duplicate skill names while preserving first-seen order."""
-
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for raw in names:
-        normalized = raw.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered.append(normalized)
-    return tuple(ordered)
 
 
 def dedupe_skill_contents(skills: Sequence[SkillContent]) -> tuple[SkillContent, ...]:
