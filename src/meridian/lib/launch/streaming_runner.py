@@ -1150,7 +1150,10 @@ async def execute_with_streaming(
         if manager is not None:
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
-        duration_seconds = resolved_clock.monotonic() - started_at
+        try:
+            duration_seconds = resolved_clock.monotonic() - started_at
+        except Exception:
+            duration_seconds = 0.0
         if lifecycle_service is None:
             lifecycle_service = create_lifecycle_service(project_root, runtime_root)
         finalized_usage = extracted.usage if extracted is not None else None
