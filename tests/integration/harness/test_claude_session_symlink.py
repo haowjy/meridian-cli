@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.claude import project_slug
-from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
+from meridian.lib.harness.claude_preflight import (
+    ensure_claude_session_accessible,
+    prepare_isolated_claude_config,
+)
 from meridian.lib.platform import IS_WINDOWS
 
 
@@ -145,3 +148,103 @@ def test_ensure_claude_session_accessible_uses_explicit_source_and_target_roots(
     else:
         assert target_file.is_symlink()
         assert target_file.resolve() == source_file.resolve()
+
+
+def test_prepare_isolated_claude_config_creates_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_root = tmp_path / "user-claude"
+    user_root.mkdir()
+    immutable_file = user_root / "settings.json"
+    immutable_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+
+    isolated_root, original_env = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root == tmp_path / "runtime" / "claude-config" / "p1"
+    assert original_env == user_root.as_posix()
+    assert isolated_root is not None
+    target = isolated_root / "settings.json"
+    assert target.exists()
+    if IS_WINDOWS:
+        assert target.read_text(encoding="utf-8") == "{}"
+    else:
+        assert target.is_symlink()
+        assert target.resolve() == immutable_file.resolve()
+
+
+def test_prepare_isolated_claude_config_isolates_projects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_root = tmp_path / "user-claude"
+    source_project = user_root / "projects" / "source"
+    source_project.mkdir(parents=True)
+    (source_project / "session.jsonl").write_text("source\n", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+
+    isolated_root, _ = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    assert (isolated_root / "projects").is_dir()
+    assert list((isolated_root / "projects").iterdir()) == []
+
+
+@pytest.mark.parametrize("name", ("statsig", "memory", "cached_preferences", "todos"))
+def test_prepare_isolated_claude_config_copies_mutable_paths(
+    name: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_root = tmp_path / "user-claude"
+    mutable_dir = user_root / name
+    mutable_dir.mkdir(parents=True)
+    source_file = mutable_dir / "state.json"
+    source_file.write_text("before", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+
+    isolated_root, _ = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    copied_file = isolated_root / name / "state.json"
+    assert copied_file.read_text(encoding="utf-8") == "before"
+    source_file.write_text("after", encoding="utf-8")
+    assert copied_file.read_text(encoding="utf-8") == "before"
+
+
+def test_prepare_isolated_claude_config_handles_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_root = tmp_path / "user-claude"
+    user_root.mkdir()
+    credentials = user_root / ".claude.json"
+    credentials.write_text('{"auth":true}', encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+
+    isolated_root, _ = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    isolated_credentials = isolated_root / ".claude.json"
+    assert isolated_credentials.exists()
+    assert isolated_credentials.read_text(encoding="utf-8") == '{"auth":true}'
+    if not IS_WINDOWS:
+        assert isolated_credentials.is_symlink()
+        assert isolated_credentials.resolve() == credentials.resolve()
+
+
+def test_prepare_isolated_claude_config_failure_returns_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_root = tmp_path / "user-claude"
+    user_root.mkdir()
+    runtime_root = tmp_path / "runtime-file"
+    runtime_root.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+
+    isolated_root, original_env = prepare_isolated_claude_config(runtime_root, "p1")
+
+    assert isolated_root is None
+    assert original_env == user_root.as_posix()

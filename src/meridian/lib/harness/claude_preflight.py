@@ -20,12 +20,87 @@ logger = structlog.get_logger(__name__)
 
 # Internal sentinel consumed by Claude projection; never forwarded to the CLI.
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
+_MUTABLE_PATHS = frozenset({"statsig", "memory", "cached_preferences", "todos"})
+
+
+def _claude_config_root() -> Path:
+    """Resolve the user's real Claude config root."""
+
+    configured = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return get_home_path() / ".claude"
 
 
 def project_slug(project_root: Path) -> str:
     """Map a repo path to Claude's on-disk project slug format."""
 
     return re.sub(r"[^a-zA-Z0-9]", "-", str(project_root.resolve()))
+
+
+def _copy_or_link_claude_config_entry(entry: Path, target: Path) -> None:
+    """Materialize one non-project Claude config entry into an overlay."""
+
+    if entry.name in _MUTABLE_PATHS:
+        if entry.is_dir():
+            shutil.copytree(entry, target, symlinks=True)
+        else:
+            shutil.copy2(entry, target)
+        return
+
+    if IS_WINDOWS:
+        if entry.is_dir():
+            import _winapi as winapi
+
+            winapi.CreateJunction(str(entry), str(target))  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        else:
+            shutil.copy2(entry, target)
+        return
+
+    os.symlink(entry, target)
+
+
+def prepare_isolated_claude_config(
+    runtime_root: Path,
+    spawn_id: str,
+) -> tuple[Path | None, str]:
+    """Create an overlay config dir isolating Claude's projects/ subtree.
+
+    Returns the isolated root, or ``None`` when setup fails, plus the original
+    ``CLAUDE_CONFIG_DIR`` environment value (empty string when unset).
+    """
+
+    original_env = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    user_root = _claude_config_root()
+    isolated_root = runtime_root / "claude-config" / spawn_id
+
+    try:
+        isolated_root.mkdir(parents=True, exist_ok=True)
+
+        if user_root.is_dir():
+            for entry in user_root.iterdir():
+                target = isolated_root / entry.name
+                if target.exists() or target.is_symlink() or entry.name == "projects":
+                    continue
+                _copy_or_link_claude_config_entry(entry, target)
+
+        (isolated_root / "projects").mkdir(exist_ok=True)
+
+        user_credentials = user_root / ".claude.json"
+        isolated_credentials = isolated_root / ".claude.json"
+        if user_credentials.is_file() and not isolated_credentials.exists():
+            if IS_WINDOWS:
+                shutil.copy2(user_credentials, isolated_credentials)
+            else:
+                os.symlink(user_credentials, isolated_credentials)
+    except OSError:
+        logger.warning(
+            "Failed to create isolated Claude config; proceeding without isolation",
+            exc_info=True,
+        )
+        return None, original_env
+
+    return isolated_root, original_env
 
 
 def ensure_claude_session_accessible(
@@ -203,6 +278,7 @@ __all__ = [
     "build_claude_preflight_result",
     "ensure_claude_session_accessible",
     "expand_claude_passthrough_args",
+    "prepare_isolated_claude_config",
     "project_slug",
     "read_parent_claude_permissions",
 ]

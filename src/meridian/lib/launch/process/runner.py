@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -40,6 +41,7 @@ from meridian.lib.state.session_store import (
     get_session_active_work_id,
     start_session,
     stop_session,
+    update_session_claude_config_dir,
     update_session_harness_id,
     update_session_work_id,
 )
@@ -464,6 +466,7 @@ def run_harness_process(
     primary_started = 0.0
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
+    isolated_config_root: Path | None = None
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     lifecycle_service = create_lifecycle_service(project_root, runtime_root)
 
@@ -591,15 +594,47 @@ def run_harness_process(
                 child_cwd = runtime_context.child_cwd
                 launch_spec = runtime_context.spec
 
+                if harness_id == HarnessId.CLAUDE:
+                    from meridian.lib.harness.claude_preflight import (
+                        prepare_isolated_claude_config,
+                    )
+
+                    isolated_config_root, _original_claude_config_dir = (
+                        prepare_isolated_claude_config(
+                            runtime_root=runtime_root,
+                            spawn_id=str(primary_spawn_id),
+                        )
+                    )
+                    if isolated_config_root is not None:
+                        child_env["CLAUDE_CONFIG_DIR"] = str(isolated_config_root)
+                        spawn_store.update_spawn(
+                            runtime_root,
+                            primary_spawn_id,
+                            claude_config_dir=str(isolated_config_root),
+                        )
+                        if managed.chat_id:
+                            update_session_claude_config_dir(
+                                runtime_root,
+                                managed.chat_id,
+                                claude_config_dir=str(isolated_config_root),
+                            )
+
                 if (
                     harness_adapter.id == HarnessId.CLAUDE
                     and preview_request.session.source_execution_cwd
                     and resolved_harness_session_id
                 ):
+                    source_config = (
+                        Path(preview_request.session.source_claude_config_dir)
+                        if preview_request.session.source_claude_config_dir
+                        else None
+                    )
                     ensure_claude_session_accessible(
                         source_session_id=resolved_harness_session_id,
                         source_cwd=Path(preview_request.session.source_execution_cwd),
                         child_cwd=child_cwd,
+                        source_config_root=source_config,
+                        target_config_root=isolated_config_root,
                     )
 
                 def _record_primary_started(child_pid: int) -> None:
@@ -652,6 +687,14 @@ def run_harness_process(
                     managed=managed,
                     lifecycle_service=lifecycle_service,
                 )
+                if isolated_config_root is not None and isolated_config_root.is_dir():
+                    try:
+                        shutil.rmtree(isolated_config_root)
+                    except OSError:
+                        logger.debug(
+                            "Failed to clean up isolated Claude config dir",
+                            exc_info=True,
+                        )
     except FileNotFoundError:
         logger.debug("Harness command not found", exc_info=True)
         exit_code = 2

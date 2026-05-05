@@ -775,10 +775,16 @@ async def execute_with_streaming(
             and request.session.requested_harness_session_id
             and request.session.source_execution_cwd
         ):
+            source_config = (
+                Path(request.session.source_claude_config_dir)
+                if request.session.source_claude_config_dir
+                else None
+            )
             ensure_claude_session_accessible(
                 source_session_id=request.session.requested_harness_session_id,
                 source_cwd=Path(request.session.source_execution_cwd),
                 child_cwd=child_cwd,
+                source_config_root=source_config,
             )
         tracer: DebugTracer | None = None
         if debug:
