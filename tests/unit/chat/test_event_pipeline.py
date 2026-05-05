@@ -130,6 +130,69 @@ async def test_post_persist_hook_appends_synthetic_event_inline(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_post_persist_hooks_isolate_failures_and_reject_unsafe_events(tmp_path):
+    log_path = tmp_path / "events.jsonl"
+    session = Session()
+    fanout = Fanout()
+    pipeline = ChatEventPipeline(
+        "c1",
+        ChatEventLog(log_path),
+        session,
+        fanout=fanout,
+    )
+
+    def fail(_persisted):
+        raise RuntimeError("boom")
+
+    def synthesize_unsafe_and_valid(persisted):
+        return [
+            ChatEvent(
+                "extension.wrong-chat",
+                0,
+                "other-chat",
+                persisted.execution_id,
+                utc_now_iso(),
+                payload={},
+            ),
+            ChatEvent(
+                "turn.completed",
+                0,
+                persisted.chat_id,
+                persisted.execution_id,
+                utc_now_iso(),
+                payload={"execution_generation": 99},
+            ),
+            ChatEvent(
+                "extension.valid",
+                0,
+                persisted.chat_id,
+                persisted.execution_id,
+                utc_now_iso(),
+                payload={"cause_seq": persisted.seq},
+            ),
+        ]
+
+    pipeline.add_post_persist_hook(fail)
+    pipeline.add_post_persist_hook(synthesize_unsafe_and_valid)
+    pipeline.start()
+
+    await pipeline.ingest(event("content.delta"))
+    await pipeline.drain()
+    await pipeline.stop()
+
+    stored_events = list(ChatEventLog(log_path).read_all())
+    assert [stored.type for stored in stored_events] == [
+        "content.delta",
+        "extension.valid",
+    ]
+    assert [event.type for event in fanout.events] == [
+        "content.delta",
+        "extension.valid",
+    ]
+    assert session.completed == []
+
+
+@pytest.mark.asyncio
 async def test_wrong_chat_event_is_dropped(tmp_path):
     log_path = tmp_path / "events.jsonl"
     session = Session()

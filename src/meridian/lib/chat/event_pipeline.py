@@ -167,10 +167,23 @@ class ChatEventPipeline:
 
     async def _emit_post_persist_events(self, persisted: ChatEvent) -> None:
         for hook in self._post_persist_hooks:
-            events = hook(persisted)
-            if events is None:
+            try:
+                events = hook(persisted)
+            except Exception:
+                logger.warning("Post-persist hook failed", exc_info=True)
+                continue
+            if not events:
                 continue
             for event in events:
+                if event.chat_id != self._chat_id:
+                    logger.warning(
+                        "Dropping synthetic event with wrong chat_id: %s",
+                        event.chat_id,
+                    )
+                    continue
+                if event.type in LIFECYCLE_EVENT_TYPES:
+                    logger.warning("Dropping lifecycle synthetic event: %s", event.type)
+                    continue
                 await self._persist_index_and_broadcast(event)
 
     async def on_execution_complete(self, execution_generation: int | None = None) -> None:
