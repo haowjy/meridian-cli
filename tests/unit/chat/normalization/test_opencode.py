@@ -19,26 +19,64 @@ def test_opencode_live_shapes_emit_text_reasoning_and_tool_lifecycle_once():
     )[0]
     n.normalize(
         event(
+            "message.updated",
+            {"properties": {"info": {"id": "msg-a1", "role": "assistant"}}},
+        )
+    )
+    n.normalize(
+        event(
             "message.part.updated",
-            {"properties": {"part": {"id": "p-r", "type": "reasoning", "text": "plan"}}},
+            {
+                "properties": {
+                    "part": {
+                        "id": "p-r",
+                        "messageID": "msg-a1",
+                        "type": "reasoning",
+                        "text": "plan",
+                    }
+                }
+            },
         )
     )
     reasoning_delta = n.normalize(
         event(
             "message.part.delta",
-            {"properties": {"partID": "p-r", "field": "text", "delta": " now"}},
+            {
+                "properties": {
+                    "partID": "p-r",
+                    "messageID": "msg-a1",
+                    "field": "text",
+                    "delta": " now",
+                }
+            },
         )
     )[0]
     n.normalize(
         event(
             "message.part.updated",
-            {"properties": {"part": {"id": "p-t", "type": "text", "text": "OK"}}},
+            {
+                "properties": {
+                    "part": {
+                        "id": "p-t",
+                        "messageID": "msg-a1",
+                        "type": "text",
+                        "text": "OK",
+                    }
+                }
+            },
         )
     )
     text_delta = n.normalize(
         event(
             "message.part.delta",
-            {"properties": {"partID": "p-t", "field": "text", "delta": "!"}},
+            {
+                "properties": {
+                    "partID": "p-t",
+                    "messageID": "msg-a1",
+                    "field": "text",
+                    "delta": "!",
+                }
+            },
         )
     )[0]
     tool_started = n.normalize(
@@ -126,13 +164,20 @@ def test_opencode_message_updated_snapshot_backfills_missing_output_and_terminal
             "message.updated",
             {
                 "properties": {
+                    "info": {"id": "msg-a2", "role": "assistant"},
                     "message": {
                         "parts": [
-                            {"id": "text-1", "type": "text", "text": "snapshot text"},
+                            {
+                                "id": "text-1",
+                                "messageID": "msg-a2",
+                                "type": "text",
+                                "text": "snapshot text",
+                            },
                             {
                                 "id": "tool-1",
                                 "type": "tool",
                                 "tool": "bash",
+                                "messageID": "msg-a2",
                                 "callID": "bash:2",
                                 "state": {
                                     "status": "completed",
@@ -156,6 +201,61 @@ def test_opencode_message_updated_snapshot_backfills_missing_output_and_terminal
     ]
     assert events[1].payload == {"stream_kind": "assistant_text", "text": "snapshot text"}
     assert events[3].item_id == "bash:2"
+
+
+def test_opencode_session_idle_without_active_turn_is_noop():
+    n = OpenCodeNormalizer("c1", "s1")
+
+    assert n.normalize(event("session.idle", {})) == []
+
+
+def test_opencode_user_message_parts_do_not_emit_assistant_content_delta():
+    n = OpenCodeNormalizer("c1", "s1")
+
+    n.normalize(
+        event(
+            "message.updated",
+            {
+                "properties": {
+                    "info": {
+                        "id": "msg-user-1",
+                        "role": "user",
+                    }
+                }
+            },
+        )
+    )
+    snapshot_events = n.normalize(
+        event(
+            "message.part.updated",
+            {
+                "properties": {
+                    "part": {
+                        "id": "part-user-1",
+                        "messageID": "msg-user-1",
+                        "type": "text",
+                        "text": "user prompt",
+                    }
+                }
+            },
+        )
+    )
+    delta_events = n.normalize(
+        event(
+            "message.part.delta",
+            {
+                "properties": {
+                    "partID": "part-user-1",
+                    "messageID": "msg-user-1",
+                    "field": "text",
+                    "delta": " user prompt",
+                }
+            },
+        )
+    )
+
+    assert snapshot_events == []
+    assert delta_events == []
 
 
 def test_opencode_legacy_shapes_still_work():

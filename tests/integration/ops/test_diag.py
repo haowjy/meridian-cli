@@ -641,6 +641,64 @@ def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
     assert result.ok is True
 
 
+def test_doctor_prune_recovers_custom_claude_root_from_overlay_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _create_project_root(tmp_path)
+    _create_agent_skill_dirs(project_root)
+    user_home = tmp_path / "user-home"
+    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
+    ambient_root = user_home / ".claude-ambient"
+    durable_root = user_home / ".claude-durable"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", ambient_root.as_posix())
+    monkeypatch.setattr(
+        diag,
+        "check_upgrade_availability",
+        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
+    )
+
+    current_uuid = "current-project-uuid"
+    (project_root / ".meridian").mkdir(parents=True, exist_ok=True)
+    (project_root / ".meridian" / "id").write_text(current_uuid, encoding="utf-8")
+    runtime_root = user_home / "projects" / current_uuid
+    stale_overlay = runtime_root / "claude-config" / "p1"
+    _write_text(
+        stale_overlay / "projects" / "slug" / "session.jsonl",
+        '{"event":"overlay-current"}\n',
+    )
+    _write_text(
+        stale_overlay / ".meridian-overlay.json",
+        '{\n  "v": 1,\n  "materialization_root": "'
+        + durable_root.as_posix()
+        + '"\n}\n',
+    )
+    _set_tree_mtime(stale_overlay, 1_600_000_000.0)
+    _set_path_mtime(runtime_root, 1_900_000_000.0)
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="claude-sonnet-4-5",
+        agent="coder",
+        harness="claude",
+        prompt="stale overlay",
+        status="failed",
+    )
+    spawn_store.update_spawn(runtime_root, "p1", claude_config_dir=stale_overlay.as_posix())
+
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
+
+    assert result.pruned_claude_overlays == 1
+    assert not stale_overlay.exists()
+    assert (durable_root / "projects" / "slug" / "session.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"event":"overlay-current"}\n'
+    assert not (ambient_root / "projects" / "slug" / "session.jsonl").exists()
+    assert spawn_store.get_spawn(runtime_root, "p1").claude_config_dir == durable_root.as_posix()
+
+
 def test_doctor_global_requires_root_side_effect_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

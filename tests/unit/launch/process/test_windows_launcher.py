@@ -30,6 +30,25 @@ def test_select_process_launcher_uses_windows_console_launcher(
 
 
 @pytest.mark.unit
+def test_select_process_launcher_with_capture_uses_subprocess_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.process.runner.can_use_windows_console_launcher",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.process.runner.can_use_pty",
+        lambda: False,
+    )
+
+    launcher = select_process_launcher(tmp_path / "output.jsonl")
+
+    assert isinstance(launcher, SubprocessProcessLauncher)
+
+
+@pytest.mark.unit
 def test_select_process_launcher_non_windows_uses_posix_pty_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

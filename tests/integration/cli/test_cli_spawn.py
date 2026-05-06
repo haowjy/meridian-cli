@@ -122,6 +122,52 @@ def test_spawn_continue_without_prompt_is_allowed(monkeypatch: pytest.MonkeyPatc
     assert captured == {"spawn_id": "p1", "prompt": ""}
 
 
+def test_spawn_fork_threads_source_claude_config_dir_into_session_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, object] = {}
+
+    resolved_reference = SimpleNamespace(
+        harness_session_id="session-seed",
+        harness="claude",
+        source_model="claude-sonnet-4-5",
+        source_agent="coder",
+        source_skills=("review",),
+        source_work_id="work-1",
+        source_chat_id="c7",
+        source_execution_cwd="/tmp/source-cwd",
+        source_claude_config_dir="/tmp/source-claude-config",
+        tracked=True,
+        missing_harness_session_id=False,
+    )
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["payload"] = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(
+        spawn_cli, "resolve_session_reference", lambda *_args, **_kwargs: resolved_reference
+    )
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "--fork", "c7", "-p", "fork prompt", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    payload = captured["payload"]
+    assert isinstance(payload, SpawnCreateInput)
+    assert payload.session.source_execution_cwd == "/tmp/source-cwd"
+    assert payload.session.source_claude_config_dir == "/tmp/source-claude-config"
+
+
 @pytest.mark.parametrize("prompt_value", ["list", "show", "files", "stats"])
 def test_spawn_default_create_routes_correctly_when_prompt_matches_subcommand(
     monkeypatch: pytest.MonkeyPatch,

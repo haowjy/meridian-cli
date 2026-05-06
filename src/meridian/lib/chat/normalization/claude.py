@@ -216,6 +216,7 @@ class ClaudeNormalizer:
         )
         if block_type != "tool_use" or item_id is None:
             return []
+        self._aggregated_tools[item_id] = {"name": name}
         return [
             self._event(
                 ITEM_STARTED,
@@ -274,14 +275,21 @@ class ClaudeNormalizer:
         block = self._blocks.pop(index, None)
         if block is None or block.block_type != "tool_use" or block.item_id is None:
             return []
+        known = self._aggregated_tools.get(block.item_id) or {}
+        if block.name is not None:
+            known["name"] = block.name
+        if block.input_json:
+            known["input"] = block.input_json
+        self._aggregated_tools[block.item_id] = known
         return [
             self._event(
-                ITEM_COMPLETED,
+                ITEM_UPDATED,
                 event,
                 item_id=block.item_id,
                 payload={
                     "item_type": block.name or "tool_use",
                     "name": block.name,
+                    "raw_type": "tool_use",
                     "input_json": block.input_json,
                 },
             )

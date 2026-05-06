@@ -121,6 +121,25 @@ def run_primary_launch(
     include_bootstrap_documents: bool = False,
     prompt: str | None = None,
 ) -> PrimaryLaunchOutput:
+    def _result_message(*, exit_code: int) -> str:
+        if dry_run:
+            if resume_target is not None:
+                return "Resume dry-run."
+            if fork_target is not None:
+                return "Fork dry-run."
+            return "Launch dry-run."
+        if exit_code == 0:
+            if resume_target is not None:
+                return "Session resumed."
+            if fork_target is not None:
+                return "Session forked."
+            return "Session finished."
+        if resume_target is not None:
+            return "Session resume failed."
+        if fork_target is not None:
+            return "Session fork failed."
+        return "Session failed."
+
     def _merge_warnings(*warnings: str | None) -> str | None:
         parts = [item.strip() for item in warnings if item and item.strip()]
         if not parts:
@@ -148,6 +167,8 @@ def run_primary_launch(
     forked_from_chat_id: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
+    continue_source_tracked = False
+    continue_source_ref: str | None = None
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
@@ -162,6 +183,8 @@ def run_primary_launch(
         resolved_continue = resolve_session_target(
             project_root=project_root, continue_ref=resume_target
         )
+        if resolved_continue.missing_harness_session_id:
+            raise ValueError(missing_fork_session_error(resume_target))
         source_harness = (
             resolved_continue.harness.strip()
             if resolved_continue.harness is not None and resolved_continue.harness.strip()
@@ -188,6 +211,8 @@ def run_primary_launch(
         continue_warning = resolved_continue.warning
         source_execution_cwd = resolved_continue.source_execution_cwd
         source_claude_config_dir = resolved_continue.source_claude_config_dir
+        continue_source_tracked = resolved_continue.tracked
+        continue_source_ref = resume_target
         session_mode = SessionMode.RESUME
     elif fork_target is not None:
         resolved_fork = resolve_session_target(project_root=project_root, continue_ref=fork_target)
@@ -222,6 +247,8 @@ def run_primary_launch(
         forked_from_chat_id = resolved_fork.chat_id
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
+        continue_source_tracked = resolved_fork.tracked
+        continue_source_ref = fork_target
         output_forked_from = resolved_fork.chat_id or fork_target
         session_mode = SessionMode.FORK
 
@@ -262,29 +289,15 @@ def run_primary_launch(
                 forked_from_chat_id=forked_from_chat_id,
                 source_execution_cwd=source_execution_cwd,
                 source_claude_config_dir=source_claude_config_dir,
+                continue_source_tracked=continue_source_tracked,
+                continue_source_ref=continue_source_ref,
             ),
         ),
         harness_registry=harness_registry,
     )
 
     return PrimaryLaunchOutput(
-        message=(
-            "Resume dry-run."
-            if dry_run and resume_target is not None
-            else (
-                "Fork dry-run."
-                if dry_run and fork_target is not None
-                else (
-                    "Launch dry-run."
-                    if dry_run
-                    else (
-                        "Session resumed."
-                        if resume_target is not None
-                        else ("Session forked." if fork_target is not None else "Session finished.")
-                    )
-                )
-            )
-        ),
+        message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),
         continue_ref=launch_result.continue_ref,

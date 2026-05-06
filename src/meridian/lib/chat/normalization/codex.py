@@ -39,11 +39,15 @@ class CodexNormalizer:
         self._chat_id = chat_id
         self._execution_id = execution_id
         self._turn_id: str | None = None
+        self._active_raw_turn_id: str | None = None
+        self._completed_raw_turn_ids: set[str] = set()
         self._completed_for_turn = False
         self._assistant_deltas_by_item: set[str] = set()
 
     def reset(self) -> None:
         self._turn_id = None
+        self._active_raw_turn_id = None
+        self._completed_raw_turn_ids.clear()
         self._completed_for_turn = False
         self._assistant_deltas_by_item.clear()
 
@@ -93,6 +97,7 @@ class CodexNormalizer:
     def _turn_started(self, event: HarnessEvent) -> ChatEvent:
         turn_id = _extract_turn_id(event.payload) or f"turn-{uuid4()}"
         self._turn_id = turn_id
+        self._active_raw_turn_id = _extract_turn_id(event.payload)
         self._completed_for_turn = False
         self._assistant_deltas_by_item.clear()
         payload: dict[str, Any] = {}
@@ -105,14 +110,23 @@ class CodexNormalizer:
         return self._event(TURN_STARTED, event, payload=payload)
 
     def _turn_completed(self, event: HarnessEvent) -> ChatEvent | None:
+        turn_id = _extract_turn_id(event.payload)
+        if turn_id is not None and turn_id in self._completed_raw_turn_ids:
+            return None
+        if turn_id is not None and self._active_raw_turn_id not in {None, turn_id}:
+            return None
         if self._completed_for_turn:
             return None
-        turn_id = _extract_turn_id(event.payload)
         if self._turn_id is None:
             self._turn_id = turn_id or f"turn-{uuid4()}"
+        if turn_id is not None and self._active_raw_turn_id is None:
+            self._active_raw_turn_id = turn_id
         payload = _turn_payload(event.payload)
         chat_event = self._event(TURN_COMPLETED, event, payload=payload)
+        if turn_id is not None:
+            self._completed_raw_turn_ids.add(turn_id)
         self._turn_id = None
+        self._active_raw_turn_id = None
         self._completed_for_turn = True
         self._assistant_deltas_by_item.clear()
         return chat_event
@@ -161,6 +175,8 @@ class CodexNormalizer:
         turn_id = _extract_turn_id(payload)
         if turn_id is not None and self._turn_id is None:
             self._turn_id = turn_id
+        if turn_id is not None and self._active_raw_turn_id is None:
+            self._active_raw_turn_id = turn_id
 
     def _item_event(self, event_type: str, event: HarnessEvent) -> ChatEvent:
         item = _item_payload(event.payload)

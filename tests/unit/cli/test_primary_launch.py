@@ -122,6 +122,8 @@ def test_run_primary_launch_resume_threads_source_metadata_into_session_request(
     request = captured["request"]
     assert request.session.source_execution_cwd == "/tmp/resume-cwd"
     assert request.session.source_claude_config_dir == "/tmp/resume-claude-config"
+    assert request.session.continue_source_tracked is True
+    assert request.session.continue_source_ref == "session-1"
 
 
 def test_run_primary_launch_fork_threads_source_claude_config_dir_into_session_request(
@@ -171,3 +173,134 @@ def test_run_primary_launch_fork_threads_source_claude_config_dir_into_session_r
     request = captured["request"]
     assert request.session.source_execution_cwd == "/tmp/fork-cwd"
     assert request.session.source_claude_config_dir == "/tmp/fork-claude-config"
+    assert request.session.continue_source_tracked is True
+    assert request.session.continue_source_ref == "session-1"
+
+
+def test_run_primary_launch_continue_tracked_ref_without_session_id_fails_fast(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_reference",
+        lambda _project_root, _ref: _resolved_reference(
+            harness_session_id=None,
+            tracked=True,
+        ),
+    )
+
+    called = False
+
+    def _fake_launch_primary(**kwargs: object) -> object:
+        nonlocal called
+        called = True
+        _ = kwargs
+        return SimpleNamespace(exit_code=0, command=(), continue_ref=None, warning=None)
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+
+    with pytest.raises(ValueError, match="has no recorded harness session"):
+        primary_launch.run_primary_launch(
+            project_root=tmp_path,
+            continue_ref="session-1",
+            fork_ref=None,
+            model="",
+            harness=None,
+            agent=None,
+            work="",
+            yolo=False,
+            approval=None,
+            autocompact=None,
+            effort=None,
+            sandbox=None,
+            timeout=None,
+            dry_run=False,
+            passthrough=(),
+        )
+
+    assert called is False
+
+
+def test_run_primary_launch_resume_failure_uses_failure_wording(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_reference",
+        lambda _project_root, _ref: _resolved_reference(),
+    )
+    monkeypatch.setattr(
+        primary_launch,
+        "launch_primary",
+        lambda **_kwargs: SimpleNamespace(
+            exit_code=2,
+            command=(),
+            continue_ref=None,
+            warning="No conversation found with session ID: session-1",
+        ),
+    )
+
+    result = primary_launch.run_primary_launch(
+        project_root=tmp_path,
+        continue_ref="session-1",
+        fork_ref=None,
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=False,
+        passthrough=(),
+    )
+
+    assert result.exit_code == 2
+    assert result.message == "Session resume failed."
+
+
+def test_run_primary_launch_fork_failure_uses_failure_wording(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_reference",
+        lambda _project_root, _ref: _resolved_reference(),
+    )
+    monkeypatch.setattr(
+        primary_launch,
+        "launch_primary",
+        lambda **_kwargs: SimpleNamespace(
+            exit_code=2,
+            command=(),
+            continue_ref=None,
+            warning="Fork failed",
+        ),
+    )
+
+    result = primary_launch.run_primary_launch(
+        project_root=tmp_path,
+        continue_ref=None,
+        fork_ref="session-1",
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=False,
+        passthrough=(),
+    )
+
+    assert result.exit_code == 2
+    assert result.message == "Session fork failed."

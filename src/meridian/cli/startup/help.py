@@ -7,7 +7,7 @@ import sys
 from meridian import __version__
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 
-_AGENT_ROOT_HELP = """Usage: meridian COMMAND [ARGS]
+AGENT_ROOT_HELP = """Usage: meridian COMMAND [ARGS]
 
 Multi-agent orchestration CLI. Meridian is a coordination layer — it launches
 subagents through harness adapters and persists state to disk. It is not a
@@ -25,6 +25,7 @@ Primary launch/resume:
   meridian -m MODEL                     Launch the primary harness
   meridian --continue c123              Resume from ref
   meridian --fork p123                  Fork from ref
+  refs: chat id (c123), spawn id (p123), or raw harness session id
 
 Quick start:
   meridian spawn -m MODEL --prompt-file /tmp/task.md --bg   Launch a subagent
@@ -164,8 +165,8 @@ def render_root_help(*, agent_mode: bool) -> str:
     """Render root help text for the given mode."""
 
     if agent_mode:
-        return _AGENT_ROOT_HELP
+        return AGENT_ROOT_HELP
     return _render_human_root_help()
 
 
-__all__ = ["_detect_agent_mode", "detect_agent_mode", "render_root_help"]
+__all__ = ["AGENT_ROOT_HELP", "_detect_agent_mode", "detect_agent_mode", "render_root_help"]

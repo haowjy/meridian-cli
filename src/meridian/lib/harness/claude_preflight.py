@@ -7,8 +7,10 @@ import os
 import re
 import shutil
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Literal, cast
 
@@ -17,6 +19,8 @@ import structlog
 from meridian.lib.launch.launch_types import PreflightResult
 from meridian.lib.launch.text_utils import dedupe_nonempty
 from meridian.lib.platform import IS_WINDOWS, get_home_path
+from meridian.lib.platform.locking import lock_file
+from meridian.lib.state.atomic import atomic_write_text
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +29,54 @@ CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
 MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV = "MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR"
 _SKIP_ENTRIES = frozenset({"projects"})
 _COPY_ENTRIES = frozenset({".claude.json", "statsig", "memory", "cached_preferences", "todos"})
+_OVERLAY_METADATA_FILENAME = ".meridian-overlay.json"
+_TRANSCRIPT_LOCKS_DIRNAME = ".meridian-transcript-locks"
+
+
+def _safe_log(level: str, event: str, **kwargs: object) -> None:
+    """Best-effort logging for warning-only overlay failure paths."""
+
+    with suppress(Exception):
+        getattr(logger, level)(event, **kwargs)
+
+
+@dataclass(frozen=True)
+class ClaudeOverlayRoots:
+    """Resolved Claude config roots for one overlay lifecycle."""
+
+    effective_config_root: Path
+    materialization_root: Path
+
+
+@dataclass(frozen=True)
+class ClaudeOverlayCleanupResult:
+    """Result of best-effort Claude overlay cleanup."""
+
+    materialization_root: Path | None
+    removed: bool
+    materialization: ClaudeOverlayMaterializationResult | None
+
+    @property
+    def materialized(self) -> bool:
+        """Backward-compatible success flag for transcript materialization."""
+
+        return self.materialization is not None and self.materialization.succeeded
+
+
+@dataclass(frozen=True)
+class ClaudeOverlayMaterializationResult:
+    """Structured transcript materialization outcome for one overlay."""
+
+    materialization_root: Path
+    discovered_transcripts: int
+    copied_transcripts: int
+    failed_transcripts: int
+
+    @property
+    def succeeded(self) -> bool:
+        """Whether every discovered transcript was handled without failure."""
+
+        return self.failed_transcripts == 0
 
 
 def _default_canonical_claude_config_root() -> Path:
@@ -83,6 +135,29 @@ def resolve_overlay_materialization_canonical_root(
     return _claude_config_root()
 
 
+def resolve_claude_overlay_roots(
+    *,
+    isolated_config_root: Path | None,
+    original_config_env: str,
+) -> ClaudeOverlayRoots:
+    """Resolve effective runtime root plus durable materialization root."""
+
+    materialization_root = resolve_overlay_materialization_canonical_root(
+        {MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV: original_config_env}
+    )
+    if isolated_config_root is not None:
+        effective_config_root = isolated_config_root
+    else:
+        fallback_config_dir = original_config_env.strip()
+        effective_config_root = (
+            Path(fallback_config_dir) if fallback_config_dir else materialization_root
+        )
+    return ClaudeOverlayRoots(
+        effective_config_root=effective_config_root,
+        materialization_root=materialization_root,
+    )
+
+
 def _claude_credentials_source(config_root: Path) -> Path | None:
     """Return the best available source for Claude's credentials file."""
 
@@ -136,6 +211,94 @@ def _link_entry(entry: Path, target: Path) -> None:
     os.symlink(entry, target)
 
 
+def _overlay_metadata_path(overlay_root: Path) -> Path:
+    return overlay_root / _OVERLAY_METADATA_FILENAME
+
+
+def _write_overlay_metadata(
+    *,
+    overlay_root: Path,
+    materialization_root: Path,
+) -> None:
+    atomic_write_text(
+        _overlay_metadata_path(overlay_root),
+        json.dumps(
+            {
+                "v": 1,
+                "materialization_root": materialization_root.as_posix(),
+            },
+            indent=2,
+        )
+        + "\n",
+    )
+
+
+def _read_overlay_materialization_root(overlay_root: Path) -> Path | None:
+    metadata_path = _overlay_metadata_path(overlay_root)
+    try:
+        raw_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError):
+        _safe_log(
+            "warning",
+            "Failed to parse Claude overlay metadata; falling back to ambient durable root",
+            overlay_metadata_path=str(metadata_path),
+            exc_info=True,
+        )
+        return None
+
+    if not isinstance(raw_payload, dict):
+        _safe_log(
+            "warning",
+            "Malformed Claude overlay metadata payload; falling back to ambient durable root",
+            overlay_metadata_path=str(metadata_path),
+        )
+        return None
+
+    payload = cast("dict[str, object]", raw_payload)
+    materialization_root = payload.get("materialization_root")
+    if not isinstance(materialization_root, str):
+        _safe_log(
+            "warning",
+            (
+                "Claude overlay metadata missing materialization_root; "
+                "falling back to ambient durable root"
+            ),
+            overlay_metadata_path=str(metadata_path),
+        )
+        return None
+
+    stripped = materialization_root.strip()
+    if not stripped:
+        _safe_log(
+            "warning",
+            (
+                "Claude overlay metadata had empty materialization_root; "
+                "falling back to ambient durable root"
+            ),
+            overlay_metadata_path=str(metadata_path),
+        )
+        return None
+
+    return Path(stripped).expanduser()
+
+
+def _overlay_transcript_lock_path(
+    *,
+    canonical_root: Path,
+    relative_path: Path,
+) -> Path:
+    lock_key = sha256(relative_path.as_posix().encode("utf-8")).hexdigest()
+    return canonical_root / _TRANSCRIPT_LOCKS_DIRNAME / f"{lock_key}.lock"
+
+
+def _overlay_transcript_wins(overlay_stat: os.stat_result, target_stat: os.stat_result) -> bool:
+    return overlay_stat.st_mtime > target_stat.st_mtime or (
+        overlay_stat.st_mtime == target_stat.st_mtime and overlay_stat.st_size > target_stat.st_size
+    )
+
+
 def prepare_isolated_claude_config(
     runtime_root: Path,
     spawn_id: str,
@@ -151,6 +314,12 @@ def prepare_isolated_claude_config(
 
     try:
         isolated_root.mkdir(parents=True, exist_ok=True)
+        _write_overlay_metadata(
+            overlay_root=isolated_root,
+            materialization_root=resolve_overlay_materialization_canonical_root(
+                {MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV: original_env}
+            ),
+        )
 
         if user_root.is_dir():
             for entry in user_root.iterdir():
@@ -173,7 +342,8 @@ def prepare_isolated_claude_config(
             if user_credentials is not None:
                 shutil.copy2(user_credentials, isolated_credentials)
     except OSError:
-        logger.warning(
+        _safe_log(
+            "warning",
             "Failed to create isolated Claude config; proceeding without isolation",
             exc_info=True,
         )
@@ -185,86 +355,184 @@ def prepare_isolated_claude_config(
 def materialize_overlay_transcripts(
     overlay_root: Path,
     canonical_root: Path | None = None,
-) -> int:
+) -> ClaudeOverlayMaterializationResult:
     """Copy overlay session transcripts into the canonical Claude config root."""
 
+    resolved_canonical_root = canonical_root or _claude_config_root()
     overlay_projects = overlay_root / "projects"
     if not overlay_projects.is_dir():
-        return 0
+        return ClaudeOverlayMaterializationResult(
+            materialization_root=resolved_canonical_root,
+            discovered_transcripts=0,
+            copied_transcripts=0,
+            failed_transcripts=0,
+        )
 
-    resolved_canonical_root = canonical_root or _claude_config_root()
     canonical_projects = resolved_canonical_root / "projects"
-    materialized = 0
+    copied_transcripts = 0
+    failed_transcripts = 0
 
     try:
-        slug_dirs = list(overlay_projects.iterdir())
+        session_files = [path for path in overlay_projects.rglob("*.jsonl") if path.is_file()]
     except OSError:
-        logger.warning(
+        _safe_log(
+            "warning",
             "Failed to list overlay projects directory",
             overlay_projects=str(overlay_projects),
             exc_info=True,
         )
-        return 0
+        return ClaudeOverlayMaterializationResult(
+            materialization_root=resolved_canonical_root,
+            discovered_transcripts=0,
+            copied_transcripts=0,
+            failed_transcripts=1,
+        )
 
-    for slug_dir in slug_dirs:
-        if not slug_dir.is_dir():
-            continue
+    for session_file in session_files:
+        relative_path = session_file.relative_to(overlay_projects)
+        target = canonical_projects / relative_path
+        temp_target = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+
         try:
-            session_files = list(slug_dir.iterdir())
+            target.parent.mkdir(parents=True, exist_ok=True)
         except OSError:
-            logger.warning(
-                "Failed to list overlay project transcript directory",
-                overlay_project_dir=str(slug_dir),
+            failed_transcripts += 1
+            _safe_log(
+                "warning",
+                "Failed to create canonical Claude transcript directory",
+                canonical_project_dir=str(target.parent),
                 exc_info=True,
             )
             continue
 
-        canonical_slug_dir = canonical_projects / slug_dir.name
-        for session_file in session_files:
-            if not session_file.is_file() or session_file.suffix != ".jsonl":
-                continue
-
-            try:
-                canonical_slug_dir.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                logger.warning(
-                    "Failed to create canonical Claude transcript directory",
-                    canonical_project_dir=str(canonical_slug_dir),
-                    exc_info=True,
-                )
-                continue
-
-            target = canonical_slug_dir / session_file.name
-            try:
+        try:
+            overlay_stat = session_file.stat()
+            shutil.copy2(session_file, temp_target)
+            lock_path = _overlay_transcript_lock_path(
+                canonical_root=resolved_canonical_root,
+                relative_path=relative_path,
+            )
+            with lock_file(lock_path):
                 should_copy = True
                 if target.exists():
-                    overlay_stat = session_file.stat()
                     target_stat = target.stat()
-                    should_copy = overlay_stat.st_mtime > target_stat.st_mtime or (
-                        overlay_stat.st_mtime == target_stat.st_mtime
-                        and overlay_stat.st_size > target_stat.st_size
-                    )
+                    should_copy = _overlay_transcript_wins(overlay_stat, target_stat)
                 if should_copy:
-                    temp_target = target.with_name(
-                        f".{target.name}.{uuid.uuid4().hex}.tmp"
-                    )
-                    try:
-                        shutil.copy2(session_file, temp_target)
-                        os.replace(temp_target, target)
-                    except OSError:
-                        with suppress(OSError):
-                            temp_target.unlink(missing_ok=True)
-                        raise
-                    materialized += 1
-            except OSError:
-                logger.warning(
-                    "Failed to materialize Claude overlay transcript",
-                    overlay_transcript=str(session_file),
-                    canonical_transcript=str(target),
-                    exc_info=True,
-                )
+                    os.replace(temp_target, target)
+                    copied_transcripts += 1
+                else:
+                    temp_target.unlink(missing_ok=True)
+        except OSError:
+            failed_transcripts += 1
+            _safe_log(
+                "warning",
+                "Failed to materialize Claude overlay transcript",
+                overlay_transcript=str(session_file),
+                canonical_transcript=str(target),
+                exc_info=True,
+            )
+            with suppress(OSError):
+                temp_target.unlink(missing_ok=True)
 
-    return materialized
+    return ClaudeOverlayMaterializationResult(
+        materialization_root=resolved_canonical_root,
+        discovered_transcripts=len(session_files),
+        copied_transcripts=copied_transcripts,
+        failed_transcripts=failed_transcripts,
+    )
+
+
+def cleanup_claude_overlay(
+    overlay_root: Path | None,
+    *,
+    canonical_root: Path | None = None,
+    remove_overlay: Callable[[Path], bool] | None = None,
+) -> ClaudeOverlayCleanupResult:
+    """Materialize transcripts, then best-effort remove one Claude overlay."""
+
+    if overlay_root is None or not overlay_root.is_dir():
+        return ClaudeOverlayCleanupResult(
+            materialization_root=None,
+            removed=False,
+            materialization=None,
+        )
+
+    resolved_canonical_root = (
+        canonical_root
+        if canonical_root is not None
+        else _read_overlay_materialization_root(overlay_root)
+        or resolve_overlay_materialization_canonical_root()
+    )
+    materialization: ClaudeOverlayMaterializationResult | None = None
+    try:
+        materialization = materialize_overlay_transcripts(
+            overlay_root,
+            canonical_root=resolved_canonical_root,
+        )
+    except Exception:
+        _safe_log(
+            "warning",
+            "Claude overlay transcript materialization failed; session transcripts may be lost",
+            overlay_root=str(overlay_root),
+            canonical_root=str(resolved_canonical_root),
+            exc_info=True,
+        )
+
+    removed = False
+    if remove_overlay is None:
+        try:
+            shutil.rmtree(overlay_root)
+            removed = True
+        except OSError:
+            _safe_log(
+                "debug",
+                "Failed to clean up isolated Claude config dir",
+                overlay_root=str(overlay_root),
+                exc_info=True,
+            )
+    else:
+        try:
+            removed = remove_overlay(overlay_root)
+        except Exception:
+            _safe_log(
+                "debug",
+                "Failed to remove Claude overlay via custom remover",
+                overlay_root=str(overlay_root),
+                exc_info=True,
+            )
+
+    return ClaudeOverlayCleanupResult(
+        materialization_root=resolved_canonical_root,
+        removed=removed,
+        materialization=materialization,
+    )
+
+
+def _dedupe_roots(*roots: Path | None) -> tuple[Path, ...]:
+    unique_roots: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root is None:
+            continue
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_roots.append(root)
+    return tuple(unique_roots)
+
+
+def _resolve_source_session_file(
+    *,
+    source_session_id: str,
+    source_slug: str,
+    source_roots: tuple[Path, ...],
+) -> tuple[Path | None, Path | None]:
+    for root in source_roots:
+        candidate = root / "projects" / source_slug / f"{source_session_id}.jsonl"
+        if candidate.exists():
+            return candidate, root
+    return None, None
 
 
 def ensure_claude_session_accessible(
@@ -284,9 +552,9 @@ def ensure_claude_session_accessible(
     if source_cwd is None:
         return
 
-    default_config_root = _claude_config_root()
-    resolved_source_config_root = source_config_root or default_config_root
-    resolved_target_config_root = target_config_root or default_config_root
+    source_canonical_root = resolve_overlay_materialization_canonical_root()
+    resolved_source_config_root = source_config_root or source_canonical_root
+    resolved_target_config_root = target_config_root or _claude_config_root()
 
     same_cwd = source_cwd.resolve() == child_cwd.resolve()
     same_config_root = (
@@ -307,25 +575,12 @@ def ensure_claude_session_accessible(
     source_slug = project_slug(source_cwd)
     child_slug = project_slug(child_cwd)
 
-    source_file: Path | None = None
-    source_root_for_copy = resolved_source_config_root
-    if source_config_root is not None:
-        configured_source = (
-            source_config_root / "projects" / source_slug / f"{safe_session_id}.jsonl"
-        )
-        if configured_source.exists():
-            source_file = configured_source
-            source_root_for_copy = source_config_root
-
-    if source_file is None:
-        canonical_source = (
-            default_config_root / "projects" / source_slug / f"{safe_session_id}.jsonl"
-        )
-        if canonical_source.exists():
-            source_file = canonical_source
-            source_root_for_copy = default_config_root
-
-    if source_file is None:
+    source_file, source_root_for_copy = _resolve_source_session_file(
+        source_session_id=safe_session_id,
+        source_slug=source_slug,
+        source_roots=_dedupe_roots(source_config_root, source_canonical_root),
+    )
+    if source_file is None or source_root_for_copy is None:
         return
 
     target_projects = resolved_target_config_root / "projects"
@@ -459,12 +714,17 @@ def build_claude_preflight_result(
 __all__ = [
     "CLAUDE_PARENT_ALLOWED_TOOLS_FLAG",
     "MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV",
+    "ClaudeOverlayCleanupResult",
+    "ClaudeOverlayMaterializationResult",
+    "ClaudeOverlayRoots",
     "build_claude_preflight_result",
+    "cleanup_claude_overlay",
     "ensure_claude_session_accessible",
     "expand_claude_passthrough_args",
     "materialize_overlay_transcripts",
     "prepare_isolated_claude_config",
     "project_slug",
     "read_parent_claude_permissions",
+    "resolve_claude_overlay_roots",
     "resolve_overlay_materialization_canonical_root",
 ]

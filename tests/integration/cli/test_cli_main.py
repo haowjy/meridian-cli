@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from meridian.cli.app_tree import AGENT_ROOT_HELP
+from meridian.cli.startup.help import AGENT_ROOT_HELP as STARTUP_AGENT_ROOT_HELP
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.lib.state import paths as state_paths
 from meridian.lib.telemetry import emit_telemetry
@@ -426,6 +427,7 @@ def test_agent_root_help_restricted_surface_contract() -> None:
     for visible in (
         "Meridian is a coordination layer",
         "For automation, use --format json",
+        "refs: chat id (c123), spawn id (p123), or raw harness session id",
         "spawn    Create and manage subagent runs",
         "work     Work item dashboard and coordination",
         "config   Show resolved configuration and sources",
@@ -444,6 +446,7 @@ def test_agent_root_help_restricted_surface_contract() -> None:
         "opencode",
     ):
         assert hidden not in normalized_help
+    assert AGENT_ROOT_HELP == STARTUP_AGENT_ROOT_HELP
 
 
 def test_bootstrap_command_enables_bootstrap_documents(

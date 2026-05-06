@@ -120,6 +120,49 @@ def test_claude_streaming_blocks_still_work():
     assert completed.payload["cost_usd"] == 0.01
 
 
+def test_claude_tool_use_block_stop_is_non_terminal_until_tool_result():
+    n = ClaudeNormalizer("c1", "s1")
+    n.normalize(event("message_start", {"message": {"model": "claude-opus"}}))
+
+    started = n.normalize(
+        event(
+            "content_block_start",
+            {
+                "index": 0,
+                "content_block": {"type": "tool_use", "id": "toolu_1", "name": "Read"},
+            },
+        )
+    )[0]
+    n.normalize(
+        event(
+            "content_block_delta",
+            {
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"file":"a.txt"}'},
+            },
+        )
+    )
+    stop = n.normalize(event("content_block_stop", {"index": 0}))[0]
+    completed = n.normalize(
+        event(
+            "user",
+            {
+                "message": {
+                    "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]
+                }
+            },
+        )
+    )[0]
+
+    assert started.type == "item.started"
+    assert stop.type == "item.updated"
+    assert stop.item_id == "toolu_1"
+    assert stop.payload["input_json"] == '{"file":"a.txt"}'
+    assert completed.type == "item.completed"
+    assert completed.item_id == "toolu_1"
+    assert completed.payload["input"] == '{"file":"a.txt"}'
+
+
 def test_claude_result_error_variant_maps_terminal_fields():
     n = ClaudeNormalizer("c1", "s1")
     n.normalize(event("message_start", {"message": {"model": "claude-sonnet"}}))

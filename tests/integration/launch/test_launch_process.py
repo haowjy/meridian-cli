@@ -5,6 +5,7 @@ import os
 
 # pyright: reportPrivateUsage=false
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,9 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+    ClaudeOverlayCleanupResult,
+    ClaudeOverlayMaterializationResult,
+    ClaudeOverlayRoots,
 )
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -35,6 +39,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import list_spawns
 
 
@@ -52,6 +57,7 @@ def _build_primary_launch_context(
     harness_id: HarnessId,
     model: str,
     prompt: str = "primary prompt",
+    extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
 ) -> tuple[Any, Any]:
     _write_minimal_mars_config(project_root)
@@ -64,6 +70,7 @@ def _build_primary_launch_context(
             prompt_is_composed=False,
             model=model,
             harness=harness_id.value,
+            extra_args=extra_args,
             session=session or SessionRequest(),
         ),
         runtime=LaunchRuntime(
@@ -272,7 +279,6 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
     monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
     outcome = process.run_harness_process(launch_context, harness_registry)
 
@@ -374,7 +380,6 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     )
     monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
     monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-
     outcome = process.run_harness_process(launch_context, harness_registry)
 
     log_dir = captured["log_dir"]
@@ -517,13 +522,60 @@ def test_run_harness_process_black_box_primary_uses_no_tui_log_artifact(
     )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
     monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
     outcome = process.run_harness_process(launch_context, harness_registry)
 
     assert captured["output_log_path"] is None
     assert outcome.primary_spawn_id is not None
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
+
+
+@pytest.mark.slow
+def test_run_harness_process_claude_primary_print_json_persists_session_id_from_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-print-json"
+    project_root.mkdir()
+    emitted_session_id = "c75c9a5c-1234-5678-9abc-def012345678"
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        extra_args=("--print", "--output-format", "json"),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        output_log_path = kwargs["output_log_path"]
+        assert isinstance(output_log_path, Path)
+        captured["output_log_path"] = output_log_path
+        output_log_path.write_text(
+            json.dumps({"session_id": emitted_session_id, "result": "ok"}) + "\n",
+            encoding="utf-8",
+        )
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(445)
+        return (0, 445)
+
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert isinstance(captured["output_log_path"], Path)
+    assert captured["output_log_path"].name == OUTPUT_FILENAME
+    assert outcome.resolved_harness_session_id == emitted_session_id
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    assert spawns[0].harness_session_id == emitted_session_id
 
 
 @pytest.mark.slow
@@ -708,7 +760,6 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
     )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
     monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
     outcome = process.run_harness_process(launch_context, harness_registry)
 
@@ -908,7 +959,8 @@ def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
         return (0, 777)
 
     monkeypatch.setattr(
-        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        process_runner,
+        "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
     monkeypatch.setattr(
@@ -966,11 +1018,23 @@ def test_run_harness_process_uses_durable_default_root_when_claude_isolation_fal
         _ = kwargs
         return None, ""
 
-    def fake_resolve_overlay_materialization_canonical_root(
-        env: dict[str, str] | None = None,
-    ) -> Path:
-        resolver_envs.append(dict(env or {}))
-        return durable_default_root
+    def fake_resolve_claude_overlay_roots(
+        *,
+        isolated_config_root: Path | None,
+        original_config_env: str,
+    ) -> object:
+        resolver_envs.append(
+            {
+                "isolated_config_root": isolated_config_root.as_posix()
+                if isolated_config_root is not None
+                else "",
+                MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV: original_config_env,
+            }
+        )
+        return ClaudeOverlayRoots(
+            effective_config_root=durable_default_root,
+            materialization_root=durable_default_root,
+        )
 
     def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
         env = kwargs["env"]
@@ -985,13 +1049,15 @@ def test_run_harness_process_uses_durable_default_root_when_claude_isolation_fal
         return (0, 778)
 
     monkeypatch.setattr(
-        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        process_runner,
+        "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
+    monkeypatch.setenv(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, "")
     monkeypatch.setattr(
         process_runner,
-        "resolve_overlay_materialization_canonical_root",
-        fake_resolve_overlay_materialization_canonical_root,
+        "resolve_claude_overlay_roots",
+        fake_resolve_claude_overlay_roots,
     )
     monkeypatch.setattr(
         process,
@@ -1057,21 +1123,33 @@ def test_run_harness_process_materializes_claude_overlay_before_cleanup(
         started(888)
         return (0, 888)
 
-    def fake_materialize(overlay_root: Path, canonical_root: Path | None = None) -> int:
-        assert overlay_root.is_dir()
+    def fake_cleanup_claude_overlay(
+        overlay_root: Path | None,
+        *,
+        canonical_root: Path | None = None,
+        remove_overlay: object | None = None,
+    ) -> object:
+        assert overlay_root is not None and overlay_root.is_dir()
+        assert canonical_root is not None
         call_order.append("materialize")
-        return 1
-
-    def fake_rmtree(path: Path) -> None:
-        assert path.is_dir()
         call_order.append("rmtree")
+        return ClaudeOverlayCleanupResult(
+            materialization_root=canonical_root,
+            removed=True,
+            materialization=ClaudeOverlayMaterializationResult(
+                materialization_root=canonical_root,
+                discovered_transcripts=1,
+                copied_transcripts=1,
+                failed_transcripts=0,
+            ),
+        )
 
     monkeypatch.setattr(
-        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        process_runner,
+        "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
-    monkeypatch.setattr(process_runner, "materialize_overlay_transcripts", fake_materialize)
-    monkeypatch.setattr(process_runner.shutil, "rmtree", fake_rmtree)
+    monkeypatch.setattr(process_runner, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
     monkeypatch.setattr(
         process,
         "_run_primary_process_with_capture",
@@ -1115,18 +1193,26 @@ def test_run_harness_process_continues_cleanup_when_overlay_materialization_fail
         started(889)
         return (0, 889)
 
-    def fake_materialize(overlay_root: Path, canonical_root: Path | None = None) -> int:
-        raise OSError(f"boom:{overlay_root}")
-
-    def fake_rmtree(path: Path) -> None:
-        cleaned_paths.append(path)
+    def fake_cleanup_claude_overlay(
+        overlay_root: Path | None,
+        *,
+        canonical_root: Path | None = None,
+        remove_overlay: object | None = None,
+    ) -> object:
+        assert overlay_root is not None
+        cleaned_paths.append(overlay_root)
+        return ClaudeOverlayCleanupResult(
+            materialization_root=canonical_root,
+            removed=True,
+            materialization=None,
+        )
 
     monkeypatch.setattr(
-        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        process_runner,
+        "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
-    monkeypatch.setattr(process_runner, "materialize_overlay_transcripts", fake_materialize)
-    monkeypatch.setattr(process_runner.shutil, "rmtree", fake_rmtree)
+    monkeypatch.setattr(process_runner, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
     monkeypatch.setattr(
         process,
         "_run_primary_process_with_capture",
@@ -1141,7 +1227,88 @@ def test_run_harness_process_continues_cleanup_when_overlay_materialization_fail
 
     assert outcome.exit_code == 0
     assert len(cleaned_paths) == 1
-    assert "Transcript materialization failed; session transcripts may be lost" in caplog.text
+
+
+@pytest.mark.slow
+def test_run_harness_process_skips_primary_metadata_repair_on_partial_materialization_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-materialize-partial-failure"
+    project_root.mkdir()
+    durable_root = tmp_path / "durable-claude"
+    durable_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    spawn_updates: list[str] = []
+
+    def fake_prepare_isolated_claude_config(**kwargs: object) -> tuple[Path | None, str]:
+        isolated_root = Path(kwargs["runtime_root"]) / "claude-config" / str(kwargs["spawn_id"])
+        isolated_root.mkdir(parents=True)
+        return isolated_root, durable_root.as_posix()
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(890)
+        return (0, 890)
+
+    def fake_cleanup_claude_overlay(
+        overlay_root: Path | None,
+        *,
+        canonical_root: Path | None = None,
+        remove_overlay: object | None = None,
+    ) -> object:
+        assert overlay_root is not None
+        assert canonical_root == durable_root
+        return ClaudeOverlayCleanupResult(
+            materialization_root=durable_root,
+            removed=True,
+            materialization=ClaudeOverlayMaterializationResult(
+                materialization_root=durable_root,
+                discovered_transcripts=2,
+                copied_transcripts=1,
+                failed_transcripts=1,
+            ),
+        )
+
+    def fake_update_spawn(
+        runtime_root: Path,
+        spawn_id: str,
+        *,
+        claude_config_dir: str | None = None,
+        **kwargs: object,
+    ) -> object:
+        _ = (runtime_root, spawn_id, kwargs)
+        if claude_config_dir is not None:
+            spawn_updates.append(claude_config_dir)
+        return None
+
+    monkeypatch.setattr(
+        process_runner,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(process_runner, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
+    monkeypatch.setattr(process_runner.spawn_store, "update_spawn", fake_update_spawn)
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert spawn_updates == [str(launch_context.runtime_root / "claude-config" / "p1")]
 
 
 @pytest.mark.slow
@@ -1189,6 +1356,157 @@ def test_run_harness_process_fresh_claude_primary_does_not_inject_seed_args(
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns) == 1
     assert spawns[0].harness_session_id in (None, "")
+
+
+@pytest.mark.slow
+def test_run_harness_process_records_generated_claude_command_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-command-session-id"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    generated_session_id = "generated-command-session-id"
+    original_build_launch_context = process_runner.build_launch_context
+
+    def fake_build_launch_context(*args: object, **kwargs: object) -> Any:
+        runtime_context = original_build_launch_context(*args, **kwargs)
+        return replace(
+            runtime_context,
+            argv=(*runtime_context.argv, "--session-id", generated_session_id),
+            seed_harness_session_id="",
+        )
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(556)
+        return (0, 556)
+
+    monkeypatch.setattr(process_runner, "build_launch_context", fake_build_launch_context)
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.resolved_harness_session_id == generated_session_id
+    assert outcome.chat_id is not None
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    assert spawns[0].harness_session_id == generated_session_id
+    assert outcome.chat_id is not None
+    assert (
+        session_store.get_session_harness_id(launch_context.runtime_root, outcome.chat_id)
+        == generated_session_id
+    )
+
+
+@pytest.mark.slow
+def test_run_harness_process_resume_raw_claude_session_seeds_overlay_with_fallback_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-resume-raw-fallback"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        session=SessionRequest(
+            requested_harness_session_id="raw-untracked-session",
+            primary_session_mode=SessionMode.RESUME.value,
+            continue_source_tracked=False,
+            continue_source_ref="raw-untracked-session",
+        ),
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    overlay_root = launch_context.runtime_root / "claude-config-overlay"
+    overlay_root.mkdir(parents=True, exist_ok=True)
+    effective_config_root = tmp_path / "effective-config-root"
+    effective_config_root.mkdir()
+    fallback_source_root = tmp_path / "fallback-source-root"
+    fallback_source_root.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_prepare_isolated_claude_config(**kwargs: object) -> tuple[Path | None, str]:
+        _ = kwargs
+        return overlay_root, ""
+
+    def fake_resolve_claude_overlay_roots(
+        *,
+        isolated_config_root: Path | None,
+        original_config_env: str,
+    ) -> object:
+        assert isolated_config_root == overlay_root
+        assert original_config_env == ""
+        return ClaudeOverlayRoots(
+            effective_config_root=effective_config_root,
+            materialization_root=fallback_source_root,
+        )
+
+    def fake_ensure_claude_session_accessible(
+        *,
+        source_session_id: str,
+        source_cwd: Path | None,
+        child_cwd: Path,
+        source_config_root: Path | None = None,
+        target_config_root: Path | None = None,
+    ) -> None:
+        captured["source_session_id"] = source_session_id
+        captured["source_cwd"] = source_cwd
+        captured["child_cwd"] = child_cwd
+        captured["source_config_root"] = source_config_root
+        captured["target_config_root"] = target_config_root
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(557)
+        return (0, 557)
+
+    monkeypatch.setattr(
+        process_runner,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(
+        process_runner,
+        "resolve_claude_overlay_roots",
+        fake_resolve_claude_overlay_roots,
+    )
+    monkeypatch.setattr(
+        process_runner,
+        "ensure_claude_session_accessible",
+        fake_ensure_claude_session_accessible,
+    )
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert captured["source_session_id"] == "raw-untracked-session"
+    assert captured["source_cwd"] == captured["child_cwd"]
+    assert captured["source_config_root"] == fallback_source_root
+    assert captured["target_config_root"] == effective_config_root
 
 
 @pytest.mark.slow

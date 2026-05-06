@@ -3,47 +3,7 @@
 from cyclopts import App
 
 from meridian import __version__
-
-# Curated help for agent mode: only commands useful for subagent callers.
-# Not auto-generated — update when adding agent-facing commands.
-AGENT_ROOT_HELP = """Usage: meridian COMMAND [ARGS]
-
-Multi-agent orchestration CLI. Meridian is a coordination layer — it launches
-subagents through harness adapters and persists state to disk. It is not a
-runtime, database, or workflow engine.
-
-State on disk is the source of truth. Inspect via CLI commands; treat state
-files under the state root as implementation detail — do not hand-edit.
-Operations are idempotent: re-running after interruption converges to correct
-state.
-
-For automation, use --format json and parse fields from JSON responses.
-Avoid scraping prose from text output.
-
-Primary launch/resume:
-  meridian -m MODEL                     Launch the primary harness
-  meridian --continue c123              Resume from ref
-  meridian --fork p123                  Fork from ref
-
-Quick start:
-  meridian spawn -m MODEL --prompt-file /tmp/task.md --bg   Launch a subagent
-  meridian spawn wait                        Wait for all pending spawns
-  meridian mars models list                  See available models
-
-Commands:
-  spawn    Create and manage subagent runs
-  session  Inspect transcripts and progress logs
-  work     Work item dashboard and coordination
-  config   Show resolved configuration and sources
-  context  Show context paths for work and knowledge
-  telemetry Tail, query, and inspect local telemetry segments
-  doctor   Health check and orphan reconciliation
-  mars     Package management and agent materialization
-  ext      Extension command discovery and invocation
-
-Run 'meridian spawn -h' for full spawn usage.
-"""
-
+from meridian.cli.startup.help import AGENT_ROOT_HELP
 
 app = App(
     name="meridian",

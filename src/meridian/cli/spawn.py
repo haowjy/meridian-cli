@@ -411,6 +411,7 @@ def _spawn_create(
                     continue_fork=True,
                     forked_from_chat_id=resolved_reference.source_chat_id,
                     source_execution_cwd=resolved_reference.source_execution_cwd,
+                    source_claude_config_dir=resolved_reference.source_claude_config_dir,
                 ),
             ),
             sink=_current_output_sink(),

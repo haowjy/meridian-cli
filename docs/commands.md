@@ -7,6 +7,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | Command | Description |
 | ------- | ----------- |
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
+| `meridian --continue REF` | Resume a prior primary session from a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id |
+| `meridian --fork REF` | Launch a new primary session by forking a prior spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides the agent through first-time environment setup |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
 | `meridian spawn list` | See running and recent spawns |
@@ -14,6 +16,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn wait ID` | Block until a spawn completes |
 | `meridian spawn show ID` | Read a spawn's report and status |
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
+| `meridian spawn --fork REF -p "next"` | Start a new spawn by forking a prior spawn, chat/session, or raw harness session id |
 | `meridian spawn --from REF -p "next"` | Start a new spawn with prior spawn or chat/session context |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn inject ID --message "text"` | Inject a message into a running streaming spawn |
@@ -30,6 +33,7 @@ Common `spawn` flags:
 | `-p "prompt"` | Inline prompt |
 | `--prompt-file PATH` | Read prompt from file |
 | `-f FILE` | Attach context file (repeatable) |
+| `--fork REF` | Fork a prior spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id into a new session |
 | `--from REF` | Attach prior context from a spawn ref (`p123`) or chat/session ref (`c123`) |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item |
@@ -175,20 +179,21 @@ reconnect/replay, persistence, and harness support matrix.
 | `meridian mars models list` | Inspect the model catalog |
 | `meridian models refresh` | Force-refresh the models.dev cache |
 | `meridian doctor` | Per-project diagnostics and orphan reconciliation (cheap, safe to run anywhere) |
-| `meridian doctor --global` | Cross-project scan — checks all projects under `~/.meridian/`; must run from the root process (not inside a spawn) |
-| `meridian doctor --prune` | Prune stale spawn artifacts and Claude overlay directories (current project); attempts transcript materialization before overlay deletion |
+| `meridian doctor --global` | Adds the machine-wide orphan-project-dir scan (`~/.meridian/projects/*`) to the normal current-project doctor checks; must run from the root process (not inside a spawn) |
+| `meridian doctor --prune` | Prune stale spawn artifacts, stale Claude overlay directories, and telemetry retention targets in the current project; makes a best-effort transcript materialization attempt before overlay deletion |
 | `meridian doctor --prune --global` | Same as `--prune`, plus orphan project dirs machine-wide |
 | `meridian serve` | Start the MCP server |
 
-`meridian doctor` scans for three categories of stale state and reports them as distinct warning codes:
+`meridian doctor` scans for four categories of stale state and reports them as distinct warning codes:
 
 | Warning code | What it means |
 | ------------ | ------------- |
 | `stale_spawn_artifacts` | Spawn artifact directories for completed spawns past the retention window |
-| `stale_claude_overlays` | Per-spawn Claude config overlay directories past the retention window; transcripts are still intact inside them until pruned |
-| `orphan_project_dirs` | Project state directories with no matching live project (`--global` only) |
+| `stale_claude_overlays` | Per-spawn Claude config overlay directories past the retention window; they may contain transcripts, and any transcripts inside remain until deletion |
+| `stale_telemetry_segments` | Current-project telemetry segments that would be pruned by retention cleanup because they are expired or because total telemetry size exceeds the cap |
+| `stale_orphan_project_dirs` | Project state directories with no matching live project (`--global` only) |
 
-`--prune` removes all three. For Claude overlays specifically, Meridian makes a best-effort attempt to materialize any remaining session transcript files into `~/.claude/projects/` before deleting the overlay. If materialization fails, Meridian logs a warning and continues prune handling. See [troubleshooting.md](troubleshooting.md#claude-session-isolation) for details on the overlay model.
+Local `--prune` removes stale spawn artifacts, stale Claude overlays, and telemetry segments selected by current-project retention cleanup. Telemetry cleanup first removes expired non-live segments, then may remove older closed segments to enforce the size cap. Orphan project dirs are only pruned by `meridian doctor --prune --global`. For Claude overlays specifically, normal completion already performs immediate cleanup after a best-effort materialization step; doctor handles only stale/crash-orphaned leftovers. If doctor-side materialization fails, Meridian logs a warning and continues prune handling. See [troubleshooting.md](troubleshooting.md#claude-session-isolation) for details on the overlay model.
 
 ## Telemetry
 

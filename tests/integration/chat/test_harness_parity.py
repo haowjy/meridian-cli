@@ -39,7 +39,17 @@ def test_all_harnesses_emit_core_chat_event_families_without_server_branching():
                 "message.updated",
                 {
                     "properties": {
-                        "message": {"parts": [{"id": "p1", "type": "text", "text": "hi"}]}
+                        "info": {"id": "msg-1", "role": "assistant"},
+                        "message": {
+                            "parts": [
+                                {
+                                    "id": "p1",
+                                    "messageID": "msg-1",
+                                    "type": "text",
+                                    "text": "hi",
+                                }
+                            ]
+                        },
                     }
                 },
             ),

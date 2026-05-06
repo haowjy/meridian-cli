@@ -116,6 +116,27 @@ def test_codex_emits_terminal_assistant_text_from_item_completed_when_delta_miss
     assert text.payload == {"stream_kind": "assistant_text", "text": "fallback"}
 
 
+def test_codex_stale_duplicate_completion_does_not_close_newer_turn():
+    n = CodexNormalizer("c1", "s1")
+
+    first_started = n.normalize(event("turn/started", {"turn": {"id": "t1"}}))[0]
+    first_completed = n.normalize(event("turn/completed", {"turn": {"id": "t1"}}))[0]
+    second_started = n.normalize(event("turn/started", {"turn": {"id": "t2"}}))[0]
+
+    stale_completion = n.normalize(event("turn/completed", {"turn": {"id": "t1"}}))
+    second_delta = n.normalize(
+        event("item/agentMessage/delta", {"turnId": "t2", "itemId": "msg-2", "delta": "hi"})
+    )[0]
+    second_completed = n.normalize(event("turn/completed", {"turn": {"id": "t2"}}))[0]
+
+    assert first_started.turn_id == "t1"
+    assert first_completed.turn_id == "t1"
+    assert second_started.turn_id == "t2"
+    assert stale_completion == []
+    assert second_delta.turn_id == "t2"
+    assert second_completed.turn_id == "t2"
+
+
 def test_codex_preserves_legacy_event_shapes():
     n = CodexNormalizer("c1", "s1")
 

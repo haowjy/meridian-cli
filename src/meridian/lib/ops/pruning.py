@@ -16,10 +16,12 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.claude_preflight import (
-    materialize_overlay_transcripts,
-    resolve_overlay_materialization_canonical_root,
+    cleanup_claude_overlay,
 )
 from meridian.lib.state import spawn_store
+from meridian.lib.state.claude_config_metadata import (
+    persist_durable_claude_config_metadata,
+)
 from meridian.lib.state.session_store import update_session_claude_config_dir
 
 _SECONDS_PER_DAY = 24 * 60 * 60
@@ -315,33 +317,6 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
     return removed
 
 
-def _repair_pruned_overlay_metadata(
-    *,
-    runtime_root: Path,
-    spawn_id: str,
-    materialization_root: Path,
-) -> None:
-    """Repair spawn/session Claude config metadata after overlay prune."""
-
-    spawn = spawn_store.get_spawn(runtime_root, spawn_id)
-    if spawn is None:
-        return
-
-    durable_config_dir = str(materialization_root)
-    spawn_store.update_spawn(
-        runtime_root,
-        spawn_id,
-        claude_config_dir=durable_config_dir,
-    )
-    chat_id = (spawn.chat_id or "").strip()
-    if chat_id:
-        update_session_claude_config_dir(
-            runtime_root,
-            chat_id,
-            claude_config_dir=durable_config_dir,
-        )
-
-
 def prune_stale_claude_overlays(
     stale: list[StaleClaudeOverlay],
     *,
@@ -350,28 +325,27 @@ def prune_stale_claude_overlays(
     """Delete stale Claude overlay directories after transcript materialization."""
 
     removed = 0
-    canonical_root = resolve_overlay_materialization_canonical_root()
     for overlay in stale:
         overlay_path = Path(overlay.path)
-        materialized = False
-        try:
-            materialize_overlay_transcripts(overlay_path, canonical_root=canonical_root)
-            materialized = True
-        except Exception:
-            logger.warning(
-                "Failed to materialize Claude overlay transcripts during doctor prune",
-                overlay_path=str(overlay_path),
-                spawn_id=overlay.spawn_id,
-                exc_info=True,
-            )
-        if _prune_dir(overlay_path):
+        cleanup_result = cleanup_claude_overlay(
+            overlay_path,
+            remove_overlay=_prune_dir,
+        )
+        if cleanup_result.removed:
             removed += 1
-            if materialized and runtime_root is not None:
+            if (
+                cleanup_result.materialized
+                and cleanup_result.materialization_root is not None
+                and runtime_root is not None
+            ):
                 try:
-                    _repair_pruned_overlay_metadata(
+                    persist_durable_claude_config_metadata(
                         runtime_root=runtime_root,
                         spawn_id=overlay.spawn_id,
-                        materialization_root=canonical_root,
+                        materialization_root=cleanup_result.materialization_root,
+                        update_spawn=spawn_store.update_spawn,
+                        update_session_claude_config_dir=update_session_claude_config_dir,
+                        get_spawn=spawn_store.get_spawn,
                     )
                 except Exception:
                     logger.warning(

@@ -1,5 +1,6 @@
 import pytest
 
+from meridian.lib.chat.normalization.base import EventNormalizer
 from meridian.lib.chat.normalization.claude import ClaudeNormalizer
 from meridian.lib.chat.normalization.codex import CodexNormalizer
 from meridian.lib.chat.normalization.opencode import OpenCodeNormalizer
@@ -15,7 +16,10 @@ from meridian.lib.harness.ids import HarnessId
         (HarnessId.OPENCODE, OpenCodeNormalizer),
     ],
 )
-def test_registry_returns_factories_for_supported_harnesses(harness_id, expected_factory):
+def test_registry_returns_factories_for_supported_harnesses(
+    harness_id: HarnessId,
+    expected_factory: type[EventNormalizer],
+) -> None:
     factory = get_normalizer_factory(harness_id)
 
     assert NORMALIZER_REGISTRY[harness_id.value] is expected_factory

@@ -38,6 +38,8 @@ class OpenCodeNormalizer:
         self._started_for_turn = False
         self._completed_for_turn = False
         self._part_type_by_id: dict[str, str] = {}
+        self._part_message_id_by_id: dict[str, str] = {}
+        self._message_role_by_id: dict[str, str] = {}
         self._parts_with_streamed_delta: set[str] = set()
         self._parts_with_snapshot_emitted: set[str] = set()
         self._started_tool_items: set[str] = set()
@@ -48,6 +50,8 @@ class OpenCodeNormalizer:
         self._started_for_turn = False
         self._completed_for_turn = False
         self._part_type_by_id.clear()
+        self._part_message_id_by_id.clear()
+        self._message_role_by_id.clear()
         self._parts_with_streamed_delta.clear()
         self._parts_with_snapshot_emitted.clear()
         self._started_tool_items.clear()
@@ -103,18 +107,22 @@ class OpenCodeNormalizer:
         return self._ensure_turn_started(event)
 
     def _session_idle(self, event: HarnessEvent) -> list[ChatEvent]:
-        started = self._ensure_turn_started(event)
+        if not self._started_for_turn:
+            return []
         completed = self._turn_completed(event)
         if completed is None:
-            return started
-        return [*started, completed]
+            return []
+        return [completed]
 
     def _message_part_delta(self, event: HarnessEvent) -> list[ChatEvent]:
         properties = as_dict(event.payload.get("properties")) or event.payload
         part_id = as_str(properties.get("partID")) or as_str(properties.get("part_id"))
         if part_id is None:
             return []
-        stream_kind = self._stream_kind_for_part(part_id)
+        message_id = _extract_message_id(properties)
+        if message_id is not None:
+            self._part_message_id_by_id[part_id] = message_id
+        stream_kind = self._stream_kind_for_part(part_id, message_id=message_id)
         if stream_kind is None:
             return []
         text = as_str(properties.get("delta"))
@@ -141,6 +149,7 @@ class OpenCodeNormalizer:
         return self._events_from_part_snapshot(event, part)
 
     def _message_updated(self, event: HarnessEvent) -> list[ChatEvent]:
+        self._record_message_role(event.payload)
         parts = _extract_message_parts(event.payload)
         if not parts:
             return []
@@ -155,12 +164,23 @@ class OpenCodeNormalizer:
         part_type = as_str(part.get("type"))
         if part_id is not None and part_type is not None:
             self._part_type_by_id[part_id] = part_type
+            message_id = _extract_message_id(part)
+            if message_id is not None:
+                self._part_message_id_by_id[part_id] = message_id
+
+    def _record_message_role(self, payload: dict[str, object]) -> None:
+        message_id, role = _extract_message_identity(payload)
+        if message_id is None or role is None:
+            return
+        self._message_role_by_id[message_id] = role.lower()
 
     def _events_from_part_snapshot(
         self, event: HarnessEvent, part: dict[str, object]
     ) -> list[ChatEvent]:
         part_id = as_str(part.get("id")) or f"item-{uuid4()}"
         part_type = as_str(part.get("type"))
+        if part_type in {"text", "reasoning"} and not self._is_assistant_part(part_id, part):
+            return []
         if part_type == "text":
             return self._text_snapshot_event(event, part, part_id, stream_kind="assistant_text")
         if part_type == "reasoning":
@@ -245,13 +265,32 @@ class OpenCodeNormalizer:
 
         return events
 
-    def _stream_kind_for_part(self, part_id: str) -> str | None:
+    def _stream_kind_for_part(self, part_id: str, *, message_id: str | None = None) -> str | None:
+        if not self._is_assistant_part(part_id, message_id=message_id):
+            return None
         part_type = self._part_type_by_id.get(part_id)
         if part_type == "text":
             return "assistant_text"
         if part_type == "reasoning":
             return "reasoning_text"
         return None
+
+    def _is_assistant_part(
+        self,
+        part_id: str,
+        part: dict[str, object] | None = None,
+        *,
+        message_id: str | None = None,
+    ) -> bool:
+        resolved_message_id = message_id or self._part_message_id_by_id.get(part_id)
+        if resolved_message_id is None and part is not None:
+            resolved_message_id = _extract_message_id(part)
+            if resolved_message_id is not None:
+                self._part_message_id_by_id[part_id] = resolved_message_id
+        if resolved_message_id is None:
+            return False
+        role = self._message_role_by_id.get(resolved_message_id)
+        return role == "assistant"
 
     def _ensure_turn_started(self, event: HarnessEvent) -> list[ChatEvent]:
         if self._started_for_turn:
@@ -345,6 +384,8 @@ class OpenCodeNormalizer:
         self._turn_id = None
         self._started_for_turn = False
         self._part_type_by_id.clear()
+        self._part_message_id_by_id.clear()
+        self._message_role_by_id.clear()
         self._parts_with_streamed_delta.clear()
         self._parts_with_snapshot_emitted.clear()
         self._started_tool_items.clear()
@@ -382,6 +423,37 @@ def _extract_session_status(payload: dict[str, object]) -> str | None:
 def _extract_part(payload: dict[str, object]) -> dict[str, object] | None:
     properties = as_dict(payload.get("properties")) or payload
     return as_dict(properties.get("part"))
+
+
+def _extract_message_identity(payload: dict[str, object]) -> tuple[str | None, str | None]:
+    properties = as_dict(payload.get("properties")) or payload
+    info = as_dict(properties.get("info"))
+    if info is None:
+        info = as_dict(payload.get("info"))
+    if info is not None:
+        message_id = as_str(info.get("id"))
+        role = as_str(info.get("role"))
+        if message_id is not None or role is not None:
+            return message_id, role
+
+    message = as_dict(properties.get("message"))
+    if message is None:
+        message = as_dict(payload.get("message"))
+    if message is not None:
+        return _extract_message_id(message), as_str(message.get("role"))
+    return None, None
+
+
+def _extract_message_id(payload: dict[str, object]) -> str | None:
+    if as_str(payload.get("messageID")) is not None:
+        return as_str(payload.get("messageID"))
+    if as_str(payload.get("messageId")) is not None:
+        return as_str(payload.get("messageId"))
+    if as_str(payload.get("message_id")) is not None:
+        return as_str(payload.get("message_id"))
+    if "role" in payload:
+        return as_str(payload.get("id"))
+    return None
 
 
 def _extract_message_parts(payload: dict[str, object]) -> list[dict[str, object]]:

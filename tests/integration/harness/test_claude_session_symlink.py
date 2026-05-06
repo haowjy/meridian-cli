@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 import meridian.lib.harness.claude_preflight as claude_preflight
 from meridian.lib.harness.claude import project_slug
 from meridian.lib.harness.claude_preflight import (
+    cleanup_claude_overlay,
     ensure_claude_session_accessible,
     materialize_overlay_transcripts,
     prepare_isolated_claude_config,
@@ -193,6 +195,47 @@ def test_ensure_claude_session_accessible_falls_back_to_canonical_when_source_ro
     assert not target_file.is_symlink()
 
 
+def test_ensure_claude_session_accessible_uses_durable_metadata_root_not_parent_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_home = tmp_path / "home"
+    durable_root = tmp_path / "durable"
+    parent_overlay = tmp_path / "parent-overlay"
+    deleted_source_overlay = tmp_path / "deleted-overlay"
+    source_cwd = tmp_path / "source"
+    child_cwd = tmp_path / "child"
+    source_cwd.mkdir()
+    child_cwd.mkdir()
+    fake_home.mkdir()
+    durable_root.mkdir()
+    parent_overlay.mkdir()
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", parent_overlay.as_posix())
+    monkeypatch.setenv(
+        claude_preflight.MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+        durable_root.as_posix(),
+    )
+
+    durable_project = durable_root / "projects" / project_slug(source_cwd)
+    durable_project.mkdir(parents=True)
+    source_file = durable_project / "session-1.jsonl"
+    source_file.write_text('{"sessionId":"session-1"}\n', encoding="utf-8")
+
+    ensure_claude_session_accessible(
+        "session-1",
+        source_cwd,
+        child_cwd,
+        source_config_root=deleted_source_overlay,
+        target_config_root=parent_overlay,
+    )
+
+    target_file = parent_overlay / "projects" / project_slug(child_cwd) / "session-1.jsonl"
+    assert target_file.exists()
+    assert target_file.read_text(encoding="utf-8") == source_file.read_text(encoding="utf-8")
+    assert not target_file.is_symlink()
+
+
 def test_ensure_claude_session_accessible_seeds_same_cwd_when_config_roots_differ(
     tmp_path: Path,
 ) -> None:
@@ -264,6 +307,7 @@ def test_prepare_isolated_claude_config_creates_overlay(
     assert isolated_root == tmp_path / "runtime" / "claude-config" / "p1"
     assert original_env == user_root.as_posix()
     assert isolated_root is not None
+    assert (isolated_root / ".meridian-overlay.json").exists()
     target = isolated_root / "settings.json"
     assert target.exists()
     if IS_WINDOWS:
@@ -415,6 +459,43 @@ def test_prepare_isolated_claude_config_uses_default_root_when_original_metadata
     assert (isolated_root / "settings.json").read_text(encoding="utf-8") == '{"source":"default"}'
 
 
+def test_cleanup_claude_overlay_uses_overlay_sidecar_materialization_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay_root = tmp_path / "overlay"
+    ambient_root = tmp_path / "ambient-root"
+    durable_root = tmp_path / "durable-root"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", ambient_root.as_posix())
+
+    isolated_root, _ = prepare_isolated_claude_config(tmp_path, "overlay")
+    assert isolated_root == tmp_path / "claude-config" / "overlay"
+    overlay_root = isolated_root
+    session_file = overlay_root / "projects" / "slug-a" / "session.jsonl"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text('{"sessionId":"sidecar"}\n', encoding="utf-8")
+    durable_root.mkdir(parents=True, exist_ok=True)
+    metadata_path = overlay_root / ".meridian-overlay.json"
+    metadata_path.write_text(
+        '{\n  "v": 1,\n  "materialization_root": "'
+        + durable_root.as_posix()
+        + '"\n}\n',
+        encoding="utf-8",
+    )
+
+    result = cleanup_claude_overlay(
+        overlay_root,
+        remove_overlay=lambda _path: True,
+    )
+
+    assert result.materialization_root == durable_root
+    assert result.materialized is True
+    assert (durable_root / "projects" / "slug-a" / "session.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"sessionId":"sidecar"}\n'
+    assert not (ambient_root / "projects" / "slug-a" / "session.jsonl").exists()
+
+
 def test_materialize_overlay_transcripts_copies_all_jsonl_files(
     tmp_path: Path,
 ) -> None:
@@ -429,9 +510,12 @@ def test_materialize_overlay_transcripts_copies_all_jsonl_files(
     second.write_text('{"sessionId":"session-2"}\n', encoding="utf-8")
     ignored.write_text("ignore me\n", encoding="utf-8")
 
-    copied = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+    result = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
 
-    assert copied == 2
+    assert result.discovered_transcripts == 2
+    assert result.copied_transcripts == 2
+    assert result.failed_transcripts == 0
+    assert result.succeeded is True
     assert (canonical_root / "projects" / "slug-a" / "session-1.jsonl").read_text(
         encoding="utf-8"
     ) == first.read_text(encoding="utf-8")
@@ -462,8 +546,9 @@ def test_materialize_overlay_transcripts_prefers_newer_or_larger_overlay_copy(
     os.utime(target, (stale_mtime, stale_mtime))
     os.utime(source, (newer_mtime, newer_mtime))
 
-    copied = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
-    assert copied == 1
+    result = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+    assert result.copied_transcripts == 1
+    assert result.failed_transcripts == 0
     assert target.read_text(encoding="utf-8") == "newer payload\n"
 
     target.write_text("tiny\n", encoding="utf-8")
@@ -472,9 +557,146 @@ def test_materialize_overlay_transcripts_prefers_newer_or_larger_overlay_copy(
     os.utime(target, (tied_mtime, tied_mtime))
     os.utime(source, (tied_mtime, tied_mtime))
 
-    copied = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
-    assert copied == 1
+    result = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+    assert result.copied_transcripts == 1
+    assert result.failed_transcripts == 0
     assert target.read_text(encoding="utf-8") == "bigger replacement\n"
+
+
+def test_materialize_overlay_transcripts_concurrent_older_overlay_cannot_overwrite_newer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_root = tmp_path / "canonical"
+    older_overlay_root = tmp_path / "overlay-old"
+    newer_overlay_root = tmp_path / "overlay-new"
+    relative_path = Path("slug-a") / "session.jsonl"
+    older_source = older_overlay_root / "projects" / relative_path
+    newer_source = newer_overlay_root / "projects" / relative_path
+    older_source.parent.mkdir(parents=True)
+    newer_source.parent.mkdir(parents=True)
+    older_source.write_text("old payload\n", encoding="utf-8")
+    newer_source.write_text("new payload wins\n", encoding="utf-8")
+    older_mtime = 1_700_000_000
+    newer_mtime = older_mtime + 10
+    os.utime(older_source, (older_mtime, older_mtime))
+    os.utime(newer_source, (newer_mtime, newer_mtime))
+
+    real_copy2 = claude_preflight.shutil.copy2
+    old_temp_staged = threading.Event()
+    allow_old_to_lock = threading.Event()
+
+    def _controlled_copy2(
+        src: str | os.PathLike[str],
+        dst: str | os.PathLike[str],
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        result = real_copy2(src, dst, *args, **kwargs)
+        if Path(src) == older_source and Path(dst).name.startswith(".session.jsonl."):
+            old_temp_staged.set()
+            assert allow_old_to_lock.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(claude_preflight.shutil, "copy2", _controlled_copy2)
+
+    older_result: list[object] = []
+    newer_result: list[object] = []
+
+    def _materialize_into(result_box: list[object], overlay_root: Path) -> None:
+        result_box.append(
+            materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+        )
+
+    older_thread = threading.Thread(
+        target=_materialize_into,
+        args=(older_result, older_overlay_root),
+    )
+    newer_thread = threading.Thread(
+        target=_materialize_into,
+        args=(newer_result, newer_overlay_root),
+    )
+
+    older_thread.start()
+    assert old_temp_staged.wait(timeout=5)
+    newer_thread.start()
+    newer_thread.join(timeout=5)
+    assert not newer_thread.is_alive()
+    allow_old_to_lock.set()
+    older_thread.join(timeout=5)
+    assert not older_thread.is_alive()
+
+    target = canonical_root / "projects" / relative_path
+    assert target.read_text(encoding="utf-8") == "new payload wins\n"
+    assert newer_result
+    assert older_result
+    assert newer_result[0].copied_transcripts == 1
+    assert older_result[0].copied_transcripts == 0
+    assert older_result[0].failed_transcripts == 0
+
+
+def test_materialize_overlay_transcripts_preserves_nested_paths(
+    tmp_path: Path,
+) -> None:
+    overlay_root = tmp_path / "overlay"
+    canonical_root = tmp_path / "canonical"
+    nested_source = overlay_root / "projects" / "slug-a" / "nested" / "session.jsonl"
+    nested_source.parent.mkdir(parents=True)
+    nested_source.write_text('{"sessionId":"nested"}\n', encoding="utf-8")
+
+    result = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+
+    assert result.discovered_transcripts == 1
+    assert result.copied_transcripts == 1
+    assert result.failed_transcripts == 0
+    nested_target = canonical_root / "projects" / "slug-a" / "nested" / "session.jsonl"
+    assert nested_target.read_text(encoding="utf-8") == nested_source.read_text(encoding="utf-8")
+
+
+def test_materialize_overlay_transcripts_counts_directory_creation_failures(
+    tmp_path: Path,
+) -> None:
+    overlay_root = tmp_path / "overlay"
+    canonical_root = tmp_path / "canonical"
+    nested_source = overlay_root / "projects" / "slug-a" / "nested" / "session.jsonl"
+    nested_source.parent.mkdir(parents=True)
+    nested_source.write_text('{"sessionId":"nested"}\n', encoding="utf-8")
+
+    blocking_file = canonical_root / "projects" / "slug-a"
+    blocking_file.parent.mkdir(parents=True)
+    blocking_file.write_text("not a directory\n", encoding="utf-8")
+
+    result = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+
+    assert result.discovered_transcripts == 1
+    assert result.copied_transcripts == 0
+    assert result.failed_transcripts == 1
+    assert result.succeeded is False
+
+
+def test_cleanup_claude_overlay_reports_not_materialized_on_partial_failure(
+    tmp_path: Path,
+) -> None:
+    overlay_root = tmp_path / "overlay"
+    canonical_root = tmp_path / "canonical"
+    nested_source = overlay_root / "projects" / "slug-a" / "nested" / "session.jsonl"
+    nested_source.parent.mkdir(parents=True)
+    nested_source.write_text('{"sessionId":"nested"}\n', encoding="utf-8")
+
+    blocking_file = canonical_root / "projects" / "slug-a"
+    blocking_file.parent.mkdir(parents=True)
+    blocking_file.write_text("not a directory\n", encoding="utf-8")
+
+    result = cleanup_claude_overlay(
+        overlay_root,
+        canonical_root=canonical_root,
+        remove_overlay=lambda _path: True,
+    )
+
+    assert result.removed is True
+    assert result.materialization is not None
+    assert result.materialization.failed_transcripts == 1
+    assert result.materialized is False
 
 
 def test_materialize_overlay_transcripts_uses_atomic_replace_and_cleans_temp_on_failure(
@@ -503,9 +725,12 @@ def test_materialize_overlay_transcripts_uses_atomic_replace_and_cleans_temp_on_
 
     monkeypatch.setattr(claude_preflight.os, "replace", _raise_replace)
 
-    copied = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
+    result = materialize_overlay_transcripts(overlay_root, canonical_root=canonical_root)
 
-    assert copied == 0
+    assert result.discovered_transcripts == 1
+    assert result.copied_transcripts == 0
+    assert result.failed_transcripts == 1
+    assert result.succeeded is False
     assert target.read_text(encoding="utf-8") == "old\n"
     assert attempted_temp_paths
     assert all(not temp_path.exists() for temp_path in attempted_temp_paths)
@@ -513,7 +738,9 @@ def test_materialize_overlay_transcripts_uses_atomic_replace_and_cleans_temp_on_
 
 
 def test_materialize_overlay_transcripts_is_noop_for_missing_projects(tmp_path: Path) -> None:
-    assert (
-        materialize_overlay_transcripts(tmp_path / "overlay", canonical_root=tmp_path / "out")
-        == 0
-    )
+    result = materialize_overlay_transcripts(tmp_path / "overlay", canonical_root=tmp_path / "out")
+
+    assert result.discovered_transcripts == 0
+    assert result.copied_transcripts == 0
+    assert result.failed_transcripts == 0
+    assert result.succeeded is True

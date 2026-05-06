@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -25,10 +24,12 @@ from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+    cleanup_claude_overlay,
     ensure_claude_session_accessible,
-    materialize_overlay_transcripts,
-    resolve_overlay_materialization_canonical_root,
+    prepare_isolated_claude_config,
+    resolve_claude_overlay_roots,
 )
+from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
@@ -39,13 +40,19 @@ from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
+from meridian.lib.launch.claude_session_access import (
+    resolve_claude_session_access_source,
+)
 from meridian.lib.launch.constants import (
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore
+from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
+from meridian.lib.state.claude_config_metadata import (
+    persist_durable_claude_config_metadata,
+)
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
@@ -97,32 +104,6 @@ class ProcessOutcome(BaseModel):
     resolved_harness_session_id: str
 
 
-def _persist_durable_claude_config_metadata(
-    *,
-    runtime_root: Path,
-    primary_spawn_id: SpawnId | None,
-    chat_id: str | None,
-    materialization_root: Path | None,
-) -> None:
-    """Persist post-cleanup durable Claude config metadata."""
-
-    if primary_spawn_id is None or materialization_root is None:
-        return
-
-    durable_config_dir = str(materialization_root)
-    spawn_store.update_spawn(
-        runtime_root,
-        primary_spawn_id,
-        claude_config_dir=durable_config_dir,
-    )
-    if chat_id:
-        update_session_claude_config_dir(
-            runtime_root,
-            chat_id,
-            claude_config_dir=durable_config_dir,
-        )
-
-
 RunPrimaryProcessWithCapture = Callable[
     [tuple[str, ...], Path, dict[str, str], Path | None, Callable[[int], None] | None],
     tuple[int, int | None],
@@ -145,7 +126,10 @@ RunPrimaryAttach = Callable[
 def select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
     """Choose the launch backend for one primary process invocation."""
 
-    _ = output_log_path
+    if output_log_path is not None:
+        if can_use_pty():
+            return PtyProcessLauncher()
+        return SubprocessProcessLauncher()
     if can_use_windows_console_launcher():
         return WindowsConsoleLauncher()
     if can_use_pty():
@@ -223,6 +207,7 @@ def _execute_via_blackbox(
     command: tuple[str, ...],
     child_cwd: Path,
     child_env: dict[str, str],
+    output_log_path: Path | None,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
     on_running: Callable[[int], None],
 ) -> int:
@@ -232,10 +217,42 @@ def _execute_via_blackbox(
         command,
         child_cwd,
         child_env,
-        None,
+        output_log_path,
         on_running,
     )
     return exit_code
+
+
+def _should_capture_blackbox_output(
+    *,
+    harness_id: HarnessId,
+    command: tuple[str, ...],
+) -> bool:
+    """Return whether black-box primary output should be captured to output.jsonl."""
+
+    if harness_id != HarnessId.CLAUDE:
+        return False
+    return "--print" in command
+
+
+def _persist_blackbox_output_artifact(
+    *,
+    artifacts: LocalStore,
+    spawn_id: SpawnId | None,
+    log_dir: Path,
+) -> None:
+    """Mirror captured primary black-box output into the artifact store."""
+
+    if spawn_id is None:
+        return
+    output_path = log_dir / OUTPUT_FILENAME
+    if not output_path.is_file():
+        return
+    with suppress(OSError):
+        artifacts.put(
+            make_artifact_key(spawn_id, OUTPUT_FILENAME),
+            output_path.read_bytes(),
+        )
 
 
 def _execute_primary_process(
@@ -284,11 +301,20 @@ def _execute_primary_process(
             use_managed_backend = False
 
     if harness_id == HarnessId.CLAUDE or not use_managed_backend:
+        output_log_path = (
+            log_dir / OUTPUT_FILENAME
+            if _should_capture_blackbox_output(
+                harness_id=harness_id,
+                command=command,
+            )
+            else None
+        )
         return (
             _execute_via_blackbox(
                 command=command,
                 child_cwd=child_cwd,
                 child_env=child_env,
+                output_log_path=output_log_path,
                 run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
                 on_running=on_running,
             ),
@@ -357,7 +383,7 @@ def _finalize_lifecycle_and_observe_session(
         if primary_started_epoch > 0.0:
             observed_harness_session_id = harness_adapter.observe_session_id(
                 artifacts=artifacts,
-                spawn_id=None,
+                spawn_id=primary_spawn_id,
                 current_session_id=resolved_harness_session_id,
                 project_root=project_root,
                 started_at_epoch=primary_started_epoch,
@@ -685,6 +711,18 @@ def run_harness_process(
                 )
                 command = runtime_context.argv
                 resolved_harness_session_id = runtime_context.seed_harness_session_id or ""
+                if harness_id == HarnessId.CLAUDE and not resolved_harness_session_id:
+                    generated_session_id = extract_session_id_from_args(command)
+                    if generated_session_id:
+                        resolved_harness_session_id = generated_session_id
+                        initial_persisted_harness_session_id = generated_session_id
+                        managed.record_harness_session_id(generated_session_id)
+                        spawn_store.update_spawn(
+                            runtime_root,
+                            primary_spawn_id,
+                            harness_session_id=generated_session_id,
+                        )
+                        lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 child_env = dict(runtime_context.env)
                 if managed.chat_id:
                     child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
@@ -692,10 +730,6 @@ def run_harness_process(
                 launch_spec = runtime_context.spec
 
                 if harness_id == HarnessId.CLAUDE:
-                    from meridian.lib.harness.claude_preflight import (
-                        prepare_isolated_claude_config,
-                    )
-
                     isolated_config_root, original_claude_config_dir = (
                         prepare_isolated_claude_config(
                             runtime_root=runtime_root,
@@ -705,19 +739,13 @@ def run_harness_process(
                     child_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] = (
                         original_claude_config_dir
                     )
-                    claude_materialization_root = resolve_overlay_materialization_canonical_root(
-                        child_env
+                    overlay_roots = resolve_claude_overlay_roots(
+                        isolated_config_root=isolated_config_root,
+                        original_config_env=original_claude_config_dir,
                     )
-                    effective_config_dir = ""
-                    if isolated_config_root is not None:
-                        effective_config_root = isolated_config_root
-                        effective_config_dir = str(isolated_config_root)
-                    elif original_claude_config_dir.strip():
-                        effective_config_root = Path(original_claude_config_dir.strip())
-                        effective_config_dir = original_claude_config_dir.strip()
-                    else:
-                        effective_config_root = claude_materialization_root
-                        effective_config_dir = str(claude_materialization_root)
+                    effective_config_root = overlay_roots.effective_config_root
+                    claude_materialization_root = overlay_roots.materialization_root
+                    effective_config_dir = str(effective_config_root)
 
                     if effective_config_dir:
                         child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
@@ -733,23 +761,22 @@ def run_harness_process(
                                 claude_config_dir=effective_config_dir,
                             )
 
-                if (
-                    harness_adapter.id == HarnessId.CLAUDE
-                    and preview_request.session.source_execution_cwd
-                    and resolved_harness_session_id
-                ):
-                    source_config = (
-                        Path(preview_request.session.source_claude_config_dir)
-                        if preview_request.session.source_claude_config_dir
-                        else None
-                    )
-                    ensure_claude_session_accessible(
-                        source_session_id=resolved_harness_session_id,
-                        source_cwd=Path(preview_request.session.source_execution_cwd),
+                if harness_adapter.id == HarnessId.CLAUDE and resolved_harness_session_id:
+                    session_access = resolve_claude_session_access_source(
+                        preview_request.session,
                         child_cwd=child_cwd,
-                        source_config_root=source_config,
+                        materialization_root=claude_materialization_root,
                         target_config_root=effective_config_root,
                     )
+                    if session_access.should_seed:
+                        ensure_claude_session_accessible(
+                            source_session_id=session_access.source_session_id
+                            or resolved_harness_session_id,
+                            source_cwd=session_access.source_cwd,
+                            child_cwd=child_cwd,
+                            source_config_root=session_access.source_config_root,
+                            target_config_root=session_access.target_config_root,
+                        )
 
                 def _record_primary_started(child_pid: int) -> None:
                     lifecycle_service.mark_running(
@@ -777,6 +804,11 @@ def run_harness_process(
                 )
                 if managed_session_id is not None:
                     resolved_harness_session_id = managed_session_id
+                _persist_blackbox_output_artifact(
+                    artifacts=artifacts,
+                    spawn_id=primary_spawn_id,
+                    log_dir=log_dir,
+                )
                 with suppress(Exception):
                     lifecycle_service.record_exited(
                         primary_spawn_id,
@@ -801,33 +833,23 @@ def run_harness_process(
                     managed=managed,
                     lifecycle_service=lifecycle_service,
                 )
-                materialized_to_root = False
-                if isolated_config_root is not None and isolated_config_root.is_dir():
+                cleanup_result = cleanup_claude_overlay(
+                    isolated_config_root,
+                    canonical_root=claude_materialization_root,
+                )
+                if (
+                    primary_spawn_id is not None
+                    and cleanup_result.removed
+                    and cleanup_result.materialized
+                ):
                     try:
-                        materialize_overlay_transcripts(
-                            isolated_config_root,
-                            canonical_root=claude_materialization_root,
-                        )
-                        materialized_to_root = True
-                    except Exception:
-                        logger.warning(
-                            "Transcript materialization failed; session transcripts may be lost",
-                            exc_info=True,
-                        )
-                    try:
-                        shutil.rmtree(isolated_config_root)
-                    except OSError:
-                        logger.debug(
-                            "Failed to clean up isolated Claude config dir",
-                            exc_info=True,
-                        )
-                if materialized_to_root:
-                    try:
-                        _persist_durable_claude_config_metadata(
+                        persist_durable_claude_config_metadata(
                             runtime_root=runtime_root,
-                            primary_spawn_id=primary_spawn_id,
+                            spawn_id=primary_spawn_id,
                             chat_id=managed.chat_id,
-                            materialization_root=claude_materialization_root,
+                            materialization_root=cleanup_result.materialization_root,
+                            update_spawn=spawn_store.update_spawn,
+                            update_session_claude_config_dir=update_session_claude_config_dir,
                         )
                     except Exception:
                         logger.warning(
