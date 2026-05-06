@@ -199,9 +199,9 @@ Each line shows: name, description, default model, and fanout aliases (deduplica
 When a spawn is launched with an agent profile and the current head candidate's harness is unavailable — whether that is the profile's base model or a harness rerouted by a matched `model-policies` rule — Meridian walks the candidate chain and selects the next available alternative without failing:
 
 1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
-2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override replaces the base candidate as the new head. The base candidate is not preserved as a fallback position in the chain.
+2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head. The original base candidate is retained as the next availability fallback in the chain.
 3. Append `fanout` entries in declared order.
-4. Walk the resulting ordered candidate chain and pick the first candidate whose harness is available.
+4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → fanout) and pick the first candidate whose harness is available.
 5. If nothing resolves, fail with a clear error naming the unavailable harness.
 
 `model-policies` participate as candidate transforms on top of the base launch candidate. They are not a separate token-discovery list outside the chain.
