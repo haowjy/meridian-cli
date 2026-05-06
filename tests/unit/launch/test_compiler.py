@@ -448,7 +448,7 @@ def test_compile_launch_params_three_state_model_policies_inherit_profile() -> N
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
-def test_compile_launch_params_three_state_empty_overlay_suppresses_profile() -> None:
+def test_compile_launch_params_three_state_empty_overlay_uses_empty_policy_list() -> None:
     alias = _alias_entry()
     profile_rule = ModelPolicyRule(
         match_type="alias",
@@ -535,7 +535,7 @@ def test_compile_launch_params_legacy_models_apply_when_overlay_absent() -> None
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
-def test_compile_launch_params_legacy_models_suppressed_by_overlay_model_policies_setting() -> None:
+def test_compile_launch_params_legacy_models_ignored_when_overlay_sets_empty_policy_list() -> None:
     alias = _alias_entry()
     request = _request(
         cli=RuntimeOverrides(model="gptmini"),

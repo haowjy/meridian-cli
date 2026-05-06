@@ -141,7 +141,7 @@ List/tool override keys (`skills`, `tools`, `disallowed-tools`, `mcp-tools`) are
 ### Three-state model-policy semantics
 
 - **Key absent**: Inherits model-policies from the agent profile
-- **Empty array** (`model-policies = []`): Suppresses all conditional model overrides
+- **Empty array** (`model-policies = []`): Uses an empty model-policy list for that agent (no policy transforms in the candidate chain)
 - **Non-empty array**: Replaces profile model-policies entirely (not merged)
 
 ### Precedence

@@ -203,10 +203,10 @@ def _fallback_entry_for_token(
     return token, harness_id, entry
 
 
-def _compiler_request_without_model_policies(
+def _compiler_request_for_base_candidate(
     request: CompilerRequest,
 ) -> CompilerRequest:
-    """Return a request variant that suppresses all model-policy sources."""
+    """Return request data for the untransformed base launch candidate."""
 
     overlay = request.agent_overlay
     if overlay is not None:
@@ -218,18 +218,18 @@ def _compiler_request_without_model_policies(
     )
 
 
-def _policy_chain_fallback_candidate(
+def _demoted_base_candidate(
     *,
     compiler_request: CompilerRequest,
     primary_result: CompilerResult,
     model_explicit: bool,
 ) -> CompilerResult | None:
-    """Return the demoted pre-policy candidate when policy rerouting applies."""
+    """Return the demoted base candidate when policy transforms apply."""
 
-    if model_explicit:
+    if model_explicit or not primary_result.matched_model_policy:
         return None
 
-    stripped_request = _compiler_request_without_model_policies(compiler_request)
+    stripped_request = _compiler_request_for_base_candidate(compiler_request)
     demoted_result = compile_launch_params(stripped_request)
     if (
         demoted_result.model_token == primary_result.model_token
@@ -498,7 +498,7 @@ def resolve_policies(
     try:
         materialized = materialize_harness(compiler_result, harness_registry=harness_registry)
     except ValueError as primary_error:
-        demoted_candidate = _policy_chain_fallback_candidate(
+        demoted_candidate = _demoted_base_candidate(
             compiler_request=compiler_request,
             primary_result=compiler_result,
             model_explicit=model_explicit,
@@ -532,11 +532,12 @@ def resolve_policies(
                 cli_overrides=explicit_user_overrides.model_copy(update={"model": fallback_model}),
                 resolved_alias_entry=resolved_entry,
             )
-            # Fanout entries participate as raw availability-chain candidates.
-            # Once selected, recompile without model-policies to avoid
-            # secondary policy matches leaking scalar overrides into fallback.
+            # Fanout entries are explicit availability-chain candidates.
+            # Compile the selected fanout token as a base candidate so
+            # the chain does not recursively re-apply model-policy
+            # transformations to fallback entries.
             compiler_result = compile_launch_params(
-                _compiler_request_without_model_policies(compiler_request)
+                _compiler_request_for_base_candidate(compiler_request)
             )
             if compiler_result.harness != str(harness_id):
                 compiler_result = replace(compiler_result, harness=str(harness_id))

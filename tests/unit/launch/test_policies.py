@@ -1147,7 +1147,7 @@ def test_resolve_policies_fanout_skips_raw_model_with_unresolvable_harness(
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_resolve_policies_profile_policy_matching_fanout_token_does_not_leak_into_fallback(
+def test_resolve_policies_profile_policy_matching_fanout_token_does_not_transform_fanout_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1198,7 +1198,7 @@ def test_resolve_policies_profile_policy_matching_fanout_token_does_not_leak_int
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_resolve_policies_fanout_fallback_skips_ambiguous_profile_model_policy_rescan(
+def test_resolve_policies_fanout_candidate_chain_avoids_profile_policy_ambiguity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1295,7 +1295,7 @@ def test_resolve_policies_model_policy_promotion_demotes_previous_candidate_for_
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_resolve_policies_raises_when_fanout_is_exhausted_and_policy_matches_do_not_seed_fallback(
+def test_resolve_policies_raises_when_candidate_chain_exhausts_available_harnesses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

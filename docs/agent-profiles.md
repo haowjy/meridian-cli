@@ -131,7 +131,7 @@ Model-policy overrides sit between explicit user flags and the profile's generic
 CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defaults  >  config  >  alias defaults
 ```
 
-Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace or suppress these model-policies per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
+Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace the agent policy list (including replacing it with an empty list) per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
 
 ## `fanout`
 
@@ -198,13 +198,13 @@ Each line shows: name, description, default model, and fanout aliases (deduplica
 
 When a spawn is launched with an agent profile and the profile's primary harness is not installed, Meridian automatically tries alternatives without failing:
 
-1. Compile the effective primary launch candidate (model + harness) after applying normal precedence and any matching `model-policies` override.
-2. If a `model-policies` rule reroutes the primary candidate, demote the pre-policy candidate to the next slot in the ordered availability chain.
+1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
+2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head candidate and the prior head is demoted.
 3. Append `fanout` entries in declared order.
-4. Walk this ordered chain and pick the first candidate whose harness is available.
+4. Walk the resulting ordered candidate chain and pick the first candidate whose harness is available.
 5. If nothing resolves, fail with a clear error naming the unavailable harness.
 
-`model-policies` are **not** scanned as an independent fallback list. Only the matched policy (if any) participates by promoting its override and demoting the previous primary candidate.
+`model-policies` participate as candidate transforms on top of the base launch candidate. They are not a separate token-discovery list outside the chain.
 
 This means a profile like:
 

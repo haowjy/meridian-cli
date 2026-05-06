@@ -64,7 +64,7 @@ def resolve_policies(*, project_root: Path, **kwargs):
     )
 
 
-def test_overlay_policy_replacement_without_match_does_not_create_fallback_candidate(
+def test_overlay_policy_replacement_without_match_keeps_base_candidate_chain(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -128,7 +128,7 @@ def test_overlay_policy_replacement_without_match_does_not_create_fallback_candi
         )
 
 
-def test_overlay_empty_model_policies_suppress_profile_fallback_candidates(
+def test_overlay_empty_model_policies_use_base_candidate_without_policy_transforms(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,7 +181,7 @@ def test_overlay_empty_model_policies_suppress_profile_fallback_candidates(
         )
 
 
-def test_overlay_policy_matching_fanout_token_does_not_leak_into_selected_fallback(
+def test_overlay_policy_matching_fanout_token_does_not_transform_selected_fanout_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -245,7 +245,7 @@ def test_overlay_policy_matching_fanout_token_does_not_leak_into_selected_fallba
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_overlay_empty_model_policies_suppress_ambiguous_profile_model_policy_scan(
+def test_overlay_empty_model_policies_avoid_profile_policy_ambiguity_in_base_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
