@@ -526,7 +526,12 @@ def resolve_policies(
                 cli_overrides=explicit_user_overrides.model_copy(update={"model": fallback_model}),
                 resolved_alias_entry=resolved_entry,
             )
-            compiler_result = compile_launch_params(compiler_request)
+            # Fanout entries participate as raw availability-chain candidates.
+            # Once selected, recompile without model-policies to avoid
+            # secondary policy matches leaking scalar overrides into fallback.
+            compiler_result = compile_launch_params(
+                _compiler_request_without_model_policies(compiler_request)
+            )
             if compiler_result.harness != str(harness_id):
                 compiler_result = replace(compiler_result, harness=str(harness_id))
             model_resolution_error = None
