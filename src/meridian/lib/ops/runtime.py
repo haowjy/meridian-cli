@@ -169,13 +169,21 @@ def resolve_runtime_root_for_read(project_root: Path) -> Path:
     if runtime_root == project_state_dir:
         return runtime_root
 
-    runtime_has_events = (runtime_root / "spawns.jsonl").is_file() or (
-        runtime_root / "sessions.jsonl"
-    ).is_file()
-    repo_has_events = (project_state_dir / "spawns.jsonl").is_file() or (
-        project_state_dir / "sessions.jsonl"
-    ).is_file()
-    if not runtime_has_events and repo_has_events:
+    def has_spawn_state(root: Path) -> bool:
+        spawns_dir = root / "spawns"
+        return spawns_dir.is_dir() and any(spawns_dir.glob("*/state.json"))
+
+    runtime_has_state = (
+        has_spawn_state(runtime_root)
+        or (runtime_root / "spawns.jsonl").is_file()
+        or (runtime_root / "sessions.jsonl").is_file()
+    )
+    repo_has_state = (
+        has_spawn_state(project_state_dir)
+        or (project_state_dir / "spawns.jsonl").is_file()
+        or (project_state_dir / "sessions.jsonl").is_file()
+    )
+    if not runtime_has_state and repo_has_state:
         return project_state_dir
 
     return runtime_root

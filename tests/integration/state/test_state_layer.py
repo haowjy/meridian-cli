@@ -1,6 +1,5 @@
 """State-layer tests for file-authoritative stores."""
 
-import json
 import multiprocessing
 from pathlib import Path
 
@@ -34,7 +33,7 @@ def _write_start_and_finalize(project_root: str, idx: int) -> None:
     )
 
 
-def test_locking_contention_writes_clean_jsonl(tmp_path: Path) -> None:
+def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
     runtime_root = tmp_path / ".meridian"
     runtime_root.mkdir(parents=True, exist_ok=True)
     process_count = 8
@@ -54,7 +53,4 @@ def test_locking_contention_writes_clean_jsonl(tmp_path: Path) -> None:
     assert len(rows) == process_count
     assert all(row.status == "succeeded" for row in rows)
 
-    # Every line must remain parseable JSON under concurrent append pressure.
-    with (runtime_root / "spawns.jsonl").open("r", encoding="utf-8") as handle:
-        for line in handle:
-            json.loads(line)
+    assert len(list((runtime_root / "spawns").glob("*/state.json"))) == process_count

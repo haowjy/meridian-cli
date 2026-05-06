@@ -1,6 +1,7 @@
 import json
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,111 @@ def _state_revision(runtime_root: Path, spawn_id: str) -> int:
         (runtime_root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8")
     )
     return int(payload["revision"])
+
+
+def _append_legacy_event(runtime_root: Path, payload: dict[str, object]) -> None:
+    with (runtime_root / "spawns.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def test_lazy_migration_converts_legacy_jsonl_to_v2_state(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    _append_legacy_event(
+        runtime_root,
+        {
+            "v": 1,
+            "event": "start",
+            "id": "p1",
+            "chat_id": "c1",
+            "model": "gpt-5.4",
+            "agent": "coder",
+            "harness": "codex",
+            "kind": "child",
+            "prompt": "legacy prompt",
+            "status": "running",
+            "started_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    _append_legacy_event(
+        runtime_root,
+        {
+            "v": 1,
+            "event": "finalize",
+            "id": "p1",
+            "status": "succeeded",
+            "exit_code": 0,
+            "finished_at": "2026-01-01T00:01:00Z",
+            "origin": "runner",
+        },
+    )
+
+    row = get_spawn(runtime_root, "p1")
+
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.prompt == "legacy prompt"
+    assert (runtime_root / "spawns" / "v2-format.json").is_file()
+    assert (runtime_root / "spawns" / "p1" / "state.json").is_file()
+    assert (runtime_root / "spawns.legacy-v1.jsonl").is_file()
+    assert not (runtime_root / "spawns.jsonl").exists()
+
+
+def test_lazy_migration_defers_for_live_v1_startup_grace(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    _append_legacy_event(
+        runtime_root,
+        {
+            "v": 1,
+            "event": "start",
+            "id": "p1",
+            "chat_id": "c1",
+            "model": "gpt-5.4",
+            "agent": "coder",
+            "harness": "codex",
+            "kind": "child",
+            "prompt": "live legacy",
+            "status": "running",
+            "started_at": started_at,
+        },
+    )
+
+    row = get_spawn(runtime_root, "p1")
+
+    assert row is not None
+    assert row.status == "running"
+    assert row.prompt == "live legacy"
+    assert not (runtime_root / "spawns" / "v2-format.json").exists()
+    assert (runtime_root / "spawns.jsonl").is_file()
+
+
+def test_lazy_migration_reconciles_stale_v1_active_before_migrating(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    started_at = (datetime.now(UTC) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    _append_legacy_event(
+        runtime_root,
+        {
+            "v": 1,
+            "event": "start",
+            "id": "p1",
+            "chat_id": "c1",
+            "model": "gpt-5.4",
+            "agent": "coder",
+            "harness": "codex",
+            "kind": "child",
+            "prompt": "stale legacy",
+            "status": "running",
+            "started_at": started_at,
+        },
+    )
+
+    row = get_spawn(runtime_root, "p1")
+
+    assert row is not None
+    assert row.status == "failed"
+    assert row.error == "orphan_run"
+    assert row.terminal_origin == "reconciler"
+    assert (runtime_root / "spawns" / "v2-format.json").is_file()
 
 
 def _finalize_in_subprocess(

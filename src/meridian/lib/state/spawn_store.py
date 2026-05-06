@@ -572,18 +572,22 @@ def record_spawn_exited(
             )
         )
         return
-    record = _read_state(paths.spawns_dir, str(spawn_id))
-    if record is None:
-        return
-    updated = record.model_copy(
-        update={
-            "exited_at": exited_at or resolved_clock.utc_now_iso(),
-            "process_exit_code": exit_code,
-        }
-    )
+    def merge_exit(current: SpawnRecord) -> SpawnRecord:
+        return current.model_copy(
+            update={
+                "exited_at": exited_at or resolved_clock.utc_now_iso(),
+                "process_exit_code": exit_code,
+            }
+        )
+
     try:
-        _write_state(paths.spawns_dir, updated)
-    except ValueError:
+        _write_state_locked(
+            paths.spawns_dir,
+            str(spawn_id),
+            merge_exit,
+            allow_terminal_overwrite=True,
+        )
+    except FileNotFoundError:
         return
 
 
@@ -827,12 +831,6 @@ def mark_spawn_running_with_snapshot(
             )
         )
         return changed, _legacy_get(paths, str(spawn_id))
-    record = _read_state(paths.spawns_dir, str(spawn_id))
-    if record is None:
-        return False, None
-    changed = record.status != "running"
-    if record.status not in {"unknown", "running"}:
-        _validate_transition(cast("SpawnStatus", record.status), "running")
     updates: dict[str, object] = {"status": "running"}
     if launch_mode is not None:
         updates["launch_mode"] = launch_mode
@@ -840,12 +838,21 @@ def mark_spawn_running_with_snapshot(
         updates["worker_pid"] = worker_pid
     if runner_pid is not None:
         updates["runner_pid"] = runner_pid
-    updated = record.model_copy(update=updates)
+
+    changed = False
+
+    def merge(current: SpawnRecord) -> SpawnRecord:
+        nonlocal changed
+        changed = current.status != "running"
+        if current.status not in {"unknown", "running"}:
+            _validate_transition(cast("SpawnStatus", current.status), "running")
+        return current.model_copy(update=updates)
+
     try:
-        _write_state(paths.spawns_dir, updated)
-    except ValueError:
-        return False, record
-    return changed, updated
+        committed = _write_state_locked(paths.spawns_dir, str(spawn_id), merge)
+    except FileNotFoundError:
+        return False, None
+    return changed, committed
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:

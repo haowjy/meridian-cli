@@ -114,6 +114,7 @@ def scan_orphan_project_dirs(
         if not project_dir.is_dir():
             continue
 
+        size_bytes, latest_mtime = _tree_activity(project_dir)
         active_spawns = [
             spawn
             for spawn in spawn_store.list_spawns(project_dir)
@@ -122,7 +123,6 @@ def scan_orphan_project_dirs(
         if active_spawns:
             continue
 
-        size_bytes, latest_mtime = _tree_activity(project_dir)
         if _is_stale(latest_mtime, retention_days=retention_days, now=now):
             results.append(
                 OrphanProjectDir(
