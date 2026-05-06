@@ -201,6 +201,7 @@ Each spawn writes artifacts to the user-level runtime directory, under `~/.merid
 
 | File | Contents |
 | ---- | -------- |
+| `state.json` | Authoritative spawn record (status, metrics, error) |
 | `report.md` | Agent's final report |
 | `output.jsonl` | Raw harness output (surfaced through `meridian session log <spawn_id>`) |
 | `stderr.log` | Harness stderr, warnings, errors |
@@ -209,6 +210,14 @@ Each spawn writes artifacts to the user-level runtime directory, under `~/.merid
 | `projection-manifest.json` | Harness ID and per-category channel routing decisions |
 
 If a spawn directory is missing entirely, the harness crashed before artifacts stabilized — relaunch.
+
+## Slow first spawn after upgrade
+
+After upgrading to a version that uses the v2 spawn state format, the first `meridian spawn` or `meridian spawn list` call triggers a one-time migration. Meridian reads the legacy `spawns.jsonl` event log, writes a `state.json` file for each existing spawn, and atomically archives the old file to `spawns.legacy-v1.jsonl`.
+
+**This is automatic — no user action required.** Migration time scales with spawn history: a few seconds for small histories, up to 2–3 minutes for very large ones. After migration, spawn operations (including primary launch) are significantly faster.
+
+Once migration completes, `spawns.legacy-v1.jsonl` is safe to delete if you want to reclaim space. It is not read after migration.
 
 ## Stale state accumulating in `~/.meridian/`
 

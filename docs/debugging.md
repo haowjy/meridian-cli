@@ -21,6 +21,7 @@ Each spawn writes artifacts under `.meridian/spawns/<spawn_id>/`.
 
 | File | Contents |
 |---|---|
+| `state.json` | Authoritative spawn record (status, metrics, error) |
 | `report.md` | Final report when the spawn reached report emission |
 | `output.jsonl` | Raw harness stdout (prefer `meridian spawn log`) |
 | `stderr.log` | Harness stderr, warnings, and errors |
@@ -88,8 +89,10 @@ You do not need to manually clean up background processes or edit state files.
 
 State layout is for debugging only:
 
-- `MERIDIAN_STATE_ROOT/spawns.jsonl`: spawn events
+- `MERIDIAN_STATE_ROOT/spawns/<id>/state.json`: authoritative per-spawn record (status, metrics, error)
 - `MERIDIAN_STATE_ROOT/spawns/<id>/`: per-spawn artifacts and logs
+- `MERIDIAN_STATE_ROOT/spawns/v2-format.json`: migration marker — present means v2 format is active
+- `MERIDIAN_STATE_ROOT/spawns.legacy-v1.jsonl`: archived v1 event log (safe to delete once confirmed stable)
 - KB dir (`meridian context kb`): shared knowledge base between spawns
 
 Prefer CLI reads and environment variables over hardcoded `.meridian/...` paths.

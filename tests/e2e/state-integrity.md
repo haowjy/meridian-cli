@@ -1,6 +1,6 @@
 # State Integrity
 
-Run these checks after any smoke test that creates `.meridian/` state. The goal is to catch malformed JSONL, missing guard files, or stale lock behavior before it becomes a debugging session.
+Run these checks after smoke flows that create `.meridian/` runtime state. The v2 spawn store is file-authoritative: live spawn state is kept in `spawns/<id>/state.json`, with `starting-prompt.md` as prompt-body authority and `spawns/v2-format.json` as the v2 marker.
 
 ## Setup
 
@@ -11,36 +11,48 @@ git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
 export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
+mkdir -p "$MERIDIAN_RUNTIME_DIR/spawns"
 cd "$REPO_ROOT"
-uv run meridian --help >/dev/null && echo "PASS: base state fixture created" || echo "FAIL: state fixture setup failed"
+uv run meridian spawn -h >/dev/null 2>&1 && echo "PASS: state fixture setup complete" || echo "FAIL: state fixture setup failed"
 ```
 
-### STATE-1. Core `.meridian/` structure exists [CRITICAL]
+### STATE-1. Core runtime directories exist [CRITICAL]
 
 ```bash
-test -d "$MERIDIAN_RUNTIME_DIR/fs" && \
+test -d "$MERIDIAN_RUNTIME_DIR" && \
 test -d "$MERIDIAN_RUNTIME_DIR/spawns" && \
-test -f "$MERIDIAN_RUNTIME_DIR/.gitignore" && \
-echo "PASS: core state directories exist" || echo "FAIL: core state directories are incomplete"
+echo "PASS: runtime root and spawns directory exist" || echo "FAIL: runtime state directories are incomplete"
 ```
 
-### STATE-2. `spawns.jsonl` contains valid JSON objects [IMPORTANT]
+### STATE-2. Spawn v2 marker and `state.json` are valid [IMPORTANT]
 
 ```bash
 uv run python - <<'PY'
-import json, os, sys
-path = os.path.join(os.environ["MERIDIAN_RUNTIME_DIR"], "spawns.jsonl")
-if not os.path.exists(path):
-    print("PASS: no spawns.jsonl yet; run lifecycle smoke to populate it")
-else:
-    with open(path) as fh:
-        lines = [line.strip() for line in fh if line.strip()]
-    assert lines
-    for line in lines:
-        doc = json.loads(line)
-        assert isinstance(doc, dict)
-        assert "spawn_id" in doc or "id" in doc
-    print("PASS: spawns.jsonl is well-formed")
+import json, os
+from pathlib import Path
+from meridian.lib.state.spawn_store import start_spawn
+
+root = Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+spawn_id = str(
+    start_spawn(
+        root,
+        chat_id="c-state",
+        model="gpt-5.4",
+        agent="smoke",
+        harness="codex",
+        prompt="hello state",
+        status="running",
+    )
+)
+marker = json.loads((root / "spawns" / "v2-format.json").read_text(encoding="utf-8"))
+state = json.loads((root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8"))
+assert marker["v"] == 2
+assert state["v"] == 2
+assert state["id"] == spawn_id
+assert state["status"] == "running"
+assert state["prompt_length"] == len("hello state")
+assert "hello state" not in json.dumps(state)
+print("PASS: v2 marker and state.json are well-formed")
 PY
 ```
 
@@ -53,7 +65,7 @@ path = os.path.join(os.environ["MERIDIAN_RUNTIME_DIR"], "sessions.jsonl")
 if not os.path.exists(path):
     print("PASS: sessions.jsonl has not been created yet")
 else:
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             if line.strip():
                 assert isinstance(json.loads(line), dict)
@@ -61,63 +73,61 @@ else:
 PY
 ```
 
-### STATE-4. Lock files are not left unusable [IMPORTANT]
+### STATE-4. Live lock files are acquirable after smoke setup [IMPORTANT]
 
 ```bash
 uv run python - <<'PY'
-import fcntl, glob, os
-root = os.environ["MERIDIAN_RUNTIME_DIR"]
-locks = glob.glob(os.path.join(root, "*.lock"))
-if not locks:
-    print("PASS: no lock files are present")
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+lock_paths = sorted(root.glob("spawns/*/state.lock")) + sorted(root.glob("spawns/migration.lock"))
+if os.name == "nt":
+    print("PASS: skipping POSIX flock probe on Windows")
+elif not lock_paths:
+    print("PASS: no per-spawn locks present yet")
 else:
-    for path in locks:
-        with open(path, "a+b") as fh:
+    import fcntl
+    for path in lock_paths:
+        with path.open("a+b") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-    print("PASS: lock files are acquirable")
+    print("PASS: per-spawn lock files are acquirable")
 PY
 ```
 
-### STATE-5. No stale flock sidecars remain after setup [NICE-TO-HAVE]
+### STATE-5. No stale atomic temp files remain [NICE-TO-HAVE]
 
 ```bash
-if find "$MERIDIAN_RUNTIME_DIR" -name '*.flock' -print | grep -q .; then
-  echo "FAIL: stale .flock files remain"
+if find "$MERIDIAN_RUNTIME_DIR" -name '.*.tmp' -print | grep -q .; then
+  echo "FAIL: stale atomic temp files remain"
 else
-  echo "PASS: no stale .flock sidecars remain"
+  echo "PASS: no stale atomic temp files remain"
 fi
 ```
 
-### STATE-6. Dead runner + stale heartbeat (>120s) stamps `orphan_run` [CRITICAL]
+### STATE-6. Dead runner + stale heartbeat (>120s) stamps `orphan_run` in `state.json` [CRITICAL]
 
 ```bash
 uv run python - <<'PY'
 import json, os, pathlib, subprocess, time
+from meridian.lib.state.spawn_store import start_spawn
 
 root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
-spawns_jsonl = root / "spawns.jsonl"
 spawn_id = "p-orphan-heartbeat-smoke"
-
-start_event = {
-    "v": 1,
-    "event": "start",
-    "id": spawn_id,
-    "chat_id": "c-state",
-    "model": "gpt-5.4",
-    "agent": "smoke",
-    "harness": "codex",
-    "kind": "child",
-    "prompt": "state integrity smoke",
-    "status": "running",
-    "runner_pid": 999999,
-    "started_at": "2000-01-01T00:00:00Z",
-}
-
-spawns_jsonl.parent.mkdir(parents=True, exist_ok=True)
-with spawns_jsonl.open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps(start_event) + "\n")
-
+start_spawn(
+    root,
+    spawn_id=spawn_id,
+    chat_id="c-state",
+    model="gpt-5.4",
+    agent="smoke",
+    harness="codex",
+    prompt="state integrity smoke",
+    status="running",
+    runner_pid=999999,
+    started_at="2000-01-01T00:00:00Z",
+)
 spawn_dir = root / "spawns" / spawn_id
 spawn_dir.mkdir(parents=True, exist_ok=True)
 heartbeat = spawn_dir / "heartbeat"
@@ -132,25 +142,16 @@ subprocess.run(
     stderr=subprocess.DEVNULL,
 )
 
-events = []
-with spawns_jsonl.open(encoding="utf-8") as fh:
-    for line in fh:
-        line = line.strip()
-        if line:
-            events.append(json.loads(line))
-
-orphan_stamped = any(
-    event.get("event") == "finalize"
-    and event.get("id") == spawn_id
-    and event.get("error") == "orphan_run"
-    for event in events
-)
-assert orphan_stamped, "expected orphan_run finalize stamp after stale heartbeat window"
-print("PASS: stale heartbeat window triggered orphan_run reconciliation")
+state = json.loads((spawn_dir / "state.json").read_text(encoding="utf-8"))
+assert state["status"] == "failed"
+assert state["error"] == "orphan_run"
+assert state["terminal_origin"] == "reconciler"
+assert (root / "spawns" / "v2-format.json").is_file()
+print("PASS: stale heartbeat triggered orphan_run reconciliation in state.json")
 PY
 ```
 
-### STATE-7. Cancel path stamps `origin=\"cancel\"` [CRITICAL]
+### STATE-7. Cancel path records `terminal_origin="cancel"` in `state.json` [CRITICAL]
 
 ```bash
 uv run python - <<'PY'
@@ -158,7 +159,7 @@ import json, os, pathlib, subprocess, uuid
 from meridian.lib.state.spawn_store import start_spawn
 
 root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
-spawn_id = f"p-origin-cancel-{uuid.uuid4().hex[:8]}"
+spawn_id = f"p-origin-cancel-smoke-{uuid.uuid4().hex[:8]}"
 start_spawn(
     root,
     spawn_id=spawn_id,
@@ -177,53 +178,39 @@ subprocess.run(
     stderr=subprocess.DEVNULL,
 )
 
-events = []
-with (root / "spawns.jsonl").open(encoding="utf-8") as fh:
-    for line in fh:
-        line = line.strip()
-        if line:
-            events.append(json.loads(line))
-
-finalize_events = [
-    event for event in events
-    if event.get("event") == "finalize" and event.get("id") == spawn_id
-]
-assert finalize_events, "expected finalize event for cancelled smoke spawn"
-latest = finalize_events[-1]
-assert latest.get("status") == "cancelled"
-assert latest.get("origin") == "cancel"
-print("PASS: cancel flow writes finalize origin=cancel")
+state = json.loads((root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8"))
+assert state["status"] == "cancelled"
+assert state["terminal_origin"] == "cancel"
+assert state["exit_code"] == 130
+print("PASS: cancel flow persisted terminal_origin=cancel in state.json")
 PY
 ```
 
-### STATE-8. Success path records `origin=\"runner\"` [IMPORTANT]
+### STATE-8. Success path records `terminal_origin="runner"` [IMPORTANT]
 
 ```bash
 uv run python - <<'PY'
-import json, os, pathlib
+import json, os
+from pathlib import Path
+from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
 
-root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
-spawns_jsonl = root / "spawns.jsonl"
-if not spawns_jsonl.exists():
-    raise AssertionError("spawns.jsonl missing")
-
-found = False
-with spawns_jsonl.open(encoding="utf-8") as fh:
-    for line in fh:
-        line = line.strip()
-        if not line:
-            continue
-        event = json.loads(line)
-        if (
-            event.get("event") == "finalize"
-            and event.get("status") == "succeeded"
-            and event.get("origin") == "runner"
-        ):
-            found = True
-            break
-
-assert found, "expected at least one successful finalize with origin=runner"
-print("PASS: success finalize origin=runner observed")
+root = Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+spawn_id = str(
+    start_spawn(
+        root,
+        chat_id="c-success",
+        model="gpt-5.4",
+        agent="smoke",
+        harness="codex",
+        prompt="success origin smoke",
+        status="running",
+    )
+)
+finalize_spawn(root, spawn_id, status="succeeded", exit_code=0, origin="runner")
+state = json.loads((root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8"))
+assert state["status"] == "succeeded"
+assert state["terminal_origin"] == "runner"
+print("PASS: success finalize recorded terminal_origin=runner")
 PY
 ```
 
@@ -232,30 +219,22 @@ PY
 ```bash
 uv run python - <<'PY'
 import json, os, pathlib, subprocess, time
+from meridian.lib.state.spawn_store import start_spawn
 
 root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
-spawns_jsonl = root / "spawns.jsonl"
 spawn_id = "p-orphan-finalizing-stale-smoke"
-
-start_event = {
-    "v": 1,
-    "event": "start",
-    "id": spawn_id,
-    "chat_id": "c-state",
-    "model": "gpt-5.4",
-    "agent": "smoke",
-    "harness": "codex",
-    "kind": "child",
-    "prompt": "finalizing stale heartbeat smoke",
-    "status": "finalizing",
-    "runner_pid": 999999,
-    "started_at": "2000-01-01T00:00:00Z",
-}
-
-spawns_jsonl.parent.mkdir(parents=True, exist_ok=True)
-with spawns_jsonl.open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps(start_event) + "\n")
-
+start_spawn(
+    root,
+    spawn_id=spawn_id,
+    chat_id="c-state",
+    model="gpt-5.4",
+    agent="smoke",
+    harness="codex",
+    prompt="finalizing stale heartbeat smoke",
+    status="finalizing",
+    runner_pid=999999,
+    started_at="2000-01-01T00:00:00Z",
+)
 spawn_dir = root / "spawns" / spawn_id
 spawn_dir.mkdir(parents=True, exist_ok=True)
 heartbeat = spawn_dir / "heartbeat"
@@ -270,53 +249,35 @@ subprocess.run(
     stderr=subprocess.DEVNULL,
 )
 
-events = []
-with spawns_jsonl.open(encoding="utf-8") as fh:
-    for line in fh:
-        line = line.strip()
-        if line:
-            events.append(json.loads(line))
-
-orphan_stamped = any(
-    event.get("event") == "finalize"
-    and event.get("id") == spawn_id
-    and event.get("error") == "orphan_finalization"
-    for event in events
-)
-assert orphan_stamped, "expected orphan_finalization finalize stamp after stale heartbeat window"
-print("PASS: stale finalizing heartbeat triggered orphan_finalization reconciliation")
+state = json.loads((spawn_dir / "state.json").read_text(encoding="utf-8"))
+assert state["status"] == "failed"
+assert state["error"] == "orphan_finalization"
+assert state["terminal_origin"] == "reconciler"
+print("PASS: stale finalizing heartbeat triggered orphan_finalization in state.json")
 PY
 ```
 
-### STATE-10. Recent `finalizing` heartbeat does not stamp terminal [IMPORTANT]
+### STATE-10. Recent `finalizing` heartbeat keeps the row non-terminal [IMPORTANT]
 
 ```bash
 uv run python - <<'PY'
 import json, os, pathlib, subprocess, time
+from meridian.lib.state.spawn_store import start_spawn
 
 root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
-spawns_jsonl = root / "spawns.jsonl"
 spawn_id = "p-orphan-finalizing-fresh-smoke"
-
-start_event = {
-    "v": 1,
-    "event": "start",
-    "id": spawn_id,
-    "chat_id": "c-state",
-    "model": "gpt-5.4",
-    "agent": "smoke",
-    "harness": "codex",
-    "kind": "child",
-    "prompt": "finalizing fresh heartbeat smoke",
-    "status": "finalizing",
-    "runner_pid": 999999,
-    "started_at": "2000-01-01T00:00:00Z",
-}
-
-spawns_jsonl.parent.mkdir(parents=True, exist_ok=True)
-with spawns_jsonl.open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps(start_event) + "\n")
-
+start_spawn(
+    root,
+    spawn_id=spawn_id,
+    chat_id="c-state",
+    model="gpt-5.4",
+    agent="smoke",
+    harness="codex",
+    prompt="finalizing fresh heartbeat smoke",
+    status="finalizing",
+    runner_pid=999999,
+    started_at="2000-01-01T00:00:00Z",
+)
 spawn_dir = root / "spawns" / spawn_id
 spawn_dir.mkdir(parents=True, exist_ok=True)
 heartbeat = spawn_dir / "heartbeat"
@@ -331,19 +292,10 @@ subprocess.run(
     stderr=subprocess.DEVNULL,
 )
 
-events = []
-with spawns_jsonl.open(encoding="utf-8") as fh:
-    for line in fh:
-        line = line.strip()
-        if line:
-            events.append(json.loads(line))
-
-finalized = any(
-    event.get("event") == "finalize"
-    and event.get("id") == spawn_id
-    for event in events
-)
-assert not finalized, "unexpected finalize stamp while heartbeat is recent"
-print("PASS: recent finalizing heartbeat skipped orphan reconciliation")
+state = json.loads((spawn_dir / "state.json").read_text(encoding="utf-8"))
+assert state["status"] == "finalizing"
+assert state["finished_at"] is None
+assert state["terminal_origin"] is None
+print("PASS: recent finalizing heartbeat kept the row non-terminal")
 PY
 ```

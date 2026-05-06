@@ -3,6 +3,9 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+### Added
+- Spawn state v2: per-spawn `state.json` replaces monolithic `spawns.jsonl` event log. Primary launch drops from ~12s to <1s on large histories. One-time migration runs automatically on first access after upgrade; legacy file archived to `spawns.legacy-v1.jsonl`.
+
 ### Changed
 - Default `spawn wait` yield intervals raised to **50 minutes** (3000s) for all harnesses, up from 15 min for Claude/Codex and 4 min for OpenCode. Long-running spawns no longer lose prompt-cache warmth mid-flight.
 ### Changed
