@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import uuid4
 
+from meridian.lib.chat.normalization.common import (
+    as_dict,
+    as_str,
+    extract_files,
+)
 from meridian.lib.chat.normalization.synthetic import is_turn_boundary_event
 from meridian.lib.chat.protocol import (
     CONTENT_DELTA,
@@ -42,17 +47,21 @@ class ClaudeNormalizer:
         self._blocks: dict[int, _BlockState] = {}
         self._completed_for_turn = False
         self._emitted_assistant_text = False
+        self._aggregated_tools: dict[str, dict[str, Any]] = {}
 
     def reset(self) -> None:
         self._turn_id = None
         self._blocks.clear()
         self._completed_for_turn = False
         self._emitted_assistant_text = False
+        self._aggregated_tools.clear()
 
     def normalize(self, event: HarnessEvent) -> list[ChatEvent]:
         match event.event_type:
             case "assistant":
                 return self._assistant(event)
+            case "user":
+                return self._user(event)
             case "message_start":
                 return [self._message_start(event)]
             case "content_block_start":
@@ -74,7 +83,7 @@ class ClaudeNormalizer:
                     self._event(FILES_PERSISTED, event, payload=dict(event.payload))
                 ]
             case value if is_turn_boundary_event(value):
-                return self._turn_completed(event)
+                return self._synthetic_turn_completed(event)
             case _:
                 return []
 
@@ -83,9 +92,10 @@ class ClaudeNormalizer:
         self._blocks.clear()
         self._completed_for_turn = False
         self._emitted_assistant_text = False
-        payload = _as_dict(event.payload.get("message")) or event.payload
-        model = _str(payload.get("model"))
-        usage = _as_dict(payload.get("usage"))
+        self._aggregated_tools.clear()
+        payload = as_dict(event.payload.get("message")) or event.payload
+        model = as_str(payload.get("model"))
+        usage = as_dict(payload.get("usage"))
         event_payload: dict[str, Any] = {}
         if model is not None:
             event_payload["model"] = model
@@ -99,28 +109,85 @@ class ClaudeNormalizer:
         return [self._message_start(event)]
 
     def _assistant(self, event: HarnessEvent) -> list[ChatEvent]:
-        started_events = self._ensure_turn_started(event)
-        content_events = [
-            self._event(
-                CONTENT_DELTA,
-                event,
-                payload={"stream_kind": stream_kind, "text": text},
+        events = [*self._ensure_turn_started(event)]
+        for block in _assistant_blocks(event.payload):
+            block_type = as_str(block.get("type"))
+            if block_type in {"thinking", "thinking_delta"}:
+                text = as_str(block.get("thinking")) or as_str(block.get("text")) or ""
+                if text:
+                    events.append(
+                        self._event(
+                            CONTENT_DELTA,
+                            event,
+                            payload={"stream_kind": "reasoning_text", "text": text},
+                        )
+                    )
+                continue
+            if block_type in {"text", "output_text", "text_delta"}:
+                text = as_str(block.get("text")) or ""
+                if text:
+                    self._emitted_assistant_text = True
+                    events.append(
+                        self._event(
+                            CONTENT_DELTA,
+                            event,
+                            payload={"stream_kind": "assistant_text", "text": text},
+                        )
+                    )
+                continue
+            if block_type != "tool_use":
+                continue
+            item_id = as_str(block.get("id")) or f"item-{uuid4()}"
+            name = as_str(block.get("name"))
+            input_payload = block.get("input")
+            self._aggregated_tools[item_id] = {
+                "name": name,
+                "input": input_payload,
+            }
+            events.append(
+                self._event(
+                    ITEM_STARTED,
+                    event,
+                    item_id=item_id,
+                    payload={
+                        "item_type": name or "tool_use",
+                        "name": name,
+                        "raw_type": "tool_use",
+                        "input": input_payload,
+                    },
+                )
             )
-            for stream_kind, text in _assistant_content(event.payload)
-        ]
-        if not content_events:
+        return events
+
+    def _user(self, event: HarnessEvent) -> list[ChatEvent]:
+        tool_results = _user_tool_results(event.payload)
+        if not tool_results:
             return []
-        if any(
-            chat_event.payload.get("stream_kind") == "assistant_text"
-            for chat_event in content_events
-        ):
-            self._emitted_assistant_text = True
-        return [*started_events, *content_events]
+        events = [*self._ensure_turn_started(event)]
+        for result in tool_results:
+            item_id = as_str(result.get("tool_use_id")) or f"item-{uuid4()}"
+            known = self._aggregated_tools.get(item_id) or {}
+            name = as_str(known.get("name"))
+            payload: dict[str, Any] = {
+                "item_type": name or "tool_use",
+                "name": name,
+                "raw_type": "tool_result",
+                "content": result.get("content"),
+            }
+            if "is_error" in result:
+                payload["is_error"] = result["is_error"]
+            if result.get("is_error") is True:
+                payload["error"] = result.get("content")
+            if "input" in known:
+                payload["input"] = known["input"]
+            events.append(self._event(ITEM_COMPLETED, event, item_id=item_id, payload=payload))
+            self._aggregated_tools.pop(item_id, None)
+        return events
 
     def _result_content(self, event: HarnessEvent) -> list[ChatEvent]:
         if self._emitted_assistant_text:
             return []
-        text = _str(event.payload.get("result")) or _str(event.payload.get("text")) or ""
+        text = as_str(event.payload.get("result")) or as_str(event.payload.get("text")) or ""
         if not text:
             return []
         self._emitted_assistant_text = True
@@ -135,10 +202,12 @@ class ClaudeNormalizer:
 
     def _content_block_start(self, event: HarnessEvent) -> list[ChatEvent]:
         index = _index(event.payload)
-        block = _as_dict(event.payload.get("content_block")) or event.payload
-        block_type = _str(block.get("type")) or "unknown"
-        item_id = _str(block.get("id")) or (f"item-{uuid4()}" if block_type == "tool_use" else None)
-        name = _str(block.get("name"))
+        block = as_dict(event.payload.get("content_block")) or event.payload
+        block_type = as_str(block.get("type")) or "unknown"
+        item_id = as_str(block.get("id")) or (
+            f"item-{uuid4()}" if block_type == "tool_use" else None
+        )
+        name = as_str(block.get("name"))
         self._blocks[index] = _BlockState(
             index=index,
             block_type=block_type,
@@ -163,10 +232,12 @@ class ClaudeNormalizer:
     def _content_block_delta(self, event: HarnessEvent) -> list[ChatEvent]:
         index = _index(event.payload)
         block = self._blocks.get(index)
-        delta = _as_dict(event.payload.get("delta")) or event.payload
-        delta_type = _str(delta.get("type"))
+        delta = as_dict(event.payload.get("delta")) or event.payload
+        delta_type = as_str(delta.get("type"))
         if delta_type == "text_delta":
-            text = _str(delta.get("text")) or ""
+            text = as_str(delta.get("text")) or ""
+            if text:
+                self._emitted_assistant_text = True
             return [
                 self._event(
                     CONTENT_DELTA,
@@ -176,7 +247,7 @@ class ClaudeNormalizer:
                 )
             ]
         if delta_type == "thinking_delta":
-            text = _str(delta.get("thinking")) or _str(delta.get("text")) or ""
+            text = as_str(delta.get("thinking")) or as_str(delta.get("text")) or ""
             return [
                 self._event(
                     CONTENT_DELTA,
@@ -186,7 +257,7 @@ class ClaudeNormalizer:
                 )
             ]
         if delta_type == "input_json_delta" and block is not None and block.item_id is not None:
-            partial = _str(delta.get("partial_json")) or ""
+            partial = as_str(delta.get("partial_json")) or ""
             block.input_json += partial
             return [
                 self._event(
@@ -217,10 +288,10 @@ class ClaudeNormalizer:
         ]
 
     def _turn_completed(self, event: HarnessEvent) -> list[ChatEvent]:
-        if self._turn_id is None:
-            self._turn_id = f"turn-{uuid4()}"
         if self._completed_for_turn:
             return []
+        if self._turn_id is None:
+            self._turn_id = f"turn-{uuid4()}"
         self._completed_for_turn = True
         payload: dict[str, Any] = {}
         for key in (
@@ -240,10 +311,16 @@ class ClaudeNormalizer:
         self._turn_id = None
         self._blocks.clear()
         self._emitted_assistant_text = False
+        self._aggregated_tools.clear()
         return [chat_event]
 
+    def _synthetic_turn_completed(self, event: HarnessEvent) -> list[ChatEvent]:
+        if self._turn_id is None or self._completed_for_turn:
+            return []
+        return self._turn_completed(event)
+
     def _file_events(self, event: HarnessEvent) -> list[ChatEvent]:
-        files = _extract_files(event.payload)
+        files = extract_files(event.payload)
         if not files:
             return []
         return [self._event(FILES_PERSISTED, event, payload={"files": files})]
@@ -274,62 +351,36 @@ def _index(payload: dict[str, object]) -> int:
     return value if isinstance(value, int) else 0
 
 
-def _assistant_content(payload: object) -> list[tuple[str, str]]:
-    if isinstance(payload, str):
-        text = payload.strip()
-        return [("assistant_text", text)] if text else []
+def _assistant_blocks(payload: object) -> list[dict[str, object]]:
     if isinstance(payload, list):
-        content: list[tuple[str, str]] = []
-        for item in cast("list[object]", payload):
-            content.extend(_assistant_content(item))
-        return content
-    if not isinstance(payload, dict):
-        return []
-
-    obj = cast("dict[str, object]", payload)
-    block_type = _str(obj.get("type"))
-    if block_type in {"thinking", "thinking_delta"}:
-        text = _str(obj.get("thinking")) or _str(obj.get("text")) or ""
-        return [("reasoning_text", text)] if text else []
-    if block_type in {"text", "output_text", "text_delta"}:
-        text = _str(obj.get("text")) or ""
-        return [("assistant_text", text)] if text else []
-
-    content: list[tuple[str, str]] = []
-    for key in ("message", "content", "text", "output"):
-        if key in obj:
-            content.extend(_assistant_content(obj[key]))
-    return content
-
-
-def _as_dict(value: object) -> dict[str, object] | None:
-    if not isinstance(value, dict):
-        return None
-    return cast("dict[str, object]", value)
-
-
-def _extract_files(payload: dict[str, object]) -> list[dict[str, object]]:
-    value = payload.get("files") or payload.get("paths")
-    if isinstance(value, list):
-        files: list[dict[str, object]] = []
-        for entry in cast("list[object]", value):
-            if isinstance(entry, str):
-                files.append({"path": entry})
-            elif isinstance(entry, dict):
-                files.append(cast("dict[str, object]", entry))
-        return files
-    path = payload.get("path") or payload.get("file")
-    if isinstance(path, str):
-        result: dict[str, object] = {"path": path}
-        for key in ("operation", "status"):
-            if key in payload:
-                result[key] = payload[key]
-        return [result]
+        blocks: list[dict[str, object]] = []
+        for entry in cast("list[object]", payload):
+            blocks.extend(_assistant_blocks(entry))
+        return blocks
+    if isinstance(payload, dict):
+        obj = cast("dict[str, object]", payload)
+        block_type = as_str(obj.get("type"))
+        if block_type in {
+            "thinking",
+            "thinking_delta",
+            "text",
+            "output_text",
+            "text_delta",
+            "tool_use",
+            "tool_result",
+        }:
+            return [obj]
+        blocks: list[dict[str, object]] = []
+        for key in ("message", "content", "output"):
+            if key in obj:
+                blocks.extend(_assistant_blocks(obj[key]))
+        return blocks
     return []
 
 
-def _str(value: object) -> str | None:
-    return value if isinstance(value, str) else None
+def _user_tool_results(payload: object) -> list[dict[str, object]]:
+    blocks = _assistant_blocks(payload)
+    return [block for block in blocks if as_str(block.get("type")) == "tool_result"]
 
 
 __all__ = ["ClaudeNormalizer"]

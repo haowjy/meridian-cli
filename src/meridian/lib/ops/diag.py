@@ -197,7 +197,10 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     pruned_spawn_artifacts = 0
     if payload.prune:
         pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
-        pruned_claude_overlays = prune_stale_claude_overlays(stale_claude_overlays)
+        pruned_claude_overlays = prune_stale_claude_overlays(
+            stale_claude_overlays,
+            runtime_root=runtime_root,
+        )
         pruned_spawn_artifacts = prune_stale_spawn_artifacts(stale_spawn_artifacts)
         if pruned_orphan_dirs > 0:
             repaired.append("orphan_project_dirs")

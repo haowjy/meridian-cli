@@ -97,6 +97,32 @@ class ProcessOutcome(BaseModel):
     resolved_harness_session_id: str
 
 
+def _persist_durable_claude_config_metadata(
+    *,
+    runtime_root: Path,
+    primary_spawn_id: SpawnId | None,
+    chat_id: str | None,
+    materialization_root: Path | None,
+) -> None:
+    """Persist post-cleanup durable Claude config metadata."""
+
+    if primary_spawn_id is None or materialization_root is None:
+        return
+
+    durable_config_dir = str(materialization_root)
+    spawn_store.update_spawn(
+        runtime_root,
+        primary_spawn_id,
+        claude_config_dir=durable_config_dir,
+    )
+    if chat_id:
+        update_session_claude_config_dir(
+            runtime_root,
+            chat_id,
+            claude_config_dir=durable_config_dir,
+        )
+
+
 RunPrimaryProcessWithCapture = Callable[
     [tuple[str, ...], Path, dict[str, str], Path | None, Callable[[int], None] | None],
     tuple[int, int | None],
@@ -689,6 +715,9 @@ def run_harness_process(
                     elif original_claude_config_dir.strip():
                         effective_config_root = Path(original_claude_config_dir.strip())
                         effective_config_dir = original_claude_config_dir.strip()
+                    else:
+                        effective_config_root = claude_materialization_root
+                        effective_config_dir = str(claude_materialization_root)
 
                     if effective_config_dir:
                         child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
@@ -772,12 +801,14 @@ def run_harness_process(
                     managed=managed,
                     lifecycle_service=lifecycle_service,
                 )
+                materialized_to_root = False
                 if isolated_config_root is not None and isolated_config_root.is_dir():
                     try:
                         materialize_overlay_transcripts(
                             isolated_config_root,
                             canonical_root=claude_materialization_root,
                         )
+                        materialized_to_root = True
                     except Exception:
                         logger.warning(
                             "Transcript materialization failed; session transcripts may be lost",
@@ -788,6 +819,22 @@ def run_harness_process(
                     except OSError:
                         logger.debug(
                             "Failed to clean up isolated Claude config dir",
+                            exc_info=True,
+                        )
+                if materialized_to_root:
+                    try:
+                        _persist_durable_claude_config_metadata(
+                            runtime_root=runtime_root,
+                            primary_spawn_id=primary_spawn_id,
+                            chat_id=managed.chat_id,
+                            materialization_root=claude_materialization_root,
+                        )
+                    except Exception:
+                        logger.warning(
+                            (
+                                "Failed to persist post-cleanup Claude config metadata "
+                                "for primary spawn"
+                            ),
                             exc_info=True,
                         )
     except FileNotFoundError:

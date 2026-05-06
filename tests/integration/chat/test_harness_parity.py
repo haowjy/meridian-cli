@@ -17,21 +17,32 @@ def _types_for(harness_id: str, events: list[HarnessEvent]) -> set[str]:
 def test_all_harnesses_emit_core_chat_event_families_without_server_branching():
     cases = {
         "claude": [
-            _event("claude", "message_start", {"message": {"model": "claude"}}),
             _event(
                 "claude",
-                "content_block_delta",
-                {"delta": {"type": "text_delta", "text": "hi"}},
+                "assistant",
+                {"message": {"content": [{"type": "text", "text": "hi"}]}},
             ),
             _event("claude", "result", {"status": "succeeded"}),
         ],
         "codex": [
-            _event("codex", "turn/started", {"turn_id": "t1"}),
-            _event("codex", "agent_message_chunk", {"text": "hi"}),
-            _event("codex", "turn/completed", {"status": "succeeded"}),
+            _event("codex", "turn/started", {"turn": {"id": "t1"}}),
+            _event(
+                "codex",
+                "item/agentMessage/delta",
+                {"turnId": "t1", "itemId": "m1", "delta": "hi"},
+            ),
+            _event("codex", "turn/completed", {"turn": {"id": "t1", "status": "completed"}}),
         ],
         "opencode": [
-            _event("opencode", "agent_message_chunk", {"text": "hi"}),
+            _event(
+                "opencode",
+                "message.updated",
+                {
+                    "properties": {
+                        "message": {"parts": [{"id": "p1", "type": "text", "text": "hi"}]}
+                    }
+                },
+            ),
             _event("opencode", "session.idle", {}),
         ],
     }
@@ -46,6 +57,84 @@ def test_all_harnesses_emit_canonical_files_persisted():
     for harness_id in ("claude", "codex", "opencode"):
         types = _types_for(harness_id, [_event(harness_id, "files.persisted", {"path": "a.txt"})])
         assert "files.persisted" in types
+
+
+def test_all_harnesses_emit_item_lifecycle_for_tool_activity():
+    cases = {
+        "claude": [
+            _event(
+                "claude",
+                "assistant",
+                {
+                    "message": {
+                        "content": [{"type": "tool_use", "id": "toolu_1", "name": "Read"}]
+                    }
+                },
+            ),
+            _event(
+                "claude",
+                "user",
+                {
+                    "message": {
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}
+                        ]
+                    }
+                },
+            ),
+        ],
+        "codex": [
+            _event("codex", "turn/started", {"turn": {"id": "t1"}}),
+            _event(
+                "codex",
+                "item/started",
+                {
+                    "turnId": "t1",
+                    "item": {"id": "call-1", "type": "commandExecution", "name": "bash"},
+                },
+            ),
+            _event(
+                "codex",
+                "item/completed",
+                {"turnId": "t1", "item": {"id": "call-1", "type": "commandExecution"}},
+            ),
+        ],
+        "opencode": [
+            _event(
+                "opencode",
+                "message.part.updated",
+                {
+                    "properties": {
+                        "part": {
+                            "id": "prt-1",
+                            "type": "tool",
+                            "tool": "bash",
+                            "callID": "bash:0",
+                            "state": {"status": "pending"},
+                        }
+                    }
+                },
+            ),
+            _event(
+                "opencode",
+                "message.part.updated",
+                {
+                    "properties": {
+                        "part": {
+                            "id": "prt-1",
+                            "type": "tool",
+                            "tool": "bash",
+                            "callID": "bash:0",
+                            "state": {"status": "completed"},
+                        }
+                    }
+                },
+            ),
+        ],
+    }
+
+    for harness_id, events in cases.items():
+        assert {"item.started", "item.completed"} <= _types_for(harness_id, events)
 
 
 def test_unknown_events_drop_instead_of_crashing():

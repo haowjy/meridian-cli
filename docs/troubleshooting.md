@@ -219,9 +219,31 @@ After upgrading to a version that uses the v2 spawn state format, the first `mer
 
 Once migration completes, `spawns.legacy-v1.jsonl` is safe to delete if you want to reclaim space. It is not read after migration.
 
+## Claude session isolation
+
+Claude stores per-session transcript files under `~/.claude/projects/<project-slug>/`. Meridian gives each Claude spawn its own isolated config directory — an **overlay** — so its `projects/` directory starts empty and concurrent spawns can't bleed conversation context into each other.
+
+**What the overlay contains**
+
+The overlay lives inside Meridian's runtime state at `~/.meridian/projects/<uuid>/claude-config/<spawn_id>/` (POSIX) or `%LOCALAPPDATA%\meridian\projects\<uuid>\claude-config\<spawn_id>\` (Windows). It mirrors most of `~/.claude/` — credentials, settings, extensions — but gives Claude a fresh empty `projects/` directory for each spawn. Mutable user-state files (`.claude.json`, `statsig`, `memory`, `cached_preferences`, `todos`) are copied in; read-only entries are symlinked. Overlay directories are internal implementation state; don't read or modify them directly.
+
+**Primary and child spawns**
+
+Both primary sessions (`meridian`) and child spawns (`meridian spawn`) get isolated overlays. Child spawns also have Claude's parent-session sentinel (`CLAUDECODE`) cleared, allowing Claude to run without nesting restrictions under Meridian's control.
+
+When a spawn uses `--continue` or `--from`, Meridian seeds the overlay's `projects/` directory with the source session's transcript file so Claude can resume the prior conversation.
+
+**Session transcripts after a spawn completes**
+
+When a spawn exits, Meridian copies its session transcript files from the overlay's `projects/` directory into the canonical `~/.claude/projects/`. This means conversations from Meridian-managed spawns appear in your regular Claude history after they complete. The overlay directory is then eligible for cleanup on the next `doctor --prune` run.
+
+**Reading spawn conversations**
+
+`meridian session log <spawn_id>` reads from Meridian's own `output.jsonl` artifact — the normalized conversation data captured by the runner. It does not read Claude's private session files in the overlay. `meridian spawn show <spawn_id>` includes a `claude_config_dir` field showing where the spawn's Claude config resided.
+
 ## Stale state accumulating in `~/.meridian/`
 
-Over time, orphan project directories and old spawn artifacts accumulate under `~/.meridian/projects/`. Per-project orphan repairs (stale locks, orphaned runs) happen silently in the background on each launch. Use `meridian doctor` to inspect and clean up manually.
+Over time, orphan project directories, old spawn artifacts, and completed-spawn Claude overlay directories accumulate under `~/.meridian/projects/`. Per-project orphan repairs (stale locks, orphaned runs) happen silently in the background on each launch. Use `meridian doctor` to inspect and clean up manually.
 
 To inspect what's stale:
 
@@ -230,12 +252,16 @@ meridian doctor           # per-project scan (cheap, run from anywhere)
 meridian doctor --global  # cross-project scan — must run from the root process, not inside a spawn
 ```
 
+`meridian doctor` reports stale Claude overlay directories as a `stale_claude_overlays` warning. The overlay directories are safe to keep — transcripts remain intact inside them until pruned.
+
 To clean up:
 
 ```bash
-meridian doctor --prune           # prune stale spawn artifacts (current project)
+meridian doctor --prune           # prune stale spawn artifacts and Claude overlays (current project)
 meridian doctor --prune --global  # also prune orphan project dirs machine-wide
 ```
+
+When `--prune` removes a Claude overlay, it first materializes any session transcript files into the canonical `~/.claude/projects/` and updates spawn/session metadata to point to the canonical config root. After that, the overlay directory is deleted and disk space is reclaimed. If materialization fails for a particular overlay, it is skipped and left for the next run.
 
 Pruning respects `state.retention_days` (default 30 days). Configure in `meridian.toml`:
 

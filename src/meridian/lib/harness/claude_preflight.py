@@ -42,6 +42,26 @@ def _claude_config_root() -> Path:
     return _default_canonical_claude_config_root()
 
 
+def _overlay_source_root_and_original_env() -> tuple[Path, str]:
+    """Resolve overlay source root + durable-root metadata payload.
+
+    Returns:
+        (source_root, original_config_env_payload)
+    """
+
+    original_config = os.environ.get(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV)
+    if original_config is not None:
+        stripped = original_config.strip()
+        if stripped:
+            return Path(stripped).expanduser(), stripped
+        return _default_canonical_claude_config_root(), ""
+
+    configured = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser(), configured
+    return _default_canonical_claude_config_root(), ""
+
+
 def resolve_overlay_materialization_canonical_root(
     env: Mapping[str, str] | None = None,
 ) -> Path:
@@ -126,8 +146,7 @@ def prepare_isolated_claude_config(
     ``CLAUDE_CONFIG_DIR`` environment value (empty string when unset).
     """
 
-    original_env = os.environ.get("CLAUDE_CONFIG_DIR", "")
-    user_root = _claude_config_root()
+    user_root, original_env = _overlay_source_root_and_original_env()
     isolated_root = runtime_root / "claude-config" / spawn_id
 
     try:

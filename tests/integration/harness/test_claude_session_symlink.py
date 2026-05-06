@@ -369,6 +369,52 @@ def test_prepare_isolated_claude_config_failure_returns_none(
     assert original_env == user_root.as_posix()
 
 
+def test_prepare_isolated_claude_config_prefers_internal_original_root_over_parent_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_overlay = tmp_path / "parent-overlay"
+    durable_root = tmp_path / "durable-root"
+    parent_overlay.mkdir()
+    durable_root.mkdir()
+    (parent_overlay / "settings.json").write_text('{"source":"overlay"}', encoding="utf-8")
+    (durable_root / "settings.json").write_text('{"source":"durable"}', encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", parent_overlay.as_posix())
+    monkeypatch.setenv(
+        claude_preflight.MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+        durable_root.as_posix(),
+    )
+
+    isolated_root, original_env = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    assert original_env == durable_root.as_posix()
+    assert (isolated_root / "settings.json").read_text(encoding="utf-8") == '{"source":"durable"}'
+
+
+def test_prepare_isolated_claude_config_uses_default_root_when_original_metadata_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_home = tmp_path / "home"
+    parent_overlay = tmp_path / "parent-overlay"
+    default_root = fake_home / ".claude"
+    fake_home.mkdir()
+    parent_overlay.mkdir()
+    default_root.mkdir(parents=True)
+    (parent_overlay / "settings.json").write_text('{"source":"overlay"}', encoding="utf-8")
+    (default_root / "settings.json").write_text('{"source":"default"}', encoding="utf-8")
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", parent_overlay.as_posix())
+    monkeypatch.setenv(claude_preflight.MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, "")
+
+    isolated_root, original_env = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    assert original_env == ""
+    assert (isolated_root / "settings.json").read_text(encoding="utf-8") == '{"source":"default"}'
+
+
 def test_materialize_overlay_transcripts_copies_all_jsonl_files(
     tmp_path: Path,
 ) -> None:

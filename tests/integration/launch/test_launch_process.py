@@ -12,7 +12,9 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
+from meridian.lib.harness.claude_preflight import (
+    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+)
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
@@ -934,6 +936,92 @@ def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
     assert any(
         event.get("event") == "update"
         and event.get("claude_config_dir") == custom_config.as_posix()
+        for event in sessions
+    )
+
+
+@pytest.mark.slow
+def test_run_harness_process_uses_durable_default_root_when_claude_isolation_fallback_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    parent_overlay = tmp_path / "parent-overlay"
+    parent_overlay.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", parent_overlay.as_posix())
+    project_root = tmp_path / "claude-isolation-fallback-default-root"
+    project_root.mkdir()
+    durable_default_root = tmp_path / "durable-default-root"
+    durable_default_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    captured: dict[str, object] = {}
+    resolver_envs: list[dict[str, str]] = []
+
+    def fake_prepare_isolated_claude_config(**kwargs: object) -> tuple[Path | None, str]:
+        _ = kwargs
+        return None, ""
+
+    def fake_resolve_overlay_materialization_canonical_root(
+        env: dict[str, str] | None = None,
+    ) -> Path:
+        resolver_envs.append(dict(env or {}))
+        return durable_default_root
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        captured["claude_config_dir"] = env.get("CLAUDE_CONFIG_DIR")
+        captured["original_claude_config_dir"] = env.get(
+            MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
+        )
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(778)
+        return (0, 778)
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(
+        process_runner,
+        "resolve_overlay_materialization_canonical_root",
+        fake_resolve_overlay_materialization_canonical_root,
+    )
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert captured["claude_config_dir"] == durable_default_root.as_posix()
+    assert captured["claude_config_dir"] != parent_overlay.as_posix()
+    assert captured["original_claude_config_dir"] == ""
+    assert resolver_envs
+    assert resolver_envs[0].get(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV) == ""
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    sessions = [
+        json.loads(line)
+        for line in (launch_context.runtime_root / "sessions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert any(
+        event.get("event") == "update"
+        and event.get("claude_config_dir") == durable_default_root.as_posix()
         for event in sessions
     )
 
