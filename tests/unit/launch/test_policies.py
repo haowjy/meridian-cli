@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -91,7 +92,7 @@ def _patch_alias_resolution(
     monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
 
 
-def resolve_policies(*, project_root: Path, **kwargs):
+def resolve_policies(*, project_root: Path, **kwargs: Any):
     return _resolve_policies_impl(
         catalog=CatalogSession(project_root),
         **kwargs,
@@ -439,9 +440,18 @@ def test_spawn_prepare_derives_harness_from_model_before_default_harness(
         model_id="claude-sonnet-4",
         harness=HarnessId.CLAUDE,
     )
+
+    def _resolve_model(
+        name: str,
+        project_root: Path | None = None,
+        cache: object | None = None,
+    ) -> AliasEntry:
+        _ = (name, project_root, cache)
+        return alias
+
     monkeypatch.setattr(
         "meridian.lib.ops.spawn.prepare.resolve_model",
-        lambda name, project_root=None, cache=None: alias,
+        _resolve_model,
     )
     _patch_alias_resolution(
         monkeypatch,
@@ -482,9 +492,12 @@ def test_spawn_validation_preserves_alias_token_for_policy_defaults(
     )
 
     def prepare_resolve_model(
-        name: str, project_root: Path | None = None, *, cache=None
+        name: str,
+        project_root: Path | None = None,
+        *,
+        cache: object | None = None,
     ) -> AliasEntry:
-        _ = project_root
+        _ = (project_root, cache)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
     monkeypatch.setattr(
@@ -530,19 +543,20 @@ def test_spawn_create_dry_run_wire_includes_prepared_model_selection(
         alias="gpt55",
         model_id=ModelId("gpt-5.5"),
         resolved_harness=HarnessId.CODEX,
-        mars_provided_harness=HarnessId.CODEX,
     )
     canonical = AliasEntry(
         alias="",
         model_id=ModelId("gpt-5.5"),
         resolved_harness=HarnessId.CODEX,
-        mars_provided_harness=HarnessId.CODEX,
     )
 
     def prepare_resolve_model(
-        name: str, project_root: Path | None = None, *, cache=None
+        name: str,
+        project_root: Path | None = None,
+        *,
+        cache: object | None = None,
     ) -> AliasEntry:
-        _ = project_root
+        _ = (project_root, cache)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
     monkeypatch.setattr(
@@ -2066,13 +2080,15 @@ def test_resolve_policies_fallback_winner_is_not_re_resolved_after_selection(
             )
         return _mock_alias(alias="", model_id=name)
 
+    def _load_aliases_for_fallback_test(self: CatalogSession) -> list[AliasEntry]:
+        _ = self
+        return [_mock_alias(alias="codex-fanout", model_id="gpt-5.5", harness=HarnessId.CODEX)]
+
     monkeypatch.setattr(CatalogSession, "resolve_model", resolve_once)
     monkeypatch.setattr(
         CatalogSession,
         "load_aliases",
-        lambda self: [
-            _mock_alias(alias="codex-fanout", model_id="gpt-5.5", harness=HarnessId.CODEX)
-        ],
+        _load_aliases_for_fallback_test,
     )
     registry = HarnessRegistry()
     registry.register(CodexAdapter())

@@ -5,16 +5,23 @@ from dataclasses import FrozenInstanceError, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
 
 from meridian.lib.catalog.agent import AgentModelEntry, FanoutEntry, ModelPolicyRule
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.config.settings import AgentOverlayConfig, MeridianConfig
+from meridian.lib.config.settings import (
+    AgentOverlayConfig,
+    AgentOverlayModelPolicy,
+    MeridianConfig,
+)
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.compiler import (
     CompilerRequest,
     CompilerResult,
@@ -36,9 +43,12 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, tuple | list):
-        return [_jsonable(item) for item in value]
+        return [_jsonable(item) for item in cast("list[Any] | tuple[Any, ...]", value)]
     if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
+        return {
+            str(key): _jsonable(item)
+            for key, item in cast("dict[object, Any]", value).items()
+        }
     return value
 
 
@@ -478,11 +488,11 @@ def test_compile_launch_params_three_state_model_policies_overlay_replaces_profi
     )
     overlay = AgentOverlayConfig(
         model_policies=(
-            {
-                "match_type": "alias",
-                "match_value": "gptmini",
-                "overrides": {"effort": "xhigh"},
-            },
+            AgentOverlayModelPolicy(
+                match_type="alias",
+                match_value="gptmini",
+                overrides={"effort": "xhigh"},
+            ),
         )
     )
     request = _request(
@@ -652,11 +662,11 @@ def test_overlay_on_missing_profile_has_no_effect() -> None:
     alias = _alias_entry()
     overlay = AgentOverlayConfig(
         model_policies=(
-            {
-                "match_type": "alias",
-                "match_value": "gptmini",
-                "overrides": {"effort": "high"},
-            },
+            AgentOverlayModelPolicy(
+                match_type="alias",
+                match_value="gptmini",
+                overrides={"effort": "high"},
+            ),
         )
     )
     request = CompilerRequest(
@@ -713,9 +723,9 @@ class _StubCatalog:
 
 
 class _MockHarnessRegistry:
-    def get_subprocess_harness(self, harness_id: HarnessId) -> object:
+    def get_subprocess_harness(self, harness_id: HarnessId) -> SubprocessHarness:
         _ = harness_id
-        return object()
+        return cast("SubprocessHarness", object())
 
 
 def test_resolve_policies_picks_up_overlay_from_config(
@@ -728,35 +738,44 @@ def test_resolve_policies_picks_up_overlay_from_config(
     captured: dict[str, AgentOverlayConfig | None] = {}
     original_compile = policies_module.compile_launch_params
 
-    def _capture_compile(request: CompilerRequest):
+    def _capture_compile(request: CompilerRequest) -> CompilerResult:
         captured["overlay"] = request.agent_overlay
         return original_compile(request)
+
+    def _load_agent_profile_with_fallback(**_: object) -> tuple[None, None]:
+        return (None, None)
+
+    def _materialize_harness(
+        _result: object,
+        harness_registry: HarnessRegistry,
+    ) -> SimpleNamespace:
+        _ = harness_registry
+        return SimpleNamespace(adapter=object())
+
+    def _resolve_skills_from_profile(**_: object) -> ResolvedSkills:
+        return ResolvedSkills(skill_names=(), loaded_skills=(), missing_skills=())
 
     monkeypatch.setattr(policies_module, "compile_launch_params", _capture_compile)
     monkeypatch.setattr(
         policies_module,
         "load_agent_profile_with_fallback",
-        lambda **_: (None, None),
+        _load_agent_profile_with_fallback,
     )
-    monkeypatch.setattr(
-        policies_module,
-        "materialize_harness",
-        lambda _result, harness_registry: SimpleNamespace(adapter=object()),
-    )
+    monkeypatch.setattr(policies_module, "materialize_harness", _materialize_harness)
     monkeypatch.setattr(
         policies_module,
         "resolve_skills_from_profile",
-        lambda **_: ResolvedSkills(skill_names=(), loaded_skills=(), missing_skills=()),
+        _resolve_skills_from_profile,
     )
 
     config = MeridianConfig.model_validate({"agents": {"coder": {"effort": "high"}}})
     overlay = config.agents["coder"]
     result = resolve_policies(
-        catalog=_StubCatalog(tmp_path),
+        catalog=cast("CatalogSession", _StubCatalog(tmp_path)),
         layers=(RuntimeOverrides(agent="coder"),),
         config_overrides=RuntimeOverrides(),
         config=config,
-        harness_registry=_MockHarnessRegistry(),  # type: ignore[arg-type]
+        harness_registry=cast("HarnessRegistry", _MockHarnessRegistry()),
     )
 
     assert captured["overlay"] == overlay

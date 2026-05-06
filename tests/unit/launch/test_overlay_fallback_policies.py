@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -57,7 +58,7 @@ def _patch_alias_resolution(
     monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
 
 
-def resolve_policies(*, project_root: Path, **kwargs):
+def resolve_policies(*, project_root: Path, **kwargs: Any):
     return _resolve_policies_impl(
         catalog=CatalogSession(project_root),
         **kwargs,

@@ -117,14 +117,21 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        CatalogSession,
-        "resolve_model",
-        lambda self, token: AliasEntry(
+    def _resolve_model_for_alias_variant(
+        self: CatalogSession,
+        token: str,
+    ) -> AliasEntry:
+        _ = (self, token)
+        return AliasEntry(
             alias="alias-token",
             model_id=ModelId("canonical-id"),
             resolved_harness=HarnessId.CODEX,
-        ),
+        )
+
+    monkeypatch.setattr(
+        CatalogSession,
+        "resolve_model",
+        _resolve_model_for_alias_variant,
     )
     _write_minimal_mars_config(tmp_path)
     write_agent(
@@ -172,14 +179,21 @@ def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_onl
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        CatalogSession,
-        "resolve_model",
-        lambda self, token: AliasEntry(
+    def _resolve_model_for_fallback_variant(
+        self: CatalogSession,
+        token: str,
+    ) -> AliasEntry:
+        _ = (self, token)
+        return AliasEntry(
             alias="alias-token",
             model_id=ModelId("canonical-id"),
             resolved_harness=HarnessId.CODEX,
-        ),
+        )
+
+    monkeypatch.setattr(
+        CatalogSession,
+        "resolve_model",
+        _resolve_model_for_fallback_variant,
     )
     _write_minimal_mars_config(tmp_path)
     write_agent(
