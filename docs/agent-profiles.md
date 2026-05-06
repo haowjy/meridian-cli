@@ -196,7 +196,7 @@ Each line shows: name, description, default model, and fanout aliases (deduplica
 
 ## Harness Availability Fallback
 
-When a spawn is launched with an agent profile and the profile's primary harness is not installed, Meridian automatically tries alternatives without failing:
+When a spawn is launched with an agent profile and the current head candidate's harness is unavailable — whether that is the profile's base model or a harness rerouted by a matched `model-policies` rule — Meridian walks the candidate chain and selects the next available alternative without failing:
 
 1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
 2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head candidate and the prior head is demoted.
