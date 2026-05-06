@@ -13,6 +13,10 @@ from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.common import (
+    OUTPUT_FILENAME,
+    _coerce_optional_int,
+    _iter_json_lines_artifact,
+    coerce_optional_float,
     extract_opencode_report,
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
@@ -134,46 +138,31 @@ def _parse_start_time(value: object) -> float | None:
 
 
 def _latest_spawn_start_epoch(*, runtime_root: Path, child_cwd: Path) -> float | None:
-    spawns_path = runtime_root / "spawns.jsonl"
-    if not spawns_path.is_file():
-        return None
+    from meridian.lib.state import spawn_store
 
     resolved_child = _safe_resolve(child_cwd)
     latest_any: float | None = None
     latest_matching_child: float | None = None
 
     try:
-        lines = spawns_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        spawns = spawn_store.list_spawns(runtime_root)
     except OSError:
         return None
 
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            payload_obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload_obj, dict):
-            continue
-        payload = cast("dict[str, object]", payload_obj)
-        if payload.get("event") != "start":
-            continue
-        if str(payload.get("harness", "")).strip().lower() != "opencode":
+    for spawn in spawns:
+        if (spawn.harness or "").strip().lower() != "opencode":
             continue
 
-        started_at = _parse_start_time(payload.get("started_at"))
+        started_at = _parse_start_time(spawn.started_at)
         if started_at is None:
             continue
         if latest_any is None or started_at > latest_any:
             latest_any = started_at
 
-        execution_cwd = payload.get("execution_cwd")
-        if not isinstance(execution_cwd, str) or not execution_cwd.strip():
+        if spawn.execution_cwd is None or not spawn.execution_cwd.strip():
             continue
         try:
-            resolved_execution_cwd = _safe_resolve(Path(execution_cwd))
+            resolved_execution_cwd = _safe_resolve(Path(spawn.execution_cwd))
         except OSError:
             continue
         if resolved_execution_cwd != resolved_child:
@@ -268,11 +257,7 @@ def _detect_storage_session_id(
     if started_at is not None:
         lower = started_at - 5.0
         upper = started_at + float(_SESSION_MATCH_WINDOW_SECONDS)
-        bounded = [
-            item
-            for item in candidates
-            if item[0] >= lower and item[0] <= upper
-        ]
+        bounded = [item for item in candidates if item[0] >= lower and item[0] <= upper]
         if bounded:
             bounded.sort(key=lambda item: item[0], reverse=True)
             return bounded[0][1]
@@ -310,6 +295,9 @@ class OpenCodeHarnessExtractor(HarnessExtractor[OpenCodeLaunchSpec]):
         )
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+        specific = _extract_opencode_usage(artifacts, spawn_id)
+        if specific != TokenUsage():
+            return specific
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
@@ -327,3 +315,38 @@ class OpenCodeHarnessExtractor(HarnessExtractor[OpenCodeLaunchSpec]):
 OPENCODE_EXTRACTOR = OpenCodeHarnessExtractor()
 
 __all__ = ["OPENCODE_EXTRACTOR", "OpenCodeHarnessExtractor"]
+
+
+def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+    last: TokenUsage | None = None
+    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+        event_type = (
+            str(payload.get("event", payload.get("type", payload.get("event_type", ""))))
+            .strip()
+            .lower()
+        )
+        if event_type not in {"session.idle", "message.updated", "response.completed"}:
+            continue
+        info = payload.get("info") if isinstance(payload.get("info"), dict) else payload
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else info
+        if not isinstance(usage, dict):
+            continue
+        cost_obj = payload.get("cost") if isinstance(payload.get("cost"), dict) else payload
+        cost = coerce_optional_float(
+            cost_obj.get("total_cost_usd") if isinstance(cost_obj, dict) else None
+        )
+        last = TokenUsage(
+            input_tokens=_coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
+            output_tokens=_coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
+            cache_read_input_tokens=_coerce_optional_int(
+                usage.get("cache_read_input_tokens") or usage.get("cache_read")
+            ),
+            cache_creation_input_tokens=_coerce_optional_int(
+                usage.get("cache_creation_input_tokens") or usage.get("cache_write")
+            ),
+            reasoning_tokens=_coerce_optional_int(
+                usage.get("reasoning_tokens") or usage.get("reasoning")
+            ),
+            total_cost_usd=cost,
+        )
+    return last or TokenUsage()

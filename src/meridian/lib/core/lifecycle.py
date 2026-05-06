@@ -392,11 +392,11 @@ class SpawnLifecycleService:
                     "terminal_origin": origin,
                 }
             )
-            if not self._write_owner_record(updated, transition="finalize"):
+            if not self._write_finalized_owner_record(updated):
                 return spawn_store.FinalizeOutcome(
                     transitioned=False,
                     wrote=False,
-                    snapshot=self._record,
+                    snapshot=self._read_owner_record_from_disk(spawn_id),
                 )
             outcome = spawn_store.FinalizeOutcome(
                 transitioned=was_active,
@@ -553,6 +553,37 @@ class SpawnLifecycleService:
             return False
         self._record = record
         return True
+
+    def _write_finalized_owner_record(self, record: SpawnRecord) -> bool:
+        """Write owner final state, preserving stale-rejection visibility.
+
+        The owner hot path keeps an in-memory record for fast lifecycle updates.
+        If another writer has already persisted terminal state, the repository
+        guard rejects this write.  Callers then need the on-disk snapshot, not
+        the stale owner record, so finalization catches the guard separately
+        from other owner writes.
+        """
+
+        try:
+            from meridian.lib.state.paths import RuntimePaths
+            from meridian.lib.state.spawn.repository import write_state
+
+            write_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, record)
+        except ValueError:
+            logger.debug(
+                "Owner lifecycle write dropped by terminal monotonicity guard.",
+                spawn_id=record.id,
+                transition="finalize",
+            )
+            return False
+        self._record = record
+        return True
+
+    def _read_owner_record_from_disk(self, spawn_id: str) -> SpawnRecord | None:
+        from meridian.lib.state.paths import RuntimePaths
+        from meridian.lib.state.spawn.repository import read_state
+
+        return read_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, spawn_id)
 
     def _dispatch(self, event: LifecycleEvent) -> None:
         for hook in self._hooks:

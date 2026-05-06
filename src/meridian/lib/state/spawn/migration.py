@@ -119,7 +119,19 @@ def _reconcile_stale_v1_active(paths: RuntimePaths, spawn_id: str) -> None:
 def _rename_if_present(source: Path, target: Path) -> None:
     if not source.exists() or target.exists():
         return
-    source.rename(target)
+    try:
+        source.rename(target)
+    except FileNotFoundError:
+        return
+    except FileExistsError:
+        return
+
+
+def _archive_legacy_files_if_present(paths: RuntimePaths) -> None:
+    """Finish archival of legacy v1 files after v2 marker is durable."""
+
+    _rename_if_present(paths.spawns_jsonl, paths.root_dir / "spawns.legacy-v1.jsonl")
+    _rename_if_present(paths.spawns_flock, paths.root_dir / "spawns.legacy-v1.jsonl.flock")
 
 
 def ensure_v2_format(runtime_root: Path) -> bool:
@@ -132,7 +144,8 @@ def ensure_v2_format(runtime_root: Path) -> bool:
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     marker_path = _marker_path(paths)
-    if marker_path.exists():
+    if marker_path.is_file():
+        _archive_legacy_files_if_present(paths)
         return True
     if not paths.spawns_jsonl.exists():
         _write_marker(paths)
@@ -171,8 +184,7 @@ def ensure_v2_format(runtime_root: Path) -> bool:
             write_state(paths.spawns_dir, record, revision=1, allow_terminal_overwrite=True)
 
         _write_marker(paths)
-        _rename_if_present(paths.spawns_jsonl, runtime_root / "spawns.legacy-v1.jsonl")
-        _rename_if_present(paths.spawns_flock, runtime_root / "spawns.legacy-v1.jsonl.flock")
+        _archive_legacy_files_if_present(paths)
         return True
 
 
