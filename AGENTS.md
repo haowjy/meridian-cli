@@ -53,7 +53,7 @@ This sets `core.hooksPath = .githooks`; Git cannot auto-install hooks on clone.
 See `DEVELOPMENT.md` for the human-facing setup and release workflow.
 
 Hook policy:
-- Pre-commit stays fast: ruff check only, for cheap checkpoint commits.
+- Pre-commit is not installed by default; optional fast ruff helper lives at `.githooks/optional/pre-commit` for humans who opt in locally.
 - Pre-push is strict: full `scripts/preflight.sh` plus direct `v*` tag push guard.
 - Release tags must go through `scripts/release.sh`, not manual tag pushes.
 

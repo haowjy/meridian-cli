@@ -14,8 +14,7 @@ clone, so every fresh checkout must run this once.
 
 Hook policy:
 
-- Pre-commit is intentionally lightweight: fast `ruff` only. It is a guardrail,
-  not the full verification gate, so checkpoint commits stay fast.
+- Pre-commit is not installed by default, so checkpoint commits stay fast. Humans who want a local fast `ruff` guardrail can opt in by copying or symlinking `.githooks/optional/pre-commit` into their active hooks path.
 - Pre-push is strict: it runs `scripts/preflight.sh`, which currently runs
   `uv run ruff check .`, `uv run pytest-llm`, and `uv run pyright`, then blocks
   direct `v*` tag pushes. Use `scripts/release.sh` for release tags.

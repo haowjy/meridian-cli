@@ -7,4 +7,4 @@ if (-not (Test-Path "$root\.githooks")) {
 git -C $root config --local core.hooksPath .githooks
 Write-Host "Git hooks activated: core.hooksPath = .githooks"
 Write-Host "Active hook: pre-push (full preflight + tag policy)"
-Write-Host "Optional hook: pre-commit (fast ruff check) — active via core.hooksPath"
+Write-Host "Optional hook: pre-commit (fast ruff check) lives at .githooks/optional/pre-commit and is not active by default"
