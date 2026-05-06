@@ -246,11 +246,14 @@ class SpawnLifecycleService:
             repository=self._repository,
         )
         allocate_spawn_sequence(str(result_id))
-        event = self._build_event("spawn.created", str(result_id))
+        record = spawn_store.get_spawn(
+            self._runtime_root, result_id, repository=self._repository
+        )
+        event = self._build_event("spawn.created", record, spawn_id=str(result_id))
         self._dispatch(event)
-        self._emit_telemetry_event("spawn.queued", str(result_id))
+        self._emit_telemetry_event("spawn.queued", record)
         if status == "running":
-            self._emit_telemetry_event("spawn.running", str(result_id))
+            self._emit_telemetry_event("spawn.running", record)
         return str(result_id)
 
     def mark_running(
@@ -262,11 +265,8 @@ class SpawnLifecycleService:
         runner_pid: int | None = None,
     ) -> None:
         """Mark a spawn as running and dispatch spawn.running."""
-        previous = spawn_store.get_spawn(
-            self._runtime_root, spawn_id, repository=self._repository
-        )
         # Authoritative transition write still happens in spawn_store.
-        changed = spawn_store.mark_spawn_running(
+        changed, record = spawn_store.mark_spawn_running_with_snapshot(
             self._runtime_root,
             spawn_id,
             launch_mode=launch_mode,
@@ -275,10 +275,9 @@ class SpawnLifecycleService:
             repository=self._repository,
         )
         if changed:
-            event = self._build_event("spawn.running", spawn_id)
+            event = self._build_event("spawn.running", record, spawn_id=spawn_id)
             self._dispatch(event)
-        if changed and (previous is None or previous.status != "running"):
-            self._emit_telemetry_event("spawn.running", spawn_id)
+            self._emit_telemetry_event("spawn.running", record)
 
     def record_exited(
         self,
@@ -289,6 +288,9 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> None:
         """Record process exit and emit spawn.process_exited telemetry."""
+        previous = spawn_store.get_spawn(
+            self._runtime_root, spawn_id, repository=self._repository
+        )
         # Authoritative transition write still happens in spawn_store.
         spawn_store.record_spawn_exited(
             self._runtime_root,
@@ -298,9 +300,15 @@ class SpawnLifecycleService:
             clock=clock,
             repository=self._repository,
         )
+        record = _record_after_exited_update(
+            previous,
+            spawn_id=spawn_id,
+            exit_code=exit_code,
+            exited_at=exited_at,
+        )
         self._emit_telemetry_event(
             "spawn.process_exited",
-            spawn_id,
+            record,
             payload={"exit_code": exit_code},
         )
 
@@ -369,13 +377,13 @@ class SpawnLifecycleService:
     def mark_finalizing(self, spawn_id: str) -> bool:
         """CAS transition running -> finalizing.  No lifecycle event dispatched."""
         # Authoritative transition write still happens in spawn_store.
-        transitioned = spawn_store.mark_finalizing(
+        transitioned, record = spawn_store.mark_finalizing_with_snapshot(
             self._runtime_root,
             spawn_id,
             repository=self._repository,
         )
         if transitioned:
-            self._emit_telemetry_event("spawn.finalizing", spawn_id)
+            self._emit_telemetry_event("spawn.finalizing", record)
         return transitioned
 
     def cancel(
@@ -434,15 +442,12 @@ class SpawnLifecycleService:
     def _emit_telemetry_event(
         self,
         event_name: str,
-        spawn_id: str,
+        record: SpawnRecord | None,
         *,
         payload: dict[str, Any] | None = None,
     ) -> None:
         if event_name not in CORE_EVENTS and event_name != "spawn.updated":
             return
-        record = spawn_store.get_spawn(
-            self._runtime_root, spawn_id, repository=self._repository
-        )
         if record is None:
             return
         self._emit_telemetry_event_for_record(event_name, record, payload=payload)
@@ -464,12 +469,13 @@ class SpawnLifecycleService:
             payload = _terminal_telemetry_payload(record)
         _emit_lifecycle_event(event_name, record, payload=payload)
 
-    def _build_event(self, event_type: EventType, spawn_id: str) -> LifecycleEvent:
-        # Read event payload through the same authoritative store boundary.
-        record = spawn_store.get_spawn(
-            self._runtime_root, spawn_id, repository=self._repository
-        )
-
+    def _build_event(
+        self,
+        event_type: EventType,
+        record: SpawnRecord | None,
+        *,
+        spawn_id: str,
+    ) -> LifecycleEvent:
         # Terminal-only fields
         status: TerminalStatus | None = None
         origin: TerminalOrigin | None = None
@@ -571,6 +577,24 @@ class SpawnLifecycleService:
             reasoning_tokens=reasoning_tokens,
             cost_is_estimate=cost_is_estimate,
         )
+
+
+def _record_after_exited_update(
+    record: SpawnRecord | None,
+    *,
+    spawn_id: str,
+    exit_code: int,
+    exited_at: str | None,
+) -> SpawnRecord | None:
+    if record is None:
+        return None
+    updates: dict[str, object] = {
+        "id": spawn_id,
+        "process_exit_code": exit_code,
+    }
+    if exited_at is not None:
+        updates["exited_at"] = exited_at
+    return record.model_copy(update=updates)
 
 
 def _emit_lifecycle_event(

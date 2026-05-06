@@ -188,6 +188,29 @@ def test_record_exited_emits_process_exited_telemetry_after_write(tmp_path: Path
     assert record.process_exit_code == 42
 
 
+def test_record_exited_reuses_pre_write_record_for_telemetry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """record_exited() should not reread after appending the exited event."""
+    repo = FakeSpawnRepository()
+    svc = _make_service(tmp_path, repository=repo)
+    spawn_id = _start_spawn(svc, status="running")
+
+    real_get_spawn = spawn_store.get_spawn
+    calls: list[str] = []
+
+    def counted_get_spawn(*args: Any, **kwargs: Any) -> Any:
+        calls.append(str(args[1]))
+        return real_get_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_store, "get_spawn", counted_get_spawn)
+
+    svc.record_exited(spawn_id, exit_code=42)
+
+    assert calls == [spawn_id]
+
+
 def test_finalize_transitions_spawn_to_terminal(tmp_path: Path) -> None:
     """Service finalize() must commit terminal status/origin through spawn_store."""
     repo = FakeSpawnRepository()
@@ -347,6 +370,29 @@ def test_start_allocates_sequence_before_hook_triggered_update(tmp_path: Path) -
     ]
 
 
+def test_start_reads_spawn_record_once_for_lifecycle_payloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """start() should share one post-write record across hook and telemetry payloads."""
+    repo = FakeSpawnRepository()
+    hook = RecordingHook()
+    real_get_spawn = spawn_store.get_spawn
+    calls: list[str] = []
+
+    def counted_get_spawn(*args: Any, **kwargs: Any) -> Any:
+        calls.append(str(args[1]))
+        return real_get_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_store, "get_spawn", counted_get_spawn)
+    svc = _make_service(tmp_path, hooks=[hook], repository=repo)
+
+    spawn_id = _start_spawn(svc, status="running")
+
+    assert calls == [spawn_id]
+    assert [event.event_type for event in hook.events] == ["spawn.created"]
+
+
 # ---------------------------------------------------------------------------
 # 3. spawn.running event dispatched after mark_running
 # ---------------------------------------------------------------------------
@@ -378,6 +424,35 @@ def test_mark_running_suppresses_duplicate_running_event(tmp_path: Path) -> None
     svc.mark_running(spawn_id)
 
     assert [e.event_type for e in hook.events] == []
+
+
+def test_mark_running_reuses_pre_write_record_for_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_running() should use the store snapshot instead of get_spawn()."""
+    repo = FakeSpawnRepository()
+    hook = RecordingHook()
+    svc = _make_service(tmp_path, hooks=[hook], repository=repo)
+    spawn_id = _start_spawn(svc, status="queued")
+    hook.events.clear()
+
+    real_get_spawn = spawn_store.get_spawn
+    calls: list[str] = []
+
+    def counted_get_spawn(*args: Any, **kwargs: Any) -> Any:
+        calls.append(str(args[1]))
+        return real_get_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(spawn_store, "get_spawn", counted_get_spawn)
+
+    svc.mark_running(spawn_id, launch_mode="background", worker_pid=123, runner_pid=456)
+
+    assert calls == []
+    running_event = hook.events[0]
+    assert running_event.event_type == "spawn.running"
+    assert running_event.model == "claude-3-5-haiku-20241022"
+    assert running_event.harness == "claude-code"
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +489,27 @@ def test_spawn_finalized_event_has_status_and_origin(tmp_path: Path) -> None:
     event = next(e for e in hook.events if e.event_type == "spawn.finalized")
     assert event.status == "failed"
     assert event.origin == "launcher"
+
+
+def test_finalize_uses_snapshot_without_get_spawn_reread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """finalize() should rely on FinalizeOutcome.snapshot for events/telemetry."""
+    hook = RecordingHook()
+    svc = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(svc, status="running")
+    hook.events.clear()
+
+    def fail_get_spawn(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("finalize() must not reread spawn records")
+
+    monkeypatch.setattr(spawn_store, "get_spawn", fail_get_spawn)
+
+    outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+
+    assert outcome.wrote is True
+    assert [event.event_type for event in hook.events] == ["spawn.finalized"]
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +725,22 @@ def test_mark_finalizing_idempotent_second_call_returns_false(tmp_path: Path) ->
     record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
     assert record is not None
     assert record.status == "finalizing"
+
+
+def test_mark_finalizing_uses_store_snapshot_without_get_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_finalizing() should not use lifecycle get_spawn telemetry rereads."""
+    svc = _make_service(tmp_path)
+    spawn_id = _start_spawn(svc, status="running")
+
+    def fail_get_spawn(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("mark_finalizing() must not call get_spawn")
+
+    monkeypatch.setattr(spawn_store, "get_spawn", fail_get_spawn)
+
+    assert svc.mark_finalizing(spawn_id) is True
 
 
 # ---------------------------------------------------------------------------

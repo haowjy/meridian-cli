@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus
@@ -31,8 +31,38 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.events import reduce_events
+from meridian.lib.state.spawn import legacy_events as _legacy_events
+from meridian.lib.state.spawn.legacy_events import (
+    APP_LAUNCH_MODE as APP_LAUNCH_MODE,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    AUTHORITATIVE_ORIGINS as AUTHORITATIVE_ORIGINS,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    BACKGROUND_LAUNCH_MODE as BACKGROUND_LAUNCH_MODE,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    FOREGROUND_LAUNCH_MODE as FOREGROUND_LAUNCH_MODE,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    LaunchMode,
+    SpawnEvent,
+    SpawnExitedEvent,
+    SpawnFinalizeEvent,
+    SpawnOrigin,
+    SpawnStartEvent,
+    SpawnUpdateEvent,
+    reduce_events,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    parse_event as parse_event,
+)
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
+
+_AUTHORITATIVE_ORIGIN_VALUES = _legacy_events._AUTHORITATIVE_ORIGIN_VALUES  # pyright: ignore[reportPrivateUsage]
+_LAUNCH_MODE_VALUES = _legacy_events._LAUNCH_MODE_VALUES  # pyright: ignore[reportPrivateUsage]
+_coerce_launch_mode = _legacy_events._coerce_launch_mode  # pyright: ignore[reportPrivateUsage]
+_parse_event = _legacy_events._parse_event  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
 
@@ -127,23 +157,6 @@ def next_spawn_id(
         )
 
 
-LaunchMode = Literal["background", "foreground", "app"]
-BACKGROUND_LAUNCH_MODE: LaunchMode = "background"
-FOREGROUND_LAUNCH_MODE: LaunchMode = "foreground"
-APP_LAUNCH_MODE: LaunchMode = "app"
-SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
-_LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
-    (BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE, APP_LAUNCH_MODE)
-)
-
-_AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
-    "runner",
-    "launcher",
-    "launch_failure",
-    "cancel",
-)
-AUTHORITATIVE_ORIGINS: frozenset[SpawnOrigin] = frozenset(_AUTHORITATIVE_ORIGIN_VALUES)
-
 ACTIVE_SPAWN_STATUSES = _ACTIVE_SPAWN_STATUSES
 is_active_spawn_status = _is_active_spawn_status
 
@@ -211,119 +224,6 @@ class FinalizeOutcome(BaseModel):
     transitioned: bool
     wrote: bool
     snapshot: SpawnRecord | None
-
-
-class SpawnStartEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    v: int = 1
-    event: Literal["start"] = "start"
-    id: str = ""
-    chat_id: str | None = None
-    parent_id: str | None = None
-    model: str | None = None
-    agent: str | None = None
-    agent_path: str | None = None
-    skills: tuple[str, ...] = ()
-    skill_paths: tuple[str, ...] = ()
-    harness: str | None = None
-    kind: str | None = None
-    desc: str | None = None
-    work_id: str | None = None
-    harness_session_id: str | None = None
-    execution_cwd: str | None = None
-    launch_mode: LaunchMode | None = None
-    worker_pid: int | None = None
-    runner_pid: int | None = None
-    status: SpawnStatus = "running"
-    prompt: str | None = None
-    started_at: str | None = None
-
-
-class SpawnUpdateEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    v: int = 1
-    event: Literal["update"] = "update"
-    id: str = ""
-    status: SpawnStatus | None = None
-    launch_mode: LaunchMode | None = None
-    worker_pid: int | None = None
-    runner_pid: int | None = None
-    harness_session_id: str | None = None
-    execution_cwd: str | None = None
-    claude_config_dir: str | None = None
-    error: str | None = None
-    desc: str | None = None
-    work_id: str | None = None
-
-
-class SpawnExitedEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    v: int = 1
-    event: Literal["exited"] = "exited"
-    id: str = ""
-    exit_code: int = 0
-    exited_at: str | None = None
-
-
-class SpawnFinalizeEvent(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    v: int = 1
-    event: Literal["finalize"] = "finalize"
-    id: str = ""
-    status: SpawnStatus | None = None
-    exit_code: int | None = None
-    finished_at: str | None = None
-    duration_secs: float | None = None
-    total_cost_usd: float | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_input_tokens: int | None = None
-    cache_creation_input_tokens: int | None = None
-    reasoning_tokens: int | None = None
-    cost_is_estimate: bool = False
-    error: str | None = None
-    origin: SpawnOrigin | None = None
-
-
-type SpawnEvent = SpawnStartEvent | SpawnUpdateEvent | SpawnExitedEvent | SpawnFinalizeEvent
-
-def _coerce_launch_mode(value: object) -> object:
-    if not isinstance(value, str):
-        return value
-    normalized = value.strip().lower()
-    if normalized in _LAUNCH_MODE_VALUES:
-        return normalized
-    return value
-
-
-def _parse_event(payload: dict[str, Any]) -> SpawnEvent | None:
-    resolved_payload = payload
-    if "launch_mode" in payload:
-        coerced_launch_mode = _coerce_launch_mode(payload.get("launch_mode"))
-        if coerced_launch_mode != payload.get("launch_mode"):
-            resolved_payload = dict(payload)
-            resolved_payload["launch_mode"] = coerced_launch_mode
-
-    event_type = resolved_payload.get("event")
-    try:
-        if event_type == "start":
-            return SpawnStartEvent.model_validate(resolved_payload)
-        if event_type == "update":
-            return SpawnUpdateEvent.model_validate(resolved_payload)
-        if event_type == "exited":
-            return SpawnExitedEvent.model_validate(resolved_payload)
-        if event_type == "finalize":
-            return SpawnFinalizeEvent.model_validate(resolved_payload)
-    except ValidationError:
-        return None
-    return None
-
-
-parse_event = _parse_event
 
 
 def start_spawn(
@@ -612,17 +512,33 @@ def mark_finalizing(
 ) -> bool:
     """CAS transition `running -> finalizing` under the spawn-store flock."""
 
+    transitioned, _snapshot = mark_finalizing_with_snapshot(
+        runtime_root,
+        spawn_id,
+        repository=repository,
+    )
+    return transitioned
+
+
+def mark_finalizing_with_snapshot(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    repository: SpawnRepository | None = None,
+) -> tuple[bool, SpawnRecord | None]:
+    """CAS transition running -> finalizing and return the post-write projection."""
+
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_repository = _resolve_repository(paths, repository=repository)
     with lock_file(paths.spawns_flock):
         records = reduce_events(resolved_repository.read_events())
         record = records.get(str(spawn_id))
         if record is None or record.status != "running":
-            return False
+            return False, record
         _validate_transition(record.status, "finalizing")
         event = SpawnUpdateEvent(id=str(spawn_id), status="finalizing")
         resolved_repository.append_event(event)
-        return True
+        return True, record.model_copy(update={"status": "finalizing"})
 
 
 def mark_spawn_running(
@@ -634,13 +550,35 @@ def mark_spawn_running(
     runner_pid: int | None = None,
     repository: SpawnRepository | None = None,
 ) -> bool:
+    changed, _snapshot = mark_spawn_running_with_snapshot(
+        runtime_root,
+        spawn_id,
+        launch_mode=launch_mode,
+        worker_pid=worker_pid,
+        runner_pid=runner_pid,
+        repository=repository,
+    )
+    return changed
+
+
+def mark_spawn_running_with_snapshot(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    launch_mode: LaunchMode | None = None,
+    worker_pid: int | None = None,
+    runner_pid: int | None = None,
+    repository: SpawnRepository | None = None,
+) -> tuple[bool, SpawnRecord | None]:
+    """Append running update and return the post-write projection without rereading."""
+
     paths = RuntimePaths.from_root_dir(runtime_root)
     resolved_repository = _resolve_repository(paths, repository=repository)
     with lock_file(paths.spawns_flock):
         records = reduce_events(resolved_repository.read_events())
         record = records.get(str(spawn_id))
         if record is None:
-            return False
+            return False, None
         changed = record.status != "running"
         if record.status not in {"unknown", "running"}:
             _validate_transition(cast("SpawnStatus", record.status), "running")
@@ -652,7 +590,14 @@ def mark_spawn_running(
             runner_pid=runner_pid,
         )
         resolved_repository.append_event(event)
-        return changed
+        updates: dict[str, object] = {"status": "running"}
+        if launch_mode is not None:
+            updates["launch_mode"] = launch_mode
+        if worker_pid is not None:
+            updates["worker_pid"] = worker_pid
+        if runner_pid is not None:
+            updates["runner_pid"] = runner_pid
+        return changed, record.model_copy(update=updates)
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
