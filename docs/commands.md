@@ -176,7 +176,7 @@ reconnect/replay, persistence, and harness support matrix.
 | `meridian models refresh` | Force-refresh the models.dev cache |
 | `meridian doctor` | Per-project diagnostics and orphan reconciliation (cheap, safe to run anywhere) |
 | `meridian doctor --global` | Cross-project scan — checks all projects under `~/.meridian/`; must run from the root process (not inside a spawn) |
-| `meridian doctor --prune` | Prune stale spawn artifacts and Claude overlay directories (current project); materializes overlay transcripts before deletion |
+| `meridian doctor --prune` | Prune stale spawn artifacts and Claude overlay directories (current project); attempts transcript materialization before overlay deletion |
 | `meridian doctor --prune --global` | Same as `--prune`, plus orphan project dirs machine-wide |
 | `meridian serve` | Start the MCP server |
 
@@ -188,7 +188,7 @@ reconnect/replay, persistence, and harness support matrix.
 | `stale_claude_overlays` | Per-spawn Claude config overlay directories past the retention window; transcripts are still intact inside them until pruned |
 | `orphan_project_dirs` | Project state directories with no matching live project (`--global` only) |
 
-`--prune` removes all three. For Claude overlays specifically, Meridian materializes any remaining session transcript files into `~/.claude/projects/` before deleting the overlay, so conversations remain accessible in regular Claude history. See [troubleshooting.md](troubleshooting.md#claude-session-isolation) for details on the overlay model.
+`--prune` removes all three. For Claude overlays specifically, Meridian makes a best-effort attempt to materialize any remaining session transcript files into `~/.claude/projects/` before deleting the overlay. If materialization fails, Meridian logs a warning and continues prune handling. See [troubleshooting.md](troubleshooting.md#claude-session-isolation) for details on the overlay model.
 
 ## Telemetry
 
