@@ -112,6 +112,8 @@ class CompilerResult:
     # Fallback info
     fallback_applied: bool = False
     fallback_model: str | None = None
+    model_policy_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    matched_model_policy: bool = False
 
 
 def render_provenance(provenance: FieldProvenance) -> dict[str, str]:
@@ -291,6 +293,8 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         warnings=tuple(warnings),
         fallback_applied=False,
         fallback_model=None,
+        model_policy_source=policy_source if effective_policies else ProvenanceLevel.UNSET,
+        matched_model_policy=matched_policy is not None,
     )
 
 

@@ -14,7 +14,13 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 
-from .compiler import CompilerRequest, CompilerResult, compile_launch_params, match_model_policy
+from .compiler import (
+    CompilerRequest,
+    CompilerResult,
+    ProvenanceLevel,
+    compile_launch_params,
+    match_model_policy,
+)
 from .launch_types import CompositionWarning
 from .materialize import materialize_harness
 from .resolve import (
@@ -605,19 +611,10 @@ def resolve_policies(
             harness_provenance=harness_provenance or "",
         )
 
-    selected_model_token_for_policy = (
-        model_selection.selected_model_token if model_selection is not None else ""
+    profile_policy_rule_matched = compiler_result.matched_model_policy and (
+        compiler_result.model_policy_source is ProvenanceLevel.PROFILE_MODEL_POLICY
     )
-    matched_policy_rule = (
-        match_model_policy(
-            model_policies=profile.model_policies,
-            canonical_model_id=str(selected_entry.model_id),
-            selected_model_token=selected_model_token_for_policy,
-        )
-        if profile is not None and selected_entry is not None
-        else None
-    )
-    model_entry_matched = matched_policy_rule is not None
+    model_entry_matched = profile_policy_rule_matched
     if not model_entry_matched:
         _, _, model_entry_matched = _resolve_profile_model_overrides(
             profile=profile,
@@ -628,7 +625,8 @@ def resolve_policies(
     if (
         profile is not None
         and profile.model_policies
-        and matched_policy_rule is None
+        and compiler_result.model_policy_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+        and not profile_policy_rule_matched
         and selected_entry is not None
         and profile_policy_defaults.model_dump(exclude_none=True)
     ):

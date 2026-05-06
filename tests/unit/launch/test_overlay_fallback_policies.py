@@ -243,3 +243,117 @@ def test_overlay_policy_matching_fanout_token_does_not_leak_into_selected_fallba
     assert policies.model_selection is not None
     assert policies.model_selection.selected_model_token == "codex-fanout"
     assert policies.model_selection.harness_provenance == "availability-fallback"
+
+
+def test_overlay_empty_model_policies_suppress_ambiguous_profile_model_policy_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: gpt-choice\n"
+            "model-policies:\n"
+            "  - match: {model-glob: 'gpt-*'}\n"
+            "    override: {effort: low}\n"
+            "  - match: {model-glob: '*5.5'}\n"
+            "    override: {effort: high}\n"
+        ),
+    )
+    aliases = {
+        "gpt-choice": _mock_alias(
+            alias="gpt-choice",
+            model_id="gpt-5.5",
+            harness=HarnessId.CODEX,
+        ),
+    }
+    _patch_alias_resolution(monkeypatch, resolved_entries=aliases)
+
+    config = MeridianConfig.model_validate(
+        {
+            "agents": {
+                "reviewer": {
+                    "model_policies": []
+                }
+            }
+        }
+    )
+
+    registry = HarnessRegistry()
+    registry.register(CodexAdapter())
+
+    policies = resolve_policies(
+        project_root=tmp_path,
+        layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+        config_overrides=RuntimeOverrides(),
+        config=config,
+        harness_registry=registry,
+        configured_default_harness="codex",
+    )
+
+    assert policies.model == "gpt-5.5"
+    assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_overrides.effort is None
+
+
+def test_overlay_non_empty_model_policies_replace_ambiguous_profile_model_policies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: gpt-choice\n"
+            "model-policies:\n"
+            "  - match: {model-glob: 'gpt-*'}\n"
+            "    override: {effort: low}\n"
+            "  - match: {model-glob: '*5.5'}\n"
+            "    override: {effort: medium}\n"
+        ),
+    )
+    aliases = {
+        "gpt-choice": _mock_alias(
+            alias="gpt-choice",
+            model_id="gpt-5.5",
+            harness=HarnessId.CODEX,
+        ),
+    }
+    _patch_alias_resolution(monkeypatch, resolved_entries=aliases)
+
+    config = MeridianConfig.model_validate(
+        {
+            "agents": {
+                "reviewer": {
+                    "model_policies": [
+                        {
+                            "match_type": "alias",
+                            "match_value": "gpt-choice",
+                            "overrides": {"effort": "high"},
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+    registry = HarnessRegistry()
+    registry.register(CodexAdapter())
+
+    policies = resolve_policies(
+        project_root=tmp_path,
+        layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+        config_overrides=RuntimeOverrides(),
+        config=config,
+        harness_registry=registry,
+        configured_default_harness="codex",
+    )
+
+    assert policies.model == "gpt-5.5"
+    assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_overrides.effort == "high"
