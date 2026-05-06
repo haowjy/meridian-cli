@@ -9,7 +9,7 @@ from meridian.lib.state.spawn.repository import (
     write_state,
     write_state_locked,
 )
-from meridian.lib.state.spawn_store import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 def _record(
@@ -74,6 +74,22 @@ def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
     assert read_prompt(spawns_dir, "p1") == "hello world"
 
 
+def test_read_state_returns_record_without_prompt_when_prompt_file_is_missing(
+    tmp_path: Path,
+) -> None:
+    spawns_dir = tmp_path / "spawns"
+    record = _record(prompt="hello world")
+
+    write_state(spawns_dir, record)
+
+    restored = read_state(spawns_dir, "p1")
+
+    assert restored == record.model_copy(update={"prompt": None})
+    assert read_prompt(spawns_dir, "p1") is None
+    state_text = (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
+    assert '"prompt_length": 11' in state_text
+
+
 def test_scan_spawn_ids_lists_only_directories_with_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     write_state(spawns_dir, _record("opaque-id"))
@@ -107,3 +123,17 @@ def test_write_state_locked_applies_mutator_under_per_spawn_lock(tmp_path: Path)
     assert committed.runner_pid == 789
     assert committed.desc == "updated"
     assert '"revision": 2' in (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
+
+
+def test_write_state_locked_rejects_mutators_that_change_spawn_id(tmp_path: Path) -> None:
+    spawns_dir = tmp_path / "spawns"
+    write_state(spawns_dir, _record())
+
+    with pytest.raises(ValueError, match="must not change spawn id"):
+        write_state_locked(
+            spawns_dir,
+            "p1",
+            lambda current: current.model_copy(update={"id": "p2"}),
+        )
+
+    assert read_state(spawns_dir, "p1") == _record().model_copy(update={"prompt": None})

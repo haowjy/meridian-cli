@@ -1,11 +1,7 @@
-"""Spawn persistence repositories.
+"""Spawn v2 state-file persistence helpers.
 
-This protocol is an internal test seam for spawn_store event IO. Meridian has a
-single filesystem backend; this module is not a runtime backend abstraction.
-
-The v2 helpers in this module persist one ``state.json`` per spawn under the
-runtime spawns directory. They intentionally live alongside the v1 event
-repository while spawn_store migrates between storage formats.
+The helpers in this module persist one ``state.json`` per spawn under the
+runtime spawns directory.
 """
 
 from __future__ import annotations
@@ -13,23 +9,18 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
-from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.event_store import append_event as _append_event
-from meridian.lib.state.event_store import read_events as _read_events
-from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn_store import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import SpawnStatus
-    from meridian.lib.state.spawn.legacy_events import LaunchMode, SpawnOrigin
-    from meridian.lib.state.spawn_store import SpawnEvent
+    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin
 
 
 class StoredSpawnState(BaseModel):
@@ -79,32 +70,6 @@ class StoredSpawnState(BaseModel):
     error: str | None = None
     terminal_origin: str | None = None
     prompt_length: int | None = None
-
-
-class SpawnRepository(Protocol):
-    """Internal seam for spawn_store event persistence tests."""
-
-    def append_event(self, event: SpawnEvent) -> None: ...
-
-    def read_events(self) -> list[SpawnEvent]: ...
-
-
-class FileSpawnRepository:
-    """Filesystem-backed spawn event repository."""
-
-    def __init__(self, paths: RuntimePaths):
-        self._paths = paths
-
-    def append_event(self, event: SpawnEvent) -> None:
-        _append_event(
-            self._paths.spawns_jsonl,
-            self._paths.spawns_flock,
-            event,
-            exclude_none=True,
-        )
-
-    def read_events(self) -> list[SpawnEvent]:
-        return _read_events(self._paths.spawns_jsonl, spawn_store.parse_event)
 
 
 def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:
@@ -317,8 +282,6 @@ def scan_spawn_ids(spawns_dir: Path) -> list[str]:
 
 
 __all__ = [
-    "FileSpawnRepository",
-    "SpawnRepository",
     "StoredSpawnState",
     "read_prompt",
     "read_state",

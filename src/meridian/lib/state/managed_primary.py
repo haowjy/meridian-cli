@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.primary_meta import PrimaryMetadata, read_primary_metadata
-from meridian.lib.state.spawn_store import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord
 
 if TYPE_CHECKING:
     from meridian.lib.state.reaper import ArtifactSnapshot, ReconciliationDecision

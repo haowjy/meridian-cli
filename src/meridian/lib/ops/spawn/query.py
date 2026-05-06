@@ -9,6 +9,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import spawn_store
+from meridian.lib.state.spawn.model import SpawnRecord
 
 from .models import SpawnDetailOutput
 
@@ -93,7 +94,7 @@ def read_spawn_row(
     spawn_id: str,
     *,
     runtime_root: Path | None = None,
-) -> spawn_store.SpawnRecord | None:
+) -> SpawnRecord | None:
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     record = spawn_store.get_spawn(resolved_runtime_root, spawn_id)
     if record is not None and is_active_spawn_status(record.status):
@@ -251,7 +252,7 @@ def read_written_files(
 def detail_from_row(
     *,
     project_root: Path,
-    row: spawn_store.SpawnRecord,
+    row: SpawnRecord,
     include_report_body: bool,
     runtime_root: Path | None = None,
 ) -> SpawnDetailOutput:

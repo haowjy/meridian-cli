@@ -8,6 +8,7 @@ from typing import Literal
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES as _TERMINAL_SPAWN_STATUSES,
 )
+from meridian.lib.state.spawn.model import AUTHORITATIVE_ORIGINS
 
 TerminalWriteDisposition = Literal["append", "replace", "reject"]
 
@@ -17,14 +18,6 @@ class TerminalWriteDecision:
     """Decision for an incoming terminal write."""
 
     disposition: TerminalWriteDisposition
-
-
-def _authoritative_origins() -> frozenset[str]:
-    # Runtime import avoids a cycle: spawn_store owns the event-origin constants
-    # and imports the event reducer during module initialization.
-    from meridian.lib.state.spawn_store import AUTHORITATIVE_ORIGINS
-
-    return AUTHORITATIVE_ORIGINS
 
 
 def decide_terminal_write(
@@ -46,7 +39,7 @@ def decide_terminal_write(
     if not already_terminal:
         return TerminalWriteDecision("append")
 
-    incoming_authoritative = incoming_origin in _authoritative_origins()
+    incoming_authoritative = incoming_origin in AUTHORITATIVE_ORIGINS
     if current_terminal_origin == "reconciler" and incoming_authoritative:
         return TerminalWriteDecision("replace")
 

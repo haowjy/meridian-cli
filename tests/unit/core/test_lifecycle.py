@@ -22,7 +22,6 @@ from meridian.lib.core.lifecycle import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
-from tests.support.fakes import FakeSpawnRepository
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -49,17 +48,12 @@ class FailingHook:
 class StoreSnapshotHook:
     """Reads store state inside hook to prove dispatch happens post-write."""
 
-    def __init__(self, runtime_root: Path, repository: FakeSpawnRepository) -> None:
+    def __init__(self, runtime_root: Path) -> None:
         self._state_root = runtime_root
-        self._repository = repository
         self.snapshots: list[tuple[str, str | None, str | None]] = []
 
     def on_event(self, event: LifecycleEvent) -> None:
-        record = spawn_store.get_spawn(
-            self._state_root,
-            event.spawn_id,
-            repository=self._repository,
-        )
+        record = spawn_store.get_spawn(self._state_root, event.spawn_id)
         self.snapshots.append(
             (
                 event.event_type,
@@ -72,9 +66,8 @@ class StoreSnapshotHook:
 class UpdatingCreatedHook:
     """Updates spawn metadata from inside spawn.created hook."""
 
-    def __init__(self, runtime_root: Path, repository: FakeSpawnRepository) -> None:
+    def __init__(self, runtime_root: Path) -> None:
         self._runtime_root = runtime_root
-        self._repository = repository
 
     def on_event(self, event: LifecycleEvent) -> None:
         if event.event_type != "spawn.created":
@@ -83,7 +76,6 @@ class UpdatingCreatedHook:
             self._runtime_root,
             event.spawn_id,
             desc="updated from hook",
-            repository=self._repository,
         )
 
 
@@ -95,10 +87,8 @@ class UpdatingCreatedHook:
 def _make_service(
     runtime_root: Path,
     hooks: list[Any] | None = None,
-    repository: FakeSpawnRepository | None = None,
 ) -> SpawnLifecycleService:
-    repo = repository if repository is not None else FakeSpawnRepository()
-    return SpawnLifecycleService(runtime_root, hooks=hooks, repository=repo)
+    return SpawnLifecycleService(runtime_root, hooks=hooks)
 
 
 def _start_spawn(svc: SpawnLifecycleService, **overrides: Any) -> str:
@@ -122,12 +112,11 @@ def _start_spawn(svc: SpawnLifecycleService, **overrides: Any) -> str:
 
 def test_start_creates_spawn_record(tmp_path: Path) -> None:
     """Service start() must delegate creation to spawn_store."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
 
     spawn_id = _start_spawn(svc)
 
-    records = spawn_store.list_spawns(tmp_path, repository=repo)
+    records = spawn_store.list_spawns(tmp_path)
     assert len(records) == 1
     assert records[0].id == spawn_id
     assert records[0].agent == "coder"
@@ -136,33 +125,30 @@ def test_start_creates_spawn_record(tmp_path: Path) -> None:
 
 def test_mark_running_updates_spawn_status(tmp_path: Path) -> None:
     """Service mark_running() must delegate status transition to spawn_store."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="queued")
 
     svc.mark_running(spawn_id)
 
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "running"
 
 
 def test_record_exited_stores_exit_code(tmp_path: Path) -> None:
     """Service record_exited() must persist process exit code through spawn_store."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     svc.record_exited(spawn_id, exit_code=42)
 
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.process_exit_code == 42
 
 
 def test_record_exited_emits_process_exited_telemetry_after_write(tmp_path: Path) -> None:
     """record_exited() must emit spawn.process_exited after the store write."""
-    repo = FakeSpawnRepository()
     telemetry_events: list[telemetry.LifecycleEvent] = []
 
     class RecordingTelemetryObserver:
@@ -170,7 +156,7 @@ def test_record_exited_emits_process_exited_telemetry_after_write(tmp_path: Path
             telemetry_events.append(event)
 
     telemetry.register_observer(RecordingTelemetryObserver())
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     svc.record_exited(spawn_id, exit_code=42)
@@ -183,7 +169,7 @@ def test_record_exited_emits_process_exited_telemetry_after_write(tmp_path: Path
     assert event.spawn_id == spawn_id
     assert event.payload == {"exit_code": 42}
 
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.process_exit_code == 42
 
@@ -193,8 +179,7 @@ def test_record_exited_reuses_pre_write_record_for_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """owner record_exited() should not reread after appending the exited event."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     real_get_spawn = spawn_store.get_spawn
@@ -213,15 +198,14 @@ def test_record_exited_reuses_pre_write_record_for_telemetry(
 
 def test_finalize_transitions_spawn_to_terminal(tmp_path: Path) -> None:
     """Service finalize() must commit terminal status/origin through spawn_store."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     assert outcome.transitioned is True
     assert outcome.wrote is True
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "succeeded"
     assert record.terminal_origin == "runner"
@@ -229,28 +213,26 @@ def test_finalize_transitions_spawn_to_terminal(tmp_path: Path) -> None:
 
 def test_mark_finalizing_transitions_running_to_finalizing(tmp_path: Path) -> None:
     """Service mark_finalizing() must apply CAS running->finalizing via spawn_store."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     result = svc.mark_finalizing(spawn_id)
 
     assert result is True
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "finalizing"
 
 
 def test_cancel_finalizes_with_cancelled_status(tmp_path: Path) -> None:
     """Service cancel() must route to finalize(cancelled, origin=cancel)."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     transitioned = svc.cancel(spawn_id)
 
     assert transitioned is True
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "cancelled"
     assert record.terminal_origin == "cancel"
@@ -258,8 +240,7 @@ def test_cancel_finalizes_with_cancelled_status(tmp_path: Path) -> None:
 
 def test_failed_finalize_writes_failure_sentinel(tmp_path: Path) -> None:
     """Failed terminal transition must write a structured failure sentinel."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     outcome = svc.finalize(spawn_id, "failed", 7, origin="launcher", error="boom")
@@ -276,8 +257,7 @@ def test_failed_finalize_writes_failure_sentinel(tmp_path: Path) -> None:
 
 def test_cancelled_finalize_does_not_write_failure_sentinel(tmp_path: Path) -> None:
     """Normal cancellation must not create a failure sentinel."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     transitioned = svc.cancel(spawn_id)
@@ -292,8 +272,7 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Sentinel write errors are best-effort and must not block terminal state."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     def raise_write_text(*args: object, **kwargs: object) -> int:
@@ -303,7 +282,7 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
 
     outcome = svc.finalize(spawn_id, "failed", 1, origin="launcher")
 
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert outcome.transitioned is True
     assert outcome.wrote is True
     assert record is not None
@@ -346,7 +325,6 @@ def test_spawn_created_event_carries_context_fields(tmp_path: Path) -> None:
 
 def test_start_allocates_sequence_before_hook_triggered_update(tmp_path: Path) -> None:
     """Hook-triggered update_spawn events must not duplicate later start telemetry seqs."""
-    repo = FakeSpawnRepository()
     telemetry_events: list[telemetry.LifecycleEvent] = []
 
     class RecordingTelemetryObserver:
@@ -356,8 +334,7 @@ def test_start_allocates_sequence_before_hook_triggered_update(tmp_path: Path) -
     telemetry.register_observer(RecordingTelemetryObserver())
     svc = _make_service(
         tmp_path,
-        hooks=[UpdatingCreatedHook(tmp_path, repo)],
-        repository=repo,
+        hooks=[UpdatingCreatedHook(tmp_path)],
     )
 
     spawn_id = _start_spawn(svc, status="running")
@@ -375,7 +352,6 @@ def test_start_reads_spawn_record_once_for_lifecycle_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """start() should share one post-write record across hook and telemetry payloads."""
-    repo = FakeSpawnRepository()
     hook = RecordingHook()
     real_get_spawn = spawn_store.get_spawn
     calls: list[str] = []
@@ -385,7 +361,7 @@ def test_start_reads_spawn_record_once_for_lifecycle_payloads(
         return real_get_spawn(*args, **kwargs)
 
     monkeypatch.setattr(spawn_store, "get_spawn", counted_get_spawn)
-    svc = _make_service(tmp_path, hooks=[hook], repository=repo)
+    svc = _make_service(tmp_path, hooks=[hook])
 
     spawn_id = _start_spawn(svc, status="running")
 
@@ -398,10 +374,9 @@ def test_bootstrap_from_disk_loads_owner_record_for_write_through(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Background workers can load state once and avoid transition rereads."""
-    repo = FakeSpawnRepository()
-    starter = _make_service(tmp_path, repository=repo)
+    starter = _make_service(tmp_path)
     spawn_id = _start_spawn(starter, status="running")
-    worker = _make_service(tmp_path, repository=repo)
+    worker = _make_service(tmp_path)
 
     bootstrapped = worker.bootstrap_from_disk(spawn_id)
 
@@ -459,9 +434,8 @@ def test_mark_running_reuses_pre_write_record_for_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """mark_running() should use the store snapshot instead of get_spawn()."""
-    repo = FakeSpawnRepository()
     hook = RecordingHook()
-    svc = _make_service(tmp_path, hooks=[hook], repository=repo)
+    svc = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(svc, status="queued")
     hook.events.clear()
 
@@ -550,11 +524,10 @@ def test_spawn_finalized_dispatched_when_authoritative_overrides_reconciler(
 ) -> None:
     """Authoritative finalize after reconciler terminal must emit replaced snapshot."""
     hook = RecordingHook()
-    repo = FakeSpawnRepository()
-    owner = _make_service(tmp_path, repository=repo)
+    owner = _make_service(tmp_path)
     spawn_id = _start_spawn(owner, status="running")
-    reconciler = _make_service(tmp_path, repository=repo)
-    svc = _make_service(tmp_path, hooks=[hook], repository=repo)
+    reconciler = _make_service(tmp_path)
+    svc = _make_service(tmp_path, hooks=[hook])
 
     reconciler.finalize(spawn_id, "failed", 1, origin="reconciler", error="orphan")
     hook.events.clear()
@@ -600,7 +573,7 @@ def test_hook_exception_does_not_block_transition(tmp_path: Path) -> None:
     spawn_id = _start_spawn(svc)
 
     # Transition completed despite failing hook
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=svc._repository)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
 
     # Subsequent hooks still received the event
@@ -618,7 +591,7 @@ def test_hook_exception_does_not_block_finalize(tmp_path: Path) -> None:
 
     assert outcome.transitioned is True  # Store write succeeded despite hook failure
     assert outcome.wrote is True
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=svc._repository)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "succeeded"
 
@@ -730,22 +703,20 @@ def test_finalized_event_includes_metrics_when_provided(tmp_path: Path) -> None:
 
 def test_mark_finalizing_returns_false_on_queued_spawn(tmp_path: Path) -> None:
     """mark_finalizing requires running status — queued spawn is silently rejected."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="queued")
 
     result = svc.mark_finalizing(spawn_id)
 
     assert result is False
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "queued"  # Status must be unchanged
 
 
 def test_mark_finalizing_idempotent_second_call_returns_false(tmp_path: Path) -> None:
     """Calling mark_finalizing twice: first returns True, second returns False."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     first = svc.mark_finalizing(spawn_id)
@@ -753,7 +724,7 @@ def test_mark_finalizing_idempotent_second_call_returns_false(tmp_path: Path) ->
 
     assert first is True
     assert second is False
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "finalizing"
 
@@ -785,8 +756,7 @@ def test_second_finalize_returns_false_with_different_terminal_status(tmp_path: 
     The first writer to reach the terminal state wins; subsequent calls
     must not overwrite the authoritative outcome.
     """
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
 
     first = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
@@ -796,7 +766,7 @@ def test_second_finalize_returns_false_with_different_terminal_status(tmp_path: 
     assert first.wrote is True
     assert second.transitioned is False
     assert second.wrote is False
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "succeeded"  # First terminal status wins
 
@@ -815,8 +785,7 @@ def test_event_id_stable_across_service_instances(tmp_path: Path) -> None:
     svc1 = _make_service(tmp_path, hooks=[hook1])
     spawn_id = _start_spawn(svc1)  # spawns through svc1
 
-    # Second service shares the same repository so it can see the spawn
-    svc2 = _make_service(tmp_path, hooks=[hook2], repository=svc1._repository)
+    svc2 = _make_service(tmp_path, hooks=[hook2])
     svc2.mark_running(spawn_id)
 
     expected_created_id = generate_event_id(spawn_id, "spawn.created", 0)
@@ -838,11 +807,10 @@ def test_mark_running_on_terminal_spawn_raises_value_error(tmp_path: Path) -> No
     _validate_transition guard raises ValueError which propagates through the
     service unchanged — the caller must handle the illegal-transition case.
     """
-    repo = FakeSpawnRepository()
-    owner = _make_service(tmp_path, repository=repo)
+    owner = _make_service(tmp_path)
     spawn_id = _start_spawn(owner, status="running")
     owner.finalize(spawn_id, "succeeded", 0, origin="runner")
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
 
     # Spawn is now in terminal state: succeeded → running is forbidden
     with pytest.raises(ValueError, match="Illegal spawn transition"):
@@ -851,14 +819,13 @@ def test_mark_running_on_terminal_spawn_raises_value_error(tmp_path: Path) -> No
 
 def test_owner_mark_running_on_terminal_spawn_is_silently_dropped(tmp_path: Path) -> None:
     """Owner mark_running must not overwrite terminal state when guard rejects."""
-    repo = FakeSpawnRepository()
-    svc = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path)
     spawn_id = _start_spawn(svc, status="running")
     svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     svc.mark_running(spawn_id)
 
-    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
     assert record is not None
     assert record.status == "succeeded"
 
@@ -870,10 +837,9 @@ def test_owner_mark_running_on_terminal_spawn_is_silently_dropped(tmp_path: Path
 
 def test_required_path_start_and_running_dispatches_post_write(tmp_path: Path) -> None:
     """Required path: start/running events must observe post-write store snapshots."""
-    repo = FakeSpawnRepository()
     recording = RecordingHook()
-    snapshot = StoreSnapshotHook(tmp_path, repo)
-    svc = _make_service(tmp_path, hooks=[recording, snapshot], repository=repo)
+    snapshot = StoreSnapshotHook(tmp_path)
+    svc = _make_service(tmp_path, hooks=[recording, snapshot])
 
     spawn_id = _start_spawn(svc, status="queued")
     svc.mark_running(spawn_id)
@@ -887,10 +853,9 @@ def test_required_path_start_and_running_dispatches_post_write(tmp_path: Path) -
 
 def test_required_path_mark_finalizing_then_finalize(tmp_path: Path) -> None:
     """Required path: finalizing+finalize must emit one finalized event with runner origin."""
-    repo = FakeSpawnRepository()
     recording = RecordingHook()
-    snapshot = StoreSnapshotHook(tmp_path, repo)
-    svc = _make_service(tmp_path, hooks=[recording, snapshot], repository=repo)
+    snapshot = StoreSnapshotHook(tmp_path)
+    svc = _make_service(tmp_path, hooks=[recording, snapshot])
     spawn_id = _start_spawn(svc, status="running")
 
     marked = svc.mark_finalizing(spawn_id)
@@ -908,10 +873,9 @@ def test_required_path_mark_finalizing_then_finalize(tmp_path: Path) -> None:
 
 def test_required_path_cancel_origin_and_post_write_hook(tmp_path: Path) -> None:
     """Required path: cancel must finalize with cancel origin and post-write visibility."""
-    repo = FakeSpawnRepository()
     recording = RecordingHook()
-    snapshot = StoreSnapshotHook(tmp_path, repo)
-    svc = _make_service(tmp_path, hooks=[recording, snapshot], repository=repo)
+    snapshot = StoreSnapshotHook(tmp_path)
+    svc = _make_service(tmp_path, hooks=[recording, snapshot])
     spawn_id = _start_spawn(svc, status="running")
 
     transitioned = svc.cancel(spawn_id)

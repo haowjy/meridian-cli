@@ -83,9 +83,10 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_bytes
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.spawn_store import (
+from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
+    LaunchMode,
 )
 from meridian.lib.streaming.spawn_manager import DrainOutcome, SpawnManager
 
@@ -469,7 +470,7 @@ async def _run_streaming_attempt(
     *,
     run: Spawn,
     runtime_root: Path,
-    launch_mode: spawn_store.LaunchMode,
+    launch_mode: LaunchMode,
     log_dir: Path,
     manager: SpawnManager,
     config: ConnectionConfig,
@@ -765,7 +766,7 @@ async def execute_with_streaming(
             run.spawn_id,
             runner_pid=os.getpid(),
         )
-        resolved_launch_mode: spawn_store.LaunchMode = (
+        resolved_launch_mode: LaunchMode = (
             BACKGROUND_LAUNCH_MODE
             if spawn_row.launch_mode == BACKGROUND_LAUNCH_MODE
             else FOREGROUND_LAUNCH_MODE

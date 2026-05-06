@@ -168,7 +168,9 @@ def test_check_status_expired():
     assert result == Status.EXPIRED
 ```
 
-Available fakes in `tests/support/fakes.py`: `FakeClock`, `FakeHeartbeat`, `FakeSpawnRepository`
+Available fakes in `tests/support/fakes.py`: `FakeClock`, `FakeHeartbeat`.
+For spawn state, prefer v2 state helpers (`create_lifecycle_service`,
+`spawn_store.get_spawn`) or direct `state.json` assertions.
 
 **Red flags that it's not a unit test:**
 - `monkeypatch.setattr(module.subprocess, "run", ...)`

@@ -212,16 +212,18 @@ async def test_complete_spawn_replaces_reconciler_terminal(
 ) -> None:
     """CR1: authoritative completion replaces a reconciler terminal."""
     hook = _LifecycleHookCollector()
-    lifecycle = SpawnLifecycleService(tmp_path, hooks=[hook])
-    service = SpawnApplicationService(tmp_path, lifecycle)
-    spawn_id = _start_running_spawn(lifecycle)
-    lifecycle.finalize(
+    owner_lifecycle = SpawnLifecycleService(tmp_path)
+    spawn_id = _start_running_spawn(owner_lifecycle)
+    reconciler_lifecycle = SpawnLifecycleService(tmp_path)
+    reconciler_lifecycle.finalize(
         str(spawn_id),
         "failed",
         1,
         origin="reconciler",
         error="orphaned",
     )
+    lifecycle = SpawnLifecycleService(tmp_path, hooks=[hook])
+    service = SpawnApplicationService(tmp_path, lifecycle)
     hook.events.clear()
 
     outcome = await service.complete_spawn(
@@ -336,8 +338,8 @@ async def test_get_spawn_failure_ignores_sentinel_when_spawn_is_not_failed(
     service = SpawnApplicationService(tmp_path, lifecycle)
     spawn_id = _start_running_spawn(lifecycle)
 
-    lifecycle.finalize(str(spawn_id), "failed", 2, origin="reconciler")
-    lifecycle.finalize(str(spawn_id), "succeeded", 0, origin="launcher")
+    SpawnLifecycleService(tmp_path).finalize(str(spawn_id), "failed", 2, origin="reconciler")
+    SpawnLifecycleService(tmp_path).finalize(str(spawn_id), "succeeded", 0, origin="launcher")
 
     assert service.get_spawn_failure(spawn_id) is None
 

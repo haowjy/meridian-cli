@@ -28,14 +28,14 @@ from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn_store import LaunchMode, SpawnOrigin
+from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
-    from meridian.lib.state.spawn_store import SpawnRecord
+    from meridian.lib.state.spawn.model import SpawnRecord
     from meridian.lib.streaming.spawn_manager import SpawnManager
 
 

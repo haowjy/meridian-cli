@@ -213,7 +213,7 @@ def _list_segments(
     # Lazy imports — telemetry initializes early; these modules depend on
     # state/core layers that aren't always available at import time.
     from meridian.lib.state.liveness import is_process_alive
-    from meridian.lib.state.spawn_store import SpawnRecord
+    from meridian.lib.state.spawn.model import SpawnRecord
 
     current_pid = os.getpid()
 

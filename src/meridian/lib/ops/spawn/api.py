@@ -29,6 +29,7 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
@@ -379,14 +380,14 @@ async def spawn_list(
 
 def _collect_descendants(
     root_id: str,
-    all_spawns: list[spawn_store.SpawnRecord],
-) -> list[spawn_store.SpawnRecord]:
+    all_spawns: list[SpawnRecord],
+) -> list[SpawnRecord]:
     """Walk the parent→child tree and return root + all descendants."""
-    by_parent: dict[str | None, list[spawn_store.SpawnRecord]] = {}
+    by_parent: dict[str | None, list[SpawnRecord]] = {}
     for s in all_spawns:
         by_parent.setdefault(s.parent_id, []).append(s)
 
-    result: list[spawn_store.SpawnRecord] = []
+    result: list[SpawnRecord] = []
     # Find the root spawn itself
     for s in all_spawns:
         if s.id == root_id:
@@ -678,7 +679,7 @@ def _normalize_work_filter(work: str | None) -> str | None:
 
 
 def _spawn_matches_work_item(
-    spawn: spawn_store.SpawnRecord,
+    spawn: SpawnRecord,
     *,
     runtime_root: Path,
     work_id: str,
@@ -905,7 +906,7 @@ def _discover_pending_spawns(
     chat_id: str,
     *,
     exclude_spawn_id: str | None = None,
-) -> list[spawn_store.SpawnRecord]:
+) -> list[SpawnRecord]:
     """Discover all active spawns for a given chat ID."""
     from meridian.lib.state.reaper import reconcile_spawns
 
@@ -1108,7 +1109,7 @@ def spawn_wait_sync(
     if poll <= 0:
         poll = config.retry_backoff_seconds
 
-    completed_rows: dict[str, spawn_store.SpawnRecord] = {}
+    completed_rows: dict[str, SpawnRecord] = {}
     pending: set[str] = set(spawn_ids)
     progress_mode = _resolve_wait_progress_mode(
         verbose=payload.verbose,
@@ -1149,7 +1150,7 @@ def spawn_wait_sync(
         now = time.monotonic()
         if checkpoint_deadline is not None and now >= checkpoint_deadline:
             pending_ids = tuple(sorted(pending))
-            checkpoint_rows: list[spawn_store.SpawnRecord] = []
+            checkpoint_rows: list[SpawnRecord] = []
             for spawn_id in spawn_ids:
                 if spawn_id in completed_rows:
                     checkpoint_rows.append(completed_rows[spawn_id])
@@ -1215,7 +1216,7 @@ def _source_spawn_for_follow_up(
     project_root: Path,
     *,
     runtime_root: Path | None = None,
-) -> tuple[str, spawn_store.SpawnRecord, ResolvedSessionReference]:
+) -> tuple[str, SpawnRecord, ResolvedSessionReference]:
     resolved_spawn_id = resolve_spawn_reference(
         project_root,
         payload_spawn_id,
@@ -1233,7 +1234,7 @@ def _source_spawn_for_follow_up(
 
 
 def _prompt_for_follow_up(
-    source_spawn: spawn_store.SpawnRecord, payload_spawn_id: str, prompt: str | None
+    source_spawn: SpawnRecord, payload_spawn_id: str, prompt: str | None
 ) -> str:
     if prompt is not None and prompt.strip():
         return prompt
@@ -1244,7 +1245,7 @@ def _prompt_for_follow_up(
     return existing_prompt
 
 
-def _model_for_follow_up(source_spawn: spawn_store.SpawnRecord, override_model: str) -> str:
+def _model_for_follow_up(source_spawn: SpawnRecord, override_model: str) -> str:
     if override_model.strip():
         return override_model
     return (source_spawn.model or "").strip()

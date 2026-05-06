@@ -2,12 +2,12 @@
 
 This module is the transition seam for the v1 JSONL spawn event format while
 spawn state v2 is introduced. Public compatibility re-exports remain in
-``meridian.lib.state.spawn_store`` and ``meridian.lib.state.spawn.events``.
+``meridian.lib.state.spawn_store``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -15,28 +15,34 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     TERMINAL_SPAWN_STATUSES as _TERMINAL_SPAWN_STATUSES,
 )
+from meridian.lib.state.spawn.model import (
+    _AUTHORITATIVE_ORIGIN_VALUES as _AUTHORITATIVE_ORIGIN_VALUES,  # pyright: ignore[reportPrivateUsage]
+)
+from meridian.lib.state.spawn.model import (
+    _LAUNCH_MODE_VALUES as _LAUNCH_MODE_VALUES,  # pyright: ignore[reportPrivateUsage]
+)
+from meridian.lib.state.spawn.model import (
+    APP_LAUNCH_MODE as APP_LAUNCH_MODE,
+)
+from meridian.lib.state.spawn.model import (
+    AUTHORITATIVE_ORIGINS as AUTHORITATIVE_ORIGINS,
+)
+from meridian.lib.state.spawn.model import (
+    BACKGROUND_LAUNCH_MODE as BACKGROUND_LAUNCH_MODE,
+)
+from meridian.lib.state.spawn.model import (
+    FOREGROUND_LAUNCH_MODE as FOREGROUND_LAUNCH_MODE,
+)
+from meridian.lib.state.spawn.model import (
+    LaunchMode as LaunchMode,
+)
+from meridian.lib.state.spawn.model import (
+    SpawnOrigin as SpawnOrigin,
+)
+from meridian.lib.state.spawn.model import (
+    SpawnRecord,
+)
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
-
-if TYPE_CHECKING:
-    from meridian.lib.state.spawn_store import SpawnRecord
-
-
-LaunchMode = Literal["background", "foreground", "app"]
-BACKGROUND_LAUNCH_MODE: LaunchMode = "background"
-FOREGROUND_LAUNCH_MODE: LaunchMode = "foreground"
-APP_LAUNCH_MODE: LaunchMode = "app"
-SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
-_LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
-    (BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE, APP_LAUNCH_MODE)
-)
-
-_AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
-    "runner",
-    "launcher",
-    "launch_failure",
-    "cancel",
-)
-AUTHORITATIVE_ORIGINS: frozenset[SpawnOrigin] = frozenset(_AUTHORITATIVE_ORIGIN_VALUES)
 
 
 class SpawnStartEvent(BaseModel):
@@ -205,10 +211,6 @@ def _normalized_work_id(work_id: str | None) -> str | None:
 
 
 def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
-    # Runtime import keeps SpawnRecord ownership in spawn_store during the v2
-    # transition while legacy event/reducer ownership moves behind this seam.
-    from meridian.lib.state import spawn_store
-
     records: dict[str, SpawnRecord] = {}
 
     for event in events:
@@ -218,7 +220,7 @@ def reduce_events(events: list[SpawnEvent]) -> dict[str, SpawnRecord]:
             continue
         current = records.get(
             spawn_id,
-            _empty_record(spawn_id, spawn_record_type=spawn_store.SpawnRecord),
+            _empty_record(spawn_id, spawn_record_type=SpawnRecord),
         )
 
         if isinstance(event, SpawnStartEvent):

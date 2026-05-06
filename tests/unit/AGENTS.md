@@ -15,7 +15,10 @@ Unit tests verify **pure logic** with **no real I/O**:
 From `tests/support/fakes.py`:
 - `FakeClock` - controllable time
 - `FakeHeartbeat` - heartbeat backend stub
-- `FakeSpawnRepository` - in-memory spawn store
+
+Prefer real v2 state helpers (`create_lifecycle_service`, `spawn_store.get_spawn`,
+or direct `state.json` assertions) for spawn state tests. Avoid new in-memory
+spawn repository fakes outside narrow lifecycle dependency-injection tests.
 
 ### Red Flags (Move to Integration)
 

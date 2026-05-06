@@ -38,16 +38,3 @@ class FakeHeartbeat:
     def touch(self) -> None:
         timestamp = self._clock.time() if self._clock is not None else 0.0
         self.touches.append(timestamp)
-
-
-class FakeSpawnRepository:
-    """In-memory spawn repository test double."""
-
-    def __init__(self) -> None:
-        self._events: list[object] = []
-
-    def append_event(self, event: object) -> None:
-        self._events.append(event)
-
-    def read_events(self) -> list[object]:
-        return list(self._events)

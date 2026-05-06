@@ -46,8 +46,6 @@ from meridian.lib.ops.spawn.failure_policy import (
 )
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state import spawn_store
-from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn.repository import FileSpawnRepository
 
 
 def _resolver() -> TieredPermissionResolver:
@@ -675,19 +673,12 @@ async def test_launch_prepared_spawn_terminalizes_prerun_exception_as_launch_fai
     )
 
     record = spawn_store.get_spawn(runtime_root, spawn_id)
-    events = FileSpawnRepository(RuntimePaths.from_root_dir(runtime_root)).read_events()
-    finalize_events = [
-        event
-        for event in events
-        if event.event == "finalize" and event.id == str(spawn_id)
-    ]
     assert result == 1
     assert record is not None
     assert record.status == "failed"
+    assert record.exit_code == 1
     assert record.terminal_origin == "launch_failure"
     assert record.error == "boom before runner entry"
-    assert len(finalize_events) == 1
-    assert finalize_events[0].origin == "launch_failure"
 
 
 @pytest.mark.asyncio

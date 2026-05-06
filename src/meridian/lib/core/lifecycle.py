@@ -16,14 +16,9 @@ Design decisions in effect:
 
 Import note
 -----------
-``spawn_store`` is imported at the BOTTOM of this module to avoid a circular
-import.  ``meridian.lib.state.__init__`` re-exports types from this module;
-when Python resolves that package import it would re-enter this file.  By
-placing the ``spawn_store`` import after all public symbols are defined, the
-partially-initialised module already exposes ``LifecycleEvent``,
-``LifecycleHook``, and ``SpawnLifecycleService`` when ``__init__.py`` asks for
-them.  Method bodies reference ``spawn_store`` by name at call time, not at
-definition time, so the delayed import is transparent to callers.
+Shared spawn domain models live in ``meridian.lib.state.spawn.model`` so this
+service imports shared types without depending on store-owned models. Store access
+stays lazy so package-level compatibility re-exports do not reintroduce cycles.
 """
 
 from __future__ import annotations
@@ -56,10 +51,27 @@ if TYPE_CHECKING:
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.domain import SpawnStatus
     from meridian.lib.hooks.dispatch import HookDispatcher
-    from meridian.lib.state.spawn.repository import SpawnRepository
-    from meridian.lib.state.spawn_store import FinalizeOutcome, LaunchMode, SpawnOrigin, SpawnRecord
+    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, SpawnRecord
+    from meridian.lib.state.spawn_store import FinalizeOutcome
 
 logger = structlog.get_logger(__name__)
+
+
+def _spawn_store() -> Any:
+    """Return the spawn store module without importing it during lifecycle init."""
+
+    from meridian.lib.state import spawn_store
+
+    return spawn_store
+
+
+def _spawn_transitions() -> Any:
+    """Return pure spawn transition helpers without importing state during init."""
+
+    from meridian.lib.state.spawn import transitions
+
+    return transitions
+
 
 # ---------------------------------------------------------------------------
 # Public type aliases
@@ -183,11 +195,9 @@ class SpawnLifecycleService:
         runtime_root: Path,
         *,
         hooks: list[LifecycleHook] | None = None,
-        repository: SpawnRepository | None = None,
     ) -> None:
         self._runtime_root = runtime_root
         self._hooks = hooks or []
-        self._repository = repository
         self._record: SpawnRecord | None = None
 
     # ------------------------------------------------------------------
@@ -220,8 +230,8 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> str:
         """Start a new spawn and dispatch spawn.created."""
-        # Authoritative transition write still happens in spawn_store.
-        result_id = spawn_store.start_spawn(
+        # Authoritative transition write still happens in _spawn_store().
+        result_id = _spawn_store().start_spawn(
             self._runtime_root,
             chat_id=chat_id,
             parent_id=parent_id,
@@ -244,12 +254,9 @@ class SpawnLifecycleService:
             status=status,
             started_at=started_at,
             clock=clock,
-            repository=self._repository,
         )
         allocate_spawn_sequence(str(result_id))
-        record = spawn_store.get_spawn(
-            self._runtime_root, result_id, repository=self._repository
-        )
+        record = _spawn_store().get_spawn(self._runtime_root, result_id)
         self._record = record
         event = self._build_event("spawn.created", self._record, spawn_id=str(result_id))
         self._dispatch(event)
@@ -270,30 +277,28 @@ class SpawnLifecycleService:
         if self._owns_record(spawn_id):
             assert self._record is not None
             changed = self._record.status != "running"
-            updates: dict[str, object] = {"status": "running"}
-            if launch_mode is not None:
-                updates["launch_mode"] = launch_mode
-            if worker_pid is not None:
-                updates["worker_pid"] = worker_pid
-            if runner_pid is not None:
-                updates["runner_pid"] = runner_pid
-            updated = self._record.model_copy(update=updates)
+            updated = _spawn_transitions().apply_mark_running(
+                self._record,
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+                validate_status_transition=False,
+            )
             if not self._write_owner_record(updated, transition="mark_running"):
                 return
             if changed:
-                event = self._build_event("spawn.running", self._record, spawn_id=spawn_id)
+                event = self._build_event("spawn.running", self._record)
                 self._dispatch(event)
                 self._emit_telemetry_event("spawn.running", self._record)
             return
 
-        # Authoritative transition write still happens in spawn_store.
-        changed, record = spawn_store.mark_spawn_running_with_snapshot(
+        # Authoritative transition write still happens in _spawn_store().
+        changed, record = _spawn_store().mark_spawn_running_with_snapshot(
             self._runtime_root,
             spawn_id,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
-            repository=self._repository,
         )
         if changed:
             event = self._build_event("spawn.running", record, spawn_id=spawn_id)
@@ -312,12 +317,11 @@ class SpawnLifecycleService:
         if self._owns_record(spawn_id):
             assert self._record is not None
             resolved_exited_at = exited_at or _utc_now_iso(clock)
-            updated = self._record.model_copy(
-                update={
-                    "id": spawn_id,
-                    "process_exit_code": exit_code,
-                    "exited_at": resolved_exited_at,
-                }
+            updated = _spawn_transitions().apply_record_exited(
+                self._record,
+                spawn_id=spawn_id,
+                exit_code=exit_code,
+                exited_at=resolved_exited_at,
             )
             if not self._write_owner_record(updated, transition="record_exited"):
                 return
@@ -328,17 +332,14 @@ class SpawnLifecycleService:
             )
             return
 
-        previous = spawn_store.get_spawn(
-            self._runtime_root, spawn_id, repository=self._repository
-        )
-        # Authoritative transition write still happens in spawn_store.
-        spawn_store.record_spawn_exited(
+        previous = _spawn_store().get_spawn(self._runtime_root, spawn_id)
+        # Authoritative transition write still happens in _spawn_store().
+        _spawn_store().record_spawn_exited(
             self._runtime_root,
             spawn_id,
             exit_code=exit_code,
             exited_at=exited_at,
             clock=clock,
-            repository=self._repository,
         )
         record = _record_after_exited_update(
             previous,
@@ -375,30 +376,30 @@ class SpawnLifecycleService:
         if self._owns_record(spawn_id):
             assert self._record is not None
             was_active = self._record.status not in _TERMINAL_STATUS_VALUES
-            updated = self._record.model_copy(
-                update={
-                    "status": status,
-                    "exit_code": exit_code,
-                    "finished_at": finished_at or _utc_now_iso(clock),
-                    "duration_secs": duration_secs,
-                    "total_cost_usd": total_cost_usd,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cache_read_input_tokens": cache_read_input_tokens,
-                    "cache_creation_input_tokens": cache_creation_input_tokens,
-                    "reasoning_tokens": reasoning_tokens,
-                    "cost_is_estimate": cost_is_estimate or self._record.cost_is_estimate,
-                    "error": error,
-                    "terminal_origin": origin,
-                }
+            updated = _spawn_transitions().apply_finalize(
+                self._record,
+                status,
+                exit_code,
+                origin=origin,
+                finished_at=finished_at or _utc_now_iso(clock),
+                duration_secs=duration_secs,
+                total_cost_usd=total_cost_usd,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                reasoning_tokens=reasoning_tokens,
+                cost_is_estimate=cost_is_estimate,
+                error=error,
+                validate_status_transition=False,
             )
             if not self._write_finalized_owner_record(updated):
-                return spawn_store.FinalizeOutcome(
+                return _spawn_store().FinalizeOutcome(
                     transitioned=False,
                     wrote=False,
                     snapshot=self._read_owner_record_from_disk(spawn_id),
                 )
-            outcome = spawn_store.FinalizeOutcome(
+            outcome = _spawn_store().FinalizeOutcome(
                 transitioned=was_active,
                 wrote=True,
                 snapshot=self._record,
@@ -415,13 +416,13 @@ class SpawnLifecycleService:
                         metadata={"origin": self._record.terminal_origin or origin},
                     ),
                 )
-            event = self._build_event_from_record("spawn.finalized", self._record)
+            event = self._build_event("spawn.finalized", self._record)
             self._dispatch(event)
             self._emit_telemetry_event_for_record(f"spawn.{self._record.status}", self._record)
             return outcome
 
-        # Authoritative transition write still happens in spawn_store.
-        outcome = spawn_store.finalize_spawn(
+        # Authoritative transition write still happens in _spawn_store().
+        outcome = _spawn_store().finalize_spawn(
             self._runtime_root,
             spawn_id,
             status,
@@ -438,7 +439,6 @@ class SpawnLifecycleService:
             finished_at=finished_at,
             error=error,
             clock=clock,
-            repository=self._repository,
         )
         if outcome.wrote and outcome.snapshot is not None:
             if outcome.snapshot.status == "failed":
@@ -449,13 +449,11 @@ class SpawnLifecycleService:
                         spawn_id=spawn_id,
                         ts=datetime.now(tz=UTC),
                         exit_code=outcome.snapshot.exit_code,
-                        reason=outcome.snapshot.error
-                        or outcome.snapshot.terminal_origin
-                        or origin,
+                        reason=outcome.snapshot.error or outcome.snapshot.terminal_origin or origin,
                         metadata={"origin": outcome.snapshot.terminal_origin or origin},
                     ),
                 )
-            event = self._build_event_from_record("spawn.finalized", outcome.snapshot)
+            event = self._build_event("spawn.finalized", outcome.snapshot)
             self._dispatch(event)
             self._emit_telemetry_event_for_record(
                 f"spawn.{outcome.snapshot.status}", outcome.snapshot
@@ -468,17 +466,16 @@ class SpawnLifecycleService:
             assert self._record is not None
             if self._record.status != "running":
                 return False
-            updated = self._record.model_copy(update={"status": "finalizing"})
+            updated = _spawn_transitions().apply_mark_finalizing(self._record)
             if not self._write_owner_record(updated, transition="mark_finalizing"):
                 return False
             self._emit_telemetry_event("spawn.finalizing", self._record)
             return True
 
-        # Authoritative transition write still happens in spawn_store.
-        transitioned, record = spawn_store.mark_finalizing_with_snapshot(
+        # Authoritative transition write still happens in _spawn_store().
+        transitioned, record = _spawn_store().mark_finalizing_with_snapshot(
             self._runtime_root,
             spawn_id,
-            repository=self._repository,
         )
         if transitioned:
             self._emit_telemetry_event("spawn.finalizing", record)
@@ -528,10 +525,9 @@ class SpawnLifecycleService:
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         """Load owner state once for workers that did not call start()."""
 
-        self._record = spawn_store.get_spawn(
+        self._record = _spawn_store().get_spawn(
             self._runtime_root,
             spawn_id,
-            repository=self._repository,
         )
         return self._record
 
@@ -632,8 +628,12 @@ class SpawnLifecycleService:
         event_type: EventType,
         record: SpawnRecord | None,
         *,
-        spawn_id: str,
+        spawn_id: str | None = None,
     ) -> LifecycleEvent:
+        resolved_spawn_id = spawn_id or (record.id if record is not None else None)
+        if resolved_spawn_id is None:
+            raise ValueError("spawn_id is required when building an event without a record")
+
         # Terminal-only fields
         status: TerminalStatus | None = None
         origin: TerminalOrigin | None = None
@@ -661,69 +661,16 @@ class SpawnLifecycleService:
             cost_is_estimate = record.cost_is_estimate
 
         return LifecycleEvent(
-            event_id=generate_event_id(spawn_id, event_type, 0),
+            event_id=generate_event_id(resolved_spawn_id, event_type, 0),
             event_type=event_type,
             timestamp=datetime.now(tz=UTC),
-            spawn_id=spawn_id,
+            spawn_id=resolved_spawn_id,
             parent_id=record.parent_id if record is not None else None,
             chat_id=record.chat_id if record is not None else None,
             work_id=record.work_id if record is not None else None,
             agent=record.agent if record is not None else None,
             model=record.model if record is not None else None,
             harness=record.harness if record is not None else None,
-            status=status,
-            origin=origin,
-            duration_secs=duration_secs,
-            total_cost_usd=total_cost_usd,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_input_tokens=cache_read_input_tokens,
-            cache_creation_input_tokens=cache_creation_input_tokens,
-            reasoning_tokens=reasoning_tokens,
-            cost_is_estimate=cost_is_estimate,
-        )
-
-    def _build_event_from_record(
-        self,
-        event_type: EventType,
-        record: SpawnRecord,
-    ) -> LifecycleEvent:
-        status: TerminalStatus | None = None
-        origin: TerminalOrigin | None = None
-        duration_secs: float | None = None
-        total_cost_usd: float | None = None
-        input_tokens: int | None = None
-        output_tokens: int | None = None
-        cache_read_input_tokens: int | None = None
-        cache_creation_input_tokens: int | None = None
-        reasoning_tokens: int | None = None
-        cost_is_estimate = False
-
-        if event_type == "spawn.finalized":
-            rec_status = record.status
-            if rec_status in _TERMINAL_STATUS_VALUES:
-                status = rec_status  # type: ignore[assignment]
-            origin = record.terminal_origin  # type: ignore[assignment]
-            duration_secs = record.duration_secs
-            total_cost_usd = record.total_cost_usd
-            input_tokens = record.input_tokens
-            output_tokens = record.output_tokens
-            cache_read_input_tokens = record.cache_read_input_tokens
-            cache_creation_input_tokens = record.cache_creation_input_tokens
-            reasoning_tokens = record.reasoning_tokens
-            cost_is_estimate = record.cost_is_estimate
-
-        return LifecycleEvent(
-            event_id=generate_event_id(record.id, event_type, 0),
-            event_type=event_type,
-            timestamp=datetime.now(tz=UTC),
-            spawn_id=record.id,
-            parent_id=record.parent_id,
-            chat_id=record.chat_id,
-            work_id=record.work_id,
-            agent=record.agent,
-            model=record.model,
-            harness=record.harness,
             status=status,
             origin=origin,
             duration_secs=duration_secs,
@@ -806,9 +753,7 @@ def _write_failure_sentinel(
         from meridian.lib.state.paths import RuntimePaths
 
         sentinel_path = (
-            RuntimePaths.from_root_dir(runtime_root).spawns_dir
-            / spawn_id
-            / "failure.json"
+            RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
         )
         sentinel_path.parent.mkdir(parents=True, exist_ok=True)
         data = asdict(failure)
@@ -854,8 +799,6 @@ def get_hook_dispatcher(project_root: Path, runtime_root: Path) -> HookDispatche
 def create_lifecycle_service(
     project_root: Path,
     runtime_root: Path,
-    *,
-    repository: SpawnRepository | None = None,
 ) -> SpawnLifecycleService:
     """Create a spawn lifecycle service with centralized hook wiring."""
 
@@ -864,13 +807,4 @@ def create_lifecycle_service(
     return SpawnLifecycleService(
         runtime_root,
         hooks=hooks,
-        repository=repository,
     )
-
-
-# ---------------------------------------------------------------------------
-# Deferred import — must be at module bottom to break circular dependency with
-# meridian.lib.state.__init__ which re-exports types from this module.
-# ---------------------------------------------------------------------------
-
-import meridian.lib.state.spawn_store as spawn_store  # noqa: E402

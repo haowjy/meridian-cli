@@ -49,10 +49,11 @@ from meridian.lib.state.paths import (
     resolve_work_scratch_dir,
 )
 from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
-from meridian.lib.state.spawn_store import (
+from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
     LaunchMode,
+    SpawnRecord,
 )
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
@@ -474,7 +475,7 @@ async def _prepare_execution_handoff(
     runtime: OperationRuntime,
     runtime_root: Path,
     project_paths: ProjectConfigPaths,
-    spawn_record: spawn_store.SpawnRecord | None,
+    spawn_record: SpawnRecord | None,
     execution_cwd: str,
     work_id: str | None,
     autocompact: int | None,
@@ -642,7 +643,7 @@ async def launch_prepared_spawn(
     runtime: OperationRuntime,
     runtime_root: Path,
     project_paths: ProjectConfigPaths,
-    spawn_record: spawn_store.SpawnRecord | None = None,
+    spawn_record: SpawnRecord | None = None,
     execution_cwd: str,
     work_id: str | None = None,
     autocompact: int | None = None,

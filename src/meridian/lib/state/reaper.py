@@ -30,7 +30,7 @@ from meridian.lib.state.managed_primary import (
     ReconciliationContext,
     read_managed_primary_snapshot,
 )
-from meridian.lib.state.spawn_store import SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord
 
 logger = structlog.get_logger(__name__)
 

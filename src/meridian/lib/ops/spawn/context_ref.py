@@ -57,7 +57,7 @@ class SessionContextRef(BaseModel):
 type ContextRef = SpawnContextRef | SessionContextRef
 
 
-def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> spawn_store.SpawnRecord:
+def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> SpawnRecord:
     from meridian.lib.state.reaper import reconcile_spawns
 
     runtime_root = resolve_runtime_root_for_read(project_root)
@@ -113,7 +113,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
     return _spawn_context_ref(row, project_root)
 
 
-def _spawn_context_ref(row: spawn_store.SpawnRecord, project_root: Path) -> SpawnContextRef:
+def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
     return SpawnContextRef(
         spawn_id=row.id,
         status=row.status,
@@ -128,7 +128,7 @@ def _spawn_context_ref(row: spawn_store.SpawnRecord, project_root: Path) -> Spaw
     )
 
 
-def _session_context_ref(primary_row: spawn_store.SpawnRecord) -> SessionContextRef:
+def _session_context_ref(primary_row: SpawnRecord) -> SessionContextRef:
     chat_id = (primary_row.chat_id or "").strip()
     if not chat_id:
         raise ValueError(f"Primary spawn '{primary_row.id}' has no associated session")

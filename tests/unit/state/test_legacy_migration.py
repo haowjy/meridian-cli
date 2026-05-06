@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from meridian.lib.state import spawn_store
-from meridian.lib.state.spawn.events import reduce_events
+from meridian.lib.state.spawn.legacy_events import reduce_events
 
 
 class UnknownEvent:
@@ -37,7 +37,7 @@ def test_reduce_events_tolerates_missing_ids_and_optional_start_fields() -> None
 
 def test_reducer_skips_all_fields_from_losing_finalize_event() -> None:
     """EARS-CR2.2: losing terminal events are true no-ops in the reducer."""
-    events = [
+    events: list[Any] = [
         spawn_store.SpawnStartEvent(
             id="p1",
             chat_id="c1",
@@ -96,7 +96,7 @@ def test_reducer_skips_all_fields_from_losing_finalize_event() -> None:
 
 def test_reducer_allows_reconciler_replacement_by_authoritative() -> None:
     """Reconciler terminal replaced by later authoritative is still allowed."""
-    events = [
+    events: list[Any] = [
         spawn_store.SpawnStartEvent(
             id="p1",
             chat_id="c1",
