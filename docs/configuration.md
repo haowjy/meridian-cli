@@ -249,8 +249,9 @@ Each existing root is projected at launch time in deterministic order: committed
 | Harness | Mechanism |
 |---|---|
 | Claude Code | `--add-dir <path>` flag per root |
-| Codex | `--add-dir <path>` flag per root |
-| OpenCode | `OPENCODE_CONFIG_CONTENT` env with `permission.external_directory` unless a parent config is already set |
+| Codex (subprocess) | `--add-dir <path>` flag per root |
+| Codex (managed primary) | `-c sandbox_workspace_write.writable_roots=[...]` on app-server launch **and** `--add-dir <path>` on `codex resume --remote` TUI attach |
+| OpenCode | `OPENCODE_CONFIG_CONTENT` env with `permission.external_directory` entries; merged into any pre-existing parent config |
 | Other harnesses | `unsupported:requires_config_generation` |
 
 ### `config show` Workspace Output
@@ -423,6 +424,21 @@ Use `meridian models refresh` to force a cache refresh from the models.dev catal
 | `MERIDIAN_DEPTH` | Zero-based delegation depth (`0` = primary/root, `1` = first delegated spawn) |
 | `MERIDIAN_MAX_DEPTH` | Max zero-based delegated spawn depth override |
 | `MERIDIAN_PARENT_SPAWN_ID` | Immediate parent spawn ID for nested execution |
+
+### Runtime Policy Overrides
+
+These override spawn-level runtime policy. They sit above project config but below CLI flags in the precedence chain and apply independently of agent overlays.
+
+| Variable | Purpose |
+|---|---|
+| `MERIDIAN_MODEL` | Model for this spawn (alias or canonical ID) |
+| `MERIDIAN_EFFORT` | Reasoning effort: `low`, `medium`, `high`, `xhigh` |
+| `MERIDIAN_APPROVAL` | Approval mode: `default`, `confirm`, `auto`, `yolo` |
+| `MERIDIAN_SANDBOX` | Sandbox level |
+| `MERIDIAN_AUTOCOMPACT` | Context compaction threshold (int 1–100) |
+| `MERIDIAN_TIMEOUT` | Spawn timeout in minutes (float > 0) |
+
+Note: `MERIDIAN_MODEL` is a per-spawn runtime override. `MERIDIAN_DEFAULT_MODEL` (below) is the config-level default used when no stronger value is set.
 
 ### Config Overrides
 

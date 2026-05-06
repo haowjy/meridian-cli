@@ -11,15 +11,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Agent overlay rendering in `meridian config show`.
 - Compiler provenance helpers for `meridian spawn --dry-run` output.
 
+### Added
+- Per-harness token usage extraction. Claude, Codex, and OpenCode each have dedicated extractors that parse their native event shapes (camelCase modelUsage, thread/tokenUsage/updated, session.idle) instead of relying on a generic snake_case scanner.
+
 ### Changed
 - Default `spawn wait` yield intervals raised to **50 minutes** (3000s) for all harnesses, up from 15 min for Claude/Codex and 4 min for OpenCode. Long-running spawns no longer lose prompt-cache warmth mid-flight.
 - `resolve_policies()` now delegates to the compiler internally through a backward-compatible wrapper.
 - Policy-field resolution now uses one generalized N-tier precedence path.
-### Changed
 - Spawn help examples now teach `--prompt-file ... --bg` as delegation default. Inline `-p` help points to prompt files for real handoffs.
-
-### Added
-- Per-harness token usage extraction. Claude, Codex, and OpenCode each have dedicated extractors that parse their native event shapes (camelCase modelUsage, thread/tokenUsage/updated, session.idle) instead of relying on a generic snake_case scanner.
 
 ### Fixed
 - Profile `approval` and `sandbox` silently dropped during policy resolution. `model_policy_scope()` projection replaces hand-curated field subset — all non-routing fields now flow through the precedence ladder automatically. Agents with `approval: auto` now correctly receive `--permission-mode acceptEdits`.
@@ -30,8 +29,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Concurrent authoritative finalizers no longer corrupt spawn metrics — losing writers are rejected at the store level (#153).
 - Authoritative spawn finalization now correctly replaces reconciler terminals (#152).
 - Spawn execution handoff split into prepare/run/cleanup phases. Post-run session teardown errors now log as secondary cleanup failures instead of rewriting runner terminal state (#154).
-
-### Fixed
 - OpenCode session continuation creates empty session instead of resuming. Root cause: `POST /session` ignores `sessionID` payload and always creates a new empty session. Fix: verify existing session via `GET /session/{id}` before POST; if found, return it directly. Attach then connects to the existing session with full history.
 
 ## [0.0.49] - 2026-05-04

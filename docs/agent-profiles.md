@@ -128,8 +128,10 @@ Scalar overrides in `override:` accept the same keys as profile-level frontmatte
 Model-policy overrides sit between explicit user flags and the profile's generic defaults:
 
 ```
-CLI flag / ENV var  >  model-policies match  >  profile defaults  >  config  >  alias defaults
+CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defaults  >  config  >  alias defaults
 ```
+
+Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace or suppress these model-policies per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
 
 ## `fanout`
 
