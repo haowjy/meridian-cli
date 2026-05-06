@@ -32,7 +32,9 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.run_inputs import ResolvedRunInputs
 from meridian.lib.ops.spawn.execute import (
     BackgroundWorkerLaunchRequest,
+    PreparedExecutionHandoff,
     _execute_existing_spawn,
+    _prepare_execution_handoff,
     _SessionExecutionContext,
     _write_params_json,
     execute_spawn_blocking,
@@ -215,6 +217,142 @@ def test_write_params_json_does_not_write_legacy_prompt_md(tmp_path: Path) -> No
     log_dir = tmp_path / ".meridian" / "spawns" / str(spawn_id)
     assert (log_dir / "params.json").exists()
     assert not (log_dir / "prompt.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_prepare_execution_handoff_transfers_session_scope_cleanup_to_caller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    session_state = {"entered": False, "exited": False}
+
+    class _HarnessRegistry:
+        def get_subprocess_harness(self, _harness_id: object) -> OpenCodeAdapter:
+            return OpenCodeAdapter()
+
+    @contextmanager
+    def fake_session_execution_context(**_kwargs: object) -> Iterator[_SessionExecutionContext]:
+        session_state["entered"] = True
+        try:
+            yield _SessionExecutionContext(
+                chat_id="c1",
+                work_id="w1",
+                resolved_agent_name="agent-from-session",
+                harness_session_id_observer=lambda _session_id: None,
+            )
+        finally:
+            session_state["exited"] = True
+
+    def fake_build_launch_context(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(resolved_request=kwargs["request"])
+
+    monkeypatch.setattr(
+        execute_module,
+        "_session_execution_context",
+        fake_session_execution_context,
+    )
+    monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
+
+    def noop_write_projection_artifacts(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        execute_module,
+        "write_projection_artifacts",
+        noop_write_projection_artifacts,
+    )
+
+    handoff = await _prepare_execution_handoff(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p1"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast(
+            "Any",
+            SimpleNamespace(harness_registry=_HarnessRegistry(), artifacts=None),
+        ),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        spawn_record=None,
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        autocompact=None,
+        ctx=None,
+    )
+
+    assert session_state == {"entered": True, "exited": False}
+    assert handoff.work_id == "w1"
+    assert handoff.resolved_request.agent == "agent-from-session"
+
+    handoff.session_exit_stack.close()
+
+    assert session_state == {"entered": True, "exited": True}
+
+
+@pytest.mark.asyncio
+async def test_prepare_execution_handoff_closes_session_scope_when_later_preparation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    session_state = {"entered": False, "exited": False}
+
+    class _HarnessRegistry:
+        def get_subprocess_harness(self, _harness_id: object) -> OpenCodeAdapter:
+            return OpenCodeAdapter()
+
+    @contextmanager
+    def fake_session_execution_context(**_kwargs: object) -> Iterator[_SessionExecutionContext]:
+        session_state["entered"] = True
+        try:
+            yield _SessionExecutionContext(
+                chat_id="c1",
+                work_id=None,
+                resolved_agent_name=None,
+                harness_session_id_observer=lambda _session_id: None,
+            )
+        finally:
+            session_state["exited"] = True
+
+    def fake_build_launch_context(**_kwargs: object) -> SimpleNamespace:
+        raise RuntimeError("boom after session scope entry")
+
+    monkeypatch.setattr(
+        execute_module,
+        "_session_execution_context",
+        fake_session_execution_context,
+    )
+    monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
+
+    with pytest.raises(RuntimeError, match="boom after session scope entry"):
+        await _prepare_execution_handoff(
+            spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p1"))),
+            request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+            runtime_request=LaunchRuntime(
+                runtime_root=(tmp_path / ".runtime").as_posix(),
+                project_paths_project_root=tmp_path.as_posix(),
+                project_paths_execution_cwd=tmp_path.as_posix(),
+            ),
+            runtime=cast(
+                "Any",
+                SimpleNamespace(harness_registry=_HarnessRegistry(), artifacts=None),
+            ),
+            runtime_root=tmp_path / ".runtime",
+            project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+            spawn_record=None,
+            execution_cwd=tmp_path.as_posix(),
+            work_id=None,
+            autocompact=None,
+            ctx=None,
+        )
+
+    assert session_state == {"entered": True, "exited": True}
 
 
 
@@ -610,7 +748,15 @@ async def test_launch_prepared_spawn_uses_direct_build_launch_context_from_durab
         fake_session_execution_context,
     )
     monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
-    monkeypatch.setattr(execute_module, "write_projection_artifacts", lambda **_kwargs: None)
+
+    def noop_write_projection_artifacts(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        execute_module,
+        "write_projection_artifacts",
+        noop_write_projection_artifacts,
+    )
     monkeypatch.setattr(execute_module, "execute_with_streaming", fake_execute_with_streaming)
 
     request = SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex")
@@ -640,6 +786,75 @@ async def test_launch_prepared_spawn_uses_direct_build_launch_context_from_durab
     assert cast("LaunchRuntime", captured["runtime"]).argv_intent == LaunchArgvIntent.SPEC_ONLY
 
 
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_does_not_finalize_launch_failure_on_teardown_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    class _ExplodingExitStack:
+        def close(self) -> None:
+            raise RuntimeError("teardown failed")
+
+    captured = {"finalize_calls": 0, "runner_calls": 0}
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return PreparedExecutionHandoff(
+            resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+            launch_context=cast("Any", SimpleNamespace()),
+            session_context=_SessionExecutionContext(
+                chat_id="c1",
+                work_id=None,
+                resolved_agent_name=None,
+                harness_session_id_observer=lambda _session_id: None,
+            ),
+            session_exit_stack=cast("Any", _ExplodingExitStack()),
+            execution_cwd=tmp_path.as_posix(),
+            work_id=None,
+            harness_session_id_observer=lambda _session_id: None,
+        )
+
+    async def fake_invoke_runner(
+        _handoff: PreparedExecutionHandoff,
+        **_kwargs: object,
+    ) -> int:
+        captured["runner_calls"] += 1
+        return 0
+
+    async def fake_finalize_launch_failure(*_args: object, **_kwargs: object) -> None:
+        captured["finalize_calls"] += 1
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(execute_module, "_invoke_runner", fake_invoke_runner)
+    monkeypatch.setattr(
+        execute_module,
+        "finalize_launch_failure",
+        fake_finalize_launch_failure,
+    )
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p1"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 0
+    assert captured == {"finalize_calls": 0, "runner_calls": 1}
+
+
 def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -662,28 +877,48 @@ def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(
         captured.update(kwargs)
         return 0
 
-    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
-    monkeypatch.setattr(
-        execute_module,
-        "resolve_project_config_paths",
-        lambda *, project_root: ProjectConfigPaths(
-            project_root=Path(project_root),
-            execution_cwd=Path(project_root),
-        ),
-    )
-    monkeypatch.setattr(execute_module, "resolve_child_execution_cwd", lambda **_kwargs: tmp_path)
-    monkeypatch.setattr(execute_module, "_write_params_json", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(execute_module, "launch_prepared_spawn", fake_launch_prepared_spawn)
-    monkeypatch.setattr(execute_module.asyncio, "run", lambda coro: real_asyncio_run(coro))
-    monkeypatch.setattr(
-        execute_module,
-        "read_spawn_row",
-        lambda *_args, **_kwargs: SimpleNamespace(
+    def fake_resolve_project_config_paths(*, project_root: str | Path) -> ProjectConfigPaths:
+        project_path = Path(project_root)
+        return ProjectConfigPaths(
+            project_root=project_path,
+            execution_cwd=project_path,
+        )
+
+    def fake_resolve_child_execution_cwd(**_kwargs: object) -> Path:
+        return tmp_path
+
+    def noop_write_params_json(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def run_coro(coro: Any) -> Any:
+        return real_asyncio_run(coro)
+
+    def fake_read_spawn_row(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
             status="succeeded",
             duration_secs=1.25,
             input_tokens=3,
             output_tokens=5,
-        ),
+        )
+
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_project_config_paths",
+        fake_resolve_project_config_paths,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_child_execution_cwd",
+        fake_resolve_child_execution_cwd,
+    )
+    monkeypatch.setattr(execute_module, "_write_params_json", noop_write_params_json)
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", fake_launch_prepared_spawn)
+    monkeypatch.setattr(execute_module.asyncio, "run", run_coro)
+    monkeypatch.setattr(
+        execute_module,
+        "read_spawn_row",
+        fake_read_spawn_row,
     )
 
     result = execute_spawn_blocking(
@@ -693,7 +928,7 @@ def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(
     )
 
     assert result.status == "succeeded"
-    assert captured["spawn"].spawn_id == spawn_id
+    assert cast("Any", captured["spawn"]).spawn_id == spawn_id
     assert cast("Any", captured["request"]).prompt == "run it"
     assert cast("Any", captured["project_paths"]).project_root == tmp_path
     assert captured["execution_cwd"] == tmp_path.as_posix()
@@ -737,23 +972,40 @@ def test_execute_spawn_blocking_backstop_finalizes_uncaught_helper_escape(
         )
         return True
 
+    def fake_resolve_project_config_paths(*, project_root: str | Path) -> ProjectConfigPaths:
+        project_path = Path(project_root)
+        return ProjectConfigPaths(
+            project_root=project_path,
+            execution_cwd=project_path,
+        )
+
+    def fake_resolve_child_execution_cwd(**_kwargs: object) -> Path:
+        return tmp_path
+
+    def noop_write_params_json(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def run_coro(coro: Any) -> Any:
+        return real_asyncio_run(coro)
+
     monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
     monkeypatch.setattr(
         execute_module,
         "resolve_project_config_paths",
-        lambda *, project_root: ProjectConfigPaths(
-            project_root=Path(project_root),
-            execution_cwd=Path(project_root),
-        ),
+        fake_resolve_project_config_paths,
     )
-    monkeypatch.setattr(execute_module, "resolve_child_execution_cwd", lambda **_kwargs: tmp_path)
-    monkeypatch.setattr(execute_module, "_write_params_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_child_execution_cwd",
+        fake_resolve_child_execution_cwd,
+    )
+    monkeypatch.setattr(execute_module, "_write_params_json", noop_write_params_json)
     monkeypatch.setattr(
         execute_module,
         "launch_prepared_spawn",
         exploding_launch_prepared_spawn,
     )
-    monkeypatch.setattr(execute_module.asyncio, "run", lambda coro: real_asyncio_run(coro))
+    monkeypatch.setattr(execute_module.asyncio, "run", run_coro)
     monkeypatch.setattr(
         execute_module,
         "finalize_launch_failure_sync",
@@ -798,19 +1050,30 @@ async def test_execute_existing_spawn_routes_through_launch_prepared_spawn(
         captured.update(kwargs)
         return 0
 
+    def fake_resolve_runtime_root(_project_root: Path) -> Path:
+        return runtime_root
+
+    def fake_build_runtime(
+        _project_root: str,
+        *,
+        sink: object | None = None,
+    ) -> SimpleNamespace:
+        _ = sink
+        return SimpleNamespace(
+            harness_registry=SimpleNamespace(),
+            artifacts=None,
+        )
+
     monkeypatch.setattr(execute_module, "launch_prepared_spawn", fake_launch_prepared_spawn)
     monkeypatch.setattr(
         execute_module,
         "resolve_runtime_root",
-        lambda _project_root: runtime_root,
+        fake_resolve_runtime_root,
     )
     monkeypatch.setattr(
         execute_module,
         "build_runtime",
-        lambda _project_root, *, sink=None: SimpleNamespace(
-            harness_registry=SimpleNamespace(),
-            artifacts=None,
-        ),
+        fake_build_runtime,
     )
 
     result = await _execute_existing_spawn(
@@ -825,7 +1088,7 @@ async def test_execute_existing_spawn_routes_through_launch_prepared_spawn(
     )
 
     assert result == 0
-    assert captured["spawn"].spawn_id == spawn_id
+    assert cast("Any", captured["spawn"]).spawn_id == spawn_id
     assert cast("Any", captured["request"]).prompt == "run it"
     assert cast("Any", captured["request"]).harness == "codex"
     assert cast("Any", captured["project_paths"]).project_root == tmp_path

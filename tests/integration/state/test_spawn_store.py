@@ -1,6 +1,8 @@
 import json
+import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.state.spawn_store import (
@@ -34,84 +36,34 @@ def _start_test_spawn(runtime_root: Path) -> str:
     )
 
 
-def _count_finalize_events(runtime_root: Path, spawn_id: str) -> int:
-    count = 0
-    with (runtime_root / "spawns.jsonl").open(encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if payload.get("event") == "finalize" and payload.get("id") == spawn_id:
-                count += 1
-    return count
+def _state_revision(runtime_root: Path, spawn_id: str) -> int:
+    payload = json.loads(
+        (runtime_root / "spawns" / spawn_id / "state.json").read_text(encoding="utf-8")
+    )
+    return int(payload["revision"])
 
 
-def _write_mixed_valid_and_malformed_spawns_jsonl(runtime_root: Path) -> None:
-    spawns_jsonl = runtime_root / "spawns.jsonl"
-    with spawns_jsonl.open("w", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "start",
-                    "id": "p1",
-                    "chat_id": "c1",
-                    "model": "gpt-5.3-codex",
-                    "agent": "coder",
-                    "harness": "codex",
-                    "status": "running",
-                    "started_at": "2026-03-01T00:00:00Z",
-                    "prompt": "hello",
-                }
-            )
-            + "\n"
-        )
-        handle.write("{ this is not json }\n")
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "finalize",
-                    "id": "broken",
-                    "status": "definitely-not-a-status",
-                    "exit_code": 1,
-                }
-            )
-            + "\n"
-        )
-        handle.write('{"v":1,"event":"update","id":"p1","status":"running"\n')
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "finalize",
-                    "id": "p1",
-                    "status": "succeeded",
-                    "exit_code": 0,
-                    "finished_at": "2026-03-01T00:01:00Z",
-                    "origin": "runner",
-                }
-            )
-            + "\n"
-        )
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "start",
-                    "id": "p2",
-                    "chat_id": "c2",
-                    "model": "gpt-5.4",
-                    "agent": "coder",
-                    "harness": "codex",
-                    "status": "running",
-                    "started_at": "2026-03-01T00:02:00Z",
-                    "prompt": "world",
-                }
-            )
-            + "\n"
-        )
+def _finalize_in_subprocess(
+    runtime_root_str: str,
+    spawn_id: str,
+    status: SpawnStatus,
+    exit_code: int,
+    duration_secs: float,
+    ready_queue: Any,
+    start_event: Any,
+    result_queue: Any,
+) -> None:
+    ready_queue.put("ready")
+    start_event.wait()
+    outcome = finalize_spawn(
+        Path(runtime_root_str),
+        spawn_id,
+        status=status,
+        exit_code=exit_code,
+        origin="runner",
+        duration_secs=duration_secs,
+    )
+    result_queue.put((outcome.wrote, outcome.transitioned))
 
 
 def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
@@ -141,49 +93,44 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row.runner_pid == 2222
 
 
-def test_list_runs_skips_truncated_trailing_json(tmp_path: Path) -> None:
+def test_list_spawns_returns_promptless_v2_records(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    spawns_jsonl = runtime_root / "spawns.jsonl"
-    with spawns_jsonl.open("w", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "start",
-                    "id": "r1",
-                    "chat_id": "c1",
-                    "model": "gpt-5.3-codex",
-                    "agent": "coder",
-                    "harness": "codex",
-                    "status": "running",
-                    "started_at": "2026-03-01T00:00:00Z",
-                    "prompt": "hello",
-                }
-            )
-            + "\n"
-        )
-        handle.write('{"v":1,"event":"finalize","id":"r1","status":"succeeded"')
+    spawn_id = _start_test_spawn(runtime_root)
 
     spawns = list_spawns(runtime_root)
     assert len(spawns) == 1
-    assert spawns[0].id == "r1"
+    assert spawns[0].id == spawn_id
     assert spawns[0].status == "running"
+    assert spawns[0].prompt is None
 
 
-def test_spawn_queries_survive_mixed_malformed_rows(tmp_path: Path) -> None:
+def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
-    _write_mixed_valid_and_malformed_spawns_jsonl(runtime_root)
+    p1 = _start_test_spawn(runtime_root)
+    p2 = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c2",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="world",
+        )
+    )
+    finalize_spawn(runtime_root, p1, status="succeeded", exit_code=0, origin="runner")
 
     spawns = list_spawns(runtime_root)
-    assert [spawn.id for spawn in spawns] == ["p1", "p2"]
+    assert [spawn.id for spawn in spawns] == [p1, p2]
     assert spawns[0].status == "succeeded"
     assert spawns[1].status == "running"
+    assert all(spawn.prompt is None for spawn in spawns)
 
-    row = get_spawn(runtime_root, "p2")
+    row = get_spawn(runtime_root, p2)
     assert row is not None
-    assert row.id == "p2"
+    assert row.id == p2
     assert row.chat_id == "c2"
     assert row.status == "running"
+    assert row.prompt == "world"
 
 
 def test_mark_finalizing_state_machine_enforces_running_only(tmp_path: Path) -> None:
@@ -235,13 +182,11 @@ def test_mark_finalizing_concurrent_race_only_one_writer_wins(tmp_path: Path) ->
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
 
+    def attempt(_unused: int) -> bool:
+        return mark_finalizing(runtime_root, spawn_id)
+
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(
-            pool.map(
-                lambda _unused: mark_finalizing(runtime_root, spawn_id),
-                (0, 1),
-            )
-        )
+        results = list(pool.map(attempt, (0, 1)))
 
     assert sorted(results) == [False, True]
     row = get_spawn(runtime_root, spawn_id)
@@ -313,7 +258,7 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
     assert first.transitioned is True
     assert second.wrote is False
     assert second.transitioned is False
-    assert _count_finalize_events(runtime_root, spawn_id) == 1
+    assert _state_revision(runtime_root, spawn_id) == 2
 
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
@@ -360,7 +305,7 @@ def test_losing_authoritative_finalize_does_not_overwrite_winner_metrics(
 
     assert first.wrote is True
     assert second.wrote is False
-    assert _count_finalize_events(runtime_root, spawn_id) == 1
+    assert _state_revision(runtime_root, spawn_id) == 2
 
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
@@ -404,7 +349,7 @@ def test_finalize_allows_authoritative_to_replace_reconciler_terminal(
     assert reconciler.transitioned is True
     assert runner.wrote is True
     assert runner.transitioned is False
-    assert _count_finalize_events(runtime_root, spawn_id) == 2
+    assert _state_revision(runtime_root, spawn_id) == 3
 
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
@@ -447,8 +392,68 @@ def test_concurrent_authoritative_finalizers_persist_one_winner(
         )
 
     assert sorted(outcomes) == [(False, False), (True, True)]
-    assert _count_finalize_events(runtime_root, spawn_id) == 1
+    assert _state_revision(runtime_root, spawn_id) == 2
     row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status in {"succeeded", "failed"}
+    assert row.duration_secs in {10.0, 99.0}
+
+
+def test_cross_process_authoritative_finalizers_persist_one_winner(
+    tmp_path: Path,
+) -> None:
+    """CR2.1: file-lock winner semantics hold across processes, not just threads."""
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    ctx = multiprocessing.get_context("spawn")
+    ready_queue = ctx.Queue()
+    result_queue = ctx.Queue()
+    start_event = ctx.Event()
+    processes = [
+        ctx.Process(
+            target=_finalize_in_subprocess,
+            args=(
+                runtime_root.as_posix(),
+                spawn_id,
+                "succeeded",
+                0,
+                10.0,
+                ready_queue,
+                start_event,
+                result_queue,
+            ),
+        ),
+        ctx.Process(
+            target=_finalize_in_subprocess,
+            args=(
+                runtime_root.as_posix(),
+                spawn_id,
+                "failed",
+                1,
+                99.0,
+                ready_queue,
+                start_event,
+                result_queue,
+            ),
+        ),
+    ]
+
+    for process in processes:
+        process.start()
+
+    for _ in processes:
+        assert ready_queue.get(timeout=10) == "ready"
+    start_event.set()
+
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
+    outcomes = [result_queue.get(timeout=10) for _ in processes]
+    row = get_spawn(runtime_root, spawn_id)
+
+    assert sorted(outcomes) == [(False, False), (True, True)]
+    assert _state_revision(runtime_root, spawn_id) == 2
     assert row is not None
     assert row.status in {"succeeded", "failed"}
     assert row.duration_secs in {10.0, 99.0}
