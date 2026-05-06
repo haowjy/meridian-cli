@@ -184,6 +184,33 @@ def test_prune_stale_claude_overlays_materializes_transcripts_before_delete(
     assert prune_stale_claude_overlays(stale) == 0
 
 
+def test_prune_stale_claude_overlays_materializes_auth_state_before_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    current_root = user_home / "projects" / "current-uuid"
+    stale_overlay = current_root / "claude-config" / "p1"
+    canonical_root = user_home / ".claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", canonical_root.as_posix())
+
+    _write_payload(stale_overlay / "projects" / "slug" / "session.jsonl", '{"event":"start"}\n')
+    _write_payload(stale_overlay / ".claude.json", '{"auth":"new"}\n')
+    _write_payload(stale_overlay / ".credentials.json", '{"token":"new"}\n')
+    _write_payload(canonical_root / ".claude.json", '{"auth":"old"}\n')
+    _set_tree_mtime(stale_overlay, _EPOCH_NOW - (40 * _DAY))
+    _set_path_mtime(current_root, _EPOCH_NOW - (1 * _DAY))
+
+    stale = scan_stale_claude_overlays(current_root, 30, set(), _EPOCH_NOW)
+
+    assert prune_stale_claude_overlays(stale) == 1
+    assert not stale_overlay.exists()
+    assert (canonical_root / ".claude.json").read_text(encoding="utf-8") == '{"auth":"new"}\n'
+    assert (canonical_root / ".credentials.json").read_text(encoding="utf-8") == (
+        '{"token":"new"}\n'
+    )
+
+
 def test_prune_stale_claude_overlays_uses_internal_original_root_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

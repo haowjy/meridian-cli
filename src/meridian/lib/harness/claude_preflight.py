@@ -28,9 +28,12 @@ logger = structlog.get_logger(__name__)
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
 MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV = "MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR"
 _SKIP_ENTRIES = frozenset({"projects"})
-_COPY_ENTRIES = frozenset({".claude.json", "statsig", "memory", "cached_preferences", "todos"})
+_COPY_ENTRIES = frozenset(
+    {".claude.json", ".credentials.json", "statsig", "memory", "cached_preferences", "todos"}
+)
 _OVERLAY_METADATA_FILENAME = ".meridian-overlay.json"
 _TRANSCRIPT_LOCKS_DIRNAME = ".meridian-transcript-locks"
+_AUTH_STATE_FILENAMES = (".claude.json", ".credentials.json")
 
 
 def _safe_log(level: str, event: str, **kwargs: object) -> None:
@@ -299,6 +302,59 @@ def _overlay_transcript_wins(overlay_stat: os.stat_result, target_stat: os.stat_
     )
 
 
+def materialize_overlay_auth_state(
+    overlay_root: Path,
+    canonical_root: Path | None = None,
+) -> None:
+    """Copy mutable Claude auth state from one overlay into the durable root."""
+
+    resolved_canonical_root = canonical_root or _claude_config_root()
+    for filename in _AUTH_STATE_FILENAMES:
+        overlay_file = overlay_root / filename
+        if not overlay_file.is_file():
+            continue
+
+        target = resolved_canonical_root / filename
+        temp_target = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            resolved_canonical_root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            _safe_log(
+                "warning",
+                "Failed to create canonical Claude auth directory",
+                canonical_root=str(resolved_canonical_root),
+                exc_info=True,
+            )
+            continue
+
+        try:
+            overlay_stat = overlay_file.stat()
+            shutil.copy2(overlay_file, temp_target)
+            lock_path = _overlay_transcript_lock_path(
+                canonical_root=resolved_canonical_root,
+                relative_path=Path("_auth") / filename,
+            )
+            with lock_file(lock_path):
+                should_copy = True
+                if target.exists():
+                    target_stat = target.stat()
+                    should_copy = _overlay_transcript_wins(overlay_stat, target_stat)
+                if should_copy:
+                    os.replace(temp_target, target)
+                else:
+                    temp_target.unlink(missing_ok=True)
+        except OSError:
+            _safe_log(
+                "warning",
+                "Failed to materialize Claude overlay auth state",
+                overlay_file=str(overlay_file),
+                canonical_file=str(target),
+                exc_info=True,
+            )
+            with suppress(OSError):
+                temp_target.unlink(missing_ok=True)
+
+
 def prepare_isolated_claude_config(
     runtime_root: Path,
     spawn_id: str,
@@ -464,6 +520,20 @@ def cleanup_claude_overlay(
         or resolve_overlay_materialization_canonical_root()
     )
     materialization: ClaudeOverlayMaterializationResult | None = None
+    try:
+        materialize_overlay_auth_state(
+            overlay_root,
+            canonical_root=resolved_canonical_root,
+        )
+    except Exception:
+        _safe_log(
+            "warning",
+            "Claude overlay auth-state materialization failed; auth/session continuity may degrade",
+            overlay_root=str(overlay_root),
+            canonical_root=str(resolved_canonical_root),
+            exc_info=True,
+        )
+
     try:
         materialization = materialize_overlay_transcripts(
             overlay_root,

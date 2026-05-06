@@ -356,6 +356,27 @@ def test_prepare_isolated_claude_config_copies_mutable_paths(
     assert copied_file.read_text(encoding="utf-8") == "before"
 
 
+def test_prepare_isolated_claude_config_copies_credentials_json_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_root = tmp_path / "user-claude"
+    user_root.mkdir()
+    credentials = user_root / ".credentials.json"
+    credentials.write_text('{"token":"source"}\n', encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", user_root.as_posix())
+
+    isolated_root, _ = prepare_isolated_claude_config(tmp_path / "runtime", "p1")
+
+    assert isolated_root is not None
+    copied = isolated_root / ".credentials.json"
+    assert copied.exists()
+    assert copied.read_text(encoding="utf-8") == '{"token":"source"}\n'
+    assert not copied.is_symlink()
+    credentials.write_text('{"token":"mutated-at-source"}\n', encoding="utf-8")
+    assert copied.read_text(encoding="utf-8") == '{"token":"source"}\n'
+
+
 def test_prepare_isolated_claude_config_handles_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -494,6 +515,35 @@ def test_cleanup_claude_overlay_uses_overlay_sidecar_materialization_root(
         encoding="utf-8"
     ) == '{"sessionId":"sidecar"}\n'
     assert not (ambient_root / "projects" / "slug-a" / "session.jsonl").exists()
+
+
+def test_cleanup_claude_overlay_materializes_auth_state_before_delete(
+    tmp_path: Path,
+) -> None:
+    overlay_root = tmp_path / "overlay"
+    canonical_root = tmp_path / "canonical"
+    canonical_root.mkdir(parents=True, exist_ok=True)
+    (canonical_root / ".claude.json").write_text('{"auth":"old"}\n', encoding="utf-8")
+    (overlay_root / "projects" / "slug-a").mkdir(parents=True, exist_ok=True)
+    (overlay_root / "projects" / "slug-a" / "session.jsonl").write_text(
+        '{"sessionId":"sidecar"}\n',
+        encoding="utf-8",
+    )
+    (overlay_root / ".claude.json").write_text('{"auth":"new"}\n', encoding="utf-8")
+    (overlay_root / ".credentials.json").write_text('{"token":"created"}\n', encoding="utf-8")
+
+    result = cleanup_claude_overlay(
+        overlay_root,
+        canonical_root=canonical_root,
+    )
+
+    assert result.removed is True
+    assert result.materialized is True
+    assert (canonical_root / ".claude.json").read_text(encoding="utf-8") == '{"auth":"new"}\n'
+    assert (canonical_root / ".credentials.json").read_text(encoding="utf-8") == (
+        '{"token":"created"}\n'
+    )
+    assert not overlay_root.exists()
 
 
 def test_materialize_overlay_transcripts_copies_all_jsonl_files(

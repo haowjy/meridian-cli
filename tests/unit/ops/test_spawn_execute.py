@@ -1892,6 +1892,32 @@ def test_cleanup_child_claude_overlay_materializes_to_original_root_metadata(
     assert captured["canonical_root"] != parent_overlay_root
 
 
+def test_cleanup_child_claude_overlay_materializes_auth_state(
+    tmp_path: Path,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    overlay_root = tmp_path / "claude-config" / "child-spawn"
+    canonical_root = tmp_path / "durable-claude"
+    overlay_root.mkdir(parents=True)
+    (overlay_root / ".claude.json").write_text('{"auth":"overlay"}\n', encoding="utf-8")
+    (overlay_root / ".credentials.json").write_text('{"token":"overlay"}\n', encoding="utf-8")
+    canonical_root.mkdir(parents=True, exist_ok=True)
+
+    materialized_root = execute_module._cleanup_child_claude_overlay(
+        isolated_config_root=overlay_root,
+        spawn_id=SpawnId("p-child-auth"),
+        canonical_root=canonical_root,
+    )
+
+    assert materialized_root == canonical_root
+    assert not overlay_root.exists()
+    assert (canonical_root / ".claude.json").read_text(encoding="utf-8") == '{"auth":"overlay"}\n'
+    assert (canonical_root / ".credentials.json").read_text(encoding="utf-8") == (
+        '{"token":"overlay"}\n'
+    )
+
+
 @pytest.mark.asyncio
 async def test_launch_prepared_spawn_claude_overlay_metadata_failure_cleans_overlay_and_finalizes(
     tmp_path: Path,
