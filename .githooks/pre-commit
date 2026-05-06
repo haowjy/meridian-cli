@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fast preflight only — keep checkpoint commits cheap
+exec "$(git rev-parse --show-toplevel)/scripts/preflight.sh" fast

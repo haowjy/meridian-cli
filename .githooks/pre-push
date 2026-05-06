@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+GIT_DIR="$(git rev-parse --absolute-git-dir)"
+RELEASE_DIR="$GIT_DIR/meridian-release"
+AUTH_FILE="$RELEASE_DIR/auth.json"
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+json_field() {
+  local file="$1"
+  local field="$2"
+  grep -m 1 "^[[:space:]]*\"$field\"[[:space:]]*:" "$file" \
+    | sed 's/^[[:space:]]*"[^"]*"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/'
+}
+
+has_branch_refs=false
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" == refs/tags/v* ]]; then
+    tag_name="${remote_ref#refs/tags/}"
+
+    if [[ "$local_sha" == "$ZERO_SHA" ]]; then
+      printf 'BLOCKED: Deletion of release tag %s.\n' "$tag_name" >&2
+      exit 1
+    fi
+
+    if [[ "$remote_sha" != "$ZERO_SHA" ]]; then
+      printf 'BLOCKED: Update of release tag %s.\n' "$tag_name" >&2
+      exit 1
+    fi
+
+    authorized=false
+    if [[ -f "$AUTH_FILE" ]]; then
+      auth_tag="$(json_field "$AUTH_FILE" tag || true)"
+      auth_sha="$(json_field "$AUTH_FILE" target_sha || true)"
+      local_tag_sha="$(git rev-parse "$local_ref^{}" 2>/dev/null || true)"
+
+      if [[ "$auth_tag" == "$tag_name" ]] && [[ "$auth_sha" == "$local_tag_sha" ]]; then
+        authorized=true
+      fi
+    fi
+
+    if [[ "$authorized" != true ]]; then
+      printf 'BLOCKED: Direct push of release tag %s.\n' "$tag_name" >&2
+      printf 'Use: scripts/release.sh prepare ... && scripts/release.sh resume --push\n' >&2
+      exit 1
+    fi
+  elif [[ "$remote_ref" == refs/heads/* ]]; then
+    has_branch_refs=true
+  fi
+done
+
+if [[ "$has_branch_refs" == true ]]; then
+  exec "$ROOT_DIR/scripts/preflight.sh" full
+fi
