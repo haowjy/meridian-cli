@@ -6,7 +6,22 @@
 git clone https://github.com/meridian-flow/meridian-cli.git
 cd meridian-cli
 uv sync --extra dev
+scripts/setup-hooks.sh        # Windows: scripts/setup-hooks.ps1
 ```
+
+`setup-hooks` sets `core.hooksPath = .githooks`. Git cannot install hooks on
+clone, so every fresh checkout must run this once.
+
+Hook policy:
+
+- Pre-commit is intentionally lightweight: fast `ruff` only. It is a guardrail,
+  not the full verification gate, so checkpoint commits stay fast.
+- Pre-push is strict: it runs `scripts/preflight.sh`, which currently runs
+  `uv run ruff check .`, `uv run pytest-llm`, and `uv run pyright`, then blocks
+  direct `v*` tag pushes. Use `scripts/release.sh` for release tags.
+- Humans may bypass hooks with Git's standard `--no-verify` only when they are
+  doing so intentionally. LLM agents must not use `--no-verify` unless the user
+  explicitly instructs them to.
 
 ## Verify
 
@@ -41,27 +56,43 @@ uv tool list
 
 ## Test
 
+For the full local preflight used by pre-push and release preparation:
+
 ```bash
+scripts/preflight.sh
+```
+
+Individual checks:
+
+```bash
+uv run ruff check .
 uv run pytest-llm
 uv run pyright
 ```
 
 ## Release
 
-Use the release helper to bump the package version, create a release commit,
-and create the matching `v<version>` tag in one step:
+Use the release helper to run preflight, bump the package version, create the
+release commit, wait for CI on stable releases, and create the matching
+`v<version>` tag. Do not create or push `v*` tags manually.
 
 The package version currently lives in `src/meridian/__init__.py` as
 `__version__`.
 
 ```bash
-scripts/release.sh patch
-scripts/release.sh 0.1.0 --push
-```
+# Stable release: prepare, push, wait for CI, then tag
+scripts/release.sh prepare patch --push
 
-By default it updates `src/meridian/__init__.py`, commits the change, and
-creates an annotated tag locally. Pass `--push` to push both the current branch
-and the new tag.
+# If CI fails after prepare, fix forward, then resume without rerunning local preflight
+scripts/release.sh resume --push
+
+# RC release: no CI gate
+scripts/release.sh prepare rc --push
+
+# Inspect or abandon prepared release state
+scripts/release.sh status
+scripts/release.sh abort
+```
 
 ## Run from source
 

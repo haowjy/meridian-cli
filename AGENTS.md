@@ -49,9 +49,13 @@ NEVER REVERT CHANGES — always assume it's someone else's work.
 ## Git Hooks
 
 Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.
-This activates the pre-push hook, which runs the full test suite before any push.
-A pre-commit hook (fast ruff check only) is also provided in `.githooks/` and is activated
-automatically via `core.hooksPath`, but it is an opt-in convenience only.
+This sets `core.hooksPath = .githooks`; Git cannot auto-install hooks on clone.
+See `DEVELOPMENT.md` for the human-facing setup and release workflow.
+
+Hook policy:
+- Pre-commit stays fast: ruff check only, for cheap checkpoint commits.
+- Pre-push is strict: full `scripts/preflight.sh` plus direct `v*` tag push guard.
+- Release tags must go through `scripts/release.sh`, not manual tag pushes.
 
 **NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
 
