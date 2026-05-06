@@ -27,7 +27,7 @@ def test_codex_maps_live_item_shapes_and_nested_ids_without_duplicate_completion
             },
         )
     )[0]
-    tool_completed = n.normalize(
+    tool_completed_events = n.normalize(
         event(
             "item/completed",
             {
@@ -35,12 +35,15 @@ def test_codex_maps_live_item_shapes_and_nested_ids_without_duplicate_completion
                 "item": {
                     "type": "commandExecution",
                     "id": "call-1",
+                    "command": "/bin/bash -lc pwd",
+                    "cwd": "/tmp",
                     "aggregatedOutput": "/repo\n",
                     "exitCode": 0,
                 },
             },
         )
-    )[0]
+    )
+    tool_completed = tool_completed_events[0]
     n.normalize(
         event(
             "item/started",
@@ -84,8 +87,15 @@ def test_codex_maps_live_item_shapes_and_nested_ids_without_duplicate_completion
     assert tool_started.type == "item.started"
     assert tool_started.item_id == "call-1"
     assert tool_started.payload["item_type"] == "command_execution"
+    assert tool_started.payload["item"]["command"] == "pwd"
     assert tool_completed.type == "item.completed"
     assert tool_completed.item_id == "call-1"
+    assert len(tool_completed_events) == 1
+    assert tool_completed.payload["item_type"] == "command_execution"
+    assert tool_completed.payload["item"]["command"] == "/bin/bash -lc pwd"
+    assert tool_completed.payload["item"]["cwd"] == "/tmp"
+    assert tool_completed.payload["item"]["aggregatedOutput"] == "/repo\n"
+    assert tool_completed.payload["item"]["exitCode"] == 0
     assert delta.type == "content.delta"
     assert delta.turn_id == "turn-1"
     assert delta.item_id == "msg-1"
@@ -96,6 +106,49 @@ def test_codex_maps_live_item_shapes_and_nested_ids_without_duplicate_completion
     assert completed.turn_id == "turn-1"
     assert completed.payload == {"status": "completed", "duration_ms": 12, "thread_id": "thread-1"}
     assert synthetic == []
+
+
+def test_codex_tool_completion_keeps_output_on_item_payload_without_assistant_delta():
+    n = CodexNormalizer("c1", "s1")
+    n.normalize(event("turn/started", {"turn": {"id": "turn-1"}}))
+
+    started = n.normalize(
+        event(
+            "item/started",
+            {
+                "turnId": "turn-1",
+                "item": {
+                    "type": "commandExecution",
+                    "id": "call-1",
+                    "command": "/bin/bash -lc pwd",
+                    "cwd": "/tmp",
+                },
+            },
+        )
+    )
+    completed = n.normalize(
+        event(
+            "item/completed",
+            {
+                "turnId": "turn-1",
+                "item": {
+                    "type": "commandExecution",
+                    "id": "call-1",
+                    "command": "/bin/bash -lc pwd",
+                    "cwd": "/tmp",
+                    "aggregatedOutput": "/tmp\n",
+                    "exitCode": 0,
+                    "durationMs": 0,
+                },
+            },
+        )
+    )
+
+    assert [entry.type for entry in started] == ["item.started"]
+    assert [entry.type for entry in completed] == ["item.completed"]
+    assert completed[0].payload["item"]["aggregatedOutput"] == "/tmp\n"
+    assert completed[0].payload["item"]["exitCode"] == 0
+    assert completed[0].payload["item"]["cwd"] == "/tmp"
 
 
 def test_codex_emits_terminal_assistant_text_from_item_completed_when_delta_missing():

@@ -203,6 +203,125 @@ def test_opencode_message_updated_snapshot_backfills_missing_output_and_terminal
     assert events[3].item_id == "bash:2"
 
 
+def test_opencode_authoritative_snapshot_does_not_duplicate_streamed_text_or_completed_tool():
+    n = OpenCodeNormalizer("c1", "s1")
+
+    n.normalize(
+        event(
+            "message.updated",
+            {"properties": {"info": {"id": "msg-a3", "role": "assistant"}}},
+        )
+    )
+    n.normalize(
+        event(
+            "message.part.updated",
+            {
+                "properties": {
+                    "part": {
+                        "id": "text-1",
+                        "messageID": "msg-a3",
+                        "type": "text",
+                        "text": "",
+                    }
+                }
+            },
+        )
+    )
+    text_delta_events = n.normalize(
+        event(
+            "message.part.delta",
+            {
+                "properties": {
+                    "partID": "text-1",
+                    "messageID": "msg-a3",
+                    "field": "text",
+                    "delta": "Hello",
+                }
+            },
+        )
+    )
+    tool_started = n.normalize(
+        event(
+            "message.part.updated",
+            {
+                "properties": {
+                    "part": {
+                        "id": "tool-1",
+                        "messageID": "msg-a3",
+                        "type": "tool",
+                        "tool": "bash",
+                        "callID": "bash:3",
+                        "state": {"status": "pending", "input": {"command": "pwd"}},
+                    }
+                }
+            },
+        )
+    )[0]
+    tool_completed = n.normalize(
+        event(
+            "message.part.updated",
+            {
+                "properties": {
+                    "part": {
+                        "id": "tool-1",
+                        "messageID": "msg-a3",
+                        "type": "tool",
+                        "tool": "bash",
+                        "callID": "bash:3",
+                        "state": {
+                            "status": "completed",
+                            "input": {"command": "pwd"},
+                            "output": "/tmp\n",
+                            "metadata": {"exit": 0},
+                        },
+                    }
+                }
+            },
+        )
+    )[-1]
+
+    snapshot = n.normalize(
+        event(
+            "message.updated",
+            {
+                "properties": {
+                    "info": {"id": "msg-a3", "role": "assistant"},
+                    "message": {
+                        "parts": [
+                            {
+                                "id": "text-1",
+                                "messageID": "msg-a3",
+                                "type": "text",
+                                "text": "Hello",
+                            },
+                            {
+                                "id": "tool-1",
+                                "messageID": "msg-a3",
+                                "type": "tool",
+                                "tool": "bash",
+                                "callID": "bash:3",
+                                "state": {
+                                    "status": "completed",
+                                    "input": {"command": "pwd"},
+                                    "output": "/tmp\n",
+                                    "metadata": {"exit": 0},
+                                },
+                            },
+                        ]
+                    },
+                }
+            },
+        )
+    )
+
+    assert [entry.type for entry in text_delta_events] == ["turn.started", "content.delta"]
+    assert text_delta_events[1].payload == {"stream_kind": "assistant_text", "text": "Hello"}
+    assert tool_started.type == "item.started"
+    assert tool_completed.type == "item.completed"
+    assert tool_completed.item_id == "bash:3"
+    assert snapshot == []
+
+
 def test_opencode_session_idle_without_active_turn_is_noop():
     n = OpenCodeNormalizer("c1", "s1")
 

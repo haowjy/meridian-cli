@@ -99,6 +99,67 @@ def test_claude_synthetic_completion_after_real_completion_does_not_break_next_t
     assert second_completed.turn_id == second_started.turn_id
 
 
+def test_claude_later_turn_aggregated_tool_result_survives_prior_synthetic_completion():
+    n = ClaudeNormalizer("c1", "s1")
+
+    first_started, first_text = n.normalize(
+        event("assistant", {"message": {"content": [{"type": "text", "text": "first"}]}})
+    )
+    first_completed = n.normalize(event("result", {"status": "succeeded"}))[0]
+    synthetic = n.normalize(
+        event(
+            TURN_BOUNDARY_EVENT_TYPE,
+            {"status": "succeeded", "synthetic": True},
+            harness_id="meridian",
+        )
+    )
+
+    second_started, tool_started = n.normalize(
+        event(
+            "assistant",
+            {
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_2",
+                            "name": "Read",
+                            "input": {"file": "b.txt"},
+                        }
+                    ]
+                }
+            },
+        )
+    )
+    tool_completed = n.normalize(
+        event(
+            "user",
+            {
+                "message": {
+                    "content": [{"type": "tool_result", "tool_use_id": "toolu_2", "content": "ok"}]
+                }
+            },
+        )
+    )[0]
+    second_completed = n.normalize(event("result", {"status": "succeeded"}))[0]
+
+    assert first_started.type == "turn.started"
+    assert first_text.type == "content.delta"
+    assert first_completed.type == "turn.completed"
+    assert synthetic == []
+    assert second_started.type == "turn.started"
+    assert second_started.turn_id != first_started.turn_id
+    assert tool_started.type == "item.started"
+    assert tool_started.turn_id == second_started.turn_id
+    assert tool_started.item_id == "toolu_2"
+    assert tool_completed.type == "item.completed"
+    assert tool_completed.turn_id == second_started.turn_id
+    assert tool_completed.item_id == "toolu_2"
+    assert tool_completed.payload["input"] == {"file": "b.txt"}
+    assert second_completed.type == "turn.completed"
+    assert second_completed.turn_id == second_started.turn_id
+
+
 def test_claude_streaming_blocks_still_work():
     n = ClaudeNormalizer("c1", "s1")
     started = n.normalize(event("message_start", {"message": {"model": "claude-opus"}}))[0]
