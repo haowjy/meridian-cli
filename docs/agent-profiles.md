@@ -135,7 +135,7 @@ Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) 
 
 ## `fanout`
 
-Declares a fallback model chain used when the profile's primary harness is unavailable. When Meridian detects the primary harness is not installed, it walks the fanout entries in order and selects the first one whose harness is available.
+Declares a fallback model chain used when the head candidate's harness is unavailable. When Meridian detects the head candidate's harness is not installed, it walks the fanout entries in order and selects the first one whose harness is available.
 
 ```yaml
 model: claude-sonnet
@@ -147,7 +147,7 @@ fanout:
 
 Each entry is either an `alias` (looked up in the model catalog) or a literal `model` ID. Fallback only activates when:
 
-- the primary harness is unavailable, **and**
+- the head candidate's harness is unavailable, **and**
 - the user did not explicitly set a model with `-m` / `MERIDIAN_MODEL`
 
 `fanout` also controls the fan-out column shown in `meridian mars list`.
@@ -199,7 +199,7 @@ Each line shows: name, description, default model, and fanout aliases (deduplica
 When a spawn is launched with an agent profile and the current head candidate's harness is unavailable — whether that is the profile's base model or a harness rerouted by a matched `model-policies` rule — Meridian walks the candidate chain and selects the next available alternative without failing:
 
 1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
-2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head candidate and the prior head is demoted.
+2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override replaces the base candidate as the new head. The base candidate is not preserved as a fallback position in the chain.
 3. Append `fanout` entries in declared order.
 4. Walk the resulting ordered candidate chain and pick the first candidate whose harness is available.
 5. If nothing resolves, fail with a clear error naming the unavailable harness.
