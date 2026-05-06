@@ -192,7 +192,7 @@ def test_record_exited_reuses_pre_write_record_for_telemetry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """record_exited() should not reread after appending the exited event."""
+    """owner record_exited() should not reread after appending the exited event."""
     repo = FakeSpawnRepository()
     svc = _make_service(tmp_path, repository=repo)
     spawn_id = _start_spawn(svc, status="running")
@@ -208,7 +208,7 @@ def test_record_exited_reuses_pre_write_record_for_telemetry(
 
     svc.record_exited(spawn_id, exit_code=42)
 
-    assert calls == [spawn_id]
+    assert calls == []
 
 
 def test_finalize_transitions_spawn_to_terminal(tmp_path: Path) -> None:
@@ -393,6 +393,34 @@ def test_start_reads_spawn_record_once_for_lifecycle_payloads(
     assert [event.event_type for event in hook.events] == ["spawn.created"]
 
 
+def test_bootstrap_from_disk_loads_owner_record_for_write_through(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Background workers can load state once and avoid transition rereads."""
+    repo = FakeSpawnRepository()
+    starter = _make_service(tmp_path, repository=repo)
+    spawn_id = _start_spawn(starter, status="running")
+    worker = _make_service(tmp_path, repository=repo)
+
+    bootstrapped = worker.bootstrap_from_disk(spawn_id)
+
+    assert bootstrapped is not None
+    assert bootstrapped.id == spawn_id
+
+    def fail_get_spawn(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("bootstrapped owner transitions must not call get_spawn")
+
+    monkeypatch.setattr(spawn_store, "get_spawn", fail_get_spawn)
+
+    assert worker.mark_finalizing(spawn_id) is True
+    outcome = worker.finalize(spawn_id, "succeeded", 0, origin="runner")
+
+    assert outcome.wrote is True
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "succeeded"
+
+
 # ---------------------------------------------------------------------------
 # 3. spawn.running event dispatched after mark_running
 # ---------------------------------------------------------------------------
@@ -522,10 +550,13 @@ def test_spawn_finalized_dispatched_when_authoritative_overrides_reconciler(
 ) -> None:
     """Authoritative finalize after reconciler terminal must emit replaced snapshot."""
     hook = RecordingHook()
-    svc = _make_service(tmp_path, hooks=[hook])
-    spawn_id = _start_spawn(svc, status="running")
+    repo = FakeSpawnRepository()
+    owner = _make_service(tmp_path, repository=repo)
+    spawn_id = _start_spawn(owner, status="running")
+    reconciler = _make_service(tmp_path, repository=repo)
+    svc = _make_service(tmp_path, hooks=[hook], repository=repo)
 
-    svc.finalize(spawn_id, "failed", 1, origin="reconciler", error="orphan")
+    reconciler.finalize(spawn_id, "failed", 1, origin="reconciler", error="orphan")
     hook.events.clear()
 
     outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
@@ -808,13 +839,28 @@ def test_mark_running_on_terminal_spawn_raises_value_error(tmp_path: Path) -> No
     service unchanged — the caller must handle the illegal-transition case.
     """
     repo = FakeSpawnRepository()
+    owner = _make_service(tmp_path, repository=repo)
+    spawn_id = _start_spawn(owner, status="running")
+    owner.finalize(spawn_id, "succeeded", 0, origin="runner")
     svc = _make_service(tmp_path, repository=repo)
-    spawn_id = _start_spawn(svc, status="running")
-    svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     # Spawn is now in terminal state: succeeded → running is forbidden
     with pytest.raises(ValueError, match="Illegal spawn transition"):
         svc.mark_running(spawn_id)
+
+
+def test_owner_mark_running_on_terminal_spawn_is_silently_dropped(tmp_path: Path) -> None:
+    """Owner mark_running must not overwrite terminal state when guard rejects."""
+    repo = FakeSpawnRepository()
+    svc = _make_service(tmp_path, repository=repo)
+    spawn_id = _start_spawn(svc, status="running")
+    svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+
+    svc.mark_running(spawn_id)
+
+    record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
+    assert record is not None
+    assert record.status == "succeeded"
 
 
 # ---------------------------------------------------------------------------
