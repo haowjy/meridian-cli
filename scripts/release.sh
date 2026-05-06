@@ -6,14 +6,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION_FILE="$ROOT_DIR/src/meridian/__init__.py"
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
-  scripts/release.sh patch [--push] [--remote origin] [--skip-ci]
-  scripts/release.sh minor [--push] [--remote origin] [--skip-ci]
-  scripts/release.sh major [--push] [--remote origin] [--skip-ci]
-  scripts/release.sh rc [--push] [--remote origin]
-  scripts/release.sh X.Y.Z [--push] [--remote origin] [--skip-ci]
-  scripts/release.sh X.Y.Z-rc.N [--push] [--remote origin]
+  scripts/release.sh prepare [patch|minor|major|rc|X.Y.Z|X.Y.Z-rc.N] [--push] [--remote origin] [--skip-ci]
+  scripts/release.sh resume [--push] [--remote origin]
+  scripts/release.sh status
+  scripts/release.sh abort
+
+  # Shorthand (routes through prepare):
+  scripts/release.sh patch --push
+  scripts/release.sh rc --push
 
 Bump types:
   patch   0.0.33 → 0.0.34
@@ -22,21 +24,18 @@ Bump types:
   rc      0.0.33 → 0.0.34-rc.1, or 0.0.34-rc.1 → 0.0.34-rc.2
 
 Behavior:
-  - Runs local checks (ruff, pyright, tests)
-  - Updates src/meridian/__init__.py
-  - Creates a release commit
-  - For stable releases: pushes commit, waits for CI green, then tags
-  - For RCs: commits and tags immediately (no CI gate)
-  - Use --skip-ci to bypass CI gate on stable releases
+  Stable: prepare pushes branch, waits for CI, then auto-resumes to tag.
+  RC: prepare commits, tags, and pushes immediately (no CI gate).
+  --skip-ci: bypasses CI gate on stable releases.
+  Resume: validates state and pushes the tag (for manual recovery after CI failure).
 
 Examples:
-  scripts/release.sh patch
-  scripts/release.sh rc                    # Create release candidate
-  scripts/release.sh rc --push             # Create and push RC
-  scripts/release.sh 0.1.0 --push          # Explicit version (CI-gated)
-  scripts/release.sh 0.1.0-rc.1            # Explicit RC version
-  scripts/release.sh patch --skip-ci       # Skip CI gate
-EOF
+  scripts/release.sh prepare patch
+  scripts/release.sh prepare rc --push
+  scripts/release.sh resume --push
+  scripts/release.sh status
+  scripts/release.sh abort
+USAGE
 }
 
 die() {
@@ -216,25 +215,71 @@ wait_for_ci() {
   return 1
 }
 
-main() {
-  [[ $# -ge 1 ]] || {
-    usage
-    exit 1
-  }
+release_dir() {
+  local git_dir
+  git_dir="$(git -C "$ROOT_DIR" rev-parse --absolute-git-dir)" || die "failed to resolve git dir"
+  printf '%s\n' "$git_dir/meridian-release"
+}
 
-  case "$1" in
-    -h|--help)
-      usage
-      exit 0
-      ;;
-  esac
+active_json() {
+  printf '%s\n' "$(release_dir)/active.json"
+}
 
-  local target="$1"
-  shift
+auth_json() {
+  printf '%s\n' "$(release_dir)/auth.json"
+}
 
-  local push_remote=""
-  local remote="origin"
-  local skip_ci=""
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+json_field() {
+  local file="$1"
+  local field="$2"
+  grep -m 1 "^[[:space:]]*\"$field\"[[:space:]]*:" "$file" \
+    | sed 's/^[[:space:]]*"[^"]*"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/'
+}
+
+write_active_json() {
+  local file="$1"
+  local version="$2"
+  local tag="$3"
+  local branch="$4"
+  local release_commit="$5"
+  local prepared_at="$6"
+  local remote="$7"
+  local skip_ci="$8"
+  local is_rc="$9"
+
+  mkdir -p "$(dirname "$file")" || die "failed to create release state directory"
+  printf '{\n  "version": "%s",\n  "tag": "%s",\n  "branch": "%s",\n  "release_commit": "%s",\n  "prepared_at": "%s",\n  "remote": "%s",\n  "skip_ci": "%s",\n  "is_rc": "%s"\n}\n' \
+    "$(json_escape "$version")" \
+    "$(json_escape "$tag")" \
+    "$(json_escape "$branch")" \
+    "$(json_escape "$release_commit")" \
+    "$(json_escape "$prepared_at")" \
+    "$(json_escape "$remote")" \
+    "$(json_escape "$skip_ci")" \
+    "$(json_escape "$is_rc")" > "$file" || die "failed to write active release state"
+}
+
+write_auth_json() {
+  local file="$1"
+  local tag="$2"
+  local target_sha="$3"
+  local remote="$4"
+
+  mkdir -p "$(dirname "$file")" || die "failed to create release state directory"
+  printf '{\n  "tag": "%s",\n  "target_sha": "%s",\n  "remote": "%s",\n  "action": "create"\n}\n' \
+    "$(json_escape "$tag")" \
+    "$(json_escape "$target_sha")" \
+    "$(json_escape "$remote")" > "$file" || die "failed to write tag auth state"
+}
+
+parse_release_options() {
+  push_remote=""
+  remote="origin"
+  skip_ci=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -256,11 +301,37 @@ main() {
         ;;
     esac
   done
+}
 
-  # No clean-tree check — concurrent agents routinely leave untracked/dirty
-  # files, and this script only stages the version file explicitly.
+stage_release_files() {
+  git -C "$ROOT_DIR" add "$VERSION_FILE"
+  # Stage frontend assets if they were built
+  if [[ -f "$ROOT_DIR/src/meridian/web_dist/index.html" ]]; then
+    git -C "$ROOT_DIR" add src/meridian/web_dist/
+  fi
+  # Also stage changelog if it was modified (promote [Unreleased])
+  if ! git -C "$ROOT_DIR" diff --quiet CHANGELOG.md 2>/dev/null; then
+    git -C "$ROOT_DIR" add CHANGELOG.md
+  fi
+}
+
+cmd_prepare() {
+  [[ $# -ge 1 ]] || die "prepare requires a target version or bump kind"
+
+  local target="$1"
+  shift
+  local push_remote remote skip_ci
+  parse_release_options "$@"
+
   local branch
   branch="$(require_branch)"
+  require_clean_tree
+
+  local active_file
+  active_file="$(active_json)"
+  if [[ -f "$active_file" ]]; then
+    die "release already active: $active_file"
+  fi
 
   # Pre-release checks
   printf 'Running pre-release checks...\n'
@@ -302,6 +373,9 @@ main() {
   if [[ "$next_version_value" =~ -rc\. ]]; then
     is_rc="1"
   fi
+  if [[ -n "$is_rc" && -n "$skip_ci" ]]; then
+    die "--skip-ci is only valid for stable releases"
+  fi
 
   write_version "$next_version_value"
   promote_changelog "$next_version_value"
@@ -313,22 +387,14 @@ main() {
     commit_msg="Release $next_version_value"
   fi
 
-  git -C "$ROOT_DIR" add "$VERSION_FILE"
-  # Stage frontend assets if they were built
-  if [[ -f "$ROOT_DIR/src/meridian/web_dist/index.html" ]]; then
-    git -C "$ROOT_DIR" add src/meridian/web_dist/
-  fi
-  # Also stage changelog if it was modified (promote [Unreleased])
-  if ! git -C "$ROOT_DIR" diff --quiet CHANGELOG.md 2>/dev/null; then
-    git -C "$ROOT_DIR" add CHANGELOG.md
-  fi
+  stage_release_files
   git -C "$ROOT_DIR" commit -m "$commit_msg"
 
-  # Stable releases: push commit first, wait for CI, then tag.
-  # RCs: tag immediately, no CI gate.
+  local release_commit
+  release_commit="$(git -C "$ROOT_DIR" rev-parse HEAD)" || die "failed to read release commit"
+
   if [[ -n "$is_rc" || -n "$skip_ci" ]]; then
-    # RC or --skip-ci: tag immediately
-    git -C "$ROOT_DIR" tag -a "$tag" -m "$commit_msg"
+    git -C "$ROOT_DIR" tag -a "$tag" "$release_commit" -m "$commit_msg"
     printf 'Released %s (tag: %s)\n' "$next_version_value" "$tag"
 
     if [[ -n "$push_remote" ]]; then
@@ -339,28 +405,178 @@ main() {
       printf 'Run:\n'
       printf '  git push %s %s && git push %s %s\n' "$remote" "$branch" "$remote" "$tag"
     fi
-  else
-    # Stable release: CI gate before tagging
+    return 0
+  fi
+
+  local prepared_at
+  prepared_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  write_active_json "$active_file" "$next_version_value" "$tag" "$branch" "$release_commit" "$prepared_at" "$remote" "$skip_ci" "$is_rc"
+
+  printf '\nPrepared release %s on branch %s\n' "$next_version_value" "$branch"
+  printf 'Created release commit %s\n' "$release_commit"
+  printf 'Wrote release state: %s\n' "$active_file"
+
+  if [[ -n "$push_remote" ]]; then
     printf 'Pushing commit to %s (CI gate before tagging)...\n' "$remote"
     git -C "$ROOT_DIR" push "$remote" "$branch"
+    printf 'Waiting for CI on %s...\n' "${release_commit:0:8}"
 
-    local commit_sha
-    commit_sha="$(git -C "$ROOT_DIR" rev-parse HEAD)"
-    printf 'Waiting for CI on %s...\n' "${commit_sha:0:8}"
-
-    if ! wait_for_ci "$remote" "$commit_sha"; then
+    if ! wait_for_ci "$remote" "$release_commit"; then
       printf '\nCI failed. The release commit is on %s but NOT tagged.\n' "$branch"
-      printf 'Fix the issue, then either:\n'
-      printf '  1. Push a fix and re-run: scripts/release.sh %s\n' "$next_version_value"
-      printf '  2. Tag manually:  git tag -a %s -m "%s" && git push %s %s\n' \
-        "$tag" "$commit_msg" "$remote" "$tag"
+      printf 'Release state was left for recovery: %s\n' "$active_file"
+      printf 'Fix the issue, then run:\n'
+      printf '  scripts/release.sh resume --push --remote %s\n' "$remote"
       die "CI gate failed — release aborted before tagging"
     fi
 
-    git -C "$ROOT_DIR" tag -a "$tag" -m "$commit_msg"
-    git -C "$ROOT_DIR" push "$remote" "$tag"
-    printf 'Released %s (tag: %s)\n' "$next_version_value" "$tag"
+    cmd_resume --push --remote "$remote"
+  else
+    printf '\nNext step: when ready, run:\n'
+    printf '  scripts/release.sh resume --push --remote %s\n' "$remote"
   fi
+}
+
+cmd_resume() {
+  local push_remote remote skip_ci
+  parse_release_options "$@"
+  [[ -z "$skip_ci" ]] || die "resume does not accept --skip-ci"
+
+  local active_file auth_file
+  active_file="$(active_json)"
+  auth_file="$(auth_json)"
+  [[ -f "$active_file" ]] || die "no active release: $active_file"
+
+  local version tag branch release_commit prepared_remote is_rc
+  version="$(json_field "$active_file" version)"
+  tag="$(json_field "$active_file" tag)"
+  branch="$(json_field "$active_file" branch)"
+  release_commit="$(json_field "$active_file" release_commit)"
+  prepared_remote="$(json_field "$active_file" remote)"
+  is_rc="$(json_field "$active_file" is_rc)"
+
+  [[ -n "$version" ]] || die "active release missing version"
+  [[ -n "$tag" ]] || die "active release missing tag"
+  [[ -n "$release_commit" ]] || die "active release missing release_commit"
+  [[ -z "$is_rc" ]] || die "resume is only valid for stable releases"
+
+  if [[ "$remote" = "origin" && -n "$prepared_remote" ]]; then
+    remote="$prepared_remote"
+  fi
+
+  local current_version
+  current_version="$(read_current_version)"
+  [[ "$current_version" = "$version" ]] || die "$VERSION_FILE version $current_version does not match prepared version $version"
+
+  git -C "$ROOT_DIR" merge-base --is-ancestor "$release_commit" HEAD \
+    || die "current branch does not contain release commit $release_commit"
+
+  local existing_tag_sha=""
+  if git -C "$ROOT_DIR" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    existing_tag_sha="$(git -C "$ROOT_DIR" rev-list -n 1 "$tag")" || die "failed to inspect existing tag $tag"
+    [[ "$existing_tag_sha" = "$release_commit" ]] \
+      || die "tag $tag already exists at $existing_tag_sha, expected $release_commit"
+    printf 'Tag %s already exists at expected commit; skipping tag creation.\n' "$tag"
+  else
+    git -C "$ROOT_DIR" tag -a "$tag" "$release_commit" -m "Release $version" \
+      || die "failed to create tag $tag"
+    printf 'Created tag %s at %s.\n' "$tag" "$release_commit"
+  fi
+
+  write_auth_json "$auth_file" "$tag" "$release_commit" "$remote"
+  printf 'Wrote tag auth state: %s\n' "$auth_file"
+
+  if [[ -n "$push_remote" ]]; then
+    if git -C "$ROOT_DIR" push "$remote" "$tag"; then
+      rm -f "$auth_file" "$active_file" || die "tag pushed, but failed to clear release state"
+      printf 'Pushed tag %s to %s.\n' "$tag" "$remote"
+      printf 'Cleared release state.\n'
+    else
+      printf 'Failed to push tag %s to %s; release state left for retry.\n' "$tag" "$remote" >&2
+      exit 1
+    fi
+  else
+    printf '\nNothing pushed. Run:\n'
+    printf '  git push %s %s\n' "$remote" "$tag"
+    printf 'Then clear release state with scripts/release.sh abort if no longer needed.\n'
+  fi
+}
+
+cmd_status() {
+  local active_file
+  active_file="$(active_json)"
+
+  if [[ ! -f "$active_file" ]]; then
+    printf 'No release in progress\n'
+    return 0
+  fi
+
+  printf 'Release in progress:\n'
+  printf '  version: %s\n' "$(json_field "$active_file" version)"
+  printf '  tag: %s\n' "$(json_field "$active_file" tag)"
+  printf '  branch: %s\n' "$(json_field "$active_file" branch)"
+  printf '  commit: %s\n' "$(json_field "$active_file" release_commit)"
+  printf '  prepared_at: %s\n' "$(json_field "$active_file" prepared_at)"
+  printf '  remote: %s\n' "$(json_field "$active_file" remote)"
+  printf '  state: %s\n' "$active_file"
+}
+
+cmd_abort() {
+  local active_file auth_file tag
+  active_file="$(active_json)"
+  auth_file="$(auth_json)"
+  tag=""
+
+  if [[ -f "$active_file" ]]; then
+    tag="$(json_field "$active_file" tag)"
+    rm -f "$active_file" "$auth_file" || die "failed to clear release state"
+    printf 'Cleared release state. Release commit remains in history.\n'
+  else
+    rm -f "$auth_file" || die "failed to clear tag auth state"
+    printf 'No release in progress. Cleared tag auth state if present.\n'
+  fi
+
+  if [[ -n "$tag" ]] && git -C "$ROOT_DIR" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    printf 'Notice: local tag %s still exists. Delete manually with: git tag -d %s\n' "$tag" "$tag"
+  fi
+}
+
+main() {
+  [[ $# -ge 1 ]] || {
+    usage
+    exit 1
+  }
+
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    prepare)
+      shift
+      cmd_prepare "$@"
+      ;;
+    resume)
+      shift
+      cmd_resume "$@"
+      ;;
+    status)
+      shift
+      [[ $# -eq 0 ]] || die "status does not accept arguments"
+      cmd_status
+      ;;
+    abort)
+      shift
+      [[ $# -eq 0 ]] || die "abort does not accept arguments"
+      cmd_abort
+      ;;
+    patch|minor|major|rc)
+      cmd_prepare "$@"
+      ;;
+    *)
+      validate_version "$1"
+      cmd_prepare "$@"
+      ;;
+  esac
 }
 
 main "$@"
