@@ -1,5 +1,27 @@
 # Troubleshooting
 
+## Spawns waste tokens on cache misses
+
+If long-running spawns feel expensive or slow to resume, the harness prompt cache may be going cold while Meridian waits.
+
+**Root cause:** Meridian's default `spawn wait` yield interval is 50 minutes. If the harness's prompt-cache TTL is shorter than that, the next turn reprocesses the full context from scratch.
+
+| Harness   | Cache TTL | Fix |
+|-----------|-----------|-----|
+| Claude Code | 5 minutes (default) or 1 hour (subscription / `ENABLE_PROMPT_CACHING_1H=1`) | Extend to 1 hour via `~/.claude/settings.json` (see [Getting Started](getting-started.md)) |
+| Codex CLI | 5–10 minutes typical, up to 1 hour extended | Usually automatic on current models |
+| OpenCode | Harness-dependent | Check OpenCode docs for cache behavior |
+
+**Quick workarounds:**
+
+```bash
+# Lower yield for a single wait
+meridian spawn wait --yield-after-secs 240
+
+# Global override
+export MERIDIAN_WAIT_YIELD_AFTER_SECONDS=240
+```
+
 ## `meridian` not found
 
 Run `uv tool update-shell` and restart your shell. If using a virtual environment, activate it first.

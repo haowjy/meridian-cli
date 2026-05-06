@@ -1039,10 +1039,10 @@ class HarnessConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     claude: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=900.0)
+        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=3000.0)
     )
     codex: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=900.0)
+        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=3000.0)
     )
     opencode: HarnessProfileConfig = Field(
         default_factory=lambda: HarnessProfileConfig(model="opencode-go/kimi-k2.6")
@@ -1065,7 +1065,7 @@ class MeridianConfig(BaseSettings):
     kill_grace_minutes: float = 2.0 / 60.0
     guardrail_timeout_minutes: float = 0.5
     wait_timeout_minutes: float = 30.0
-    default_wait_yield_seconds: float = 240.0
+    default_wait_yield_seconds: float = 3000.0
     min_wait_yield_seconds: float = 30.0
     default_model: str = ""
     default_harness: str = "codex"

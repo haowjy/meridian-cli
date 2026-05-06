@@ -14,6 +14,38 @@ Meridian is a coordination layer — it needs at least one harness installed to 
 
 **Platform**: macOS, Linux, Windows, WSL.
 
+## Performance Tip: Keep Prompt Cache Warm
+
+Long-running spawns can lose prompt-cache warmth while Meridian waits for them to finish. When the cache goes cold, the harness reprocesses the full context on resume — costing extra tokens and time.
+
+| Harness     | Default cache TTL | How to extend |
+| ----------- | ----------------- | ------------- |
+| Claude Code | 5 minutes (default) or 1 hour (subscription) | Set `ENABLE_PROMPT_CACHING_1H=1` in `~/.claude/settings.json` |
+| Codex CLI   | 5–10 minutes typical | Extended cache up to 1 hour (automatic on most models) |
+
+**For Claude Code users**, create or edit `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "ENABLE_PROMPT_CACHING_1H": "1"
+  }
+}
+```
+
+This opts into the 1-hour prompt-cache TTL so Meridian's default 50-minute `spawn wait` yield interval stays comfortably inside the warm window.
+
+If you cannot extend cache TTL, lower Meridian's yield interval instead:
+
+```bash
+# One-off adjustment for a single wait
+meridian spawn wait --yield-after-secs 240
+
+# Global override via environment variable
+export MERIDIAN_WAIT_YIELD_AFTER_SECONDS=240
+```
+
+
 ## Install
 
 ```bash

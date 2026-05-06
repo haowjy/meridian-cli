@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Changed
+- Default `spawn wait` yield intervals raised to **50 minutes** (3000s) for all harnesses, up from 15 min for Claude/Codex and 4 min for OpenCode. Long-running spawns no longer lose prompt-cache warmth mid-flight.
+### Changed
 - Spawn help examples now teach `--prompt-file ... --bg` as delegation default. Inline `-p` help points to prompt files for real handoffs.
 
 ### Added
