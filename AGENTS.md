@@ -46,6 +46,34 @@ Use `meridian spawn` (not `uv run meridian spawn`) to hand off tasks to subagent
 
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
+## Git Hooks
+
+Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.
+This activates the pre-push hook, which runs the full test suite before any push.
+A pre-commit hook (fast ruff check only) is also provided in `.githooks/` and is activated
+automatically via `core.hooksPath`, but it is an opt-in convenience only.
+
+**NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
+
+**NEVER manually create or push git tags matching `v*`.** Use `scripts/release.sh` for all releases.
+
+### Release workflow
+
+```bash
+# Stable release: prepare, wait for CI, then resume
+scripts/release.sh prepare patch --push        # runs checks, bumps, commits, pushes branch, waits for CI, tags
+
+# If CI fails — fix forward, then resume manually:
+scripts/release.sh resume --push
+
+# RC release (no CI gate):
+scripts/release.sh prepare rc --push
+
+# Check state / abandon:
+scripts/release.sh status
+scripts/release.sh abort
+```
+
 ### Logging Convention
 
 Catalog/config modules (`meridian.lib.catalog.*`, `meridian.lib.config.*`) use stdlib `logging.getLogger(__name__)`. Ops/launch/harness modules (`meridian.lib.ops.*`, `meridian.lib.launch.*`, `meridian.lib.harness.*`) use `structlog.get_logger()`. Split matters: launch diagnostic boundary (`capture_library_diagnostics()` in `diagnostics.py`) captures stdlib warnings during spawn/launch; structlog bypasses it, so catalog/config structlog warnings leak to stderr.

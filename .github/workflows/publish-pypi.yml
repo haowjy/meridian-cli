@@ -6,7 +6,45 @@ on:
       - "v*"
 
 jobs:
+  verify-provenance:
+    name: Verify release provenance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag provenance
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PY_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' src/meridian/__init__.py)
+
+          if [[ "$TAG_VERSION" != "$PY_VERSION" ]]; then
+            echo "::error::Tag version ($TAG_VERSION) != __init__.py ($PY_VERSION)"
+            exit 1
+          fi
+
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Tagged commit is not reachable from $DEFAULT_BRANCH"
+            exit 1
+          fi
+
+          COMMIT_MSG=$(git log -1 --format=%s "$GITHUB_SHA")
+          if [[ "$TAG_VERSION" == *-rc* ]]; then
+            [[ "$COMMIT_MSG" == "Release candidate $TAG_VERSION" ]] || \
+              echo "::warning::RC commit message doesn't match expected format"
+          else
+            if [[ "$COMMIT_MSG" != "Release $TAG_VERSION" ]]; then
+              echo "::error::Commit message doesn't match: expected 'Release $TAG_VERSION', got '$COMMIT_MSG'"
+              exit 1
+            fi
+          fi
+
+          echo "Provenance verified for v$TAG_VERSION"
+
   build:
+    needs: [verify-provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: read
