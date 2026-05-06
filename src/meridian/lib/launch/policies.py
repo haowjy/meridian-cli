@@ -14,7 +14,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 
-from .compiler import CompilerRequest, compile_launch_params, match_model_policy
+from .compiler import CompilerRequest, CompilerResult, compile_launch_params, match_model_policy
 from .launch_types import CompositionWarning
 from .materialize import materialize_harness
 from .resolve import (
@@ -197,6 +197,43 @@ def _fallback_entry_for_token(
     return token, harness_id, entry
 
 
+def _compiler_request_without_model_policies(
+    request: CompilerRequest,
+) -> CompilerRequest:
+    """Return a request variant that suppresses all model-policy sources."""
+
+    overlay = request.agent_overlay
+    if overlay is not None:
+        overlay = overlay.model_copy(update={"model_policies": ()})
+    return replace(
+        request,
+        agent_overlay=overlay,
+        profile_model_policies=(),
+    )
+
+
+def _policy_chain_fallback_candidate(
+    *,
+    compiler_request: CompilerRequest,
+    primary_result: CompilerResult,
+    model_explicit: bool,
+) -> CompilerResult | None:
+    """Return the demoted pre-policy candidate when policy rerouting applies."""
+
+    if model_explicit:
+        return None
+
+    stripped_request = _compiler_request_without_model_policies(compiler_request)
+    demoted_result = compile_launch_params(stripped_request)
+    if (
+        demoted_result.model_token == primary_result.model_token
+        and demoted_result.model == primary_result.model
+        and demoted_result.harness == primary_result.harness
+    ):
+        return None
+    return demoted_result
+
+
 def _try_harness_availability_fallback(
     *,
     harness_id: HarnessId,
@@ -214,17 +251,6 @@ def _try_harness_availability_fallback(
         fallback_token = fanout_entry.value
         fallback = _fallback_entry_for_token(
             fallback_token,
-            catalog=catalog,
-            harness_registry=harness_registry,
-        )
-        if fallback is not None:
-            return fallback
-
-    for rule in profile.model_policies:
-        if rule.match_type == "model-glob":
-            continue
-        fallback = _fallback_entry_for_token(
-            rule.match_value,
             catalog=catalog,
             harness_registry=harness_registry,
         )
@@ -462,27 +488,54 @@ def resolve_policies(
     harness_id = HarnessId(compiler_result.harness)
     harness_provenance = compiler_result.harness_provenance
 
-    fallback = _try_harness_availability_fallback(
-        harness_id=harness_id,
-        harness_registry=harness_registry,
-        profile=profile,
-        model_explicit=model_explicit,
-        catalog=catalog,
-    )
-    if fallback is not None:
-        fallback_model, harness_id, resolved_entry = fallback
-        compiler_request = replace(
-            compiler_request,
-            cli_overrides=explicit_user_overrides.model_copy(update={"model": fallback_model}),
-            resolved_alias_entry=resolved_entry,
+    materialized = None
+    try:
+        materialized = materialize_harness(compiler_result, harness_registry=harness_registry)
+    except ValueError as primary_error:
+        demoted_candidate = _policy_chain_fallback_candidate(
+            compiler_request=compiler_request,
+            primary_result=compiler_result,
+            model_explicit=model_explicit,
         )
-        compiler_result = compile_launch_params(compiler_request)
-        if compiler_result.harness != str(harness_id):
-            compiler_result = replace(compiler_result, harness=str(harness_id))
-        model_resolution_error = None
-        harness_provenance = "availability-fallback"
+        if demoted_candidate is not None:
+            try:
+                compiler_result = demoted_candidate
+                harness_id = HarnessId(compiler_result.harness)
+                harness_provenance = "availability-fallback"
+                model_resolution_error = None
+                materialized = materialize_harness(
+                    compiler_result,
+                    harness_registry=harness_registry,
+                )
+            except ValueError:
+                demoted_candidate = None
 
-    materialized = materialize_harness(compiler_result, harness_registry=harness_registry)
+        if demoted_candidate is None:
+            fallback = _try_harness_availability_fallback(
+                harness_id=harness_id,
+                harness_registry=harness_registry,
+                profile=profile,
+                model_explicit=model_explicit,
+                catalog=catalog,
+            )
+            if fallback is None:
+                raise primary_error
+            fallback_model, harness_id, resolved_entry = fallback
+            compiler_request = replace(
+                compiler_request,
+                cli_overrides=explicit_user_overrides.model_copy(update={"model": fallback_model}),
+                resolved_alias_entry=resolved_entry,
+            )
+            compiler_result = compile_launch_params(compiler_request)
+            if compiler_result.harness != str(harness_id):
+                compiler_result = replace(compiler_result, harness=str(harness_id))
+            model_resolution_error = None
+            harness_provenance = "availability-fallback"
+            materialized = materialize_harness(
+                compiler_result,
+                harness_registry=harness_registry,
+            )
+    assert materialized is not None
 
     model_token = compiler_result.model_token
     if model_token and resolved_entry is None and model_resolution_error is None:

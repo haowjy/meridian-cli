@@ -198,12 +198,13 @@ Each line shows: name, description, default model, and fanout aliases (deduplica
 
 When a spawn is launched with an agent profile and the profile's primary harness is not installed, Meridian automatically tries alternatives without failing:
 
-1. Walk `fanout` entries in declared order
-2. For each entry, resolve the token to a model/harness via the alias catalog
-3. Use the first entry whose harness is available
-4. If no fanout entry resolves, also scan exact `model` and `alias` match values in `model-policies`
-5. Skip `model-glob` rules in the fallback scan
-6. If nothing resolves, fail with a clear error naming the unavailable harness
+1. Compile the effective primary launch candidate (model + harness) after applying normal precedence and any matching `model-policies` override.
+2. If a `model-policies` rule reroutes the primary candidate, demote the pre-policy candidate to the next slot in the ordered availability chain.
+3. Append `fanout` entries in declared order.
+4. Walk this ordered chain and pick the first candidate whose harness is available.
+5. If nothing resolves, fail with a clear error naming the unavailable harness.
+
+`model-policies` are **not** scanned as an independent fallback list. Only the matched policy (if any) participates by promoting its override and demoting the previous primary candidate.
 
 This means a profile like:
 

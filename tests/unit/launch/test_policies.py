@@ -1147,7 +1147,7 @@ def test_resolve_policies_fanout_skips_raw_model_with_unresolvable_harness(
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_resolve_policies_fallback_scans_fanout_then_exact_policies_and_skips_globs(
+def test_resolve_policies_model_policy_promotion_demotes_previous_candidate_for_availability(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1157,29 +1157,16 @@ def test_resolve_policies_fallback_scans_fanout_then_exact_policies_and_skips_gl
         name="reviewer",
         frontmatter=(
             "name: reviewer\n"
-            "model: claude-choice\n"
-            "fanout:\n"
-            "  - alias: unavailable-too\n"
+            "model: codex-choice\n"
             "model-policies:\n"
-            "  - match: {model-glob: 'gpt-*'}\n"
-            "    override: {effort: low}\n"
-            "  - match: {alias: unavailable-policy}\n"
-            "    override: {autocompact: 44}\n"
-            "  - match: {model: gpt-5.4}\n"
-            "    override: {effort: high}\n"
+            "  - match: {alias: codex-choice}\n"
+            "    override: {harness: claude, effort: high}\n"
         ),
     )
     aliases = {
-        "claude-choice": _mock_alias(
-            alias="claude-choice", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE
+        "codex-choice": _mock_alias(
+            alias="codex-choice", model_id="gpt-5.5", harness=HarnessId.CODEX
         ),
-        "unavailable-too": _mock_alias(
-            alias="unavailable-too", model_id="opencode-model", harness=HarnessId.OPENCODE
-        ),
-        "unavailable-policy": _mock_alias(
-            alias="unavailable-policy", model_id="opencode-policy", harness=HarnessId.OPENCODE
-        ),
-        "gpt-5.4": _mock_alias(alias="", model_id="gpt-5.4", harness=HarnessId.CODEX),
     }
     _patch_alias_resolution(monkeypatch, resolved_entries=aliases)
     registry = HarnessRegistry()
@@ -1194,18 +1181,17 @@ def test_resolve_policies_fallback_scans_fanout_then_exact_policies_and_skips_gl
         configured_default_harness="claude",
     )
 
-    assert policies.model == "gpt-5.4"
+    assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
-    assert policies.resolved_overrides.effort == "high"
-    assert policies.resolved_overrides.autocompact is None
+    assert policies.resolved_overrides.effort is None
     assert policies.model_selection is not None
-    assert policies.model_selection.requested_token == "claude-choice"
-    assert policies.model_selection.selected_model_token == "gpt-5.4"
-    assert policies.model_selection.canonical_model_id == "gpt-5.4"
+    assert policies.model_selection.requested_token == "codex-choice"
+    assert policies.model_selection.selected_model_token == "codex-choice"
+    assert policies.model_selection.canonical_model_id == "gpt-5.5"
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_resolve_policies_raises_when_fallback_candidates_are_exhausted_and_glob_is_skipped(
+def test_resolve_policies_raises_when_fanout_is_exhausted_and_policy_matches_do_not_seed_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

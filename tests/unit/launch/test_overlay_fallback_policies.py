@@ -64,7 +64,7 @@ def resolve_policies(*, project_root: Path, **kwargs):
     )
 
 
-def test_overlay_model_policies_replace_profile_candidates_for_availability_fallback(
+def test_overlay_policy_replacement_without_match_does_not_create_fallback_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,22 +117,15 @@ def test_overlay_model_policies_replace_profile_candidates_for_availability_fall
         }
     )
 
-    policies = resolve_policies(
-        project_root=tmp_path,
-        layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
-        config_overrides=RuntimeOverrides(),
-        config=config,
-        harness_registry=registry,
-        configured_default_harness="claude",
-    )
-
-    assert policies.model == "gpt-5.5"
-    assert policies.harness == HarnessId.CODEX
-    assert policies.model_selection is not None
-    assert policies.model_selection.requested_token == "claude-choice"
-    assert policies.model_selection.selected_model_token == "overlay-codex"
-    assert policies.model_selection.canonical_model_id == "gpt-5.5"
-    assert policies.model_selection.harness_provenance == "availability-fallback"
+    with pytest.raises(ValueError, match="Unknown or unsupported harness 'claude'"):
+        resolve_policies(
+            project_root=tmp_path,
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides(),
+            config=config,
+            harness_registry=registry,
+            configured_default_harness="claude",
+        )
 
 
 def test_overlay_empty_model_policies_suppress_profile_fallback_candidates(
