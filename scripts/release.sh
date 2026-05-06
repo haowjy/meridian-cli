@@ -399,8 +399,17 @@ cmd_prepare() {
 
     if [[ -n "$push_remote" ]]; then
       git -C "$ROOT_DIR" push "$remote" "$branch"
-      git -C "$ROOT_DIR" push "$remote" "$tag"
-      printf 'Pushed branch %s and tag %s to %s\n' "$branch" "$tag" "$remote"
+      # Write auth marker for the pre-push hook before pushing tag.
+      local auth_file
+      auth_file="$(auth_json)"
+      write_auth_json "$auth_file" "$tag" "$release_commit" "$remote"
+      if git -C "$ROOT_DIR" push "$remote" "$tag"; then
+        rm -f "$auth_file"
+        printf 'Pushed branch %s and tag %s to %s\n' "$branch" "$tag" "$remote"
+      else
+        printf 'Branch pushed but tag push failed; auth state left for retry.\n' >&2
+        exit 1
+      fi
     else
       printf 'Run:\n'
       printf '  git push %s %s && git push %s %s\n' "$remote" "$branch" "$remote" "$tag"
