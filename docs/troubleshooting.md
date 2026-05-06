@@ -231,7 +231,7 @@ The overlay lives inside Meridian's runtime state at `~/.meridian/projects/<uuid
 
 Both primary sessions (`meridian`) and child spawns (`meridian spawn`) get isolated overlays. Child spawns also have Claude's parent-session sentinel (`CLAUDECODE`) cleared, allowing Claude to run without nesting restrictions under Meridian's control.
 
-When a spawn uses `--continue` or `--from`, Meridian seeds the overlay's `projects/` directory with the source session's transcript file so Claude can resume the prior conversation.
+When a spawn uses `--continue`, `--from`, or fork-style resume flows, Meridian seeds the target overlay's `projects/` directory from the source session transcript so Claude can resume prior context. Seeding only runs when Meridian can resolve both the source session ID and source execution CWD.
 
 **Session transcripts after a spawn completes**
 
@@ -239,7 +239,7 @@ When a spawn exits, Meridian copies its session transcript files from the overla
 
 **Reading spawn conversations**
 
-`meridian session log <spawn_id>` reads from Meridian's own `output.jsonl` artifact — the normalized conversation data captured by the runner. It does not read Claude's private session files in the overlay. `meridian spawn show <spawn_id>` includes a `claude_config_dir` field showing where the spawn's Claude config resided.
+`meridian session log <spawn_id>` may read Meridian spawn artifacts (`history.jsonl` / legacy `output.jsonl`) for active or fallback paths, and otherwise reads native harness transcripts. For Claude, those native transcripts resolve under Claude's session-store `projects/` tree. `meridian spawn show <spawn_id>` includes a `claude_config_dir` field showing where the spawn's Claude config resided.
 
 ## Stale state accumulating in `~/.meridian/`
 
