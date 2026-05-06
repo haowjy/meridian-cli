@@ -323,6 +323,10 @@ Every event has this envelope:
 | `turn.started` | `model`, `effort` | Prompt delivered, model responding |
 | `turn.completed` | `outcome`, `usage`, `cost` | Turn finished (`completed` / `failed` / `interrupted` / `cancelled`) |
 
+Meridian normalizes each harness's native stream into this turn contract. Clients
+should treat `turn.completed` as the single turn-end signal, regardless of
+whether the source harness was Claude, Codex, or OpenCode.
+
 ### Content
 
 All content uses type `content.delta` with a `stream_kind` in the payload:
@@ -353,6 +357,10 @@ Example:
 
 `item_type` values: `command_execution`, `file_change`, `mcp_tool_call`,
 `web_search`, `context_compaction`, `image_view`.
+
+Current Claude, Codex, and OpenCode chat backends all map their live native tool
+events into this `item.*` lifecycle, so clients should consume the canonical
+events above rather than harness-specific raw shapes.
 
 ### Files
 
@@ -451,9 +459,9 @@ Chats that were `active` or `draining` when the process died emit a
 
 | Harness | Runtime HITL | Model switching | Notes |
 | ------- | ------------ | --------------- | ----- |
-| Claude (`claude`) | No | Yes | Launch-time permissions only. Parses `--output-format stream-json`. |
-| Codex (`codex`) | Yes | Yes | Connects to Codex app-server via WebSocket. |
-| OpenCode (`opencode`) | No | Yes | Connects to OpenCode HTTP SSE API. |
+| Claude (`claude`) | No | Yes | Launch-time permissions only. Parses `--output-format stream-json`; live assistant/tool events normalize into canonical `turn.*`, `content.delta`, and `item.*` chat events. |
+| Codex (`codex`) | Yes | Yes | Connects to Codex app-server via WebSocket; live assistant/tool events normalize into canonical `turn.*`, `content.delta`, and `item.*` chat events. |
+| OpenCode (`opencode`) | No | Yes | Connects to OpenCode HTTP SSE API; live assistant/tool events normalize into canonical `turn.*`, `content.delta`, and `item.*` chat events. |
 
 For Codex managed primary session behavior, see [codex-tui-passthrough.md](codex-tui-passthrough.md).
 

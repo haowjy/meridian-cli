@@ -21,6 +21,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn help examples now teach `--prompt-file ... --bg` as delegation default. Inline `-p` help points to prompt files for real handoffs.
 
 ### Fixed
+- Chat normalization now maps current Claude, Codex, and OpenCode live event shapes into canonical chat events. Assistant text, reasoning, tool lifecycle, and turn completion now reach `meridian chat` clients instead of dropping output or leaving chats stuck `active`.
 - Profile `approval` and `sandbox` silently dropped during policy resolution. `model_policy_scope()` projection replaces hand-curated field subset — all non-routing fields now flow through the precedence ladder automatically. Agents with `approval: auto` now correctly receive `--permission-mode acceptEdits`.
 - Spawn finalization ownership (R4-R6): streaming runner now owns finalization from function entry via sentinel locals + outer try/finally. Eliminates gap where early setup exceptions escaped without terminal events. `launch_prepared_spawn()` extracted as shared helper for both foreground/background paths — structural ownership replaces `pre_launch_complete` boolean flag. Surface-level panic backstops added as last-resort around entire post-row sections.
 - TokenUsage expanded with cache_read_input_tokens, cache_creation_input_tokens, reasoning_tokens, cost_is_estimate.
