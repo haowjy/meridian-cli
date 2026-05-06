@@ -5,9 +5,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 ### Added
 - Spawn state v2: per-spawn `state.json` replaces monolithic `spawns.jsonl` event log. Primary launch drops from ~12s to <1s on large histories. One-time migration runs automatically on first access after upgrade; legacy file archived to `spawns.legacy-v1.jsonl`.
+- Project-scoped agent runtime overrides via `[agents.<name>]` in config files — override model, harness, effort, approval, sandbox, autocompact per agent without editing generated profiles.
+- Canonical launch-parameter compiler (`src/meridian/lib/launch/compiler.py`) as single authority for launch resolution with typed provenance.
+- Three-state model-policy overlay semantics: inherit, suppress, or replace profile model-policies.
+- Agent overlay rendering in `meridian config show`.
+- Compiler provenance helpers for `meridian spawn --dry-run` output.
 
 ### Changed
 - Default `spawn wait` yield intervals raised to **50 minutes** (3000s) for all harnesses, up from 15 min for Claude/Codex and 4 min for OpenCode. Long-running spawns no longer lose prompt-cache warmth mid-flight.
+- `resolve_policies()` now delegates to the compiler internally through a backward-compatible wrapper.
+- Policy-field resolution now uses one generalized N-tier precedence path.
 ### Changed
 - Spawn help examples now teach `--prompt-file ... --bg` as delegation default. Inline `-p` help points to prompt files for real handoffs.
 

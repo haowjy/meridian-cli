@@ -107,6 +107,61 @@ For config-file resolution, Meridian layers sources in this order:
 
 Environment variables still override all file values.
 
+## Agent Runtime Overrides
+
+Override agent runtime policy per-project without editing generated `.mars/agents/` profiles.
+
+### Config surface
+
+Accepted in all config files: `~/.meridian/config.toml` (user), `meridian.toml` (project), `meridian.local.toml` (project-local).
+
+```toml
+[agents.tech-lead]
+model = "gpt55"
+effort = "medium"
+approval = "auto"
+
+[[agents.tech-lead.model-policies]]
+match = { model-glob = "gpt*" }
+override = { effort = "medium", autocompact = 40 }
+```
+
+### Supported fields
+
+Scalar fields: `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`.
+
+**`timeout` is not supported in v1.** Timeout continues to resolve through existing CLI/env/profile/config paths.
+
+### Model-policy rules
+
+Each rule has a `match` table (exactly one of `model`, `alias`, `model-glob`) and an `override` table with supported fields: `harness`, `effort`, `approval`, `sandbox`, `autocompact`.
+
+List/tool override keys (`skills`, `tools`, `disallowed-tools`, `mcp-tools`) are rejected with a warning in config overlays.
+
+### Three-state model-policy semantics
+
+- **Key absent**: Inherits model-policies from the agent profile
+- **Empty array** (`model-policies = []`): Suppresses all conditional model overrides
+- **Non-empty array**: Replaces profile model-policies entirely (not merged)
+
+### Precedence
+
+Per-field, strongest to weakest:
+1. CLI flags (`-m`, `--effort`, etc.)
+2. Environment variables (`MERIDIAN_MODEL`, `MERIDIAN_EFFORT`)
+3. Matched model-policy rule (from overlay if present, profile otherwise)
+4. Agent overlay generic defaults
+5. Agent profile defaults
+6. Config-level defaults
+7. Model alias defaults
+
+Project-local overrides win over project, project wins over user config.
+
+### Observability
+
+- `meridian config show` displays agent overlay values with `[source: file]`
+- `meridian spawn --dry-run` reflects overlay-aware routing and provenance
+
 ## Example
 
 ```toml

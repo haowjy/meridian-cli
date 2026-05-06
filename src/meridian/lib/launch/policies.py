@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from fnmatch import fnmatchcase
+from dataclasses import dataclass, replace
 
-from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, ModelPolicyRule
+from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig
@@ -15,7 +14,9 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 
+from .compiler import CompilerRequest, compile_launch_params, match_model_policy
 from .launch_types import CompositionWarning
+from .materialize import materialize_harness
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -125,50 +126,6 @@ def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
         effort=entry.effort,
         autocompact=entry.autocompact,
     )
-
-
-def _policy_rule_to_overrides(rule: ModelPolicyRule) -> RuntimeOverrides:
-    return RuntimeOverrides.model_validate(dict(rule.overrides))
-
-
-def match_model_policy(
-    *,
-    model_policies: tuple[ModelPolicyRule, ...],
-    canonical_model_id: str,
-    selected_model_token: str,
-) -> ModelPolicyRule | None:
-    """Find the single best-matching model policy rule.
-
-    Ranking: exact model > exact alias > model-glob. Ambiguity at the
-    same specificity rank raises ValueError.
-    """
-
-    ranked_matches: list[tuple[int, ModelPolicyRule]] = []
-    for rule in model_policies:
-        if rule.match_type == "model" and rule.match_value == canonical_model_id:
-            ranked_matches.append((0, rule))
-        elif rule.match_type == "alias" and rule.match_value == selected_model_token:
-            ranked_matches.append((1, rule))
-        elif rule.match_type == "model-glob" and fnmatchcase(canonical_model_id, rule.match_value):
-            ranked_matches.append((2, rule))
-
-    if not ranked_matches:
-        return None
-
-    best_rank = min(rank for rank, _rule in ranked_matches)
-    winners = [rule for rank, rule in ranked_matches if rank == best_rank]
-    if len(winners) > 1:
-        match_kind = {
-            0: "model",
-            1: "alias",
-            2: "model-glob",
-        }[best_rank]
-        values = ", ".join(rule.match_value for rule in winners)
-        raise ValueError(
-            f"Ambiguous model-policies for {match_kind} match on "
-            f"'{selected_model_token}' / '{canonical_model_id}': {values}."
-        )
-    return winners[0]
 
 
 def _resolve_profile_model_overrides(
@@ -428,7 +385,8 @@ def resolve_policies(
 
     project_root = catalog.project_root
     pre_profile_resolved = resolve(*layers, config_overrides)
-    requested_agent = resolve(*layers).agent
+    explicit_user_overrides = resolve(*layers)
+    requested_agent = explicit_user_overrides.agent
     configured_default_agent = pre_profile_resolved.agent if not requested_agent else ""
 
     profile, profile_warning = load_agent_profile_with_fallback(
@@ -436,50 +394,74 @@ def resolve_policies(
         requested_agent=requested_agent,
         configured_default=configured_default_agent,
     )
+
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)
     full_layers = (*layers, profile_overrides, config_overrides)
-    resolved = resolve(*full_layers)
-    resolved_entry: AliasEntry | None = None
-    model_resolution_error: ValueError | None = None
-    if resolved.model:
-        try:
-            resolved_entry = catalog.resolve_model(resolved.model)
-        except ValueError as exc:
-            model_resolution_error = exc
-
-    matched_policy_rule = (
-        match_model_policy(
-            model_policies=profile.model_policies,
-            canonical_model_id=str(resolved_entry.model_id),
-            selected_model_token=resolved.model,
-        )
-        if profile is not None and resolved_entry is not None and resolved.model is not None
-        else None
-    )
-    policy_rule_harness = (
-        str(matched_policy_rule.overrides["harness"]).strip()
-        if matched_policy_rule is not None and matched_policy_rule.overrides.get("harness")
-        else None
-    )
+    base_resolved = resolve(*full_layers)
 
     model_layer_index = _first_set_layer_index(full_layers, "model")
     harness_layer_index = _first_set_layer_index(full_layers, "harness")
     pre_profile_layer_count = len(layers)
-
-    harness_id, harness_provenance = resolve_harness_routing(
-        resolved=resolved,
-        resolved_entry=resolved_entry,
-        model_resolution_error=model_resolution_error,
-        policy_rule_harness=policy_rule_harness,
-        model_layer_index=model_layer_index,
-        harness_layer_index=harness_layer_index,
-        pre_profile_layer_count=pre_profile_layer_count,
-        configured_default_harness=configured_default_harness,
-    )
     model_explicit = (
         model_layer_index is not None and model_layer_index < pre_profile_layer_count
     )
-    original_requested_token = resolved.model or ""
+    user_explicit_same_precedence = (
+        model_layer_index is not None
+        and harness_layer_index is not None
+        and model_layer_index == harness_layer_index
+        and model_layer_index < pre_profile_layer_count
+    )
+
+    selected_agent_name = profile.name if profile is not None else (
+        requested_agent or configured_default_agent or ""
+    )
+    agent_overlay = config.agents.get(selected_agent_name) if selected_agent_name else None
+
+    requested_model_token = (
+        explicit_user_overrides.model
+        or (agent_overlay.model if agent_overlay is not None else None)
+        or (profile.model if profile is not None else None)
+        or config_overrides.model
+        or ""
+    )
+    resolved_entry: AliasEntry | None = None
+    model_resolution_error: ValueError | None = None
+    if requested_model_token:
+        try:
+            resolved_entry = catalog.resolve_model(requested_model_token)
+        except ValueError as exc:
+            model_resolution_error = exc
+
+    alias_catalog = catalog.alias_map()
+    profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
+    compiler_request = CompilerRequest(
+        requested_agent=requested_agent,
+        requested_model=explicit_user_overrides.model,
+        cli_overrides=explicit_user_overrides,
+        env_overrides=RuntimeOverrides(),
+        agent_overlay=agent_overlay,
+        config_defaults=config_overrides,
+        profile_routing_model=profile.model if profile is not None else None,
+        profile_routing_harness=profile.harness if profile is not None else None,
+        profile_policy_effort=profile.effort if profile is not None else None,
+        profile_policy_approval=profile.approval if profile is not None else None,
+        profile_policy_sandbox=profile.sandbox if profile is not None else None,
+        profile_policy_autocompact=profile.autocompact if profile is not None else None,
+        profile_model_policies=profile.model_policies if profile is not None else None,
+        profile_legacy_models=dict(profile.models) if profile is not None else None,
+        profile_fanout=profile.fanout if profile is not None else None,
+        profile_skills=profile_skills,
+        resolved_alias_entry=resolved_entry,
+        alias_catalog=alias_catalog,
+        configured_default_harness=configured_default_harness,
+        project_root=project_root.as_posix(),
+    )
+
+    compiler_result = compile_launch_params(compiler_request)
+    requested_token_for_selection = compiler_result.model_selection_requested_token
+    harness_id = HarnessId(compiler_result.harness)
+    harness_provenance = compiler_result.harness_provenance
+
     fallback = _try_harness_availability_fallback(
         harness_id=harness_id,
         harness_registry=harness_registry,
@@ -489,41 +471,44 @@ def resolve_policies(
     )
     if fallback is not None:
         fallback_model, harness_id, resolved_entry = fallback
-        resolved = resolved.model_copy(update={"model": fallback_model})
+        compiler_request = replace(
+            compiler_request,
+            cli_overrides=explicit_user_overrides.model_copy(update={"model": fallback_model}),
+            resolved_alias_entry=resolved_entry,
+        )
+        compiler_result = compile_launch_params(compiler_request)
+        if compiler_result.harness != str(harness_id):
+            compiler_result = replace(compiler_result, harness=str(harness_id))
         model_resolution_error = None
         harness_provenance = "availability-fallback"
-    user_explicit_same_precedence = (
-        model_layer_index is not None
-        and harness_layer_index is not None
-        and model_layer_index == harness_layer_index
-        and model_layer_index < pre_profile_layer_count
-    )
+
+    materialized = materialize_harness(compiler_result, harness_registry=harness_registry)
+
+    model_token = compiler_result.model_token
+    if model_token and resolved_entry is None and model_resolution_error is None:
+        try:
+            resolved_entry = catalog.resolve_model(model_token)
+        except ValueError:
+            resolved_entry = None
+
     # If model resolution failed but harness is explicit, bind the raw
     # model string to the explicit harness instead of failing.
     if (
-        resolved.harness
+        base_resolved.harness
         and not user_explicit_same_precedence
         and model_resolution_error is not None
         and resolved_entry is None
-        and resolved.model is not None
+        and model_token
     ):
         resolved_entry = AliasEntry(
             alias="",
-            model_id=ModelId(resolved.model),
+            model_id=ModelId(model_token),
             resolved_harness=harness_id,
         )
         model_resolution_error = None
 
-    try:
-        adapter = harness_registry.get_subprocess_harness(harness_id)
-    except (KeyError, TypeError) as exc:
-        supported = ", ".join(str(harness) for harness in harness_registry.ids())
-        raise ValueError(
-            f"Unknown or unsupported harness '{harness_id}'. Available harnesses: {supported}"
-        ) from exc
-
     final_model, resolved_model_entry = _resolve_final_model(
-        layer_model=resolved.model,
+        layer_model=model_token,
         resolved_entry=resolved_entry,
         harness_id=harness_id,
         config=config,
@@ -540,6 +525,7 @@ def resolve_policies(
             harness_registry=harness_registry,
             is_policy_reroute=False,
         )
+
     selected_entry: AliasEntry | None = resolved_model_entry
     model_selection: ModelSelectionContext | None = None
     if final_model:
@@ -549,7 +535,7 @@ def resolve_policies(
             else final_model
         )
         model_selection = ModelSelectionContext(
-            requested_token=original_requested_token or final_model,
+            requested_token=requested_token_for_selection or final_model,
             selected_model_token=selected_model_token,
             canonical_model_id=(
                 str(selected_entry.model_id) if selected_entry is not None else final_model
@@ -561,34 +547,25 @@ def resolve_policies(
             harness_provenance=harness_provenance or "",
         )
 
-    alias_catalog = catalog.alias_map()
-    selected_model_token = (
+    selected_model_token_for_policy = (
         model_selection.selected_model_token if model_selection is not None else ""
     )
     matched_policy_rule = (
         match_model_policy(
             model_policies=profile.model_policies,
             canonical_model_id=str(selected_entry.model_id),
-            selected_model_token=selected_model_token,
+            selected_model_token=selected_model_token_for_policy,
         )
         if profile is not None and selected_entry is not None
         else None
     )
-    if matched_policy_rule is not None:
-        profile_model_overrides = _policy_rule_to_overrides(matched_policy_rule)
-        model_warning = None
-        model_entry_matched = True
-    else:
-        (
-            profile_model_overrides,
-            model_warning,
-            model_entry_matched,
-        ) = _resolve_profile_model_overrides(
+    model_entry_matched = matched_policy_rule is not None
+    if not model_entry_matched:
+        _, _, model_entry_matched = _resolve_profile_model_overrides(
             profile=profile,
             selected_entry=selected_entry,
             alias_catalog=alias_catalog,
         )
-    alias_defaults = RuntimeOverrides.from_alias_entry(selected_entry)
     profile_policy_defaults = profile_overrides.model_policy_scope()
     if (
         profile is not None
@@ -602,27 +579,23 @@ def resolve_policies(
             "model-policy defaults.",
             selected_entry.model_id,
         )
-    explicit_user_overrides = resolve(*layers).model_policy_scope()
-    model_policy_resolved = resolve_policy_fields(
-        explicit_user_overrides,
-        profile_model_overrides.model_policy_scope(),
-        profile_policy_defaults,
-        config_overrides.model_policy_scope(),
-        alias_defaults.model_policy_scope(),
-    )
     _log_unmatched_profile_policy_defaults(
         profile=profile,
         selected_entry=selected_entry,
         model_entry_matched=model_entry_matched,
         profile_defaults=profile_policy_defaults,
     )
-    resolved = resolved.model_copy(
-        update=model_policy_resolved.model_dump(exclude_none=True)
+
+    resolved = base_resolved.model_copy(
+        update=RuntimeOverrides(
+            effort=compiler_result.effort,
+            approval=compiler_result.approval,
+            sandbox=compiler_result.sandbox,
+            autocompact=compiler_result.autocompact,
+            timeout=compiler_result.timeout,
+        ).model_dump(exclude_none=True)
     )
 
-    profile_skills: tuple[str, ...] = ()
-    if profile is not None:
-        profile_skills = dedupe_skill_names(profile.skills)
     skill_selected_model_token = (
         model_selection.selected_model_token if model_selection is not None else final_model
     )
@@ -638,11 +611,13 @@ def resolve_policies(
         canonical_model_id=skill_canonical_model_id,
     )
 
+    model_warning = "\n".join(compiler_result.warnings).strip() or None
+
     return ResolvedPolicies(
         profile=profile,
         model=final_model,
         harness=harness_id,
-        adapter=adapter,
+        adapter=materialized.adapter,
         resolved_skills=resolved_skills,
         resolved_overrides=resolved,
         model_selection=model_selection,

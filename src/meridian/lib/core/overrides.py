@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
-    from meridian.lib.config.settings import MeridianConfig
+    from meridian.lib.config.settings import AgentOverlayConfig, MeridianConfig
     from meridian.lib.launch.types import LaunchRequest
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
@@ -215,6 +215,30 @@ class RuntimeOverrides(BaseModel):
             return cls()
         return cls(
             model=_normalize_optional_string(config.default_model) or None,
+        )
+
+    @classmethod
+    def from_agent_overlay_routing(cls, overlay: AgentOverlayConfig | None) -> RuntimeOverrides:
+        """Extract routing fields (model, harness) from an agent overlay."""
+
+        if overlay is None:
+            return cls()
+        return cls(
+            model=overlay.model,
+            harness=overlay.harness,
+        )
+
+    @classmethod
+    def from_agent_overlay_policy(cls, overlay: AgentOverlayConfig | None) -> RuntimeOverrides:
+        """Extract policy fields from an agent overlay."""
+
+        if overlay is None:
+            return cls()
+        return cls(
+            effort=overlay.effort,
+            approval=overlay.approval,
+            sandbox=overlay.sandbox,
+            autocompact=overlay.autocompact,
         )
 
     @classmethod

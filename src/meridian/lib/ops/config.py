@@ -874,6 +874,60 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
             )
         )
 
+    config = inspection.surface.resolved_config
+    if config.agents:
+        for agent_name, overlay in sorted(config.agents.items()):
+            for field_name in (
+                "model",
+                "harness",
+                "effort",
+                "approval",
+                "sandbox",
+                "autocompact",
+            ):
+                field_value = getattr(overlay, field_name, None)
+                if field_value is None:
+                    continue
+                values.append(
+                    ConfigResolvedValue(
+                        key=f"agents.{agent_name}.{field_name}",
+                        value=str(field_value),
+                        source="file",
+                        env_var=None,
+                    )
+                )
+
+            if overlay.model_policies is None:
+                continue
+
+            if len(overlay.model_policies) == 0:
+                values.append(
+                    ConfigResolvedValue(
+                        key=f"agents.{agent_name}.model-policies",
+                        value="[] (suppressed)",
+                        source="file",
+                        env_var=None,
+                    )
+                )
+                continue
+
+            rules_desc: list[str] = []
+            for rule in overlay.model_policies:
+                override_keys = ", ".join(
+                    f"{key}={value}" for key, value in sorted(rule.overrides.items())
+                )
+                rules_desc.append(
+                    f'match: {rule.match_type} "{rule.match_value}" → {override_keys}'
+                )
+            values.append(
+                ConfigResolvedValue(
+                    key=f"agents.{agent_name}.model-policies",
+                    value=f"{len(overlay.model_policies)} rules ({'; '.join(rules_desc)})",
+                    source="file",
+                    env_var=None,
+                )
+            )
+
     return ConfigShowOutput(
         path=inspection.surface.project_config.write_path.as_posix(),
         workspace=inspection.surface.workspace,
