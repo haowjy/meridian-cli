@@ -300,7 +300,7 @@ def _finalize_lifecycle_and_observe_session(
     )
     if primary_spawn_id is not None:
         duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
-        asyncio.run(
+        outcome = asyncio.run(
             SpawnApplicationService(
                 runtime_root,
                 lifecycle_service,
@@ -312,6 +312,11 @@ def _finalize_lifecycle_and_observe_session(
                 duration_secs=duration,
             )
         )
+        if not outcome.wrote:
+            logger.info(
+                "Launcher finalize skipped; spawn already terminal or missing: %s",
+                primary_spawn_id,
+            )
     try:
         observed_harness_session_id = None
         if primary_started_epoch > 0.0:

@@ -313,14 +313,16 @@ class SpawnStatsOutput(BaseModel):
             rows = [["model", "total", "succeeded", "failed", "success%", "cost"]]
             for model, stats in self.models.items():
                 label = model if model else "(unknown)"
-                rows.append([
-                    label,
-                    str(stats.total),
-                    str(stats.succeeded),
-                    str(stats.failed),
-                    stats.success_rate(),
-                    f"${stats.cost_usd:.2f}" if stats.cost_usd else "-",
-                ])
+                rows.append(
+                    [
+                        label,
+                        str(stats.total),
+                        str(stats.succeeded),
+                        str(stats.failed),
+                        stats.success_rate(),
+                        f"${stats.cost_usd:.2f}" if stats.cost_usd else "-",
+                    ]
+                )
             lines.append(tabular(rows))
         if self.children:
             from meridian.lib.core.formatting import tabular
@@ -418,9 +420,7 @@ class SpawnListOutput(BaseModel):
                         entry.agent or "-",
                         entry.desc or "-",
                         _truncate_cell(entry.model, max_chars=18) if entry.model else "-",
-                        f"{entry.duration_secs:.1f}s"
-                        if entry.duration_secs is not None
-                        else "-",
+                        f"{entry.duration_secs:.1f}s" if entry.duration_secs is not None else "-",
                     ]
                 )
         else:
@@ -503,7 +503,11 @@ class SpawnDetailOutput(BaseModel):
     failure_reason: str | None
     input_tokens: int | None
     output_tokens: int | None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
     cost_usd: float | None
+    cost_is_estimate: bool = False
     report_path: str | None
     report_summary: str | None
     report_body: str | None
@@ -570,6 +574,18 @@ class SpawnDetailOutput(BaseModel):
             wire["failure_reason"] = self.failure_reason
         if self.cost_usd is not None:
             wire["cost_usd"] = round(self.cost_usd, 4)
+            if self.cost_is_estimate:
+                wire["cost_estimated"] = True
+        if self.input_tokens is not None:
+            wire["input_tokens"] = self.input_tokens
+        if self.output_tokens is not None:
+            wire["output_tokens"] = self.output_tokens
+        if self.cache_read_input_tokens is not None:
+            wire["cache_read_input_tokens"] = self.cache_read_input_tokens
+        if self.cache_creation_input_tokens is not None:
+            wire["cache_creation_input_tokens"] = self.cache_creation_input_tokens
+        if self.reasoning_tokens is not None:
+            wire["reasoning_tokens"] = self.reasoning_tokens
         if self.report_path is not None:
             wire["report_path"] = self.report_path
         if self.report_summary is not None:
@@ -607,6 +623,8 @@ class SpawnDetailOutput(BaseModel):
         )
 
         cost_value: str | None = None if self.cost_usd is None else f"${self.cost_usd:.4f}"
+        if cost_value is not None and self.cost_is_estimate:
+            cost_value = f"~{cost_value}"
 
         failure_label: str | None = None
         failure_value = self.failure_reason
@@ -653,6 +671,22 @@ class SpawnDetailOutput(BaseModel):
             ("Work", work_value),
             ("Desc", desc_value),
             (failure_label or "Failure", failure_value),
+            ("Input tokens", None if self.input_tokens is None else str(self.input_tokens)),
+            ("Output tokens", None if self.output_tokens is None else str(self.output_tokens)),
+            (
+                "Cache read tokens",
+                None if self.cache_read_input_tokens is None else str(self.cache_read_input_tokens),
+            ),
+            (
+                "Cache creation tokens",
+                None
+                if self.cache_creation_input_tokens is None
+                else str(self.cache_creation_input_tokens),
+            ),
+            (
+                "Reasoning tokens",
+                None if self.reasoning_tokens is None else str(self.reasoning_tokens),
+            ),
             ("Cost", cost_value),
             ("Report", self.report_path),
             ("Last message", self.last_message),

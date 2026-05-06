@@ -8,7 +8,8 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,14 +22,13 @@ from meridian.lib.core.child_env import build_child_env_overrides
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
-from meridian.lib.core.lifecycle import SpawnLifecycleService, create_lifecycle_service
+from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.sink import OutputSink
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
-from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.context import LaunchContext, build_launch_context
 from meridian.lib.launch.cwd import resolve_child_execution_cwd
 from meridian.lib.launch.fork import materialize_fork
 from meridian.lib.launch.request import (
@@ -64,6 +64,7 @@ from ..runtime import (
     resolve_runtime_root,
     runtime_context,
 )
+from .failure_policy import finalize_launch_failure, finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
 from .query import read_spawn_row
 
@@ -78,29 +79,6 @@ _BACKGROUND_RUNTIME_ARTIFACTS = (
     _BACKGROUND_STDERR_FILENAME,
     _BG_WORKER_REQUEST_FILENAME,
 )
-
-
-def _complete_spawn_sync(
-    *,
-    runtime_root: Path,
-    lifecycle_service: SpawnLifecycleService,
-    spawn_id: SpawnId,
-    status: str,
-    exit_code: int,
-    origin: str,
-    **metrics: Any,
-) -> bool:
-    """Run the async shared finalization seam from synchronous launch paths."""
-
-    return asyncio.run(
-        SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
-            spawn_id,
-            status,
-            exit_code,
-            origin=origin,
-            **metrics,
-        )
-    )
 
 
 class _SpawnContext(BaseModel):
@@ -128,6 +106,19 @@ class BackgroundWorkerLaunchRequest(BaseModel):
 
     request: SpawnRequest
     runtime: LaunchRuntime
+
+
+@dataclass
+class PreparedExecutionHandoff:
+    """Result of successful spawn preparation. Owns session scope cleanup."""
+
+    resolved_request: SpawnRequest
+    launch_context: LaunchContext
+    session_context: _SessionExecutionContext
+    session_exit_stack: ExitStack
+    execution_cwd: str
+    work_id: str | None
+    harness_session_id_observer: Callable[[str], None]
 
 
 def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
@@ -475,6 +466,174 @@ def _session_execution_context(
         )
 
 
+async def _prepare_execution_handoff(
+    *,
+    spawn: Spawn,
+    request: SpawnRequest,
+    runtime_request: LaunchRuntime,
+    runtime: OperationRuntime,
+    runtime_root: Path,
+    project_paths: ProjectConfigPaths,
+    spawn_record: spawn_store.SpawnRecord | None,
+    execution_cwd: str,
+    work_id: str | None,
+    autocompact: int | None,
+    ctx: RuntimeContext | None,
+) -> PreparedExecutionHandoff:
+    """Prepare execution context; close session scope before re-raising on failure."""
+
+    resolved_context = runtime_context(ctx)
+    local_stack = ExitStack()
+    try:
+        harness_id = HarnessId(request.harness or "")
+        harness_adapter = runtime.harness_registry.get_subprocess_harness(harness_id)
+        resolved_session = _resolve_session_continuation(
+            request=request,
+            harness_id=harness_id,
+            harness_adapter=harness_adapter,
+        )
+
+        resolved_request = request.model_copy(update={"session": resolved_session})
+        resolved_agent_name = request.agent
+        if spawn_record is not None:
+            resolved_agent_name = (
+                request.agent if request.agent is not None else spawn_record.agent
+            )
+
+        session_context = local_stack.enter_context(
+            _session_execution_context(
+                runtime_root=runtime_root,
+                harness_id=request.harness or "",
+                harness_session_id=(
+                    resolved_session.requested_harness_session_id
+                    or (spawn_record.harness_session_id if spawn_record else "")
+                    or ""
+                ),
+                model=request.model or "",
+                session_agent=(
+                    (spawn_record.agent if spawn_record else "")
+                    or request.agent_metadata.get("session_agent", "")
+                ),
+                session_agent_path=(
+                    (spawn_record.agent_path if spawn_record else "")
+                    or request.agent_metadata.get("session_agent_path", "")
+                ),
+                skills=request.skills or (spawn_record.skills if spawn_record else ()),
+                session_skill_paths=(
+                    spawn_record.skill_paths if spawn_record else request.skill_paths
+                ),
+                run_agent_name=resolved_agent_name,
+                inherited_work_id=work_id,
+                forked_from_chat_id=resolved_session.forked_from_chat_id,
+                execution_cwd=execution_cwd,
+            )
+        )
+        resolved_request = resolved_request.model_copy(
+            update={"agent": session_context.resolved_agent_name}
+        )
+        # I-10/I-11: spawn row AND chat row now both exist. Materialize any
+        # pending fork via the sole owner so the spawn row receives the forked
+        # session ID via update_spawn (not pre-populated on the start row).
+        if resolved_session.continue_fork and resolved_session.requested_harness_session_id:
+            forked_session_id = materialize_fork(
+                adapter=harness_adapter,
+                source_session_id=resolved_session.requested_harness_session_id,
+                runtime_root=runtime_root,
+                spawn_id=spawn.spawn_id,
+            )
+            resolved_request = resolved_request.model_copy(
+                update={
+                    "session": resolved_request.session.model_copy(
+                        update={
+                            "requested_harness_session_id": forked_session_id,
+                            "continue_fork": False,
+                        }
+                    )
+                }
+            )
+
+        run_env_overrides = _spawn_child_env(
+            str(spawn.spawn_id),
+            work_id=session_context.work_id or work_id,
+            runtime_root=runtime_root,
+            autocompact=autocompact,
+            ctx=resolved_context,
+        )
+        runtime_work_id = session_context.work_id or work_id
+        final_request = resolved_request.model_copy(update={"work_id_hint": runtime_work_id})
+        launch_runtime = runtime_request.model_copy(
+            update={
+                "argv_intent": LaunchArgvIntent.SPEC_ONLY,
+                "runtime_root": runtime_root.as_posix(),
+                "project_paths_project_root": project_paths.project_root.as_posix(),
+                "project_paths_execution_cwd": execution_cwd,
+            }
+        )
+        launch_context = build_launch_context(
+            spawn_id=str(spawn.spawn_id),
+            request=final_request,
+            runtime=launch_runtime,
+            harness_registry=runtime.harness_registry,
+            plan_overrides=run_env_overrides,
+            runtime_work_id=runtime_work_id,
+        )
+        write_projection_artifacts(
+            log_dir=resolve_spawn_log_dir(project_paths.project_root, spawn.spawn_id),
+            launch_context=launch_context,
+            surface="spawn",
+        )
+
+        handoff_stack = local_stack
+        local_stack = ExitStack()
+        return PreparedExecutionHandoff(
+            resolved_request=final_request,
+            launch_context=launch_context,
+            session_context=session_context,
+            session_exit_stack=handoff_stack,
+            execution_cwd=execution_cwd,
+            work_id=runtime_work_id,
+            harness_session_id_observer=session_context.harness_session_id_observer,
+        )
+    except Exception:
+        local_stack.close()
+        raise
+
+
+async def _invoke_runner(
+    handoff: PreparedExecutionHandoff,
+    *,
+    spawn: Spawn,
+    runtime: OperationRuntime,
+    runtime_root: Path,
+    project_paths: ProjectConfigPaths,
+    event_observer: Callable[[StreamEvent], None] | None,
+    stream_stdout_to_terminal: bool,
+    stream_stderr_to_terminal: bool,
+    debug: bool,
+) -> int:
+    """Delegate execution to the streaming runner after preparation succeeds."""
+
+    return await execute_with_streaming(
+        spawn,
+        request=handoff.resolved_request,
+        launch_context=handoff.launch_context,
+        project_root=project_paths.project_root,
+        runtime_root=runtime_root,
+        artifacts=runtime.artifacts,
+        harness_session_id_observer=handoff.harness_session_id_observer,
+        event_observer=event_observer,
+        stream_stdout_to_terminal=stream_stdout_to_terminal,
+        stream_stderr_to_terminal=stream_stderr_to_terminal,
+        debug=debug,
+    )
+
+
+def _close_execution_handoff(handoff: PreparedExecutionHandoff) -> None:
+    """Close session scope owned by a prepared execution handoff."""
+
+    handoff.session_exit_stack.close()
+
+
 async def launch_prepared_spawn(
     *,
     spawn: Spawn,
@@ -493,138 +652,53 @@ async def launch_prepared_spawn(
     debug: bool = False,
     ctx: RuntimeContext | None = None,
 ) -> int:
-    """Shared post-row, pre-run launch handoff for foreground/background spawns.
+    """Shared post-row, pre-run launch handoff for foreground/background spawns."""
 
-    Owns launch_failure finalization for exceptions before runner entry.
-    After runner entry, execute_with_streaming owns terminal finalization.
-    """
-
-    resolved_context = runtime_context(ctx)
-    lifecycle_service = create_lifecycle_service(project_paths.project_root, runtime_root)
     try:
-        harness_id = HarnessId(request.harness or "")
-        harness_adapter = runtime.harness_registry.get_subprocess_harness(harness_id)
-        resolved_session = _resolve_session_continuation(
+        handoff = await _prepare_execution_handoff(
+            spawn=spawn,
             request=request,
-            harness_id=harness_id,
-            harness_adapter=harness_adapter,
-        )
-
-        resolved_request = request.model_copy(update={"session": resolved_session})
-        resolved_agent_name = request.agent
-        if spawn_record is not None:
-            resolved_agent_name = (
-                request.agent if request.agent is not None else spawn_record.agent
-            )
-
-        with _session_execution_context(
+            runtime_request=runtime_request,
+            runtime=runtime,
             runtime_root=runtime_root,
-            harness_id=request.harness or "",
-            harness_session_id=(
-                resolved_session.requested_harness_session_id
-                or (spawn_record.harness_session_id if spawn_record else "")
-                or ""
-            ),
-            model=request.model or "",
-            session_agent=(
-                (spawn_record.agent if spawn_record else "")
-                or request.agent_metadata.get("session_agent", "")
-            ),
-            session_agent_path=(
-                (spawn_record.agent_path if spawn_record else "")
-                or request.agent_metadata.get("session_agent_path", "")
-            ),
-            skills=request.skills or (spawn_record.skills if spawn_record else ()),
-            session_skill_paths=(
-                spawn_record.skill_paths if spawn_record else request.skill_paths
-            ),
-            run_agent_name=resolved_agent_name,
-            inherited_work_id=work_id,
-            forked_from_chat_id=resolved_session.forked_from_chat_id,
+            project_paths=project_paths,
+            spawn_record=spawn_record,
             execution_cwd=execution_cwd,
-        ) as session_context:
-            resolved_request = resolved_request.model_copy(
-                update={"agent": session_context.resolved_agent_name}
-            )
-            # I-10/I-11: spawn row AND chat row now both exist. Materialize any
-            # pending fork via the sole owner so the spawn row receives the forked
-            # session ID via update_spawn (not pre-populated on the start row).
-            if resolved_session.continue_fork and resolved_session.requested_harness_session_id:
-                forked_session_id = materialize_fork(
-                    adapter=harness_adapter,
-                    source_session_id=resolved_session.requested_harness_session_id,
-                    runtime_root=runtime_root,
-                    spawn_id=spawn.spawn_id,
-                )
-                resolved_request = resolved_request.model_copy(
-                    update={
-                        "session": resolved_request.session.model_copy(
-                            update={
-                                "requested_harness_session_id": forked_session_id,
-                                "continue_fork": False,
-                            }
-                        )
-                    }
-                )
-
-            run_env_overrides = _spawn_child_env(
-                str(spawn.spawn_id),
-                work_id=session_context.work_id or work_id,
-                runtime_root=runtime_root,
-                autocompact=autocompact,
-                ctx=resolved_context,
-            )
-            runtime_work_id = session_context.work_id or work_id
-            final_request = resolved_request.model_copy(
-                update={"work_id_hint": runtime_work_id}
-            )
-            launch_runtime = runtime_request.model_copy(
-                update={
-                    "argv_intent": LaunchArgvIntent.SPEC_ONLY,
-                    "runtime_root": runtime_root.as_posix(),
-                    "project_paths_project_root": project_paths.project_root.as_posix(),
-                    "project_paths_execution_cwd": execution_cwd,
-                }
-            )
-            launch_context = build_launch_context(
-                spawn_id=str(spawn.spawn_id),
-                request=final_request,
-                runtime=launch_runtime,
-                harness_registry=runtime.harness_registry,
-                plan_overrides=run_env_overrides,
-                runtime_work_id=runtime_work_id,
-            )
-            write_projection_artifacts(
-                log_dir=resolve_spawn_log_dir(project_paths.project_root, spawn.spawn_id),
-                launch_context=launch_context,
-                surface="spawn",
-            )
-
-            # Hand off to runner — runner owns finalization from here.
-            return await execute_with_streaming(
-                spawn,
-                request=final_request,
-                launch_context=launch_context,
-                project_root=project_paths.project_root,
-                runtime_root=runtime_root,
-                artifacts=runtime.artifacts,
-                harness_session_id_observer=session_context.harness_session_id_observer,
-                event_observer=event_observer,
-                stream_stdout_to_terminal=stream_stdout_to_terminal,
-                stream_stderr_to_terminal=stream_stderr_to_terminal,
-                debug=debug,
-            )
+            work_id=work_id,
+            autocompact=autocompact,
+            ctx=ctx,
+        )
     except Exception as exc:
-        # Pre-run failure: this helper owns launch_failure finalization.
-        await SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
+        await finalize_launch_failure(
+            runtime_root,
+            project_paths.project_root,
             spawn.spawn_id,
-            "failed",
-            1,
-            origin="launch_failure",
-            error=str(exc),
+            str(exc),
         )
         logger.exception("Pre-launch setup failed.", spawn_id=str(spawn.spawn_id))
         return 1
+
+    try:
+        return await _invoke_runner(
+            handoff,
+            spawn=spawn,
+            runtime=runtime,
+            runtime_root=runtime_root,
+            project_paths=project_paths,
+            event_observer=event_observer,
+            stream_stdout_to_terminal=stream_stdout_to_terminal,
+            stream_stderr_to_terminal=stream_stderr_to_terminal,
+            debug=debug,
+        )
+    finally:
+        try:
+            _close_execution_handoff(handoff)
+        except Exception:
+            logger.warning(
+                "Post-run session teardown failed.",
+                spawn_id=str(spawn.spawn_id),
+                exc_info=True,
+            )
 
 
 async def _execute_existing_spawn(
@@ -656,29 +730,25 @@ async def _execute_existing_spawn(
         logger.error("Spawn not found for background execution.", spawn_id=str(spawn_id))
         return 1
 
-    lifecycle_service = create_lifecycle_service(project_paths.project_root, runtime_root)
-
     request = launch_request.request
     runtime_request = launch_request.runtime
     resolved_model = (request.model or "").strip()
     resolved_harness_id = (request.harness or "").strip()
     resolved_prompt = (request.prompt or "").strip()
     if not resolved_prompt:
-        await SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
+        await finalize_launch_failure(
+            runtime_root,
+            project_paths.project_root,
             spawn_id,
-            "failed",
-            1,
-            origin="launch_failure",
-            error="Missing prompt",
+            "Missing prompt",
         )
         return 1
     if not resolved_harness_id:
-        await SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
+        await finalize_launch_failure(
+            runtime_root,
+            project_paths.project_root,
             spawn_id,
-            "failed",
-            1,
-            origin="launch_failure",
-            error="Missing harness",
+            "Missing harness",
         )
         return 1
 
@@ -784,7 +854,6 @@ def execute_spawn_background(
         )
     log_dir = resolve_spawn_log_dir(project_paths.project_root, context.spawn.spawn_id)
     log_dir.mkdir(parents=True, exist_ok=True)
-    lifecycle_service = create_lifecycle_service(project_paths.project_root, context.runtime_root)
     try:
         _write_params_json(
             project_paths,
@@ -815,14 +884,11 @@ def execute_spawn_background(
             ),
         )
     except Exception as exc:
-        _complete_spawn_sync(
-            runtime_root=context.runtime_root,
-            lifecycle_service=lifecycle_service,
-            spawn_id=context.spawn.spawn_id,
-            status="failed",
-            exit_code=1,
-            origin="launch_failure",
-            error=str(exc),
+        finalize_launch_failure_sync(
+            context.runtime_root,
+            project_paths.project_root,
+            context.spawn.spawn_id,
+            str(exc),
         )
         _cleanup_background_runtime_artifacts(log_dir)
         logger.exception(
@@ -875,14 +941,11 @@ def execute_spawn_background(
                 **_build_detached_popen_kwargs(),
             )
     except OSError as exc:
-        _complete_spawn_sync(
-            runtime_root=context.runtime_root,
-            lifecycle_service=lifecycle_service,
-            spawn_id=context.spawn.spawn_id,
-            status="failed",
-            exit_code=1,
-            origin="launch_failure",
-            error=str(exc),
+        finalize_launch_failure_sync(
+            context.runtime_root,
+            project_paths.project_root,
+            context.spawn.spawn_id,
+            str(exc),
         )
         _cleanup_background_runtime_artifacts(log_dir)
         logger.exception(
@@ -906,7 +969,7 @@ def execute_spawn_background(
             exit_code=1,
         )
 
-    lifecycle_service.mark_running(
+    create_lifecycle_service(project_paths.project_root, context.runtime_root).mark_running(
         context.spawn.spawn_id,
         launch_mode=BACKGROUND_LAUNCH_MODE,
         runner_pid=process.pid,
@@ -1019,18 +1082,11 @@ def execute_spawn_blocking(
             )
         )
     except Exception as exc:
-        lifecycle_service = create_lifecycle_service(
-            project_paths.project_root,
+        finalize_launch_failure_sync(
             context.runtime_root,
-        )
-        _complete_spawn_sync(
-            runtime_root=context.runtime_root,
-            lifecycle_service=lifecycle_service,
-            spawn_id=spawn.spawn_id,
-            status="failed",
-            exit_code=1,
-            origin="launch_failure",
-            error=str(exc),
+            project_paths.project_root,
+            spawn.spawn_id,
+            str(exc),
         )
         logger.exception("Foreground spawn crashed.", spawn_id=str(spawn.spawn_id))
         return SpawnActionOutput(
@@ -1136,15 +1192,11 @@ def _background_worker_main(
             launch_request = _load_bg_worker_request(log_dir)
         except Exception as exc:
             error = f"Failed to load background worker request: {exc}"
-            lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-            _complete_spawn_sync(
-                runtime_root=runtime_root,
-                lifecycle_service=lifecycle_service,
-                spawn_id=spawn_id,
-                status="failed",
-                exit_code=1,
-                origin="launch_failure",
-                error=error,
+            finalize_launch_failure_sync(
+                runtime_root,
+                project_root,
+                spawn_id,
+                error,
             )
             logger.error(
                 "Failed to load background worker request.",
@@ -1164,15 +1216,11 @@ def _background_worker_main(
             )
         )
     except Exception:
-        lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-        _complete_spawn_sync(
-            runtime_root=runtime_root,
-            lifecycle_service=lifecycle_service,
-            spawn_id=spawn_id,
-            status="failed",
-            exit_code=1,
-            origin="launch_failure",
-            error="background_worker_crash",
+        finalize_launch_failure_sync(
+            runtime_root,
+            project_root,
+            spawn_id,
+            "background_worker_crash",
         )
         logger.exception("Background worker crashed.", spawn_id=str(spawn_id))
         return 1

@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from meridian.lib.core.domain import SpawnStatus
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.state.spawn.repository import SpawnRepository
-    from meridian.lib.state.spawn_store import LaunchMode, SpawnOrigin, SpawnRecord
+    from meridian.lib.state.spawn_store import FinalizeOutcome, LaunchMode, SpawnOrigin, SpawnRecord
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +140,10 @@ class LifecycleEvent:
     total_cost_usd: float | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cache_read_input_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    cost_is_estimate: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -311,10 +315,14 @@ class SpawnLifecycleService:
         total_cost_usd: float | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        cache_read_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
+        cost_is_estimate: bool = False,
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
-    ) -> bool:
+    ) -> FinalizeOutcome:
         """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
         # Authoritative transition write still happens in spawn_store.
         outcome = spawn_store.finalize_spawn(
@@ -327,6 +335,10 @@ class SpawnLifecycleService:
             total_cost_usd=total_cost_usd,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            reasoning_tokens=reasoning_tokens,
+            cost_is_estimate=cost_is_estimate,
             finished_at=finished_at,
             error=error,
             clock=clock,
@@ -352,7 +364,7 @@ class SpawnLifecycleService:
             self._emit_telemetry_event_for_record(
                 f"spawn.{outcome.snapshot.status}", outcome.snapshot
             )
-        return outcome.transitioned
+        return outcome
 
     def mark_finalizing(self, spawn_id: str) -> bool:
         """CAS transition running -> finalizing.  No lifecycle event dispatched."""
@@ -375,12 +387,16 @@ class SpawnLifecycleService:
         total_cost_usd: float | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        cache_read_input_tokens: int | None = None,
+        cache_creation_input_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
+        cost_is_estimate: bool = False,
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
     ) -> bool:
         """Cancel a spawn — convenience for finalize(status='cancelled', origin='cancel')."""
-        return self.finalize(
+        outcome = self.finalize(
             spawn_id,
             "cancelled",
             exit_code,
@@ -389,10 +405,15 @@ class SpawnLifecycleService:
             total_cost_usd=total_cost_usd,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            reasoning_tokens=reasoning_tokens,
+            cost_is_estimate=cost_is_estimate,
             finished_at=finished_at,
             error=error,
             clock=clock,
         )
+        return outcome.transitioned
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -456,6 +477,10 @@ class SpawnLifecycleService:
         total_cost_usd: float | None = None
         input_tokens: int | None = None
         output_tokens: int | None = None
+        cache_read_input_tokens: int | None = None
+        cache_creation_input_tokens: int | None = None
+        reasoning_tokens: int | None = None
+        cost_is_estimate = False
 
         if event_type == "spawn.finalized" and record is not None:
             rec_status = record.status
@@ -466,6 +491,10 @@ class SpawnLifecycleService:
             total_cost_usd = record.total_cost_usd
             input_tokens = record.input_tokens
             output_tokens = record.output_tokens
+            cache_read_input_tokens = record.cache_read_input_tokens
+            cache_creation_input_tokens = record.cache_creation_input_tokens
+            reasoning_tokens = record.reasoning_tokens
+            cost_is_estimate = record.cost_is_estimate
 
         return LifecycleEvent(
             event_id=generate_event_id(spawn_id, event_type, 0),
@@ -484,6 +513,10 @@ class SpawnLifecycleService:
             total_cost_usd=total_cost_usd,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            reasoning_tokens=reasoning_tokens,
+            cost_is_estimate=cost_is_estimate,
         )
 
     def _build_event_from_record(
@@ -497,6 +530,10 @@ class SpawnLifecycleService:
         total_cost_usd: float | None = None
         input_tokens: int | None = None
         output_tokens: int | None = None
+        cache_read_input_tokens: int | None = None
+        cache_creation_input_tokens: int | None = None
+        reasoning_tokens: int | None = None
+        cost_is_estimate = False
 
         if event_type == "spawn.finalized":
             rec_status = record.status
@@ -507,6 +544,10 @@ class SpawnLifecycleService:
             total_cost_usd = record.total_cost_usd
             input_tokens = record.input_tokens
             output_tokens = record.output_tokens
+            cache_read_input_tokens = record.cache_read_input_tokens
+            cache_creation_input_tokens = record.cache_creation_input_tokens
+            reasoning_tokens = record.reasoning_tokens
+            cost_is_estimate = record.cost_is_estimate
 
         return LifecycleEvent(
             event_id=generate_event_id(record.id, event_type, 0),
@@ -525,6 +566,10 @@ class SpawnLifecycleService:
             total_cost_usd=total_cost_usd,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            reasoning_tokens=reasoning_tokens,
+            cost_is_estimate=cost_is_estimate,
         )
 
 

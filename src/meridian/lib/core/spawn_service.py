@@ -58,6 +58,25 @@ class CancelOutcome:
     harness: str | None = None
 
 
+
+
+@dataclass(frozen=True)
+class CompleteSpawnOutcome:
+    """Surface-neutral result of a spawn finalization attempt."""
+
+    wrote: bool
+    transitioned: bool
+    entered_finalizing: bool
+    already_terminal: bool
+    snapshot: SpawnRecord | None
+    spawn_id: SpawnId
+
+    @property
+    def accepted(self) -> bool:
+        """True when finalization was written (first OR replacement)."""
+        return self.wrote
+
+
 @dataclass(frozen=True)
 class PreparedSpawn:
     """Result of successful spawn preparation.
@@ -479,11 +498,11 @@ class SpawnApplicationService:
         origin: str,
         duration_secs: float | None = None,
         **metrics: object,
-    ) -> bool:
+    ) -> CompleteSpawnOutcome:
         """Finalize a spawn through the shared idempotent terminal seam.
 
-        Returns True when this call performed the first terminal transition.
-        Returns False when the spawn is missing or already terminal.
+        Returns a rich outcome distinguishing accepted writes, first
+        transitions, pre-existing terminal rows, and post-write snapshots.
         """
         lock = await self._locks.acquire(str(spawn_id))
         async with lock:
@@ -505,21 +524,38 @@ class SpawnApplicationService:
         origin: str,
         duration_secs: float | None = None,
         **metrics: object,
-    ) -> bool:
+    ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
-        if record is None or self.is_terminal(record.status):
-            return False
+        if record is None:
+            return CompleteSpawnOutcome(
+                wrote=False,
+                transitioned=False,
+                entered_finalizing=False,
+                already_terminal=False,
+                snapshot=None,
+                spawn_id=spawn_id,
+            )
+        was_terminal = self.is_terminal(record.status)
 
-        if record.status != "finalizing":
-            self._lifecycle.mark_finalizing(str(spawn_id))
+        entered_finalizing = False
+        if record.status == "running":
+            entered_finalizing = self._lifecycle.mark_finalizing(str(spawn_id))
 
-        return self._lifecycle.finalize(
+        outcome = self._lifecycle.finalize(
             str(spawn_id),
             cast("SpawnStatus", status),
             exit_code,
             origin=cast("SpawnOrigin", origin),
             duration_secs=duration_secs,
             **cast("dict[str, Any]", metrics),
+        )
+        return CompleteSpawnOutcome(
+            wrote=outcome.wrote,
+            transitioned=outcome.transitioned,
+            entered_finalizing=entered_finalizing,
+            already_terminal=was_terminal,
+            snapshot=outcome.snapshot,
+            spawn_id=spawn_id,
         )
 
     # ---- Archive Operations (SEAM-5) ----
@@ -664,6 +700,7 @@ def _started_at_epoch(started_at: str | None) -> float | None:
 
 __all__ = [
     "CancelOutcome",
+    "CompleteSpawnOutcome",
     "KeyedLockRegistry",
     "PreparedSpawn",
     "SpawnApplicationService",

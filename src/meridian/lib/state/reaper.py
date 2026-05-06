@@ -240,7 +240,7 @@ def _finalize_and_log(
     error: str | None, reason: str, snapshot: ArtifactSnapshot, now: float
 ) -> SpawnRecord:
     lifecycle_service = create_lifecycle_service(runtime_root.parent, runtime_root)
-    if not asyncio.run(
+    outcome = asyncio.run(
         SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
             SpawnId(record.id),
             status,
@@ -248,7 +248,8 @@ def _finalize_and_log(
             origin="reconciler",
             error=error,
         )
-    ):
+    )
+    if not outcome.wrote:
         return record
     inactivity_secs = (
         max(0.0, now - snapshot.last_activity_epoch)

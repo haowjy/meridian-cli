@@ -11,13 +11,13 @@ from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn
+from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
     has_durable_report_completion,
@@ -74,6 +74,7 @@ from meridian.lib.launch.streaming.decision import (
     terminal_event_outcome,
 )
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
+from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
 from meridian.lib.safety.guardrails import run_guardrails
 from meridian.lib.safety.redaction import SecretSpec, redact_secret_bytes
@@ -95,7 +96,6 @@ if TYPE_CHECKING:
 _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
 logger = structlog.get_logger(__name__)
-_TERMINAL_EVENT_GRACE_SECONDS = 0.5
 _HEARTBEAT_INTERVAL_SECS = 30.0
 
 
@@ -110,6 +110,50 @@ class _AttemptRuntime:
     terminated_by_report_watchdog: bool
     terminal_observed: bool = False
     start_error: str | None = None
+
+
+@dataclass
+class StreamingRunConclusion:
+    """Accumulates execution outcome across retry attempts."""
+
+    exit_code: int = DEFAULT_INFRA_EXIT_CODE
+    failure_reason: str | None = None
+    extracted: FinalizeExtraction | None = None
+    terminated_after_completion: bool = False
+    final_attempt_terminal_observed: bool = False
+    retries_attempted: int = 0
+
+    def absorb_attempt(self, attempt: _AttemptRuntime) -> None:
+        """Merge one attempt's terminal fields into the run conclusion."""
+
+        self.exit_code = attempt.drain_exit_code
+        self.terminated_after_completion = (
+            self.terminated_after_completion or attempt.terminated_by_report_watchdog
+        )
+        self.final_attempt_terminal_observed = attempt.terminal_observed
+
+    def resolve_terminal_state(
+        self,
+        *,
+        received_signal: signal.Signals | None,
+    ) -> tuple[SpawnStatus, int, str | None]:
+        """Compute the persisted terminal state from accumulated execution evidence."""
+
+        cancelled = not self.final_attempt_terminal_observed and (
+            self.failure_reason in {"cancelled", "terminated"}
+            or received_signal in {signal.SIGINT, signal.SIGTERM}
+        )
+        durable_report_completion = (
+            self.extracted is not None
+            and has_durable_report_completion(self.extracted.report.content)
+        )
+        return resolve_execution_terminal_state(
+            exit_code=self.exit_code,
+            failure_reason=self.failure_reason,
+            cancelled=cancelled,
+            durable_report_completion=durable_report_completion,
+            terminated_after_completion=self.terminated_after_completion,
+        )
 
 
 def _touch_heartbeat_file(
@@ -231,25 +275,6 @@ def _emit_stream_event(
         return
     sys.stderr.write(f"{rendered}\n")
     sys.stderr.flush()
-
-
-async def _await_terminal_outcome_after_completion(
-    *,
-    completion_task: asyncio.Task[DrainOutcome | None],
-    terminal_event_future: asyncio.Future[TerminalEventOutcome],
-    grace_seconds: float = _TERMINAL_EVENT_GRACE_SECONDS,
-) -> TerminalEventOutcome | None:
-    if terminal_event_future.done():
-        return terminal_event_future.result()
-    if not completion_task.done():
-        return None
-    try:
-        return await asyncio.wait_for(
-            asyncio.shield(terminal_event_future),
-            timeout=grace_seconds,
-        )
-    except TimeoutError:
-        return None
 
 
 async def _consume_subscriber_events(
@@ -389,58 +414,24 @@ async def run_streaming_spawn(
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
 
-        done, _ = await asyncio.wait(
-            {
-                cast("asyncio.Task[object]", completion_task),
-                cast("asyncio.Task[object]", signal_task),
-                cast("asyncio.Future[object]", terminal_event_future),
-            },
-            return_when=asyncio.FIRST_COMPLETED,
+        decision = await arbitrate_terminal(
+            completion_task=completion_task,
+            terminal_event_future=terminal_event_future,
+            signal_task=signal_task,
         )
-        if terminal_event_future in done:
-            terminal_outcome = terminal_event_future.result()
+        terminal_outcome = decision.terminal_outcome
+        if decision.stop_required:
+            stop_exit_code = decision.synthetic_exit_code
+            if decision.trigger == TriggerKind.SIGNAL:
+                stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
+            if stop_exit_code is None:
+                raise RuntimeError("terminal decision requires an exit code")
             await manager.stop_spawn(
                 spawn_id,
-                status=terminal_outcome.status,
-                exit_code=terminal_outcome.exit_code,
-                error=terminal_outcome.error,
+                status=decision.synthetic_status or "cancelled",
+                exit_code=stop_exit_code,
+                error=decision.synthetic_error,
             )
-        elif completion_task in done:
-            # Completion and signal can resolve in the same wakeup while a terminal
-            # frame is still queued; run completion grace first to preserve terminal
-            # precedence when that frame lands shortly after drain completion.
-            terminal_outcome = await _await_terminal_outcome_after_completion(
-                completion_task=completion_task,
-                terminal_event_future=terminal_event_future,
-            )
-            if terminal_outcome is not None:
-                await manager.stop_spawn(
-                    spawn_id,
-                    status=terminal_outcome.status,
-                    exit_code=terminal_outcome.exit_code,
-                    error=terminal_outcome.error,
-                )
-        elif signal_task in done and shutdown_event.is_set():
-            if completion_task.done():
-                terminal_outcome = await _await_terminal_outcome_after_completion(
-                    completion_task=completion_task,
-                    terminal_event_future=terminal_event_future,
-                )
-                if terminal_outcome is not None:
-                    await manager.stop_spawn(
-                        spawn_id,
-                        status=terminal_outcome.status,
-                        exit_code=terminal_outcome.exit_code,
-                        error=terminal_outcome.error,
-                    )
-            else:
-                signal_exit = signal_to_exit_code(received_signal[0]) or 130
-                await manager.stop_spawn(
-                    spawn_id,
-                    status="cancelled",
-                    exit_code=signal_exit,
-                    error="cancelled",
-                )
 
         outcome = await completion_task
         if outcome is None:
@@ -551,29 +542,16 @@ async def _run_streaming_attempt(
             )
         )
 
-        wait_tasks: set[asyncio.Future[object]] = {
-            cast("asyncio.Task[object]", completion_task),
-            cast("asyncio.Task[object]", signal_task),
-            cast("asyncio.Task[object]", watchdog_task),
-            cast("asyncio.Future[object]", terminal_event_future),
-        }
-        if budget_task is not None:
-            wait_tasks.add(cast("asyncio.Task[object]", budget_task))
-        if timeout_task is not None:
-            wait_tasks.add(cast("asyncio.Task[object]", timeout_task))
-
-        done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
-        if terminal_event_future in done:
-            terminal_outcome = terminal_event_future.result()
-            await manager.stop_spawn(
-                run.spawn_id,
-                status=terminal_outcome.status,
-                exit_code=terminal_outcome.exit_code,
-                error=terminal_outcome.error,
-            )
-            drain_exit_code = terminal_outcome.exit_code
-            drain_error = terminal_outcome.error
-        elif budget_task is not None and budget_task in done and budget_signal.is_set():
+        decision = await arbitrate_terminal(
+            completion_task=completion_task,
+            terminal_event_future=terminal_event_future,
+            signal_task=signal_task,
+            timeout_task=timeout_task,
+            budget_task=budget_task,
+            watchdog_task=watchdog_task,
+        )
+        terminal_outcome = decision.terminal_outcome
+        if decision.trigger == TriggerKind.BUDGET:
             await manager.stop_spawn(
                 run.spawn_id,
                 status="failed",
@@ -581,7 +559,7 @@ async def _run_streaming_attempt(
                 error="budget_exceeded",
             )
             drain_exit_code = DEFAULT_INFRA_EXIT_CODE
-        elif timeout_task is not None and timeout_task in done:
+        elif decision.trigger == TriggerKind.TIMEOUT:
             timed_out = True
             await manager.stop_spawn(
                 run.spawn_id,
@@ -590,51 +568,22 @@ async def _run_streaming_attempt(
                 error="timeout",
             )
             drain_exit_code = 3
-        elif watchdog_task in done:
-            terminated_by_report_watchdog = bool(watchdog_task.result())
-        elif completion_task in done:
-            # If completion and signal resolve together, always run the bounded
-            # terminal grace window so late-arriving terminal frames can win.
-            terminal_outcome = await _await_terminal_outcome_after_completion(
-                completion_task=completion_task,
-                terminal_event_future=terminal_event_future,
+        elif decision.trigger == TriggerKind.WATCHDOG:
+            terminated_by_report_watchdog = not decision.watchdog_noop
+        elif decision.stop_required:
+            stop_exit_code = decision.synthetic_exit_code
+            if decision.trigger == TriggerKind.SIGNAL:
+                stop_exit_code = signal_to_exit_code(received_signal[0]) or 130
+            if stop_exit_code is None:
+                raise RuntimeError("terminal decision requires an exit code")
+            await manager.stop_spawn(
+                run.spawn_id,
+                status=decision.synthetic_status or "cancelled",
+                exit_code=stop_exit_code,
+                error=decision.synthetic_error,
             )
-            if terminal_outcome is not None:
-                await manager.stop_spawn(
-                    run.spawn_id,
-                    status=terminal_outcome.status,
-                    exit_code=terminal_outcome.exit_code,
-                    error=terminal_outcome.error,
-                )
-                drain_exit_code = terminal_outcome.exit_code
-                drain_error = terminal_outcome.error
-        elif signal_task in done and signal_event.is_set():
-            if completion_task.done():
-                terminal_outcome = await _await_terminal_outcome_after_completion(
-                    completion_task=completion_task,
-                    terminal_event_future=terminal_event_future,
-                )
-                if terminal_outcome is not None:
-                    await manager.stop_spawn(
-                        run.spawn_id,
-                        status=terminal_outcome.status,
-                        exit_code=terminal_outcome.exit_code,
-                        error=terminal_outcome.error,
-                    )
-                    drain_exit_code = terminal_outcome.exit_code
-                    drain_error = terminal_outcome.error
-            else:
-                signal_exit = signal_to_exit_code(received_signal[0]) or 130
-                await manager.stop_spawn(
-                    run.spawn_id,
-                    status="cancelled",
-                    exit_code=signal_exit,
-                    error="cancelled",
-                )
-                drain_exit_code = signal_exit
-
-        if watchdog_task in done and not terminated_by_report_watchdog:
-            terminated_by_report_watchdog = bool(watchdog_task.result())
+            drain_exit_code = stop_exit_code
+            drain_error = decision.synthetic_error
 
         drain_outcome = await completion_task
         if drain_outcome is not None and terminal_outcome is None:
@@ -734,12 +683,7 @@ async def execute_with_streaming(
             run.spawn_id,
         )
     )
-    exit_code = DEFAULT_INFRA_EXIT_CODE
-    failure_reason: str | None = None
-    extracted: FinalizeExtraction | None = None
-    terminated_after_completion = False
-    final_attempt_terminal_observed = False
-    retries_attempted = 0
+    conclusion = StreamingRunConclusion()
     lifecycle_service: SpawnLifecycleService | None = None
     manager: SpawnManager | None = None
     installed_signals: list[signal.Signals] = []
@@ -880,8 +824,8 @@ async def execute_with_streaming(
                 _truncate_attempt_logs(log_dir)
 
                 if preflight_breach is not None:
-                    exit_code = DEFAULT_INFRA_EXIT_CODE
-                    failure_reason = "budget_exceeded"
+                    conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+                    conclusion.failure_reason = "budget_exceeded"
                     _append_budget_exceeded_event(run=run, breach=preflight_breach)
                     break
 
@@ -900,11 +844,7 @@ async def execute_with_streaming(
                     event_observer=event_observer,
                     stream_stdout_to_terminal=stream_stdout_to_terminal,
                 )
-                exit_code = attempt.drain_exit_code
-                terminated_after_completion = (
-                    terminated_after_completion or attempt.terminated_by_report_watchdog
-                )
-                final_attempt_terminal_observed = attempt.terminal_observed
+                conclusion.absorb_attempt(attempt)
                 if attempt.start_error is not None:
                     logger.warning(
                         "Failed to execute streaming spawn attempt.",
@@ -912,7 +852,7 @@ async def execute_with_streaming(
                         harness_id=str(harness.id),
                         error=attempt.start_error,
                     )
-                    failure_reason = attempt.start_error
+                    conclusion.failure_reason = attempt.start_error
                     _append_text_to_stderr_artifact(
                         artifacts=artifacts,
                         spawn_id=run.spawn_id,
@@ -921,16 +861,20 @@ async def execute_with_streaming(
                     )
                 attempt_cancelled = False
                 if attempt.timed_out:
-                    failure_reason = "timeout"
+                    conclusion.failure_reason = "timeout"
                 if not attempt.terminal_observed:
                     if attempt.received_signal == signal.SIGINT:
-                        failure_reason = "cancelled"
+                        conclusion.failure_reason = "cancelled"
                         attempt_cancelled = True
                     elif attempt.received_signal == signal.SIGTERM:
-                        failure_reason = "terminated"
+                        conclusion.failure_reason = "terminated"
                         attempt_cancelled = True
-                elif exit_code != 0 and failure_reason is None and attempt.drain_error is not None:
-                    failure_reason = attempt.drain_error
+                elif (
+                    conclusion.exit_code != 0
+                    and conclusion.failure_reason is None
+                    and attempt.drain_error is not None
+                ):
+                    conclusion.failure_reason = attempt.drain_error
 
                 _persist_attempt_artifacts(
                     artifacts=artifacts,
@@ -951,13 +895,14 @@ async def execute_with_streaming(
                     child_cwd=child_cwd,
                     runtime_root=runtime_root,
                 )
-                extracted = enrich_finalize(
+                extraction = enrich_finalize(
                     artifacts=artifacts,
                     extractor=streaming_extractor,
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
                     secrets=secrets,
                 )
+                conclusion.extracted = extraction
 
                 # I-4: observe_session_id() is the sole observation callsite.
                 extracted_harness_session_id = (
@@ -999,49 +944,49 @@ async def execute_with_streaming(
 
                 if attempt_cancelled:
                     if attempt.received_signal is not None:
-                        exit_code = signal_to_exit_code(attempt.received_signal) or 130
+                        conclusion.exit_code = signal_to_exit_code(attempt.received_signal) or 130
                     break
 
                 if attempt.budget_breach is not None:
-                    failure_reason = "budget_exceeded"
-                    exit_code = DEFAULT_INFRA_EXIT_CODE
+                    conclusion.failure_reason = "budget_exceeded"
+                    conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
                     _append_budget_exceeded_event(run=run, breach=attempt.budget_breach)
                     break
 
                 if (
                     budget_tracker is not None
-                    and extracted.usage.total_cost_usd is not None
-                    and budget_tracker.observe_cost(extracted.usage.total_cost_usd) is not None
+                    and extraction.usage.total_cost_usd is not None
+                    and budget_tracker.observe_cost(extraction.usage.total_cost_usd) is not None
                 ):
-                    failure_reason = "budget_exceeded"
+                    conclusion.failure_reason = "budget_exceeded"
                     breach = budget_tracker.check()
                     if breach is not None:
                         _append_budget_exceeded_event(run=run, breach=breach)
-                    exit_code = DEFAULT_INFRA_EXIT_CODE
+                    conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
                     break
 
                 if (
-                    exit_code == 0
+                    conclusion.exit_code == 0
                     and _spawn_kind(runtime_root, run.spawn_id) == "child"
-                    and extracted.report.content is None
+                    and extraction.report.content is None
                 ):
-                    failure_reason = "missing_report"
+                    conclusion.failure_reason = "missing_report"
 
                 # A lingering Codex app-server can require watchdog-driven cleanup even after
                 # the spawn has already written a durable report. Treat that as terminal
                 # success here so the retry classifier never turns the synthetic exit code
                 # from `stop_spawn()` back into another failed attempt.
                 if attempt.terminated_by_report_watchdog and has_durable_report_completion(
-                    extracted.report.content
+                    extraction.report.content
                 ):
-                    exit_code = 0
-                    failure_reason = None
+                    conclusion.exit_code = 0
+                    conclusion.failure_reason = None
                     break
 
-                if extracted.output_is_empty:
-                    if exit_code == 0:
-                        exit_code = 1
-                        failure_reason = "empty_output"
+                if extraction.output_is_empty:
+                    if conclusion.exit_code == 0:
+                        conclusion.exit_code = 1
+                        conclusion.failure_reason = "empty_output"
                         break
                     if _artifact_is_zero_bytes(
                         artifacts=artifacts,
@@ -1056,25 +1001,25 @@ async def execute_with_streaming(
                             artifacts=artifacts,
                             spawn_id=run.spawn_id,
                             output_log_path=output_log_path,
-                            exit_code=exit_code,
-                            failure_reason=failure_reason,
+                            exit_code=conclusion.exit_code,
+                            failure_reason=conclusion.failure_reason,
                             timed_out=attempt.timed_out,
                         )
 
-                if exit_code == 0:
+                if conclusion.exit_code == 0:
                     guardrail_result = run_guardrails(
                         guardrails,
                         spawn_id=run.spawn_id,
                         cwd=child_cwd,
                         env=child_env,
-                        report_path=extracted.report_path,
+                        report_path=extraction.report_path,
                         output_log_path=output_log_path,
                         timeout_seconds=guardrail_timeout_seconds,
                     )
                     if guardrail_result.ok:
                         break
 
-                    failure_reason = "guardrail_failed"
+                    conclusion.failure_reason = "guardrail_failed"
                     guardrail_text = _guardrail_failure_text(guardrail_result.failures)
                     _append_text_to_stderr_artifact(
                         artifacts=artifacts,
@@ -1083,24 +1028,26 @@ async def execute_with_streaming(
                         secrets=secrets,
                     )
 
-                    if retries_attempted >= max_retries:
-                        exit_code = 1
+                    if conclusion.retries_attempted >= max_retries:
+                        conclusion.exit_code = 1
                         break
 
-                    retries_attempted += 1
-                    exit_code = 1
+                    conclusion.retries_attempted += 1
+                    conclusion.exit_code = 1
                     logger.warning(
                         "Retrying after guardrail failure.",
                         spawn_id=str(run.spawn_id),
                         harness_id=str(harness.id),
-                        retries_attempted=retries_attempted,
+                        retries_attempted=conclusion.retries_attempted,
                         max_retries=max_retries,
                         guardrail_failures=[
                             f"{item.script}:{item.exit_code}" for item in guardrail_result.failures
                         ],
                     )
                     if retry_backoff_seconds > 0:
-                        await asyncio.sleep(retry_backoff_seconds * retries_attempted)
+                        await asyncio.sleep(
+                            retry_backoff_seconds * conclusion.retries_attempted
+                        )
                     continue
 
                 stderr_key = make_artifact_key(run.spawn_id, STDERR_FILENAME)
@@ -1110,50 +1057,50 @@ async def execute_with_streaming(
                     else ""
                 )
                 category = classify_error(
-                    exit_code,
+                    conclusion.exit_code,
                     stderr_text,
                     timed_out=attempt.timed_out,
                 )
                 if attempt.timed_out:
-                    failure_reason = "timeout"
+                    conclusion.failure_reason = "timeout"
                 elif category == ErrorCategory.STRATEGY_CHANGE:
-                    failure_reason = "strategy_change"
+                    conclusion.failure_reason = "strategy_change"
 
                 if not should_retry(
-                    exit_code=exit_code,
+                    exit_code=conclusion.exit_code,
                     stderr=stderr_text,
                     timed_out=attempt.timed_out,
-                    retries_attempted=retries_attempted,
+                    retries_attempted=conclusion.retries_attempted,
                     max_retries=max_retries,
                 ):
                     break
 
-                retries_attempted += 1
+                conclusion.retries_attempted += 1
                 logger.warning(
                     "Retrying failed run attempt.",
                     spawn_id=str(run.spawn_id),
                     harness_id=str(harness.id),
-                    exit_code=exit_code,
-                    retries_attempted=retries_attempted,
+                    exit_code=conclusion.exit_code,
+                    retries_attempted=conclusion.retries_attempted,
                     max_retries=max_retries,
                     error_category=str(category),
                 )
                 if retry_backoff_seconds > 0:
-                    await asyncio.sleep(retry_backoff_seconds * retries_attempted)
+                    await asyncio.sleep(retry_backoff_seconds * conclusion.retries_attempted)
         except asyncio.CancelledError:
-            exit_code = 130
-            failure_reason = "cancelled"
+            conclusion.exit_code = 130
+            conclusion.failure_reason = "cancelled"
         except Exception:
             logger.exception(
                 "Streaming spawn execution failed with infrastructure error.",
                 spawn_id=str(run.spawn_id),
                 harness_id=str(launch_context.harness.id),
             )
-            exit_code = DEFAULT_INFRA_EXIT_CODE
-            failure_reason = "infrastructure_error"
+            conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+            conclusion.failure_reason = "infrastructure_error"
     except Exception:
-        exit_code = DEFAULT_INFRA_EXIT_CODE
-        failure_reason = "infrastructure_error"
+        conclusion.exit_code = DEFAULT_INFRA_EXIT_CODE
+        conclusion.failure_reason = "infrastructure_error"
         logger.exception(
             "Streaming spawn setup failed.",
             spawn_id=str(run.spawn_id),
@@ -1171,35 +1118,24 @@ async def execute_with_streaming(
             duration_seconds = 0.0
         if lifecycle_service is None:
             lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-        finalized_usage = extracted.usage if extracted is not None else None
-        durable_report_completion = extracted is not None and has_durable_report_completion(
-            extracted.report.content
+        finalized_usage = (
+            conclusion.extracted.usage if conclusion.extracted is not None else None
         )
-        cancelled = not final_attempt_terminal_observed and (
-            failure_reason in {"cancelled", "terminated"}
-            or received_signal[0] in {signal.SIGINT, signal.SIGTERM}
+        status, resolved_exit_code, resolved_failure_reason = conclusion.resolve_terminal_state(
+            received_signal=received_signal[0],
         )
-        status, exit_code, failure_reason = resolve_execution_terminal_state(
-            exit_code=exit_code,
-            failure_reason=failure_reason,
-            cancelled=cancelled,
-            durable_report_completion=durable_report_completion,
-            terminated_after_completion=terminated_after_completion,
-        )
+        conclusion.exit_code = resolved_exit_code
+        conclusion.failure_reason = resolved_failure_reason
         with signal_coordinator().mask_sigterm():
             spawn_service = SpawnApplicationService(
                 runtime_root,
                 lifecycle_service,
                 spawn_manager=manager,
             )
-            current_record = spawn_service.get_spawn(run.spawn_id)
-            will_mark_finalizing = (
-                current_record is not None and current_record.status != "finalizing"
-            )
-            finalized = await spawn_service.complete_spawn(
+            outcome = await spawn_service.complete_spawn(
                 run.spawn_id,
                 status,
-                exit_code,
+                conclusion.exit_code,
                 origin="runner",
                 duration_secs=duration_seconds,
                 total_cost_usd=(
@@ -1223,9 +1159,9 @@ async def execute_with_streaming(
                 cost_is_estimate=(
                     finalized_usage.cost_is_estimate if finalized_usage is not None else False
                 ),
-                error=failure_reason,
+                error=conclusion.failure_reason,
             )
-            if finalized and will_mark_finalizing:
+            if outcome.entered_finalizing:
                 try:
                     resolved_heartbeat_touch()
                 except Exception:
@@ -1236,18 +1172,19 @@ async def execute_with_streaming(
                         harness_id=str(launch_context.harness.id),
                         exc_info=True,
                     )
-            elif not finalized:
+            elif not outcome.wrote:
                 logger.info(
                     "Runner finalize skipped; spawn already terminal or missing.",
                     spawn_id=str(run.spawn_id),
                     harness_id=str(launch_context.harness.id),
                 )
 
-    return exit_code
+    return conclusion.exit_code
 
 
 __all__ = [
     "DEFAULT_GUARDRAIL_TIMEOUT_SECONDS",
+    "StreamingRunConclusion",
     "TerminalEventOutcome",
     "execute_with_streaming",
     "run_streaming_spawn",

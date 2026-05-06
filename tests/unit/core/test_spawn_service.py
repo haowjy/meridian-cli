@@ -127,14 +127,14 @@ def _mock_launch_context(
 
 
 @pytest.mark.asyncio
-async def test_complete_spawn_returns_true_for_first_terminal_transition(
+async def test_complete_spawn_returns_outcome_for_first_terminal_transition(
     tmp_path: Path,
 ) -> None:
     lifecycle = SpawnLifecycleService(tmp_path)
     service = SpawnApplicationService(tmp_path, lifecycle)
     spawn_id = _start_running_spawn(lifecycle)
 
-    transitioned = await service.complete_spawn(
+    outcome = await service.complete_spawn(
         spawn_id,
         "succeeded",
         0,
@@ -146,7 +146,13 @@ async def test_complete_spawn_returns_true_for_first_terminal_transition(
     )
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert transitioned is True
+    assert outcome.wrote is True
+    assert outcome.transitioned is True
+    assert outcome.entered_finalizing is True
+    assert outcome.already_terminal is False
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "succeeded"
+    assert outcome.accepted is True
     assert record is not None
     assert record.status == "succeeded"
     assert record.exit_code == 0
@@ -155,6 +161,158 @@ async def test_complete_spawn_returns_true_for_first_terminal_transition(
     assert record.input_tokens == 10
     assert record.output_tokens == 20
     assert record.terminal_origin == "runner"
+
+
+@pytest.mark.asyncio
+async def test_complete_spawn_returns_missing_outcome_for_missing_spawn(
+    tmp_path: Path,
+) -> None:
+    lifecycle = SpawnLifecycleService(tmp_path)
+    service = SpawnApplicationService(tmp_path, lifecycle)
+
+    outcome = await service.complete_spawn(
+        SpawnId("p-missing"),
+        "succeeded",
+        0,
+        origin="runner",
+    )
+
+    assert outcome.wrote is False
+    assert outcome.transitioned is False
+    assert outcome.entered_finalizing is False
+    assert outcome.already_terminal is False
+    assert outcome.snapshot is None
+    assert outcome.spawn_id == SpawnId("p-missing")
+
+
+@pytest.mark.asyncio
+async def test_complete_spawn_returns_already_terminal_outcome_for_terminal_spawn(
+    tmp_path: Path,
+) -> None:
+    hook = _LifecycleHookCollector()
+    lifecycle = SpawnLifecycleService(tmp_path, hooks=[hook])
+    service = SpawnApplicationService(tmp_path, lifecycle)
+    spawn_id = _start_running_spawn(lifecycle)
+    await service.complete_spawn(spawn_id, "succeeded", 0, origin="runner")
+    hook.events.clear()
+
+    outcome = await service.complete_spawn(spawn_id, "failed", 1, origin="cancel")
+
+    assert outcome.wrote is False
+    assert outcome.transitioned is False
+    assert outcome.entered_finalizing is False
+    assert outcome.already_terminal is True
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "succeeded"
+    assert outcome.snapshot.terminal_origin == "runner"
+    assert [getattr(event, "event_type", None) for event in hook.events] == []
+
+
+@pytest.mark.asyncio
+async def test_complete_spawn_replaces_reconciler_terminal(
+    tmp_path: Path,
+) -> None:
+    """CR1: authoritative completion replaces a reconciler terminal."""
+    hook = _LifecycleHookCollector()
+    lifecycle = SpawnLifecycleService(tmp_path, hooks=[hook])
+    service = SpawnApplicationService(tmp_path, lifecycle)
+    spawn_id = _start_running_spawn(lifecycle)
+    lifecycle.finalize(
+        str(spawn_id),
+        "failed",
+        1,
+        origin="reconciler",
+        error="orphaned",
+    )
+    hook.events.clear()
+
+    outcome = await service.complete_spawn(
+        spawn_id,
+        "succeeded",
+        0,
+        origin="runner",
+        duration_secs=2.5,
+    )
+
+    assert outcome.wrote is True
+    assert outcome.transitioned is False
+    assert outcome.entered_finalizing is False
+    assert outcome.already_terminal is True
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "succeeded"
+    assert outcome.snapshot.exit_code == 0
+    assert outcome.snapshot.terminal_origin == "runner"
+    assert outcome.snapshot.duration_secs == 2.5
+    assert [getattr(event, "event_type", None) for event in hook.events] == [
+        "spawn.finalized"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_complete_spawn_rejects_authoritative_loser(
+    tmp_path: Path,
+) -> None:
+    """CR1: later authoritative finalizer is rejected with unchanged snapshot."""
+    hook = _LifecycleHookCollector()
+    lifecycle = SpawnLifecycleService(tmp_path, hooks=[hook])
+    service = SpawnApplicationService(tmp_path, lifecycle)
+    spawn_id = _start_running_spawn(lifecycle)
+    await service.complete_spawn(
+        spawn_id,
+        "succeeded",
+        0,
+        origin="runner",
+        duration_secs=1.0,
+    )
+    hook.events.clear()
+
+    outcome = await service.complete_spawn(
+        spawn_id,
+        "failed",
+        1,
+        origin="launcher",
+        duration_secs=9.0,
+        error="late launcher failure",
+    )
+
+    assert outcome.wrote is False
+    assert outcome.transitioned is False
+    assert outcome.entered_finalizing is False
+    assert outcome.already_terminal is True
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "succeeded"
+    assert outcome.snapshot.exit_code == 0
+    assert outcome.snapshot.terminal_origin == "runner"
+    assert outcome.snapshot.duration_secs == 1.0
+    assert outcome.snapshot.error is None
+    assert [getattr(event, "event_type", None) for event in hook.events] == []
+
+
+@pytest.mark.asyncio
+async def test_complete_spawn_on_queued_spawn_does_not_enter_finalizing(
+    tmp_path: Path,
+) -> None:
+    lifecycle = SpawnLifecycleService(tmp_path)
+    service = SpawnApplicationService(tmp_path, lifecycle)
+    spawn_id = SpawnId(
+        lifecycle.start(
+            chat_id="chat-1",
+            model="model-1",
+            agent="coder",
+            harness="codex",
+            prompt="do the thing",
+            status="queued",
+        )
+    )
+
+    outcome = await service.complete_spawn(spawn_id, "failed", 1, origin="launcher")
+
+    assert outcome.wrote is True
+    assert outcome.transitioned is True
+    assert outcome.entered_finalizing is False
+    assert outcome.already_terminal is False
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "failed"
 
 
 @pytest.mark.asyncio
@@ -216,8 +374,11 @@ async def test_complete_spawn_returns_false_after_terminal_transition(
     )
 
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert first is True
-    assert second is False
+    assert first.wrote is True
+    assert first.transitioned is True
+    assert second.wrote is False
+    assert second.transitioned is False
+    assert second.already_terminal is True
     assert record is not None
     assert record.status == "succeeded"
     assert record.exit_code == 0
@@ -244,7 +405,7 @@ async def test_complete_spawn_serializes_concurrent_terminal_attempts(
     events = FileSpawnRepository(RuntimePaths.from_root_dir(tmp_path)).read_events()
     finalize_events = [event for event in events if event.event == "finalize"]
     record = spawn_store.get_spawn(tmp_path, spawn_id)
-    assert sorted(results) == [False, True]
+    assert sorted(result.transitioned for result in results) == [False, True]
     assert len(finalize_events) == 1
     assert record is not None
     assert record.status in {"succeeded", "cancelled"}
@@ -727,6 +888,7 @@ def test_update_metadata_persists_changes_emits_event_and_preserves_status(
         "runner_pid": None,
         "harness_session_id": "session-123",
         "execution_cwd": execution_cwd,
+        "claude_config_dir": None,
         "error": "boom",
         "desc": "updated desc",
         "work_id": "work-123",
@@ -799,6 +961,7 @@ def test_update_metadata_partial_updates_preserve_omitted_fields_and_status(
         "runner_pid": None,
         "harness_session_id": None,
         "execution_cwd": first_execution_cwd,
+        "claude_config_dir": None,
         "error": None,
         "desc": "first desc",
         "work_id": "work-123",
@@ -809,6 +972,7 @@ def test_update_metadata_partial_updates_preserve_omitted_fields_and_status(
         "runner_pid": None,
         "harness_session_id": "session-123",
         "execution_cwd": None,
+        "claude_config_dir": None,
         "error": "boom",
         "desc": None,
         "work_id": None,
@@ -819,6 +983,7 @@ def test_update_metadata_partial_updates_preserve_omitted_fields_and_status(
         "runner_pid": None,
         "harness_session_id": None,
         "execution_cwd": second_execution_cwd,
+        "claude_config_dir": None,
         "error": None,
         "desc": None,
         "work_id": None,

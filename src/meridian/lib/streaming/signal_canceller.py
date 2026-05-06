@@ -15,6 +15,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import structlog
+
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
@@ -24,10 +26,12 @@ from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.spawn_store import APP_LAUNCH_MODE, SpawnOrigin
 
 if TYPE_CHECKING:
+    from meridian.lib.core.spawn_service import CompleteSpawnOutcome
     from meridian.lib.state.spawn_store import SpawnRecord
     from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _WAIT_POLL_INTERVAL_SECS = 0.1
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,7 +52,7 @@ class SignalCanceller:
         runtime_root: Path,
         grace_seconds: float = 5.0,
         manager: SpawnManager | None = None,
-        complete_spawn: Callable[..., Awaitable[bool]] | None = None,
+        complete_spawn: Callable[..., Awaitable[CompleteSpawnOutcome]] | None = None,
     ) -> None:
         self._runtime_root = runtime_root
         self._grace_seconds = grace_seconds
@@ -95,16 +99,29 @@ class SignalCanceller:
                     self._runtime_root,
                     SpawnLifecycleService(self._runtime_root),
                 ).complete_spawn
-            finalized = await complete_spawn(
+            outcome = await complete_spawn(
                 spawn_id,
                 "cancelled",
                 130,
                 origin="cancel",
                 error="cancelled",
             )
+            if outcome.snapshot is not None and _is_terminal(outcome.snapshot.status):
+                return _outcome_from_record(
+                    outcome.snapshot,
+                    already_terminal=not outcome.transitioned,
+                )
+
+            logger.warning(
+                "cancel_race_snapshot_missing",
+                spawn_id=str(spawn_id),
+                wrote=outcome.wrote,
+            )
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if latest is not None and _is_terminal(latest.status):
-                return _outcome_from_record(latest, already_terminal=not finalized)
+                return _outcome_from_record(
+                    latest, already_terminal=not outcome.transitioned
+                )
             return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
 
         with suppress(ProcessLookupError):

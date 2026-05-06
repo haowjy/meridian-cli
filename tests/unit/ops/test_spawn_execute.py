@@ -23,7 +23,12 @@ from meridian.lib.launch.composition import (
 )
 from meridian.lib.launch.context import LaunchContext
 from meridian.lib.launch.reference import ReferenceItem
-from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import (
+    LaunchArgvIntent,
+    LaunchCompositionSurface,
+    LaunchRuntime,
+    SpawnRequest,
+)
 from meridian.lib.launch.run_inputs import ResolvedRunInputs
 from meridian.lib.ops.spawn.execute import (
     BackgroundWorkerLaunchRequest,
@@ -32,6 +37,10 @@ from meridian.lib.ops.spawn.execute import (
     _write_params_json,
     execute_spawn_blocking,
     launch_prepared_spawn,
+)
+from meridian.lib.ops.spawn.failure_policy import (
+    finalize_launch_failure,
+    finalize_launch_failure_sync,
 )
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state import spawn_store
@@ -308,6 +317,63 @@ def test_execute_existing_spawn_terminalizes_missing_required_launch_fields(
     assert record.error == expected_error
 
 
+def test_finalize_launch_failure_sync_owns_fixed_terminal_tuple(tmp_path: Path) -> None:
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p1")
+    service = create_lifecycle_service(tmp_path, runtime_root)
+    service.start(
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="",
+        skills=(),
+        skill_paths=(),
+        harness="codex",
+        kind="child",
+        prompt="stored prompt",
+        spawn_id=str(spawn_id),
+        status="queued",
+    )
+
+    outcome = finalize_launch_failure_sync(runtime_root, tmp_path, spawn_id, "boom")
+
+    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert outcome.wrote is True
+    assert record is not None
+    assert record.status == "failed"
+    assert record.exit_code == 1
+    assert record.terminal_origin == "launch_failure"
+    assert record.error == "boom"
+
+
+@pytest.mark.asyncio
+async def test_finalize_launch_failure_async_matches_sync_tuple(tmp_path: Path) -> None:
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p1")
+    service = create_lifecycle_service(tmp_path, runtime_root)
+    service.start(
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="",
+        skills=(),
+        skill_paths=(),
+        harness="codex",
+        kind="child",
+        prompt="stored prompt",
+        spawn_id=str(spawn_id),
+        status="queued",
+    )
+
+    outcome = await finalize_launch_failure(runtime_root, tmp_path, spawn_id, "boom")
+
+    record = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert outcome.wrote is True
+    assert record is not None
+    assert record.status == "failed"
+    assert record.exit_code == 1
+    assert record.terminal_origin == "launch_failure"
+    assert record.error == "boom"
+
+
 def test_execute_existing_spawn_allows_empty_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -486,6 +552,94 @@ async def test_launch_prepared_spawn_terminalizes_prerun_exception_as_launch_fai
     assert finalize_events[0].origin == "launch_failure"
 
 
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_uses_direct_build_launch_context_from_durable_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p1")
+    service = create_lifecycle_service(tmp_path, runtime_root)
+    service.start(
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="",
+        skills=(),
+        skill_paths=(),
+        harness="codex",
+        kind="child",
+        prompt="stored prompt",
+        spawn_id=str(spawn_id),
+        status="queued",
+    )
+
+    class _HarnessRegistry:
+        def get_subprocess_harness(self, _harness_id: object) -> OpenCodeAdapter:
+            return OpenCodeAdapter()
+
+    @contextmanager
+    def fake_session_execution_context(**_kwargs: object) -> Iterator[_SessionExecutionContext]:
+        yield _SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        )
+
+    captured: dict[str, object] = {}
+
+    def fake_build_launch_context(**kwargs: Any) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            argv=("opencode", "run"),
+            spec=SimpleNamespace(),
+            env=MappingProxyType({}),
+            child_cwd=tmp_path,
+            report_output_path=tmp_path / "report.md",
+            resolved_request=kwargs["request"],
+        )
+
+    async def fake_execute_with_streaming(*_args: object, **_kwargs: object) -> int:
+        return 0
+
+    monkeypatch.setattr(
+        execute_module,
+        "_session_execution_context",
+        fake_session_execution_context,
+    )
+    monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
+    monkeypatch.setattr(execute_module, "write_projection_artifacts", lambda **_kwargs: None)
+    monkeypatch.setattr(execute_module, "execute_with_streaming", fake_execute_with_streaming)
+
+    request = SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex")
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=spawn_id)),
+        request=request,
+        runtime_request=LaunchRuntime(
+            runtime_root=runtime_root.as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast(
+            "Any",
+            SimpleNamespace(harness_registry=_HarnessRegistry(), artifacts=None),
+        ),
+        runtime_root=runtime_root,
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 0
+    assert isinstance(captured["request"], SpawnRequest)
+    assert cast("SpawnRequest", captured["request"]).prompt == "run it"
+    assert cast("LaunchRuntime", captured["runtime"]).composition_surface == (
+        LaunchCompositionSurface.DIRECT
+    )
+    assert cast("LaunchRuntime", captured["runtime"]).argv_intent == LaunchArgvIntent.SPEC_ONLY
+
+
 def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -567,8 +721,20 @@ def test_execute_spawn_blocking_backstop_finalizes_uncaught_helper_escape(
     async def exploding_launch_prepared_spawn(**_kwargs: object) -> int:
         raise RuntimeError("helper escaped")
 
-    def fake_complete_spawn_sync(**kwargs: object) -> bool:
-        captured.update(kwargs)
+    def fake_finalize_launch_failure_sync(
+        runtime_root: Path,
+        project_root: Path,
+        spawn_id: SpawnId,
+        error: str,
+    ) -> bool:
+        captured.update(
+            {
+                "runtime_root": runtime_root,
+                "project_root": project_root,
+                "spawn_id": spawn_id,
+                "error": error,
+            }
+        )
         return True
 
     monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
@@ -590,10 +756,9 @@ def test_execute_spawn_blocking_backstop_finalizes_uncaught_helper_escape(
     monkeypatch.setattr(execute_module.asyncio, "run", lambda coro: real_asyncio_run(coro))
     monkeypatch.setattr(
         execute_module,
-        "create_lifecycle_service",
-        lambda *_args, **_kwargs: "lifecycle-service",
+        "finalize_launch_failure_sync",
+        fake_finalize_launch_failure_sync,
     )
-    monkeypatch.setattr(execute_module, "_complete_spawn_sync", fake_complete_spawn_sync)
 
     result = execute_spawn_blocking(
         payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
@@ -605,11 +770,8 @@ def test_execute_spawn_blocking_backstop_finalizes_uncaught_helper_escape(
     assert result.error == "execution_crash"
     assert result.exit_code == 1
     assert captured["runtime_root"] == runtime_root
-    assert captured["lifecycle_service"] == "lifecycle-service"
+    assert captured["project_root"] == tmp_path
     assert captured["spawn_id"] == spawn_id
-    assert captured["status"] == "failed"
-    assert captured["exit_code"] == 1
-    assert captured["origin"] == "launch_failure"
     assert captured["error"] == "helper escaped"
 
 

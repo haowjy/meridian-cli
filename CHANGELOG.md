@@ -3,6 +3,9 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+### Changed
+- Spawn help examples now teach `--prompt-file ... --bg` as delegation default. Inline `-p` help points to prompt files for real handoffs.
+
 ### Added
 - Per-harness token usage extraction. Claude, Codex, and OpenCode each have dedicated extractors that parse their native event shapes (camelCase modelUsage, thread/tokenUsage/updated, session.idle) instead of relying on a generic snake_case scanner.
 
@@ -13,6 +16,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Catalog-based cost estimation for harnesses that don't expose pricing (Codex). Reads mars models cache pricing (cost_input, cost_output, cost_cache_read, cost_reasoning) and applies per-token formula. Falls back to 10% heuristic when cache pricing is missing.
 - CLI spawn show displays cached/reasoning tokens and prefixes estimated costs with `~`.
 - Concurrent authoritative finalizers no longer corrupt spawn metrics — losing writers are rejected at the store level (#153).
+- Authoritative spawn finalization now correctly replaces reconciler terminals (#152).
+- Spawn execution handoff split into prepare/run/cleanup phases. Post-run session teardown errors now log as secondary cleanup failures instead of rewriting runner terminal state (#154).
 
 ### Fixed
 - OpenCode session continuation creates empty session instead of resuming. Root cause: `POST /session` ignores `sessionID` payload and always creates a new empty session. Fix: verify existing session via `GET /session/{id}` before POST; if found, return it directly. Attach then connects to the existing session with full history.

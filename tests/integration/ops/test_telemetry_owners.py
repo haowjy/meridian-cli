@@ -145,8 +145,7 @@ def test_background_worker_main_uses_spawn_id_as_logical_owner(
         "resolve_spawn_log_dir",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(_StopAfterTelemetrySetup()),
     )
-    monkeypatch.setattr(spawn_execute, "create_lifecycle_service", lambda *_a, **_kw: None)
-    monkeypatch.setattr(spawn_execute, "_complete_spawn_sync", lambda **_kw: False)
+    monkeypatch.setattr(spawn_execute, "finalize_launch_failure_sync", lambda *_a: False)
 
     result = spawn_execute._background_worker_main(
         ["--spawn-id", "p77", "--project-root", project_root.as_posix()]
@@ -194,17 +193,27 @@ def test_background_worker_main_backstop_finalizes_uncaught_helper_escape(
         "_execute_existing_spawn",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("helper escaped")),
     )
-    monkeypatch.setattr(
-        spawn_execute,
-        "create_lifecycle_service",
-        lambda *_a, **_kw: "lifecycle-service",
-    )
-
-    def _capture_complete(**kwargs):
-        captured.update(kwargs)
+    def _capture_finalize_launch_failure(
+        runtime_root: Path,
+        project_root: Path,
+        spawn_id: object,
+        error: str,
+    ) -> bool:
+        captured.update(
+            {
+                "runtime_root": runtime_root,
+                "project_root": project_root,
+                "spawn_id": spawn_id,
+                "error": error,
+            }
+        )
         return True
 
-    monkeypatch.setattr(spawn_execute, "_complete_spawn_sync", _capture_complete)
+    monkeypatch.setattr(
+        spawn_execute,
+        "finalize_launch_failure_sync",
+        _capture_finalize_launch_failure,
+    )
 
     result = spawn_execute._background_worker_main(
         ["--spawn-id", "p88", "--project-root", project_root.as_posix()]
@@ -212,11 +221,8 @@ def test_background_worker_main_backstop_finalizes_uncaught_helper_escape(
 
     assert result == 1
     assert captured["runtime_root"] == runtime_root
-    assert captured["lifecycle_service"] == "lifecycle-service"
+    assert captured["project_root"] == project_root
     assert str(captured["spawn_id"]) == "p88"
-    assert captured["status"] == "failed"
-    assert captured["exit_code"] == 1
-    assert captured["origin"] == "launch_failure"
     assert captured["error"] == "background_worker_crash"
 
 

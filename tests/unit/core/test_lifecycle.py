@@ -194,9 +194,10 @@ def test_finalize_transitions_spawn_to_terminal(tmp_path: Path) -> None:
     svc = _make_service(tmp_path, repository=repo)
     spawn_id = _start_spawn(svc, status="running")
 
-    transitioned = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+    outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert transitioned is True
+    assert outcome.transitioned is True
+    assert outcome.wrote is True
     record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
     assert record is not None
     assert record.status == "succeeded"
@@ -238,10 +239,11 @@ def test_failed_finalize_writes_failure_sentinel(tmp_path: Path) -> None:
     svc = _make_service(tmp_path, repository=repo)
     spawn_id = _start_spawn(svc, status="running")
 
-    transitioned = svc.finalize(spawn_id, "failed", 7, origin="launcher", error="boom")
+    outcome = svc.finalize(spawn_id, "failed", 7, origin="launcher", error="boom")
 
     sentinel_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "failure.json"
-    assert transitioned is True
+    assert outcome.transitioned is True
+    assert outcome.wrote is True
     data = json.loads(sentinel_path.read_text(encoding="utf-8"))
     assert data["spawn_id"] == spawn_id
     assert data["exit_code"] == 7
@@ -276,10 +278,11 @@ def test_failure_sentinel_write_failure_does_not_block_finalize(
 
     monkeypatch.setattr(Path, "write_text", raise_write_text)
 
-    transitioned = svc.finalize(spawn_id, "failed", 1, origin="launcher")
+    outcome = svc.finalize(spawn_id, "failed", 1, origin="launcher")
 
     record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
-    assert transitioned is True
+    assert outcome.transitioned is True
+    assert outcome.wrote is True
     assert record is not None
     assert record.status == "failed"
 
@@ -388,9 +391,10 @@ def test_spawn_finalized_dispatched_on_first_terminal_transition(tmp_path: Path)
     svc = _make_service(tmp_path, hooks=[hook])
     spawn_id = _start_spawn(svc, status="running")
 
-    transitioned = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+    outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert transitioned is True
+    assert outcome.transitioned is True
+    assert outcome.wrote is True
     finalized = [e for e in hook.events if e.event_type == "spawn.finalized"]
     assert len(finalized) == 1
     event = finalized[0]
@@ -428,9 +432,10 @@ def test_spawn_finalized_dispatched_when_authoritative_overrides_reconciler(
     svc.finalize(spawn_id, "failed", 1, origin="reconciler", error="orphan")
     hook.events.clear()
 
-    transitioned = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+    outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert transitioned is False
+    assert outcome.transitioned is False
+    assert outcome.wrote is True
     finalized = [e for e in hook.events if e.event_type == "spawn.finalized"]
     assert len(finalized) == 1
     assert finalized[0].status == "succeeded"
@@ -447,9 +452,10 @@ def test_spawn_finalized_not_dispatched_for_rejected_authoritative_loser(
 
     svc.finalize(spawn_id, "succeeded", 0, origin="runner")
     hook.events.clear()
-    transitioned = svc.finalize(spawn_id, "failed", 1, origin="launcher")
+    outcome = svc.finalize(spawn_id, "failed", 1, origin="launcher")
 
-    assert transitioned is False
+    assert outcome.transitioned is False
+    assert outcome.wrote is False
     assert [event.event_type for event in hook.events] == []
 
 
@@ -481,9 +487,10 @@ def test_hook_exception_does_not_block_finalize(tmp_path: Path) -> None:
     svc = _make_service(tmp_path, hooks=[failing])
     spawn_id = _start_spawn(svc, status="running")
 
-    transitioned = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+    outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
-    assert transitioned is True  # Store write succeeded despite hook failure
+    assert outcome.transitioned is True  # Store write succeeded despite hook failure
+    assert outcome.wrote is True
     record = spawn_store.get_spawn(tmp_path, spawn_id, repository=svc._repository)
     assert record is not None
     assert record.status == "succeeded"
@@ -642,8 +649,10 @@ def test_second_finalize_returns_false_with_different_terminal_status(tmp_path: 
     first = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
     second = svc.finalize(spawn_id, "failed", 1, origin="launcher")
 
-    assert first is True
-    assert second is False
+    assert first.transitioned is True
+    assert first.wrote is True
+    assert second.transitioned is False
+    assert second.wrote is False
     record = spawn_store.get_spawn(tmp_path, spawn_id, repository=repo)
     assert record is not None
     assert record.status == "succeeded"  # First terminal status wins
@@ -727,10 +736,11 @@ def test_required_path_mark_finalizing_then_finalize(tmp_path: Path) -> None:
     spawn_id = _start_spawn(svc, status="running")
 
     marked = svc.mark_finalizing(spawn_id)
-    finalized = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
+    outcome = svc.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     assert marked is True
-    assert finalized is True
+    assert outcome.transitioned is True
+    assert outcome.wrote is True
     assert [event.event_type for event in recording.events] == ["spawn.created", "spawn.finalized"]
     finalized_event = recording.events[-1]
     assert finalized_event.status == "succeeded"

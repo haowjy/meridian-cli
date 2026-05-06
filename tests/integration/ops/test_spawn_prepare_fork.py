@@ -93,3 +93,36 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     dry_run_command = " ".join(dry_run_prepared.cli_command)
     assert "/spawns/preview/report.md" not in dry_run_command
     assert "<spawn-report-path>" in dry_run_command
+
+
+def test_build_create_payload_returns_durable_spawn_request_without_prepared_surface_fields(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_subagent(tmp_path)
+    (tmp_path / "mars.toml").write_text(
+        "[settings]\n"
+        'targets = [".claude"]\n',
+        encoding="utf-8",
+    )
+    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="test durable seam",
+            project_root=tmp_path.as_posix(),
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    payload = prepared.model_dump(mode="json", exclude_none=True)
+
+    assert payload["prompt"] == "test durable seam"
+    assert "cli_command" in payload
+    for prepared_only_field in (
+        "seed_harness_session_id",
+        "agent_inventory_prompt",
+        "context_prompt",
+        "alias_catalog",
+    ):
+        assert prepared_only_field not in payload
