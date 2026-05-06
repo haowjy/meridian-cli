@@ -122,7 +122,7 @@ async def test_auto_accept_handler_auto_accepts_approval_and_answers_user_input(
 
 
 @pytest.mark.asyncio
-async def test_interactive_handler_emits_open_request_event_without_answering() -> None:
+async def test_interactive_handler_emits_request_opened_event() -> None:
     connection = _RecordingConnection()
     events: list[HarnessEvent] = []
 
@@ -156,6 +156,10 @@ async def test_interactive_handler_emits_open_request_event_without_answering() 
     ]
     assert connection.responses == []
     assert connection.user_inputs == []
+
+
+def test_auto_accept_handler_has_no_runtime_hitl_true() -> None:
+    assert AutoAcceptHandler.no_runtime_hitl is True
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "extra_args",
         "interactive",
         "mcp_tools",
+        "projected_roots",
         "report_output_path",
         "base_instructions",
         "developer_instructions",
@@ -134,6 +135,9 @@ def project_codex_spec_to_cli_args(
 
     if harness_session_id:
         command.extend(("resume", harness_session_id))
+
+    for root in spec.projected_roots:
+        command.extend(("--add-dir", root.as_posix()))
 
     command.extend(spec.extra_args)
 

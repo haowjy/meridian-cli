@@ -27,6 +27,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "extra_args",
         "interactive",
         "mcp_tools",
+        "projected_roots",
         "agent_name",
         "appended_system_prompt",
         "skills",
@@ -101,6 +102,11 @@ def project_opencode_spec_to_cli_args(
         logger.debug(
             "OpenCode subprocess cannot project appended_system_prompt separately; "
             "streaming transport sends it via the message system field"
+        )
+    if spec.projected_roots:
+        logger.debug(
+            "OpenCode subprocess workspace roots are projected via %s env.",
+            "OPENCODE_CONFIG_CONTENT",
         )
 
     command: list[str] = list(base_command)

@@ -131,3 +131,54 @@ def test_launch_primary_passes_empty_bootstrap_documents_when_none_exist(tmp_pat
 
     assert result.command == ('fake-harness',)
     assert captured['request'].supplemental_prompt_documents == ()
+
+
+def test_launch_primary_prepares_once_binds_preview_once_and_passes_prepared_surface_to_runner(
+    tmp_path,
+    monkeypatch,
+):
+    project_root = tmp_path / 'project'
+    (project_root / '.meridian').mkdir(parents=True)
+    (project_root / 'mars.toml').write_text('[settings]\ntargets=[".agents"]\n', encoding='utf-8')
+
+    prepared = SimpleNamespace(tag='prepared')
+    preview_context = SimpleNamespace(warnings=(), argv=('preview-harness',))
+    calls: list[str] = []
+    runner_args: dict[str, object] = {}
+
+    def fake_prepare_launch_surface(**_kwargs):
+        calls.append('prepare')
+        return prepared
+
+    def fake_bind_launch_context(**kwargs):
+        assert kwargs['prepared'] is prepared
+        calls.append('bind')
+        return preview_context
+
+    def fake_run_harness_process(launch_context, harness_registry, *, prepared=None):
+        _ = harness_registry
+        runner_args['launch_context'] = launch_context
+        runner_args['prepared'] = prepared
+        return SimpleNamespace(
+            command=('runtime-harness',),
+            exit_code=0,
+            resolved_harness_session_id='session-1',
+        )
+
+    monkeypatch.setattr(launch_context, 'prepare_launch_surface', fake_prepare_launch_surface)
+    monkeypatch.setattr(launch_context, 'bind_launch_context', fake_bind_launch_context)
+    monkeypatch.setattr('meridian.lib.launch.process.run_harness_process', fake_run_harness_process)
+
+    result = launch_primary(
+        project_root=project_root,
+        request=LaunchRequest(dry_run=False),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert calls == ['prepare', 'bind']
+    assert runner_args == {
+        'launch_context': preview_context,
+        'prepared': prepared,
+    }
+    assert result.command == ('runtime-harness',)
+    assert result.continue_ref == 'session-1'

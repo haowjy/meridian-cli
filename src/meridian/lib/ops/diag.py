@@ -15,10 +15,13 @@ from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.ops.pruning import (
     OrphanProjectDir,
+    StaleClaudeOverlay,
     StaleSpawnArtifact,
     prune_orphan_project_dirs,
+    prune_stale_claude_overlays,
     prune_stale_spawn_artifacts,
     scan_orphan_project_dirs,
+    scan_stale_claude_overlays,
     scan_stale_spawn_artifacts,
 )
 from meridian.lib.ops.runtime import resolve_runtime_root
@@ -62,8 +65,10 @@ class DoctorOutput(BaseModel):
     agents_dir: str
     skills_dir: str
     orphan_project_dirs: tuple[OrphanProjectDir, ...] = ()
+    stale_claude_overlays: tuple[StaleClaudeOverlay, ...] = ()
     stale_spawn_artifacts: tuple[StaleSpawnArtifact, ...] = ()
     pruned_orphan_dirs: int = 0
+    pruned_claude_overlays: int = 0
     pruned_spawn_artifacts: int = 0
     telemetry_cleanup: TelemetryCleanupStats | None = None
     warnings: tuple["DoctorWarning", ...] = ()
@@ -81,8 +86,10 @@ class DoctorOutput(BaseModel):
             ("agents_dir", self.agents_dir),
             ("skills_dir", self.skills_dir),
             ("orphan_project_dirs", str(len(self.orphan_project_dirs))),
+            ("stale_claude_overlays", str(len(self.stale_claude_overlays))),
             ("stale_spawn_artifacts", str(len(self.stale_spawn_artifacts))),
             ("pruned_orphan_dirs", str(self.pruned_orphan_dirs)),
+            ("pruned_claude_overlays", str(self.pruned_claude_overlays)),
             ("pruned_spawn_artifacts", str(self.pruned_spawn_artifacts)),
             ("repaired", ", ".join(self.repaired) if self.repaired else "none"),
         ]
@@ -172,6 +179,12 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 "Run 'meridian doctor --global' from a top-level shell, not from a nested spawn."
             )
         orphan_project_dirs = scan_orphan_project_dirs(get_user_home(), retention_days, now)
+    stale_claude_overlays = scan_stale_claude_overlays(
+        runtime_root,
+        retention_days,
+        active_spawn_ids,
+        now,
+    )
     stale_spawn_artifacts = scan_stale_spawn_artifacts(
         runtime_root,
         retention_days,
@@ -180,12 +193,16 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     )
 
     pruned_orphan_dirs = 0
+    pruned_claude_overlays = 0
     pruned_spawn_artifacts = 0
     if payload.prune:
         pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
+        pruned_claude_overlays = prune_stale_claude_overlays(stale_claude_overlays)
         pruned_spawn_artifacts = prune_stale_spawn_artifacts(stale_spawn_artifacts)
         if pruned_orphan_dirs > 0:
             repaired.append("orphan_project_dirs")
+        if pruned_claude_overlays > 0:
+            repaired.append("claude_overlays")
         if pruned_spawn_artifacts > 0:
             repaired.append("spawn_artifacts")
 
@@ -245,6 +262,20 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 payload={
                     "spawn_ids": [item.spawn_id for item in stale_spawn_artifacts],
                     "paths": [item.path for item in stale_spawn_artifacts],
+                },
+            )
+        )
+    if not payload.prune and stale_claude_overlays:
+        warnings.append(
+            DoctorWarning(
+                code="stale_claude_overlays",
+                message=(
+                    f"{len(stale_claude_overlays)} stale Claude overlay dir(s) would be "
+                    "materialized and pruned with --prune."
+                ),
+                payload={
+                    "spawn_ids": [item.spawn_id for item in stale_claude_overlays],
+                    "paths": [item.path for item in stale_claude_overlays],
                 },
             )
         )
@@ -339,8 +370,10 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         agents_dir=agents_dir.as_posix(),
         skills_dir=skills_dir.as_posix(),
         orphan_project_dirs=tuple(orphan_project_dirs),
+        stale_claude_overlays=tuple(stale_claude_overlays),
         stale_spawn_artifacts=tuple(stale_spawn_artifacts),
         pruned_orphan_dirs=pruned_orphan_dirs,
+        pruned_claude_overlays=pruned_claude_overlays,
         pruned_spawn_artifacts=pruned_spawn_artifacts,
         telemetry_cleanup=telemetry_cleanup,
         warnings=tuple(warnings),

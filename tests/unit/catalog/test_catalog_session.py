@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry, entry
+from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache, entry
 from meridian.lib.core.types import HarnessId
 
 PROJECT_ROOT = Path("/tmp/catalog-session-project")
@@ -99,6 +99,66 @@ def test_catalog_session_cache_is_isolated_between_sessions(
         ("gpt54", PROJECT_ROOT),
         ("gpt54", PROJECT_ROOT),
     ]
+
+
+def test_catalog_session_list_all_models_reuses_cache_for_repeated_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Path | None] = []
+
+    def fake_run_mars_models_list_all(project_root: Path | None = None) -> list[dict[str, object]]:
+        calls.append(project_root)
+        return [{"id": "gpt-5.4", "harness": "codex"}]
+
+    monkeypatch.setattr(
+        "meridian.lib.catalog.model_aliases.run_mars_models_list_all",
+        fake_run_mars_models_list_all,
+    )
+
+    session = CatalogSession(PROJECT_ROOT)
+
+    first = session.list_all_models()
+    second = session.list_all_models()
+
+    assert first == second == [{"id": "gpt-5.4", "harness": "codex"}]
+    assert calls == [PROJECT_ROOT]
+
+
+def test_catalog_session_honors_injected_cache_without_requerying_mars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = MarsResultCache()
+    cache.put_resolve(
+        "gpt54",
+        PROJECT_ROOT,
+        {
+            "name": "gpt54",
+            "model_id": "gpt-5.4",
+            "harness": "codex",
+        },
+    )
+    cache.put_list_all(
+        PROJECT_ROOT,
+        [{"id": "gpt-5.4", "harness": "codex"}],
+    )
+
+    monkeypatch.setattr(
+        "meridian.lib.catalog.model_aliases.run_mars_models_resolve",
+        lambda *_args, **_kwargs: pytest.fail("resolve should use injected cache"),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.catalog.model_aliases.run_mars_models_list_all",
+        lambda *_args, **_kwargs: pytest.fail("list_all should use injected cache"),
+    )
+
+    session = CatalogSession(PROJECT_ROOT, cache=cache)
+
+    resolved = session.resolve_model("gpt54")
+    listed = session.list_all_models()
+
+    assert str(resolved.model_id) == "gpt-5.4"
+    assert resolved.harness == HarnessId.CODEX
+    assert listed == [{"id": "gpt-5.4", "harness": "codex"}]
 
 
 @pytest.mark.parametrize(

@@ -55,11 +55,13 @@ class ScriptedAcquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
         if self._index >= len(self._controls):
             raise AssertionError("unexpected acquire")
         control = self._controls[self._index]
         self._index += 1
+        _ = chat_state
         self.calls.append((chat_id, initial_prompt, execution_generation))
         control.started.set()
         await control.release.wait()

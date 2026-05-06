@@ -430,6 +430,12 @@ def test_build_launch_context_projects_context_paths_to_workspace_roots(
         assert (tmp_path / "ctx" / "kb").as_posix() in external_dirs
         assert (tmp_path / "ctx" / "strategy").as_posix() in external_dirs
 
+    projected_roots = {path.as_posix() for path in runtime_ctx.spec.projected_roots}
+    assert (tmp_path / "ctx" / "work").as_posix() in projected_roots
+    assert (tmp_path / "ctx" / "archive" / "work").as_posix() in projected_roots
+    assert (tmp_path / "ctx" / "kb").as_posix() in projected_roots
+    assert (tmp_path / "ctx" / "strategy").as_posix() in projected_roots
+
 
 def test_build_launch_context_opencode_includes_context_paths_in_external_directory(
     monkeypatch: MonkeyPatch,

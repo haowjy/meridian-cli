@@ -215,6 +215,53 @@ def test_spawn_explicit_text_format_works(
     assert "Spawn dry-run." in output
 
 
+def test_spawn_dry_run_uses_threaded_project_root_for_runtime_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared_context = object()
+    prepared_roots: list[object] = []
+
+    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.setattr(
+        cli_main,
+        "maybe_bootstrap_runtime_state",
+        lambda *_args, **_kwargs: project_root,
+    )
+    monkeypatch.setattr(
+        spawn_cli,
+        "resolve_project_root",
+        lambda: pytest.fail("spawn CLI should reuse the threaded project root"),
+    )
+    monkeypatch.setattr(
+        spawn_cli,
+        "prepare_for_runtime_write",
+        lambda root: prepared_roots.append(root) or prepared_context,
+    )
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = sink
+        assert payload.prompt == "build"
+        assert prepared is prepared_context
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "-p", "build", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert prepared_roots == [project_root]
+
+
 def test_spawn_dry_run_text_includes_model_routing_provenance(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -535,8 +582,8 @@ def test_spawn_children_resolves_parent_reference_before_filtering(
     )
     monkeypatch.setattr(
         spawn_cli,
-        "get_global_options",
-        lambda: SimpleNamespace(output=SimpleNamespace(format="json")),
+        "_get_global_options",
+        lambda: SimpleNamespace(output=SimpleNamespace(format="json"), project_root=None),
     )
 
     emitted: list[SpawnListOutput] = []
@@ -579,8 +626,8 @@ def test_spawn_children_includes_agent_and_desc_in_output(
     )
     monkeypatch.setattr(
         spawn_cli,
-        "get_global_options",
-        lambda: SimpleNamespace(output=SimpleNamespace(format="text")),
+        "_get_global_options",
+        lambda: SimpleNamespace(output=SimpleNamespace(format="text"), project_root=None),
     )
 
     emitted: list[SpawnListOutput] = []
@@ -626,8 +673,8 @@ def test_spawn_children_json_includes_agent_and_desc(
     )
     monkeypatch.setattr(
         spawn_cli,
-        "get_global_options",
-        lambda: SimpleNamespace(output=SimpleNamespace(format="json")),
+        "_get_global_options",
+        lambda: SimpleNamespace(output=SimpleNamespace(format="json"), project_root=None),
     )
 
     emitted: list[SpawnListOutput] = []

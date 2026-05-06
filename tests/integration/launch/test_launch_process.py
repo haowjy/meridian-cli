@@ -12,6 +12,7 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
@@ -32,6 +33,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.state.spawn_store import list_spawns
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -105,6 +107,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.delenv(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, raising=False)
     project_root = tmp_path
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -197,16 +200,9 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     assert captured["forked_from_chat_id"] == "c7"
     assert captured["env_chat_id"] == "c999"
     assert outcome.chat_id == "c999"
-    events = [
-        json.loads(line)
-        for line in (launch_context.runtime_root / "spawns.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    ]
-    finalize_events = [event for event in events if event.get("event") == "finalize"]
-    assert len(finalize_events) == 1
-    assert finalize_events[0]["origin"] == "launcher"
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    assert spawns[0].terminal_origin == "launcher"
 
 
 @pytest.mark.slow
@@ -246,6 +242,11 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
         command = tuple(kwargs["command"])
         captured["command"] = command
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        captured["original_claude_config_dir"] = env.get(
+            MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
+        )
         output_log_path = kwargs["output_log_path"]
         captured["output_log_path"] = output_log_path
         prompt_flag_index = command.index("--append-system-prompt-file")
@@ -292,6 +293,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert "primary prompt" in starting_prompt
     assert "passthrough system prompt" not in starting_prompt
     assert not (log_dir / "prompt.md").exists()
+    assert captured["original_claude_config_dir"] == os.environ.get("CLAUDE_CONFIG_DIR", "")
     assert json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8")) == {
         "harness": "claude",
         "surface": "primary",
@@ -598,30 +600,14 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
     captured: dict[str, object] = {}
 
-    def _read_spawn_events() -> list[dict[str, object]]:
-        spawns_jsonl = launch_context.runtime_root / "spawns.jsonl"
-        if not spawns_jsonl.exists():
-            return []
-        return [
-            json.loads(line)
-            for line in spawns_jsonl.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-
-    def _running_updates(events: list[dict[str, object]]) -> list[dict[str, object]]:
-        return [
-            event
-            for event in events
-            if event.get("event") == "update" and event.get("status") == "running"
-        ]
-
     def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
         on_running = kwargs.get("on_running")
         assert callable(on_running)
-        assert _running_updates(_read_spawn_events()) == []
+        assert list_spawns(launch_context.runtime_root)[0].status == "queued"
         on_running(5151)
-        updates_after_callback = _running_updates(_read_spawn_events())
-        captured["updates_seen_before_return"] = len(updates_after_callback)
+        running_record = list_spawns(launch_context.runtime_root)[0]
+        captured["status_seen_before_return"] = running_record.status
+        captured["worker_pid_seen_before_return"] = running_record.worker_pid
         return process.PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5151)
 
     def fail_black_box(**kwargs: object) -> tuple[int, int]:
@@ -636,10 +622,8 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
 
     outcome = process.run_harness_process(launch_context, harness_registry)
 
-    assert captured["updates_seen_before_return"] == 1
-    running_updates = _running_updates(_read_spawn_events())
-    assert len(running_updates) == 1
-    assert running_updates[0]["worker_pid"] == 5151
+    assert captured["status_seen_before_return"] == "running"
+    assert captured["worker_pid_seen_before_return"] == 5151
     assert outcome.exit_code == 0
     assert outcome.resolved_harness_session_id == "thread-managed"
 
@@ -913,6 +897,9 @@ def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
         env = kwargs["env"]
         assert isinstance(env, dict)
         captured["claude_config_dir"] = env.get("CLAUDE_CONFIG_DIR")
+        captured["original_claude_config_dir"] = env.get(
+            MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
+        )
         started = kwargs.get("on_child_started")
         assert callable(started)
         started(777)
@@ -935,18 +922,8 @@ def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
 
     assert outcome.exit_code == 0
     assert captured["claude_config_dir"] == custom_config.as_posix()
-    events = [
-        json.loads(line)
-        for line in (launch_context.runtime_root / "spawns.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    ]
-    assert any(
-        event.get("event") == "update"
-        and event.get("claude_config_dir") == custom_config.as_posix()
-        for event in events
-    )
+    assert captured["original_claude_config_dir"] == custom_config.as_posix()
+    assert list_spawns(launch_context.runtime_root)
     sessions = [
         json.loads(line)
         for line in (launch_context.runtime_root / "sessions.jsonl")
@@ -959,6 +936,125 @@ def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
         and event.get("claude_config_dir") == custom_config.as_posix()
         for event in sessions
     )
+
+
+@pytest.mark.slow
+def test_run_harness_process_materializes_claude_overlay_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-materialize"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    call_order: list[str] = []
+
+    def fake_prepare_isolated_claude_config(**kwargs: object) -> tuple[Path | None, str]:
+        isolated_root = Path(kwargs["runtime_root"]) / "claude-config" / str(kwargs["spawn_id"])
+        (isolated_root / "projects" / "slug").mkdir(parents=True)
+        (isolated_root / "projects" / "slug" / "session-1.jsonl").write_text(
+            '{"sessionId":"session-1"}\n',
+            encoding="utf-8",
+        )
+        return isolated_root, ""
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(888)
+        return (0, 888)
+
+    def fake_materialize(overlay_root: Path, canonical_root: Path | None = None) -> int:
+        assert overlay_root.is_dir()
+        call_order.append("materialize")
+        return 1
+
+    def fake_rmtree(path: Path) -> None:
+        assert path.is_dir()
+        call_order.append("rmtree")
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(process_runner, "materialize_overlay_transcripts", fake_materialize)
+    monkeypatch.setattr(process_runner.shutil, "rmtree", fake_rmtree)
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert call_order == ["materialize", "rmtree"]
+
+
+@pytest.mark.slow
+def test_run_harness_process_continues_cleanup_when_overlay_materialization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-materialize-failure"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    cleaned_paths: list[Path] = []
+
+    def fake_prepare_isolated_claude_config(**kwargs: object) -> tuple[Path | None, str]:
+        isolated_root = Path(kwargs["runtime_root"]) / "claude-config" / str(kwargs["spawn_id"])
+        (isolated_root / "projects").mkdir(parents=True)
+        return isolated_root, ""
+
+    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+        started = kwargs.get("on_child_started")
+        assert callable(started)
+        started(889)
+        return (0, 889)
+
+    def fake_materialize(overlay_root: Path, canonical_root: Path | None = None) -> int:
+        raise OSError(f"boom:{overlay_root}")
+
+    def fake_rmtree(path: Path) -> None:
+        cleaned_paths.append(path)
+
+    monkeypatch.setattr(
+        "meridian.lib.harness.claude_preflight.prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(process_runner, "materialize_overlay_transcripts", fake_materialize)
+    monkeypatch.setattr(process_runner.shutil, "rmtree", fake_rmtree)
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        fake_run_primary_process_with_capture,
+    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    with caplog.at_level("WARNING"):
+        outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert len(cleaned_paths) == 1
+    assert "Transcript materialization failed; session transcripts may be lost" in caplog.text
+
 
 @pytest.mark.slow
 def test_run_harness_process_fresh_claude_primary_does_not_inject_seed_args(
@@ -1002,16 +1098,9 @@ def test_run_harness_process_fresh_claude_primary_does_not_inject_seed_args(
     assert launch_context.seed_harness_session_id in (None, "")
     assert "command_session_id" not in captured
     assert outcome.resolved_harness_session_id == ""
-    events = [
-        json.loads(line)
-        for line in (launch_context.runtime_root / "spawns.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    ]
-    start_events = [e for e in events if e.get("event") == "start"]
-    assert len(start_events) == 1
-    assert start_events[0]["harness_session_id"] in (None, "")
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    assert spawns[0].harness_session_id in (None, "")
 
 
 @pytest.mark.slow
@@ -1053,19 +1142,8 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
     # State should be repaired to the observed session ID
     assert outcome.resolved_harness_session_id == observed_id
     # Spawn record should have the observed ID
-    events = [
-        json.loads(line)
-        for line in (launch_context.runtime_root / "spawns.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    ]
-    update_events = [
-        e
-        for e in events
-        if e.get("event") == "update" and e.get("harness_session_id") == observed_id
-    ]
-    assert len(update_events) >= 1
+    spawns = list_spawns(launch_context.runtime_root)
+    assert any(spawn.harness_session_id == observed_id for spawn in spawns)
 
 
 @pytest.mark.slow

@@ -4,13 +4,15 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 import structlog
@@ -26,6 +28,13 @@ from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
+from meridian.lib.harness.claude_preflight import (
+    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+    ensure_claude_session_accessible,
+    materialize_overlay_transcripts,
+    prepare_isolated_claude_config,
+    resolve_overlay_materialization_canonical_root,
+)
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.context import LaunchContext, build_launch_context
@@ -48,7 +57,11 @@ from meridian.lib.state.paths import (
     resolve_spawn_log_dir,
     resolve_work_scratch_dir,
 )
-from meridian.lib.state.session_store import get_session_active_work_id, update_session_work_id
+from meridian.lib.state.session_store import (
+    get_session_active_work_id,
+    update_session_claude_config_dir,
+    update_session_work_id,
+)
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -532,10 +545,15 @@ async def _prepare_execution_handoff(
         resolved_request = resolved_request.model_copy(
             update={"agent": session_context.resolved_agent_name}
         )
-        # I-10/I-11: spawn row AND chat row now both exist. Materialize any
-        # pending fork via the sole owner so the spawn row receives the forked
-        # session ID via update_spawn (not pre-populated on the start row).
-        if resolved_session.continue_fork and resolved_session.requested_harness_session_id:
+        # I-10/I-11: spawn row AND chat row now both exist. Codex forking is
+        # Meridian-materialized so the spawn row receives the forked session ID
+        # via update_spawn (not pre-populated on the start row). Other harnesses
+        # keep continue_fork native for launch projection.
+        if (
+            harness_id == HarnessId.CODEX
+            and resolved_session.continue_fork
+            and resolved_session.requested_harness_session_id
+        ):
             forked_session_id = materialize_fork(
                 adapter=harness_adapter,
                 source_session_id=resolved_session.requested_harness_session_id,
@@ -635,6 +653,122 @@ def _close_execution_handoff(handoff: PreparedExecutionHandoff) -> None:
     handoff.session_exit_stack.close()
 
 
+def _prepare_child_claude_overlay(
+    *,
+    handoff: PreparedExecutionHandoff,
+    spawn_id: SpawnId,
+    runtime_root: Path,
+) -> Path | None:
+    """Create per-spawn Claude overlay, inject env, and persist metadata."""
+    isolated_config_root: Path | None = None
+    try:
+        isolated_config_root, original_claude_config_dir = prepare_isolated_claude_config(
+            runtime_root=runtime_root,
+            spawn_id=str(spawn_id),
+        )
+
+        effective_config_dir: str | None = None
+        if isolated_config_root is not None:
+            effective_config_dir = str(isolated_config_root)
+        elif original_claude_config_dir.strip():
+            effective_config_dir = original_claude_config_dir.strip()
+
+        child_env = dict(handoff.launch_context.env)
+        child_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] = original_claude_config_dir
+        if effective_config_dir:
+            child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
+            spawn_store.update_spawn(
+                runtime_root,
+                spawn_id,
+                claude_config_dir=effective_config_dir,
+            )
+            if handoff.session_context.chat_id:
+                update_session_claude_config_dir(
+                    runtime_root,
+                    handoff.session_context.chat_id,
+                    claude_config_dir=effective_config_dir,
+                )
+        handoff.launch_context = replace(
+            handoff.launch_context,
+            env=MappingProxyType(child_env),
+        )
+
+        return isolated_config_root
+    except Exception:
+        if isolated_config_root is not None:
+            _cleanup_child_claude_overlay(
+                isolated_config_root=isolated_config_root,
+                spawn_id=spawn_id,
+                canonical_root=resolve_overlay_materialization_canonical_root(
+                    handoff.launch_context.env
+                ),
+            )
+        raise
+
+
+def _seed_child_claude_session_access(
+    *,
+    request: SpawnRequest,
+    child_cwd: Path,
+    target_config_root: Path | None,
+) -> None:
+    """Seed continue/fork transcript into child Claude config root."""
+
+    source_session_id = (request.session.requested_harness_session_id or "").strip()
+    source_execution_cwd = (request.session.source_execution_cwd or "").strip()
+    if not source_session_id or not source_execution_cwd:
+        return
+    source_config_root = (
+        Path(request.session.source_claude_config_dir)
+        if request.session.source_claude_config_dir
+        else None
+    )
+    ensure_claude_session_accessible(
+        source_session_id=source_session_id,
+        source_cwd=Path(source_execution_cwd),
+        child_cwd=child_cwd,
+        source_config_root=source_config_root,
+        target_config_root=target_config_root,
+    )
+
+
+def _cleanup_child_claude_overlay(
+    *,
+    isolated_config_root: Path | None,
+    spawn_id: SpawnId,
+    canonical_root: Path | None = None,
+) -> None:
+    """Materialize transcripts, then remove the child Claude overlay."""
+
+    if isolated_config_root is None or not isolated_config_root.is_dir():
+        return
+
+    try:
+        materialization_root = (
+            canonical_root
+            if canonical_root is not None
+            else resolve_overlay_materialization_canonical_root()
+        )
+        materialize_overlay_transcripts(
+            isolated_config_root,
+            canonical_root=materialization_root,
+        )
+    except Exception:
+        logger.warning(
+            "Child transcript materialization failed; session transcripts may be lost",
+            spawn_id=str(spawn_id),
+            exc_info=True,
+        )
+    try:
+        shutil.rmtree(isolated_config_root)
+    except OSError:
+        logger.debug(
+            "Failed to clean up isolated Claude config for child spawn",
+            spawn_id=str(spawn_id),
+            exc_info=True,
+        )
+
+
 async def launch_prepared_spawn(
     *,
     spawn: Spawn,
@@ -655,6 +789,8 @@ async def launch_prepared_spawn(
 ) -> int:
     """Shared post-row, pre-run launch handoff for foreground/background spawns."""
 
+    handoff: PreparedExecutionHandoff
+    claude_overlay_root: Path | None = None
     try:
         handoff = await _prepare_execution_handoff(
             spawn=spawn,
@@ -680,6 +816,28 @@ async def launch_prepared_spawn(
         return 1
 
     try:
+        try:
+            if handoff.launch_context.harness.id == HarnessId.CLAUDE:
+                claude_overlay_root = _prepare_child_claude_overlay(
+                    handoff=handoff,
+                    spawn_id=spawn.spawn_id,
+                    runtime_root=runtime_root,
+                )
+                _seed_child_claude_session_access(
+                    request=handoff.resolved_request,
+                    child_cwd=handoff.launch_context.child_cwd,
+                    target_config_root=claude_overlay_root,
+                )
+        except Exception as exc:
+            await finalize_launch_failure(
+                runtime_root,
+                project_paths.project_root,
+                spawn.spawn_id,
+                str(exc),
+            )
+            logger.exception("Child Claude pre-run setup failed.", spawn_id=str(spawn.spawn_id))
+            return 1
+
         return await _invoke_runner(
             handoff,
             spawn=spawn,
@@ -692,6 +850,14 @@ async def launch_prepared_spawn(
             debug=debug,
         )
     finally:
+        if claude_overlay_root is not None:
+            _cleanup_child_claude_overlay(
+                isolated_config_root=claude_overlay_root,
+                spawn_id=spawn.spawn_id,
+                canonical_root=resolve_overlay_materialization_canonical_root(
+                    handoff.launch_context.env
+                ),
+            )
         try:
             _close_execution_handoff(handoff)
         except Exception:

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import meridian.lib.chat.server as server
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.protocol import ChatEvent, utc_now_iso
 from meridian.lib.chat.server import app, configure
@@ -34,9 +35,18 @@ class Acquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return Handle()
+
+
+def _replayed_events(client: TestClient, chat_id: str) -> list[dict[str, object]]:
+    stream_source = server._runtime.get_stream_source(chat_id)
+    assert stream_source is not None
+    expected_event_count = len(list(stream_source.event_log.read_all()))
+    with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
+        return [ws.receive_json() for _ in range(expected_event_count)]
 
 
 def test_rest_routes_are_command_wrappers(tmp_path: Path) -> None:
@@ -108,9 +118,13 @@ def test_restart_recovery_marks_unclosed_active_chat_idle_with_error(tmp_path: P
     configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
     with TestClient(app) as client:
         assert client.get(f"/chat/{chat_id}/state").json()["state"] == "idle"
-        with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-            events = [ws.receive_json(), ws.receive_json(), ws.receive_json()]
-        assert [event["type"] for event in events] == [
+        events = _replayed_events(client, chat_id)
+        relevant_types = [
+            event["type"]
+            for event in events
+            if event["type"] not in {"user.prompt", "chat.state_changed"}
+        ]
+        assert relevant_types == [
             "chat.started",
             "turn.started",
             "runtime.error",

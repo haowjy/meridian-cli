@@ -64,6 +64,7 @@ class _ResolvedSessionTarget(BaseModel):
     source_agent: str | None = None
     source_work_id: str | None = None
     source_execution_cwd: str | None = None
+    source_claude_config_dir: str | None = None
     tracked: bool = False
     warning: str | None = None
 
@@ -93,6 +94,7 @@ def resolve_session_target(
         source_agent=resolved.source_agent,
         source_work_id=resolved.source_work_id,
         source_execution_cwd=resolved.source_execution_cwd,
+        source_claude_config_dir=resolved.source_claude_config_dir,
         tracked=resolved.tracked,
         warning=resolved.warning,
     )
@@ -145,6 +147,7 @@ def run_primary_launch(
     continue_warning: str | None = None
     forked_from_chat_id: str | None = None
     source_execution_cwd: str | None = None
+    source_claude_config_dir: str | None = None
     output_forked_from: str | None = None
     session_mode = SessionMode.FRESH
     explicit_harness = harness.strip() if harness is not None and harness.strip() else None
@@ -183,6 +186,8 @@ def run_primary_launch(
                 "Use --harness to specify which harness owns this session."
             )
         continue_warning = resolved_continue.warning
+        source_execution_cwd = resolved_continue.source_execution_cwd
+        source_claude_config_dir = resolved_continue.source_claude_config_dir
         session_mode = SessionMode.RESUME
     elif fork_target is not None:
         resolved_fork = resolve_session_target(project_root=project_root, continue_ref=fork_target)
@@ -216,6 +221,7 @@ def run_primary_launch(
         continue_fork = True
         forked_from_chat_id = resolved_fork.chat_id
         source_execution_cwd = resolved_fork.source_execution_cwd
+        source_claude_config_dir = resolved_fork.source_claude_config_dir
         output_forked_from = resolved_fork.chat_id or fork_target
         session_mode = SessionMode.FORK
 
@@ -255,6 +261,7 @@ def run_primary_launch(
                 continue_fork=continue_fork,
                 forked_from_chat_id=forked_from_chat_id,
                 source_execution_cwd=source_execution_cwd,
+                source_claude_config_dir=source_claude_config_dir,
             ),
         ),
         harness_registry=harness_registry,

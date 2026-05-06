@@ -1,6 +1,7 @@
 import importlib
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -96,6 +97,46 @@ def test_main_harness_shortcut_routes_into_primary_launch(
     assert exc_info.value.code == 0
     assert captured["harness"] == "codex"
     assert captured["dry_run"] is True
+
+
+@pytest.mark.parametrize(
+    ("argv", "agent_depth"),
+    [
+        (["models", "list"], None),
+        (["--format", "json", "models", "list"], None),
+        (["models", "list"], "1"),
+    ],
+    ids=["human-text", "human-json", "agent-mode"],
+)
+def test_main_models_list_redirect_stays_in_startup_layer(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    agent_depth: str | None,
+) -> None:
+    original_models_cmd = sys.modules.pop("meridian.cli.models_cmd", None)
+    try:
+        monkeypatch.setattr(
+            cli_main,
+            "maybe_bootstrap_runtime_state",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("models list redirect should not bootstrap runtime state")
+            ),
+        )
+        if agent_depth is None:
+            monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+        else:
+            monkeypatch.setenv("MERIDIAN_DEPTH", agent_depth)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli_main.main(argv)
+
+        assert exc_info.value.code == 1
+        assert "meridian models list" in capsys.readouterr().err
+        assert "meridian.cli.models_cmd" not in sys.modules
+    finally:
+        if original_models_cmd is not None:
+            sys.modules["meridian.cli.models_cmd"] = original_models_cmd
 
 
 def test_primary_launch_background_repairs_stay_within_current_project(
@@ -417,7 +458,7 @@ def test_bootstrap_command_enables_bootstrap_documents(
         captured.update(kwargs)
         return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
 
-    monkeypatch.setattr(bootstrap_cmd.primary_launch, "run_primary_launch", _fake_primary_launch)
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
 
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(["bootstrap", "--dry-run"])
@@ -438,7 +479,7 @@ def test_bootstrap_command_without_agent_forwards_agent_none(
         captured.update(kwargs)
         return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
 
-    monkeypatch.setattr(bootstrap_cmd.primary_launch, "run_primary_launch", _fake_primary_launch)
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
 
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(["bootstrap", "--dry-run"])

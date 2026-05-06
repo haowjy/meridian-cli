@@ -15,11 +15,15 @@ from meridian.lib.harness.codex_rollout import (
     resolve_rollout_session_id,
 )
 from meridian.lib.harness.common import (
+    OUTPUT_FILENAME,
+    _coerce_optional_int,
+    _iter_json_lines_artifact,
     extract_codex_report,
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 
 from .base import HarnessExtractor, session_from_mapping_with_keys
@@ -28,6 +32,8 @@ _SESSION_ID_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bcodex\s+resume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
     re.compile(r"\bresume\s+([A-Za-z0-9][A-Za-z0-9._:-]{5,})\b", re.IGNORECASE),
 )
+
+
 def _resolve_rollout_session_id(path: Path, project_root: Path) -> str | None:
     return resolve_rollout_session_id(path, project_root)
 
@@ -91,6 +97,9 @@ class CodexHarnessExtractor(HarnessExtractor[CodexLaunchSpec]):
         return _detect_primary_session_id(child_cwd=child_cwd, launch_env=launch_env)
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+        specific = _extract_codex_usage(artifacts, spawn_id)
+        if specific != TokenUsage():
+            return specific
         return extract_usage_from_artifacts(artifacts, spawn_id)
 
     def extract_session_id(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
@@ -116,3 +125,67 @@ class CodexHarnessExtractor(HarnessExtractor[CodexLaunchSpec]):
 CODEX_EXTRACTOR = CodexHarnessExtractor()
 
 __all__ = ["CODEX_EXTRACTOR", "CodexHarnessExtractor"]
+
+
+def _nested_get(payload: dict[str, object], *keys: str) -> object:
+    current: object = payload
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _extract_codex_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+    last_total_usage: dict[str, object] | None = None
+    model_id: str | None = None
+    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
+        event_type = (
+            str(payload.get("event_type", payload.get("type", payload.get("event", ""))))
+            .strip()
+            .lower()
+            .replace("/", ".")
+        )
+        # Real Codex events: thread/tokenUsage/updated with tokenUsage.total (camelCase)
+        if event_type == "thread.tokenusage.updated":
+            token_usage = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
+            if isinstance(token_usage, dict):
+                total = token_usage.get("total")
+                if isinstance(total, dict):
+                    last_total_usage = total
+                # Try to extract model from the event payload
+                raw_model = payload.get("model") or _nested_get(payload, "payload", "model")
+                if isinstance(raw_model, str) and raw_model.strip():
+                    model_id = raw_model.strip()
+        # Test fixture / fallback: turn/completed with snake_case usage
+        elif event_type == "turn.completed":
+            usage = payload.get("usage")
+            if not isinstance(usage, dict):
+                usage = _nested_get(payload, "payload", "usage")
+            if isinstance(usage, dict):
+                last_total_usage = usage
+                raw_model = payload.get("model") or _nested_get(payload, "payload", "model")
+                if isinstance(raw_model, str) and raw_model.strip():
+                    model_id = raw_model.strip()
+    if last_total_usage is None:
+        return TokenUsage()
+    usage = TokenUsage(
+        input_tokens=_coerce_optional_int(
+            last_total_usage.get("inputTokens") or last_total_usage.get("input_tokens")
+        ),
+        output_tokens=_coerce_optional_int(
+            last_total_usage.get("outputTokens") or last_total_usage.get("output_tokens")
+        ),
+        cache_read_input_tokens=_coerce_optional_int(
+            last_total_usage.get("cachedInputTokens") or last_total_usage.get("cached_input_tokens")
+        ),
+        cache_creation_input_tokens=_coerce_optional_int(
+            last_total_usage.get("cacheCreationInputTokens")
+            or last_total_usage.get("cache_creation_input_tokens")
+        ),
+        reasoning_tokens=_coerce_optional_int(
+            last_total_usage.get("reasoningOutputTokens")
+            or last_total_usage.get("reasoning_output_tokens")
+        ),
+    )
+    return estimate_usage_cost(model_id=model_id, usage=usage)

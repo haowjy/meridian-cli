@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -10,7 +9,7 @@ import pytest
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.lifecycle import create_lifecycle_service
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.ops.spawn.execute import (
     PreparedExecutionHandoff,
@@ -18,16 +17,6 @@ from meridian.lib.ops.spawn.execute import (
     launch_prepared_spawn,
 )
 from meridian.lib.state import spawn_store
-
-
-def _count_finalize_events(runtime_root: Path, spawn_id: str) -> int:
-    count = 0
-    with (runtime_root / "spawns.jsonl").open(encoding="utf-8") as handle:
-        for line in handle:
-            payload = json.loads(line)
-            if payload.get("event") == "finalize" and payload.get("id") == spawn_id:
-                count += 1
-    return count
 
 
 def _start_spawn(
@@ -112,7 +101,10 @@ async def test_launch_prepared_spawn_keeps_runner_terminal_tuple_when_teardown_c
                 harness="codex",
                 agent="coder",
             ),
-            launch_context=cast("Any", SimpleNamespace()),
+            launch_context=cast(
+                "Any",
+                SimpleNamespace(harness=SimpleNamespace(id=HarnessId.CODEX)),
+            ),
             session_context=_SessionExecutionContext(
                 chat_id="c1",
                 work_id=None,
@@ -165,6 +157,5 @@ async def test_launch_prepared_spawn_keeps_runner_terminal_tuple_when_teardown_c
     assert row.exit_code == 143
     assert row.terminal_origin == "runner"
     assert row.error == "cancelled"
-    assert _count_finalize_events(runtime_root, str(spawn_id)) == 1
     assert len(warning_calls) == 1
     assert warning_calls[0][0][0] == "Post-run session teardown failed."

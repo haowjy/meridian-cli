@@ -36,8 +36,9 @@ class Acquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return Handle()
 
 

@@ -23,11 +23,11 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
-from meridian.lib.state.spawn_store import APP_LAUNCH_MODE, SpawnOrigin
+from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin
 
 if TYPE_CHECKING:
     from meridian.lib.core.spawn_service import CompleteSpawnOutcome
-    from meridian.lib.state.spawn_store import SpawnRecord
+    from meridian.lib.state.spawn.model import SpawnRecord
     from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _WAIT_POLL_INTERVAL_SECS = 0.1

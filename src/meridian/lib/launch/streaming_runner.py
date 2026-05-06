@@ -27,7 +27,6 @@ from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
 from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
@@ -715,22 +714,6 @@ async def execute_with_streaming(
             execution_cwd=str(child_cwd),
         )
 
-        if (
-            harness.id == HarnessId.CLAUDE
-            and request.session.requested_harness_session_id
-            and request.session.source_execution_cwd
-        ):
-            source_config = (
-                Path(request.session.source_claude_config_dir)
-                if request.session.source_claude_config_dir
-                else None
-            )
-            ensure_claude_session_accessible(
-                source_session_id=request.session.requested_harness_session_id,
-                source_cwd=Path(request.session.source_execution_cwd),
-                child_cwd=child_cwd,
-                source_config_root=source_config,
-            )
         tracer: DebugTracer | None = None
         if debug:
             from meridian.lib.observability.debug_tracer import DebugTracer

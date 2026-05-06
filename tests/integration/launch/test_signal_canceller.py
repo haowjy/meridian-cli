@@ -17,7 +17,7 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_runtime_paths
-from meridian.lib.state.spawn_store import LaunchMode
+from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.streaming.signal_canceller import SignalCanceller
 
 

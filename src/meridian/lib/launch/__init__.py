@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         build_launch_context,
         prepare_launch_surface,
     )
+    from meridian.lib.launch.materialize import MaterializedLaunch, materialize_harness
     from meridian.lib.launch.policies import ResolvedPolicies, resolve_policies
     from meridian.lib.launch.process import ProcessOutcome, run_harness_process
     from meridian.lib.launch.resolve import (
@@ -144,6 +145,7 @@ def __getattr__(name: str) -> Any:
     mapping: dict[str, tuple[str, str]] = {
         "LaunchRequest": (".types", "LaunchRequest"),
         "LaunchResult": (".types", "LaunchResult"),
+        "MaterializedLaunch": (".materialize", "MaterializedLaunch"),
         "PrimarySessionMetadata": (".types", "PrimarySessionMetadata"),
         "ProcessOutcome": (".process", "ProcessOutcome"),
         "PreparedLaunchSurface": (".context", "PreparedLaunchSurface"),
@@ -161,6 +163,7 @@ def __getattr__(name: str) -> Any:
             "normalize_system_prompt_passthrough_args",
         ),
         "prepare_launch_surface": (".context", "prepare_launch_surface"),
+        "materialize_harness": (".materialize", "materialize_harness"),
         "resolve_harness": (".resolve", "resolve_harness"),
         "resolve_policies": (".policies", "resolve_policies"),
         "resolve_skills_from_profile": (".resolve", "resolve_skills_from_profile"),
@@ -182,6 +185,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "LaunchRequest",
     "LaunchResult",
+    "MaterializedLaunch",
     "PreparedLaunchSurface",
     "PrimarySessionMetadata",
     "ProcessOutcome",
@@ -195,6 +199,7 @@ __all__ = [
     "build_primary_prompt",
     "launch_primary",
     "load_agent_profile_with_fallback",
+    "materialize_harness",
     "normalize_system_prompt_passthrough_args",
     "prepare_launch_surface",
     "resolve_harness",

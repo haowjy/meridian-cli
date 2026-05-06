@@ -5,10 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.ops.pruning import (
     prune_orphan_project_dirs,
+    prune_stale_claude_overlays,
     prune_stale_spawn_artifacts,
     scan_orphan_project_dirs,
+    scan_stale_claude_overlays,
     scan_stale_spawn_artifacts,
 )
 from meridian.lib.state import spawn_store
@@ -98,6 +101,36 @@ def test_scan_stale_spawn_artifacts_respects_scope_and_retention_semantics(
     assert all(item.project_uuid == "current-uuid" for item in stale_only)
 
 
+def test_scan_stale_claude_overlays_respects_scope_and_retention_semantics(
+    tmp_path: Path,
+) -> None:
+    user_home = tmp_path / "user-home"
+    current_root = user_home / "projects" / "current-uuid"
+    other_root = user_home / "projects" / "other-uuid"
+    stale_overlay = current_root / "claude-config" / "p1"
+    active_overlay = current_root / "claude-config" / "p2"
+    other_overlay = other_root / "claude-config" / "p9"
+
+    _write_payload(stale_overlay / "projects" / "slug" / "session.jsonl", '{"event":"old"}\n')
+    _write_payload(active_overlay / "projects" / "slug" / "session.jsonl", '{"event":"new"}\n')
+    _write_payload(other_overlay / "projects" / "slug" / "session.jsonl", '{"event":"other"}\n')
+    _set_tree_mtime(stale_overlay, _EPOCH_NOW - (40 * _DAY))
+    _set_tree_mtime(active_overlay, _EPOCH_NOW - (1 * _DAY))
+    _set_tree_mtime(other_overlay, _EPOCH_NOW - (40 * _DAY))
+    _set_path_mtime(current_root, _EPOCH_NOW - (1 * _DAY))
+    _set_path_mtime(other_root, _EPOCH_NOW - (1 * _DAY))
+
+    active_spawn_ids = {"p2"}
+    stale_only = scan_stale_claude_overlays(current_root, 30, active_spawn_ids, _EPOCH_NOW)
+    aggressive = scan_stale_claude_overlays(current_root, 0, active_spawn_ids, _EPOCH_NOW)
+    never = scan_stale_claude_overlays(current_root, -1, active_spawn_ids, _EPOCH_NOW)
+
+    assert [item.spawn_id for item in stale_only] == ["p1"]
+    assert [item.spawn_id for item in aggressive] == ["p1"]
+    assert never == []
+    assert all(item.project_uuid == "current-uuid" for item in stale_only)
+
+
 def test_prune_functions_are_idempotent(tmp_path: Path) -> None:
     user_home = tmp_path / "user-home"
     orphan_dir = user_home / "projects" / "orphan-uuid"
@@ -119,3 +152,80 @@ def test_prune_functions_are_idempotent(tmp_path: Path) -> None:
     assert not stale_spawn.exists()
     assert prune_orphan_project_dirs(orphans) == 0
     assert prune_stale_spawn_artifacts(stale) == 0
+
+
+def test_prune_stale_claude_overlays_materializes_transcripts_before_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    current_root = user_home / "projects" / "current-uuid"
+    stale_overlay = current_root / "claude-config" / "p1"
+    canonical_root = user_home / ".claude"
+    session_file = stale_overlay / "projects" / "slug" / "session.jsonl"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", canonical_root.as_posix())
+
+    _write_payload(session_file, '{"event":"start"}\n')
+    _set_tree_mtime(stale_overlay, _EPOCH_NOW - (40 * _DAY))
+    _set_path_mtime(current_root, _EPOCH_NOW - (1 * _DAY))
+
+    stale = scan_stale_claude_overlays(current_root, 30, set(), _EPOCH_NOW)
+
+    assert prune_stale_claude_overlays(stale) == 1
+    assert not stale_overlay.exists()
+    assert (canonical_root / "projects" / "slug" / "session.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"event":"start"}\n'
+    assert prune_stale_claude_overlays(stale) == 0
+
+
+def test_prune_stale_claude_overlays_uses_internal_original_root_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    current_root = user_home / "projects" / "current-uuid"
+    stale_overlay = current_root / "claude-config" / "p1"
+    parent_overlay_root = current_root / "claude-config" / "parent-overlay"
+    durable_root = user_home / ".claude-durable"
+    session_file = stale_overlay / "projects" / "slug" / "session.jsonl"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", parent_overlay_root.as_posix())
+    monkeypatch.setenv(
+        MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+        durable_root.as_posix(),
+    )
+
+    _write_payload(session_file, '{"event":"start"}\n')
+    _set_tree_mtime(stale_overlay, _EPOCH_NOW - (40 * _DAY))
+    _set_path_mtime(current_root, _EPOCH_NOW - (1 * _DAY))
+
+    stale = scan_stale_claude_overlays(current_root, 30, set(), _EPOCH_NOW)
+
+    assert prune_stale_claude_overlays(stale) == 1
+    assert not stale_overlay.exists()
+    assert (durable_root / "projects" / "slug" / "session.jsonl").read_text(
+        encoding="utf-8"
+    ) == '{"event":"start"}\n'
+    assert not (parent_overlay_root / "projects" / "slug" / "session.jsonl").exists()
+
+
+def test_prune_stale_claude_overlays_deletes_even_when_materialization_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_home = tmp_path / "user-home"
+    current_root = user_home / "projects" / "current-uuid"
+    stale_overlay = current_root / "claude-config" / "p1"
+
+    _write_payload(stale_overlay / "projects" / "slug" / "session.jsonl", '{"event":"start"}\n')
+    _set_tree_mtime(stale_overlay, _EPOCH_NOW - (40 * _DAY))
+    _set_path_mtime(current_root, _EPOCH_NOW - (1 * _DAY))
+    stale = scan_stale_claude_overlays(current_root, 30, set(), _EPOCH_NOW)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.pruning.materialize_overlay_transcripts",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    assert prune_stale_claude_overlays(stale) == 1
+    assert not stale_overlay.exists()

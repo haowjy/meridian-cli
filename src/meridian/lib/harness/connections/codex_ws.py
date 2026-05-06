@@ -213,7 +213,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             runtime_model_switch=False,
             structured_reasoning=True,
             supports_primary_observer=True,
-            supports_runtime_hitl=True,
+            supports_runtime_hitl=not getattr(self._request_handler, "no_runtime_hitl", True),
             supported_startup_phases=frozenset(
                 phase.value
                 for phase in (
@@ -452,23 +452,25 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         decision: str,
         payload: dict[str, object] | None = None,
     ) -> None:
-        jsonrpc_id = self._hitl_requests.pop(request_id, None)
+        jsonrpc_id = self._hitl_requests.get(request_id)
         if jsonrpc_id is None:
             raise ValueError(f"No pending Codex HITL request: {request_id}")
         result: dict[str, object] = {"decision": decision}
         if payload:
             result.update(payload)
         await self._send_jsonrpc_result(jsonrpc_id, result)
+        self._hitl_requests.pop(request_id, None)
 
     async def respond_user_input(
         self,
         request_id: str,
         answers: dict[str, object],
     ) -> None:
-        jsonrpc_id = self._hitl_requests.pop(request_id, None)
+        jsonrpc_id = self._hitl_requests.get(request_id)
         if jsonrpc_id is None:
             raise ValueError(f"No pending Codex HITL request: {request_id}")
         await self._send_jsonrpc_result(jsonrpc_id, {"answers": answers})
+        self._hitl_requests.pop(request_id, None)
 
     async def _connect_with_retry(self, ws_url: str, timeout_seconds: float) -> Any:
         loop = asyncio.get_running_loop()
@@ -612,15 +614,10 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                     if isinstance(params_obj, dict)
                     else {}
                 )
-                self._update_turn_state(method=method, payload=payload)
-
-                await self._event_queue.put(
-                    HarnessEvent(
-                        event_type=method,
-                        payload=payload,
-                        harness_id=self.harness_id.value,
-                        raw_text=raw_text,
-                    )
+                await self._handle_notification(
+                    method=method,
+                    payload=payload,
+                    raw_text=raw_text,
                 )
         except Exception as exc:
             if self._state in {"starting", "connected"}:
@@ -636,6 +633,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                 )
         finally:
             self._fail_pending_requests(RuntimeError("Codex websocket closed"))
+            self._clear_stale_hitl_requests(reason="websocket_closed")
             await self._event_queue.put(None)
 
     async def _cleanup_resources(self, *, mark_stopped: bool) -> None:
@@ -659,7 +657,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             self._process = None
 
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
-        self._hitl_requests = {}
+        self._clear_stale_hitl_requests(reason="connection_stopped")
         self._current_turn_id = None
         self._thread_id = None
         self._cancel_requested = False
@@ -733,14 +731,6 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         params_obj = message.get("params")
         payload = cast("dict[str, object]", params_obj) if isinstance(params_obj, dict) else {}
 
-        if self._primary_observer_mode:
-            await self._send_jsonrpc_error(
-                request_id,
-                code=-32601,
-                message="Meridian observer does not handle server requests in primary attach mode",
-            )
-            return
-
         if not isinstance(method, str):
             return
 
@@ -798,6 +788,8 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         launch_spec = self._launch_spec
         if launch_spec is None or launch_spec.permission_resolver.config.approval != "confirm":
             return False
+        if not getattr(self._request_handler, "no_runtime_hitl", False):
+            return False
 
         logger.warning(
             "Rejecting Codex server approval request in confirm mode: %s",
@@ -820,6 +812,42 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             message="Codex websocket approval requests are unsupported in confirm mode.",
         )
         return True
+
+    async def _handle_notification(
+        self,
+        *,
+        method: str,
+        payload: dict[str, object],
+        raw_text: str,
+    ) -> None:
+        if method == "serverRequest/resolved":
+            self._resolve_server_request(payload)
+        self._update_turn_state(method=method, payload=payload)
+        await self._event_queue.put(
+            HarnessEvent(
+                event_type=method,
+                payload=payload,
+                harness_id=self.harness_id.value,
+                raw_text=raw_text,
+            )
+        )
+
+    def _resolve_server_request(self, payload: dict[str, object]) -> None:
+        resolved_request_id = _extract_server_request_id(payload)
+        if resolved_request_id is None:
+            return
+        self._hitl_requests.pop(resolved_request_id, None)
+
+    def _clear_stale_hitl_requests(self, *, reason: str) -> None:
+        pending_count = len(self._hitl_requests)
+        if pending_count == 0:
+            return
+        logger.debug(
+            "Dropping %d stale Codex HITL request(s) during %s",
+            pending_count,
+            reason,
+        )
+        self._hitl_requests = {}
 
     def _fail_pending_requests(self, error: Exception) -> None:
         for request_id in list(self._pending_requests.keys()):
@@ -1043,6 +1071,25 @@ def _extract_turn_id(payload: dict[str, object]) -> str | None:
     turn_obj = payload.get("turn")
     if isinstance(turn_obj, dict):
         return _extract_str(cast("dict[str, object]", turn_obj), "id")
+    return None
+
+
+def _extract_server_request_id(payload: dict[str, object]) -> str | None:
+    for key in ("request_id", "requestId", "id"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                return stripped
+        if isinstance(value, int):
+            return str(value)
+
+    request_obj = payload.get("request")
+    if isinstance(request_obj, dict):
+        nested_id = _extract_server_request_id(cast("dict[str, object]", request_obj))
+        if nested_id is not None:
+            return nested_id
+
     return None
 
 

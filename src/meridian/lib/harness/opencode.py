@@ -313,6 +313,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
             "continue_harness_session_id",
             "continue_fork",
             "mcp_tools",
+            "projected_roots",
             "appended_system_prompt",
             "user_turn_content",
         }
@@ -365,6 +366,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
             extra_args=run.extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
+            projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             # OpenCode does not support native meridian agents; agent body is
             # delivered via system prompt composition instead.

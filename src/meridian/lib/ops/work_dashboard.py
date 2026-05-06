@@ -11,6 +11,7 @@ from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read, runtime_context
 from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state.spawn.model import SpawnRecord
 
 
 def _display_path(project_root: Path, path: Path) -> str:
@@ -26,7 +27,7 @@ def _spawn_id_sort_key(spawn_id: str) -> tuple[int, str]:
     return (10**9, spawn_id)
 
 
-def _spawn_desc(spawn: spawn_store.SpawnRecord) -> str:
+def _spawn_desc(spawn: SpawnRecord) -> str:
     desc = (spawn.desc or "").strip()
     if desc:
         return " ".join(desc.split())
@@ -44,7 +45,7 @@ class WorkDashboardSpawn(BaseModel):
     desc: str = ""
 
 
-def _dashboard_spawn(spawn: spawn_store.SpawnRecord) -> WorkDashboardSpawn:
+def _dashboard_spawn(spawn: SpawnRecord) -> WorkDashboardSpawn:
     return WorkDashboardSpawn(
         id=spawn.id,
         model=(spawn.model or "").strip() or "-",
@@ -106,7 +107,7 @@ def _active_session_work_ids(runtime_root: Path) -> dict[str, str]:
 
 
 def _effective_work_id(
-    spawn: spawn_store.SpawnRecord,
+    spawn: SpawnRecord,
     *,
     active_session_work_ids: dict[str, str],
 ) -> str | None:
@@ -120,7 +121,7 @@ def _effective_work_id(
 
 
 def _associated_with_work_item(
-    spawn: spawn_store.SpawnRecord,
+    spawn: SpawnRecord,
     *,
     work_id: str,
     active_session_work_ids: dict[str, str],

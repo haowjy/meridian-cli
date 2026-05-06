@@ -19,10 +19,7 @@ from meridian.lib.harness.session_detection import infer_harness_from_untracked_
 from meridian.lib.harness.transcript import TranscriptMessage, text_from_value
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.runtime import (
-    async_from_sync,
-    resolve_runtime_root_for_read,
-)
+from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.query import read_spawn_row
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import spawn_output_path
@@ -30,6 +27,7 @@ from meridian.lib.state.primary_meta import (
     is_managed_primary,
     read_primary_harness_session_id,
 )
+from meridian.lib.state.spawn.model import SpawnRecord
 
 _CODEX_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
@@ -495,7 +493,7 @@ def _persist_primary_harness_session_id(
 def _detect_primary_harness_session_id(
     *,
     project_root: Path,
-    spawn_row: spawn_store.SpawnRecord,
+    spawn_row: SpawnRecord,
     harness_hint: str | None,
 ) -> str | None:
     if spawn_row.kind != "primary":
@@ -574,7 +572,7 @@ def _target_from_spawn_output(
     )
 
 
-def _primary_spawn_for_chat(runtime_root: Path, chat_id: str) -> spawn_store.SpawnRecord | None:
+def _primary_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnRecord | None:
     from meridian.lib.state.reaper import reconcile_spawns
 
     spawns = reconcile_spawns(

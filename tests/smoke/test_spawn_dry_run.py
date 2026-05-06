@@ -26,19 +26,72 @@ def test_model_override(cli, scratch_dir):
     """Model override is accepted in dry-run."""
     agents_dir = scratch_dir / ".mars" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
-    (agents_dir / "reviewer.md").write_text("# Reviewer\n", encoding="utf-8")
+    (agents_dir / "reviewer.md").write_text(
+        "---\nname: reviewer\nmodel: gpt-5.4\n---\n# Reviewer\n",
+        encoding="utf-8",
+    )
     # Seed mars.toml so model resolution works
     mars_content = "[settings]\nmodels_cache_ttl_hours = 24\n"
     (scratch_dir / "mars.toml").write_text(mars_content, encoding="utf-8")
 
     result = cli(
-        "spawn", "-a", "reviewer", "-p", "test", "-m", "sonnet",
+        "spawn", "-a", "reviewer", "-p", "test", "-m", "gpt-5.5",
         "--dry-run", json_mode=True
     )
     result.assert_success()
     data = result.json
     assert data["status"] == "dry-run"
-    assert data.get("model")  # Model should be set
+    assert data["model"] == "gpt-5.5"
+    assert data["model_selection"]["requested_token"] == "gpt-5.5"
+    assert data["model_selection"]["canonical_model_id"] == "gpt-5.5"
+    assert data["harness_id"] == "codex"
+
+
+def test_agent_overlay_model_precedence_visible_in_dry_run(cli, scratch_dir):
+    """Dry-run reflects project-local agent model overlays and CLI model override."""
+    agents_dir = scratch_dir / ".mars" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "reviewer.md").write_text(
+        "---\nname: reviewer\nmodel: gpt-5.4\n---\n# Reviewer\n",
+        encoding="utf-8",
+    )
+    (scratch_dir / "mars.toml").write_text(
+        "[settings]\nmodels_cache_ttl_hours = 24\n",
+        encoding="utf-8",
+    )
+    (scratch_dir / "meridian.toml").write_text(
+        '[agents.reviewer]\nmodel = "gpt-5.4"\n',
+        encoding="utf-8",
+    )
+    (scratch_dir / "meridian.local.toml").write_text(
+        '[agents.reviewer]\nmodel = "gpt-5.5"\n',
+        encoding="utf-8",
+    )
+
+    overlay_result = cli(
+        "spawn", "-a", "reviewer", "-p", "test",
+        "--dry-run", json_mode=True
+    )
+    overlay_result.assert_success()
+    overlay_data = overlay_result.json
+    assert overlay_data["status"] == "dry-run"
+    assert overlay_data["model"] == "gpt-5.5"
+    assert overlay_data["model_selection"]["requested_token"] == "gpt-5.5"
+    assert overlay_data["model_selection"]["canonical_model_id"] == "gpt-5.5"
+    assert overlay_data["harness_id"] == "codex"
+
+    cli_override_result = cli(
+        "spawn", "-a", "reviewer", "-p", "test",
+        "-m", "gpt-5.4",
+        "--dry-run", json_mode=True
+    )
+    cli_override_result.assert_success()
+    cli_override_data = cli_override_result.json
+    assert cli_override_data["status"] == "dry-run"
+    assert cli_override_data["model"] == "gpt-5.4"
+    assert cli_override_data["model_selection"]["requested_token"] == "gpt-5.4"
+    assert cli_override_data["model_selection"]["canonical_model_id"] == "gpt-5.4"
+    assert cli_override_data["harness_id"] == "codex"
 
 
 def test_template_vars_substitution(cli, scratch_dir):

@@ -111,7 +111,7 @@ def _read_prompt_from_stdin(*, explicit_prompt_file_stdin: bool, allow_empty: bo
     if sys.stdin.isatty():
         if explicit_prompt_file_stdin:
             raise ValueError("--prompt-file - requires stdin to be piped or redirected")
-        raise ValueError("prompt required: pass -p, --prompt-file, or pipe stdin")
+        raise ValueError("prompt required: pass --prompt-file, -p, or pipe stdin")
     try:
         prompt_text = sys.stdin.read()
     except UnicodeDecodeError as exc:
@@ -160,21 +160,24 @@ def _resolve_spawn_prompt(
         raise ValueError("prompt stdin is empty")
     if has_files or is_continue:
         return ""
-    raise ValueError("prompt required: pass -p, --prompt-file, or pipe stdin")
+    raise ValueError("prompt required: pass --prompt-file, -p, or pipe stdin")
 
 
 def _spawn_create(
     emit: Any,
     prompt: Annotated[
         str | None,
-        Parameter(name=["--prompt", "-p"], help="Prompt as a literal string."),
+        Parameter(
+            name=["--prompt", "-p"],
+            help="Inline literal prompt. Prefer --prompt-file for delegation.",
+        ),
     ] = None,
     prompt_file: Annotated[
         str | None,
         Parameter(
             name="--prompt-file",
             help=(
-                "Read prompt from a file. Use '-' to read stdin. "
+                "Read prompt from a file. Preferred for delegation. Use '-' to read stdin. "
                 "If neither --prompt nor --prompt-file is set and stdin is piped, "
                 "stdin is used as the prompt."
             ),

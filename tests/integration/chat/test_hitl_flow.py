@@ -73,7 +73,9 @@ class Acquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
+        _ = chat_state
         self.calls.append((chat_id, initial_prompt, execution_generation))
         return next(self._handles)
 
@@ -110,6 +112,21 @@ def _ingest_event(
     client.portal.call(entry.pipeline.drain)
 
 
+def _replayed_events(client: TestClient, chat_id: str) -> list[dict[str, object]]:
+    stream_source = server._runtime.get_stream_source(chat_id)
+    assert stream_source is not None
+    expected_event_count = len(list(stream_source.event_log.read_all()))
+    with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
+        return [ws.receive_json() for _ in range(expected_event_count)]
+
+
+def _drain_pipeline(client: TestClient, chat_id: str) -> None:
+    entry = server._runtime.live_entries.get(chat_id)
+    if entry is None:
+        return
+    client.portal.call(entry.pipeline.drain)
+
+
 
 def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> None:
     handle = Handle(pending_requests={"r1"})
@@ -133,19 +150,21 @@ def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> 
             f"/chat/{chat_id}/approve",
             json={"request_id": "r1", "decision": "accept", "payload": {"x": 1}},
         ).json()
-
-        with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-            events = [ws.receive_json(), ws.receive_json(), ws.receive_json()]
+        _drain_pipeline(client, chat_id)
+        events = _replayed_events(client, chat_id)
 
     assert approved == {"status": "accepted", "error": None}
     assert handle.requests == [("r1", "accept", {"x": 1})]
-    assert [event["type"] for event in events] == [
+    relevant_events = [
+        event for event in events if event["type"] in {"chat.started", "request.opened", "request.resolved"}
+    ]
+    assert [event["type"] for event in relevant_events] == [
         "chat.started",
         "request.opened",
         "request.resolved",
     ]
-    assert events[-1]["request_id"] == "r1"
-    assert events[-1]["payload"]["decision"] == "accept"
+    assert relevant_events[-1]["request_id"] == "r1"
+    assert relevant_events[-1]["payload"]["decision"] == "accept"
 
 
 
@@ -223,9 +242,8 @@ def test_multiple_pending_requests_each_emit_their_own_resolution(tmp_path: Path
             ).json()["status"]
             == "accepted"
         )
-
-        with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-            events = [ws.receive_json() for _ in range(5)]
+        _drain_pipeline(client, chat_id)
+        events = _replayed_events(client, chat_id)
 
     resolved = [event for event in events if event["type"] == "request.resolved"]
     assert handle.requests == [("r1", "accept", None), ("r2", "reject", None)]
@@ -326,13 +344,27 @@ def test_hitl_events_appear_in_replay_after_persistence(tmp_path: Path) -> None:
             ).json()["status"]
             == "accepted"
         )
+        _drain_pipeline(client, chat_id)
         assert client.post(f"/chat/{chat_id}/close").json()["status"] == "accepted"
 
     configure(runtime_root=tmp_path, backend_acquisition=Acquisition(), project_root=tmp_path)
-    with TestClient(app) as client, client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-        events = [ws.receive_json() for _ in range(6)]
+    with TestClient(app) as client:
+        events = _replayed_events(client, chat_id)
 
-    assert [(event["type"], event.get("request_id")) for event in events] == [
+    relevant_events = [
+        event
+        for event in events
+        if event["type"]
+        in {
+            "chat.started",
+            "request.opened",
+            "user_input.requested",
+            "request.resolved",
+            "user_input.resolved",
+            "chat.exited",
+        }
+    ]
+    assert [(event["type"], event.get("request_id")) for event in relevant_events] == [
         ("chat.started", None),
         ("request.opened", "r1"),
         ("user_input.requested", "i1"),

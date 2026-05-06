@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _SERVE_COMMAND_FIELDS: frozenset[str] = frozenset(
     {
         "extra_args",
+        "projected_roots",
         "interactive",
         "prompt",
         "permission_resolver",
@@ -56,6 +57,11 @@ def _consume_streaming_lifecycle_fields(spec: OpenCodeLaunchSpec) -> None:
         logger.debug(
             "OpenCode streaming ignores interactive launch flag; "
             "HTTP transport remains interactive"
+        )
+    if spec.projected_roots:
+        logger.debug(
+            "OpenCode streaming workspace roots are projected via %s env.",
+            "OPENCODE_CONFIG_CONTENT",
         )
 
     config = spec.permission_resolver.config

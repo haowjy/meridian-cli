@@ -23,6 +23,7 @@ _APP_SERVER_ARG_FIELDS: frozenset[str] = frozenset(
     {
         "permission_resolver",
         "extra_args",
+        "projected_roots",
         "report_output_path",
         "mcp_tools",
     }
@@ -67,26 +68,6 @@ _ACCOUNTED_FIELDS: frozenset[str] = (
 )
 _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
 _DELEGATED_FIELDS: frozenset[str] = frozenset()
-
-
-def _extract_add_dir_paths(args: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Extract ``--add-dir`` pairs from *args*.
-
-    Returns ``(remaining_args, extracted_paths)`` where *remaining_args* has all
-    ``--add-dir <path>`` pairs removed and *extracted_paths* collects the path
-    values in order.
-    """
-    remaining: list[str] = []
-    paths: list[str] = []
-    i = 0
-    while i < len(args):
-        if args[i] == "--add-dir" and i + 1 < len(args):
-            paths.append(args[i + 1])
-            i += 2
-        else:
-            remaining.append(args[i])
-            i += 1
-    return tuple(remaining), tuple(paths)
 
 
 def _build_writable_roots_config(paths: tuple[str, ...]) -> tuple[str, ...]:
@@ -152,22 +133,22 @@ def project_codex_spec_to_appserver_command(
             "Codex streaming ignores report_output_path; reports extracted from artifacts"
         )
 
-    remaining_args, add_dir_paths = _extract_add_dir_paths(spec.extra_args)
-
-    writable_roots_config = _build_writable_roots_config(add_dir_paths)
+    writable_roots_config = _build_writable_roots_config(
+        tuple(root.as_posix() for root in spec.projected_roots)
+    )
     if writable_roots_config:
         logger.debug(
-            "Converting --add-dir paths to sandbox_workspace_write.writable_roots: %s",
-            list(add_dir_paths),
+            "Projecting roots to sandbox_workspace_write.writable_roots: %s",
+            [root.as_posix() for root in spec.projected_roots],
         )
         command.extend(writable_roots_config)
 
-    if remaining_args:
+    if spec.extra_args:
         logger.debug(
             "Forwarding passthrough args to codex app-server: %s",
-            list(remaining_args),
+            list(spec.extra_args),
         )
-        command.extend(remaining_args)
+        command.extend(spec.extra_args)
 
     return command
 
@@ -236,7 +217,6 @@ __all__ = [
     "HarnessCapabilityMismatch",
     "_build_writable_roots_config",
     "_check_projection_drift",
-    "_extract_add_dir_paths",
     "project_codex_spec_to_appserver_command",
     "project_codex_spec_to_thread_request",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkable
 
@@ -73,6 +74,9 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Harness-agnostic MCP tool configuration.
     mcp_tools: tuple[str, ...] = ()
+
+    # First-class workspace root projection — harness-agnostic, deduplicated.
+    projected_roots: tuple[Path, ...] = ()
 
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:

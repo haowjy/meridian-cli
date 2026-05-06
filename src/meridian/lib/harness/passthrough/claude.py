@@ -32,8 +32,9 @@ class ClaudePassthrough:
     def build_tui_command(
         self,
         connection: HarnessConnection[Any],
+        spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
-        _ = connection
+        _ = connection, spec
         raise PassthroughError("Managed primary attach is not supported for claude")
 
 

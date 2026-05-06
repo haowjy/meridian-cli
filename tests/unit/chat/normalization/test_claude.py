@@ -1,9 +1,11 @@
+from typing import Any
+
 from meridian.lib.chat.normalization.claude import ClaudeNormalizer
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.streaming.drain_policy import TURN_BOUNDARY_EVENT_TYPE
 
 
-def event(event_type, payload):
+def event(event_type: str, payload: dict[str, Any]) -> HarnessEvent:
     return HarnessEvent(event_type=event_type, payload=payload, harness_id="claude")
 
 
@@ -153,3 +155,49 @@ def test_claude_result_emits_files_before_turn_completed():
         ]
     }
     assert completed.type == "turn.completed"
+
+
+def test_claude_aggregated_assistant_event_emits_reasoning_and_text_content():
+    n = ClaudeNormalizer("c1", "s1")
+
+    started, reasoning, text = n.normalize(
+        event(
+            "assistant",
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "thinking", "thinking": "checking"},
+                        {"type": "text", "text": "Hello! How can I help?"},
+                    ]
+                },
+            },
+        )
+    )
+    completed = n.normalize(
+        event("result", {"status": "succeeded", "result": "Hello! How can I help?"})
+    )[0]
+
+    assert started.type == "turn.started"
+    assert reasoning.type == "content.delta"
+    assert reasoning.payload == {"stream_kind": "reasoning_text", "text": "checking"}
+    assert text.type == "content.delta"
+    assert text.payload == {"stream_kind": "assistant_text", "text": "Hello! How can I help?"}
+    assert text.turn_id == started.turn_id
+    assert completed.type == "turn.completed"
+    assert completed.turn_id == started.turn_id
+
+
+def test_claude_result_text_emits_assistant_content_when_no_assistant_event_present():
+    n = ClaudeNormalizer("c1", "s1")
+
+    started, text, completed = n.normalize(
+        event("result", {"status": "succeeded", "result": "result-only reply"})
+    )
+
+    assert started.type == "turn.started"
+    assert text.type == "content.delta"
+    assert text.payload == {"stream_kind": "assistant_text", "text": "result-only reply"}
+    assert text.turn_id == started.turn_id
+    assert completed.type == "turn.completed"
+    assert completed.turn_id == started.turn_id

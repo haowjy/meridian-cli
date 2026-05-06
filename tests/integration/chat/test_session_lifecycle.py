@@ -32,7 +32,15 @@ class Acquisition:
         self._handles = iter(handles)
         self.calls: list[tuple[str, str, int]] = []
 
-    async def acquire(self, chat_id, initial_prompt, *, execution_generation=0):
+    async def acquire(
+        self,
+        chat_id,
+        initial_prompt,
+        *,
+        execution_generation=0,
+        chat_state="active",
+    ):
+        _ = chat_state
         self.calls.append((chat_id, initial_prompt, execution_generation))
         return next(self._handles)
 

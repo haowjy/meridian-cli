@@ -1,7 +1,11 @@
 from pathlib import Path
 
+import pytest
+
+from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import load_config
-from meridian.lib.core.types import HarnessId
+from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
@@ -36,6 +40,33 @@ def _prepare_codex_runtime(project_root: Path):
     return codex_adapter, build_runtime_from_root_and_config(
         project_root, load_config(project_root)
     )
+
+
+def _patch_catalog_models(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cli_model: str = "gpt-5.5",
+    overlay_model: str = "claude-sonnet-4.5",
+) -> None:
+    cli_entry = AliasEntry(
+        alias=cli_model,
+        model_id=ModelId(cli_model),
+        resolved_harness=HarnessId.CODEX,
+    )
+    overlay_entry = AliasEntry(
+        alias=overlay_model,
+        model_id=ModelId(overlay_model),
+        resolved_harness=HarnessId.CLAUDE,
+    )
+
+    def resolve_model(self: CatalogSession, name: str) -> AliasEntry:
+        return {
+            cli_model: cli_entry,
+            overlay_model: overlay_entry,
+        }[name]
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [cli_entry, overlay_entry])
 
 
 def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
@@ -126,3 +157,103 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
         "alias_catalog",
     ):
         assert prepared_only_field not in payload
+
+
+def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_precedence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_subagent(tmp_path)
+    (tmp_path / "mars.toml").write_text(
+        "[settings]\n"
+        'targets = [".claude"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "meridian.toml").write_text(
+        "[agents.meridian-subagent]\n"
+        'model = "claude-sonnet-4.5"\n'
+        'effort = "medium"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "meridian.local.toml").write_text(
+        "[agents.meridian-subagent]\n"
+        'effort = "high"\n',
+        encoding="utf-8",
+    )
+    user_config = tmp_path / "user-config.toml"
+    user_config.write_text(
+        "[agents.meridian-subagent]\n"
+        'effort = "low"\n',
+        encoding="utf-8",
+    )
+    _patch_catalog_models(monkeypatch)
+    runtime = build_runtime_from_root_and_config(
+        tmp_path,
+        load_config(tmp_path, user_config=user_config),
+    )
+
+    overlay_routed = build_create_payload(
+        SpawnCreateInput(
+            prompt="overlay routing",
+            project_root=tmp_path.as_posix(),
+            agent="meridian-subagent",
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+    cli_model_overridden = build_create_payload(
+        SpawnCreateInput(
+            prompt="cli beats overlay model",
+            project_root=tmp_path.as_posix(),
+            agent="meridian-subagent",
+            model="gpt-5.5",
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert overlay_routed.model == "claude-sonnet-4.5"
+    assert overlay_routed.harness == "claude"
+    assert overlay_routed.effort == "high"
+
+    assert cli_model_overridden.model == "gpt-5.5"
+    assert cli_model_overridden.harness == "codex"
+    assert cli_model_overridden.effort == "high"
+    assert cli_model_overridden.model_selection_requested_token == "gpt-5.5"
+    assert cli_model_overridden.model_selection_canonical_id == "gpt-5.5"
+    assert cli_model_overridden.model_selection_harness_provenance == "mars-provided"
+
+
+def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_subagent(tmp_path)
+    (tmp_path / "mars.toml").write_text(
+        "[settings]\n"
+        'targets = [".claude"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "meridian.toml").write_text(
+        "[agents.meridian-subagent]\n"
+        'model = "claude-sonnet-4.5"\n'
+        'effort = "high"\n',
+        encoding="utf-8",
+    )
+    _patch_catalog_models(monkeypatch)
+    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="no agent means no overlay",
+            project_root=tmp_path.as_posix(),
+            model="gpt-5.5",
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert prepared.agent is None
+    assert prepared.model == "gpt-5.5"
+    assert prepared.harness == "codex"
+    assert prepared.effort is None

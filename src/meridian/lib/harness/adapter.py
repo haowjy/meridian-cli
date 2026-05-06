@@ -76,6 +76,7 @@ class SpawnParams(BaseModel):
     extra_args: tuple[str, ...] = ()
     project_root: str | None = None
     mcp_tools: tuple[str, ...] = ()
+    projected_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
     continue_fork: bool = False

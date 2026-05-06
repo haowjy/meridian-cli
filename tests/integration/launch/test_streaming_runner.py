@@ -22,11 +22,9 @@ from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRe
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
-    RuntimePaths,
     resolve_project_runtime_root,
     resolve_spawn_log_dir,
 )
-from meridian.lib.state.spawn.repository import FileSpawnRepository
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.support.fakes import FakeClock, FakeHeartbeat
 
@@ -427,18 +425,11 @@ async def test_setup_failure_produces_terminal_event(
 
     assert exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
     row = spawn_store.get_spawn(runtime_root, run.spawn_id)
-    events = FileSpawnRepository(RuntimePaths.from_root_dir(runtime_root)).read_events()
-    finalize_events = [
-        event
-        for event in events
-        if event.event == "finalize" and event.id == str(run.spawn_id)
-    ]
     assert row is not None
     assert row.status == "failed"
     assert row.exit_code == launch_constants.DEFAULT_INFRA_EXIT_CODE
     assert row.error is not None
-    assert len(finalize_events) == 1
-    assert finalize_events[0].origin == "runner"
+    assert row.terminal_origin == "runner"
 
 
 @pytest.mark.asyncio

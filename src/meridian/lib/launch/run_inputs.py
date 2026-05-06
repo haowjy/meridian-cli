@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.types import ModelId
@@ -23,6 +25,7 @@ class ResolvedRunInputs(BaseModel):
     extra_args: tuple[str, ...] = ()
     project_root: str | None = None
     mcp_tools: tuple[str, ...] = ()
+    projected_roots: tuple[Path, ...] = ()
     interactive: bool = False
     continue_harness_session_id: str | None = None
     continue_fork: bool = False

@@ -8,7 +8,7 @@ from collections.abc import Callable
 import pytest
 
 from meridian.cli.startup.cyclopts_app import build_lazy_app
-from meridian.cli.startup.lazy_dispatch import make_lazy_command
+from meridian.cli.startup.lazy_dispatch import _resolve_lazy_target, make_lazy_command
 
 
 def test_make_lazy_command_for_main_root_returns_callable() -> None:
@@ -81,3 +81,32 @@ def test_lazy_command_rejects_invalid_target() -> None:
 
     with pytest.raises(ValueError, match=r"module\.path:function\.path"):
         handler()
+
+
+def test_resolve_lazy_target_rejects_empty_attribute_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = types.SimpleNamespace(group=types.SimpleNamespace())
+    monkeypatch.setattr(importlib, "import_module", lambda _module_path: fake_module)
+
+    with pytest.raises(ValueError, match="empty path segment"):
+        _resolve_lazy_target("example.lazy:group..command")
+
+
+def test_resolve_lazy_target_rejects_non_callable_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = types.SimpleNamespace(group=types.SimpleNamespace(command="not callable"))
+    monkeypatch.setattr(importlib, "import_module", lambda _module_path: fake_module)
+
+    with pytest.raises(TypeError, match="does not resolve to a callable"):
+        _resolve_lazy_target("example.lazy:group.command")
+
+
+def test_build_lazy_app_registers_nested_command_structure() -> None:
+    app = build_lazy_app()
+
+    assert "spawn" in app.resolved_commands()
+    assert "report" in app["spawn"].resolved_commands()
+    assert {"show", "search"}.issubset(app["spawn"]["report"].resolved_commands())
+    assert {"bash", "zsh", "fish", "install"}.issubset(app["completion"].resolved_commands())

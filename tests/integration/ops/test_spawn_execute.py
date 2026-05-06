@@ -8,7 +8,7 @@ import pytest
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import Spawn
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.ops.spawn.execute import (
     PreparedExecutionHandoff,
@@ -39,7 +39,12 @@ async def test_launch_prepared_spawn_closes_session_scope_when_runner_raises(
                 harness="codex",
                 agent="coder",
             ),
-            launch_context=cast("Any", SimpleNamespace()),
+            launch_context=cast(
+                "Any",
+                SimpleNamespace(
+                    harness=SimpleNamespace(id=HarnessId.OPENCODE),
+                ),
+            ),
             session_context=_SessionExecutionContext(
                 chat_id="c1",
                 work_id=None,

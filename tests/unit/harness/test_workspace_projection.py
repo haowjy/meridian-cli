@@ -68,20 +68,40 @@ def test_workspace_projection_projects_opencode_external_directories() -> None:
     }
 
 
-def test_workspace_projection_opencode_parent_env_suppresses_workspace_projection() -> None:
+def test_workspace_projection_opencode_merges_parent_env_additively() -> None:
     result = project_workspace_roots(
         harness_id=HarnessId.OPENCODE,
         roots=(Path("/tmp/workspace/root-a"),),
-        parent_opencode_config_content='{"permission":{"external_directory":["/preexisting"]}}',
+        parent_opencode_config_content=(
+            '{"instructions":["/tmp/system.md"],'
+            '"permission":{"other":"keep","external_directory":{"/preexisting/*":"ask"}}}'
+        ),
     )
 
     assert result.applicability == "active"
     assert result.args == ()
-    assert result.env_overrides == {}
-    assert len(result.diagnostics) == 1
-    diagnostic = result.diagnostics[0]
-    assert diagnostic.code == "workspace_opencode_parent_env_suppressed"
-    assert diagnostic.payload == {"env_var": OPENCODE_CONFIG_CONTENT_ENV}
+    assert result.diagnostics == ()
+    payload = json.loads(result.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
+    assert payload["instructions"] == ["/tmp/system.md"]
+    assert payload["permission"]["other"] == "keep"
+    assert payload["permission"]["external_directory"] == {
+        "/preexisting/*": "ask",
+        "/tmp/workspace/root-a/*": "allow",
+    }
+
+
+def test_workspace_projection_opencode_coerces_legacy_list_external_directory() -> None:
+    result = project_workspace_roots(
+        harness_id=HarnessId.OPENCODE,
+        roots=(Path("/tmp/workspace/root-a"),),
+        parent_opencode_config_content='{"permission":{"external_directory":["/legacy/*"]}}',
+    )
+
+    payload = json.loads(result.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
+    assert payload["permission"]["external_directory"] == {
+        "/legacy/*": "allow",
+        "/tmp/workspace/root-a/*": "allow",
+    }
 
 
 def test_workspace_projection_codex_produces_add_dir_args() -> None:

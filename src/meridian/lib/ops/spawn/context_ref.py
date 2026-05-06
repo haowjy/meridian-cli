@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state.spawn.model import SpawnRecord
 
 from .query import (
     read_report_text,

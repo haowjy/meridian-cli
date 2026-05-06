@@ -126,6 +126,8 @@ class ServerRequestHandler(Protocol):
 class AutoAcceptHandler:
     """Default request policy: preserve existing non-chat auto-answer behavior."""
 
+    no_runtime_hitl: bool = True
+
     async def handle_request(
         self,
         connection: HarnessConnection[Any],
@@ -149,6 +151,8 @@ class InteractiveHandler:
     integration; the current production codebase has no instantiation path for
     it.
     """
+
+    no_runtime_hitl: bool = False
 
     def __init__(
         self,

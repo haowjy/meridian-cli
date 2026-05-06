@@ -398,7 +398,7 @@ def _dedupe_roots_in_order(roots: tuple[Path, ...]) -> tuple[Path, ...]:
     deduped: list[Path] = []
     seen: set[str] = set()
     for root in roots:
-        key = root.as_posix()
+        key = os.path.normcase(str(root))
         if key in seen:
             continue
         seen.add(key)
@@ -950,23 +950,21 @@ def bind_launch_context(
             expanded_passthrough_args=tuple(resolved_request.extra_args)
         )
 
+    projected_roots = _dedupe_roots_in_order(
+        (
+            *workspace_roots,
+            *git_context_roots,
+            *context_projection_roots,
+            runtime_root,
+            system_temp_root,
+        )
+    )
     workspace_projection = project_workspace_roots(
         harness_id=harness.id,
-        roots=_dedupe_roots_in_order(
-            (
-                *workspace_roots,
-                *git_context_roots,
-                *context_projection_roots,
-                runtime_root,
-                system_temp_root,
-            )
-        ),
+        roots=projected_roots,
         parent_opencode_config_content=os.getenv(OPENCODE_CONFIG_CONTENT_ENV),
     )
-    projected_extra_args = (
-        *preflight.expanded_passthrough_args,
-        *workspace_projection.args,
-    )
+    projected_extra_args = preflight.expanded_passthrough_args
     if workspace_projection.diagnostics:
         composition_warnings = (
             *composition_warnings,
@@ -1008,6 +1006,7 @@ def bind_launch_context(
         extra_args=projected_extra_args,
         project_root=child_cwd.as_posix(),
         mcp_tools=resolved_request.mcp_tools,
+        projected_roots=projected_roots,
         interactive=is_primary_launch,
         continue_harness_session_id=effective_session_id,
         continue_fork=(

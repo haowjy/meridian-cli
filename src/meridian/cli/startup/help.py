@@ -27,7 +27,7 @@ Primary launch/resume:
   meridian --fork p123                  Fork from ref
 
 Quick start:
-  meridian spawn -m MODEL -p "prompt" --bg   Launch a subagent (background)
+  meridian spawn -m MODEL --prompt-file /tmp/task.md --bg   Launch a subagent
   meridian spawn wait                        Wait for all pending spawns
   meridian mars models list                  See available models
 
@@ -69,7 +69,7 @@ _HUMAN_COMMAND_ORDER = (
 )
 
 _HUMAN_COMMAND_SUMMARIES = {
-    "spawn": "Run subagents with a model and prompt.",
+    "spawn": "Run subagents with a model and prompt file.",
     "session": "Inspect conversation and progress logs.",
     "work": "Active activity grouped by work, plus work item coordination commands.",
     "hooks": "Hook inspection and execution commands",

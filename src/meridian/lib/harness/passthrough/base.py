@@ -34,6 +34,7 @@ class TuiPassthrough(Protocol):
     def build_tui_command(
         self,
         connection: HarnessConnection[Any],
+        spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
         """Return a TUI command builder for the given connection."""
         ...

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import meridian.lib.chat.server as server
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.protocol import ChatEvent, utc_now_iso
 from meridian.lib.chat.replay import ReplayService
@@ -47,8 +48,9 @@ class Acquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return Handle()
 
 
@@ -183,13 +185,23 @@ def test_two_clients_receive_same_live_stream_and_disconnecting_one_does_not_aff
                     ).json()["status"]
                     == "accepted"
                 )
+                client.portal.call(server._runtime.live_entries[chat_id].pipeline.drain)
 
-                first_events = [first.receive_json(), first.receive_json()]
-                second_events = [second.receive_json(), second.receive_json()]
+                persisted_events = server._runtime.list_events(chat_id)
+                assert persisted_events is not None
+                remaining_event_count = len(persisted_events) - 1
+                first_events = [first.receive_json() for _ in range(remaining_event_count)]
+                second_events = [second.receive_json() for _ in range(remaining_event_count)]
                 assert first_events == second_events
 
             assert client.post(f"/chat/{chat_id}/close").json()["status"] == "accepted"
             trailing = first.receive_json()
 
-    assert [event["type"] for event in first_events] == ["request.resolved", "user_input.resolved"]
+    relevant_events = [
+        event for event in first_events if event["type"] in {"request.resolved", "user_input.resolved"}
+    ]
+    assert [event["type"] for event in relevant_events] == [
+        "request.resolved",
+        "user_input.resolved",
+    ]
     assert trailing["type"] == "chat.exited"

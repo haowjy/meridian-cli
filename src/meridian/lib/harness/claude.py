@@ -235,6 +235,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             "continue_fork",
             "appended_system_prompt",
             "mcp_tools",
+            "projected_roots",
             "user_turn_content",
         }
     )
@@ -314,6 +315,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             extra_args=effective_extra_args,
             interactive=run.interactive,
             mcp_tools=run.mcp_tools,
+            projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             agents_payload=run.adhoc_agent_payload.strip() or None,
             agent_name=run.agent,

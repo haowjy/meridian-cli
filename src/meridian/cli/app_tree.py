@@ -26,7 +26,7 @@ Primary launch/resume:
   meridian --fork p123                  Fork from ref
 
 Quick start:
-  meridian spawn -m MODEL -p "prompt" --bg   Launch a subagent (background)
+  meridian spawn -m MODEL --prompt-file /tmp/task.md --bg   Launch a subagent
   meridian spawn wait                        Wait for all pending spawns
   meridian mars models list                  See available models
 
@@ -64,17 +64,18 @@ app = App(
 spawn_app = App(
     name="spawn",
     help=(
-        "Run subagents with a model and prompt.\n"
+        "Run subagents with a model and prompt file.\n"
         "Runs in foreground by default; returns when the spawn reaches a terminal state. "
         "Foreground streaming uses terminal capture when available (Unix TTY sessions). "
         "On Windows or non-TTY shells, meridian falls back to subprocess capture. "
-        "Use --background to return immediately with the spawn ID."
+        "Use --background to return immediately with the spawn ID. "
+        "For delegation, write the prompt to a file and pass --prompt-file."
     ),
     help_epilogue=(
         "Examples:\n\n"
-        '  meridian spawn -m gpt-5.3-codex -p "Fix the bug in auth.py"\n\n'
-        '  meridian spawn -m claude-sonnet-4-6 -p "Review" -f src/main.py\n\n'
-        '  meridian spawn --fork c123 -p "Continue this thread with a branch"\n\n'
+        "  meridian spawn -m gpt-5.3-codex --prompt-file /tmp/fix-auth.md --bg\n\n"
+        "  meridian spawn -m claude-sonnet-4-6 --prompt-file /tmp/review.md --bg -f src/main.py\n\n"
+        "  meridian spawn --fork c123 --prompt-file /tmp/follow-up.md --bg\n\n"
         "  meridian spawn wait\n"
     ),
     help_formatter="plain",

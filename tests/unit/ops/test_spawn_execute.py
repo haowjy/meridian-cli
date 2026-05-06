@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
@@ -12,7 +13,8 @@ import pytest
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.lifecycle import create_lifecycle_service
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.launch.artifact_io import write_projection_artifacts
@@ -27,6 +29,7 @@ from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
     LaunchRuntime,
+    SessionRequest,
     SpawnRequest,
 )
 from meridian.lib.launch.run_inputs import ResolvedRunInputs
@@ -244,7 +247,11 @@ async def test_prepare_execution_handoff_transfers_session_scope_cleanup_to_call
             session_state["exited"] = True
 
     def fake_build_launch_context(**kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(resolved_request=kwargs["request"])
+        return SimpleNamespace(
+            resolved_request=kwargs["request"],
+            harness=SimpleNamespace(id=HarnessId.OPENCODE),
+            child_cwd=tmp_path,
+        )
 
     monkeypatch.setattr(
         execute_module,
@@ -353,6 +360,189 @@ async def test_prepare_execution_handoff_closes_session_scope_when_later_prepara
     assert session_state == {"entered": True, "exited": True}
 
 
+@pytest.mark.parametrize("harness", ["claude", "opencode"])
+@pytest.mark.asyncio
+async def test_prepare_execution_handoff_keeps_native_child_fork_for_non_codex_harnesses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    class _HarnessRegistry:
+        def get_subprocess_harness(self, _harness_id: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                capabilities=SimpleNamespace(
+                    supports_session_resume=True,
+                    supports_session_fork=True,
+                )
+            )
+
+    @contextmanager
+    def fake_session_execution_context(**_kwargs: object) -> Iterator[_SessionExecutionContext]:
+        yield _SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        )
+
+    def fake_build_launch_context(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            resolved_request=kwargs["request"],
+            harness=SimpleNamespace(id=HarnessId.OPENCODE),
+            child_cwd=tmp_path,
+        )
+
+    def noop_write_projection_artifacts(**_kwargs: object) -> None:
+        return None
+
+    materialize_calls = {"count": 0}
+
+    def fake_materialize_fork(**_kwargs: object) -> str:
+        materialize_calls["count"] += 1
+        return "unexpected-fork-id"
+
+    monkeypatch.setattr(
+        execute_module,
+        "_session_execution_context",
+        fake_session_execution_context,
+    )
+    monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
+    monkeypatch.setattr(
+        execute_module,
+        "write_projection_artifacts",
+        noop_write_projection_artifacts,
+    )
+    monkeypatch.setattr(execute_module, "materialize_fork", fake_materialize_fork)
+
+    handoff = await _prepare_execution_handoff(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p-native"))),
+        request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness=harness,
+            session=SessionRequest(
+                requested_harness_session_id="source-session",
+                continue_harness=harness,
+                continue_fork=True,
+            ),
+        ),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast(
+            "Any",
+            SimpleNamespace(harness_registry=_HarnessRegistry(), artifacts=None),
+        ),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        spawn_record=None,
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        autocompact=None,
+        ctx=None,
+    )
+    try:
+        assert materialize_calls["count"] == 0
+        assert handoff.resolved_request.session.requested_harness_session_id == "source-session"
+        assert handoff.resolved_request.session.continue_fork is True
+    finally:
+        handoff.session_exit_stack.close()
+
+
+@pytest.mark.asyncio
+async def test_prepare_execution_handoff_materializes_child_fork_for_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    class _HarnessRegistry:
+        def get_subprocess_harness(self, _harness_id: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                capabilities=SimpleNamespace(
+                    supports_session_resume=True,
+                    supports_session_fork=True,
+                )
+            )
+
+    @contextmanager
+    def fake_session_execution_context(**_kwargs: object) -> Iterator[_SessionExecutionContext]:
+        yield _SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        )
+
+    def fake_build_launch_context(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            resolved_request=kwargs["request"],
+            harness=SimpleNamespace(id=HarnessId.OPENCODE),
+            child_cwd=tmp_path,
+        )
+
+    def noop_write_projection_artifacts(**_kwargs: object) -> None:
+        return None
+
+    materialize_args: dict[str, object] = {}
+
+    def fake_materialize_fork(**kwargs: object) -> str:
+        materialize_args.update(kwargs)
+        return "forked-session"
+
+    monkeypatch.setattr(
+        execute_module,
+        "_session_execution_context",
+        fake_session_execution_context,
+    )
+    monkeypatch.setattr(execute_module, "build_launch_context", fake_build_launch_context)
+    monkeypatch.setattr(
+        execute_module,
+        "write_projection_artifacts",
+        noop_write_projection_artifacts,
+    )
+    monkeypatch.setattr(execute_module, "materialize_fork", fake_materialize_fork)
+
+    handoff = await _prepare_execution_handoff(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p-codex"))),
+        request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="codex",
+            session=SessionRequest(
+                requested_harness_session_id="source-session",
+                continue_harness="codex",
+                continue_fork=True,
+            ),
+        ),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast(
+            "Any",
+            SimpleNamespace(harness_registry=_HarnessRegistry(), artifacts=None),
+        ),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        spawn_record=None,
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        autocompact=None,
+        ctx=None,
+    )
+    try:
+        assert materialize_args["source_session_id"] == "source-session"
+        assert materialize_args["spawn_id"] == SpawnId("p-codex")
+        assert handoff.resolved_request.session.requested_harness_session_id == "forked-session"
+        assert handoff.resolved_request.session.continue_fork is False
+    finally:
+        handoff.session_exit_stack.close()
 
 
 def _start_background_spawn_row(
@@ -556,7 +746,11 @@ def test_execute_existing_spawn_allows_empty_model(
         )
 
     def fake_build_launch_context(**kwargs: Any) -> SimpleNamespace:
-        return SimpleNamespace(resolved_request=kwargs["request"])
+        return SimpleNamespace(
+            resolved_request=kwargs["request"],
+            harness=SimpleNamespace(id=HarnessId.OPENCODE),
+            child_cwd=tmp_path,
+        )
 
     def fake_write_projection_artifacts(**_kwargs: Any) -> None:
         return None
@@ -725,6 +919,7 @@ async def test_launch_prepared_spawn_uses_direct_build_launch_context_from_durab
             argv=("opencode", "run"),
             spec=SimpleNamespace(),
             env=MappingProxyType({}),
+            harness=SimpleNamespace(id=HarnessId.OPENCODE),
             child_cwd=tmp_path,
             report_output_path=tmp_path / "report.md",
             resolved_request=kwargs["request"],
@@ -778,6 +973,602 @@ async def test_launch_prepared_spawn_uses_direct_build_launch_context_from_durab
 
 
 @pytest.mark.asyncio
+async def test_launch_prepared_spawn_claude_overlay_updates_env_metadata_and_seeding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    overlay_root = tmp_path / "claude-config" / "p1"
+    overlay_root.mkdir(parents=True)
+    child_cwd = tmp_path / "child"
+    child_cwd.mkdir()
+
+    run_inputs = ResolvedRunInputs(
+        prompt="run it",
+        model=ModelId("gpt-5.4"),
+        project_root=tmp_path.as_posix(),
+    )
+    base_launch_context = _make_launch_context(
+        tmp_path=tmp_path,
+        spec=OpenCodeLaunchSpec(prompt="run it", permission_resolver=_resolver()),
+        run_inputs=run_inputs,
+    )
+    claude_launch_context = dataclass_replace(
+        base_launch_context,
+        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        child_cwd=child_cwd,
+        env=MappingProxyType({"BASE": "1"}),
+    )
+    handoff = PreparedExecutionHandoff(
+        resolved_request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="claude",
+            session=SessionRequest(
+                requested_harness_session_id="session-1",
+                source_execution_cwd=(tmp_path / "source").as_posix(),
+                source_claude_config_dir=(tmp_path / "source-overlay").as_posix(),
+            ),
+        ),
+        launch_context=claude_launch_context,
+        session_context=_SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        ),
+        session_exit_stack=ExitStack(),
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        harness_session_id_observer=lambda _session_id: None,
+    )
+
+    updates: list[tuple[str, str]] = []
+    session_updates: list[tuple[str, str]] = []
+    seeded: dict[str, object] = {}
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return handoff
+
+    def fake_prepare_isolated_claude_config(
+        *,
+        runtime_root: Path,
+        spawn_id: str,
+    ) -> tuple[Path, str]:
+        assert runtime_root == tmp_path / ".runtime"
+        assert spawn_id == "p1"
+        return overlay_root, ""
+
+    def fake_update_spawn(
+        _runtime_root: Path,
+        _spawn_id: SpawnId,
+        *,
+        claude_config_dir: str | None = None,
+        **_kwargs: object,
+    ) -> object:
+        if claude_config_dir is not None:
+            updates.append(("spawn", claude_config_dir))
+        return SimpleNamespace(wrote=True, entered_finalizing=False)
+
+    def fake_update_session_claude_config_dir(
+        _runtime_root: Path,
+        chat_id: str,
+        *,
+        claude_config_dir: str,
+    ) -> None:
+        session_updates.append((chat_id, claude_config_dir))
+
+    def fake_seed_session_access(**kwargs: object) -> None:
+        seeded.update(kwargs)
+
+    async def fake_invoke_runner(
+        prepared_handoff: PreparedExecutionHandoff,
+        **_kwargs: object,
+    ) -> int:
+        assert prepared_handoff.launch_context.env["CLAUDE_CONFIG_DIR"] == overlay_root.as_posix()
+        assert (
+            prepared_handoff.launch_context.env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV]
+            == ""
+        )
+        assert updates == [("spawn", overlay_root.as_posix())]
+        assert session_updates == [("c1", overlay_root.as_posix())]
+        return 0
+
+    def noop_cleanup(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(execute_module.spawn_store, "update_spawn", fake_update_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "update_session_claude_config_dir",
+        fake_update_session_claude_config_dir,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "ensure_claude_session_accessible",
+        fake_seed_session_access,
+    )
+    monkeypatch.setattr(execute_module, "_invoke_runner", fake_invoke_runner)
+    monkeypatch.setattr(execute_module, "_cleanup_child_claude_overlay", noop_cleanup)
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p1"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 0
+    assert seeded["source_session_id"] == "session-1"
+    assert seeded["source_cwd"] == Path((tmp_path / "source").as_posix())
+    assert seeded["child_cwd"] == child_cwd
+    assert seeded["source_config_root"] == Path((tmp_path / "source-overlay").as_posix())
+    assert seeded["target_config_root"] == overlay_root
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_claude_overlay_reseeds_same_cwd_across_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    overlay_root = tmp_path / "claude-config" / "p-same"
+    overlay_root.mkdir(parents=True)
+    child_cwd = tmp_path / "project"
+    child_cwd.mkdir()
+    parent_overlay = tmp_path / "parent-overlay"
+
+    run_inputs = ResolvedRunInputs(
+        prompt="run it",
+        model=ModelId("gpt-5.4"),
+        project_root=tmp_path.as_posix(),
+    )
+    base_launch_context = _make_launch_context(
+        tmp_path=tmp_path,
+        spec=OpenCodeLaunchSpec(prompt="run it", permission_resolver=_resolver()),
+        run_inputs=run_inputs,
+    )
+    claude_launch_context = dataclass_replace(
+        base_launch_context,
+        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        child_cwd=child_cwd,
+        env=MappingProxyType({"CLAUDE_CONFIG_DIR": parent_overlay.as_posix(), "BASE": "1"}),
+    )
+    handoff = PreparedExecutionHandoff(
+        resolved_request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="claude",
+            session=SessionRequest(
+                requested_harness_session_id="session-1",
+                source_execution_cwd=child_cwd.as_posix(),
+                source_claude_config_dir=(tmp_path / "source-overlay").as_posix(),
+            ),
+        ),
+        launch_context=claude_launch_context,
+        session_context=_SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        ),
+        session_exit_stack=ExitStack(),
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        harness_session_id_observer=lambda _session_id: None,
+    )
+
+    seeded: dict[str, object] = {}
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return handoff
+
+    def fake_prepare_isolated_claude_config(
+        *,
+        runtime_root: Path,
+        spawn_id: str,
+    ) -> tuple[Path, str]:
+        assert runtime_root == tmp_path / ".runtime"
+        assert spawn_id == "p-same"
+        return overlay_root, ""
+
+    def fake_update_spawn(
+        *_args: object,
+        **_kwargs: object,
+    ) -> object:
+        return SimpleNamespace(wrote=True, entered_finalizing=False)
+
+    def fake_update_session(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def fake_seed_session_access(**kwargs: object) -> None:
+        seeded.update(kwargs)
+
+    async def fake_invoke_runner(
+        prepared_handoff: PreparedExecutionHandoff,
+        **_kwargs: object,
+    ) -> int:
+        assert prepared_handoff.launch_context.env["CLAUDE_CONFIG_DIR"] == overlay_root.as_posix()
+        assert prepared_handoff.launch_context.env["BASE"] == "1"
+        return 0
+
+    def noop_cleanup(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(execute_module.spawn_store, "update_spawn", fake_update_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "ensure_claude_session_accessible",
+        fake_seed_session_access,
+    )
+    monkeypatch.setattr(execute_module, "_invoke_runner", fake_invoke_runner)
+    monkeypatch.setattr(execute_module, "_cleanup_child_claude_overlay", noop_cleanup)
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p-same"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 0
+    assert seeded["source_cwd"] == child_cwd
+    assert seeded["child_cwd"] == child_cwd
+    assert seeded["source_config_root"] == Path((tmp_path / "source-overlay").as_posix())
+    assert seeded["target_config_root"] == overlay_root
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_claude_overlay_cleanup_materializes_before_removal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    overlay_root = tmp_path / "claude-config" / "p2"
+    overlay_root.mkdir(parents=True)
+    child_cwd = tmp_path / "child"
+    child_cwd.mkdir()
+
+    run_inputs = ResolvedRunInputs(
+        prompt="run it",
+        model=ModelId("gpt-5.4"),
+        project_root=tmp_path.as_posix(),
+    )
+    base_launch_context = _make_launch_context(
+        tmp_path=tmp_path,
+        spec=OpenCodeLaunchSpec(prompt="run it", permission_resolver=_resolver()),
+        run_inputs=run_inputs,
+    )
+    claude_launch_context = dataclass_replace(
+        base_launch_context,
+        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        child_cwd=child_cwd,
+    )
+    handoff = PreparedExecutionHandoff(
+        resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        launch_context=claude_launch_context,
+        session_context=_SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        ),
+        session_exit_stack=ExitStack(),
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        harness_session_id_observer=lambda _session_id: None,
+    )
+
+    calls: list[tuple[str, Path]] = []
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return handoff
+
+    def fake_prepare_isolated_claude_config(
+        *,
+        runtime_root: Path,
+        spawn_id: str,
+    ) -> tuple[Path, str]:
+        assert runtime_root == tmp_path / ".runtime"
+        assert spawn_id == "p2"
+        return overlay_root, ""
+
+    async def fake_invoke_runner(
+        _prepared_handoff: PreparedExecutionHandoff,
+        **_kwargs: object,
+    ) -> int:
+        return 0
+
+    def fake_update_spawn(
+        *_args: object,
+        **_kwargs: object,
+    ) -> object:
+        return SimpleNamespace(wrote=True, entered_finalizing=False)
+
+    def fake_update_session(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    def fake_materialize_overlay_transcripts(
+        root: Path,
+        canonical_root: Path | None = None,
+    ) -> int:
+        calls.append(("materialize", root))
+        return 1
+
+    def fake_rmtree(root: Path) -> None:
+        calls.append(("rmtree", root))
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(execute_module, "_invoke_runner", fake_invoke_runner)
+    monkeypatch.setattr(execute_module.spawn_store, "update_spawn", fake_update_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "materialize_overlay_transcripts",
+        fake_materialize_overlay_transcripts,
+    )
+    monkeypatch.setattr(execute_module.shutil, "rmtree", fake_rmtree)
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p2"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 0
+    assert calls == [
+        ("materialize", overlay_root),
+        ("rmtree", overlay_root),
+    ]
+
+
+def test_cleanup_child_claude_overlay_materializes_to_original_root_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    overlay_root = tmp_path / "claude-config" / "child-spawn"
+    overlay_root.mkdir(parents=True)
+    parent_overlay_root = tmp_path / "claude-config" / "parent-spawn"
+    parent_overlay_root.mkdir(parents=True)
+    durable_root = tmp_path / "durable-claude"
+    durable_root.mkdir(parents=True)
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", parent_overlay_root.as_posix())
+    monkeypatch.setenv(
+        MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+        durable_root.as_posix(),
+    )
+
+    captured: dict[str, Path | None] = {}
+
+    def fake_materialize_overlay_transcripts(
+        root: Path,
+        canonical_root: Path | None = None,
+    ) -> int:
+        captured["overlay_root"] = root
+        captured["canonical_root"] = canonical_root
+        return 1
+
+    def fake_rmtree(_path: Path) -> None:
+        return None
+
+    monkeypatch.setattr(
+        execute_module,
+        "materialize_overlay_transcripts",
+        fake_materialize_overlay_transcripts,
+    )
+    monkeypatch.setattr(execute_module.shutil, "rmtree", fake_rmtree)
+
+    execute_module._cleanup_child_claude_overlay(
+        isolated_config_root=overlay_root,
+        spawn_id=SpawnId("p-clean"),
+    )
+
+    assert captured["overlay_root"] == overlay_root
+    assert captured["canonical_root"] == durable_root
+    assert captured["canonical_root"] != parent_overlay_root
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_claude_overlay_metadata_failure_cleans_overlay_and_finalizes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    class _TrackingExitStack:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    overlay_root = tmp_path / "claude-config" / "p-meta"
+    overlay_root.mkdir(parents=True)
+    run_inputs = ResolvedRunInputs(
+        prompt="run it",
+        model=ModelId("gpt-5.4"),
+        project_root=tmp_path.as_posix(),
+    )
+    base_launch_context = _make_launch_context(
+        tmp_path=tmp_path,
+        spec=OpenCodeLaunchSpec(prompt="run it", permission_resolver=_resolver()),
+        run_inputs=run_inputs,
+    )
+    claude_launch_context = dataclass_replace(
+        base_launch_context,
+        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        child_cwd=tmp_path,
+        env=MappingProxyType({}),
+    )
+    exit_stack = _TrackingExitStack()
+    handoff = PreparedExecutionHandoff(
+        resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        launch_context=claude_launch_context,
+        session_context=_SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        ),
+        session_exit_stack=cast("Any", exit_stack),
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        harness_session_id_observer=lambda _session_id: None,
+    )
+
+    finalized_errors: list[str] = []
+    cleanup_calls: list[tuple[str, Path]] = []
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return handoff
+
+    def fake_prepare_isolated_claude_config(
+        *,
+        runtime_root: Path,
+        spawn_id: str,
+    ) -> tuple[Path, str]:
+        assert runtime_root == tmp_path / ".runtime"
+        assert spawn_id == "p4"
+        return overlay_root, ""
+
+    def fake_update_spawn(
+        *_args: object,
+        **_kwargs: object,
+    ) -> object:
+        raise RuntimeError("spawn metadata failed")
+
+    def fake_materialize_overlay_transcripts(
+        root: Path,
+        canonical_root: Path | None = None,
+    ) -> int:
+        cleanup_calls.append(("materialize", root))
+        return 1
+
+    def fake_rmtree(root: Path) -> None:
+        cleanup_calls.append(("rmtree", root))
+
+    async def fake_finalize_launch_failure(
+        _runtime_root: Path,
+        _project_root: Path,
+        _spawn_id: SpawnId,
+        error: str,
+    ) -> None:
+        finalized_errors.append(error)
+
+    async def fail_if_called(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("runner should not execute after metadata update failure")
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(execute_module.spawn_store, "update_spawn", fake_update_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "materialize_overlay_transcripts",
+        fake_materialize_overlay_transcripts,
+    )
+    monkeypatch.setattr(execute_module.shutil, "rmtree", fake_rmtree)
+    monkeypatch.setattr(
+        execute_module,
+        "finalize_launch_failure",
+        fake_finalize_launch_failure,
+    )
+    monkeypatch.setattr(execute_module, "_invoke_runner", fail_if_called)
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p4"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 1
+    assert finalized_errors == ["spawn metadata failed"]
+    assert cleanup_calls == [("materialize", overlay_root), ("rmtree", overlay_root)]
+    assert exit_stack.closed is True
+
+
+@pytest.mark.asyncio
 async def test_launch_prepared_spawn_does_not_finalize_launch_failure_on_teardown_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -793,7 +1584,14 @@ async def test_launch_prepared_spawn_does_not_finalize_launch_failure_on_teardow
     async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
         return PreparedExecutionHandoff(
             resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
-            launch_context=cast("Any", SimpleNamespace()),
+            launch_context=cast(
+                "Any",
+                SimpleNamespace(
+                    harness=SimpleNamespace(id=HarnessId.OPENCODE),
+                    child_cwd=tmp_path,
+                    env=MappingProxyType({}),
+                ),
+            ),
             session_context=_SessionExecutionContext(
                 chat_id="c1",
                 work_id=None,
@@ -844,6 +1642,124 @@ async def test_launch_prepared_spawn_does_not_finalize_launch_failure_on_teardow
 
     assert result == 0
     assert captured == {"finalize_calls": 0, "runner_calls": 1}
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    class _TrackingExitStack:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    overlay_root = tmp_path / "claude-config" / "p3"
+    overlay_root.mkdir(parents=True)
+    exit_stack = _TrackingExitStack()
+    handoff = PreparedExecutionHandoff(
+        resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        launch_context=cast(
+            "Any",
+            SimpleNamespace(
+                harness=SimpleNamespace(id=HarnessId.CLAUDE),
+                child_cwd=tmp_path,
+                env=MappingProxyType({}),
+            ),
+        ),
+        session_context=_SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        ),
+        session_exit_stack=cast("Any", exit_stack),
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        harness_session_id_observer=lambda _session_id: None,
+    )
+
+    finalized_errors: list[str] = []
+    cleaned_overlays: list[tuple[Path, SpawnId]] = []
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return handoff
+
+    def fake_prepare_child_claude_overlay(**_kwargs: object) -> Path:
+        return overlay_root
+
+    def fake_seed_child_claude_session_access(**_kwargs: object) -> None:
+        raise RuntimeError("seed failed")
+
+    async def fake_finalize_launch_failure(
+        _runtime_root: Path,
+        _project_root: Path,
+        _spawn_id: SpawnId,
+        error: str,
+    ) -> None:
+        finalized_errors.append(error)
+
+    async def fail_if_called(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("runner should not execute after Claude pre-run setup failure")
+
+    def fake_cleanup_child_claude_overlay(
+        *,
+        isolated_config_root: Path | None,
+        spawn_id: SpawnId,
+        canonical_root: Path | None = None,
+    ) -> None:
+        assert isolated_config_root is not None
+        cleaned_overlays.append((isolated_config_root, spawn_id))
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_child_claude_overlay",
+        fake_prepare_child_claude_overlay,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "_seed_child_claude_session_access",
+        fake_seed_child_claude_session_access,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "finalize_launch_failure",
+        fake_finalize_launch_failure,
+    )
+    monkeypatch.setattr(execute_module, "_invoke_runner", fail_if_called)
+    monkeypatch.setattr(
+        execute_module,
+        "_cleanup_child_claude_overlay",
+        fake_cleanup_child_claude_overlay,
+    )
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p3"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 1
+    assert finalized_errors == ["seed failed"]
+    assert exit_stack.closed is True
+    assert cleaned_overlays == [(overlay_root, SpawnId("p3"))]
 
 
 def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(

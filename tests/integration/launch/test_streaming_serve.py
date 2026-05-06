@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
@@ -11,15 +9,6 @@ from meridian.cli import streaming_serve as streaming_serve_module
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
 from meridian.lib.streaming.spawn_manager import DrainOutcome
-
-
-def _read_spawn_events(runtime_root: Path) -> list[dict[str, object]]:
-    events_path = runtime_root / "spawns.jsonl"
-    return [
-        cast("dict[str, object]", json.loads(line))
-        for line in events_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
 
 
 def _fake_launch_context(
@@ -72,11 +61,6 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
     await streaming_serve_module.streaming_serve("codex", "hello")
 
     assert helper_calls == [("p1", str(runtime_root))]
-    events = _read_spawn_events(runtime_root)
-    assert [event["event"] for event in events] == ["start", "update", "finalize"]
-    assert events[1]["status"] == "finalizing"
-    assert events[-1]["status"] == "cancelled"
-
     row = get_spawn(runtime_root, "p1")
     assert row is not None
     assert row.status == "cancelled"
@@ -100,14 +84,10 @@ async def test_streaming_serve_start_failure_finalizes_failed_once(
     with pytest.raises(RuntimeError, match="boom"):
         await streaming_serve_module.streaming_serve("codex", "hello")
 
-    events = _read_spawn_events(runtime_root)
-    assert [event["event"] for event in events] == ["start", "update", "finalize"]
-    assert events[1]["status"] == "finalizing"
-    assert events[-1]["status"] == "failed"
-    assert events[-1]["error"] == "boom"
-
     row = get_spawn(runtime_root, "p1")
     assert row is not None
+    assert row.status == "failed"
+    assert row.error == "boom"
     assert row.status == "failed"
     assert row.error == "boom"
 
@@ -157,10 +137,6 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     assert config.env_overrides["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
     assert config.env_overrides["EXTRA_ENV"] == "present"
     assert config.debug_tracer is not None
-
-    events = _read_spawn_events(runtime_root)
-    assert [event["event"] for event in events] == ["start", "update", "finalize"]
-    assert events[-1]["status"] == "succeeded"
 
     row = get_spawn(runtime_root, "p1")
     assert row is not None

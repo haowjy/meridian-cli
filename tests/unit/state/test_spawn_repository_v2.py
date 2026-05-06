@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     read_prompt,
     read_state,
@@ -9,7 +10,6 @@ from meridian.lib.state.spawn.repository import (
     write_state,
     write_state_locked,
 )
-from meridian.lib.state.spawn.model import SpawnRecord
 
 
 def _record(

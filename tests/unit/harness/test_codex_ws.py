@@ -4,14 +4,18 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import codex_ws
-from meridian.lib.harness.connections.base import ConnectionConfig, HarnessRequest
+from meridian.lib.harness.connections.base import (
+    AutoAcceptHandler,
+    ConnectionConfig,
+    HarnessRequest,
+    InteractiveHandler,
+)
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.projections.project_codex_common import (
     HarnessCapabilityMismatch,
@@ -21,6 +25,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
 )
+from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.safety.permissions import (
     PermissionConfig,
     TieredPermissionResolver,
@@ -116,6 +121,19 @@ def test_codex_ws_update_turn_state_accepts_thread_activity_aliases(event_type: 
 
     assert connection._thread_id == "thread-alias"
     assert connection._current_turn_id == "turn-alias"
+
+
+def test_codex_ws_capabilities_runtime_hitl_depends_on_request_handler() -> None:
+    auto_accept_connection = codex_ws.CodexConnection(request_handler=AutoAcceptHandler())
+    assert auto_accept_connection.capabilities.supports_runtime_hitl is False
+
+    async def _event_sink(_event: object) -> None:
+        return None
+
+    interactive_connection = codex_ws.CodexConnection(
+        request_handler=InteractiveHandler(_event_sink)
+    )
+    assert interactive_connection.capabilities.supports_runtime_hitl is True
 
 
 @pytest.mark.asyncio
@@ -367,7 +385,32 @@ async def test_codex_ws_non_observer_emits_startup_phases(
 
 
 @pytest.mark.asyncio
-async def test_codex_ws_primary_observer_mode_declines_all_server_requests(
+async def test_codex_ws_primary_observer_dispatches_requests_to_handler() -> None:
+    events: list[object] = []
+
+    async def _event_sink(event: object) -> None:
+        events.append(event)
+
+    connection = codex_ws.CodexConnection(request_handler=InteractiveHandler(_event_sink))
+    connection._primary_observer_mode = True
+
+    await connection._handle_server_request(
+        {
+            "id": "observer-req-1",
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thread-1"},
+        }
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, codex_ws.HarnessEvent)
+    assert event.event_type == "request/opened"
+    assert event.payload["request_type"] == "approval"
+
+
+@pytest.mark.asyncio
+async def test_codex_ws_primary_observer_rejects_unsupported_server_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     connection = codex_ws.CodexConnection()
@@ -386,46 +429,84 @@ async def test_codex_ws_primary_observer_mode_declines_all_server_requests(
 
     await connection._handle_server_request(
         {
-            "id": "observer-req-1",
-            "method": "item/commandExecution/requestApproval",
+            "id": "observer-req-2",
+            "method": "item/tool/unsupported",
             "params": {"threadId": "thread-1"},
         }
     )
 
+    warning = await asyncio.wait_for(connection._event_queue.get(), timeout=1.0)
+    assert warning is not None
+    assert warning.event_type == "warning/unsupportedServerRequest"
+    assert warning.payload == {
+        "method": "item/tool/unsupported",
+        "params": {"threadId": "thread-1"},
+    }
     assert captured_errors == [
         (
-            "observer-req-1",
+            "observer-req-2",
             -32601,
-            "Meridian observer does not handle server requests in primary attach mode",
+            "Meridian codex_ws adapter does not support server request 'item/tool/unsupported'",
         )
     ]
-    assert connection._event_queue.empty()
 
 
 @pytest.mark.asyncio
-async def test_codex_ws_confirm_mode_rejects_approval_before_handler(
+async def test_codex_ws_confirm_mode_rejects_only_when_handler_has_no_runtime_hitl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handled_requests: list[HarnessRequest] = []
+    interactive_events: list[object] = []
 
-    class RecordingHandler:
-        async def handle_request(
-            self,
-            connection: Any,
-            request: HarnessRequest,
-        ) -> None:
-            _ = connection
-            handled_requests.append(request)
+    async def _interactive_event_sink(event: object) -> None:
+        interactive_events.append(event)
 
-    connection = codex_ws.CodexConnection(request_handler=RecordingHandler())
-    connection._launch_spec = CodexLaunchSpec(
+    interactive_connection = codex_ws.CodexConnection(
+        request_handler=InteractiveHandler(_interactive_event_sink)
+    )
+    interactive_connection._launch_spec = CodexLaunchSpec(
+        permission_resolver=TieredPermissionResolver(
+            config=PermissionConfig(approval="confirm")
+        )
+    )
+    interactive_errors: list[tuple[object, int, str]] = []
+
+    async def _fake_send_jsonrpc_error_interactive(
+        request_id: object,
+        *,
+        code: int,
+        message: str,
+    ) -> None:
+        interactive_errors.append((request_id, code, message))
+
+    monkeypatch.setattr(
+        interactive_connection,
+        "_send_jsonrpc_error",
+        _fake_send_jsonrpc_error_interactive,
+    )
+
+    await interactive_connection._handle_server_request(
+        {
+            "id": "approval-req-interactive",
+            "method": "item/commandExecution/requestApproval",
+            "params": {"threadId": "thread-1"},
+        }
+    )
+    assert len(interactive_events) == 1
+    interactive_event = interactive_events[0]
+    assert isinstance(interactive_event, codex_ws.HarnessEvent)
+    assert interactive_event.event_type == "request/opened"
+    assert interactive_event.payload["request_type"] == "approval"
+    assert interactive_errors == []
+
+    auto_accept_connection = codex_ws.CodexConnection(request_handler=AutoAcceptHandler())
+    auto_accept_connection._launch_spec = CodexLaunchSpec(
         permission_resolver=TieredPermissionResolver(
             config=PermissionConfig(approval="confirm")
         )
     )
     captured_errors: list[tuple[object, int, str]] = []
 
-    async def _fake_send_jsonrpc_error(
+    async def _fake_send_jsonrpc_error_auto_accept(
         request_id: object,
         *,
         code: int,
@@ -433,9 +514,11 @@ async def test_codex_ws_confirm_mode_rejects_approval_before_handler(
     ) -> None:
         captured_errors.append((request_id, code, message))
 
-    monkeypatch.setattr(connection, "_send_jsonrpc_error", _fake_send_jsonrpc_error)
+    monkeypatch.setattr(
+        auto_accept_connection, "_send_jsonrpc_error", _fake_send_jsonrpc_error_auto_accept
+    )
 
-    await connection._handle_server_request(
+    await auto_accept_connection._handle_server_request(
         {
             "id": "approval-req-1",
             "method": "item/commandExecution/requestApproval",
@@ -443,9 +526,7 @@ async def test_codex_ws_confirm_mode_rejects_approval_before_handler(
         }
     )
 
-    warning = await asyncio.wait_for(connection._event_queue.get(), timeout=1.0)
-
-    assert handled_requests == []
+    warning = await asyncio.wait_for(auto_accept_connection._event_queue.get(), timeout=1.0)
     assert warning is not None
     assert warning.event_type == "warning/approvalRejected"
     assert warning.payload == {
@@ -459,6 +540,79 @@ async def test_codex_ws_confirm_mode_rejects_approval_before_handler(
             "Codex websocket approval requests are unsupported in confirm mode.",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_codex_ws_managed_primary_uses_interactive_handler() -> None:
+    connection = process_runner._create_managed_primary_connection(
+        harness_id=HarnessId.CODEX,
+        connection_factory=codex_ws.CodexConnection,
+    )
+    assert isinstance(connection, codex_ws.CodexConnection)
+    assert isinstance(connection._request_handler, InteractiveHandler)
+    await connection._request_handler.handle_request(
+        connection,
+        HarnessRequest(
+            request_id="approval-queue-test",
+            request_type="approval",
+            method="item/commandExecution/requestApproval",
+            payload={"command": "echo"},
+        ),
+    )
+    event = await asyncio.wait_for(connection._event_queue.get(), timeout=1.0)
+    assert event is not None
+    assert event.event_type == "request/opened"
+    assert event.payload["request_id"] == "approval-queue-test"
+
+
+@pytest.mark.asyncio
+async def test_codex_ws_server_request_resolved_clears_hitl() -> None:
+    connection = codex_ws.CodexConnection()
+    connection._hitl_requests = {"approval-1": 1, "approval-2": 2}
+
+    await connection._handle_notification(
+        method="serverRequest/resolved",
+        payload={"requestId": "approval-1"},
+        raw_text='{"method":"serverRequest/resolved"}',
+    )
+
+    assert connection._hitl_requests == {"approval-2": 2}
+
+
+@pytest.mark.asyncio
+async def test_codex_ws_respond_request_keeps_hitl_when_send_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = codex_ws.CodexConnection()
+    connection._hitl_requests = {"approval-1": 1}
+
+    async def _failing_send(_request_id: object, _result: dict[str, object]) -> None:
+        raise RuntimeError("connection closed")
+
+    monkeypatch.setattr(connection, "_send_jsonrpc_result", _failing_send)
+
+    with pytest.raises(RuntimeError, match="connection closed"):
+        await connection.respond_request("approval-1", "accept")
+
+    assert connection._hitl_requests == {"approval-1": 1}
+
+
+@pytest.mark.asyncio
+async def test_codex_ws_respond_user_input_keeps_hitl_when_send_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = codex_ws.CodexConnection()
+    connection._hitl_requests = {"input-1": 2}
+
+    async def _failing_send(_request_id: object, _result: dict[str, object]) -> None:
+        raise RuntimeError("connection closed")
+
+    monkeypatch.setattr(connection, "_send_jsonrpc_result", _failing_send)
+
+    with pytest.raises(RuntimeError, match="connection closed"):
+        await connection.respond_user_input("input-1", {"name": "value"})
+
+    assert connection._hitl_requests == {"input-1": 2}
 
 
 @pytest.mark.asyncio
@@ -527,6 +681,7 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
         ),
         report_output_path="report.md",
         extra_args=("--invalid-flag",),
+        projected_roots=(Path("/tmp/root-a"), Path("/tmp/root b")),
     )
 
     with caplog.at_level(
@@ -541,6 +696,9 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
     assert command[:4] == ["codex", "app-server", "--listen", "ws://127.0.0.1:7777"]
     assert _values_for_setting(command, "sandbox_mode") == ['"read-only"']
     assert _values_for_setting(command, "approval_policy") == ['"on-request"']
+    assert _values_for_setting(command, "sandbox_workspace_write.writable_roots") == [
+        '["/tmp/root-a", "/tmp/root b"]'
+    ]
     assert command[-1:] == ["--invalid-flag"]
     assert (
         "Codex streaming ignores report_output_path; reports extracted from artifacts"

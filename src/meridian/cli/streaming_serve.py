@@ -144,7 +144,7 @@ async def streaming_serve(
         raise
     finally:
         with signal_coordinator().mask_sigterm():
-            await spawn_service.complete_spawn(
+            finalize_outcome = await spawn_service.complete_spawn(
                 spawn_id,
                 status=outcome_status,
                 exit_code=outcome_exit_code,
@@ -152,4 +152,6 @@ async def streaming_serve(
                 duration_secs=max(0.0, time.monotonic() - start_monotonic),
                 error=failure_message if outcome_status == "failed" else None,
             )
+            if not finalize_outcome.wrote:
+                print(f"Finalize skipped for spawn {spawn_id} (already terminal or missing)")
             print(f"Stopped spawn {spawn_id} (status={outcome_status}, exit={outcome_exit_code})")

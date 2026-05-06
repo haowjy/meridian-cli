@@ -36,8 +36,9 @@ class Acquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return Handle()
 
 
@@ -73,8 +74,25 @@ def _ingest_turn_started(
 
 
 def _event_types(client: TestClient, chat_id: str, count: int) -> list[str]:
+    stream_source = server._runtime.get_stream_source(chat_id)
+    assert stream_source is not None
+    expected_event_count = len(list(stream_source.event_log.read_all()))
     with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-        return [ws.receive_json()["type"] for _ in range(count)]
+        events = [ws.receive_json() for _ in range(expected_event_count)]
+    relevant_types = [
+        event["type"]
+        for event in events
+        if event["type"] not in {"user.prompt", "chat.state_changed"}
+    ]
+    return relevant_types[:count]
+
+
+def _replayed_events(client: TestClient, chat_id: str) -> list[dict[str, object]]:
+    stream_source = server._runtime.get_stream_source(chat_id)
+    assert stream_source is not None
+    expected_event_count = len(list(stream_source.event_log.read_all()))
+    with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
+        return [ws.receive_json() for _ in range(expected_event_count)]
 
 
 def _state(client: TestClient, chat_id: str) -> str:
@@ -104,15 +122,19 @@ def test_restart_recovery_restores_non_closed_chat_to_idle_and_emits_runtime_err
     configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
     with TestClient(app) as client:
         assert client.get(f"/chat/{chat_id}/state").json() == {"chat_id": chat_id, "state": "idle"}
-        with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-            events = [ws.receive_json(), ws.receive_json(), ws.receive_json()]
+        events = _replayed_events(client, chat_id)
 
-    assert [event["type"] for event in events] == [
+    relevant_events = [
+        event
+        for event in events
+        if event["type"] not in {"user.prompt", "chat.state_changed"}
+    ]
+    assert [event["type"] for event in relevant_events] == [
         "chat.started",
         "turn.started",
         "runtime.error",
     ]
-    assert events[-1]["payload"]["reason"] == "backend_lost_after_restart"
+    assert relevant_events[-1]["payload"]["reason"] == "backend_lost_after_restart"
 
 
 def test_restart_recovery_tolerates_truncated_jsonl_tail(tmp_path: Path) -> None:
@@ -158,7 +180,10 @@ def test_restart_recovery_rebuilds_missing_or_corrupt_index_from_jsonl(
             "SELECT type FROM events WHERE chat_id=? ORDER BY seq",
             (chat_id,),
         ).fetchall()
-        assert rows == [
+        relevant_rows = [
+            row for row in rows if row[0] not in {"user.prompt", "chat.state_changed"}
+        ]
+        assert relevant_rows == [
             ("chat.started",),
             ("turn.started",),
             ("runtime.error",),

@@ -269,12 +269,13 @@ def test_workspace_roots_append_after_claude_preflight_projection(
     runtime_root = tmp_path / ".meridian"
     assert preview.child_cwd == tmp_path
     args = preview.run_params.extra_args
-    # Preflight passthrough args come first
     assert args[:2] == ("--user-tail", "1")
-    # Workspace roots follow (may include system temp dir)
-    add_dirs = [args[i + 1] for i in range(len(args) - 1) if args[i] == "--add-dir"]
-    assert shared_root.as_posix() in add_dirs
-    assert runtime_root.as_posix() in add_dirs
+    assert "--add-dir" not in args
+    projected_roots = {path.as_posix() for path in preview.spec.projected_roots}
+    assert shared_root.as_posix() in projected_roots
+    assert runtime_root.as_posix() in projected_roots
+    assert shared_root.as_posix() in preview.argv
+    assert runtime_root.as_posix() in preview.argv
 
 
 def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Path) -> None:
@@ -322,13 +323,20 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     )
 
     runtime_root = tmp_path / ".meridian"
-    args = preview.run_params.extra_args
-    # Extract --add-dir paths from the arg pairs
-    add_dirs = [args[i + 1] for i in range(len(args) - 1) if args[i] == "--add-dir"]
-    assert local_override_root.as_posix() in add_dirs
-    assert local_only_root.as_posix() in add_dirs
-    assert runtime_root.as_posix() in add_dirs
-    assert legacy_root.as_posix() not in add_dirs
+    assert "--add-dir" not in preview.run_params.extra_args
+    projected_roots = {path.as_posix() for path in preview.spec.projected_roots}
+    assert local_override_root.as_posix() in projected_roots
+    assert local_only_root.as_posix() in projected_roots
+    assert runtime_root.as_posix() in projected_roots
+    assert legacy_root.as_posix() not in projected_roots
+    codex_add_dir_pairs = {
+        (preview.argv[index], preview.argv[index + 1])
+        for index, token in enumerate(preview.argv[:-1])
+        if token == "--add-dir"
+    }
+    assert ("--add-dir", local_override_root.as_posix()) in codex_add_dir_pairs
+    assert ("--add-dir", local_only_root.as_posix()) in codex_add_dir_pairs
+    assert ("--add-dir", runtime_root.as_posix()) in codex_add_dir_pairs
 
 
 def test_git_backed_context_remote_projects_clone_root_once(
@@ -372,17 +380,9 @@ def test_git_backed_context_remote_projects_clone_root_once(
 
     clone_root = resolve_clone_path(remote)
     runtime_root = tmp_path / ".meridian"
-    codex_clone_root_pairs = sum(
-        1
-        for index, token in enumerate(preview.run_params.extra_args[:-1])
-        if token == "--add-dir"
-        and preview.run_params.extra_args[index + 1] == clone_root.as_posix()
-    )
-    assert codex_clone_root_pairs == 1
-    assert any(
-        token == "--add-dir" and preview.run_params.extra_args[index + 1] == runtime_root.as_posix()
-        for index, token in enumerate(preview.run_params.extra_args[:-1])
-    )
+    projected_root_values = [path.as_posix() for path in preview.spec.projected_roots]
+    assert projected_root_values.count(clone_root.as_posix()) == 1
+    assert projected_root_values.count(runtime_root.as_posix()) == 1
 
     monkeypatch.setenv("CLAUDECODE", "1")
     claude_preview = build_launch_context(
@@ -413,8 +413,7 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Isolate from parent OpenCode session env so workspace projection is not
-    # suppressed.
+    # Isolate from parent OpenCode session env for deterministic assertions.
     monkeypatch.delenv(OPENCODE_CONFIG_CONTENT_ENV, raising=False)
     _write_minimal_mars_config(tmp_path)
     docs_root = tmp_path / "docs-root"
@@ -459,7 +458,7 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     [False, True],
     ids=["without_parent_env", "with_parent_env"],
 )
-def test_opencode_workspace_projection_handles_parent_env_suppression(
+def test_opencode_workspace_projection_merges_parent_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     parent_env_present: bool,
@@ -475,7 +474,8 @@ def test_opencode_workspace_projection_handles_parent_env_suppression(
     if parent_env_present:
         monkeypatch.setenv(
             OPENCODE_CONFIG_CONTENT_ENV,
-            '{"permission":{"external_directory":["/existing"]}}',
+            '{"instructions":["/tmp/system.md"],'
+            '"permission":{"external_directory":{"/existing/*":"ask"}}}',
         )
     else:
         monkeypatch.delenv(OPENCODE_CONFIG_CONTENT_ENV, raising=False)
@@ -499,16 +499,15 @@ def test_opencode_workspace_projection_handles_parent_env_suppression(
     )
 
     warning_codes = {warning.code for warning in preview.warnings}
+    runtime_root = tmp_path / ".meridian"
+    payload = json.loads(preview.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
+    external_dirs = payload["permission"]["external_directory"]
+    assert external_dirs[shared_root.as_posix() + "/*"] == "allow"
+    assert external_dirs[runtime_root.as_posix() + "/*"] == "allow"
     if parent_env_present:
-        assert OPENCODE_CONFIG_CONTENT_ENV not in preview.env_overrides
-        assert "workspace_opencode_parent_env_suppressed" in warning_codes
-    else:
-        runtime_root = tmp_path / ".meridian"
-        payload = json.loads(preview.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
-        external_dirs = payload["permission"]["external_directory"]
-        assert external_dirs[shared_root.as_posix() + "/*"] == "allow"
-        assert external_dirs[runtime_root.as_posix() + "/*"] == "allow"
-        assert "workspace_opencode_parent_env_suppressed" not in warning_codes
+        assert payload["instructions"] == ["/tmp/system.md"]
+        assert external_dirs["/existing/*"] == "ask"
+    assert "workspace_opencode_parent_env_suppressed" not in warning_codes
 
 
 def test_spawn_prepare_opencode_keeps_all_references_inline(

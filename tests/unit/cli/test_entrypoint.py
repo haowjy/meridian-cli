@@ -51,7 +51,7 @@ def test_render_root_help_agent_mode_matches_agent_help_shape() -> None:
 
     assert rendered.startswith("Usage: meridian COMMAND [ARGS]\n")
     assert "For automation, use --format json" in rendered
-    assert "meridian spawn -m MODEL -p \"prompt\" --bg" in rendered
+    assert "meridian spawn -m MODEL --prompt-file /tmp/task.md --bg" in rendered
     assert "Commands:\n  spawn" in rendered
 
 

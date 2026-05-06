@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,25 +48,47 @@ def _project_claude_workspace_args(roots: tuple[Path, ...]) -> tuple[str, ...]:
     return tuple(projected)
 
 
-def _build_opencode_workspace_config(roots: tuple[Path, ...]) -> str:
-    # OpenCode permission schema: each key maps to either an Action string
-    # ("allow"/"ask"/"deny") or a Record<pattern, Action>.  ``external_directory``
-    # takes a per-path object, e.g. ``{"/abs/path": "allow"}``.
-    #
-    # Append ``/*`` so the pattern covers files *inside* the directory, not just
-    # the directory inode itself. Without the trailing wildcard OpenCode denies
-    # reads of any file under the root.
-    return json.dumps(
+def _coerce_external_directory_entries(raw: object) -> dict[str, str]:
+    if isinstance(raw, dict):
+        raw_mapping = cast("dict[Any, Any]", raw)
+        return {str(path): str(action) for path, action in raw_mapping.items()}
+    if isinstance(raw, list):
+        raw_list = cast("list[Any]", raw)
+        return {str(path): "allow" for path in raw_list}
+    return {}
+
+
+def _merge_opencode_workspace_config(
+    *,
+    roots: tuple[Path, ...],
+    parent_opencode_config_content: str | None,
+) -> str:
+    parent_raw = (parent_opencode_config_content or "").strip()
+    merged: dict[str, object] = {}
+    if parent_raw:
+        try:
+            parsed = json.loads(parent_raw)
+            if isinstance(parsed, dict):
+                parsed_mapping = cast("dict[Any, Any]", parsed)
+                merged = {str(key): value for key, value in parsed_mapping.items()}
+        except json.JSONDecodeError:
+            merged = {}
+
+    permission_raw = merged.get("permission")
+    permission: dict[str, object] = (
         {
-            "permission": {
-                "external_directory": {
-                    root.as_posix() + "/*": "allow" for root in roots
-                },
-            }
-        },
-        separators=(",", ":"),
-        sort_keys=True,
+            str(key): value
+            for key, value in cast("dict[Any, Any]", permission_raw).items()
+        }
+        if isinstance(permission_raw, dict)
+        else {}
     )
+    external_directory = _coerce_external_directory_entries(permission.get("external_directory"))
+    for root in roots:
+        external_directory[root.as_posix() + "/*"] = "allow"
+    permission["external_directory"] = external_directory
+    merged["permission"] = permission
+    return json.dumps(merged, separators=(",", ":"), sort_keys=True)
 
 
 def project_workspace_roots(
@@ -90,25 +112,13 @@ def project_workspace_roots(
         )
 
     if harness_id == HarnessId.OPENCODE:
-        parent_config = (parent_opencode_config_content or "").strip()
-        if parent_config:
-            return ProjectionResult(
-                applicability="active",
-                diagnostics=(
-                    WorkspaceProjectionDiagnostic(
-                        code="workspace_opencode_parent_env_suppressed",
-                        message=(
-                            "Workspace projection for OpenCode was suppressed because "
-                            "parent OPENCODE_CONFIG_CONTENT is already set."
-                        ),
-                        payload={"env_var": OPENCODE_CONFIG_CONTENT_ENV},
-                    ),
-                ),
-            )
         return ProjectionResult(
             applicability="active",
             env_overrides={
-                OPENCODE_CONFIG_CONTENT_ENV: _build_opencode_workspace_config(roots)
+                OPENCODE_CONFIG_CONTENT_ENV: _merge_opencode_workspace_config(
+                    roots=roots,
+                    parent_opencode_config_content=parent_opencode_config_content,
+                )
             },
         )
 

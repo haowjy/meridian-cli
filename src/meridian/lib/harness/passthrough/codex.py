@@ -44,10 +44,14 @@ def _require_observer_endpoint_url(
 def _build_codex_attach_command(
     session_id: str,
     ws_url: str,
+    projected_roots: tuple[Path, ...],
 ) -> tuple[str, ...]:
     """Build `codex resume {session_id} --remote {ws_url}`."""
 
-    return ("codex", "resume", session_id, "--remote", ws_url)
+    command = ["codex", "resume", session_id, "--remote", ws_url]
+    for root in projected_roots:
+        command.extend(("--add-dir", root.as_posix()))
+    return tuple(command)
 
 
 class CodexPassthrough:
@@ -77,10 +81,15 @@ class CodexPassthrough:
     def build_tui_command(
         self,
         connection: HarnessConnection[Any],
+        spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
+        if not isinstance(spec, CodexLaunchSpec):
+            raise PassthroughError(f"Expected CodexLaunchSpec, got {type(spec).__name__}")
+
         return lambda session_id: _build_codex_attach_command(
             session_id=session_id,
             ws_url=_require_observer_endpoint_url(connection, transport="ws"),
+            projected_roots=spec.projected_roots,
         )
 
 

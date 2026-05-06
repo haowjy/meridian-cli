@@ -110,6 +110,7 @@ def _projected_spec_to_run_inputs(
             "model": ModelId(projected_model) if projected_model else None,
             "effort": projected_spec.effort,
             "extra_args": projected_spec.extra_args,
+            "projected_roots": projected_spec.projected_roots,
             "continue_harness_session_id": projected_spec.continue_session_id,
             "continue_fork": projected_spec.continue_fork,
             "interactive": projected_spec.interactive,

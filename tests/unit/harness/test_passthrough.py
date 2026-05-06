@@ -123,7 +123,13 @@ def test_claude_passthrough_stub_raises_for_managed_primary_attach(tmp_path: Pat
         PassthroughError,
         match="Managed primary attach is not supported for claude",
     ):
-        passthrough.build_tui_command(cast("Any", object()))
+        passthrough.build_tui_command(
+            cast("Any", object()),
+            ClaudeLaunchSpec(
+                prompt="hello claude",
+                permission_resolver=_permission_resolver(),
+            ),
+        )
 
 
 def test_passthrough_module_chain_imports_without_circular_imports() -> None:
@@ -167,9 +173,26 @@ def test_codex_passthrough_builds_tui_command_from_ws_observer_endpoint() -> Non
         )(),
     )
 
-    command = CodexPassthrough().build_tui_command(connection)("thread-123")
+    command = CodexPassthrough().build_tui_command(
+        connection,
+        CodexLaunchSpec(
+            prompt="hello codex",
+            permission_resolver=_permission_resolver(),
+            projected_roots=(Path("/tmp/root-a"), Path("/tmp/root b")),
+        ),
+    )("thread-123")
 
-    assert command == ("codex", "resume", "thread-123", "--remote", "ws://127.0.0.1:43123")
+    assert command == (
+        "codex",
+        "resume",
+        "thread-123",
+        "--remote",
+        "ws://127.0.0.1:43123",
+        "--add-dir",
+        "/tmp/root-a",
+        "--add-dir",
+        "/tmp/root b",
+    )
 
 
 def test_opencode_passthrough_builds_tui_command_from_http_observer_endpoint() -> None:
@@ -190,6 +213,12 @@ def test_opencode_passthrough_builds_tui_command_from_http_observer_endpoint() -
         )(),
     )
 
-    command = OpenCodePassthrough().build_tui_command(connection)("session-456")
+    command = OpenCodePassthrough().build_tui_command(
+        connection,
+        OpenCodeLaunchSpec(
+            prompt="hello opencode",
+            permission_resolver=_permission_resolver(),
+        ),
+    )("session-456")
 
     assert command == ("opencode", "attach", "http://127.0.0.1:8765", "--session", "session-456")

@@ -36,8 +36,9 @@ class Acquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return Handle()
 
 
@@ -54,11 +55,21 @@ class BlockingAcquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Handle:
+        _ = chat_state
         self.calls.append((chat_id, initial_prompt, execution_generation))
         self.started.set()
         self.release.wait(timeout=5)
         return self.handle
+
+
+def _receive_ack(ws: Any, command_id: str, *, max_messages: int = 8) -> dict[str, Any]:
+    for _ in range(max_messages):
+        payload = ws.receive_json()
+        if payload.get("ack") == command_id:
+            return payload
+    raise AssertionError(f"Did not receive ack for {command_id!r} within {max_messages} messages")
 
 
 def test_websocket_command_ack_uses_command_type_discriminator(tmp_path: Path) -> None:
@@ -74,7 +85,7 @@ def test_websocket_command_ack_uses_command_type_discriminator(tmp_path: Path) -
                 "timestamp": "2026-04-29T00:00:00Z",
                 "payload": {"text": "hi"},
             })
-            assert ws.receive_json() == {"ack": "cmd-1", "status": "accepted"}
+            assert _receive_ack(ws, "cmd-1") == {"ack": "cmd-1", "status": "accepted"}
             ws.send_json({
                 "command_type": "prompt",
                 "command_id": "cmd-2",
@@ -82,7 +93,7 @@ def test_websocket_command_ack_uses_command_type_discriminator(tmp_path: Path) -
                 "timestamp": "2026-04-29T00:00:00Z",
                 "payload": {"text": "again"},
             })
-            assert ws.receive_json() == {
+            assert _receive_ack(ws, "cmd-2") == {
                 "ack": "cmd-2",
                 "status": "rejected",
                 "error": "concurrent_prompt",
@@ -116,7 +127,7 @@ def test_multiple_websocket_clients_serialize_prompt_dispatch_through_shared_ses
                         "payload": {"text": text},
                     }
                 )
-                results[name] = ws.receive_json()
+                results[name] = _receive_ack(ws, name)
 
             first = threading.Thread(target=send_prompt, args=("cmd-1", ws_one, "first"))
             second = threading.Thread(target=send_prompt, args=("cmd-2", ws_two, "second"))
@@ -127,6 +138,9 @@ def test_multiple_websocket_clients_serialize_prompt_dispatch_through_shared_ses
             second.join(timeout=5)
             acquisition.release.set()
             first.join(timeout=5)
+            second.join(timeout=5)
+            assert not first.is_alive()
+            assert not second.is_alive()
 
     assert acquisition.calls == [(chat_id, "first", 1)]
     assert sorted(results.values(), key=lambda item: item["ack"]) == [
@@ -150,7 +164,7 @@ def test_websocket_transport_forwards_unknown_command_types_to_handler(tmp_path:
                     "payload": {},
                 }
             )
-            assert ws.receive_json() == {
+            assert _receive_ack(ws, "cmd-future") == {
                 "ack": "cmd-future",
                 "status": "rejected",
                 "error": "unknown_command_type:future.command",
@@ -172,7 +186,7 @@ def test_malformed_websocket_command_is_rejected_with_correlated_ack(tmp_path: P
                     "payload": "not-an-object",
                 }
             )
-            payload = ws.receive_json()
+            payload = _receive_ack(ws, "cmd-bad")
 
     assert payload["ack"] == "cmd-bad"
     assert payload["status"] == "rejected"

@@ -23,9 +23,18 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.claude_preflight import ensure_claude_session_accessible
+from meridian.lib.harness.claude_preflight import (
+    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
+    ensure_claude_session_accessible,
+    materialize_overlay_transcripts,
+    resolve_overlay_materialization_canonical_root,
+)
 from meridian.lib.harness.connections import get_connection_class
-from meridian.lib.harness.connections.base import HarnessConnection
+from meridian.lib.harness.connections.base import (
+    HarnessConnection,
+    HarnessEvent,
+    InteractiveHandler,
+)
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
@@ -46,7 +55,7 @@ from meridian.lib.state.session_store import (
     update_session_harness_id,
     update_session_work_id,
 )
-from meridian.lib.state.spawn_store import FOREGROUND_LAUNCH_MODE
+from meridian.lib.state.spawn.model import FOREGROUND_LAUNCH_MODE
 
 from ..context import (
     LaunchContext,
@@ -361,6 +370,29 @@ def _finalize_lifecycle_and_observe_session(
     return resolved_exit_code, resolved_harness_session_id
 
 
+def _create_managed_primary_connection(
+    *,
+    harness_id: HarnessId,
+    connection_factory: Callable[..., HarnessConnection[Any]],
+) -> HarnessConnection[Any]:
+    """Build one managed-primary connection with harness-specific request policy."""
+
+    if harness_id != HarnessId.CODEX:
+        return connection_factory()
+
+    connection_ref: dict[str, HarnessConnection[Any]] = {}
+
+    async def _event_sink(event: HarnessEvent) -> None:
+        connection = connection_ref["connection"]
+        await cast("Any", connection)._event_queue.put(event)
+
+    connection = connection_factory(
+        request_handler=InteractiveHandler(event_sink=_event_sink)
+    )
+    connection_ref["connection"] = connection
+    return connection
+
+
 async def _run_primary_attach(
     *,
     harness_id: HarnessId,
@@ -377,10 +409,13 @@ async def _run_primary_attach(
     try:
         passthrough = get_passthrough(harness_id)
         connection_factory = cast(
-            "Callable[[], HarnessConnection[Any]]",
+            "Callable[..., HarnessConnection[Any]]",
             get_connection_class(harness_id),
         )
-        connection = connection_factory()
+        connection = _create_managed_primary_connection(
+            harness_id=harness_id,
+            connection_factory=connection_factory,
+        )
         config = passthrough.build_config(
             spawn_id=spawn_id,
             spec=spec,
@@ -391,7 +426,7 @@ async def _run_primary_attach(
             spawn_id=spawn_id,
             spawn_dir=spawn_dir,
             connection=connection,
-            tui_command_builder=passthrough.build_tui_command(connection),
+            tui_command_builder=passthrough.build_tui_command(connection, spec),
             process_launcher=process_launcher,
             on_running=on_running,
         )
@@ -482,6 +517,7 @@ def run_harness_process(
     primary_started_local_iso: str | None = None
     isolated_config_root: Path | None = None
     effective_config_root: Path | None = None
+    claude_materialization_root: Path | None = None
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     lifecycle_service = create_lifecycle_service(project_root, runtime_root)
 
@@ -640,6 +676,12 @@ def run_harness_process(
                             spawn_id=str(primary_spawn_id),
                         )
                     )
+                    child_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] = (
+                        original_claude_config_dir
+                    )
+                    claude_materialization_root = resolve_overlay_materialization_canonical_root(
+                        child_env
+                    )
                     effective_config_dir = ""
                     if isolated_config_root is not None:
                         effective_config_root = isolated_config_root
@@ -731,6 +773,16 @@ def run_harness_process(
                     lifecycle_service=lifecycle_service,
                 )
                 if isolated_config_root is not None and isolated_config_root.is_dir():
+                    try:
+                        materialize_overlay_transcripts(
+                            isolated_config_root,
+                            canonical_root=claude_materialization_root,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Transcript materialization failed; session transcripts may be lost",
+                            exc_info=True,
+                        )
                     try:
                         shutil.rmtree(isolated_config_root)
                     except OSError:

@@ -29,10 +29,10 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_paths
-from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
 )
+from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
 from meridian.lib.telemetry.router import emit_telemetry
@@ -96,7 +96,7 @@ def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float
     sorted_ids = sorted(pending_spawn_ids)
     ids_str = ", ".join(sorted_ids)
     ids_joined = " ".join(sorted_ids)
-    
+
     lines = [
         f"Wait checkpoint after {elapsed_secs / 60:.0f}m. Still running: {ids_str}",
         "",
@@ -106,14 +106,16 @@ def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float
         lines.append(f"  meridian session log {spawn_id} --last 5")
     if len(sorted_ids) > 3:
         lines.append(f"  ... (+{len(sorted_ids) - 3} more)")
-    
-    lines.extend([
-        "",
-        f"If active, re-wait: meridian spawn wait {ids_joined}",
-        f"If stuck, cancel:   meridian spawn cancel {sorted_ids[0]}"
-        + (" ..." if len(sorted_ids) > 1 else ""),
-    ])
-    
+
+    lines.extend(
+        [
+            "",
+            f"If active, re-wait: meridian spawn wait {ids_joined}",
+            f"If stuck, cancel:   meridian spawn cancel {sorted_ids[0]}"
+            + (" ..." if len(sorted_ids) > 1 else ""),
+        ]
+    )
+
     return "\n".join(lines)
 
 

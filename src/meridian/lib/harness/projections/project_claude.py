@@ -27,6 +27,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "extra_args",
         "interactive",
         "mcp_tools",
+        "projected_roots",
         "model",
         "permission_resolver",
         "prompt",
@@ -187,6 +188,9 @@ def project_claude_spec_to_cli_args(
         if spec.continue_fork:
             command.append("--fork-session")
 
+    for root in spec.projected_roots:
+        command.extend(("--add-dir", root.as_posix()))
+
     _log_collision_if_needed(
         managed_flag="--allowedTools",
         has_managed_value=bool(allowed_tools),
@@ -204,13 +208,13 @@ def project_claude_spec_to_cli_args(
     )
 
     command.extend(passthrough_tail)
-    
+
     # For interactive Claude launches, add user-turn content as positional argument
     # This routes USER_TASK_PROMPT and TASK_CONTEXT to the user-turn channel
     # instead of --append-system-prompt (spec S-2a)
     if spec.interactive and spec.user_turn_content:
         command.append(spec.user_turn_content)
-    
+
     return command
 
 

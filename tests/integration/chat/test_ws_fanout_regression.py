@@ -41,8 +41,9 @@ class PassiveAcquisition:
         initial_prompt: str,
         *,
         execution_generation: int = 0,
+        chat_state: str = "active",
     ) -> Any:
-        _ = (chat_id, initial_prompt, execution_generation)
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return cast("Any", PassiveHandle())
 
 
@@ -271,7 +272,14 @@ def test_websocket_command_ack_framing_matches_each_command_id(tmp_path: Path) -
                     "payload": {"text": "hello"},
                 }
             )
-            assert ws.receive_json() == {"ack": "cmd-prompt", "status": "accepted"}
+            prompt_messages = _receive_until(
+                ws,
+                lambda messages: any(payload.get("ack") == "cmd-prompt" for payload in messages),
+                max_messages=4,
+            )
+            assert {payload["ack"] for payload in prompt_messages if "ack" in payload} == {
+                "cmd-prompt"
+            }
 
             ws.send_json(
                 {
@@ -282,7 +290,14 @@ def test_websocket_command_ack_framing_matches_each_command_id(tmp_path: Path) -
                     "payload": {},
                 }
             )
-            assert ws.receive_json() == {"ack": "cmd-cancel", "status": "accepted"}
+            cancel_messages = _receive_until(
+                ws,
+                lambda messages: any(payload.get("ack") == "cmd-cancel" for payload in messages),
+                max_messages=4,
+            )
+            assert {payload["ack"] for payload in cancel_messages if "ack" in payload} == {
+                "cmd-cancel"
+            }
 
             ws.send_json(
                 {

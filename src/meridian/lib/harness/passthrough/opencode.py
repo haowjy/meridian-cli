@@ -66,7 +66,9 @@ class OpenCodePassthrough:
     def build_tui_command(
         self,
         connection: HarnessConnection[Any],
+        spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
+        _ = spec
         return lambda session_id: _build_opencode_attach_command(
             session_id=session_id,
             http_url=_require_observer_endpoint_url(connection, transport="http"),

@@ -151,6 +151,120 @@ def test_resolve_policy_fields_accepts_tier_tuple() -> None:
     assert resolved.approval == "confirm"
 
 
+def test_resolve_policy_fields_three_tiers_resolve_per_field_precedence() -> None:
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(effort="high"),
+        RuntimeOverrides(effort="medium", approval="auto"),
+        RuntimeOverrides(approval="confirm", autocompact=30),
+    )
+
+    assert resolved.effort == "high"
+    assert resolved.approval == "auto"
+    assert resolved.autocompact == 30
+
+
+def test_resolve_policy_fields_five_tiers_resolve_per_field_precedence() -> None:
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(),
+        RuntimeOverrides(sandbox="workspace-write"),
+        RuntimeOverrides(effort="medium", sandbox="read-only"),
+        RuntimeOverrides(approval="confirm", autocompact=70),
+        RuntimeOverrides(effort="low", approval="auto", autocompact=30),
+    )
+
+    assert resolved.sandbox == "workspace-write"
+    assert resolved.effort == "medium"
+    assert resolved.approval == "confirm"
+    assert resolved.autocompact == 70
+
+
+def test_resolve_policy_fields_seven_tiers_resolve_per_field_precedence() -> None:
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(),
+        RuntimeOverrides(timeout=12.5),
+        RuntimeOverrides(),
+        RuntimeOverrides(autocompact=80),
+        RuntimeOverrides(timeout=20.0, approval="auto"),
+        RuntimeOverrides(effort="low", autocompact=30),
+        RuntimeOverrides(approval="confirm", effort="medium"),
+    )
+
+    assert resolved.timeout == 12.5
+    assert resolved.autocompact == 80
+    assert resolved.approval == "auto"
+    assert resolved.effort == "low"
+
+
+def test_resolve_policy_fields_empty_tiers_passthrough_to_lower_values() -> None:
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(),
+        RuntimeOverrides(),
+        RuntimeOverrides(effort="medium", autocompact=40),
+    )
+
+    assert resolved.effort == "medium"
+    assert resolved.autocompact == 40
+
+
+def test_resolve_policy_fields_all_none_resolution_keeps_fields_none() -> None:
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(),
+        RuntimeOverrides(),
+        RuntimeOverrides(),
+    )
+
+    assert resolved.model is None
+    assert resolved.harness is None
+    assert resolved.agent is None
+    assert resolved.effort is None
+    assert resolved.sandbox is None
+    assert resolved.approval is None
+    assert resolved.autocompact is None
+    assert resolved.timeout is None
+
+
+def test_resolve_policy_fields_model_policy_scope_strips_routing_fields() -> None:
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(
+            model="gpt55",
+            harness="codex",
+            agent="reviewer",
+            effort="high",
+        ).model_policy_scope(),
+        RuntimeOverrides(
+            model="claude",
+            harness="claude",
+            agent="fallback",
+            approval="auto",
+        ).model_policy_scope(),
+    )
+
+    assert resolved.model is None
+    assert resolved.harness is None
+    assert resolved.agent is None
+    assert resolved.effort == "high"
+    assert resolved.approval == "auto"
+
+
+def test_resolve_policy_fields_tuple_form_matches_positional_form() -> None:
+    tiers = (
+        RuntimeOverrides(),
+        RuntimeOverrides(effort="high"),
+        RuntimeOverrides(effort="medium", approval="auto"),
+        RuntimeOverrides(approval="confirm"),
+    )
+
+    assert resolve_policy_fields(tiers) == resolve_policy_fields(*tiers)
+
+
+def test_resolve_policy_fields_raises_type_error_on_mixed_tuple_usage() -> None:
+    with pytest.raises(TypeError, match="tier tuple only as its sole argument"):
+        resolve_policy_fields(
+            RuntimeOverrides(effort="high"),
+            (RuntimeOverrides(approval="auto"),),
+        )
+
+
 def test_policy_warnings_preserve_legacy_combined_text_format() -> None:
     warnings = _policy_warnings(
         profile_warning="profile missing",

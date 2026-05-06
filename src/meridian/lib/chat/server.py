@@ -327,8 +327,8 @@ async def ws_chat(websocket: WebSocket, chat_id: str) -> None:
                 continue
             raw_mapping = cast("dict[object, object]", raw_obj)
             raw: dict[str, object] = {str(key): value for key, value in raw_mapping.items()}
-            ack = await _handle_ws_command(raw, chat_id)
             async with send_lock:
+                ack = await _handle_ws_command(raw, chat_id)
                 await websocket.send_json(ack)
 
     try:

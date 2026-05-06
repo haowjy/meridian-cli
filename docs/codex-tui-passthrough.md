@@ -13,6 +13,34 @@ For `meridian codex`, Meridian now:
 
 This gives Meridian a real Codex thread ID, managed startup telemetry, and hidden instruction delivery for the role/system tiers.
 
+## Workspace Roots
+
+Configured `[workspace.*]` roots reach the remote TUI, not just the app-server.
+
+When Meridian builds the `codex resume --remote` attach command it appends `--add-dir <path>` for every entry in `projected_roots`:
+
+```
+codex resume <session-id> --remote ws://127.0.0.1:<port> \
+  --add-dir /abs/path/sibling-repo \
+  --add-dir /abs/path/other-repo
+```
+
+This matters because Codex's remote-TUI mode sends per-turn sandbox policy constructed from the TUI's local permission profile. Without the `--add-dir` flags the remote TUI's per-turn overrides would narrow writable scope below what the app-server was originally configured with, causing approval prompts or write failures for paths that should be freely writable.
+
+Roots are deduplicated and resolved to absolute paths before projection. Paths that do not exist on disk are silently skipped for committed entries; a warning is emitted for missing local-only entries (see `workspace_local_missing_root`).
+
+## Approval Routing
+
+Managed primary sessions surface approval requests instead of auto-accepting or rejecting them.
+
+In the managed architecture Meridian is the websocket client connected to the Codex app-server. When Codex issues a `*/requestApproval` or `item/tool/requestUserInput` JSON-RPC server request, it goes to Meridian — not to the TUI. Meridian dispatches these through an interactive handler (`ManagedPrimaryRequestHandler`) that records them as `request/opened` events in the spawn's harness history. A controller — CLI, chat frontend, or API — can then answer via `respond_request()` or `respond_user_input()`.
+
+Key properties:
+
+- **Requests are surfaced, not auto-accepted.** Pending requests stay open until a controller responds or Codex times out.
+- **Subagent spawns are unaffected.** Spawn/subagent sessions continue using `AutoAcceptHandler` (auto-approve everything). Approval events from a spawn do not propagate to the parent session.
+- **Unsupported server request methods** (anything other than approval and user-input variants) still return a transport-level error.
+
 ## Instruction Routing
 
 Codex managed primary uses these channels:

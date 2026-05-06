@@ -16,8 +16,15 @@ class Handle:
     async def respond_user_input(self, request_id, answers): pass
 
 class Acquisition:
-    async def acquire(self, chat_id, initial_prompt, *, execution_generation=0):
-        _ = (chat_id, initial_prompt, execution_generation)
+    async def acquire(
+        self,
+        chat_id,
+        initial_prompt,
+        *,
+        execution_generation=0,
+        chat_state="active",
+    ):
+        _ = (chat_id, initial_prompt, execution_generation, chat_state)
         return Handle()
 
 @pytest.mark.asyncio

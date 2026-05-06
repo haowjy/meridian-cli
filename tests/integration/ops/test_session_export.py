@@ -154,7 +154,7 @@ def test_session_export_include_spawns_appends_child_reports(tmp_path: Path) -> 
         started_at="2026-05-02T00:00:00Z",
     )
     report_path = runtime_root / "spawns" / "p1" / "report.md"
-    report_path.parent.mkdir(parents=True)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("report body\n", encoding="utf-8")
 
     output = session_export_sync(
