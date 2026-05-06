@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.state.spawn import migration
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -118,6 +119,45 @@ def test_lazy_migration_defers_for_live_v1_startup_grace(tmp_path: Path) -> None
     assert row.prompt == "live legacy"
     assert not (runtime_root / "spawns" / "v2-format.json").exists()
     assert (runtime_root / "spawns.jsonl").is_file()
+
+
+def test_lazy_migration_deferred_decision_is_cached(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    _append_legacy_event(
+        runtime_root,
+        {
+            "v": 1,
+            "event": "start",
+            "id": "p1",
+            "chat_id": "c1",
+            "model": "gpt-5.4",
+            "agent": "coder",
+            "harness": "codex",
+            "kind": "child",
+            "prompt": "live legacy",
+            "status": "running",
+            "started_at": started_at,
+        },
+    )
+
+    read_count = 0
+    original_read_events = migration.read_events
+
+    def counting_read_events(*args: Any, **kwargs: Any) -> Any:
+        nonlocal read_count
+        read_count += 1
+        return original_read_events(*args, **kwargs)
+
+    monkeypatch.setattr(migration, "read_events", counting_read_events)
+
+    for _ in range(9):
+        assert migration.ensure_v2_format(runtime_root) is False
+
+    assert read_count == 1
+    assert not (runtime_root / "spawns" / "v2-format.json").exists()
 
 
 def test_lazy_migration_reconciles_stale_v1_active_before_migrating(tmp_path: Path) -> None:

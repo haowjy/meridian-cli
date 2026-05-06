@@ -24,11 +24,13 @@ from meridian.lib.state.spawn.repository import write_state
 
 _STARTUP_GRACE_SECS = 15.0
 _HEARTBEAT_WINDOW_SECS = 120.0
+_DEFERRED_MIGRATION_CACHE_SECS = 30.0
 _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     OUTPUT_FILENAME,
     "stderr.log",
 )
+_v2_format_cache: dict[str, tuple[bool, float]] = {}
 
 
 class V2FormatMarker(BaseModel):
@@ -134,6 +136,27 @@ def _archive_legacy_files_if_present(paths: RuntimePaths) -> None:
     _rename_if_present(paths.spawns_flock, paths.root_dir / "spawns.legacy-v1.jsonl.flock")
 
 
+def _cache_key(runtime_root: Path) -> str:
+    return str(runtime_root.resolve())
+
+
+def _cached_v2_format(cache_key: str, now: float) -> bool | None:
+    cached = _v2_format_cache.get(cache_key)
+    if cached is None:
+        return None
+    cached_result, cached_at = cached
+    if cached_result:
+        return True
+    if now - cached_at < _DEFERRED_MIGRATION_CACHE_SECS:
+        return False
+    return None
+
+
+def _cache_v2_format(cache_key: str, result: bool, now: float | None = None) -> bool:
+    _v2_format_cache[cache_key] = (result, time.time() if now is None else now)
+    return result
+
+
 def ensure_v2_format(runtime_root: Path) -> bool:
     """Ensure the runtime root uses v2 spawn state format.
 
@@ -143,31 +166,38 @@ def ensure_v2_format(runtime_root: Path) -> bool:
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
+    now = time.time()
+    cache_key = _cache_key(runtime_root)
+    cached_result = _cached_v2_format(cache_key, now)
+    if cached_result is True:
+        return True
+
     marker_path = _marker_path(paths)
     if marker_path.is_file():
         _archive_legacy_files_if_present(paths)
-        return True
+        return _cache_v2_format(cache_key, True, now)
+    if cached_result is False:
+        return False
     if not paths.spawns_jsonl.exists():
         _write_marker(paths)
-        return True
+        return _cache_v2_format(cache_key, True, now)
 
     paths.spawns_dir.mkdir(parents=True, exist_ok=True)
     with lock_file(_migration_lock_path(paths)):
         if marker_path.exists():
-            return True
+            return _cache_v2_format(cache_key, True, now)
         if not paths.spawns_jsonl.exists():
             _write_marker(paths)
-            return True
+            return _cache_v2_format(cache_key, True, now)
 
         events = read_events(paths.spawns_jsonl, parse_event)
         records = reduce_events(events)
-        now = time.time()
         reconciled = False
         for record in records.values():
             if not is_active_spawn_status(record.status):
                 continue
             if _is_live_v1_runner(paths, record.id, record.runner_pid, record.started_at, now):
-                return False
+                return _cache_v2_format(cache_key, False, now)
             _reconcile_stale_v1_active(paths, record.id)
             reconciled = True
 
@@ -185,7 +215,7 @@ def ensure_v2_format(runtime_root: Path) -> bool:
 
         _write_marker(paths)
         _archive_legacy_files_if_present(paths)
-        return True
+        return _cache_v2_format(cache_key, True, now)
 
 
 __all__ = ["ensure_v2_format"]
