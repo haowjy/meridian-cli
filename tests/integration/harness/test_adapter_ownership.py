@@ -18,6 +18,12 @@ from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 
 
+@pytest.fixture(autouse=True)
+def _clear_inherited_claude_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR", raising=False)
+
+
 def _write_codex_rollout(codex_home: Path, project_root: Path, session_id: str) -> Path:
     rollout_dir = codex_home / "sessions" / "2026" / "03" / "08"
     rollout_dir.mkdir(parents=True, exist_ok=True)
