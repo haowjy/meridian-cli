@@ -6,6 +6,7 @@ Also includes file-backed ID generation for spawns and sessions.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -46,16 +47,28 @@ from meridian.lib.state.spawn.legacy_events import (
 )
 from meridian.lib.state.spawn.legacy_events import (
     LaunchMode,
-    SpawnEvent,
-    SpawnExitedEvent,
-    SpawnFinalizeEvent,
     SpawnOrigin,
-    SpawnStartEvent,
-    SpawnUpdateEvent,
-    reduce_events,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    SpawnEvent as SpawnEvent,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    SpawnExitedEvent as SpawnExitedEvent,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    SpawnFinalizeEvent as SpawnFinalizeEvent,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    SpawnStartEvent as SpawnStartEvent,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    SpawnUpdateEvent as SpawnUpdateEvent,
 )
 from meridian.lib.state.spawn.legacy_events import (
     parse_event as parse_event,
+)
+from meridian.lib.state.spawn.legacy_events import (
+    reduce_events as reduce_events,
 )
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 
@@ -72,24 +85,6 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # ID generation (absorbed from state/id_gen.py)
 # ---------------------------------------------------------------------------
-
-
-def _resolve_repository(
-    paths: RuntimePaths,
-    *,
-    repository: SpawnRepository | None = None,
-) -> SpawnRepository:
-    if repository is not None:
-        return repository
-
-    from meridian.lib.state.spawn.repository import FileSpawnRepository
-
-    return FileSpawnRepository(paths)
-
-
-def _next_spawn_id_from_events(events: list[SpawnEvent]) -> SpawnId:
-    starts = sum(1 for event in events if event.event == "start")
-    return SpawnId(f"p{starts + 1}")
 
 
 def _spawn_id_index(spawn_id: SpawnId | str) -> int:
@@ -113,8 +108,11 @@ def _read_spawn_counter(paths: RuntimePaths) -> int:
         return 0
 
 
-def _seed_spawn_counter_from_events(events: list[SpawnEvent]) -> int:
-    return max((_spawn_id_index(getattr(event, "id", "")) for event in events), default=0)
+def _seed_spawn_counter_from_dirs(paths: RuntimePaths) -> int:
+    return max(
+        (_spawn_id_index(spawn_id) for spawn_id in _scan_spawn_ids(paths.spawns_dir)),
+        default=0,
+    )
 
 
 def reserve_spawn_id(
@@ -129,11 +127,11 @@ def reserve_spawn_id(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
+    _ = repository
     with lock_file(paths.spawns_flock):
         current = _read_spawn_counter(paths)
         if current == 0 and not _spawn_counter_path(paths).is_file():
-            current = _seed_spawn_counter_from_events(resolved_repository.read_events())
+            current = _seed_spawn_counter_from_dirs(paths)
         next_value = current + 1
         atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
         return SpawnId(f"p{next_value}")
@@ -147,14 +145,11 @@ def next_spawn_id(
     """Return the next spawn ID (`p1`, `p2`, ...) for a state root."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
+    _ = repository
     with lock_file(paths.spawns_flock):
-        next_from_events = _next_spawn_id_from_events(resolved_repository.read_events())
+        next_from_dirs = SpawnId(f"p{_seed_spawn_counter_from_dirs(paths) + 1}")
         next_from_counter = SpawnId(f"p{_read_spawn_counter(paths) + 1}")
-        return max(
-            (next_from_events, next_from_counter),
-            key=_spawn_id_index,
-        )
+        return max((next_from_dirs, next_from_counter), key=_spawn_id_index)
 
 
 ACTIVE_SPAWN_STATUSES = _ACTIVE_SPAWN_STATUSES
@@ -208,6 +203,52 @@ class SpawnRecord(BaseModel):
     terminal_origin: SpawnOrigin | None
 
 
+def _read_state(spawns_dir: Path, spawn_id: str) -> SpawnRecord | None:
+    from meridian.lib.state.spawn.repository import read_state
+
+    return read_state(spawns_dir, spawn_id)
+
+
+def _write_state(
+    spawns_dir: Path,
+    record: SpawnRecord,
+    *,
+    revision: int | None = None,
+    allow_terminal_overwrite: bool = False,
+) -> int:
+    from meridian.lib.state.spawn.repository import write_state
+
+    return write_state(
+        spawns_dir,
+        record,
+        revision=revision,
+        allow_terminal_overwrite=allow_terminal_overwrite,
+    )
+
+
+def _write_state_locked(
+    spawns_dir: Path,
+    spawn_id: str,
+    mutator: Any,
+    *,
+    allow_terminal_overwrite: bool = False,
+) -> SpawnRecord:
+    from meridian.lib.state.spawn.repository import write_state_locked
+
+    return write_state_locked(
+        spawns_dir,
+        spawn_id,
+        mutator,
+        allow_terminal_overwrite=allow_terminal_overwrite,
+    )
+
+
+def _scan_spawn_ids(spawns_dir: Path) -> list[str]:
+    from meridian.lib.state.spawn.repository import scan_spawn_ids
+
+    return scan_spawn_ids(spawns_dir)
+
+
 class FinalizeOutcome(BaseModel):
     """Result of a finalize write with the exact post-write projection.
 
@@ -252,14 +293,11 @@ def start_spawn(
     clock: Clock | None = None,
     repository: SpawnRepository | None = None,
 ) -> SpawnId:
-    """Append a spawn start event under `spawns.jsonl.flock` and return the spawn ID."""
+    """Create a v2 spawn state directory and return the spawn ID."""
 
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(
-        paths,
-        repository=repository,
-    )
+    _ = repository
     started = started_at or resolved_clock.utc_now_iso()
 
     with lock_file(paths.spawns_flock):
@@ -268,11 +306,11 @@ def start_spawn(
         else:
             current = _read_spawn_counter(paths)
             if current == 0 and not _spawn_counter_path(paths).is_file():
-                current = _seed_spawn_counter_from_events(resolved_repository.read_events())
+                current = _seed_spawn_counter_from_dirs(paths)
             next_value = current + 1
             atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
             resolved_spawn_id = SpawnId(f"p{next_value}")
-        event = SpawnStartEvent(
+        record = SpawnRecord(
             id=str(resolved_spawn_id),
             chat_id=chat_id,
             parent_id=parent_id,
@@ -284,17 +322,35 @@ def start_spawn(
             harness=harness,
             kind=kind,
             desc=desc,
-            work_id=work_id,
+            work_id=work_id.strip() or None if work_id is not None else None,
             harness_session_id=harness_session_id,
             execution_cwd=execution_cwd,
+            claude_config_dir=None,
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
             status=status,
-            started_at=started,
             prompt=prompt,
+            started_at=started,
+            exited_at=None,
+            process_exit_code=None,
+            finished_at=None,
+            exit_code=None,
+            duration_secs=None,
+            total_cost_usd=None,
+            input_tokens=None,
+            output_tokens=None,
+            cache_read_input_tokens=None,
+            cache_creation_input_tokens=None,
+            reasoning_tokens=None,
+            cost_is_estimate=False,
+            error=None,
+            terminal_origin=None,
         )
-        resolved_repository.append_event(event)
+        spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
+        spawn_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(spawn_dir / "starting-prompt.md", prompt)
+        _write_state(paths.spawns_dir, record, revision=1)
         return resolved_spawn_id
 
 
@@ -304,26 +360,17 @@ def remove_spawn_events(
     *,
     repository: SpawnRepository | None = None,
 ) -> None:
-    """Remove all events for one spawn from the JSONL store.
+    """Remove v2 state for one spawn.
 
     This narrow rollback seam is for failed spawn preparation before any runner
     can observe or act on the row. It is not a user-facing delete/archive path.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
-    wanted = str(spawn_id)
-    with lock_file(paths.spawns_flock):
-        retained = [
-            event
-            for event in resolved_repository.read_events()
-            if getattr(event, "id", "") != wanted
-        ]
-        lines = [
-            event.model_dump_json(exclude_none=True, by_alias=False) + "\n"
-            for event in retained
-        ]
-        atomic_write_text(paths.spawns_jsonl, "".join(lines))
+    _ = repository
+    state_path = paths.spawns_dir / str(spawn_id) / "state.json"
+    with suppress(FileNotFoundError):
+        state_path.unlink()
 
 
 def update_spawn(
@@ -341,53 +388,65 @@ def update_spawn(
     work_id: str | None = None,
     repository: SpawnRepository | None = None,
 ) -> None:
-    """Append a metadata update event under `spawns.jsonl.flock`."""
+    """Update v2 spawn metadata under the per-spawn state lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
-    event = SpawnUpdateEvent(
-        id=str(spawn_id),
-        launch_mode=launch_mode,
-        worker_pid=worker_pid,
-        runner_pid=runner_pid,
-        harness_session_id=harness_session_id,
-        execution_cwd=execution_cwd,
-        claude_config_dir=claude_config_dir,
-        error=error,
-        desc=desc,
-        work_id=work_id,
-    )
-    resolved_repository.append_event(event)
-    record = get_spawn(runtime_root, spawn_id, repository=resolved_repository)
-    if record is not None:
-        from meridian.lib.core.telemetry import (
-            LifecycleEvent,
-            next_spawn_sequence,
-            notify_observers,
-        )
+    _ = repository
 
-        notify_observers(
-            LifecycleEvent(
-                event="spawn.updated",
-                spawn_id=str(record.id),
-                harness_id=record.harness or "",
-                model=record.model or "",
-                agent=record.agent,
-                ts=datetime.now(tz=UTC),
-                seq=next_spawn_sequence(record.id),
-                payload={
-                    "launch_mode": launch_mode,
-                    "worker_pid": worker_pid,
-                    "runner_pid": runner_pid,
-                    "harness_session_id": harness_session_id,
-                    "execution_cwd": execution_cwd,
-                    "claude_config_dir": claude_config_dir,
-                    "error": error,
-                    "desc": desc,
-                    "work_id": work_id,
-                },
-            )
+    def merge(current: SpawnRecord) -> SpawnRecord:
+        updates: dict[str, object] = {}
+        for key, value in {
+            "launch_mode": launch_mode,
+            "worker_pid": worker_pid,
+            "runner_pid": runner_pid,
+            "harness_session_id": harness_session_id,
+            "execution_cwd": execution_cwd,
+            "claude_config_dir": claude_config_dir,
+            "error": error,
+            "desc": desc,
+            "work_id": work_id.strip() or None if work_id is not None else None,
+        }.items():
+            if value is not None:
+                updates[key] = value
+        return current.model_copy(update=updates)
+
+    try:
+        record = _write_state_locked(
+            paths.spawns_dir,
+            str(spawn_id),
+            merge,
+            allow_terminal_overwrite=True,
         )
+    except FileNotFoundError:
+        return
+    from meridian.lib.core.telemetry import (
+        LifecycleEvent,
+        next_spawn_sequence,
+        notify_observers,
+    )
+
+    notify_observers(
+        LifecycleEvent(
+            event="spawn.updated",
+            spawn_id=str(record.id),
+            harness_id=record.harness or "",
+            model=record.model or "",
+            agent=record.agent,
+            ts=datetime.now(tz=UTC),
+            seq=next_spawn_sequence(record.id),
+            payload={
+                "launch_mode": launch_mode,
+                "worker_pid": worker_pid,
+                "runner_pid": runner_pid,
+                "harness_session_id": harness_session_id,
+                "execution_cwd": execution_cwd,
+                "claude_config_dir": claude_config_dir,
+                "error": error,
+                "desc": desc,
+                "work_id": work_id,
+            },
+        )
+    )
 
 
 def record_spawn_exited(
@@ -399,20 +458,24 @@ def record_spawn_exited(
     clock: Clock | None = None,
     repository: SpawnRepository | None = None,
 ) -> None:
-    """Append an exited event — the harness process has exited."""
+    """Record that the harness process has exited."""
 
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(
-        paths,
-        repository=repository,
+    _ = repository
+    record = _read_state(paths.spawns_dir, str(spawn_id))
+    if record is None:
+        return
+    updated = record.model_copy(
+        update={
+            "exited_at": exited_at or resolved_clock.utc_now_iso(),
+            "process_exit_code": exit_code,
+        }
     )
-    event = SpawnExitedEvent(
-        id=str(spawn_id),
-        exit_code=exit_code,
-        exited_at=exited_at or resolved_clock.utc_now_iso(),
-    )
-    resolved_repository.append_event(event)
+    try:
+        _write_state(paths.spawns_dir, updated)
+    except ValueError:
+        return
 
 
 def finalize_spawn(
@@ -447,63 +510,74 @@ def finalize_spawn(
     """
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(
-        paths,
-        repository=repository,
-    )
-    with lock_file(paths.spawns_flock):
-        records = reduce_events(resolved_repository.read_events())
-        record = records.get(str(spawn_id))
+    _ = repository
+    class _FinalizeRejected(Exception):
+        def __init__(self, snapshot: SpawnRecord) -> None:
+            self.snapshot = snapshot
+
+    was_active = False
+
+    def finalize(current: SpawnRecord) -> SpawnRecord:
+        nonlocal was_active
         decision = decide_terminal_write(
-            current_status=record.status if record is not None else None,
-            current_terminal_origin=record.terminal_origin if record is not None else None,
+            current_status=current.status,
+            current_terminal_origin=current.terminal_origin,
             incoming_origin=origin,
         )
         if decision.disposition == "reject":
             logger.info(
                 "Finalize rejected by terminal write policy.",
                 spawn_id=str(spawn_id),
-                current_status=record.status if record is not None else None,
-                current_terminal_origin=(
-                    record.terminal_origin if record is not None else None
-                ),
+                current_status=current.status,
+                current_terminal_origin=current.terminal_origin,
                 attempted_status=status,
                 attempted_origin=origin,
                 attempted_error=error,
             )
-            return FinalizeOutcome(transitioned=False, wrote=False, snapshot=record)
-        if (
-            record is not None
-            and record.status != "unknown"
-            and record.status not in _TERMINAL_SPAWN_STATUSES
-        ):
-            _validate_transition(record.status, status)
-        was_active = record is not None and is_active_spawn_status(record.status)
-        event = SpawnFinalizeEvent(
-            id=str(spawn_id),
-            status=status,
-            exit_code=exit_code,
-            finished_at=finished_at or resolved_clock.utc_now_iso(),
-            duration_secs=duration_secs,
-            total_cost_usd=total_cost_usd,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_input_tokens=cache_read_input_tokens,
-            cache_creation_input_tokens=cache_creation_input_tokens,
-            reasoning_tokens=reasoning_tokens,
-            cost_is_estimate=cost_is_estimate,
-            error=error,
-            origin=origin,
-        )
-        resolved_repository.append_event(event)
-        snapshot = reduce_events(resolved_repository.read_events()).get(str(spawn_id))
-        return FinalizeOutcome(
-            transitioned=was_active,
-            wrote=True,
-            snapshot=snapshot,
+            raise _FinalizeRejected(current)
+        if current.status != "unknown" and current.status not in _TERMINAL_SPAWN_STATUSES:
+            _validate_transition(current.status, status)
+        was_active = is_active_spawn_status(current.status)
+        return current.model_copy(
+            update={
+                "status": status,
+                "exit_code": exit_code,
+                "finished_at": finished_at or resolved_clock.utc_now_iso(),
+                "duration_secs": duration_secs,
+                "total_cost_usd": total_cost_usd,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read_input_tokens": cache_read_input_tokens,
+                "cache_creation_input_tokens": cache_creation_input_tokens,
+                "reasoning_tokens": reasoning_tokens,
+                "cost_is_estimate": cost_is_estimate or current.cost_is_estimate,
+                "error": error,
+                "terminal_origin": origin,
+            }
         )
 
-
+    record = _read_state(paths.spawns_dir, str(spawn_id))
+    if record is None:
+        decide_terminal_write(
+            current_status=None,
+            current_terminal_origin=None,
+            incoming_origin=origin,
+        )
+        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
+    try:
+        committed = _write_state_locked(
+            paths.spawns_dir,
+            str(spawn_id),
+            finalize,
+            allow_terminal_overwrite=True,
+        )
+    except _FinalizeRejected as exc:
+        return FinalizeOutcome(transitioned=False, wrote=False, snapshot=exc.snapshot)
+    return FinalizeOutcome(
+        transitioned=was_active,
+        wrote=True,
+        snapshot=committed,
+    )
 def mark_finalizing(
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -529,16 +603,25 @@ def mark_finalizing_with_snapshot(
     """CAS transition running -> finalizing and return the post-write projection."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
-    with lock_file(paths.spawns_flock):
-        records = reduce_events(resolved_repository.read_events())
-        record = records.get(str(spawn_id))
-        if record is None or record.status != "running":
-            return False, record
-        _validate_transition(record.status, "finalizing")
-        event = SpawnUpdateEvent(id=str(spawn_id), status="finalizing")
-        resolved_repository.append_event(event)
-        return True, record.model_copy(update={"status": "finalizing"})
+    _ = repository
+
+    class _NoTransition(Exception):
+        def __init__(self, snapshot: SpawnRecord | None) -> None:
+            self.snapshot = snapshot
+
+    def transition(current: SpawnRecord) -> SpawnRecord:
+        if current.status != "running":
+            raise _NoTransition(current)
+        _validate_transition(current.status, "finalizing")
+        return current.model_copy(update={"status": "finalizing"})
+
+    if _read_state(paths.spawns_dir, str(spawn_id)) is None:
+        return False, None
+    try:
+        committed = _write_state_locked(paths.spawns_dir, str(spawn_id), transition)
+    except _NoTransition as exc:
+        return False, exc.snapshot
+    return True, committed
 
 
 def mark_spawn_running(
@@ -573,31 +656,26 @@ def mark_spawn_running_with_snapshot(
     """Append running update and return the post-write projection without rereading."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
-    with lock_file(paths.spawns_flock):
-        records = reduce_events(resolved_repository.read_events())
-        record = records.get(str(spawn_id))
-        if record is None:
-            return False, None
-        changed = record.status != "running"
-        if record.status not in {"unknown", "running"}:
-            _validate_transition(cast("SpawnStatus", record.status), "running")
-        event = SpawnUpdateEvent(
-            id=str(spawn_id),
-            status="running",
-            launch_mode=launch_mode,
-            worker_pid=worker_pid,
-            runner_pid=runner_pid,
-        )
-        resolved_repository.append_event(event)
-        updates: dict[str, object] = {"status": "running"}
-        if launch_mode is not None:
-            updates["launch_mode"] = launch_mode
-        if worker_pid is not None:
-            updates["worker_pid"] = worker_pid
-        if runner_pid is not None:
-            updates["runner_pid"] = runner_pid
-        return changed, record.model_copy(update=updates)
+    _ = repository
+    record = _read_state(paths.spawns_dir, str(spawn_id))
+    if record is None:
+        return False, None
+    changed = record.status != "running"
+    if record.status not in {"unknown", "running"}:
+        _validate_transition(cast("SpawnStatus", record.status), "running")
+    updates: dict[str, object] = {"status": "running"}
+    if launch_mode is not None:
+        updates["launch_mode"] = launch_mode
+    if worker_pid is not None:
+        updates["worker_pid"] = worker_pid
+    if runner_pid is not None:
+        updates["runner_pid"] = runner_pid
+    updated = record.model_copy(update=updates)
+    try:
+        _write_state(paths.spawns_dir, updated)
+    except ValueError:
+        return False, record
+    return changed, updated
 
 
 def _spawn_sort_key(spawn: SpawnRecord) -> tuple[int, str]:
@@ -615,8 +693,12 @@ def list_spawns(
     """List derived spawn records with optional equality filters."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
-    spawns = list(reduce_events(resolved_repository.read_events()).values())
+    _ = repository
+    spawns = [
+        record.model_copy(update={"prompt": None})
+        for spawn_id in _scan_spawn_ids(paths.spawns_dir)
+        if (record := _read_state(paths.spawns_dir, spawn_id)) is not None
+    ]
 
     if filters:
         filtered: list[SpawnRecord] = []
@@ -646,16 +728,12 @@ def get_spawn(
 ) -> SpawnRecord | None:
     """Return one spawn by ID.
 
-    Reads the full event log and reduces it to find the requested spawn.
-    Uses ``reduce_events`` directly instead of ``list_spawns`` to avoid
-    sorting overhead; the result dict is keyed by spawn ID so the lookup
-    is O(1) after the single event-log parse.
+    Reads ``spawns/<id>/state.json`` and its prompt body without locking.
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    resolved_repository = _resolve_repository(paths, repository=repository)
-    records = reduce_events(resolved_repository.read_events())
-    return records.get(str(spawn_id))
+    _ = repository
+    return _read_state(paths.spawns_dir, str(spawn_id))
 
 
 def spawn_stats(

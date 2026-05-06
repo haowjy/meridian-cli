@@ -247,6 +247,7 @@ def write_state(
     record: SpawnRecord,
     *,
     revision: int | None = None,
+    allow_terminal_overwrite: bool = False,
 ) -> int:
     """Write one spawn's v2 state file and return the committed revision.
 
@@ -256,7 +257,11 @@ def write_state(
     """
 
     current = _read_stored_state(spawns_dir, record.id)
-    if current is not None and current.status in TERMINAL_SPAWN_STATUSES:
+    if (
+        current is not None
+        and current.status in TERMINAL_SPAWN_STATUSES
+        and not allow_terminal_overwrite
+    ):
         raise ValueError(f"Refusing to overwrite terminal spawn state: {record.id}")
 
     next_revision = revision if revision is not None else (current.revision + 1 if current else 1)
@@ -272,6 +277,8 @@ def write_state_locked(
     spawns_dir: Path,
     spawn_id: str,
     mutator: Callable[[SpawnRecord], SpawnRecord],
+    *,
+    allow_terminal_overwrite: bool = False,
 ) -> SpawnRecord:
     """Mutate one spawn state under its per-spawn ``state.lock``."""
 
@@ -282,7 +289,11 @@ def write_state_locked(
         updated = mutator(current)
         if updated.id != spawn_id:
             raise ValueError("Locked state mutator must not change spawn id")
-        write_state(spawns_dir, updated)
+        write_state(
+            spawns_dir,
+            updated,
+            allow_terminal_overwrite=allow_terminal_overwrite,
+        )
         committed = read_state(spawns_dir, spawn_id)
         if committed is None:
             raise FileNotFoundError(_state_path(spawns_dir, spawn_id))

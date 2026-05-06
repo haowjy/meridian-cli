@@ -222,13 +222,10 @@ def _list_segments(
     spawn_records: dict[str, SpawnRecord] | None = None
     if runtime_root is not None:
         try:
-            from meridian.lib.state.paths import RuntimePaths
-            from meridian.lib.state.spawn.events import reduce_events
-            from meridian.lib.state.spawn.repository import FileSpawnRepository
+            from meridian.lib.state import spawn_store
 
-            paths = RuntimePaths.from_root_dir(runtime_root)
-            repo = FileSpawnRepository(paths)
-            spawn_records = reduce_events(repo.read_events())
+            records = spawn_store.list_spawns(runtime_root)
+            spawn_records = {r.id: r for r in records}
         except Exception:
             spawn_records = None
 
