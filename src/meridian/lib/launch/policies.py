@@ -277,6 +277,35 @@ def _try_harness_availability_fallback(
     return None
 
 
+def resolve_policy_fields(
+    *tiers: RuntimeOverrides | tuple[RuntimeOverrides, ...],
+) -> RuntimeOverrides:
+    """Resolve policy-field precedence across an ordered tier ladder.
+
+    Tiers are supplied from highest to lowest precedence, either as positional
+    ``RuntimeOverrides`` arguments or as one tuple of ``RuntimeOverrides``.
+    Routing fields should be stripped by callers before resolution when the
+    policy scope excludes them.
+    """
+
+    resolved_tiers: tuple[RuntimeOverrides, ...]
+    if len(tiers) == 1 and isinstance(tiers[0], tuple):
+        resolved_tiers = tiers[0]
+    else:
+        resolved_tiers = tuple(_require_policy_tier(tier) for tier in tiers)
+    return resolve(*resolved_tiers)
+
+
+def _require_policy_tier(
+    tier: RuntimeOverrides | tuple[RuntimeOverrides, ...],
+) -> RuntimeOverrides:
+    if isinstance(tier, tuple):
+        raise TypeError(
+            "resolve_policy_fields() accepts a tier tuple only as its sole argument."
+        )
+    return tier
+
+
 def _resolve_model_policy_overrides(
     *,
     explicit_user_overrides: RuntimeOverrides,
@@ -285,18 +314,9 @@ def _resolve_model_policy_overrides(
     config_overrides: RuntimeOverrides,
     alias_defaults: RuntimeOverrides,
 ) -> RuntimeOverrides:
-    """Resolve model-scoped runtime policy precedence for launch policies.
+    """Deprecated compatibility wrapper for the legacy five-tier policy helper."""
 
-    Precedence ladder:
-    1) explicit user (CLI/ENV layers)
-    2) profile `models:` entry
-    3) profile generic defaults
-    4) config
-    5) alias defaults
-    6) unset (`None`)
-    """
-
-    return resolve(
+    return resolve_policy_fields(
         explicit_user_overrides,
         profile_model_overrides,
         profile_defaults,
@@ -583,12 +603,12 @@ def resolve_policies(
             selected_entry.model_id,
         )
     explicit_user_overrides = resolve(*layers).model_policy_scope()
-    model_policy_resolved = _resolve_model_policy_overrides(
-        explicit_user_overrides=explicit_user_overrides,
-        profile_model_overrides=profile_model_overrides.model_policy_scope(),
-        profile_defaults=profile_policy_defaults,
-        config_overrides=config_overrides.model_policy_scope(),
-        alias_defaults=alias_defaults.model_policy_scope(),
+    model_policy_resolved = resolve_policy_fields(
+        explicit_user_overrides,
+        profile_model_overrides.model_policy_scope(),
+        profile_policy_defaults,
+        config_overrides.model_policy_scope(),
+        alias_defaults.model_policy_scope(),
     )
     _log_unmatched_profile_policy_defaults(
         profile=profile,
@@ -637,8 +657,10 @@ def resolve_policies(
 __all__ = [
     "ModelSelectionContext",
     "ResolvedPolicies",
+    "_resolve_model_policy_overrides",
     "match_model_policy",
     "resolve_harness_routing",
     "resolve_policies",
+    "resolve_policy_fields",
     "validate_harness_compatibility",
 ]

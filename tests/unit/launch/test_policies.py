@@ -19,6 +19,7 @@ from meridian.lib.launch.policies import (
     _policy_warnings,
     _resolve_model_policy_overrides,
     match_model_policy,
+    resolve_policy_fields,
     validate_harness_compatibility,
 )
 from meridian.lib.launch.policies import (
@@ -98,23 +99,23 @@ def resolve_policies(*, project_root: Path, **kwargs):
 
 
 def test_resolve_model_policy_overrides_resolves_full_runtime_policy_fields() -> None:
-    resolved = _resolve_model_policy_overrides(
-        explicit_user_overrides=RuntimeOverrides(
+    resolved = resolve_policy_fields(
+        RuntimeOverrides(
             model="user-model",
             sandbox="workspace-write",
         ).model_policy_scope(),
-        profile_model_overrides=RuntimeOverrides(
+        RuntimeOverrides(
             harness="codex",
             approval="auto",
         ).model_policy_scope(),
-        profile_defaults=RuntimeOverrides(effort="medium", sandbox="read-only"),
-        config_overrides=RuntimeOverrides(
+        RuntimeOverrides(effort="medium", sandbox="read-only"),
+        RuntimeOverrides(
             agent="config-agent",
             effort="high",
             approval="confirm",
             autocompact=70,
         ).model_policy_scope(),
-        alias_defaults=RuntimeOverrides(effort="low", autocompact=30),
+        RuntimeOverrides(effort="low", autocompact=30),
     )
 
     assert resolved.model is None
@@ -124,6 +125,30 @@ def test_resolve_model_policy_overrides_resolves_full_runtime_policy_fields() ->
     assert resolved.approval == "auto"
     assert resolved.effort == "medium"
     assert resolved.autocompact == 70
+
+
+def test_resolve_model_policy_overrides_legacy_wrapper_preserves_named_signature() -> None:
+    resolved = _resolve_model_policy_overrides(
+        explicit_user_overrides=RuntimeOverrides(),
+        profile_model_overrides=RuntimeOverrides(effort="high"),
+        profile_defaults=RuntimeOverrides(effort="medium"),
+        config_overrides=RuntimeOverrides(effort="low"),
+        alias_defaults=RuntimeOverrides(effort="xhigh"),
+    )
+
+    assert resolved.effort == "high"
+
+
+def test_resolve_policy_fields_accepts_tier_tuple() -> None:
+    resolved = resolve_policy_fields(
+        (
+            RuntimeOverrides(),
+            RuntimeOverrides(approval="confirm"),
+            RuntimeOverrides(approval="auto"),
+        )
+    )
+
+    assert resolved.approval == "confirm"
 
 
 def test_policy_warnings_preserve_legacy_combined_text_format() -> None:
