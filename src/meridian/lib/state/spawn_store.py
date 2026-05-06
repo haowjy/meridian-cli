@@ -115,6 +115,19 @@ def _seed_spawn_counter_from_dirs(paths: RuntimePaths) -> int:
     )
 
 
+def _seed_spawn_counter_from_legacy_jsonl(paths: RuntimePaths) -> int:
+    from meridian.lib.state.event_store import read_events
+
+    return max(
+        (
+            _spawn_id_index(spawn_id)
+            for event in read_events(paths.spawns_jsonl, parse_event)
+            if (spawn_id := getattr(event, "id", None))
+        ),
+        default=0,
+    )
+
+
 def reserve_spawn_id(
     runtime_root: Path,
     *,
@@ -128,10 +141,13 @@ def reserve_spawn_id(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    v2_active = _ensure_v2_format(runtime_root)
     with lock_file(paths.spawns_flock):
         current = _read_spawn_counter(paths)
         if current == 0 and not _spawn_counter_path(paths).is_file():
             current = _seed_spawn_counter_from_dirs(paths)
+            if not v2_active:
+                current = max(current, _seed_spawn_counter_from_legacy_jsonl(paths))
         next_value = current + 1
         atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
         return SpawnId(f"p{next_value}")
@@ -146,10 +162,14 @@ def next_spawn_id(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    v2_active = _ensure_v2_format(runtime_root)
     with lock_file(paths.spawns_flock):
-        next_from_dirs = SpawnId(f"p{_seed_spawn_counter_from_dirs(paths) + 1}")
+        seed = _seed_spawn_counter_from_dirs(paths)
+        if not v2_active:
+            seed = max(seed, _seed_spawn_counter_from_legacy_jsonl(paths))
+        next_from_existing = SpawnId(f"p{seed + 1}")
         next_from_counter = SpawnId(f"p{_read_spawn_counter(paths) + 1}")
-        return max((next_from_dirs, next_from_counter), key=_spawn_id_index)
+        return max((next_from_existing, next_from_counter), key=_spawn_id_index)
 
 
 ACTIVE_SPAWN_STATUSES = _ACTIVE_SPAWN_STATUSES
@@ -249,6 +269,30 @@ def _scan_spawn_ids(spawns_dir: Path) -> list[str]:
     return scan_spawn_ids(spawns_dir)
 
 
+def _ensure_v2_format(runtime_root: Path) -> bool:
+    from meridian.lib.state.spawn.migration import ensure_v2_format
+
+    return ensure_v2_format(runtime_root)
+
+
+def _legacy_repository(paths: RuntimePaths) -> SpawnRepository:
+    from meridian.lib.state.spawn.repository import FileSpawnRepository
+
+    return FileSpawnRepository(paths)
+
+
+def _legacy_records(paths: RuntimePaths) -> dict[str, SpawnRecord]:
+    return reduce_events(_legacy_repository(paths).read_events())
+
+
+def _legacy_get(paths: RuntimePaths, spawn_id: str) -> SpawnRecord | None:
+    return _legacy_records(paths).get(spawn_id)
+
+
+def _legacy_list(paths: RuntimePaths) -> list[SpawnRecord]:
+    return sorted(_legacy_records(paths).values(), key=_spawn_sort_key)
+
+
 class FinalizeOutcome(BaseModel):
     """Result of a finalize write with the exact post-write projection.
 
@@ -299,6 +343,46 @@ def start_spawn(
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
     started = started_at or resolved_clock.utc_now_iso()
+    if not _ensure_v2_format(runtime_root):
+        legacy_repo = _legacy_repository(paths)
+        with lock_file(paths.spawns_flock):
+            if spawn_id is not None:
+                resolved_spawn_id = SpawnId(str(spawn_id))
+            else:
+                current = _read_spawn_counter(paths)
+                if current == 0 and not _spawn_counter_path(paths).is_file():
+                    current = max(
+                        _seed_spawn_counter_from_dirs(paths),
+                        _seed_spawn_counter_from_legacy_jsonl(paths),
+                    )
+                next_value = current + 1
+                atomic_write_text(_spawn_counter_path(paths), f"{next_value}\n")
+                resolved_spawn_id = SpawnId(f"p{next_value}")
+        legacy_repo.append_event(
+            SpawnStartEvent(
+                id=str(resolved_spawn_id),
+                chat_id=chat_id,
+                parent_id=parent_id,
+                model=model,
+                agent=agent,
+                agent_path=agent_path,
+                skills=skills,
+                skill_paths=skill_paths,
+                harness=harness,
+                kind=kind,
+                desc=desc,
+                work_id=work_id.strip() or None if work_id is not None else None,
+                harness_session_id=harness_session_id,
+                execution_cwd=execution_cwd,
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+                status=status,
+                prompt=prompt,
+                started_at=started,
+            )
+        )
+        return resolved_spawn_id
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -392,6 +476,22 @@ def update_spawn(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    if not _ensure_v2_format(runtime_root):
+        _legacy_repository(paths).append_event(
+            SpawnUpdateEvent(
+                id=str(spawn_id),
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+                harness_session_id=harness_session_id,
+                execution_cwd=execution_cwd,
+                claude_config_dir=claude_config_dir,
+                error=error,
+                desc=desc,
+                work_id=work_id.strip() or None if work_id is not None else None,
+            )
+        )
+        return
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
@@ -463,6 +563,15 @@ def record_spawn_exited(
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    if not _ensure_v2_format(runtime_root):
+        _legacy_repository(paths).append_event(
+            SpawnExitedEvent(
+                id=str(spawn_id),
+                exit_code=exit_code,
+                exited_at=exited_at or resolved_clock.utc_now_iso(),
+            )
+        )
+        return
     record = _read_state(paths.spawns_dir, str(spawn_id))
     if record is None:
         return
@@ -511,6 +620,39 @@ def finalize_spawn(
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    if not _ensure_v2_format(runtime_root):
+        current = _legacy_get(paths, str(spawn_id))
+        if current is None:
+            return FinalizeOutcome(transitioned=False, wrote=False, snapshot=None)
+        decision = decide_terminal_write(
+            current_status=current.status,
+            current_terminal_origin=current.terminal_origin,
+            incoming_origin=origin,
+        )
+        if decision.disposition == "reject":
+            return FinalizeOutcome(transitioned=False, wrote=False, snapshot=current)
+        was_active = is_active_spawn_status(current.status)
+        _legacy_repository(paths).append_event(
+            SpawnFinalizeEvent(
+                id=str(spawn_id),
+                status=status,
+                exit_code=exit_code,
+                finished_at=finished_at or resolved_clock.utc_now_iso(),
+                duration_secs=duration_secs,
+                total_cost_usd=total_cost_usd,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                reasoning_tokens=reasoning_tokens,
+                cost_is_estimate=cost_is_estimate,
+                error=error,
+                origin=origin,
+            )
+        )
+        snapshot = _legacy_get(paths, str(spawn_id))
+        return FinalizeOutcome(transitioned=was_active, wrote=True, snapshot=snapshot)
+
     class _FinalizeRejected(Exception):
         def __init__(self, snapshot: SpawnRecord) -> None:
             self.snapshot = snapshot
@@ -578,6 +720,8 @@ def finalize_spawn(
         wrote=True,
         snapshot=committed,
     )
+
+
 def mark_finalizing(
     runtime_root: Path,
     spawn_id: SpawnId | str,
@@ -604,6 +748,15 @@ def mark_finalizing_with_snapshot(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    if not _ensure_v2_format(runtime_root):
+        current = _legacy_get(paths, str(spawn_id))
+        if current is None or current.status != "running":
+            return False, current
+        _validate_transition(current.status, "finalizing")
+        _legacy_repository(paths).append_event(
+            SpawnUpdateEvent(id=str(spawn_id), status="finalizing")
+        )
+        return True, _legacy_get(paths, str(spawn_id))
 
     class _NoTransition(Exception):
         def __init__(self, snapshot: SpawnRecord | None) -> None:
@@ -657,6 +810,23 @@ def mark_spawn_running_with_snapshot(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    if not _ensure_v2_format(runtime_root):
+        record = _legacy_get(paths, str(spawn_id))
+        if record is None:
+            return False, None
+        changed = record.status != "running"
+        if record.status not in {"unknown", "running"}:
+            _validate_transition(cast("SpawnStatus", record.status), "running")
+        _legacy_repository(paths).append_event(
+            SpawnUpdateEvent(
+                id=str(spawn_id),
+                status="running",
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+            )
+        )
+        return changed, _legacy_get(paths, str(spawn_id))
     record = _read_state(paths.spawns_dir, str(spawn_id))
     if record is None:
         return False, None
@@ -694,11 +864,14 @@ def list_spawns(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
-    spawns = [
-        record.model_copy(update={"prompt": None})
-        for spawn_id in _scan_spawn_ids(paths.spawns_dir)
-        if (record := _read_state(paths.spawns_dir, spawn_id)) is not None
-    ]
+    if not _ensure_v2_format(runtime_root):
+        spawns = [spawn.model_copy(update={"prompt": None}) for spawn in _legacy_list(paths)]
+    else:
+        spawns = [
+            record.model_copy(update={"prompt": None})
+            for spawn_id in _scan_spawn_ids(paths.spawns_dir)
+            if (record := _read_state(paths.spawns_dir, spawn_id)) is not None
+        ]
 
     if filters:
         filtered: list[SpawnRecord] = []
@@ -733,6 +906,8 @@ def get_spawn(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
     _ = repository
+    if not _ensure_v2_format(runtime_root):
+        return _legacy_get(paths, str(spawn_id))
     return _read_state(paths.spawns_dir, str(spawn_id))
 
 
