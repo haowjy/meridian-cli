@@ -25,6 +25,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `resolve_policies()` now delegates to the compiler internally through a backward-compatible wrapper.
 - Policy-field resolution now uses one generalized N-tier precedence path.
 - Spawn help examples now teach `--prompt-file ... --bg` as delegation default. Inline `-p` help points to prompt files for real handoffs.
+- `meridian chat` launch now allowed in nested execution (`MERIDIAN_DEPTH > 0`). Agents can delegate headless chat servers (`--headless --port 0`) from within spawns. Root-only restriction lifted for the launch subcommand only.
+- `meridian chat` management subcommands (`list`, `show`, `kill`, `open`, `events`) now allowed in nested execution. Agents can read and manage chat sessions without being at depth 0.
+- Project `meridian.toml` sets `[defaults] max_depth = 4`, raising the nesting ceiling for workflows that fan-out through multiple spawn tiers.
 
 ### Fixed
 - Chat normalization now maps current Claude, Codex, and OpenCode live event shapes into canonical chat events. Assistant text, reasoning, tool lifecycle, and turn completion now reach `meridian chat` clients instead of dropping output or leaving chats stuck `active`.
