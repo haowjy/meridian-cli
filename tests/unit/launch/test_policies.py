@@ -291,6 +291,53 @@ def test_surface_policy_input_rejects_unknown_supported_execution_policy_field()
         )
 
 
+def test_chat_and_spawn_prepare_surfaces_resolve_equivalent_shared_policy_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alias = _mock_alias(alias="codex", model_id="gpt-5.3-codex", harness=HarnessId.CODEX)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={"codex": alias, "gpt-5.3-codex": alias},
+    )
+    registry = get_default_harness_registry()
+    layers = (
+        RuntimeOverrides(model="codex", approval="auto", sandbox="workspace-write", effort="high"),
+        RuntimeOverrides(),
+    )
+    config = MeridianConfig()
+    chat_policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.CHAT,
+            catalog=CatalogSession(Path.cwd()),
+            layers=layers,
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=registry,
+            configured_default_harness="claude",
+            supported_execution_policy_fields=frozenset(
+                {"effort", "sandbox", "approval", "autocompact"}
+            ),
+        )
+    )
+    spawn_policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(Path.cwd()),
+            layers=layers,
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=registry,
+            configured_default_harness="claude",
+        )
+    )
+
+    assert chat_policy.model == spawn_policy.model == "gpt-5.3-codex"
+    assert chat_policy.harness == spawn_policy.harness == HarnessId.CODEX
+    assert chat_policy.resolved_overrides.effort == spawn_policy.resolved_overrides.effort == "high"
+    assert chat_policy.resolved_overrides.sandbox == "workspace-write"
+    assert chat_policy.resolved_overrides.approval == "auto"
+
+
 def test_resolve_policy_fields_tuple_form_matches_positional_form() -> None:
     tiers = (
         RuntimeOverrides(),

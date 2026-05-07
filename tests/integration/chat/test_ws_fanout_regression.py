@@ -10,6 +10,7 @@ from typing import Any, cast
 from fastapi.testclient import TestClient
 
 from meridian.lib.chat.event_log import ChatEventLog
+from meridian.lib.chat.policy import default_chat_policy_snapshot
 from meridian.lib.chat.protocol import CHAT_EXITED, CHAT_STARTED, ChatEvent, utc_now_iso
 from meridian.lib.chat.replay import ReplayService
 from meridian.lib.chat.runtime import ChatRuntime
@@ -135,6 +136,7 @@ def test_reconnect_with_last_seq_replays_missed_events_over_websocket_transport(
     runtime = ChatRuntime(
         runtime_root=tmp_path,
         project_root=tmp_path,
+        default_policy_snapshot=default_chat_policy_snapshot(),
         backend_acquisition=cast("Any", PassiveAcquisition()),
     )
     configure(runtime=runtime)
@@ -213,6 +215,7 @@ def test_three_websocket_clients_receive_same_close_event(tmp_path: Path) -> Non
     runtime = ChatRuntime(
         runtime_root=tmp_path,
         project_root=tmp_path,
+        default_policy_snapshot=default_chat_policy_snapshot(),
         backend_acquisition=cast("Any", PassiveAcquisition()),
     )
     configure(runtime=runtime)
@@ -378,6 +381,7 @@ def test_rapid_connect_disconnect_does_not_leak_fanout_clients(tmp_path: Path) -
     runtime = ChatRuntime(
         runtime_root=tmp_path,
         project_root=tmp_path,
+        default_policy_snapshot=default_chat_policy_snapshot(),
         backend_acquisition=cast("Any", PassiveAcquisition()),
     )
     configure(runtime=runtime)

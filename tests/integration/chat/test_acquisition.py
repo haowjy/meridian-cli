@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.chat.backend_acquisition import ColdSpawnAcquisition
+from meridian.lib.chat.policy import ChatBackendLaunchPlan, default_chat_policy_snapshot
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionCapabilities, ConnectionConfig
 from meridian.lib.harness.ids import HarnessId
@@ -96,6 +97,40 @@ class PipelineLookup:
     def get_pipeline(self, chat_id):
         return self.pipeline
 
+    def get_policy_snapshot(self, chat_id):
+        _ = chat_id
+        return default_chat_policy_snapshot()
+
+
+def _launch_plan_factory(
+    *,
+    spawn_id: SpawnId,
+    harness_id: HarnessId,
+    project_root: Path,
+    env_overrides: dict[str, str] | None = None,
+):
+    def build(chat_id: str, prompt: str) -> ChatBackendLaunchPlan:
+        _ = chat_id
+        config = ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=harness_id,
+            prompt=prompt,
+            project_root=project_root,
+            env_overrides=env_overrides or {},
+        )
+        spec = ClaudeLaunchSpec(
+            prompt=prompt,
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        )
+        return ChatBackendLaunchPlan(
+            harness_id=harness_id,
+            connection_config=config,
+            spec=spec,
+            configured_payload={"harness": harness_id.value, "model": spec.model or ""},
+        )
+
+    return build
+
 
 @pytest.mark.asyncio
 async def test_cold_acquisition_registers_observer_before_start_and_uses_persistent_policy(
@@ -108,16 +143,10 @@ async def test_cold_acquisition_registers_observer_before_start_and_uses_persist
         spawn_manager=manager,
         normalizer_factory=lambda chat_id, execution_id: Normalizer(),
         pipeline_lookup=PipelineLookup(),
-        connection_config_factory=lambda chat_id, prompt: ConnectionConfig(
+        launch_plan_factory=_launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
-            prompt=prompt,
             project_root=tmp_path,
-            env_overrides={},
-        ),
-        launch_spec_factory=lambda prompt: ClaudeLaunchSpec(
-            prompt=prompt,
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -131,31 +160,36 @@ async def test_cold_acquisition_registers_observer_before_start_and_uses_persist
 
 
 @pytest.mark.asyncio
-async def test_cold_acquisition_default_config_injects_harness_and_meridian_context(
+async def test_cold_acquisition_uses_launch_plan_connection_config(
     tmp_path: Path,
 ):
     manager = SpawnManager()
-    runtime_root = tmp_path / "runtime"
     project_root = tmp_path / "project"
-    project_root.mkdir()
+    project_root.mkdir(parents=True)
+    env_overrides = {
+        "MERIDIAN_HARNESS": "codex",
+        "MERIDIAN_SPAWN_ID": "s-chat",
+        "MERIDIAN_PROJECT_DIR": str(project_root.resolve()),
+        "MERIDIAN_RUNTIME_DIR": str((tmp_path / "runtime").resolve()),
+    }
 
     acquisition = ColdSpawnAcquisition(
         spawn_manager=manager,
         normalizer_factory=lambda chat_id, execution_id: Normalizer(),
         pipeline_lookup=PipelineLookup(),
-        project_root=project_root,
-        runtime_root=runtime_root,
-        harness_id=HarnessId.CODEX,
+        launch_plan_factory=_launch_plan_factory(
+            spawn_id=SpawnId("s-chat"),
+            harness_id=HarnessId.CODEX,
+            project_root=project_root,
+            env_overrides=env_overrides,
+        ),
     )
 
     handle = await acquisition.acquire("c1", "hello")
 
     assert manager.started_config is not None
-    env_overrides = manager.started_config.env_overrides
-    assert env_overrides["MERIDIAN_HARNESS"] == "codex"
-    assert env_overrides["MERIDIAN_SPAWN_ID"] == str(handle.spawn_id)
-    assert env_overrides["MERIDIAN_PROJECT_DIR"] == str(project_root.resolve())
-    assert env_overrides["MERIDIAN_RUNTIME_DIR"] == str(runtime_root.resolve())
+    assert manager.started_config.env_overrides == env_overrides
+    assert str(handle.spawn_id) == "s-chat"
 
 
 @pytest.mark.asyncio
@@ -168,16 +202,10 @@ async def test_cold_acquisition_unregisters_observer_when_start_fails(tmp_path: 
         spawn_manager=manager,
         normalizer_factory=lambda chat_id, execution_id: Normalizer(),
         pipeline_lookup=PipelineLookup(),
-        connection_config_factory=lambda chat_id, prompt: ConnectionConfig(
+        launch_plan_factory=_launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
-            prompt=prompt,
             project_root=tmp_path,
-            env_overrides={},
-        ),
-        launch_spec_factory=lambda prompt: ClaudeLaunchSpec(
-            prompt=prompt,
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 
@@ -197,16 +225,10 @@ async def test_cold_acquisition_stops_spawn_when_heartbeat_fails(tmp_path: Path)
         spawn_manager=manager,
         normalizer_factory=lambda chat_id, execution_id: Normalizer(),
         pipeline_lookup=PipelineLookup(),
-        connection_config_factory=lambda chat_id, prompt: ConnectionConfig(
+        launch_plan_factory=_launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
-            prompt=prompt,
             project_root=tmp_path,
-            env_overrides={},
-        ),
-        launch_spec_factory=lambda prompt: ClaudeLaunchSpec(
-            prompt=prompt,
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         ),
     )
 

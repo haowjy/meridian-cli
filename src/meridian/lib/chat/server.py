@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.chat.commands import ChatCommand, CommandResult
 from meridian.lib.chat.frontend import FrontendAssets
+from meridian.lib.chat.policy import ChatPolicySnapshot, default_chat_policy_snapshot
 from meridian.lib.chat.protocol import utc_now_iso
 from meridian.lib.chat.replay import ReplayService
 from meridian.lib.chat.runtime import ChatRuntime
@@ -128,6 +129,7 @@ def configure(
     runtime_root: Path | None = None,
     backend_acquisition: BackendAcquisition | None = None,
     project_root: Path | None = None,
+    default_policy_snapshot: ChatPolicySnapshot | None = None,
 ) -> None:
     """Configure process-local chat server dependencies."""
 
@@ -138,6 +140,7 @@ def configure(
     _runtime = ChatRuntime(
         runtime_root=runtime_root or get_user_home(),
         project_root=project_root or Path.cwd(),
+        default_policy_snapshot=default_policy_snapshot or default_chat_policy_snapshot(),
         backend_acquisition=backend_acquisition or _UnavailableAcquisition(),
     )
 

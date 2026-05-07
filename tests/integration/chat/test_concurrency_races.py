@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from meridian.lib.chat.commands import ChatCommand
+from meridian.lib.chat.policy import default_chat_policy_snapshot
 from meridian.lib.chat.protocol import TURN_COMPLETED, ChatEvent, utc_now_iso
 from meridian.lib.chat.runtime import ChatRuntime
 from meridian.lib.core.types import SpawnId
@@ -82,6 +83,7 @@ async def start_runtime(tmp_path: Path, acquisition: ScriptedAcquisition) -> Cha
     runtime = ChatRuntime(
         runtime_root=tmp_path,
         project_root=tmp_path,
+        default_policy_snapshot=default_chat_policy_snapshot(),
         backend_acquisition=acquisition,
     )
     await runtime.start()

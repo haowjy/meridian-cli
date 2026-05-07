@@ -11,15 +11,31 @@ import pytest
 from meridian.cli import chat_cmd
 from meridian.cli.chat_cmd import run_chat_server
 from meridian.cli.output import OutputConfig
+from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.model_aliases import AliasEntry
+from meridian.lib.chat.policy import build_chat_backend_launch_plan, default_chat_policy_snapshot
+from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.harness.ids import HarnessId
+from meridian.lib.harness.launch_spec import CodexLaunchSpec
+from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.launch_types import CompositionWarning
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from tests.support.fixtures import write_skill
 
 cli_main = importlib.import_module("meridian.cli.main")
 
 
 class EmptyPipelineLookup:
+    def __init__(self, snapshot=None) -> None:
+        self._snapshot = snapshot or default_chat_policy_snapshot()
+
     def get_pipeline(self, chat_id: str):
         _ = chat_id
         return None
+
+    def get_policy_snapshot(self, chat_id: str):
+        _ = chat_id
+        return self._snapshot
 
 
 class _UnexpectedCall(RuntimeError):
@@ -28,6 +44,19 @@ class _UnexpectedCall(RuntimeError):
 
 class _FakeLauncher:
     pass
+
+
+@pytest.fixture(autouse=True)
+def _stable_policy_resolution(monkeypatch, request):
+    if request.node.name.startswith("test_chat_policy_snapshot_") or request.node.name in {
+        "test_chat_cli_rejects_unknown_harness",
+    }:
+        return
+    monkeypatch.setattr(
+        chat_cmd,
+        "_resolve_chat_policy_snapshot",
+        lambda **_kwargs: default_chat_policy_snapshot(),
+    )
 
 
 def test_chat_cli_auto_port_prints_local_backend_url(monkeypatch, tmp_path) -> None:
@@ -42,7 +71,6 @@ def test_chat_cli_auto_port_prints_local_backend_url(monkeypatch, tmp_path) -> N
     actual_port = run_chat_server(
         host="127.0.0.1",
         port=0,
-        model="test-model",
         harness="claude",
         headless=True,
         uvicorn_run=fake_run,
@@ -303,6 +331,7 @@ def test_chat_command_falls_back_to_globally_parsed_harness(monkeypatch) -> None
     assert captured["headless"] is False
     assert captured["frontend_dist"] is None
     assert captured["open_browser"] is False
+    assert captured["autocompact"] is None
 
 
 def test_chat_command_prefers_explicit_harness_over_global_default(monkeypatch) -> None:
@@ -333,18 +362,31 @@ def test_chat_command_prefers_explicit_harness_over_global_default(monkeypatch) 
     assert captured["open_browser"] is True
 
 
+def test_chat_command_passes_autocompact_to_chat_server(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_chat_server(**kwargs) -> int:
+        captured.update(kwargs)
+        return 8765
+
+    monkeypatch.setattr(chat_cmd, "run_chat_server", fake_run_chat_server)
+    chat_cmd._chat(port=8765, autocompact=55)
+
+    assert captured["autocompact"] == 55
+
+
 @pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX, HarnessId.OPENCODE])
 def test_backend_acquisition_preserves_requested_harness(tmp_path, harness: HarnessId) -> None:
+    snapshot = default_chat_policy_snapshot(harness=harness, model="model-x")
     acquisition = chat_cmd._build_backend_acquisition(
         runtime_root=tmp_path / "runtime",
         project_root=tmp_path,
-        harness_id=harness,
-        model="model-x",
-        pipeline_lookup=EmptyPipelineLookup(),
+        pipeline_lookup=EmptyPipelineLookup(snapshot),
     )
 
-    config = acquisition._build_connection_config("c1", "hello")
-    spec = acquisition._build_launch_spec("hello")
+    plan = acquisition._build_launch_plan("c1", "hello")
+    config = plan.connection_config
+    spec = plan.spec
 
     assert config.harness_id == harness
     assert spec.model == "model-x"
@@ -363,11 +405,15 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
 ) -> None:
     runtime_root = tmp_path / "runtime"
     captured: dict[str, object] = {}
+    snapshot = default_chat_policy_snapshot(harness=expected_harness, model="model-x")
 
     class FakeRuntime:
-        def __init__(self, *, runtime_root, project_root, acquisition_factory) -> None:
+        def __init__(
+            self, *, runtime_root, project_root, default_policy_snapshot, acquisition_factory
+        ) -> None:
             captured["runtime_root"] = runtime_root
             captured["project_root"] = project_root
+            captured["default_policy_snapshot"] = default_policy_snapshot
             captured["acquisition_factory"] = acquisition_factory
             captured["runtime"] = self
 
@@ -377,6 +423,7 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
     monkeypatch.setattr(chat_cmd, "ChatRuntime", FakeRuntime)
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
     monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr(chat_cmd, "_resolve_chat_policy_snapshot", lambda **_kwargs: snapshot)
     monkeypatch.chdir(tmp_path)
 
     import meridian.lib.chat.server as chat_server
@@ -395,19 +442,21 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
 
     assert captured["runtime_root"] == runtime_root
     assert captured["project_root"] == tmp_path
+    assert captured["default_policy_snapshot"] == snapshot
     assert captured["configured_runtime"] is captured["runtime"]
 
     factory = cast("chat_cmd._ChatBackendAcquisitionFactory", captured["acquisition_factory"])
-    assert factory.harness_id == expected_harness
-    assert factory.model == "model-x"
+    assert factory.policy_snapshot == snapshot
 
+    lookup = EmptyPipelineLookup(snapshot)
     acquisition = factory.build(
-        pipeline_lookup=EmptyPipelineLookup(),
+        pipeline_lookup=lookup,
         project_root=tmp_path,
         runtime_root=runtime_root,
     )
-    config = acquisition._build_connection_config("c1", "hello")
-    spec = acquisition._build_launch_spec("hello")
+    plan = acquisition._build_launch_plan("c1", "hello")
+    config = plan.connection_config
+    spec = plan.spec
 
     assert config.harness_id == expected_harness
     assert config.project_root == tmp_path
@@ -476,6 +525,322 @@ def test_chat_command_headless_takes_precedence_over_meridian_env_dev(monkeypatc
 
     assert captured["headless"] is True
     assert captured["dev"] is False
+
+
+def test_chat_policy_resolution_fails_before_runtime_configure_or_discovery_write(
+    monkeypatch, tmp_path
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    configured: list[object] = []
+    write_bootstrap_calls: list[Path] = []
+    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
+    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        chat_cmd,
+        "prepare_for_runtime_write",
+        lambda root: write_bootstrap_calls.append(root),
+    )
+    monkeypatch.setattr(
+        chat_cmd,
+        "_resolve_chat_policy_snapshot",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("policy-failed")),
+    )
+
+    import meridian.lib.chat.server as chat_server
+
+    monkeypatch.setattr(chat_server, "configure", lambda **kwargs: configured.append(kwargs))
+    monkeypatch.setattr(chat_server, "app", object())
+
+    with pytest.raises(ValueError, match="policy-failed"):
+        run_chat_server(
+            port=8765,
+            headless=True,
+            uvicorn_run=lambda *_args, **_kwargs: None,
+            stdout=StringIO(),
+        )
+
+    assert configured == []
+    assert write_bootstrap_calls == []
+    assert not (runtime_root / "chat-server.json").exists()
+
+
+def _mock_alias(alias: str, model_id: str, harness: HarnessId) -> AliasEntry:
+    return AliasEntry(alias=alias, model_id=ModelId(model_id), resolved_harness=harness)
+
+
+def test_chat_policy_snapshot_resolves_alias_to_canonical_model(monkeypatch, tmp_path) -> None:
+    alias_entry = _mock_alias("codex", "gpt-5.3-codex", HarnessId.CODEX)
+
+    def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        if token in {"codex", "gpt-5.3-codex"}:
+            return alias_entry
+        raise ValueError(f"unknown model {token}")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model="codex",
+        harness="codex",
+        agent=None,
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert snapshot.canonical_model_id == "gpt-5.3-codex"
+    assert snapshot.harness == "codex"
+
+
+def test_chat_policy_snapshot_rejects_incompatible_explicit_harness(monkeypatch, tmp_path) -> None:
+    alias_entry = _mock_alias("gptmini", "gpt-5.4-mini", HarnessId.CODEX)
+
+    def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        if token in {"gptmini", "gpt-5.4-mini"}:
+            return alias_entry
+        raise ValueError(f"unknown model {token}")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
+
+    with pytest.raises(ValueError, match="incompatible"):
+        chat_cmd._resolve_chat_policy_snapshot(
+            project_root=tmp_path,
+            model="gptmini",
+            harness="claude",
+            agent=None,
+            skills=(),
+            approval=None,
+            sandbox=None,
+            effort=None,
+            autocompact=None,
+        )
+
+
+def test_chat_policy_snapshot_without_model_does_not_force_catalog_lookup(
+    monkeypatch, tmp_path
+) -> None:
+    calls: list[str] = []
+
+    def fail_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        calls.append(f"resolve:{token}")
+        raise AssertionError("catalog resolve_model should not run without a model token")
+
+    def fail_load_aliases(self: CatalogSession) -> list[AliasEntry]:
+        _ = self
+        calls.append("load_aliases")
+        raise AssertionError("catalog load_aliases should not run without a model token")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fail_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", fail_load_aliases)
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model=None,
+        harness=None,
+        agent=None,
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert calls == []
+    assert snapshot.harness == "claude"
+    assert snapshot.canonical_model_id == ""
+
+
+def test_chat_policy_snapshot_collects_profile_and_missing_skill_warnings(tmp_path) -> None:
+    (tmp_path / "meridian.toml").write_text(
+        '[primary]\nagent = "missing-default"\n',
+        encoding="utf-8",
+    )
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model=None,
+        harness=None,
+        agent=None,
+        skills=("missing-skill",),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    warning_codes = [warning.code for warning in snapshot.warnings]
+    assert "profile_warning" in warning_codes
+    assert "missing_skills_warning" in warning_codes
+    warning_messages = [warning.message for warning in snapshot.warnings]
+    assert any(
+        "Configured agent profile 'missing-default' is unavailable" in message
+        for message in warning_messages
+    )
+    assert any("Warning: Skipped unavailable skills: missing-skill" in m for m in warning_messages)
+
+
+def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
+    monkeypatch, tmp_path
+) -> None:
+    alias_entry = _mock_alias("gptmini", "gpt-5.4-mini", HarnessId.CODEX)
+    write_skill(tmp_path, "profile-skill", body="Profile skill body")
+    write_skill(tmp_path, "cli-skill", body="CLI skill body")
+    (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
+    (tmp_path / ".mars" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".mars" / "agents" / "reviewer.md").write_text(
+        "---\n"
+        "name: reviewer\n"
+        "model: claude-sonnet-4-6\n"
+        "approval: auto\n"
+        "autocompact: 37\n"
+        "sandbox: workspace-write\n"
+        "skills:\n"
+        "  - profile-skill\n"
+        "tools:\n"
+        "  - Read\n"
+        "disallowed-tools:\n"
+        "  - Bash\n"
+        "mcp-tools:\n"
+        "  - github=gh\n"
+        "model-policies:\n"
+        "  - match:\n"
+        "      model: gpt-5.4-mini\n"
+        "    override:\n"
+        "      effort: low\n"
+        "---\n\n"
+        "Reviewer profile body.\n",
+        encoding="utf-8",
+    )
+
+    def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        if token in {"gptmini", "gpt-5.4-mini"}:
+            return alias_entry
+        raise ValueError(f"unknown model {token}")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model="gptmini",
+        harness=None,
+        agent="reviewer",
+        skills=("cli-skill", "profile-skill"),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert snapshot.requested_model_token == "gptmini"
+    assert snapshot.selected_model_token == "gptmini"
+    assert snapshot.canonical_model_id == "gpt-5.4-mini"
+    assert snapshot.harness == "codex"
+    assert snapshot.agent_name == "reviewer"
+    assert snapshot.approval == "auto"
+    assert snapshot.sandbox == "workspace-write"
+    assert snapshot.effort == "low"
+    assert snapshot.autocompact == 37
+    assert snapshot.skills == ("profile-skill", "cli-skill")
+    assert snapshot.allowed_tools == ("Read",)
+    assert snapshot.disallowed_tools == ("Bash",)
+    assert snapshot.mcp_tools == ("github=gh",)
+    assert snapshot.prompt_inputs.agent_profile_body == ""
+    assert snapshot.prompt_inputs.adhoc_agent_payload == "Reviewer profile body."
+    assert [doc.logical_name for doc in snapshot.prompt_inputs.skill_documents] == [
+        "profile-skill",
+        "cli-skill",
+    ]
+
+    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CODEX)
+    plan = build_chat_backend_launch_plan(
+        snapshot=snapshot,
+        initial_prompt="Please review this change.",
+        spawn_id=SpawnId("chat-test"),
+        adapter=adapter,
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+    )
+
+    assert plan.harness_id == HarnessId.CODEX
+    assert plan.connection_config.harness_id == HarnessId.CODEX
+    assert isinstance(plan.spec, CodexLaunchSpec)
+    assert plan.spec.model == "gpt-5.4-mini"
+    assert plan.spec.base_instructions == "Reviewer profile body."
+    assert plan.spec.user_turn_content == "Please review this change."
+    assert "Profile skill body" in (plan.spec.developer_instructions or "")
+    assert "CLI skill body" in (plan.spec.developer_instructions or "")
+    assert plan.spec.mcp_tools == ("github=gh",)
+    assert not isinstance(plan.spec.permission_resolver, UnsafeNoOpPermissionResolver)
+    assert plan.connection_config.env_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "37"
+    assert plan.configured_payload == {
+        "harness": "codex",
+        "model": "gpt-5.4-mini",
+        "requested_model_token": "gptmini",
+        "selected_model_token": "gptmini",
+        "harness_provenance": "mars-provided",
+        "policy_snapshot_id": snapshot.snapshot_id,
+        "autocompact": 37,
+    }
+
+
+def test_chat_cli_prints_policy_warnings_before_backend_url(monkeypatch, tmp_path) -> None:
+    runtime_root = tmp_path / "runtime"
+    snapshot = default_chat_policy_snapshot().model_copy(
+        update={
+            "warnings": (
+                CompositionWarning(code="profile_warning", message="profile warning"),
+                CompositionWarning(code="missing_skills_warning", message="missing skill warning"),
+            )
+        }
+    )
+    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
+    monkeypatch.setattr(chat_cmd, "_resolve_chat_policy_snapshot", lambda **_kwargs: snapshot)
+    stdout = StringIO()
+
+    run_chat_server(
+        port=8765,
+        headless=True,
+        uvicorn_run=lambda *_args, **_kwargs: None,
+        stdout=stdout,
+    )
+
+    assert stdout.getvalue() == (
+        "Warning (profile_warning): profile warning\n"
+        "Warning (missing_skills_warning): missing skill warning\n"
+        "Chat backend: http://127.0.0.1:8765\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "flag"),
+    [
+        (["chat", "ls", "--model", "codex"], "--model"),
+        (["chat", "show", "c1", "--approval", "auto"], "--approval"),
+        (["chat", "log", "c1", "--skills", "md-validation"], "--skills"),
+        (["chat", "close", "c1", "--agent", "reviewer"], "--agent"),
+    ],
+)
+def test_chat_management_subcommands_reject_launch_policy_flags(
+    argv: list[str], flag: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(argv)
+
+    assert exc_info.value.code == 1
+    stderr = capsys.readouterr().err
+    assert 'Unknown option: "' in stderr
+    assert flag in stderr or (
+        flag == "--agent" and '"-a"' in stderr
+    )
 
 
 @pytest.mark.parametrize(

@@ -563,7 +563,9 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         except ValueError as exc:
             model_resolution_error = exc
 
-    alias_catalog = surface.catalog.alias_map()
+    alias_catalog: dict[str, AliasEntry] = {}
+    if requested_model_token:
+        alias_catalog = surface.catalog.alias_map()
     profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
     compiler_request = CompilerRequest(
         requested_agent=requested_agent,

@@ -5,6 +5,7 @@ import pytest
 from meridian.lib.chat.backend_acquisition import ColdSpawnAcquisition
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.event_pipeline import ChatEventPipeline
+from meridian.lib.chat.policy import ChatBackendLaunchPlan, default_chat_policy_snapshot
 from meridian.lib.chat.protocol import CHAT_CONFIGURED, TURN_STARTED, ChatEvent
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import (
@@ -35,6 +36,10 @@ class FakePipelineLookup:
     def get_pipeline(self, chat_id):
         _ = chat_id
         return self.pipeline
+
+    def get_policy_snapshot(self, chat_id):
+        _ = chat_id
+        return default_chat_policy_snapshot()
 
 
 class FakeConnection:
@@ -93,14 +98,21 @@ def launch_spec(prompt):
     )
 
 
-def connection_config(chat_id, initial_prompt):
+def launch_plan(chat_id, initial_prompt):
     _ = chat_id
-    return ConnectionConfig(
+    config = ConnectionConfig(
         spawn_id=SpawnId("chat-s1"),
         harness_id=HarnessId.CODEX,
         prompt=initial_prompt,
         project_root=Path.cwd(),
         env_overrides={},
+    )
+    spec = launch_spec(initial_prompt)
+    return ChatBackendLaunchPlan(
+        harness_id=config.harness_id,
+        connection_config=config,
+        spec=spec,
+        configured_payload={"harness": "codex", "model": spec.model or ""},
     )
 
 
@@ -113,8 +125,7 @@ async def test_acquisition_emits_chat_configured_before_observed_turn_started(tm
         spawn_manager=manager,
         normalizer_factory=lambda chat_id, execution_id: NoopNormalizer(),
         pipeline_lookup=FakePipelineLookup(pipeline),
-        connection_config_factory=connection_config,
-        launch_spec_factory=launch_spec,
+        launch_plan_factory=launch_plan,
     )
 
     handle = await acquisition.acquire("c1", "hello", execution_generation=3, chat_state="active")

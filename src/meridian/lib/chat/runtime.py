@@ -18,6 +18,11 @@ from meridian.lib.chat.commands import COMMAND_CLOSE, ChatCommand, CommandResult
 from meridian.lib.chat.event_index import ChatEventIndex
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.event_pipeline import ChatEventPipeline
+from meridian.lib.chat.policy import (
+    ChatPolicySnapshot,
+    read_chat_policy_snapshot,
+    write_chat_policy_snapshot,
+)
 from meridian.lib.chat.protocol import CHAT_EXITED, CHAT_STARTED, ChatEvent, utc_now_iso
 from meridian.lib.chat.session_service import ChatSessionService
 from meridian.lib.chat.ws_fanout import WebSocketFanOut
@@ -39,7 +44,7 @@ class LiveChatEntry:
 class PersistedChatRecord:
     event_log: ChatEventLog
     event_index: ChatEventIndex
-    state: Literal["closed"]
+    state: Literal["closed", "unavailable"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,8 @@ class PipelineLookup(Protocol):
 
     def get_pipeline(self, chat_id: str) -> ChatEventPipeline | None: ...
 
+    def get_policy_snapshot(self, chat_id: str) -> ChatPolicySnapshot: ...
+
 
 class ChatRuntime(PipelineLookup):
     """Own recovered chat state and live chat service registries."""
@@ -75,6 +82,7 @@ class ChatRuntime(PipelineLookup):
         *,
         runtime_root: Path,
         project_root: Path,
+        default_policy_snapshot: ChatPolicySnapshot,
         backend_acquisition: BackendAcquisition | None = None,
         acquisition_factory: BackendAcquisitionFactory | None = None,
     ) -> None:
@@ -82,6 +90,8 @@ class ChatRuntime(PipelineLookup):
         self.project_root = project_root
         self.paths = RuntimePaths.from_root_dir(runtime_root)
         self.checkpoint_lock = asyncio.Lock()
+        self._default_policy_snapshot = default_policy_snapshot
+        self._chat_policy_snapshots: dict[str, ChatPolicySnapshot] = {}
         self._live: dict[str, LiveChatEntry] = {}
         self._persisted_only: dict[str, PersistedChatRecord] = {}
         self._started = False
@@ -133,6 +143,20 @@ class ChatRuntime(PipelineLookup):
                     if chat_id not in self._persisted_only and chat_id not in self._live
                 }
             )
+            unavailable_ids: list[str] = []
+            for chat_id, entry in tuple(self._live.items()):
+                try:
+                    self._chat_policy_snapshots[chat_id] = self._load_policy_snapshot(chat_id)
+                except RuntimeError as exc:
+                    unavailable_ids.append(chat_id)
+                    self._register_unavailable_chat(
+                        chat_id=chat_id,
+                        event_log=entry.event_log,
+                        event_index=entry.event_index,
+                        detail=str(exc),
+                    )
+            for chat_id in unavailable_ids:
+                self._live.pop(chat_id, None)
             self._started = True
 
         for entry in self._live.values():
@@ -168,6 +192,7 @@ class ChatRuntime(PipelineLookup):
                 chats_cleaned += 1
             self._live.clear()
             self._persisted_only.clear()
+            self._chat_policy_snapshots.clear()
         finally:
             self._started = False
             emit_telemetry(
@@ -189,6 +214,9 @@ class ChatRuntime(PipelineLookup):
         chat_id = f"c-{uuid4().hex}"
         event_log = ChatEventLog(self.paths.chat_history_path(chat_id))
         event_index = ChatEventIndex(self.paths.chats_dir / chat_id / "index.sqlite3")
+        snapshot = self._default_policy_snapshot.model_copy(deep=True)
+        write_chat_policy_snapshot(self.paths.chat_policy_path(chat_id), snapshot)
+        self._chat_policy_snapshots[chat_id] = snapshot
         entry = build_live_entry(
             chat_id=chat_id,
             event_log=event_log,
@@ -295,6 +323,16 @@ class ChatRuntime(PipelineLookup):
     def active_chat_count(self) -> int:
         return sum(1 for entry in self._live.values() if entry.session.state != "closed")
 
+    def get_policy_snapshot(self, chat_id: str) -> ChatPolicySnapshot:
+        """Return persisted chat policy snapshot for acquisition planning."""
+
+        snapshot = self._chat_policy_snapshots.get(chat_id)
+        if snapshot is not None:
+            return snapshot
+        loaded = self._load_policy_snapshot(chat_id)
+        self._chat_policy_snapshots[chat_id] = loaded
+        return loaded
+
     def register_live(self, chat_id: str, entry: LiveChatEntry) -> None:
         self._ensure_running()
         self._persisted_only.pop(chat_id, None)
@@ -365,6 +403,40 @@ class ChatRuntime(PipelineLookup):
         if self._stopped:
             raise RuntimeError("chat runtime is stopped")
 
+    def _load_policy_snapshot(self, chat_id: str) -> ChatPolicySnapshot:
+        path = self.paths.chat_policy_path(chat_id)
+        if not path.exists():
+            raise RuntimeError(
+                f"chat policy snapshot missing for recovered chat {chat_id}: {path}"
+            )
+        try:
+            return read_chat_policy_snapshot(path)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"chat policy snapshot invalid for recovered chat {chat_id}: {exc}"
+            ) from exc
+
+    def _register_unavailable_chat(
+        self,
+        *,
+        chat_id: str,
+        event_log: ChatEventLog,
+        event_index: ChatEventIndex,
+        detail: str,
+    ) -> None:
+        self._chat_policy_snapshots.pop(chat_id, None)
+        _append_policy_snapshot_unavailable_error(
+            chat_id=chat_id,
+            event_log=event_log,
+            event_index=event_index,
+            detail=detail,
+        )
+        self._persisted_only[chat_id] = PersistedChatRecord(
+            event_log=event_log,
+            event_index=event_index,
+            state="unavailable",
+        )
+
 
 @dataclass(frozen=True)
 class _DiskChatRecord:
@@ -420,6 +492,40 @@ async def _checkpoint_turn(service: CheckpointService, event: ChatEvent) -> None
         turn_id = raw_turn_id if isinstance(raw_turn_id, str) else None
     if turn_id:
         await service.create_checkpoint(turn_id)
+
+
+def _append_policy_snapshot_unavailable_error(
+    *,
+    chat_id: str,
+    event_log: ChatEventLog,
+    event_index: ChatEventIndex,
+    detail: str,
+) -> None:
+    events = list(event_log.read_all())
+    for event in reversed(events):
+        if (
+            event.type == "runtime.error"
+            and event.payload.get("reason") == "policy_snapshot_unavailable"
+        ):
+            return
+    persisted = event_log.append(
+        ChatEvent(
+            type="runtime.error",
+            seq=0,
+            chat_id=chat_id,
+            execution_id=_last_execution_id(events),
+            timestamp=utc_now_iso(),
+            payload={"reason": "policy_snapshot_unavailable", "detail": detail},
+        )
+    )
+    event_index.upsert(persisted)
+
+
+def _last_execution_id(events: list[ChatEvent]) -> str:
+    for event in reversed(events):
+        if event.execution_id:
+            return event.execution_id
+    return ""
 
 
 __all__ = [

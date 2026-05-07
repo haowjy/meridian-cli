@@ -13,24 +13,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, cast
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from cyclopts import App, Parameter
 
+from meridian.cli.utils import parse_csv_list
 from meridian.lib.bootstrap.services import prepare_for_runtime_read, prepare_for_runtime_write
+from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.chat.backend_acquisition import ColdSpawnAcquisition
 from meridian.lib.chat.frontend import FrontendAssets, resolve_frontend_assets
 from meridian.lib.chat.normalization.base import EventNormalizer
 from meridian.lib.chat.normalization.registry import get_normalizer_factory
+from meridian.lib.chat.policy import (
+    ChatBackendLaunchPlan,
+    ChatPolicySnapshot,
+    build_chat_backend_launch_plan,
+    snapshot_from_resolved_policy,
+)
 from meridian.lib.chat.runtime import ChatRuntime, PipelineLookup
 from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.settings import load_config
+from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import (
-    ClaudeLaunchSpec,
-    CodexLaunchSpec,
-    OpenCodeLaunchSpec,
-)
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
+from meridian.lib.launch.launch_types import CompositionWarning
+from meridian.lib.launch.policies import SurfacePolicyInput, resolve_launch_policy
+from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
@@ -77,6 +86,38 @@ def _chat(
         str | None,
         Parameter(name="--harness", help="Harness id: claude, codex, or opencode."),
     ] = None,
+    agent: Annotated[
+        str | None,
+        Parameter(name=["--agent", "-a"], help="Agent profile name."),
+    ] = None,
+    skills: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name=["--skills", "-s"],
+            help="Comma-separated ad-hoc skills to load. Repeatable.",
+            negative_iterable=(),
+        ),
+    ] = (),
+    approval: Annotated[
+        str | None,
+        Parameter(name="--approval", help="Approval mode: default, confirm, auto, yolo."),
+    ] = None,
+    sandbox: Annotated[
+        str | None,
+        Parameter(name="--sandbox", help="Sandbox mode override."),
+    ] = None,
+    effort: Annotated[
+        str | None,
+        Parameter(name="--effort", help="Effort override: low, medium, high, xhigh."),
+    ] = None,
+    autocompact: Annotated[
+        int | None,
+        Parameter(name="--autocompact", help="Autocompact threshold percentage (1-100)."),
+    ] = None,
+    yolo: Annotated[
+        bool,
+        Parameter(name="--yolo", help="Shorthand for --approval yolo."),
+    ] = False,
     port: Annotated[int, Parameter(name="--port", help="Port to bind; 0 auto-assigns.")] = 0,
     host: Annotated[
         str,
@@ -132,9 +173,23 @@ def _chat(
         dev = True
 
     effective_harness = harness or get_global_options().harness
+    if yolo and approval is not None:
+        raise ValueError(
+            "Cannot use --yolo with --approval (--yolo is shorthand for --approval yolo)."
+        )
+    resolved_approval = approval if approval is not None else ("yolo" if yolo else None)
+    parsed_skills: list[str] = []
+    for token in skills:
+        parsed_skills.extend(parse_csv_list(token, field_name="skills"))
     run_chat_server(
         model=model,
         harness=effective_harness,
+        agent=agent,
+        skills=tuple(parsed_skills),
+        approval=resolved_approval,
+        sandbox=sandbox,
+        effort=effort,
+        autocompact=autocompact,
         port=port,
         host=host,
         headless=headless,
@@ -218,6 +273,12 @@ def run_chat_server(
     *,
     model: str | None = None,
     harness: str | None = None,
+    agent: str | None = None,
+    skills: tuple[str, ...] = (),
+    approval: str | None = None,
+    sandbox: str | None = None,
+    effort: str | None = None,
+    autocompact: int | None = None,
     port: int = 0,
     host: str = "127.0.0.1",
     headless: bool = False,
@@ -242,25 +303,7 @@ def run_chat_server(
     if port < 0 or port > 65535:
         raise ValueError("port must be between 0 and 65535")
 
-    prepared = prepare_for_runtime_write(resolve_project_root())
-    project_root = prepared.project_root
-    runtime_root = get_user_home()  # kept for ChatRuntime — not telemetry
-    harness_id = _resolve_harness_id(harness)
-    runtime = ChatRuntime(
-        runtime_root=runtime_root,
-        project_root=project_root,
-        acquisition_factory=_ChatBackendAcquisitionFactory(
-            harness_id=harness_id,
-            model=(model or "").strip() or None,
-        ),
-    )
-    configure(runtime=runtime)
-
-    env_port = int(os.environ.get("PORT", "0") or "0")
-    actual_port = port if port != 0 else (env_port or _find_free_port(host))
     output = stdout if stdout is not None else sys.stdout
-    display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    url = f"http://{display_host}:{actual_port}"
 
     if open_browser and headless:
         print("Warning: --open is ignored in headless mode.", file=output, flush=True)
@@ -291,6 +334,36 @@ def run_chat_server(
             "Error: --portless-force is only valid with portless dev mode.", file=output, flush=True
         )
         sys.exit(1)
+
+    project_root = resolve_project_root()
+    policy_snapshot = _resolve_chat_policy_snapshot(
+        project_root=project_root,
+        model=model,
+        harness=harness,
+        agent=agent,
+        skills=skills,
+        approval=approval,
+        sandbox=sandbox,
+        effort=effort,
+        autocompact=autocompact,
+    )
+    _emit_chat_policy_warnings(policy_snapshot.warnings, output)
+    prepared = prepare_for_runtime_write(project_root)
+    project_root = prepared.project_root
+    runtime_root = get_user_home()  # kept for ChatRuntime — not telemetry
+    runtime = ChatRuntime(
+        runtime_root=runtime_root,
+        project_root=project_root,
+        default_policy_snapshot=policy_snapshot,
+        acquisition_factory=_ChatBackendAcquisitionFactory(
+            policy_snapshot=policy_snapshot,
+        ),
+    )
+    configure(runtime=runtime)
+    env_port = int(os.environ.get("PORT", "0") or "0")
+    actual_port = port if port != 0 else (env_port or _find_free_port(host))
+    display_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    url = f"http://{display_host}:{actual_port}"
 
     if dev:
         from meridian.lib.chat.dev_frontend import (
@@ -434,6 +507,60 @@ def _resolve_harness_id(harness: str | None) -> HarnessId:
         raise ValueError(f"unsupported chat harness {raw!r}; expected one of: {valid}") from exc
 
 
+def _resolve_chat_policy_snapshot(
+    *,
+    project_root: Path,
+    model: str | None,
+    harness: str | None,
+    agent: str | None,
+    skills: tuple[str, ...],
+    approval: str | None,
+    sandbox: str | None,
+    effort: str | None,
+    autocompact: int | None,
+) -> ChatPolicySnapshot:
+    normalized_harness: str | None = None
+    if (harness or "").strip():
+        normalized_harness = _resolve_harness_id(harness).value
+    config = load_config(project_root)
+    catalog = CatalogSession(project_root)
+    harness_registry = get_default_harness_registry()
+    cli_overrides = RuntimeOverrides(
+        model=(model or "").strip() or None,
+        harness=normalized_harness,
+        agent=(agent or "").strip() or None,
+        approval=(approval or "").strip() or None,
+        sandbox=(sandbox or "").strip() or None,
+        effort=(effort or "").strip() or None,
+        autocompact=autocompact,
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.CHAT,
+            catalog=catalog,
+            layers=(cli_overrides, RuntimeOverrides.from_env()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=harness_registry,
+            configured_default_harness=config.primary.harness or "claude",
+            skills_readonly=True,
+            requested_skills=skills,
+            supported_execution_policy_fields=frozenset(
+                {"effort", "sandbox", "approval", "autocompact"}
+            ),
+        )
+    )
+    return snapshot_from_resolved_policy(policy)
+
+
+def _emit_chat_policy_warnings(warnings: tuple[CompositionWarning, ...], output: Any) -> None:
+    for warning in warnings:
+        message = warning.message.strip()
+        if not message:
+            continue
+        print(f"Warning ({warning.code}): {message}", file=output, flush=True)
+
+
 def _find_free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
@@ -548,8 +675,7 @@ async def _follow_chat_log(chat_id: str, *, url: str | None, last_seq: int | Non
 
 @dataclass(frozen=True)
 class _ChatBackendAcquisitionFactory:
-    harness_id: HarnessId
-    model: str | None
+    policy_snapshot: ChatPolicySnapshot
 
     def build(
         self,
@@ -561,8 +687,6 @@ class _ChatBackendAcquisitionFactory:
         return _build_backend_acquisition(
             runtime_root=runtime_root,
             project_root=project_root,
-            harness_id=self.harness_id,
-            model=self.model,
             pipeline_lookup=pipeline_lookup,
         )
 
@@ -571,24 +695,23 @@ def _build_backend_acquisition(
     *,
     runtime_root: Path,
     project_root: Path,
-    harness_id: HarnessId,
-    model: str | None,
     pipeline_lookup: PipelineLookup,
 ) -> ColdSpawnAcquisition:
     manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
+    harness_registry = get_default_harness_registry()
 
     return ColdSpawnAcquisition(
         spawn_manager=cast("Any", manager),
-        normalizer_factory=_normalizer_factory(harness_id),
+        normalizer_factory=_chat_policy_normalizer_factory(pipeline_lookup),
         pipeline_lookup=pipeline_lookup,
-        launch_spec_factory=lambda prompt: _launch_spec(
-            harness_id=harness_id,
+        launch_plan_factory=lambda chat_id, prompt: _build_chat_launch_plan(
+            chat_id=chat_id,
             prompt=prompt,
-            model=model,
+            pipeline_lookup=pipeline_lookup,
+            harness_registry=harness_registry,
+            project_root=project_root,
+            runtime_root=runtime_root,
         ),
-        project_root=project_root,
-        runtime_root=runtime_root,
-        harness_id=harness_id,
     )
 
 
@@ -601,30 +724,34 @@ def _normalizer_factory(harness_id: HarnessId) -> Callable[[str, str], EventNorm
     return wrapper
 
 
-def _launch_spec(*, harness_id: HarnessId, prompt: str, model: str | None) -> ResolvedLaunchSpec:
-    permission_resolver = UnsafeNoOpPermissionResolver(_suppress_warning=True)
-    if harness_id == HarnessId.CLAUDE:
-        return ClaudeLaunchSpec(
-            prompt=prompt,
-            model=model,
-            permission_resolver=permission_resolver,
-        )
-    if harness_id == HarnessId.CODEX:
-        return CodexLaunchSpec(
-            prompt=prompt,
-            model=model,
-            permission_resolver=permission_resolver,
-        )
-    if harness_id == HarnessId.OPENCODE:
-        return OpenCodeLaunchSpec(
-            prompt=prompt,
-            model=model,
-            permission_resolver=permission_resolver,
-        )
-    return ResolvedLaunchSpec(
-        prompt=prompt,
-        model=model,
-        permission_resolver=permission_resolver,
+def _chat_policy_normalizer_factory(
+    pipeline_lookup: PipelineLookup,
+) -> Callable[[str, str], EventNormalizer]:
+    def wrapper(chat_id: str, execution_id: str) -> EventNormalizer:
+        snapshot = pipeline_lookup.get_policy_snapshot(chat_id)
+        return _normalizer_factory(HarnessId(snapshot.harness))(chat_id, execution_id)
+
+    return wrapper
+
+
+def _build_chat_launch_plan(
+    *,
+    chat_id: str,
+    prompt: str,
+    pipeline_lookup: PipelineLookup,
+    harness_registry: HarnessRegistry,
+    project_root: Path,
+    runtime_root: Path,
+) -> ChatBackendLaunchPlan:
+    snapshot = pipeline_lookup.get_policy_snapshot(chat_id)
+    adapter = harness_registry.get_subprocess_harness(HarnessId(snapshot.harness))
+    return build_chat_backend_launch_plan(
+        snapshot=snapshot,
+        initial_prompt=prompt,
+        spawn_id=SpawnId(f"chat-{uuid4()}"),
+        adapter=adapter,
+        project_root=project_root,
+        runtime_root=runtime_root,
     )
 
 
