@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- Centralized session reference resolution. `resolve_session_reference()` now recovers missing harness session IDs from durable state (session store, spawn row, primary meta) and harness adapter detection. Recovery provenance is explicit: SESSION_STORE, SPAWN_ROW, PRIMARY_META, DETECTED_UNVERIFIED. `session log`, `--continue`, `--fork`, and `--from` now share the same resolution path instead of divergent fallbacks.
+- New `reference_recovery.py` module — read-only helper for harness session ID recovery. Keeps transcript-source policy separate from reference resolution.
+- `LaunchResult` and `PrimaryLaunchOutput` carry `continue_chat_id` separately from `continue_ref`. Quit message now shows `meridian --continue <chat-id>` instead of UUID, making session resumption human-friendly.
+- `ResolvedSessionReference` gains `effective_harness_session_id` (any recorded or recovered ID) and `authoritative_harness_session_id` (excludes DETECTED_UNVERIFIED). Continue/fork paths require authoritative recovery; `session log` may use detected IDs for transcript verification.
+
+### Added
 - Spawn state v2: per-spawn `state.json` replaces monolithic `spawns.jsonl` event log. Primary launch drops from ~12s to <1s on large histories. One-time migration runs automatically on first access after upgrade; legacy file archived to `spawns.legacy-v1.jsonl`.
 - Project-scoped agent runtime overrides via `[agents.<name>]` in config files — override model, harness, effort, approval, sandbox, autocompact per agent without editing generated profiles.
 - Canonical launch-parameter compiler (`src/meridian/lib/launch/compiler.py`) as single authority for launch resolution with typed provenance.

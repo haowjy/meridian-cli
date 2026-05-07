@@ -125,6 +125,7 @@ def launch_primary(
             command=preview_context.argv,
             exit_code=0,
             continue_ref=None,
+            continue_chat_id=None,
             warning=warning,
         )
 
@@ -135,6 +136,7 @@ def launch_primary(
         command=outcome.command,
         exit_code=outcome.exit_code,
         continue_ref=continue_ref,
+        continue_chat_id=outcome.chat_id,
         warning=warning,
     )
 

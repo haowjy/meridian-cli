@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.ops.reference_recovery import (
+    RecoveryResult,
+    recover_harness_session_id,
+)
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
@@ -32,12 +36,42 @@ class ResolvedSessionReference:
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     warning: str | None = None
+    recovery: RecoveryResult | None = None
 
     @property
     def missing_harness_session_id(self) -> bool:
-        """True when a tracked reference exists but has no recorded harness session id."""
+        """True when a tracked reference exists but has no harness session id.
 
-        return self.tracked and self.harness_session_id is None
+        Considers authoritative recovery (session_store, spawn_row, primary_meta)
+        but excludes detected_unverified.
+        """
+
+        return self.tracked and self.authoritative_harness_session_id is None
+
+    @property
+    def effective_harness_session_id(self) -> str | None:
+        """Return the harness session id, preferring recorded over recovered."""
+
+        return self.harness_session_id or (
+            self.recovery.harness_session_id if self.recovery is not None else None
+        )
+
+    @property
+    def authoritative_harness_session_id(self) -> str | None:
+        """Return the harness session id, using only authoritative recovery.
+
+        Excludes DETECTED_UNVERIFIED — suitable for continue/fork paths
+        that require verified session identity.
+        """
+
+        if self.harness_session_id:
+            return self.harness_session_id
+        if self.recovery is None:
+            return None
+        from meridian.lib.ops.reference_recovery import RecoveryProvenance
+        if self.recovery.provenance == RecoveryProvenance.DETECTED_UNVERIFIED:
+            return None
+        return self.recovery.harness_session_id
 
 
 def _normalize_optional(value: str | None) -> str | None:
@@ -207,6 +241,26 @@ def _resolve_harness_session_reference(
     )
 
 
+def _try_recover(
+    project_root: Path,
+    runtime_root: Path,
+    ref: str,
+    recorded_harness_session_id: str | None,
+    recorded_harness: str | None,
+) -> RecoveryResult | None:
+    """Attempt recovery only when recorded ID is missing."""
+
+    if recorded_harness_session_id and recorded_harness_session_id.strip():
+        return None
+    return recover_harness_session_id(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        ref=ref,
+        recorded_harness_session_id=recorded_harness_session_id,
+        recorded_harness=recorded_harness,
+    )
+
+
 def resolve_session_reference(
     project_root: Path,
     ref: str,
@@ -221,9 +275,31 @@ def resolve_session_reference(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     if _SPAWN_REF_RE.fullmatch(normalized):
-        return _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
+        result = _resolve_spawn_reference(resolved_runtime_root, normalized, project_root)
+        if result.missing_harness_session_id:
+            recovery = _try_recover(
+                project_root=project_root,
+                runtime_root=resolved_runtime_root,
+                ref=normalized,
+                recorded_harness_session_id=result.harness_session_id,
+                recorded_harness=result.harness,
+            )
+            if recovery is not None:
+                return replace(result, recovery=recovery)
+        return result
     if _CHAT_REF_RE.fullmatch(normalized):
-        return _resolve_chat_reference(resolved_runtime_root, normalized, project_root)
+        result = _resolve_chat_reference(resolved_runtime_root, normalized, project_root)
+        if result.missing_harness_session_id:
+            recovery = _try_recover(
+                project_root=project_root,
+                runtime_root=resolved_runtime_root,
+                ref=normalized,
+                recorded_harness_session_id=result.harness_session_id,
+                recorded_harness=result.harness,
+            )
+            if recovery is not None:
+                return replace(result, recovery=recovery)
+        return result
     return _resolve_harness_session_reference(resolved_runtime_root, normalized, project_root)
 
 

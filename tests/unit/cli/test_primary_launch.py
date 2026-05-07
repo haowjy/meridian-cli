@@ -20,9 +20,27 @@ def _resolved_reference(**overrides: object) -> object:
         "source_claude_config_dir": "/tmp/source-claude-config",
         "tracked": True,
         "warning": None,
+        "recovery": None,
     }
     payload.update(overrides)
-    return type("Resolved", (), payload)()
+    obj = type("Resolved", (), payload)()
+    recorded = getattr(obj, "harness_session_id", None)
+    recovery = getattr(obj, "recovery", None)
+    if recorded:
+        obj.effective_harness_session_id = recorded
+        obj.authoritative_harness_session_id = recorded
+    elif recovery is not None:
+        recovery_id = getattr(recovery, "harness_session_id", None)
+        obj.effective_harness_session_id = recovery_id
+        provenance = getattr(recovery, "provenance", None)
+        if provenance is not None and str(provenance) == "detected_unverified":
+            obj.authoritative_harness_session_id = None
+        else:
+            obj.authoritative_harness_session_id = recovery_id
+    else:
+        obj.effective_harness_session_id = None
+        obj.authoritative_harness_session_id = None
+    return obj
 
 
 def test_run_primary_launch_rejects_continue_cross_harness(

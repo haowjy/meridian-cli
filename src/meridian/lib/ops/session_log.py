@@ -600,34 +600,25 @@ def _resolve_from_chat_id(
         normalized_harness = primary_spawn.harness.strip() or None
 
     normalized_session_id = (
-        resolved.harness_session_id.strip() if resolved.harness_session_id is not None else None
+        resolved.effective_harness_session_id.strip()
+        if resolved.effective_harness_session_id is not None
+        else None
     )
-    should_persist_primary_session_id = False
-    if resolved.missing_harness_session_id:
+    should_persist = resolved.recovery is not None
+
+    if normalized_session_id is None:
         if primary_spawn is None:
             raise ValueError(_primary_transcript_unavailable_message(chat_id))
-        primary_spawn_session_id = (primary_spawn.harness_session_id or "").strip()
-        if primary_spawn_session_id:
-            normalized_session_id = primary_spawn_session_id
-            should_persist_primary_session_id = True
-        else:
-            primary_meta_session_id = read_primary_harness_session_id(
-                runtime_root, primary_spawn.id
-            )
-            if primary_meta_session_id is not None:
-                normalized_session_id = primary_meta_session_id
-                should_persist_primary_session_id = True
-            else:
-                normalized_session_id = _detect_primary_harness_session_id(
-                    project_root=project_root,
-                    spawn_row=primary_spawn,
-                    harness_hint=normalized_harness,
-                )
-                should_persist_primary_session_id = normalized_session_id is not None
+        normalized_session_id = _detect_primary_harness_session_id(
+            project_root=project_root,
+            spawn_row=primary_spawn,
+            harness_hint=normalized_harness,
+        )
+        should_persist = normalized_session_id is not None
         if normalized_session_id is None:
             raise ValueError(_primary_transcript_unavailable_message(chat_id))
 
-    if normalized_session_id is None or not normalized_session_id.strip():
+    if not normalized_session_id.strip():
         raise ValueError(f"Chat '{chat_id}' not found")
 
     try:
@@ -662,7 +653,7 @@ def _resolve_from_chat_id(
         )
         return resolved_target
 
-    if should_persist_primary_session_id and primary_spawn is not None:
+    if should_persist and primary_spawn is not None:
         _persist_primary_harness_session_id(
             runtime_root=runtime_root,
             spawn_id=primary_spawn.id,

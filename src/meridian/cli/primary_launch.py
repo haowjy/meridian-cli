@@ -23,6 +23,7 @@ class PrimaryLaunchOutput(BaseModel):
     exit_code: int
     command: tuple[str, ...] = ()
     continue_ref: str | None = None
+    continue_chat_id: str | None = None
     forked_from: str | None = None
     resume_command: str | None = None
     warning: str | None = None
@@ -87,7 +88,7 @@ def resolve_session_target(
 
     resolved = resolve_session_reference(project_root, normalized)
     return _ResolvedSessionTarget(
-        harness_session_id=resolved.harness_session_id,
+        harness_session_id=resolved.authoritative_harness_session_id,
         chat_id=resolved.source_chat_id,
         harness=resolved.harness,
         source_model=resolved.source_model,
@@ -296,16 +297,22 @@ def run_primary_launch(
         harness_registry=harness_registry,
     )
 
+    continue_chat_id = getattr(launch_result, "continue_chat_id", None)
     return PrimaryLaunchOutput(
         message=_result_message(exit_code=launch_result.exit_code),
         exit_code=launch_result.exit_code,
         command=launch_result.command if dry_run else (),
         continue_ref=launch_result.continue_ref,
+        continue_chat_id=continue_chat_id,
         forked_from=output_forked_from,
         resume_command=(
-            f"meridian --continue {launch_result.continue_ref}"
-            if launch_result.continue_ref is not None
-            else None
+            f"meridian --continue {continue_chat_id}"
+            if continue_chat_id is not None
+            else (
+                f"meridian --continue {launch_result.continue_ref}"
+                if launch_result.continue_ref is not None
+                else None
+            )
         ),
         warning=_merge_warnings(continue_warning, launch_result.warning),
     )
