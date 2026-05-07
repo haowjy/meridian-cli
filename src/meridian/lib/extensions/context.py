@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.service_context import (
+    ApplicationContext,
+    ApplicationServices,
+    ExtensionEntryPoint,
+)
+
 if TYPE_CHECKING:
+    from meridian.lib.config.settings import MeridianConfig
+    from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.extensions.types import ExtensionSurface
 
 
@@ -135,6 +143,31 @@ class ExtensionCommandServices:
 
     runtime_root: Path | None = None
     meridian_dir: Path | None = None
+    application: ExtensionEntryPoint = field(default_factory=ExtensionEntryPoint)
+
+
+def build_extension_command_services(
+    *,
+    project_root: Path | None = None,
+    runtime_root: Path | None = None,
+    config: MeridianConfig | None = None,
+    lifecycle: SpawnLifecycleService | None = None,
+    meridian_dir: Path | None = None,
+) -> ExtensionCommandServices:
+    """Build extension services with the shared application seam attached."""
+
+    return ExtensionCommandServices(
+        runtime_root=runtime_root,
+        meridian_dir=meridian_dir,
+        application=ExtensionEntryPoint(
+            context=ApplicationContext(
+                project_root=project_root,
+                runtime_root=runtime_root,
+                config=config,
+            ),
+            services=ApplicationServices(lifecycle=lifecycle),
+        ),
+    )
 
 
 __all__ = [
@@ -143,4 +176,5 @@ __all__ = [
     "ExtensionCommandServices",
     "ExtensionInvocationContext",
     "ExtensionInvocationContextBuilder",
+    "build_extension_command_services",
 ]

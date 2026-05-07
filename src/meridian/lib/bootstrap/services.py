@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meridian.lib.bootstrap import config as bootstrap_config
 from meridian.lib.bootstrap import project_state, runtime_state
 from meridian.lib.bootstrap.project_state import ProjectLayoutSnapshot
 from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.service_context import (
+    ApplicationContext,
+    ApplicationServices,
+    ChatEntryPoint,
+    SpawnEntryPoint,
+)
+
+if TYPE_CHECKING:
+    from meridian.lib.core.lifecycle import SpawnLifecycleService
 
 
 @dataclass(frozen=True)
@@ -34,6 +44,18 @@ class RuntimeWriteContext(RuntimeReadContext):
     migration_ran: bool = True
     project_dirs_ensured: bool = True
     runtime_dirs_ensured: bool = True
+
+
+def _application_context_from_runtime(
+    prepared: RuntimeReadContext | RuntimeWriteContext,
+) -> ApplicationContext:
+    """Project bootstrap state onto the shared application context carrier."""
+
+    return ApplicationContext(
+        project_root=prepared.project_root,
+        runtime_root=prepared.runtime_root,
+        config=prepared.config,
+    )
 
 
 def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
@@ -82,4 +104,30 @@ def prepare_for_runtime_write(project_root: Path) -> RuntimeWriteContext:
         layout=project_write_context.layout,
         config=project_write_context.config,
         runtime_root=runtime_root,
+    )
+
+
+def build_spawn_entrypoint(
+    prepared: RuntimeReadContext | RuntimeWriteContext,
+    *,
+    lifecycle: SpawnLifecycleService | None = None,
+) -> SpawnEntryPoint:
+    """Build the minimal shared carrier for spawn entrypoints."""
+
+    return SpawnEntryPoint(
+        context=_application_context_from_runtime(prepared),
+        services=ApplicationServices(lifecycle=lifecycle),
+    )
+
+
+def build_chat_entrypoint(
+    prepared: RuntimeReadContext | RuntimeWriteContext,
+    *,
+    lifecycle: SpawnLifecycleService | None = None,
+) -> ChatEntryPoint:
+    """Build the minimal shared carrier for chat entrypoints."""
+
+    return ChatEntryPoint(
+        context=_application_context_from_runtime(prepared),
+        services=ApplicationServices(lifecycle=lifecycle),
     )
