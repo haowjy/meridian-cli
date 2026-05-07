@@ -297,53 +297,56 @@ def test_main_does_not_create_segment_telemetry_when_project_root_never_resolves
 
 
 @pytest.mark.parametrize(
-    "argv",
+    ("argv", "expected_output"),
     [
-        ["chat", "ls"],
-        ["chat", "show", "c1"],
-        ["chat", "log", "c1"],
-        ["chat", "close", "c1"],
+        (["chat", "ls"], "chat_id"),
+        (["chat", "show", "c1"], "chat_id: c1"),
+        (["chat", "log", "c1"], '"type": "chat.created"'),
+        (["chat", "close", "c1"], "closed c1"),
     ],
 )
-def test_main_rejects_nested_chat_management_commands_before_chat_runtime_preparation(
+def test_main_allows_nested_chat_management_commands(
     argv: list[str],
+    expected_output: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    calls: list[str] = []
+    runtime_reads: list[Path] = []
+    request_calls: list[tuple[str, str, str | None]] = []
 
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(
         "meridian.cli.chat_cmd.prepare_for_runtime_read",
-        lambda *_args, **_kwargs: calls.append("read"),
+        lambda project_root: runtime_reads.append(project_root),
     )
     monkeypatch.setattr(
-        "meridian.cli.chat_cmd.prepare_for_runtime_write",
-        lambda *_args, **_kwargs: calls.append("write"),
-    )
-    monkeypatch.setattr(
-        "meridian.cli.chat_cmd.get_user_home",
-        lambda: (_ for _ in ()).throw(AssertionError("nested chat should fail before user-home")),
-    )
-    monkeypatch.setattr(
-        "meridian.lib.bootstrap.services.prepare_for_runtime_read",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("nested chat should not bootstrap runtime state")
-        ),
-    )
-    monkeypatch.setattr(
-        "meridian.lib.bootstrap.services.prepare_for_runtime_write",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("nested chat should not bootstrap runtime state")
-        ),
+        "meridian.cli.chat_cmd.resolve_project_root",
+        lambda: Path("/tmp/project"),
     )
 
+    def _fake_request_json(method: str, path: str, *, url: str | None) -> dict[str, object]:
+        request_calls.append((method, path, url))
+        if path == "/chat":
+            return {"chats": [{"chat_id": "c1", "state": "idle", "created_at": "now"}]}
+        if path == "/chat/c1/state":
+            return {"chat_id": "c1", "state": "idle"}
+        if path.startswith("/chat/c1/events"):
+            return {
+                "events": [{"seq": 1, "type": "chat.created", "timestamp": "2026-05-07T00:00:00Z"}]
+            }
+        if path == "/chat/c1/close":
+            return {"status": "accepted"}
+        raise AssertionError(f"unexpected request {method} {path}")
+
+    monkeypatch.setattr("meridian.cli.chat_cmd._request_json", _fake_request_json)
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(argv)
 
-    assert exc_info.value.code == 1
-    assert calls == []
-    assert "root Meridian process" in capsys.readouterr().err
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert expected_output in output
+    assert runtime_reads == [Path("/tmp/project")]
+    assert len(request_calls) >= 1
 
 
 def test_main_allows_nested_chat_launch(monkeypatch: pytest.MonkeyPatch) -> None:

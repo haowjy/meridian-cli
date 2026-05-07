@@ -108,7 +108,7 @@ Expected:
 
 ## 3. Agent + skills + approval: `-a reviewer --skills md-validation --approval auto`
 
-Use a fresh runtime root and a top-level shell:
+Use a fresh runtime root:
 
 ```bash
 export MERIDIAN_HOME="$(mktemp -d)"

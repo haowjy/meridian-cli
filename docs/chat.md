@@ -102,10 +102,9 @@ override discovery.
 
 ### Usage context
 
-`meridian chat` and all its subcommands (`ls`, `show`, `log`, `close`) are for
-**root-process use only**. Running them inside a spawn (where `MERIDIAN_DEPTH > 0`)
-exits immediately with a clear error. Start the chat server from your terminal or
-a top-level process, not from within an agent.
+`meridian chat` and its management subcommands (`ls`, `show`, `log`, `close`) can run
+from both top-level shells and nested/delegated Meridian executions (`MERIDIAN_DEPTH > 0`).
+Management commands still use normal runtime discovery and argument validation.
 
 ---
 

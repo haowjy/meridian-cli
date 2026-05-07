@@ -62,21 +62,6 @@ def register_chat_command(app: App) -> None:
     chat_app.command(name="close")(_chat_close)
 
 
-def _require_root_process() -> None:
-    """Reject chat commands in nested execution before touching user-home state."""
-    from meridian.lib.core.depth import is_nested_meridian_process
-
-    if is_nested_meridian_process():
-        import sys
-
-        print(
-            "error: meridian chat requires a root Meridian process. "
-            "Chat commands cannot run inside a nested spawn or delegated execution.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-
-
 def _chat(
     model: Annotated[
         str | None,
@@ -205,7 +190,6 @@ def _chat(
 def _chat_ls(
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    _require_root_process()
     prepare_for_runtime_read(resolve_project_root())
     response = _request_json("GET", "/chat", url=url)
     rows = response.get("chats", [])
@@ -218,7 +202,6 @@ def _chat_show(
     chat_id: Annotated[str, Parameter(help="Chat id to inspect.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    _require_root_process()
     prepare_for_runtime_read(resolve_project_root())
     state = _request_json("GET", f"/chat/{chat_id}/state", url=url)
     events = _request_json("GET", f"/chat/{chat_id}/events?last=5", url=url)
@@ -241,7 +224,6 @@ def _chat_log(
         Parameter(name="--follow", help="Follow live events over WebSocket."),
     ] = False,
 ) -> None:
-    _require_root_process()
     prepare_for_runtime_read(resolve_project_root())
     query = f"?last={last}" if last is not None else ""
     response = _request_json("GET", f"/chat/{chat_id}/events{query}", url=url)
@@ -257,7 +239,6 @@ def _chat_close(
     chat_id: Annotated[str, Parameter(help="Chat id to close.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    _require_root_process()
     prepare_for_runtime_read(resolve_project_root())
     response = _request_json("POST", f"/chat/{chat_id}/close", url=url)
     status = response.get("status", "unknown")
