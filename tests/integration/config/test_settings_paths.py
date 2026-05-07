@@ -4,9 +4,13 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import (
+    resolve_project_root,
+    resolve_project_root_resolution,
+)
 from meridian.lib.config.settings import load_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
+from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
 
 
 def test_resolve_project_root_prefers_mars_skills_ancestor(
@@ -47,6 +51,40 @@ def test_resolve_project_root_stops_at_git_boundary(
     monkeypatch.chdir(nested)
 
     assert resolve_project_root() == project_root.resolve()
+
+
+def test_resolve_project_root_prefers_meridian_toml_in_plain_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "plain-project"
+    nested = project_root / "src" / "feature"
+    project_root.mkdir()
+    nested.mkdir(parents=True)
+    (project_root / "meridian.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(nested)
+
+    resolution = resolve_project_root_resolution()
+
+    assert resolution.project_root == project_root.resolve()
+    assert resolution.execution_cwd == nested.resolve()
+    assert resolution.source == "meridian-toml"
+
+
+def test_resolve_project_root_prefers_project_state_in_plain_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "plain-project"
+    nested = project_root / "pkg" / "module"
+    (project_root / ".meridian").mkdir(parents=True)
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+
+    resolution = resolve_project_root_resolution()
+
+    assert resolution.project_root == project_root.resolve()
+    assert resolution.source == "project-state"
 
 
 def test_load_config_reads_meridian_toml_at_project_root(tmp_path: Path) -> None:
@@ -169,3 +207,38 @@ def test_resolve_project_config_state_reports_present_when_meridian_toml_exists(
     assert state.status == "present"
     assert state.path == config_path.resolve()
     assert state.write_path == config_path.resolve()
+
+
+def test_project_authority_keeps_nested_plain_dir_root_and_paths(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "plain-project"
+    nested = project_root / "tools" / "scripts"
+    project_root.mkdir()
+    nested.mkdir(parents=True)
+    (project_root / "meridian.local.toml").write_text("", encoding="utf-8")
+
+    authority = resolve_project_authority(execution_cwd=nested)
+
+    assert authority.project_root == project_root.resolve()
+    assert authority.execution_cwd == nested.resolve()
+    assert authority.project_root_source == "meridian-local-toml"
+    assert authority.project_config_paths.project_root == project_root.resolve()
+    assert authority.project_config_paths.execution_cwd == nested.resolve()
+
+
+def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directory(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "plain-project"
+    nested = project_root / "docs"
+    runtime_root = project_root / ".meridian"
+    nested.mkdir(parents=True)
+    runtime_root.mkdir()
+    (runtime_root / "spawns.jsonl").write_text("", encoding="utf-8")
+
+    authority = resolve_runtime_authority_for_read(execution_cwd=nested)
+
+    assert authority.project_root == project_root.resolve()
+    assert authority.runtime_root == runtime_root.resolve()
+    assert authority.runtime_root_source in {"project-state", "project-state-fallback"}

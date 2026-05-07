@@ -36,6 +36,8 @@ def test_prepare_for_project_read_does_not_create_state(tmp_path: Path) -> None:
 
     result = prepare_for_project_read(project_root)
 
+    assert result.authority.project_root == project_root
+    assert result.authority.project_root_source == "explicit"
     assert result.project_root == project_root
     assert result.layout.project_state_dir == project_root / ".meridian"
     assert not (project_root / ".meridian").exists()
@@ -48,6 +50,9 @@ def test_prepare_for_runtime_read_returns_none_without_uuid_or_repo_state(
 
     result = prepare_for_runtime_read(project_root)
 
+    assert result.authority.project_root == project_root
+    assert result.authority.runtime_root is None
+    assert result.authority.runtime_root_source == "unresolved"
     assert result.runtime_root is None
     assert not (project_root / ".meridian").exists()
 
@@ -62,6 +67,8 @@ def test_prepare_for_runtime_read_falls_back_to_existing_repo_local_state(
 
     result = prepare_for_runtime_read(project_root)
 
+    assert result.authority.runtime_root == repo_state
+    assert result.authority.runtime_root_source == "project-state"
     assert result.runtime_root == repo_state
     assert not (repo_state / "id").exists()
 
@@ -73,6 +80,7 @@ def test_prepare_for_project_write_runs_project_setup_without_runtime_root(
 
     result = prepare_for_project_write(project_root)
 
+    assert result.authority.project_root == project_root
     assert result.migration_ran is True
     assert (project_root / ".meridian" / ".gitignore").is_file()
     assert (project_root / ".meridian" / "kb").is_dir()
@@ -90,6 +98,8 @@ def test_prepare_for_runtime_write_creates_uuid_and_runtime_dirs(
 
     project_uuid = get_project_uuid(project_root / ".meridian")
     assert project_uuid is not None
+    assert result.authority.runtime_root == result.runtime_root
+    assert result.authority.runtime_root_source == "user-home-project"
     assert result.runtime_root == tmp_path / "user-home" / "projects" / project_uuid
     assert result.runtime_root.is_dir()
     assert (result.runtime_root / "spawns").is_dir()

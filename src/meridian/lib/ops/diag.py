@@ -6,7 +6,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
@@ -24,7 +23,7 @@ from meridian.lib.ops.pruning import (
     scan_stale_claude_overlays,
     scan_stale_spawn_artifacts,
 )
-from meridian.lib.ops.runtime import resolve_runtime_root
+from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_write
 from meridian.lib.state import spawn_store
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.user_paths import get_user_home
@@ -61,6 +60,9 @@ class DoctorOutput(BaseModel):
 
     ok: bool
     project_root: str
+    project_root_source: str
+    runtime_root: str
+    runtime_root_source: str
     runs_checked: int
     agents_dir: str
     skills_dir: str
@@ -82,6 +84,9 @@ class DoctorOutput(BaseModel):
         pairs: list[tuple[str, str | None]] = [
             ("ok", status),
             ("project_root", self.project_root),
+            ("project_root_source", self.project_root_source),
+            ("runtime_root", self.runtime_root),
+            ("runtime_root_source", self.runtime_root_source),
             ("runs_checked", str(self.runs_checked)),
             ("agents_dir", self.agents_dir),
             ("skills_dir", self.skills_dir),
@@ -131,14 +136,19 @@ def _telemetry_cleanup_stats(stats: RetentionStats) -> TelemetryCleanupStats:
 
 
 def _repair_stale_session_locks(project_root: Path) -> int:
-    cleanup = cleanup_stale_sessions(resolve_runtime_root(project_root))
+    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
+    if runtime_root is None:
+        raise ValueError("Doctor lock repair requires a runtime root.")
+    cleanup = cleanup_stale_sessions(runtime_root)
     return len(cleanup.cleaned_ids)
 
 
 def _repair_orphan_runs(project_root: Path) -> int:
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = resolve_runtime_root(project_root)
+    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
+    if runtime_root is None:
+        raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(runtime_root)
     running_before = sum(1 for s in spawns if is_active_spawn_status(s.status))
     reconciled = reconcile_spawns(runtime_root, spawns)
@@ -147,13 +157,14 @@ def _repair_orphan_runs(project_root: Path) -> int:
 
 
 def doctor_sync(payload: DoctorInput) -> DoctorOutput:
-    explicit_root = (
-        Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-    )
-    surface = build_config_surface(resolve_project_root(explicit_root))
+    authority = resolve_project_authority(payload.project_root)
+    surface = build_config_surface(authority)
     project_root = surface.project_root
     ensure_runtime_state_bootstrap_sync(project_root)
-    runtime_root = resolve_runtime_root(project_root)
+    runtime_authority = resolve_runtime_authority_for_write(project_root)
+    runtime_root = runtime_authority.runtime_root
+    if runtime_root is None:
+        raise ValueError("Doctor runtime authority did not resolve a runtime root.")
     retention_days = surface.resolved_config.state.retention_days
     now = time.time()
 
@@ -369,6 +380,9 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     return DoctorOutput(
         ok=not warnings,
         project_root=project_root.as_posix(),
+        project_root_source=surface.authority.project_root_source,
+        runtime_root=runtime_root.as_posix(),
+        runtime_root_source=runtime_authority.runtime_root_source or "unresolved",
         runs_checked=len(spawns),
         agents_dir=agents_dir.as_posix(),
         skills_dir=skills_dir.as_posix(),

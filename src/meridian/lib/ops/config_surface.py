@@ -24,6 +24,7 @@ from meridian.lib.harness.workspace_projection import (
     WorkspaceApplicability,
     project_workspace_roots,
 )
+from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot, resolve_runtime_authority_for_read
 
 
 class ConfigSurfaceWorkspaceRoots(BaseModel):
@@ -102,6 +103,7 @@ class ConfigSurface(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    authority: RuntimeAuthoritySnapshot
     project_root: Path
     project_config: ProjectConfigState
     user_config_path: Path | None
@@ -111,10 +113,15 @@ class ConfigSurface(BaseModel):
     warning: str | None = None
 
 
-def build_config_surface(project_root: Path) -> ConfigSurface:
+def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> ConfigSurface:
     """Build shared config inspection state for one resolved repository root."""
 
-    resolved_root = project_root.expanduser().resolve()
+    authority = (
+        project_root
+        if isinstance(project_root, RuntimeAuthoritySnapshot)
+        else resolve_runtime_authority_for_read(project_root)
+    )
+    resolved_root = authority.project_root
     user_config_path = resolve_user_config_path(None)
     warning: str | None = None
     if not resolved_root.exists():
@@ -122,6 +129,7 @@ def build_config_surface(project_root: Path) -> ConfigSurface:
     workspace_snapshot = resolve_workspace_snapshot(resolved_root)
 
     return ConfigSurface(
+        authority=authority,
         project_root=resolved_root,
         project_config=resolve_project_config_state(resolved_root),
         user_config_path=user_config_path,

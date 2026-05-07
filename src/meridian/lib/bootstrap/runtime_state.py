@@ -31,7 +31,7 @@ def resolve_runtime_root_for_read(project_root: Path) -> Path | None:
     project_state_dir = resolve_project_paths(project_root).root_dir
     runtime_root = resolve_project_runtime_root_or_none(project_root)
     if runtime_root is None:
-        return project_state_dir if project_state_dir.exists() else None
+        return project_state_dir if _root_has_runtime_state(project_state_dir) else None
 
     if runtime_root == project_state_dir:
         return runtime_root

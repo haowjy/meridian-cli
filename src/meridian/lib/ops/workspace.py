@@ -8,11 +8,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.workspace import parse_workspace_config
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.ops.runtime import async_from_sync, resolve_project_authority
 from meridian.lib.state.atomic import atomic_write_text
 
 _WORKSPACE_TEMPLATE = """# Workspace topology — local path overrides and additions.
@@ -148,11 +146,9 @@ def _ensure_local_gitignore_entries(
 
 
 def workspace_init_sync(payload: WorkspaceInitInput) -> WorkspaceInitOutput:
-    explicit_root = (
-        Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-    )
-    project_root = resolve_project_root(explicit_root)
-    project_paths = resolve_project_config_paths(project_root=project_root)
+    authority = resolve_project_authority(payload.project_root)
+    project_root = authority.project_root
+    project_paths = authority.project_config_paths
 
     workspace_path = project_paths.meridian_local_toml
     created = False
@@ -284,11 +280,8 @@ def _disabled_roots_warning(count: int) -> str:
 
 
 def workspace_migrate_sync(payload: WorkspaceMigrateInput) -> WorkspaceMigrateOutput:
-    explicit_root = (
-        Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-    )
-    project_root = resolve_project_root(explicit_root)
-    project_paths = resolve_project_config_paths(project_root=project_root)
+    authority = resolve_project_authority(payload.project_root)
+    project_paths = authority.project_config_paths
 
     legacy_path = project_paths.workspace_local_toml
     if not legacy_path.exists():
