@@ -149,7 +149,9 @@ def _extract_codex_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUs
         )
         # Real Codex events: thread/tokenUsage/updated with tokenUsage.total (camelCase)
         if event_type == "thread.tokenusage.updated":
-            token_usage_obj = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
+            token_usage_obj = payload.get("tokenUsage") or _nested_get(
+                payload, "payload", "tokenUsage"
+            )
             if isinstance(token_usage_obj, dict):
                 token_usage = cast("dict[str, object]", token_usage_obj)
                 total_obj = token_usage.get("total")
