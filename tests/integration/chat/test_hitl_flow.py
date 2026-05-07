@@ -156,7 +156,10 @@ def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> 
     assert approved == {"status": "accepted", "error": None}
     assert handle.requests == [("r1", "accept", {"x": 1})]
     relevant_events = [
-        event for event in events if event["type"] in {"chat.started", "request.opened", "request.resolved"}
+        event for event in events
+        if event["type"] in {
+            "chat.started", "request.opened", "request.resolved"
+        }
     ]
     assert [event["type"] for event in relevant_events] == [
         "chat.started",

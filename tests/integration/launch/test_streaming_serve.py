@@ -40,6 +40,7 @@ def _fake_launch_context(
             "EXTRA_ENV": "present",
         },
         spec=SimpleNamespace(name="fake-spec"),
+        run_params=SimpleNamespace(appended_system_prompt=system or ""),
     )
 
 

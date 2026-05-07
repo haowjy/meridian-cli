@@ -198,7 +198,10 @@ def test_two_clients_receive_same_live_stream_and_disconnecting_one_does_not_aff
             trailing = first.receive_json()
 
     relevant_events = [
-        event for event in first_events if event["type"] in {"request.resolved", "user_input.resolved"}
+        event for event in first_events
+        if event["type"] in {
+            "request.resolved", "user_input.resolved"
+        }
     ]
     assert [event["type"] for event in relevant_events] == [
         "request.resolved",
