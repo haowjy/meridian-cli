@@ -130,6 +130,7 @@ Meridian classifies a spawn as orphaned when its runner process is gone and ther
 
 - **`orphan_run`** — the spawn record was `status=running` (or `queued`) when reaped. The runner died before completing post-exit work; because output drain and report extraction happen while status is still `running`, a crash during drain also produces this error. The spawn likely produced partial or no output.
 - **`orphan_finalization`** — the spawn record was `status=finalizing` when reaped, meaning the runner completed all post-exit work but crashed in the narrow window before persisting the terminal state. The spawn is likely to have a usable `report.md` on disk even though it was classified as failed.
+- **`orphan_primary`** — a managed Codex/OpenCode primary lost its Meridian launcher/wrapper. Passive reconciliation records the failed state but does not signal managed-primary runtime children such as backend app servers or attached TUIs. Use `meridian spawn cancel ID` when you explicitly want Meridian to clean up tracked leftovers.
 
 To detect and reconcile orphaned state, run:
 
@@ -232,11 +233,11 @@ Once migration completes, `spawns.legacy-v1.jsonl` is safe to delete if you want
 
 ## Claude session isolation
 
-Claude stores per-session transcript files under `~/.claude/projects/<project-slug>/`. Meridian gives each Claude session (primary session or child spawn) its own isolated config directory — an **overlay** — so its `projects/` directory starts empty and concurrent sessions can't bleed conversation context into each other.
+Claude stores per-session transcript files under the configured Claude config root (default `~/.claude`) in `projects/<project-slug>/`. Meridian gives each Claude session (primary session or child spawn) its own isolated config directory — an **overlay** — so its `projects/` directory starts empty and concurrent sessions can't bleed conversation context into each other.
 
 **What the overlay contains**
 
-The overlay lives inside Meridian's runtime state at `~/.meridian/projects/<uuid>/claude-config/<spawn_id>/` (POSIX) or `%LOCALAPPDATA%\meridian\projects\<uuid>\claude-config\<spawn_id>\` (Windows). It mirrors most of `~/.claude/` — credentials, settings, extensions — but gives Claude a fresh empty `projects/` directory for each Claude session. Mutable user-state files (`.claude.json`, `statsig`, `memory`, `cached_preferences`, `todos`) are copied in; read-only entries are linked or copied depending on platform (for example, symlinks on POSIX). Overlay directories are internal implementation state; don't read or modify them directly.
+The overlay lives inside Meridian's runtime state at `~/.meridian/projects/<uuid>/claude-config/<spawn_id>/` (POSIX) or `%LOCALAPPDATA%\meridian\projects\<uuid>\claude-config\<spawn_id>\` (Windows). It mirrors most of the configured Claude config root (default `~/.claude`) — credentials, settings, extensions — but gives Claude a fresh empty `projects/` directory for each Claude session. Mutable user-state files (`.claude.json`, `.credentials.json`, `statsig`, `memory`, `cached_preferences`, `todos`) are copied in; read-only entries are linked or copied depending on platform (for example, symlinks on POSIX). Overlay directories are internal implementation state; don't read or modify them directly.
 
 **Primary and child spawns**
 
@@ -246,7 +247,7 @@ When a primary session or child spawn uses `--continue`, `--fork`, or equivalent
 
 **Session transcripts after normal exit**
 
-When a primary session or child spawn exits normally, Meridian attempts to materialize its session transcript files from the overlay's `projects/` directory into the canonical Claude `projects/` tree (usually `~/.claude/projects/`). This means conversations from Meridian-managed Claude sessions usually appear in your regular Claude history after they complete. After that best-effort materialization step, Meridian removes the overlay immediately on normal completion. `doctor --prune` only cleans up stale/crash-orphaned overlays left behind when normal cleanup did not finish.
+When a primary session or child spawn exits normally, Meridian attempts to materialize its session transcript files from the overlay's `projects/` directory into the canonical Claude `projects/` tree under the configured Claude config root (default `~/.claude/projects/`). This means conversations from Meridian-managed Claude sessions usually appear in your regular Claude history after they complete. Meridian also preserves selected auth/config files (`.claude.json` and `.credentials.json`) back to the durable Claude config root so overlay-side login or token refresh changes are not discarded. This does not repair already-invalid durable Claude credentials; if raw `claude` reports `401 Invalid authentication credentials`, re-authenticate with Claude directly first. After these best-effort materialization steps, Meridian removes the overlay immediately on normal completion. `doctor --prune` only cleans up stale/crash-orphaned overlays left behind when normal cleanup did not finish.
 
 **Reading spawn conversations**
 

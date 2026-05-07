@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -355,6 +357,7 @@ class SpawnApplicationService:
         async with lock:
             record = self.require_spawn(spawn_id)
             if self.is_terminal(record.status):
+                self._cleanup_orphan_managed_primary(spawn_id, record)
                 return _cancel_outcome_from_record(str(spawn_id), record, already_terminal=True)
 
             is_finalizing = record.status == "finalizing"
@@ -388,6 +391,36 @@ class SpawnApplicationService:
                     finalizing=terminal is None,
                 )
         raise RuntimeError("unreachable cancel state")
+
+    def _cleanup_orphan_managed_primary(
+        self,
+        spawn_id: SpawnId,
+        record: SpawnRecord,
+    ) -> None:
+        """Best-effort cleanup for terminal managed orphan-primary spawns."""
+        if record.error != "orphan_primary":
+            return
+
+        from meridian.lib.state.managed_primary import terminate_managed_primary_processes
+        from meridian.lib.state.primary_meta import read_primary_metadata
+
+        metadata = read_primary_metadata(self._runtime_root, str(spawn_id))
+        if metadata is not None:
+            if not metadata.managed_backend:
+                return
+            terminate_managed_primary_processes(
+                metadata,
+                started_epoch=_started_at_epoch(record.started_at),
+                include_launcher=False,
+            )
+            return
+
+        if not _is_managed_primary_candidate(record):
+            return
+        _terminate_worker_pid_fallback(
+            record.worker_pid,
+            started_epoch=_started_at_epoch(record.started_at),
+        )
 
     async def _wait_for_terminal(
         self,
@@ -681,6 +714,26 @@ def _coerce_cancel_status(status: str) -> SpawnStatus:
     if status in {"queued", "running", "finalizing", "succeeded", "failed", "cancelled"}:
         return cast("SpawnStatus", status)
     return "failed"
+
+
+def _is_managed_primary_candidate(record: SpawnRecord) -> bool:
+    harness = (record.harness or "").strip().lower()
+    return record.kind == "primary" and harness in {"codex", "opencode"}
+
+
+def _terminate_worker_pid_fallback(
+    worker_pid: int | None,
+    *,
+    started_epoch: float | None,
+) -> None:
+    if worker_pid is None or worker_pid <= 0 or worker_pid == os.getpid():
+        return
+    if not is_process_alive(worker_pid, created_after_epoch=started_epoch):
+        return
+    try:
+        os.kill(worker_pid, signal.SIGTERM)
+    except OSError:
+        return
 
 
 def _started_at_epoch(started_at: str | None) -> float | None:

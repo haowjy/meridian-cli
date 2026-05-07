@@ -495,6 +495,11 @@ def test_cleanup_claude_overlay_uses_overlay_sidecar_materialization_root(
     session_file = overlay_root / "projects" / "slug-a" / "session.jsonl"
     session_file.parent.mkdir(parents=True, exist_ok=True)
     session_file.write_text('{"sessionId":"sidecar"}\n', encoding="utf-8")
+    (overlay_root / ".claude.json").write_text('{"auth":"sidecar"}\n', encoding="utf-8")
+    (overlay_root / ".credentials.json").write_text('{"token":"sidecar"}\n', encoding="utf-8")
+    ambient_root.mkdir(parents=True, exist_ok=True)
+    (ambient_root / ".claude.json").write_text('{"auth":"ambient"}\n', encoding="utf-8")
+    (ambient_root / ".credentials.json").write_text('{"token":"ambient"}\n', encoding="utf-8")
     durable_root.mkdir(parents=True, exist_ok=True)
     metadata_path = overlay_root / ".meridian-overlay.json"
     metadata_path.write_text(
@@ -514,7 +519,15 @@ def test_cleanup_claude_overlay_uses_overlay_sidecar_materialization_root(
     assert (durable_root / "projects" / "slug-a" / "session.jsonl").read_text(
         encoding="utf-8"
     ) == '{"sessionId":"sidecar"}\n'
+    assert (durable_root / ".claude.json").read_text(encoding="utf-8") == '{"auth":"sidecar"}\n'
+    assert (durable_root / ".credentials.json").read_text(encoding="utf-8") == (
+        '{"token":"sidecar"}\n'
+    )
     assert not (ambient_root / "projects" / "slug-a" / "session.jsonl").exists()
+    assert (ambient_root / ".claude.json").read_text(encoding="utf-8") == '{"auth":"ambient"}\n'
+    assert (ambient_root / ".credentials.json").read_text(encoding="utf-8") == (
+        '{"token":"ambient"}\n'
+    )
 
 
 def test_cleanup_claude_overlay_materializes_auth_state_before_delete(

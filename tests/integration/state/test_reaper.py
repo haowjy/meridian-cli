@@ -36,6 +36,9 @@ def _create_spawn(
     *,
     spawn_id: str = "p1",
     status: str = "running",
+    kind: str = "child",
+    harness: str = "codex",
+    worker_pid: int | None = None,
     runner_pid: int | None = 123,
     started_at: str | None = _OLD_STARTED_AT,
 ) -> tuple[Path, str]:
@@ -46,8 +49,10 @@ def _create_spawn(
         chat_id="c1",
         model="gpt-5.4",
         agent="tester",
-        harness="codex",
+        harness=harness,
+        kind=kind,
         prompt="hello",
+        worker_pid=worker_pid,
         status=status,
         runner_pid=runner_pid,
         started_at=started_at,
@@ -98,6 +103,13 @@ def _write_primary_meta(
         + "\n",
         encoding="utf-8",
     )
+    return metadata_path
+
+
+def _write_corrupt_primary_meta(runtime_root: Path, spawn_id: str) -> Path:
+    metadata_path = runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text("{corrupt json", encoding="utf-8")
     return metadata_path
 
 
@@ -315,7 +327,87 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
-    assert sent_signals == [(8882, signal.SIGTERM), (9992, signal.SIGTERM)]
+    assert sent_signals == []
+
+
+@pytest.mark.parametrize("harness", ["codex", "opencode"])
+@pytest.mark.parametrize("corrupt_primary_meta", [False, True])
+def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_skips_worker_sigterm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+    corrupt_primary_meta: bool,
+) -> None:
+    runner_pid = 9101
+    worker_pid = 9102
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        harness=harness,
+        runner_pid=runner_pid,
+        worker_pid=worker_pid,
+        started_at=_OLD_STARTED_AT,
+    )
+    if corrupt_primary_meta:
+        _write_corrupt_primary_meta(runtime_root, spawn_id)
+    record = _get_spawn(runtime_root, spawn_id)
+
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda pid, created_after_epoch=None: pid == worker_pid,
+    )
+    sent_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.os.kill",
+        lambda pid, sig: sent_signals.append((pid, sig)),
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "orphan_primary"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "orphan_primary"
+    assert sent_signals == []
+
+
+def test_reconcile_active_spawn_orphan_primary_diagnostics_include_launcher_alive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner_pid = 9201
+    worker_pid = 9202
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        harness="codex",
+        runner_pid=runner_pid,
+        worker_pid=worker_pid,
+        started_at=_OLD_STARTED_AT,
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda pid, created_after_epoch=None: pid == worker_pid,
+    )
+
+    warnings: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.logger.warning",
+        lambda event, **kwargs: warnings.append((event, kwargs)),
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.error == "orphan_primary"
+    assert warnings
+    event, payload = warnings[-1]
+    assert "Managed primary candidate reconciled without readable metadata" in event
+    assert payload["launcher_alive"] is False
+    assert payload["managed_metadata_readable"] is False
 
 
 def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_recovery(
@@ -545,6 +637,42 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifac
     assert latest.error is None
 
 
+def test_reconcile_active_spawn_child_orphan_terminates_worker_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner_pid = 9301
+    worker_pid = 9302
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="child",
+        harness="codex",
+        runner_pid=runner_pid,
+        worker_pid=worker_pid,
+        started_at=_OLD_STARTED_AT,
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda pid, created_after_epoch=None: pid == worker_pid,
+    )
+    sent_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.os.kill",
+        lambda pid, sig: sent_signals.append((pid, sig)),
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "orphan_run"
+    assert sent_signals == [(worker_pid, signal.SIGTERM)]
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "orphan_run"
+
+
 def _patch_spawn_cancel_runtime_resolution(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -563,6 +691,172 @@ def _patch_spawn_cancel_runtime_resolution(
         "meridian.lib.ops.spawn.api.resolve_spawn_reference",
         lambda _project_root, _spawn_id: spawn_id,
     )
+
+
+def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7301,
+        backend_pid=7302,
+        tui_pid=7303,
+        activity="idle",
+    )
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda pid, created_after_epoch=None: pid in {7302, 7303},
+    )
+    sent_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.os.kill",
+        lambda pid, sig: sent_signals.append((pid, sig)),
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, _get_spawn(runtime_root, spawn_id))
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "orphan_primary"
+    assert sent_signals == []
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+
+    assert output.status == "failed"
+    assert output.exit_code == 1
+    assert output.message == f"Spawn '{spawn_id}' is already failed."
+    assert sent_signals == [(7302, signal.SIGTERM), (7303, signal.SIGTERM)]
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "orphan_primary"
+
+
+@pytest.mark.parametrize("harness", ["codex", "opencode"])
+@pytest.mark.parametrize("corrupt_primary_meta", [False, True])
+def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pid_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+    corrupt_primary_meta: bool,
+) -> None:
+    runner_pid = 9351
+    worker_pid = 9352
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        kind="primary",
+        harness=harness,
+        runner_pid=runner_pid,
+        worker_pid=worker_pid,
+        started_at=_OLD_STARTED_AT,
+    )
+    if corrupt_primary_meta:
+        _write_corrupt_primary_meta(runtime_root, spawn_id)
+
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda pid, created_after_epoch=None: pid == worker_pid,
+    )
+    passive_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.os.kill",
+        lambda pid, sig: passive_signals.append((pid, sig)),
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, _get_spawn(runtime_root, spawn_id))
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 1
+    assert reconciled.error == "orphan_primary"
+    assert passive_signals == []
+
+    explicit_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.is_process_alive",
+        lambda pid, created_after_epoch=None: pid == worker_pid,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.os.kill",
+        lambda pid, sig: explicit_signals.append((pid, sig)),
+    )
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+
+    assert output.status == "failed"
+    assert output.exit_code == 1
+    assert output.message == f"Spawn '{spawn_id}' is already failed."
+    assert explicit_signals == [(worker_pid, signal.SIGTERM)]
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "orphan_primary"
+
+
+def test_cancel_terminal_non_orphan_primary_does_not_terminate_children(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        status="succeeded",
+        runner_pid=None,
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7401,
+        backend_pid=7402,
+        tui_pid=7403,
+        activity="idle",
+    )
+    _patch_spawn_cancel_runtime_resolution(
+        monkeypatch,
+        runtime_root=runtime_root,
+        spawn_id=spawn_id,
+    )
+    sent_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.os.kill",
+        lambda pid, sig: sent_signals.append((pid, sig)),
+    )
+
+    output = spawn_api.spawn_cancel_sync(
+        SpawnCancelInput(
+            spawn_id=spawn_id,
+            project_root=tmp_path.as_posix(),
+        )
+    )
+
+    assert output.status == "succeeded"
+    assert output.exit_code == 1
+    assert output.message == f"Spawn '{spawn_id}' is already succeeded."
+    assert sent_signals == []
 
 
 def test_spawn_cancel_managed_primary_signals_launcher_first(

@@ -62,7 +62,6 @@ class Skip:
 @dataclass(frozen=True)
 class FinalizeFailed:
     error: str
-    terminate_orphan_primary_children: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,6 +171,18 @@ def _has_recent_activity(snapshot: ArtifactSnapshot) -> bool:
     return snapshot.recent_activity_artifact is not None
 
 
+def _is_potential_managed_primary(record: SpawnRecord) -> bool:
+    """Conservative managed-primary fallback identification from spawn state.
+
+    When primary metadata is missing/corrupt we cannot prove whether a Codex or
+    OpenCode primary is managed-backend or black-box, so reconciliation treats
+    these as managed-primary candidates to avoid passive worker/TUI termination.
+    """
+
+    harness = (record.harness or "").strip().lower()
+    return record.kind == "primary" and harness in {"codex", "opencode"}
+
+
 def decide_generic_reconciliation(
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
@@ -232,7 +243,78 @@ def decide_reconciliation(
             durable_report_completion=generic_snapshot.durable_report_completion,
         )
 
-    return decide_generic_reconciliation(record, generic_snapshot, now)
+    generic_decision = decide_generic_reconciliation(record, generic_snapshot, now)
+    if (
+        _is_potential_managed_primary(record)
+        and isinstance(generic_decision, FinalizeFailed)
+        and generic_decision.error in {"missing_runner_pid", "orphan_run"}
+    ):
+        return FinalizeFailed(error="orphan_primary")
+    return generic_decision
+
+
+def _log_orphan_primary_diagnostics(
+    record: SpawnRecord,
+    snapshot: ArtifactSnapshot,
+    managed_snapshot: ManagedPrimarySnapshot | None,
+) -> None:
+    if managed_snapshot is not None:
+        metadata = managed_snapshot.metadata
+        launcher_pid = metadata.launcher_pid
+        launcher_alive = (
+            managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
+        )
+        backend_alive = (
+            is_process_alive(
+                metadata.backend_pid,
+                created_after_epoch=managed_snapshot.started_epoch,
+            )
+            if metadata.backend_pid is not None
+            else None
+        )
+        tui_alive = (
+            is_process_alive(
+                metadata.tui_pid,
+                created_after_epoch=managed_snapshot.started_epoch,
+            )
+            if metadata.tui_pid is not None
+            else None
+        )
+        logger.warning(
+            "Managed primary launcher dead; reconciler did not terminate tracked children.",
+            spawn_id=record.id,
+            managed_metadata_readable=True,
+            launcher_pid=launcher_pid,
+            launcher_alive=launcher_alive,
+            backend_pid=metadata.backend_pid,
+            backend_alive=backend_alive,
+            tui_pid=metadata.tui_pid,
+            tui_alive=tui_alive,
+            activity=metadata.activity,
+        )
+        return
+
+    launcher_pid = (
+        record.runner_pid
+        if record.runner_pid is not None and record.runner_pid > 0
+        else None
+    )
+    launcher_alive = snapshot.runner_pid_alive if launcher_pid is not None else None
+    logger.warning(
+        (
+            "Managed primary candidate reconciled without readable metadata; "
+            "skipped worker termination."
+        ),
+        spawn_id=record.id,
+        managed_metadata_readable=False,
+        launcher_pid=launcher_pid,
+        launcher_alive=launcher_alive,
+        backend_pid=None,
+        backend_alive=None,
+        tui_pid=None,
+        tui_alive=None,
+        activity=None,
+    )
 
 
 def _finalize_and_log(
@@ -326,9 +408,16 @@ def reconcile_active_spawn(runtime_root: Path, record: SpawnRecord) -> SpawnReco
         return record
     if isinstance(decision, FinalizeSucceededFromReport):
         return _finalize_completed_report(runtime_root, record, generic_snapshot, now)
-    if decision.terminate_orphan_primary_children and managed_snapshot is not None:
-        ManagedPrimaryReconciliationStrategy.cleanup(managed_snapshot)
-    elif managed_snapshot is None and record.worker_pid is not None and record.worker_pid > 0:
+    if decision.error == "orphan_primary" and (
+        managed_snapshot is not None or _is_potential_managed_primary(record)
+    ):
+        _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
+    if (
+        managed_snapshot is None
+        and record.worker_pid is not None
+        and record.worker_pid > 0
+        and not _is_potential_managed_primary(record)
+    ):
         _terminate_worker_pid(record.worker_pid, generic_snapshot.started_epoch)
     return _finalize_failed(runtime_root, record, decision.error, generic_snapshot, now)
 

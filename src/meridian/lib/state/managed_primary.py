@@ -72,20 +72,7 @@ class ManagedPrimaryReconciliationStrategy:
                 return FinalizeSucceededFromReport()
             return FinalizeFailed(error="orphan_finalization")
 
-        return FinalizeFailed(
-            error="orphan_primary",
-            terminate_orphan_primary_children=True,
-        )
-
-    @staticmethod
-    def cleanup(managed: ManagedPrimarySnapshot) -> tuple[int, ...]:
-        """Terminate orphan children if needed."""
-
-        return terminate_managed_primary_processes(
-            managed.metadata,
-            started_epoch=managed.started_epoch,
-            include_launcher=False,
-        )
+        return FinalizeFailed(error="orphan_primary")
 
 
 def read_managed_primary_snapshot(
