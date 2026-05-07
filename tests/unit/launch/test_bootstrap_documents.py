@@ -7,16 +7,26 @@ from meridian.lib.launch import context as launch_context
 
 def _capture_launch_request(monkeypatch):
     captured = {}
+    prepared_policy = SimpleNamespace(tag="policy")
     prepared = SimpleNamespace()
 
-    def fake_prepare_launch_surface(**kwargs):
+    def fake_compile_prepared_policy_surface(**kwargs):
         captured['request'] = kwargs['request']
+        return prepared_policy
+
+    def fake_prepare_launch_surface(**kwargs):
+        assert kwargs["prepared_policy"] is prepared_policy
         return prepared
 
     def fake_bind_launch_context(**kwargs):
         assert kwargs['prepared'] is prepared
         return SimpleNamespace(warnings=(), argv=('fake-harness',))
 
+    monkeypatch.setattr(
+        launch_context,
+        'compile_prepared_policy_surface',
+        fake_compile_prepared_policy_surface,
+    )
     monkeypatch.setattr(launch_context, 'prepare_launch_surface', fake_prepare_launch_surface)
     monkeypatch.setattr(launch_context, 'bind_launch_context', fake_bind_launch_context)
     return captured
@@ -133,6 +143,49 @@ def test_launch_primary_passes_empty_bootstrap_documents_when_none_exist(tmp_pat
     assert captured['request'].supplemental_prompt_documents == ()
 
 
+def test_launch_primary_dry_run_uses_explicit_work_for_prompt_and_env_preview(
+    tmp_path, monkeypatch
+):
+    project_root = tmp_path / 'project'
+    runtime_root = project_root / '.meridian'
+    (runtime_root / 'work' / 'work-inherited').mkdir(parents=True)
+    (project_root / 'mars.toml').write_text('[settings]\ntargets=[".agents"]\n', encoding='utf-8')
+
+    monkeypatch.setenv('MERIDIAN_ACTIVE_WORK_ID', 'work-inherited')
+    monkeypatch.setenv(
+        'MERIDIAN_ACTIVE_WORK_DIR',
+        (runtime_root / 'work' / 'work-inherited').as_posix(),
+    )
+
+    captured_active_work_dirs: list[object] = []
+    captured_env_overrides: dict[str, str] = {}
+    original_build_context_prompt = launch_context.build_context_prompt
+    original_bind_launch_context = launch_context.bind_launch_context
+
+    def fake_build_context_prompt(**kwargs):
+        captured_active_work_dirs.append(kwargs['active_work_dir'])
+        return original_build_context_prompt(**kwargs)
+
+    def capture_bind_launch_context(**kwargs):
+        bound = original_bind_launch_context(**kwargs)
+        captured_env_overrides.update(bound.env_overrides)
+        return bound
+
+    monkeypatch.setattr(launch_context, 'build_context_prompt', fake_build_context_prompt)
+    monkeypatch.setattr(launch_context, 'bind_launch_context', capture_bind_launch_context)
+
+    launch_primary(
+        project_root=project_root,
+        request=LaunchRequest(dry_run=True, work_id='Preview Work'),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    expected_work_dir = runtime_root / 'work' / 'preview-work'
+    assert captured_active_work_dirs == [expected_work_dir]
+    assert captured_env_overrides['MERIDIAN_ACTIVE_WORK_ID'] == 'preview-work'
+    assert captured_env_overrides['MERIDIAN_ACTIVE_WORK_DIR'] == expected_work_dir.as_posix()
+
+
 def test_launch_primary_prepares_once_binds_preview_once_and_passes_prepared_surface_to_runner(
     tmp_path,
     monkeypatch,
@@ -141,12 +194,18 @@ def test_launch_primary_prepares_once_binds_preview_once_and_passes_prepared_sur
     (project_root / '.meridian').mkdir(parents=True)
     (project_root / 'mars.toml').write_text('[settings]\ntargets=[".agents"]\n', encoding='utf-8')
 
+    prepared_policy = SimpleNamespace(tag='policy')
     prepared = SimpleNamespace(tag='prepared')
     preview_context = SimpleNamespace(warnings=(), argv=('preview-harness',))
     calls: list[str] = []
     runner_args: dict[str, object] = {}
 
-    def fake_prepare_launch_surface(**_kwargs):
+    def fake_compile_prepared_policy_surface(**_kwargs):
+        calls.append('compile')
+        return prepared_policy
+
+    def fake_prepare_launch_surface(**kwargs):
+        assert kwargs['prepared_policy'] is prepared_policy
         calls.append('prepare')
         return prepared
 
@@ -166,6 +225,11 @@ def test_launch_primary_prepares_once_binds_preview_once_and_passes_prepared_sur
             chat_id=None,
         )
 
+    monkeypatch.setattr(
+        launch_context,
+        'compile_prepared_policy_surface',
+        fake_compile_prepared_policy_surface,
+    )
     monkeypatch.setattr(launch_context, 'prepare_launch_surface', fake_prepare_launch_surface)
     monkeypatch.setattr(launch_context, 'bind_launch_context', fake_bind_launch_context)
     monkeypatch.setattr('meridian.lib.launch.process.run_harness_process', fake_run_harness_process)
@@ -176,7 +240,7 @@ def test_launch_primary_prepares_once_binds_preview_once_and_passes_prepared_sur
         harness_registry=get_default_harness_registry(),
     )
 
-    assert calls == ['prepare', 'bind']
+    assert calls == ['compile', 'prepare', 'bind']
     assert runner_args == {
         'launch_context': preview_context,
         'prepared': prepared,

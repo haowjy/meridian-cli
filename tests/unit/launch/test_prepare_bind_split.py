@@ -12,9 +12,11 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import (
     PreparedLaunchSurface,
+    PreparedPolicySurface,
     RuntimeBindings,
     bind_launch_context,
     build_launch_context,
+    compile_prepared_policy_surface,
     prepare_launch_surface,
 )
 from meridian.lib.launch.request import (
@@ -64,7 +66,26 @@ def _forbidden(name: str):
     return _raise
 
 
-def test_prepare_launch_surface_does_not_call_bind_phase_helpers(
+def _compile_policy_surface(
+    *,
+    tmp_path: Path,
+    runtime: LaunchRuntime,
+    request: SpawnRequest,
+    catalog: CatalogSession,
+    explicit_work_id: str | None = None,
+) -> PreparedPolicySurface:
+    return compile_prepared_policy_surface(
+        request=request,
+        runtime=runtime,
+        project_root=tmp_path,
+        harness_registry=get_default_harness_registry(),
+        catalog=catalog,
+        explicit_work_id=explicit_work_id,
+        dry_run=True,
+    )
+
+
+def test_compile_prepared_policy_surface_does_not_call_projector_helpers(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -83,6 +104,60 @@ def test_prepare_launch_surface_does_not_call_bind_phase_helpers(
     monkeypatch.setattr(catalog, "list_all_models", lambda: [])
 
     for helper_name in (
+        "load_reference_items",
+        "scan_agent_profiles",
+        "build_agent_inventory_prompt",
+        "build_context_prompt",
+        "compose_skill_prompt_documents",
+        "normalize_system_prompt_passthrough_args",
+    ):
+        monkeypatch.setattr(launch_context, helper_name, _forbidden(helper_name))
+
+    prepared_policy = _compile_policy_surface(
+        tmp_path=tmp_path,
+        request=_build_request(),
+        runtime=_build_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        catalog=catalog,
+    )
+
+    assert prepared_policy.resolved_policy.model == "gpt-5.4"
+    assert prepared_policy.resolved_policy.harness == HarnessId.CODEX
+
+
+def test_prepare_launch_surface_does_not_call_bind_phase_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    catalog = CatalogSession(tmp_path)
+    monkeypatch.setattr(
+        catalog,
+        "resolve_model",
+        lambda _token: AliasEntry(
+            alias="",
+            model_id=ModelId("gpt-5.4"),
+            resolved_harness=HarnessId.CODEX,
+        ),
+    )
+    monkeypatch.setattr(catalog, "load_aliases", lambda: [])
+    monkeypatch.setattr(catalog, "list_all_models", lambda: [])
+
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+    prepared_policy = _compile_policy_surface(
+        tmp_path=tmp_path,
+        runtime=runtime,
+        request=_build_request(),
+        catalog=catalog,
+    )
+
+    for helper_name in (
+        "resolve_launch_policy",
         "resolve_child_execution_cwd",
         "build_env_plan",
         "resolve_permission_pipeline",
@@ -94,14 +169,52 @@ def test_prepare_launch_surface_does_not_call_bind_phase_helpers(
 
     prepared = prepare_launch_surface(
         request=_build_request(),
-        runtime=_build_runtime(
-            tmp_path=tmp_path,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        runtime=runtime,
+        prepared_policy=prepared_policy,
+    )
+
+    assert prepared.request.prompt_is_composed is True
+    assert prepared.request.harness == HarnessId.CODEX.value
+
+
+def test_prepare_launch_surface_primary_does_not_use_spawn_prompt_policy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    catalog = CatalogSession(tmp_path)
+    monkeypatch.setattr(
+        catalog,
+        "resolve_model",
+        lambda _token: AliasEntry(
+            alias="",
+            model_id=ModelId("gpt-5.4"),
+            resolved_harness=HarnessId.CODEX,
         ),
-        project_root=tmp_path,
-        harness_registry=get_default_harness_registry(),
+    )
+    monkeypatch.setattr(catalog, "load_aliases", lambda: [])
+    monkeypatch.setattr(catalog, "list_all_models", lambda: [])
+
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.PRIMARY,
+    )
+    prepared_policy = _compile_policy_surface(
+        tmp_path=tmp_path,
+        runtime=runtime,
+        request=_build_request(),
         catalog=catalog,
-        dry_run=True,
+    )
+    monkeypatch.setattr(
+        prepared_policy.resolved_policy.adapter,
+        "run_prompt_policy",
+        _forbidden("run_prompt_policy"),
+    )
+
+    prepared = prepare_launch_surface(
+        request=_build_request(),
+        runtime=runtime,
+        prepared_policy=prepared_policy,
     )
 
     assert prepared.request.prompt_is_composed is True
@@ -170,11 +283,17 @@ def test_build_launch_context_prepare_surfaces_delegate_through_prepare_and_bind
     surface: LaunchCompositionSurface,
 ) -> None:
     calls: list[str] = []
+    prepared_policy = SimpleNamespace(tag="policy")
     prepared = SimpleNamespace(tag="prepared")
     bound = SimpleNamespace(tag="bound")
 
-    def fake_prepare_launch_surface(**kwargs: object) -> object:
+    def fake_compile_prepared_policy_surface(**kwargs: object) -> object:
         assert isinstance(kwargs["catalog"], CatalogSession)
+        calls.append("compile")
+        return prepared_policy
+
+    def fake_prepare_launch_surface(**kwargs: object) -> object:
+        assert kwargs["prepared_policy"] is prepared_policy
         calls.append("prepare")
         return prepared
 
@@ -183,6 +302,11 @@ def test_build_launch_context_prepare_surfaces_delegate_through_prepare_and_bind
         calls.append("bind")
         return bound
 
+    monkeypatch.setattr(
+        launch_context,
+        "compile_prepared_policy_surface",
+        fake_compile_prepared_policy_surface,
+    )
     monkeypatch.setattr(launch_context, "prepare_launch_surface", fake_prepare_launch_surface)
     monkeypatch.setattr(launch_context, "bind_launch_context", fake_bind_launch_context)
 
@@ -195,7 +319,7 @@ def test_build_launch_context_prepare_surfaces_delegate_through_prepare_and_bind
     )
 
     assert result is bound
-    assert calls == ["prepare", "bind"]
+    assert calls == ["compile", "prepare", "bind"]
 
 
 def test_build_launch_context_direct_skips_prepare_and_uses_lightweight_surface(
@@ -208,6 +332,11 @@ def test_build_launch_context_direct_skips_prepare_and_uses_lightweight_surface(
         launch_context,
         "prepare_launch_surface",
         _forbidden("prepare_launch_surface"),
+    )
+    monkeypatch.setattr(
+        launch_context,
+        "compile_prepared_policy_surface",
+        _forbidden("compile_prepared_policy_surface"),
     )
 
     def fake_bind_launch_context(**kwargs: object) -> object:
@@ -273,3 +402,89 @@ def test_bind_launch_context_prefers_forked_runtime_session_without_mutating_pre
 
     assert bound.run_params.continue_harness_session_id == "forked-session"
     assert prepared.seed_harness_session_id == "seed-session"
+
+
+def test_build_launch_context_uses_explicit_request_work_for_prepare_and_bind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
+    monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_DIR", raising=False)
+
+    captured_active_work_dirs: list[Path | None] = []
+    monkeypatch.setattr(launch_context, "scan_agent_profiles", lambda **_kwargs: [])
+    monkeypatch.setattr(launch_context, "build_agent_inventory_prompt", lambda **_kwargs: "")
+
+    def fake_build_context_prompt(**kwargs: object) -> str:
+        captured_active_work_dirs.append(kwargs["active_work_dir"])
+        return ""
+
+    monkeypatch.setattr(launch_context, "build_context_prompt", fake_build_context_prompt)
+
+    request = _build_request(prompt_is_composed=False).model_copy(
+        update={"work_id_hint": "work-explicit"}
+    )
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    bound = build_launch_context(
+        spawn_id="p-explicit-work",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    expected_work_dir = tmp_path / ".meridian" / "work" / "work-explicit"
+    assert captured_active_work_dirs == [expected_work_dir]
+    assert bound.work_id == "work-explicit"
+    assert bound.env_overrides["MERIDIAN_ACTIVE_WORK_ID"] == "work-explicit"
+    assert bound.env_overrides["MERIDIAN_ACTIVE_WORK_DIR"] == expected_work_dir.as_posix()
+
+
+def test_build_launch_context_runtime_work_overrides_inherited_work_for_prepare_and_bind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_ID", "work-inherited")
+    monkeypatch.setenv(
+        "MERIDIAN_ACTIVE_WORK_DIR",
+        (tmp_path / ".meridian" / "work" / "work-inherited").as_posix(),
+    )
+
+    captured_active_work_dirs: list[Path | None] = []
+    monkeypatch.setattr(launch_context, "scan_agent_profiles", lambda **_kwargs: [])
+    monkeypatch.setattr(launch_context, "build_agent_inventory_prompt", lambda **_kwargs: "")
+
+    def fake_build_context_prompt(**kwargs: object) -> str:
+        captured_active_work_dirs.append(kwargs["active_work_dir"])
+        return ""
+
+    monkeypatch.setattr(launch_context, "build_context_prompt", fake_build_context_prompt)
+
+    request = _build_request(prompt_is_composed=False).model_copy(
+        update={"work_id_hint": "work-request"}
+    )
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    bound = build_launch_context(
+        spawn_id="p-runtime-work",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        runtime_work_id="work-runtime",
+        dry_run=True,
+    )
+
+    expected_work_dir = tmp_path / ".meridian" / "work" / "work-runtime"
+    assert captured_active_work_dirs == [expected_work_dir]
+    assert bound.work_id == "work-runtime"
+    assert bound.env_overrides["MERIDIAN_ACTIVE_WORK_ID"] == "work-runtime"
+    assert bound.env_overrides["MERIDIAN_ACTIVE_WORK_DIR"] == expected_work_dir.as_posix()

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
+from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir
 
 if TYPE_CHECKING:
@@ -15,9 +16,11 @@ if TYPE_CHECKING:
     )
     from meridian.lib.launch.context import (
         PreparedLaunchSurface,
+        PreparedPolicySurface,
         RuntimeBindings,
         bind_launch_context,
         build_launch_context,
+        compile_prepared_policy_surface,
         prepare_launch_surface,
     )
     from meridian.lib.launch.materialize import MaterializedLaunch, materialize_harness
@@ -57,6 +60,15 @@ def _resolve_work_id_for_launch(project_root: Path, request: LaunchRequest) -> s
     return None
 
 
+def _preview_work_id_for_launch(request: LaunchRequest) -> str | None:
+    """Normalize an explicit work item for dry-run preview without creating it."""
+
+    explicit_work_id = (request.work_id or "").strip()
+    if not explicit_work_id:
+        return None
+    return work_store.slugify(explicit_work_id) or None
+
+
 def launch_primary(
     *,
     project_root: Path,
@@ -68,7 +80,12 @@ def launch_primary(
     from meridian.lib.catalog.catalog_session import CatalogSession
     from meridian.lib.core.context import resolve_runtime_context
 
-    from .context import RuntimeBindings, bind_launch_context, prepare_launch_surface
+    from .context import (
+        RuntimeBindings,
+        bind_launch_context,
+        compile_prepared_policy_surface,
+        prepare_launch_surface,
+    )
     from .plan import build_primary_launch_runtime, build_primary_spawn_request
     from .process import run_harness_process
     from .types import LaunchResult
@@ -86,9 +103,11 @@ def launch_primary(
                 )
             }
         )
-    resolved_work_id = None
-    if not request.dry_run:
-        resolved_work_id = _resolve_work_id_for_launch(project_root, request)
+    resolved_work_id = (
+        _preview_work_id_for_launch(request)
+        if request.dry_run
+        else _resolve_work_id_for_launch(project_root, request)
+    )
 
     resolved_project_root = Path(runtime.project_paths_project_root).expanduser().resolve()
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
@@ -103,14 +122,20 @@ def launch_primary(
             runtime_root=runtime_root,
         ).work_dir
     )
-    prepared = prepare_launch_surface(
-        request=build_primary_spawn_request(request=request),
+    spawn_request = build_primary_spawn_request(request=request)
+    prepared_policy = compile_prepared_policy_surface(
+        request=spawn_request,
         runtime=runtime,
         project_root=resolved_project_root,
         harness_registry=harness_registry,
         catalog=CatalogSession(resolved_project_root),
         active_work_dir=active_work_dir,
         dry_run=request.dry_run,
+    )
+    prepared = prepare_launch_surface(
+        request=spawn_request,
+        runtime=runtime,
+        prepared_policy=prepared_policy,
     )
     preview_context = bind_launch_context(
         prepared=prepared,
@@ -157,6 +182,7 @@ def __getattr__(name: str) -> Any:
         "PrimarySessionMetadata": (".types", "PrimarySessionMetadata"),
         "ProcessOutcome": (".process", "ProcessOutcome"),
         "PreparedLaunchSurface": (".context", "PreparedLaunchSurface"),
+        "PreparedPolicySurface": (".context", "PreparedPolicySurface"),
         "ResolvedLaunchPolicy": (".policies", "ResolvedLaunchPolicy"),
         "ResolvedPolicies": (".policies", "ResolvedPolicies"),
         "SurfacePolicyInput": (".policies", "SurfacePolicyInput"),
@@ -166,6 +192,7 @@ def __getattr__(name: str) -> Any:
         "SessionMode": (".types", "SessionMode"),
         "bind_launch_context": (".context", "bind_launch_context"),
         "build_launch_context": (".context", "build_launch_context"),
+        "compile_prepared_policy_surface": (".context", "compile_prepared_policy_surface"),
         "build_primary_prompt": (".types", "build_primary_prompt"),
         "load_agent_profile_with_fallback": (".resolve", "load_agent_profile_with_fallback"),
         "normalize_system_prompt_passthrough_args": (
@@ -198,6 +225,7 @@ __all__ = [
     "LaunchResult",
     "MaterializedLaunch",
     "PreparedLaunchSurface",
+    "PreparedPolicySurface",
     "PrimarySessionMetadata",
     "ProcessOutcome",
     "ResolvedLaunchPolicy",
@@ -210,6 +238,7 @@ __all__ = [
     "bind_launch_context",
     "build_launch_context",
     "build_primary_prompt",
+    "compile_prepared_policy_surface",
     "launch_primary",
     "load_agent_profile_with_fallback",
     "materialize_harness",
