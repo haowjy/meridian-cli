@@ -49,15 +49,21 @@ def _load_model(model_id: str, project_root: Path | None = None) -> dict[str, ob
     root = resolve_project_root(project_root)
     path = root / ".mars" / "models-cache.json"
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw_obj: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    models = raw.get("models") if isinstance(raw, dict) else None
-    if not isinstance(models, list):
+    if not isinstance(raw_obj, dict):
         return None
-    for item in models:
-        if isinstance(item, dict) and str(item.get("id", "")).strip() == model_id:
-            return cast("dict[str, object]", item)
+    raw = cast("dict[str, object]", raw_obj)
+    models_obj = raw.get("models")
+    if not isinstance(models_obj, list):
+        return None
+    for item_obj in cast("list[object]", models_obj):
+        if not isinstance(item_obj, dict):
+            continue
+        item = cast("dict[str, object]", item_obj)
+        if str(item.get("id", "")).strip() == model_id:
+            return item
     return None
 
 

@@ -14,8 +14,8 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
-    _coerce_optional_int,
-    _iter_json_lines_artifact,
+    _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
+    _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     coerce_optional_float,
     extract_opencode_report,
     extract_session_id_from_artifacts_with_patterns,
@@ -327,14 +327,14 @@ def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> Toke
         )
         if event_type not in {"session.idle", "message.updated", "response.completed"}:
             continue
-        info = payload.get("info") if isinstance(payload.get("info"), dict) else payload
-        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else info
-        if not isinstance(usage, dict):
-            continue
-        cost_obj = payload.get("cost") if isinstance(payload.get("cost"), dict) else payload
-        cost = coerce_optional_float(
-            cost_obj.get("total_cost_usd") if isinstance(cost_obj, dict) else None
-        )
+        info_obj = payload.get("info")
+        info = cast("dict[str, object]", info_obj) if isinstance(info_obj, dict) else payload
+        usage_obj = payload.get("usage")
+        usage_source = cast("dict[str, object]", usage_obj) if isinstance(usage_obj, dict) else info
+        usage = usage_source
+        cost_obj = payload.get("cost")
+        cost_source = cast("dict[str, object]", cost_obj) if isinstance(cost_obj, dict) else payload
+        cost = coerce_optional_float(cost_source.get("total_cost_usd"))
         last = TokenUsage(
             input_tokens=_coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
             output_tokens=_coerce_optional_int(usage.get("output_tokens") or usage.get("output")),

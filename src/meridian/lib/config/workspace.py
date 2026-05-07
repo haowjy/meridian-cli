@@ -10,7 +10,10 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.project_paths import resolve_project_config_paths
-from meridian.lib.state.paths import _load_workspace_table, _merge_nested_dicts
+from meridian.lib.state.paths import (
+    _load_workspace_table,  # pyright: ignore[reportPrivateUsage]
+    _merge_nested_dicts,  # pyright: ignore[reportPrivateUsage]
+)
 
 WorkspaceStatus = Literal["none", "present", "invalid"]
 WorkspaceFindingCode = Literal[

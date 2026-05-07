@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from meridian.cli.bootstrap import (
-    _TOP_LEVEL_BOOL_FLAGS,
-    _TOP_LEVEL_VALUE_FLAGS,
+    _TOP_LEVEL_BOOL_FLAGS,  # pyright: ignore[reportPrivateUsage]
+    _TOP_LEVEL_VALUE_FLAGS,  # pyright: ignore[reportPrivateUsage]
     HARNESS_SHORTCUT_NAMES,
 )
 from meridian.cli.startup.catalog import CommandCatalog, CommandDescriptor

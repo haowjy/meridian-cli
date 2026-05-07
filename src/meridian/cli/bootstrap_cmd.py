@@ -15,7 +15,7 @@ def register_bootstrap_command(
     get_global_harness: Callable[[], str | None],
 ) -> None:
     @app.command(name="bootstrap")
-    def bootstrap(
+    def bootstrap(  # pyright: ignore[reportUnusedFunction]
         model: Annotated[
             str,
             Parameter(name=["--model", "-m"], help="Model id or alias for primary harness."),

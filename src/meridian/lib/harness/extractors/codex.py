@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
@@ -16,8 +17,8 @@ from meridian.lib.harness.codex_rollout import (
 )
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
-    _coerce_optional_int,
-    _iter_json_lines_artifact,
+    _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
+    _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     extract_codex_report,
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
@@ -130,9 +131,9 @@ __all__ = ["CODEX_EXTRACTOR", "CodexHarnessExtractor"]
 def _nested_get(payload: dict[str, object], *keys: str) -> object:
     current: object = payload
     for key in keys:
-        if not isinstance(current, dict):
+        if not isinstance(current, Mapping):
             return None
-        current = current.get(key)
+        current = cast("Mapping[str, object]", current).get(key)
     return current
 
 
@@ -148,10 +149,12 @@ def _extract_codex_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUs
         )
         # Real Codex events: thread/tokenUsage/updated with tokenUsage.total (camelCase)
         if event_type == "thread.tokenusage.updated":
-            token_usage = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
-            if isinstance(token_usage, dict):
-                total = token_usage.get("total")
-                if isinstance(total, dict):
+            token_usage_obj = payload.get("tokenUsage") or _nested_get(payload, "payload", "tokenUsage")
+            if isinstance(token_usage_obj, dict):
+                token_usage = cast("dict[str, object]", token_usage_obj)
+                total_obj = token_usage.get("total")
+                if isinstance(total_obj, dict):
+                    total = cast("dict[str, object]", total_obj)
                     last_total_usage = total
                 # Try to extract model from the event payload
                 raw_model = payload.get("model") or _nested_get(payload, "payload", "model")
@@ -159,10 +162,11 @@ def _extract_codex_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUs
                     model_id = raw_model.strip()
         # Test fixture / fallback: turn/completed with snake_case usage
         elif event_type == "turn.completed":
-            usage = payload.get("usage")
-            if not isinstance(usage, dict):
-                usage = _nested_get(payload, "payload", "usage")
-            if isinstance(usage, dict):
+            usage_obj = payload.get("usage")
+            if not isinstance(usage_obj, dict):
+                usage_obj = _nested_get(payload, "payload", "usage")
+            if isinstance(usage_obj, dict):
+                usage = cast("dict[str, object]", usage_obj)
                 last_total_usage = usage
                 raw_model = payload.get("model") or _nested_get(payload, "payload", "model")
                 if isinstance(raw_model, str) and raw_model.strip():

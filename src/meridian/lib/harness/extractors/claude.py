@@ -14,8 +14,8 @@ from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
-    _coerce_optional_int,
-    _iter_json_lines_artifact,
+    _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
+    _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     coerce_optional_float,
     extract_claude_report,
     extract_session_id_from_artifacts_with_patterns,
@@ -31,7 +31,7 @@ def _project_slug(path: Path) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "-", str(path.resolve()))
 
 
-def _detect_primary_session_id(
+def _detect_primary_session_id(  # pyright: ignore[reportUnusedFunction]
     *,
     child_cwd: Path,
     launch_env: Mapping[str, str],
@@ -131,9 +131,11 @@ def _extract_claude_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenU
         # Real Claude events use camelCase modelUsage; test fixtures use snake_case usage
         model_usage = payload.get("modelUsage")
         if isinstance(model_usage, dict):
-            for item in model_usage.values():
-                if not isinstance(item, dict):
+            model_usage_map = cast("dict[str, object]", model_usage)
+            for item_obj in model_usage_map.values():
+                if not isinstance(item_obj, dict):
                     continue
+                item = cast("dict[str, object]", item_obj)
                 input_tokens += _coerce_optional_int(item.get("inputTokens")) or 0
                 output_tokens += _coerce_optional_int(item.get("outputTokens")) or 0
                 cache_read += _coerce_optional_int(item.get("cacheReadInputTokens")) or 0
@@ -146,9 +148,11 @@ def _extract_claude_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenU
         # Also support test fixture format with snake_case "usage" field
         usage = payload.get("usage")
         if isinstance(usage, dict) and not isinstance(model_usage, dict):
-            for item in usage.values():
-                if not isinstance(item, dict):
+            usage_map = cast("dict[str, object]", usage)
+            for item_obj in usage_map.values():
+                if not isinstance(item_obj, dict):
                     continue
+                item = cast("dict[str, object]", item_obj)
                 input_tokens += _coerce_optional_int(item.get("input_tokens")) or 0
                 output_tokens += _coerce_optional_int(item.get("output_tokens")) or 0
                 cache_read += _coerce_optional_int(item.get("cache_read_input_tokens")) or 0
