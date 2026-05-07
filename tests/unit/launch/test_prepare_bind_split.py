@@ -13,6 +13,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import (
     PreparedLaunchSurface,
     PreparedPolicySurface,
+    PreparedPromptPayload,
     RuntimeBindings,
     bind_launch_context,
     build_launch_context,
@@ -23,6 +24,7 @@ from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
     LaunchRuntime,
+    RequestPromptPayload,
     SpawnRequest,
 )
 
@@ -175,6 +177,11 @@ def test_prepare_launch_surface_does_not_call_bind_phase_helpers(
 
     assert prepared.request.prompt_is_composed is True
     assert prepared.request.harness == HarnessId.CODEX.value
+    assert prepared.prompt_payload.user_turn_content == "hello"
+    assert prepared.prompt_payload.appended_system_prompt is not None
+    assert "adhoc_agent_payload" not in prepared.request.agent_metadata
+    assert "appended_system_prompt" not in prepared.request.agent_metadata
+    assert "user_turn_content" not in prepared.request.agent_metadata
 
 
 def test_prepare_launch_surface_primary_does_not_use_spawn_prompt_policy_fallback(
@@ -231,6 +238,7 @@ def test_bind_launch_context_does_not_call_prepare_phase_helpers(
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
         seed_harness_session_id="seed-session",
         composition_warnings=(),
+        prompt_payload=PreparedPromptPayload(),
         loaded_references=(),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
@@ -268,6 +276,59 @@ def test_bind_launch_context_does_not_call_prepare_phase_helpers(
 
     assert bound.run_params.continue_harness_session_id == "seed-session"
     assert bound.resolved_request.prompt == "hello"
+
+
+def test_bind_launch_context_consumes_typed_prompt_payload(
+    tmp_path: Path,
+) -> None:
+    registry = get_default_harness_registry()
+    prepared = PreparedLaunchSurface(
+        request=_build_request(prompt_is_composed=True).model_copy(
+            update={
+                "prompt_payload": RequestPromptPayload(
+                    adhoc_agent_payload="wrong-adhoc",
+                    appended_system_prompt="wrong-system",
+                    user_turn_content="wrong-user",
+                )
+            }
+        ),
+        harness=registry.get_subprocess_harness(HarnessId.CODEX),
+        seed_harness_session_id=None,
+        composition_warnings=(),
+        prompt_payload=PreparedPromptPayload(
+            adhoc_agent_payload="typed-adhoc",
+            appended_system_prompt="typed-system",
+            user_turn_content="typed-user",
+        ),
+        loaded_references=(),
+        profile_tools_for_deny_optout=(),
+        has_profile_for_deny_optout=False,
+        projected_content=None,
+        model_selection=None,
+        alias_catalog=None,
+        agent_inventory_prompt=None,
+        context_prompt=None,
+        seed_session_args=(),
+        launch_request=None,
+    )
+
+    bound = bind_launch_context(
+        prepared=prepared,
+        bindings=RuntimeBindings(
+            spawn_id="p-typed-payload",
+            report_output_path=tmp_path / "report.md",
+        ),
+        runtime=_build_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.DIRECT,
+        ),
+        project_root=tmp_path,
+        harness_registry=registry,
+    )
+
+    assert bound.run_params.adhoc_agent_payload == "typed-adhoc"
+    assert bound.run_params.appended_system_prompt == "typed-system"
+    assert bound.run_params.user_turn_content == "typed-user"
 
 
 @pytest.mark.parametrize(
@@ -373,6 +434,7 @@ def test_bind_launch_context_prefers_forked_runtime_session_without_mutating_pre
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
         seed_harness_session_id="seed-session",
         composition_warnings=(),
+        prompt_payload=PreparedPromptPayload(),
         loaded_references=(),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,

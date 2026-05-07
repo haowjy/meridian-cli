@@ -68,6 +68,17 @@ def test_rest_routes_are_command_wrappers(tmp_path: Path) -> None:
         assert client.get(f"/chat/{chat_id}/state").json()["state"] == "closed"
 
 
+def test_create_chat_accepts_empty_body(tmp_path: Path) -> None:
+    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
+    with TestClient(app) as client:
+        created = client.post("/chat")
+
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["chat_id"].startswith("c-")
+    assert payload["state"] == "idle"
+
+
 def test_list_chats_and_events_routes_expose_persisted_state(tmp_path: Path) -> None:
     configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
     with TestClient(app) as client:

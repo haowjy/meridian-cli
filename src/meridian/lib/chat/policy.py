@@ -11,19 +11,20 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
-from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.launch.command import resolve_launch_spec_stage
 from meridian.lib.launch.composition import ComposedLaunchContent, PromptDocument
-from meridian.lib.launch.context import ChildEnvContext
+from meridian.lib.launch.context import (
+    build_child_runtime_env_overrides,
+    materialize_launch_artifacts,
+    prepare_prompt_payload,
+)
 from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
-from meridian.lib.launch.permissions import resolve_permission_pipeline
 from meridian.lib.launch.policies import ResolvedLaunchPolicy
 from meridian.lib.launch.prompt import compose_skill_prompt_documents
 from meridian.lib.launch.resolve import format_missing_skills_warning, resolve_profile_path
-from meridian.lib.launch.run_inputs import ResolvedRunInputs
 from meridian.lib.state.atomic import atomic_write_text
 
 CHAT_POLICY_SNAPSHOT_VERSION = 1
@@ -98,6 +99,12 @@ class ChatBackendLaunchPlan:
     connection_config: ConnectionConfig
     spec: ResolvedLaunchSpec
     configured_payload: dict[str, object]
+
+
+def _supports_launch_autocompact(harness_id: HarnessId) -> bool:
+    """Return whether launch-time autocompact env override is supported."""
+
+    return harness_id == HarnessId.CLAUDE
 
 
 def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySnapshot:
@@ -240,49 +247,46 @@ def build_chat_backend_launch_plan(
         prior_output="",
     )
     projected = adapter.project_content(composed)
-    prompt = projected.user_turn_content.strip() or initial_prompt
-    appended_system_prompt = projected.system_prompt.strip() or None
-    user_turn_content = projected.user_turn_content.strip() or None
-
-    run_inputs = ResolvedRunInputs(
-        prompt=prompt,
-        model=ModelId(snapshot.canonical_model_id) if snapshot.canonical_model_id else None,
+    harness_id = HarnessId(snapshot.harness)
+    prompt_payload = prepare_prompt_payload(
+        adhoc_agent_payload=snapshot.prompt_inputs.adhoc_agent_payload,
+        projected_content=projected,
+    )
+    materialized = materialize_launch_artifacts(
+        harness=adapter,
+        prompt=projected.user_turn_content.strip() or initial_prompt,
+        model=snapshot.canonical_model_id,
         effort=snapshot.effort,
         skills=snapshot.skills,
         agent=snapshot.agent_name,
-        adhoc_agent_payload=snapshot.prompt_inputs.adhoc_agent_payload.strip(),
-        extra_args=(),
+        prompt_payload=prompt_payload,
         project_root=project_root.as_posix(),
         mcp_tools=snapshot.mcp_tools,
-        interactive=False,
-        appended_system_prompt=appended_system_prompt,
-        user_turn_content=user_turn_content,
-    )
-    _, perms = resolve_permission_pipeline(
         sandbox=snapshot.sandbox,
-        approval=snapshot.approval or "default",
         allowed_tools=snapshot.allowed_tools,
         disallowed_tools=snapshot.disallowed_tools,
+        approval=snapshot.approval,
     )
-    spec = resolve_launch_spec_stage(adapter=adapter, run_inputs=run_inputs, perms=perms)
-
-    runtime_env = ChildEnvContext.from_environment(
+    runtime_env = build_child_runtime_env_overrides(
         project_paths=ProjectConfigPaths(
-            project_root=project_root,
-            execution_cwd=project_root,
+            project_root=project_root.resolve(),
+            execution_cwd=project_root.resolve(),
         ),
         runtime_root=runtime_root,
-    ).child_context(child_spawn_id=str(spawn_id))
+        child_spawn_id=str(spawn_id),
+    )
     runtime_env["MERIDIAN_HARNESS"] = snapshot.harness
-    if snapshot.autocompact is not None:
+    autocompact_supported = _supports_launch_autocompact(harness_id)
+    if snapshot.autocompact is not None and autocompact_supported:
         runtime_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(snapshot.autocompact)
 
     config = ConnectionConfig(
         spawn_id=spawn_id,
-        harness_id=HarnessId(snapshot.harness),
-        prompt=prompt,
+        harness_id=harness_id,
+        prompt=materialized.run_params.prompt,
         project_root=project_root,
         env_overrides=runtime_env,
+        system=materialized.run_params.appended_system_prompt,
     )
     configured_payload: dict[str, object] = {
         "harness": snapshot.harness,
@@ -292,12 +296,12 @@ def build_chat_backend_launch_plan(
         "harness_provenance": snapshot.harness_provenance,
         "policy_snapshot_id": snapshot.snapshot_id,
     }
-    if snapshot.autocompact is not None:
+    if snapshot.autocompact is not None and autocompact_supported:
         configured_payload["autocompact"] = snapshot.autocompact
     return ChatBackendLaunchPlan(
         harness_id=config.harness_id,
         connection_config=config,
-        spec=spec,
+        spec=materialized.spec,
         configured_payload=configured_payload,
     )
 

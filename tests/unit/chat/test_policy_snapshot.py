@@ -21,6 +21,7 @@ from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import HarnessCapabilities
+from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
@@ -298,7 +299,8 @@ def test_build_chat_backend_launch_plan_uses_snapshot_and_reports_boundary_diagn
     assert "SNAPSHOT PROFILE BODY" in (plan.spec.developer_instructions or "")
     assert "CHANGED FILE CONTENT" not in (plan.spec.developer_instructions or "")
     assert plan.connection_config.env_overrides["MERIDIAN_HARNESS"] == "codex"
-    assert plan.connection_config.env_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "37"
+    assert plan.connection_config.system == plan.spec.developer_instructions
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in plan.connection_config.env_overrides
     assert plan.configured_payload == {
         "harness": "codex",
         "model": "gpt-5.3-codex",
@@ -306,5 +308,31 @@ def test_build_chat_backend_launch_plan_uses_snapshot_and_reports_boundary_diagn
         "selected_model_token": "codex",
         "harness_provenance": "mars-provided",
         "policy_snapshot_id": "snap-immutable",
-        "autocompact": 37,
     }
+
+
+def test_build_chat_backend_launch_plan_applies_autocompact_only_for_claude_harness(
+    tmp_path: Path,
+) -> None:
+    snapshot = ChatPolicySnapshot(
+        snapshot_id="snap-claude",
+        requested_model_token="",
+        selected_model_token="",
+        canonical_model_id="claude-sonnet-4-6",
+        harness="claude",
+        autocompact=42,
+        prompt_inputs=ChatPromptInputsSnapshot(),
+    )
+
+    plan = build_chat_backend_launch_plan(
+        snapshot=snapshot,
+        initial_prompt="hello",
+        spawn_id=SpawnId("chat-s2"),
+        adapter=ClaudeAdapter(),
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+    )
+
+    assert plan.connection_config.env_overrides["MERIDIAN_HARNESS"] == "claude"
+    assert plan.connection_config.env_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "42"
+    assert plan.configured_payload["autocompact"] == 42

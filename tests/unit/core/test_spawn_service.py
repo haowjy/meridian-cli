@@ -102,10 +102,6 @@ def _mock_launch_context(
     env_overrides: dict[str, str] | None = None,
     system_prompt: str | None = None,
 ) -> SimpleNamespace:
-    agent_metadata: dict[str, str] = {}
-    if system_prompt is not None:
-        agent_metadata["appended_system_prompt"] = system_prompt
-
     resolved_request = SimpleNamespace(
         model=model,
         harness=harness,
@@ -114,10 +110,11 @@ def _mock_launch_context(
         skills=(),
         skill_paths=(),
         session=SimpleNamespace(requested_harness_session_id=None),
-        agent_metadata=agent_metadata,
+        agent_metadata={},
     )
     return SimpleNamespace(
         resolved_request=resolved_request,
+        run_params=SimpleNamespace(appended_system_prompt=system_prompt),
         child_cwd=child_cwd,
         work_id=work_id,
         env_overrides=env_overrides or {"MERIDIAN_SPAWN_ID": spawn_id},

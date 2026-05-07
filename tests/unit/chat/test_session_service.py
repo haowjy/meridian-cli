@@ -122,6 +122,22 @@ async def test_active_prompt_rejected_until_turn_completed():
 
 
 @pytest.mark.asyncio
+async def test_subsequent_prompts_reuse_healthy_backend_without_new_acquisition():
+    acquisition = FakeAcquisition()
+    session = ChatSessionService("c1", acquisition)
+
+    await session.prompt("hello")
+    handle = session.current_execution
+    session.on_turn_completed(session.execution_generation)
+    await session.prompt("again")
+
+    assert len(acquisition.handles) == 1
+    assert session.current_execution is handle
+    assert handle.messages == ["again"]
+    assert acquisition.prompts == [("c1", "hello", 1, "active")]
+
+
+@pytest.mark.asyncio
 async def test_stale_generation_callbacks_are_ignored():
     session = ChatSessionService("c1", FakeAcquisition())
     await session.prompt("hello")

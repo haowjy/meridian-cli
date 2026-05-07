@@ -35,8 +35,7 @@ def _violations(path: Path, label: str, pattern: str) -> list[str]:
 def test_chat_policy_owner_module_still_owns_policy_to_launch_conversion() -> None:
     required_owner_calls = [
         ("ComposedLaunchContent", r"\bComposedLaunchContent\s*\("),
-        ("resolve_permission_pipeline", r"\bresolve_permission_pipeline\s*\("),
-        ("resolve_launch_spec_stage", r"\bresolve_launch_spec_stage\s*\("),
+        ("materialize_launch_artifacts", r"\bmaterialize_launch_artifacts\s*\("),
     ]
 
     missing = [
@@ -56,6 +55,7 @@ def test_non_owner_chat_launch_modules_do_not_compose_launch_specs_directly() ->
         ("ComposedLaunchContent", r"\bComposedLaunchContent\s*\("),
         ("resolve_permission_pipeline", r"\bresolve_permission_pipeline\s*\("),
         ("resolve_launch_spec_stage", r"\bresolve_launch_spec_stage\s*\("),
+        ("materialize_launch_artifacts", r"\bmaterialize_launch_artifacts\s*\("),
         ("ClaudeLaunchSpec", r"\bClaudeLaunchSpec\s*\("),
         ("CodexLaunchSpec", r"\bCodexLaunchSpec\s*\("),
         ("OpenCodeLaunchSpec", r"\bOpenCodeLaunchSpec\s*\("),

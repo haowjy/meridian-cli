@@ -169,7 +169,7 @@ async def list_chats() -> ChatListResponse:
 
 
 @app.post("/chat", response_model=CreateChatResponse)
-async def create_chat(body: CreateChatRequest) -> CreateChatResponse:
+async def create_chat(body: CreateChatRequest | None = None) -> CreateChatResponse:
     start = time.monotonic()
     _ = body
     view = await _configured_runtime().create_chat()

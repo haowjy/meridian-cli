@@ -57,7 +57,7 @@ fails before port binding, `chat-server.json` is written, or any frontend assets
 | `--yolo` | — | Shorthand for `--approval yolo`. |
 | `--effort LEVEL` | profile/harness default | Effort / reasoning level, if supported by the harness. |
 | `--sandbox MODE` | profile default | Sandbox mode value, if supported by the harness. |
-| `--autocompact PCT` | profile/harness default | Enable autocompact at N% context use (integer percentage), if the harness supports a launch-time setting for it. |
+| `--autocompact PCT` | profile/harness default | Enable autocompact at N% context use (integer percentage), when supported by the resolved harness. Current chat backend applies launch-time autocompact only for Claude. |
 
 `--timeout` is not supported for `meridian chat`. Chat has server-lifetime, per-turn,
 idle, and recovery timeout dimensions that require separate design.
@@ -209,7 +209,8 @@ These commands connect to a running chat server. They are runtime-management onl
 and do not accept launch-policy flags (`-m`, `--harness`, `-a`, `--skills`,
 `--approval`, etc.). By default they read the server URL from
 `~/.meridian/chat-server.json`; use `--url http://host:port` to target a specific
-server.
+server. Root-level harness selectors are also rejected for management commands
+(`meridian --harness codex chat ls`, `meridian codex chat ls`).
 
 ```bash
 meridian chat ls

@@ -335,7 +335,7 @@ class SpawnApplicationService:
             prompt=launch_ctx.resolved_request.prompt,
             project_root=launch_ctx.child_cwd,
             env_overrides=dict(launch_ctx.env_overrides),
-            system=launch_ctx.resolved_request.agent_metadata.get("appended_system_prompt"),
+            system=launch_ctx.run_params.appended_system_prompt,
             debug_tracer=debug_tracer,
         )
 

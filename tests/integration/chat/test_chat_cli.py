@@ -686,6 +686,140 @@ def test_chat_policy_snapshot_collects_profile_and_missing_skill_warnings(tmp_pa
     assert any("Warning: Skipped unavailable skills: missing-skill" in m for m in warning_messages)
 
 
+def test_chat_policy_snapshot_explicit_missing_agent_fails_before_startup(
+    monkeypatch, tmp_path
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    configured: list[object] = []
+    write_bootstrap_calls: list[Path] = []
+    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
+    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        chat_cmd,
+        "prepare_for_runtime_write",
+        lambda root: write_bootstrap_calls.append(root),
+    )
+
+    import meridian.lib.chat.server as chat_server
+
+    monkeypatch.setattr(chat_server, "configure", lambda **kwargs: configured.append(kwargs))
+    monkeypatch.setattr(chat_server, "app", object())
+
+    with pytest.raises(FileNotFoundError, match="missing-explicit-agent"):
+        run_chat_server(
+            agent="missing-explicit-agent",
+            port=8765,
+            headless=True,
+            uvicorn_run=lambda *_args, **_kwargs: None,
+            stdout=StringIO(),
+        )
+
+    assert configured == []
+    assert write_bootstrap_calls == []
+    assert not (runtime_root / "chat-server.json").exists()
+
+
+def test_chat_policy_snapshot_loads_harness_and_model_skill_variant(monkeypatch, tmp_path) -> None:
+    alias_entry = _mock_alias("gptmini", "gpt-5.4-mini", HarnessId.CODEX)
+    write_skill(tmp_path, "variant-skill", body="Base body")
+    token_variant = (
+        tmp_path
+        / ".mars"
+        / "skills"
+        / "variant-skill"
+        / "variants"
+        / "codex"
+        / "gptmini"
+        / "SKILL.md"
+    )
+    token_variant.parent.mkdir(parents=True, exist_ok=True)
+    token_variant.write_text("Token variant body\n", encoding="utf-8")
+    canonical_variant = (
+        tmp_path
+        / ".mars"
+        / "skills"
+        / "variant-skill"
+        / "variants"
+        / "codex"
+        / "gpt-5.4-mini"
+        / "SKILL.md"
+    )
+    canonical_variant.parent.mkdir(parents=True, exist_ok=True)
+    canonical_variant.write_text("Canonical variant body\n", encoding="utf-8")
+
+    def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        if token in {"gptmini", "gpt-5.4-mini"}:
+            return alias_entry
+        raise ValueError(f"unknown model {token}")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model="gptmini",
+        harness="codex",
+        agent=None,
+        skills=("variant-skill",),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert snapshot.skills == ("variant-skill",)
+    assert [doc.logical_name for doc in snapshot.prompt_inputs.skill_documents] == ["variant-skill"]
+    assert "Token variant body" in snapshot.prompt_inputs.skill_documents[0].content
+    assert "Base body" not in snapshot.prompt_inputs.skill_documents[0].content
+    assert snapshot.prompt_inputs.skill_documents[0].path == token_variant.resolve().as_posix()
+
+
+def test_chat_policy_snapshot_approval_env_beats_profile_and_config(
+    monkeypatch, tmp_path
+) -> None:
+    alias_entry = _mock_alias("gptmini", "gpt-5.4-mini", HarnessId.CODEX)
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+    (tmp_path / "meridian.toml").write_text(
+        '[primary]\napproval = "auto"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
+    (tmp_path / ".mars" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".mars" / "agents" / "reviewer.md").write_text(
+        "---\n"
+        "name: reviewer\n"
+        "approval: yolo\n"
+        "---\n\n"
+        "Reviewer profile body.\n",
+        encoding="utf-8",
+    )
+
+    def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        if token in {"gptmini", "gpt-5.4-mini"}:
+            return alias_entry
+        raise ValueError(f"unknown model {token}")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model="gptmini",
+        harness=None,
+        agent="reviewer",
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert snapshot.approval == "confirm"
+    assert snapshot.field_provenance["approval"] == "env"
+
+
 def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     monkeypatch, tmp_path
 ) -> None:
@@ -780,7 +914,7 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert "CLI skill body" in (plan.spec.developer_instructions or "")
     assert plan.spec.mcp_tools == ("github=gh",)
     assert not isinstance(plan.spec.permission_resolver, UnsafeNoOpPermissionResolver)
-    assert plan.connection_config.env_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] == "37"
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in plan.connection_config.env_overrides
     assert plan.configured_payload == {
         "harness": "codex",
         "model": "gpt-5.4-mini",
@@ -788,7 +922,6 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
         "selected_model_token": "gptmini",
         "harness_provenance": "mars-provided",
         "policy_snapshot_id": snapshot.snapshot_id,
-        "autocompact": 37,
     }
 
 
@@ -841,6 +974,25 @@ def test_chat_management_subcommands_reject_launch_policy_flags(
     assert flag in stderr or (
         flag == "--agent" and '"-a"' in stderr
     )
+
+
+@pytest.mark.parametrize(
+    ("argv", "selector"),
+    [
+        (["--harness", "codex", "chat", "ls"], "--harness"),
+        (["codex", "chat", "ls"], "codex"),
+    ],
+)
+def test_chat_management_subcommands_reject_global_harness_selectors(
+    argv: list[str], selector: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(argv)
+
+    message = str(exc_info.value)
+    assert "Unknown option" in message
+    assert selector in message
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.parametrize(

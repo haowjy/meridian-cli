@@ -162,3 +162,12 @@ async def test_acquisition_emits_chat_configured_before_observed_turn_started(tm
         "supports_model_swap": False,
         "supports_effort_swap": False,
     }
+    for forbidden_key in (
+        "spawn_id",
+        "report_path",
+        "execution_budget",
+        "budget",
+        "continuation",
+        "fork",
+    ):
+        assert forbidden_key not in events[0].payload

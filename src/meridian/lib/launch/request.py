@@ -54,6 +54,16 @@ class SessionRequest(BaseModel):
     primary_session_mode: str | None = None
 
 
+class RequestPromptPayload(BaseModel):
+    """Typed managed prompt payload carried across persisted request boundaries."""
+
+    model_config = ConfigDict(frozen=True)
+
+    adhoc_agent_payload: str = ""
+    appended_system_prompt: str | None = None
+    user_turn_content: str | None = None
+
+
 class SpawnRequest(BaseModel):
     """Raw spawn request used to reconstruct launch composition at execute time."""
 
@@ -94,6 +104,7 @@ class SpawnRequest(BaseModel):
     work_id_hint: str | None = None
     warning: str | None = None
     agent_metadata: dict[str, str] = Field(default_factory=_empty_agent_metadata)
+    prompt_payload: RequestPromptPayload = Field(default_factory=RequestPromptPayload)
 
     # Resolved metadata (computed at prepare time; NOT used by executors for composition)
     skill_paths: tuple[str, ...] = ()
@@ -148,6 +159,7 @@ __all__ = [
     "LaunchArgvIntent",
     "LaunchCompositionSurface",
     "LaunchRuntime",
+    "RequestPromptPayload",
     "RetryPolicy",
     "SessionRequest",
     "SpawnRequest",

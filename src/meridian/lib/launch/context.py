@@ -41,6 +41,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchSpec,
     summarize_composition_warnings,
 )
+from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.paths import (
     load_context_config,
     resolve_project_paths,
@@ -90,6 +91,7 @@ from .request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
     LaunchRuntime,
+    RequestPromptPayload,
     SpawnRequest,
 )
 from .resolve import (
@@ -252,6 +254,7 @@ class PreparedLaunchSurface:
     harness: SubprocessHarness
     seed_harness_session_id: str | None
     composition_warnings: tuple[CompositionWarning, ...]
+    prompt_payload: PreparedPromptPayload
     loaded_references: tuple[ReferenceItem, ...]
     profile_tools_for_deny_optout: tuple[str, ...]
     has_profile_for_deny_optout: bool
@@ -264,6 +267,25 @@ class PreparedLaunchSurface:
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
+
+
+@dataclass(frozen=True)
+class PreparedPromptPayload:
+    """Typed internal prompt payload carried across prepare/bind."""
+
+    adhoc_agent_payload: str = ""
+    appended_system_prompt: str | None = None
+    user_turn_content: str | None = None
+
+
+@dataclass(frozen=True)
+class MaterializedLaunchArtifacts:
+    """Shared launch materialization below policy resolution."""
+
+    run_params: ResolvedRunInputs
+    permission_config: PermissionConfig
+    perms: PermissionResolver
+    spec: ResolvedLaunchSpec
 
 
 @dataclass(frozen=True)
@@ -339,6 +361,105 @@ def _build_composition_warnings(
             continue
         warnings.append(CompositionWarning(code=code, message=normalized))
     return tuple(warnings)
+
+
+def prepare_prompt_payload(
+    *,
+    adhoc_agent_payload: str = "",
+    projected_content: ProjectedContent | None = None,
+    appended_system_prompt: str | None = None,
+    user_turn_content: str | None = None,
+) -> PreparedPromptPayload:
+    """Normalize managed prompt payload for later launch binding."""
+
+    projected_system_prompt = (
+        projected_content.system_prompt.strip() if projected_content is not None else ""
+    )
+    projected_user_turn = (
+        projected_content.user_turn_content.strip() if projected_content is not None else ""
+    )
+    normalized_system_prompt = (
+        projected_system_prompt or (appended_system_prompt or "").strip() or None
+    )
+    normalized_user_turn = projected_user_turn or (user_turn_content or "").strip() or None
+    return PreparedPromptPayload(
+        adhoc_agent_payload=adhoc_agent_payload.strip(),
+        appended_system_prompt=normalized_system_prompt,
+        user_turn_content=normalized_user_turn,
+    )
+
+
+def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPromptPayload:
+    """Convert internal prompt payload to the persisted request carrier."""
+
+    return RequestPromptPayload(
+        adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
+        appended_system_prompt=prompt_payload.appended_system_prompt,
+        user_turn_content=prompt_payload.user_turn_content,
+    )
+
+
+def materialize_launch_artifacts(
+    *,
+    harness: SubprocessHarness,
+    prompt: str,
+    model: str | None,
+    effort: str | None,
+    skills: tuple[str, ...],
+    agent: str | None,
+    prompt_payload: PreparedPromptPayload,
+    extra_args: tuple[str, ...] = (),
+    project_root: str | None = None,
+    mcp_tools: tuple[str, ...] = (),
+    projected_roots: tuple[Path, ...] = (),
+    interactive: bool = False,
+    continue_harness_session_id: str | None = None,
+    continue_fork: bool = False,
+    report_output_path: str | None = None,
+    context_from_payload: tuple[str, ...] = (),
+    reference_items: tuple[ReferenceItem, ...] = (),
+    sandbox: str | None = None,
+    allowed_tools: tuple[str, ...] = (),
+    disallowed_tools: tuple[str, ...] = (),
+    approval: str | None = None,
+    unsafe_no_permissions: bool = False,
+) -> MaterializedLaunchArtifacts:
+    """Build shared run/spec/permission launch artifacts."""
+
+    run_params = ResolvedRunInputs(
+        prompt=prompt,
+        model=ModelId(model) if model else None,
+        effort=effort,
+        skills=skills,
+        agent=agent,
+        adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
+        extra_args=extra_args,
+        project_root=project_root,
+        mcp_tools=mcp_tools,
+        projected_roots=projected_roots,
+        interactive=interactive,
+        continue_harness_session_id=continue_harness_session_id,
+        continue_fork=continue_fork,
+        report_output_path=report_output_path,
+        appended_system_prompt=prompt_payload.appended_system_prompt,
+        context_from_payload=context_from_payload,
+        reference_items=reference_items,
+        user_turn_content=prompt_payload.user_turn_content,
+    )
+    permission_config, perms = resolve_permission_pipeline(
+        sandbox=sandbox,
+        allowed_tools=allowed_tools,
+        disallowed_tools=disallowed_tools,
+        approval=approval or "default",
+        unsafe_no_permissions=unsafe_no_permissions,
+    )
+    spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
+    return MaterializedLaunchArtifacts(
+        run_params=run_params,
+        permission_config=permission_config,
+        perms=perms,
+        spec=spec,
+    )
 
 
 def _missing_continue_session_error(source_ref: str | None) -> str:
@@ -528,6 +649,31 @@ def _resolve_active_work_dir(
         explicit_runtime_root=runtime_root,
         context_config=context_config,
     ).work_dir
+
+
+def build_child_runtime_env_overrides(
+    *,
+    project_paths: ProjectConfigPaths,
+    runtime_root: Path,
+    child_spawn_id: str,
+    work_id: str | None = None,
+    increment_depth: bool = True,
+    additional_overrides: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Build child runtime env overrides shared by launch/chat callers."""
+
+    runtime_ctx = ChildEnvContext.from_environment(
+        project_paths=project_paths,
+        runtime_root=runtime_root,
+        explicit_work_id=work_id,
+    )
+    runtime_overrides = runtime_ctx.child_context(
+        child_spawn_id=child_spawn_id,
+        increment_depth=increment_depth,
+    )
+    if additional_overrides:
+        runtime_overrides.update(additional_overrides)
+    return runtime_overrides
 
 
 def _resolve_session_continuation(
@@ -986,6 +1132,7 @@ def prepare_launch_surface(
     continuation = ResolvedContinuation(harness_session_id=None, continue_fork=False)
     seed_harness_session_id: str | None = None
     seed_session_args: tuple[str, ...] = ()
+    prompt_payload = PreparedPromptPayload()
     if runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE:
         (
             final_prompt,
@@ -1004,6 +1151,11 @@ def prepare_launch_surface(
             policy=policies,
         )
         seed_harness_session_id = continuation.harness_session_id
+        prompt_payload = prepare_prompt_payload(
+            projected_content=projected_content,
+            appended_system_prompt=appended_system_prompt,
+            user_turn_content=user_turn_content,
+        )
     elif runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
         (
             final_prompt,
@@ -1021,6 +1173,11 @@ def prepare_launch_surface(
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policies,
+        )
+        prompt_payload = prepare_prompt_payload(
+            projected_content=projected_content,
+            appended_system_prompt=appended_system_prompt,
+            user_turn_content=user_turn_content,
         )
 
     missing_skills_warning = (
@@ -1055,16 +1212,18 @@ def prepare_launch_surface(
         agent_metadata["session_agent"] = resolved_agent_name
     if session_agent_path:
         agent_metadata["session_agent_path"] = session_agent_path
+    adhoc_agent_payload = ""
     if profile is not None and harness.capabilities.supports_native_agents:
-        agent_metadata["adhoc_agent_payload"] = harness.build_adhoc_agent_payload(
+        adhoc_agent_payload = harness.build_adhoc_agent_payload(
             name=profile.name,
             description=profile.description,
             prompt=profile.body,
         )
-    if appended_system_prompt:
-        agent_metadata["appended_system_prompt"] = appended_system_prompt
-    if user_turn_content:
-        agent_metadata["user_turn_content"] = user_turn_content
+    prompt_payload = PreparedPromptPayload(
+        adhoc_agent_payload=adhoc_agent_payload,
+        appended_system_prompt=prompt_payload.appended_system_prompt,
+        user_turn_content=prompt_payload.user_turn_content,
+    )
     profile_tools_for_deny_optout = profile.tools if profile is not None else ()
 
     resolved_request = request.model_copy(
@@ -1094,6 +1253,7 @@ def prepare_launch_surface(
             "context_from": resolved_context_from,
             "warning": warning,
             "agent_metadata": agent_metadata,
+            "prompt_payload": _request_prompt_payload(prompt_payload),
             "skill_paths": resolve_skill_paths(resolved_skills.loaded_skills),
             **model_selection_update,
         }
@@ -1103,6 +1263,7 @@ def prepare_launch_surface(
         harness=harness,
         seed_harness_session_id=seed_harness_session_id,
         composition_warnings=composition_warnings,
+        prompt_payload=prompt_payload,
         loaded_references=loaded_references,
         profile_tools_for_deny_optout=profile_tools_for_deny_optout,
         has_profile_for_deny_optout=has_profile,
@@ -1147,6 +1308,11 @@ def _build_direct_surface(
         ).strip()
         or None,
         composition_warnings=composition_warnings,
+        prompt_payload=prepare_prompt_payload(
+            adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,
+            appended_system_prompt=request.prompt_payload.appended_system_prompt,
+            user_turn_content=request.prompt_payload.user_turn_content,
+        ),
         loaded_references=loaded_references,
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
@@ -1189,6 +1355,7 @@ def bind_launch_context(
     harness = prepared.harness
     effective_session_id = bindings.forked_harness_session_id or prepared.seed_harness_session_id
     composition_warnings = prepared.composition_warnings
+    prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
     profile_tools_for_deny_optout = prepared.profile_tools_for_deny_optout
     has_profile_for_deny_optout = prepared.has_profile_for_deny_optout
@@ -1240,7 +1407,6 @@ def bind_launch_context(
             update={"warning": summarize_composition_warnings(composition_warnings)}
         )
 
-    resolved_agent_metadata = resolved_request.agent_metadata
     model = (resolved_request.model or "").strip()
     model_family = normalize_usage_model_family(model)
     emit_telemetry(
@@ -1249,39 +1415,6 @@ def bind_launch_context(
         scope="core.launch",
         ids={"spawn_id": bindings.spawn_id},
         data={"model_family": model_family, "harness": harness.id.value},
-    )
-    if projected_content is not None:
-        appended_system_prompt = projected_content.system_prompt.strip() or None
-        user_turn_content = projected_content.user_turn_content.strip() or None
-    else:
-        appended_system_prompt = (
-            resolved_agent_metadata.get("appended_system_prompt") or ""
-        ).strip() or None
-        user_turn_content = (resolved_agent_metadata.get("user_turn_content") or "").strip() or None
-    is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    run_params = ResolvedRunInputs(
-        prompt=resolved_request.prompt,
-        model=ModelId(model) if model else None,
-        effort=resolved_request.effort,
-        skills=resolved_request.skills,
-        agent=resolved_request.agent,
-        adhoc_agent_payload=(resolved_agent_metadata.get("adhoc_agent_payload") or "").strip(),
-        extra_args=projected_extra_args,
-        project_root=child_cwd.as_posix(),
-        mcp_tools=resolved_request.mcp_tools,
-        projected_roots=projected_roots,
-        interactive=is_primary_launch,
-        continue_harness_session_id=effective_session_id,
-        continue_fork=(
-            bindings.continue_fork_override
-            if bindings.continue_fork_override is not None
-            else resolved_request.session.continue_fork
-        ),
-        report_output_path=report_output_path.as_posix(),
-        appended_system_prompt=appended_system_prompt,
-        context_from_payload=resolved_request.context_from,
-        reference_items=loaded_references,
-        user_turn_content=user_turn_content,
     )
 
     if (
@@ -1306,14 +1439,40 @@ def bind_launch_context(
                 }
             )
 
-    permission_config, perms = resolve_permission_pipeline(
+    is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    materialized = materialize_launch_artifacts(
+        harness=harness,
+        prompt=resolved_request.prompt,
+        model=model,
+        effort=resolved_request.effort,
+        skills=resolved_request.skills,
+        agent=resolved_request.agent,
+        prompt_payload=prompt_payload,
+        extra_args=projected_extra_args,
+        project_root=child_cwd.as_posix(),
+        mcp_tools=resolved_request.mcp_tools,
+        projected_roots=projected_roots,
+        interactive=is_primary_launch,
+        continue_harness_session_id=effective_session_id,
+        continue_fork=(
+            bindings.continue_fork_override
+            if bindings.continue_fork_override is not None
+            else resolved_request.session.continue_fork
+        ),
+        report_output_path=report_output_path.as_posix(),
+        context_from_payload=resolved_request.context_from,
+        reference_items=loaded_references,
         sandbox=resolved_request.sandbox,
         allowed_tools=resolved_request.allowed_tools,
         disallowed_tools=resolved_request.disallowed_tools,
-        approval=resolved_request.approval or "default",
+        approval=resolved_request.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
     )
-    spec = resolve_launch_spec_stage(adapter=harness, run_inputs=run_params, perms=perms)
+    run_params = materialized.run_params
+
+    permission_config = materialized.permission_config
+    perms = materialized.perms
+    spec = materialized.spec
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
         argv = build_launch_argv(
@@ -1327,15 +1486,12 @@ def bind_launch_context(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
-    runtime_ctx = ChildEnvContext.from_environment(
+    runtime_overrides = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
-        explicit_work_id=effective_work_id,
-    )
-    increment_depth = runtime.composition_surface != LaunchCompositionSurface.PRIMARY
-    runtime_overrides = runtime_ctx.child_context(
         child_spawn_id=bindings.spawn_id,
-        increment_depth=increment_depth,
+        work_id=effective_work_id,
+        increment_depth=runtime.composition_surface != LaunchCompositionSurface.PRIMARY,
     )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
@@ -1473,13 +1629,18 @@ def build_launch_context(
 __all__ = [
     "ChildEnvContext",
     "LaunchContext",
+    "MaterializedLaunchArtifacts",
     "PreparedLaunchSurface",
     "PreparedPolicySurface",
+    "PreparedPromptPayload",
     "RuntimeBindings",
     "bind_launch_context",
+    "build_child_runtime_env_overrides",
     "build_launch_context",
     "compile_prepared_policy_surface",
+    "materialize_launch_artifacts",
     "merge_env_overrides",
     "normalize_usage_model_family",
     "prepare_launch_surface",
+    "prepare_prompt_payload",
 ]
