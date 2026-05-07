@@ -85,15 +85,15 @@ idle, and recovery timeout dimensions that require separate design.
 | Combination | Error |
 | ----------- | ----- |
 | `--headless --dev` | `--dev cannot be combined with --headless` |
-| `--headless --frontend-dist PATH` | valid — `--headless` wins; `--frontend-dist` is ignored implicitly (explicitly specifying `--frontend-dist` with `--headless` is an error: use one or the other) |
+| `--headless --frontend-dist PATH` | accepted — headless wins; frontend assets are unused |
 | `--dev --frontend-dist PATH` | `--frontend-dist cannot be combined with --dev` |
 | `--frontend-root PATH` (without `--dev`) | `--frontend-root is only valid with --dev` |
-| `--no-portless` (without `--dev`) | `--no-portless is only valid with --dev` |
-| `--tailscale` or `--funnel` (without `--dev`) | `--tailscale and --funnel are only valid with --dev` |
+| `--no-portless` (without `--dev`, with or without `--headless`) | `--no-portless is only valid with --dev` |
+| `--tailscale` or `--funnel` (without `--dev`, with or without `--headless`) | `--tailscale and --funnel are only valid with --dev` |
 | `--tailscale --funnel` | `--tailscale and --funnel cannot be combined` |
 | `--no-portless --tailscale` or `--no-portless --funnel` | `--no-portless cannot be combined with --tailscale or --funnel` |
-| `--portless-force` (without effective portless dev mode) | `--portless-force requires effective portless dev mode` |
-| `--headless` with any of `--no-portless`, `--tailscale`, `--funnel`, `--portless-force` | `dev frontend flags cannot be combined with --headless` |
+| `--portless-force` (without effective portless dev mode) | `--portless-force is only valid with portless dev mode` |
+| `--headless --portless-force` | `dev frontend flags cannot be combined with --headless` |
 | `--yolo --approval MODE` | `Cannot use --yolo with --approval` |
 
 Startup writes `~/.meridian/chat-server.json` with the current base URL so management
