@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import time
 
-from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.bootstrap.services import (
+    build_spawn_application_service,
+    prepare_for_runtime_write,
+)
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.lifecycle import create_lifecycle_service
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
@@ -48,8 +49,7 @@ async def streaming_serve(
         raise ValueError("Prepared runtime write context is missing runtime root.")
     runtime_root = prepared.runtime_root
     start_monotonic = time.monotonic()
-    lifecycle = create_lifecycle_service(project_root, runtime_root)
-    spawn_service = SpawnApplicationService(runtime_root, lifecycle)
+    spawn_service = build_spawn_application_service(prepared)
 
     # Build request and runtime BEFORE allocating spawn ID (SEAM-1)
     spawn_req = SpawnRequest(

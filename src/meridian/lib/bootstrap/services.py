@@ -19,6 +19,7 @@ from meridian.lib.service_context import (
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
+    from meridian.lib.core.spawn_service import SpawnApplicationService
 
 
 @dataclass(frozen=True)
@@ -114,10 +115,40 @@ def build_spawn_entrypoint(
 ) -> SpawnEntryPoint:
     """Build the minimal shared carrier for spawn entrypoints."""
 
+    resolved_lifecycle = lifecycle
+    if resolved_lifecycle is None and isinstance(prepared, RuntimeWriteContext):
+        if prepared.runtime_root is None:
+            raise ValueError("Prepared runtime write context is missing runtime root.")
+        from meridian.lib.core.lifecycle import create_lifecycle_service
+
+        resolved_lifecycle = create_lifecycle_service(
+            prepared.project_root,
+            prepared.runtime_root,
+        )
+
     return SpawnEntryPoint(
         context=_application_context_from_runtime(prepared),
-        services=ApplicationServices(lifecycle=lifecycle),
+        services=ApplicationServices(lifecycle=resolved_lifecycle),
     )
+
+
+def build_spawn_application_service(
+    prepared: RuntimeWriteContext,
+    *,
+    lifecycle: SpawnLifecycleService | None = None,
+) -> SpawnApplicationService:
+    """Build a spawn application service from the shared spawn entrypoint seam."""
+
+    from meridian.lib.core.spawn_service import SpawnApplicationService
+
+    entrypoint = build_spawn_entrypoint(prepared, lifecycle=lifecycle)
+    runtime_root = entrypoint.context.runtime_root
+    if runtime_root is None:
+        raise ValueError("Spawn entrypoint is missing runtime root.")
+    lifecycle_service = entrypoint.services.lifecycle
+    if lifecycle_service is None:
+        raise ValueError("Spawn entrypoint is missing lifecycle service.")
+    return SpawnApplicationService(runtime_root, lifecycle_service)
 
 
 def build_chat_entrypoint(

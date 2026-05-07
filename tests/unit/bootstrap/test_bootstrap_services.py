@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.bootstrap.services import (
+    build_spawn_application_service,
+    build_spawn_entrypoint,
     prepare_for_project_read,
     prepare_for_project_write,
     prepare_for_runtime_read,
@@ -92,3 +94,28 @@ def test_prepare_for_runtime_write_creates_uuid_and_runtime_dirs(
     assert (result.runtime_root / "sessions").is_dir()
     assert (result.runtime_root / "chats").is_dir()
     assert (result.runtime_root / "telemetry").is_dir()
+
+
+def test_build_spawn_entrypoint_adds_lifecycle_for_runtime_write_context(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    prepared = prepare_for_runtime_write(project_root)
+
+    entrypoint = build_spawn_entrypoint(prepared)
+
+    assert entrypoint.context.project_root == project_root
+    assert entrypoint.context.runtime_root == prepared.runtime_root
+    assert entrypoint.context.config == prepared.config
+    assert entrypoint.services.lifecycle is not None
+
+
+def test_build_spawn_application_service_uses_shared_entrypoint_seam(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    prepared = prepare_for_runtime_write(project_root)
+
+    service = build_spawn_application_service(prepared)
+
+    assert service.runtime_root == prepared.runtime_root
