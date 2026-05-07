@@ -358,10 +358,11 @@ Meridian                                      OA microCT analysis   Ready
 ```txt
 Meridian                                      OA microCT analysis   Ready
 
-You
-Review the latest microCT run and tell me what needs attention.
+        ┌──────────────────────────────────────────────────────────────┐
+        │ Review the latest microCT run and tell me what needs         │
+        │ attention.                                                   │
+        └──────────────────────────────────────────────────────────────┘
 
-Meridian
 The run completed. Two items need review:
 
 1. Tibial ratio table has missing labels.
@@ -377,6 +378,8 @@ Copy   Save note   View activity
         │ Research analyst ▾     Ask before editing ▾              ↑   │
         └──────────────────────────────────────────────────────────────┘
 ```
+
+Human messages use a wide, right-aligned bubble around 90–95% of the transcript column. Assistant messages are embedded left-aligned in document flow with no avatar, role label, or bubble. Actions stay as tiny muted text links below the assistant content.
 
 ### Chat: approval needed
 
