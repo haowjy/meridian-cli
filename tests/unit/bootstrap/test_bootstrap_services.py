@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.bootstrap.services import (
+    build_chat_entrypoint,
+    build_extension_entrypoint,
     build_spawn_application_service,
     build_spawn_entrypoint,
     prepare_for_project_read,
@@ -103,6 +105,34 @@ def test_build_spawn_entrypoint_keeps_runtime_write_context_carrier_only(
     prepared = prepare_for_runtime_write(project_root)
 
     entrypoint = build_spawn_entrypoint(prepared)
+
+    assert entrypoint.context.project_root == project_root
+    assert entrypoint.context.runtime_root == prepared.runtime_root
+    assert entrypoint.context.config == prepared.config
+    assert entrypoint.services.lifecycle is None
+
+
+def test_build_chat_entrypoint_keeps_runtime_write_context_carrier_only(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    prepared = prepare_for_runtime_write(project_root)
+
+    entrypoint = build_chat_entrypoint(prepared)
+
+    assert entrypoint.context.project_root == project_root
+    assert entrypoint.context.runtime_root == prepared.runtime_root
+    assert entrypoint.context.config == prepared.config
+    assert entrypoint.services.lifecycle is None
+
+
+def test_build_extension_entrypoint_keeps_runtime_write_context_carrier_only(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    prepared = prepare_for_runtime_write(project_root)
+
+    entrypoint = build_extension_entrypoint(prepared)
 
     assert entrypoint.context.project_root == project_root
     assert entrypoint.context.runtime_root == prepared.runtime_root

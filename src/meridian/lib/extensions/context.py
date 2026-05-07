@@ -148,6 +148,7 @@ class ExtensionCommandServices:
 
 def build_extension_command_services(
     *,
+    application: ExtensionEntryPoint | None = None,
     project_root: Path | None = None,
     runtime_root: Path | None = None,
     config: MeridianConfig | None = None,
@@ -156,17 +157,19 @@ def build_extension_command_services(
 ) -> ExtensionCommandServices:
     """Build extension services with the shared application seam attached."""
 
-    return ExtensionCommandServices(
-        runtime_root=runtime_root,
-        meridian_dir=meridian_dir,
-        application=ExtensionEntryPoint(
-            context=ApplicationContext(
-                project_root=project_root,
-                runtime_root=runtime_root,
-                config=config,
-            ),
-            services=ApplicationServices(lifecycle=lifecycle),
+    resolved_application = application or ExtensionEntryPoint(
+        context=ApplicationContext(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            config=config,
         ),
+        services=ApplicationServices(lifecycle=lifecycle),
+    )
+
+    return ExtensionCommandServices(
+        runtime_root=runtime_root or resolved_application.context.runtime_root,
+        meridian_dir=meridian_dir,
+        application=resolved_application,
     )
 
 

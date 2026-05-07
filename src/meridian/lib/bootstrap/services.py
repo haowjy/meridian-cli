@@ -14,6 +14,7 @@ from meridian.lib.service_context import (
     ApplicationContext,
     ApplicationServices,
     ChatEntryPoint,
+    ExtensionEntryPoint,
     SpawnEntryPoint,
 )
 
@@ -153,6 +154,19 @@ def build_chat_entrypoint(
     """Build the minimal shared carrier for chat entrypoints."""
 
     return ChatEntryPoint(
+        context=_application_context_from_runtime(prepared),
+        services=ApplicationServices(lifecycle=lifecycle),
+    )
+
+
+def build_extension_entrypoint(
+    prepared: RuntimeReadContext | RuntimeWriteContext,
+    *,
+    lifecycle: SpawnLifecycleService | None = None,
+) -> ExtensionEntryPoint:
+    """Build the minimal shared carrier for extension entrypoints."""
+
+    return ExtensionEntryPoint(
         context=_application_context_from_runtime(prepared),
         services=ApplicationServices(lifecycle=lifecycle),
     )

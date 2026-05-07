@@ -45,7 +45,8 @@ async def archive_spawn_handler(
     coordination (SEAM-5).
     """
     _ = context
-    if services.runtime_root is None:
+    runtime_root = services.application.context.runtime_root or services.runtime_root
+    if runtime_root is None:
         return ExtensionErrorResult(
             code="service_unavailable",
             message="runtime_root not available",
@@ -58,8 +59,8 @@ async def archive_spawn_handler(
 
     # Create a minimal lifecycle service without hooks - archive doesn't
     # require project-level hook wiring
-    lifecycle = SpawnLifecycleService(services.runtime_root)
-    spawn_service = SpawnApplicationService(services.runtime_root, lifecycle)
+    lifecycle = services.application.services.lifecycle or SpawnLifecycleService(runtime_root)
+    spawn_service = SpawnApplicationService(runtime_root, lifecycle)
 
     try:
         was_new = await spawn_service.archive(spawn_id)
@@ -110,10 +111,13 @@ async def get_spawn_stats_handler(
     """Wrap spawn_stats operation output for extension command surface."""
 
     _ = context
-    if services.meridian_dir is None:
+    project_root = services.application.context.project_root
+    if project_root is None and services.meridian_dir is not None:
+        project_root = services.meridian_dir.parent
+    if project_root is None:
         return ExtensionErrorResult(
             code="service_unavailable",
-            message="meridian_dir not available",
+            message="project_root not available",
         )
 
     from meridian.lib.ops.spawn.api import spawn_stats_sync
@@ -121,7 +125,7 @@ async def get_spawn_stats_handler(
 
     payload = SpawnStatsInput(
         spawn_id=args["spawn_id"],
-        project_root=services.meridian_dir.parent.as_posix(),
+        project_root=project_root.as_posix(),
     )
     result = spawn_stats_sync(payload)
     return ExtensionJSONResult(payload=result.model_dump())

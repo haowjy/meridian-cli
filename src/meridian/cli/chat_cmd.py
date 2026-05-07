@@ -18,7 +18,11 @@ from uuid import uuid4
 from cyclopts import App, Parameter
 
 from meridian.cli.utils import parse_csv_list
-from meridian.lib.bootstrap.services import prepare_for_runtime_read, prepare_for_runtime_write
+from meridian.lib.bootstrap.services import (
+    build_chat_entrypoint,
+    prepare_for_runtime_read,
+    prepare_for_runtime_write,
+)
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.chat.backend_acquisition import ColdSpawnAcquisition
 from meridian.lib.chat.frontend import FrontendAssets, resolve_frontend_assets
@@ -40,6 +44,7 @@ from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_r
 from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.launch.policies import SurfacePolicyInput, resolve_launch_policy
 from meridian.lib.launch.request import LaunchCompositionSurface
+from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
@@ -190,7 +195,7 @@ def _chat(
 def _chat_ls(
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
+    _prepare_chat_runtime_read_entrypoint()
     response = _request_json("GET", "/chat", url=url)
     rows = response.get("chats", [])
     if not isinstance(rows, list):
@@ -202,7 +207,7 @@ def _chat_show(
     chat_id: Annotated[str, Parameter(help="Chat id to inspect.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
+    _prepare_chat_runtime_read_entrypoint()
     state = _request_json("GET", f"/chat/{chat_id}/state", url=url)
     events = _request_json("GET", f"/chat/{chat_id}/events?last=5", url=url)
     print(f"chat_id: {state.get('chat_id', chat_id)}")
@@ -224,7 +229,7 @@ def _chat_log(
         Parameter(name="--follow", help="Follow live events over WebSocket."),
     ] = False,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
+    _prepare_chat_runtime_read_entrypoint()
     query = f"?last={last}" if last is not None else ""
     response = _request_json("GET", f"/chat/{chat_id}/events{query}", url=url)
     events = _events_from_response(response)
@@ -239,7 +244,7 @@ def _chat_close(
     chat_id: Annotated[str, Parameter(help="Chat id to close.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
+    _prepare_chat_runtime_read_entrypoint()
     response = _request_json("POST", f"/chat/{chat_id}/close", url=url)
     status = response.get("status", "unknown")
     if status != "accepted":
@@ -269,6 +274,7 @@ def run_chat_server(
     no_portless: bool = False,
     funnel: bool = False,
     portless_force: bool = False,
+    entrypoint: ChatEntryPoint | None = None,
     uvicorn_run: Callable[..., Any] | None = None,
     stdout: Any | None = None,
 ) -> int:
@@ -314,7 +320,7 @@ def run_chat_server(
         )
         sys.exit(1)
 
-    project_root = resolve_project_root()
+    project_root = _resolve_chat_project_root(entrypoint)
     policy_snapshot = _resolve_chat_policy_snapshot(
         project_root=project_root,
         model=model,
@@ -327,8 +333,10 @@ def run_chat_server(
         autocompact=autocompact,
     )
     _emit_chat_policy_warnings(policy_snapshot.warnings, output)
-    prepared = prepare_for_runtime_write(project_root)
-    project_root = prepared.project_root
+    if entrypoint is None:
+        prepared = prepare_for_runtime_write(project_root)
+        entrypoint = build_chat_entrypoint(prepared)
+    project_root = _chat_project_root(entrypoint)
     runtime_root = get_user_home()  # kept for ChatRuntime — not telemetry
     runtime = ChatRuntime(
         runtime_root=runtime_root,
@@ -452,6 +460,30 @@ def run_chat_server(
     runner = uvicorn_run or uvicorn.run
     runner(chat_app, host=host, port=actual_port)
     return actual_port
+
+
+def _prepare_chat_runtime_read_entrypoint() -> ChatEntryPoint:
+    """Prepare the minimal chat entrypoint seam for read-only chat clients."""
+
+    prepared = prepare_for_runtime_read(resolve_project_root())
+    return build_chat_entrypoint(prepared)
+
+
+def _resolve_chat_project_root(entrypoint: ChatEntryPoint | None) -> Path:
+    """Resolve project root from a prebuilt seam or project discovery."""
+
+    if entrypoint is not None:
+        return _chat_project_root(entrypoint)
+    return resolve_project_root()
+
+
+def _chat_project_root(entrypoint: ChatEntryPoint) -> Path:
+    """Extract the required project root from a chat entrypoint."""
+
+    project_root = entrypoint.context.project_root
+    if project_root is None:
+        raise ValueError("Chat entrypoint is missing project root.")
+    return project_root
 
 
 def _check_stale_assets(assets: FrontendAssets, output: Any) -> None:

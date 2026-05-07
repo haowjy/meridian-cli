@@ -12,6 +12,7 @@ import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.execute as spawn_execute
 import meridian.lib.telemetry.bootstrap as telemetry_bootstrap
 from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.service_context import ApplicationContext, ChatEntryPoint
 from meridian.lib.state.launch_boundary import EVENT_WORKER_FAILURE, read_launch_boundary_events
 
 
@@ -288,7 +289,7 @@ def test_run_chat_server_uses_prepared_runtime_write_context(
     monkeypatch.setattr(
         chat_cmd,
         "prepare_for_runtime_write",
-        lambda root: SimpleNamespace(project_root=root, runtime_root=runtime_root),
+        lambda root: SimpleNamespace(project_root=root, runtime_root=runtime_root, config=None),
     )
 
     def _capture_chat_runtime(**kwargs):
@@ -309,6 +310,45 @@ def test_run_chat_server_uses_prepared_runtime_write_context(
 
     with pytest.raises(_StopAfterTelemetrySetup):
         chat_cmd.run_chat_server(harness="codex", headless=True)
+
+    assert captured == {
+        "chat_project_root": project_root,
+        "chat_runtime_root": runtime_root,
+    }
+
+
+def test_run_chat_server_accepts_prebuilt_chat_entrypoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        chat_cmd,
+        "prepare_for_runtime_write",
+        lambda _root: pytest.fail("prepare_for_runtime_write should not run"),
+    )
+    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: pytest.fail("should not resolve"))
+
+    def _capture_chat_runtime(**kwargs):
+        captured["chat_project_root"] = kwargs["project_root"]
+        captured["chat_runtime_root"] = kwargs["runtime_root"]
+        return object()
+
+    monkeypatch.setattr(chat_cmd, "ChatRuntime", _capture_chat_runtime)
+    monkeypatch.setattr(
+        "meridian.lib.chat.server.configure",
+        lambda **_kwargs: (_ for _ in ()).throw(_StopAfterTelemetrySetup()),
+    )
+    monkeypatch.setattr(chat_cmd, "get_user_home", lambda: runtime_root)
+
+    entrypoint = ChatEntryPoint(context=ApplicationContext(project_root=project_root))
+
+    with pytest.raises(_StopAfterTelemetrySetup):
+        chat_cmd.run_chat_server(harness="codex", headless=True, entrypoint=entrypoint)
 
     assert captured == {
         "chat_project_root": project_root,

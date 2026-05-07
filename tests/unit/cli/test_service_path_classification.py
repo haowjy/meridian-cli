@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -66,8 +67,9 @@ def test_chat_management_commands_use_runtime_read_preparation(
 ) -> None:
     calls: list[str] = []
 
-    def fake_runtime_read(project_root: Path) -> None:
+    def fake_runtime_read(project_root: Path) -> SimpleNamespace:
         calls.append(f"read:{project_root}")
+        return SimpleNamespace(project_root=project_root, runtime_root=None, config=None)
 
     def fake_runtime_write(project_root: Path) -> None:
         calls.append(f"write:{project_root}")
