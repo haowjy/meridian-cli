@@ -7,7 +7,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | Command | Description |
 | ------- | ----------- |
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
-| `meridian --continue REF` | Resume a prior primary session from a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id |
+| `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are now the preferred reference — shown in the quit message when a primary session ends. |
 | `meridian --fork REF` | Launch a new primary session by forking a prior spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides the agent through first-time environment setup |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |

@@ -108,6 +108,8 @@ Primary `--continue REF` / `--fork REF` and spawn `--fork REF` also accept a raw
 meridian --continue 01JABCDEF1234567890
 ```
 
+When a primary session ends, the quit message now shows the chat ID (e.g. `c123`) as the preferred `--continue` reference. Chat IDs are stable and human-friendly; UUIDs still work but are no longer the default suggestion.
+
 `--continue` resumes the same session. `--fork` starts a new session seeded from prior context. `--from` only attaches prior context; it does not resume/fork transcript state.
 
 To find which spawns belong to a work item:
