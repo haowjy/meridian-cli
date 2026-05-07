@@ -6,6 +6,8 @@ import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import pytest
+
 
 @contextmanager
 def _env_overrides(overrides: dict[str, str]) -> Iterator[None]:
@@ -93,6 +95,48 @@ def test_resolve_precedence() -> None:
     assert result.effort == "high"
     assert result.sandbox == "full-access"
     assert result.timeout == 10.0
+
+
+def test_runtime_overrides_split_routing_from_execution_policy_fields() -> None:
+    from meridian.lib.core.overrides import RuntimeOverrides
+
+    overrides = RuntimeOverrides(
+        model="gptmini",
+        harness="codex",
+        agent="reviewer",
+        effort="high",
+        sandbox="workspace-write",
+        approval="auto",
+        autocompact=40,
+        timeout=15.0,
+    )
+
+    assert overrides.routing_scope() == RuntimeOverrides(
+        model="gptmini",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert overrides.execution_policy_scope() == RuntimeOverrides(
+        effort="high",
+        sandbox="workspace-write",
+        approval="auto",
+        autocompact=40,
+        timeout=15.0,
+    )
+    assert overrides.execution_policy_scope(frozenset({"effort", "approval"})) == RuntimeOverrides(
+        effort="high",
+        approval="auto",
+    )
+    assert overrides.model_policy_scope() == overrides.execution_policy_scope()
+
+
+def test_execution_policy_scope_rejects_unknown_supported_field_names() -> None:
+    from meridian.lib.core.overrides import RuntimeOverrides
+
+    overrides = RuntimeOverrides(effort="high", approval="auto")
+
+    with pytest.raises(ValueError, match="Unknown execution policy field"):
+        overrides.execution_policy_scope(frozenset({"effort", "typo"}))
 
 
 def test_spawn_config_layer_does_not_set_harness() -> None:

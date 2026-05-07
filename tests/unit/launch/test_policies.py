@@ -17,9 +17,12 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.policies import (
+    ResolvedLaunchPolicy,
+    SurfacePolicyInput,
     _policy_warnings,
     _resolve_model_policy_overrides,
     match_model_policy,
+    resolve_launch_policy,
     resolve_policy_fields,
     validate_harness_compatibility,
 )
@@ -37,7 +40,7 @@ from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.api import spawn_create_sync
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload, validate_create_input
-from tests.support.fixtures import write_agent
+from tests.support.fixtures import write_agent, write_skill
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -247,6 +250,47 @@ def test_resolve_policy_fields_model_policy_scope_strips_routing_fields() -> Non
     assert resolved.approval == "auto"
 
 
+def test_surface_policy_input_splits_routing_and_execution_layers() -> None:
+    registry = get_default_harness_registry()
+    surface = SurfacePolicyInput(
+        surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        catalog=CatalogSession(Path.cwd()),
+        layers=(
+            RuntimeOverrides(model="gptmini", effort="high", approval="auto"),
+            RuntimeOverrides(harness="codex", sandbox="workspace-write"),
+        ),
+        config_overrides=RuntimeOverrides(agent="reviewer", timeout=20.0),
+        config=MeridianConfig(),
+        harness_registry=registry,
+    )
+
+    assert surface.routing_layers == (
+        RuntimeOverrides(model="gptmini"),
+        RuntimeOverrides(harness="codex"),
+        RuntimeOverrides(agent="reviewer"),
+    )
+    assert surface.execution_policy_layers == (
+        RuntimeOverrides(effort="high", approval="auto"),
+        RuntimeOverrides(sandbox="workspace-write"),
+        RuntimeOverrides(timeout=20.0),
+    )
+
+
+def test_surface_policy_input_rejects_unknown_supported_execution_policy_field() -> None:
+    registry = get_default_harness_registry()
+
+    with pytest.raises(ValueError, match="Unknown execution policy field"):
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(Path.cwd()),
+            layers=(RuntimeOverrides(),),
+            config_overrides=RuntimeOverrides(),
+            config=MeridianConfig(),
+            harness_registry=registry,
+            supported_execution_policy_fields=frozenset({"effort", "typo"}),
+        )
+
+
 def test_resolve_policy_fields_tuple_form_matches_positional_form() -> None:
     tiers = (
         RuntimeOverrides(),
@@ -274,6 +318,146 @@ def test_policy_warnings_preserve_legacy_combined_text_format() -> None:
 
     assert [warning.code for warning in warnings] == ["policy_warning"]
     assert warnings[0].message == "profile missing\nmodel ambiguous"
+
+
+def test_resolve_launch_policy_boundary_returns_split_routing_and_policy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "gptmini": _mock_alias(
+                alias="gptmini",
+                model_id="openai/gpt-5.4-mini",
+                harness=HarnessId.CODEX,
+                default_effort="medium",
+                default_autocompact=30,
+            )
+        },
+    )
+    surface = SurfacePolicyInput(
+        surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        catalog=CatalogSession(tmp_path),
+        layers=(
+            RuntimeOverrides(model="gptmini", approval="auto"),
+            RuntimeOverrides(),
+        ),
+        config_overrides=RuntimeOverrides(agent="reviewer", sandbox="workspace-write"),
+        config=MeridianConfig(),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    resolved = resolve_launch_policy(surface)
+
+    assert isinstance(resolved, ResolvedLaunchPolicy)
+    assert resolved.resolved_routing == RuntimeOverrides(
+        model="gptmini",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert resolved.resolved_execution_policy == RuntimeOverrides(
+        approval="auto",
+        sandbox="workspace-write",
+        effort="medium",
+        autocompact=30,
+    )
+    assert resolved.field_provenance.model_source.value == "cli"
+    assert resolved.field_provenance.effort_source.value == "alias-default"
+    assert resolved.resolved_overrides == RuntimeOverrides(
+        model="gptmini",
+        harness="codex",
+        agent="reviewer",
+        approval="auto",
+        sandbox="workspace-write",
+        effort="medium",
+        autocompact=30,
+    )
+
+
+def test_resolve_launch_policy_merges_cli_skills_inside_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_skill(tmp_path, "dev-principles")
+    write_skill(tmp_path, "shared-workspace")
+    write_agent(tmp_path, name="reviewer", model="gpt-5.4", skills=("dev-principles",))
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={"gpt-5.4": _mock_alias(alias="gpt-5.4", model_id="gpt-5.4")},
+    )
+    policies = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides(),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+            requested_skills=("shared-workspace", "dev-principles"),
+            skills_readonly=True,
+        )
+    )
+
+    assert policies.resolved_skills.skill_names == ("dev-principles", "shared-workspace")
+
+
+def test_resolve_launch_policy_filters_unsupported_execution_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={"gptmini": _mock_alias(alias="gptmini", model_id="gpt-5.4-mini")},
+    )
+
+    policies = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(model="gptmini", timeout=11.0, effort="high"),
+                RuntimeOverrides(timeout=22.0),
+            ),
+            config_overrides=RuntimeOverrides(timeout=33.0, approval="auto"),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+            supported_execution_policy_fields=frozenset(
+                {"effort", "sandbox", "approval", "autocompact"}
+            ),
+        )
+    )
+
+    assert policies.resolved_execution_policy == RuntimeOverrides(
+        effort="high",
+        approval="auto",
+    )
+    assert policies.resolved_overrides.timeout is None
+    assert policies.field_provenance.timeout_source.value == "unset"
+
+
+def test_resolve_launch_policy_preserves_env_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={"gptmini": _mock_alias(alias="gptmini", model_id="gpt-5.4-mini")},
+    )
+
+    policies = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(model="gptmini"),
+                RuntimeOverrides(approval="auto"),
+            ),
+            config_overrides=RuntimeOverrides(approval="confirm"),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policies.resolved_overrides.approval == "auto"
+    assert policies.field_provenance.approval_source.value == "env"
 
 
 def test_match_model_policy_ranks_model_over_alias_over_glob(tmp_path: Path) -> None:
@@ -1103,6 +1287,16 @@ def test_resolve_policies_falls_back_to_first_available_fanout_before_model_poli
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_routing == RuntimeOverrides(
+        model="codex-fanout",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert policies.resolved_overrides == RuntimeOverrides(
+        model="codex-fanout",
+        harness="codex",
+        agent="reviewer",
+    )
     assert policies.model_selection is not None
     assert policies.model_selection.requested_token == "claude-choice"
     assert policies.model_selection.selected_model_token == "codex-fanout"
@@ -1155,6 +1349,16 @@ def test_resolve_policies_fanout_skips_raw_model_with_unresolvable_harness(
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_routing == RuntimeOverrides(
+        model="codex-fanout",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert policies.resolved_overrides == RuntimeOverrides(
+        model="codex-fanout",
+        harness="codex",
+        agent="reviewer",
+    )
     assert policies.model_selection is not None
     assert policies.model_selection.requested_token == "claude-choice"
     assert policies.model_selection.selected_model_token == "codex-fanout"
@@ -1206,6 +1410,16 @@ def test_resolve_policies_profile_policy_matching_fanout_token_does_not_transfor
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_routing == RuntimeOverrides(
+        model="codex-fanout",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert policies.resolved_overrides == RuntimeOverrides(
+        model="codex-fanout",
+        harness="codex",
+        agent="reviewer",
+    )
     assert policies.resolved_overrides.effort is None
     assert policies.model_selection is not None
     assert policies.model_selection.selected_model_token == "codex-fanout"
@@ -1301,6 +1515,16 @@ def test_resolve_policies_model_policy_promotion_demotes_previous_candidate_for_
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_routing == RuntimeOverrides(
+        model="codex-choice",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert policies.resolved_overrides == RuntimeOverrides(
+        model="codex-choice",
+        harness="codex",
+        agent="reviewer",
+    )
     assert policies.resolved_overrides.effort is None
     assert policies.model_selection is not None
     assert policies.model_selection.requested_token == "codex-choice"
@@ -1309,7 +1533,7 @@ def test_resolve_policies_model_policy_promotion_demotes_previous_candidate_for_
     assert policies.model_selection.harness_provenance == "availability-fallback"
 
 
-def test_resolve_policies_literal_fanout_model_wins_after_unavailable_policy_reroute_without_policy_leakage(
+def test_literal_fanout_model_wins_after_unavailable_policy_reroute_without_policy_leakage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1356,6 +1580,16 @@ def test_resolve_policies_literal_fanout_model_wins_after_unavailable_policy_rer
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
+    assert policies.resolved_routing == RuntimeOverrides(
+        model="gpt-5.5",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert policies.resolved_overrides == RuntimeOverrides(
+        model="gpt-5.5",
+        harness="codex",
+        agent="reviewer",
+    )
     assert policies.resolved_overrides.effort is None
     assert policies.model_selection is not None
     assert policies.model_selection.requested_token == "claude-choice"

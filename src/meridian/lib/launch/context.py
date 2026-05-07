@@ -65,7 +65,7 @@ from .permissions import (
     resolve_nested_claude_permission_request,
     resolve_permission_pipeline,
 )
-from .policies import ModelSelectionContext, resolve_policies
+from .policies import ModelSelectionContext, SurfacePolicyInput, resolve_launch_policy
 from .prompt import (
     build_agent_inventory_prompt,
     build_context_prompt,
@@ -88,11 +88,9 @@ from .request import (
     SpawnRequest,
 )
 from .resolve import (
-    dedupe_skill_names,
     format_missing_skills_warning,
     resolve_profile_path,
     resolve_skill_paths,
-    resolve_skills_from_profile,
 )
 from .run_inputs import ResolvedRunInputs
 from .workspace import resolve_workspace_snapshot_for_launch
@@ -507,14 +505,18 @@ def prepare_launch_surface(
         config_overrides = RuntimeOverrides.from_spawn_config(config)
         configured_default_harness = config.default_harness
 
-    policies = resolve_policies(
-        catalog=catalog,
-        layers=(cli_overrides, env_overrides),
-        config_overrides=config_overrides,
-        config=config,
-        harness_registry=harness_registry,
-        configured_default_harness=configured_default_harness,
-        skills_readonly=dry_run,
+    policies = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=runtime.composition_surface,
+            catalog=catalog,
+            layers=(cli_overrides, env_overrides),
+            config_overrides=config_overrides,
+            config=config,
+            harness_registry=harness_registry,
+            configured_default_harness=configured_default_harness,
+            skills_readonly=dry_run,
+            requested_skills=request.skills,
+        )
     )
     profile = policies.profile
     has_profile = profile is not None
@@ -522,24 +524,6 @@ def prepare_launch_surface(
     model_selection = policies.model_selection
     harness = policies.adapter
     resolved_skills = policies.resolved_skills
-    if request.skills:
-        merged_skill_names = dedupe_skill_names((*resolved_skills.skill_names, *request.skills))
-        resolved_skills = resolve_skills_from_profile(
-            profile_skills=merged_skill_names,
-            project_root=project_paths.project_root,
-            readonly=dry_run,
-            harness_id=str(policies.harness),
-            selected_model_token=(
-                model_selection.selected_model_token
-                if model_selection is not None
-                else policies.model
-            ),
-            canonical_model_id=(
-                model_selection.canonical_model_id
-                if model_selection is not None
-                else policies.model
-            ),
-        )
 
     if active_work_dir is None:
         active_work_dir = ResolvedContext.from_environment(

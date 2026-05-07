@@ -79,6 +79,7 @@ def _request(
     profile_skills: tuple[str, ...] = (),
     alias_entry: AliasEntry | None = None,
     alias_catalog: dict[str, AliasEntry] | None = None,
+    supported_execution_policy_fields: tuple[str, ...] | frozenset[str] | None = None,
 ) -> CompilerRequest:
     resolved_alias = alias_entry
     resolved_catalog = alias_catalog
@@ -105,6 +106,11 @@ def _request(
         alias_catalog=resolved_catalog,
         configured_default_harness="claude",
         project_root="/repo",
+        supported_execution_policy_fields=(
+            supported_execution_policy_fields
+            if supported_execution_policy_fields is not None
+            else ("effort", "sandbox", "approval", "autocompact", "timeout")
+        ),
     )
 
 
@@ -579,6 +585,39 @@ def test_compile_launch_params_per_field_independence() -> None:
     assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
     assert result.approval == "confirm"
     assert result.field_provenance.approval_source is ProvenanceLevel.CONFIG_DEFAULT
+
+
+def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
+    alias = _alias_entry()
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini", timeout=10.0, effort="high"),
+        env=RuntimeOverrides(timeout=20.0),
+        config=RuntimeOverrides(timeout=30.0, approval="confirm"),
+        alias_entry=alias,
+        supported_execution_policy_fields=(
+            "effort",
+            "sandbox",
+            "approval",
+            "autocompact",
+        ),
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.timeout is None
+    assert result.approval == "confirm"
+    assert result.field_provenance.timeout_source is ProvenanceLevel.UNSET
+
+
+def test_compiler_request_rejects_unknown_supported_execution_policy_field() -> None:
+    alias = _alias_entry()
+
+    with pytest.raises(ValueError, match="Unknown execution policy field"):
+        _request(
+            cli=RuntimeOverrides(model="gptmini"),
+            alias_entry=alias,
+            supported_execution_policy_fields=("effort", "typo"),
+        )
 
 
 def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> None:

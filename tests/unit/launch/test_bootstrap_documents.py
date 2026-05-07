@@ -163,6 +163,7 @@ def test_launch_primary_prepares_once_binds_preview_once_and_passes_prepared_sur
             command=('runtime-harness',),
             exit_code=0,
             resolved_harness_session_id='session-1',
+            chat_id=None,
         )
 
     monkeypatch.setattr(launch_context, 'prepare_launch_surface', fake_prepare_launch_surface)

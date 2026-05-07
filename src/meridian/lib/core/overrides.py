@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -17,6 +18,17 @@ if TYPE_CHECKING:
 _AUTOCOMPACT_MIN = 1
 _AUTOCOMPACT_MAX = 100
 _ROUTING_OVERRIDE_FIELDS = frozenset({"model", "harness", "agent"})
+type ExecutionPolicyField = Literal[
+    "effort", "sandbox", "approval", "autocompact", "timeout"
+]
+EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
+    "effort",
+    "sandbox",
+    "approval",
+    "autocompact",
+    "timeout",
+)
+_EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
 KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh"})
 KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "yolo"})
@@ -59,6 +71,35 @@ def _normalize_optional_string(value: str | None) -> str | None:
     return normalized
 
 
+def normalize_execution_policy_fields(
+    fields: Iterable[ExecutionPolicyField | str],
+) -> tuple[ExecutionPolicyField, ...]:
+    """Validate and normalize execution-policy field names."""
+
+    normalized: list[ExecutionPolicyField] = []
+    unknown: list[str] = []
+    seen: set[ExecutionPolicyField] = set()
+
+    for raw_field in fields:
+        field_name = raw_field.strip() if isinstance(raw_field, str) else raw_field
+        if field_name not in _EXECUTION_POLICY_FIELD_SET:
+            unknown.append(str(raw_field))
+            continue
+        typed_field = cast("ExecutionPolicyField", field_name)
+        if typed_field in seen:
+            continue
+        seen.add(typed_field)
+        normalized.append(typed_field)
+
+    if unknown:
+        raise ValueError(
+            "Unknown execution policy field(s): "
+            f"{', '.join(sorted(unknown))}. Expected one of {list(EXECUTION_POLICY_FIELDS)}."
+        )
+
+    return tuple(normalized)
+
+
 class RuntimeOverrides(BaseModel):
     """Fields that can be set at any config layer."""
 
@@ -73,17 +114,40 @@ class RuntimeOverrides(BaseModel):
     autocompact: int | None = None
     timeout: float | None = None
 
-    def model_policy_scope(self) -> RuntimeOverrides:
-        """Return only fields that participate in model-policy precedence."""
+    def routing_scope(self) -> RuntimeOverrides:
+        """Return only routing fields used to select model, harness, and agent."""
 
         return type(self).model_validate(
             {
                 field_name: value
-                for field_name in type(self).model_fields
-                if field_name not in _ROUTING_OVERRIDE_FIELDS
-                and (value := getattr(self, field_name)) is not None
+                for field_name in _ROUTING_OVERRIDE_FIELDS
+                if (value := getattr(self, field_name)) is not None
             }
         )
+
+    def execution_policy_scope(
+        self,
+        allowed_fields: frozenset[ExecutionPolicyField] | None = None,
+    ) -> RuntimeOverrides:
+        """Return only execution-policy fields resolved after routing selection."""
+
+        field_names = (
+            _EXECUTION_POLICY_FIELD_SET
+            if allowed_fields is None
+            else frozenset(normalize_execution_policy_fields(allowed_fields))
+        )
+        return type(self).model_validate(
+            {
+                field_name: value
+                for field_name in field_names
+                if (value := getattr(self, field_name)) is not None
+            }
+        )
+
+    def model_policy_scope(self) -> RuntimeOverrides:
+        """Compatibility wrapper for execution-policy-only model policy precedence."""
+
+        return self.execution_policy_scope()
 
     @field_validator("effort")
     @classmethod
@@ -282,8 +346,11 @@ def resolve(*layers: RuntimeOverrides) -> RuntimeOverrides:
 
 
 __all__ = [
+    "EXECUTION_POLICY_FIELDS",
     "KNOWN_APPROVAL_VALUES",
     "KNOWN_EFFORT_VALUES",
+    "ExecutionPolicyField",
     "RuntimeOverrides",
+    "normalize_execution_policy_fields",
     "resolve",
 ]

@@ -10,7 +10,12 @@ from typing import Literal, cast
 from meridian.lib.catalog.agent import AgentModelEntry, FanoutEntry, ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig
-from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.core.overrides import (
+    EXECUTION_POLICY_FIELDS,
+    ExecutionPolicyField,
+    RuntimeOverrides,
+    normalize_execution_policy_fields,
+)
 
 
 class ProvenanceLevel(Enum):
@@ -72,6 +77,14 @@ class CompilerRequest:
     # Options
     configured_default_harness: str = "claude"
     project_root: str = ""
+    supported_execution_policy_fields: tuple[ExecutionPolicyField, ...] = EXECUTION_POLICY_FIELDS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "supported_execution_policy_fields",
+            normalize_execution_policy_fields(self.supported_execution_policy_fields),
+        )
 
 
 @dataclass(frozen=True)
@@ -211,7 +224,9 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         autocompact=request.profile_policy_autocompact,
     )
 
-    effort, effort_source = _resolve_field(
+    effort, effort_source = _resolve_execution_policy_field(
+        request,
+        "effort",
         (request.cli_overrides.effort, ProvenanceLevel.CLI),
         (request.env_overrides.effort, ProvenanceLevel.ENV),
         (policy_override_tier.effort, policy_override_source),
@@ -220,7 +235,9 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.config_defaults.effort, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.effort, ProvenanceLevel.ALIAS_DEFAULT),
     )
-    approval, approval_source = _resolve_field(
+    approval, approval_source = _resolve_execution_policy_field(
+        request,
+        "approval",
         (request.cli_overrides.approval, ProvenanceLevel.CLI),
         (request.env_overrides.approval, ProvenanceLevel.ENV),
         (policy_override_tier.approval, policy_override_source),
@@ -229,7 +246,9 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.config_defaults.approval, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.approval, ProvenanceLevel.ALIAS_DEFAULT),
     )
-    sandbox, sandbox_source = _resolve_field(
+    sandbox, sandbox_source = _resolve_execution_policy_field(
+        request,
+        "sandbox",
         (request.cli_overrides.sandbox, ProvenanceLevel.CLI),
         (request.env_overrides.sandbox, ProvenanceLevel.ENV),
         (policy_override_tier.sandbox, policy_override_source),
@@ -238,7 +257,9 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.config_defaults.sandbox, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.sandbox, ProvenanceLevel.ALIAS_DEFAULT),
     )
-    autocompact, autocompact_source = _resolve_field(
+    autocompact, autocompact_source = _resolve_execution_policy_field(
+        request,
+        "autocompact",
         (request.cli_overrides.autocompact, ProvenanceLevel.CLI),
         (request.env_overrides.autocompact, ProvenanceLevel.ENV),
         (policy_override_tier.autocompact, policy_override_source),
@@ -247,7 +268,9 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.config_defaults.autocompact, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.autocompact, ProvenanceLevel.ALIAS_DEFAULT),
     )
-    timeout, timeout_source = _resolve_field(
+    timeout, timeout_source = _resolve_execution_policy_field(
+        request,
+        "timeout",
         (request.cli_overrides.timeout, ProvenanceLevel.CLI),
         (request.env_overrides.timeout, ProvenanceLevel.ENV),
         (
@@ -345,6 +368,16 @@ def _resolve_field[T](
         if value is not None:
             return value, source
     return None, ProvenanceLevel.UNSET
+
+
+def _resolve_execution_policy_field[T](
+    request: CompilerRequest,
+    field_name: ExecutionPolicyField,
+    *candidates: tuple[T | None, ProvenanceLevel],
+) -> tuple[T | None, ProvenanceLevel]:
+    if field_name not in set(request.supported_execution_policy_fields):
+        return None, ProvenanceLevel.UNSET
+    return _resolve_field(*candidates)
 
 
 def _resolve_model_token(request: CompilerRequest) -> tuple[str, ProvenanceLevel]:

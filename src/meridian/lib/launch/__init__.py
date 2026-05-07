@@ -21,7 +21,13 @@ if TYPE_CHECKING:
         prepare_launch_surface,
     )
     from meridian.lib.launch.materialize import MaterializedLaunch, materialize_harness
-    from meridian.lib.launch.policies import ResolvedPolicies, resolve_policies
+    from meridian.lib.launch.policies import (
+        ResolvedLaunchPolicy,
+        ResolvedPolicies,
+        SurfacePolicyInput,
+        resolve_launch_policy,
+        resolve_policies,
+    )
     from meridian.lib.launch.process import ProcessOutcome, run_harness_process
     from meridian.lib.launch.resolve import (
         ResolvedSkills,
@@ -151,7 +157,9 @@ def __getattr__(name: str) -> Any:
         "PrimarySessionMetadata": (".types", "PrimarySessionMetadata"),
         "ProcessOutcome": (".process", "ProcessOutcome"),
         "PreparedLaunchSurface": (".context", "PreparedLaunchSurface"),
+        "ResolvedLaunchPolicy": (".policies", "ResolvedLaunchPolicy"),
         "ResolvedPolicies": (".policies", "ResolvedPolicies"),
+        "SurfacePolicyInput": (".policies", "SurfacePolicyInput"),
         "ResolvedSkills": (".resolve", "ResolvedSkills"),
         "RuntimeBindings": (".context", "RuntimeBindings"),
         "SessionIntent": (".types", "SessionIntent"),
@@ -167,6 +175,7 @@ def __getattr__(name: str) -> Any:
         "prepare_launch_surface": (".context", "prepare_launch_surface"),
         "materialize_harness": (".materialize", "materialize_harness"),
         "resolve_harness": (".resolve", "resolve_harness"),
+        "resolve_launch_policy": (".policies", "resolve_launch_policy"),
         "resolve_policies": (".policies", "resolve_policies"),
         "resolve_skills_from_profile": (".resolve", "resolve_skills_from_profile"),
         "run_harness_process": (".process", "run_harness_process"),
@@ -191,11 +200,13 @@ __all__ = [
     "PreparedLaunchSurface",
     "PrimarySessionMetadata",
     "ProcessOutcome",
+    "ResolvedLaunchPolicy",
     "ResolvedPolicies",
     "ResolvedSkills",
     "RuntimeBindings",
     "SessionIntent",
     "SessionMode",
+    "SurfacePolicyInput",
     "bind_launch_context",
     "build_launch_context",
     "build_primary_prompt",
@@ -205,6 +216,7 @@ __all__ = [
     "normalize_system_prompt_passthrough_args",
     "prepare_launch_surface",
     "resolve_harness",
+    "resolve_launch_policy",
     "resolve_policies",
     "resolve_skills_from_profile",
     "run_harness_process",

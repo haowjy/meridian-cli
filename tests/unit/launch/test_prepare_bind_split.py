@@ -131,11 +131,10 @@ def test_bind_launch_context_does_not_call_prepare_phase_helpers(
     )
     for helper_name in (
         "load_reference_items",
-        "resolve_policies",
+        "resolve_launch_policy",
         "scan_agent_profiles",
         "build_agent_inventory_prompt",
         "build_context_prompt",
-        "resolve_skills_from_profile",
         "compose_skill_prompt_documents",
     ):
         monkeypatch.setattr(launch_context, helper_name, _forbidden(helper_name))

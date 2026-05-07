@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig
-from meridian.lib.core.overrides import RuntimeOverrides, resolve
+from meridian.lib.core.overrides import (
+    EXECUTION_POLICY_FIELDS,
+    ExecutionPolicyField,
+    RuntimeOverrides,
+    normalize_execution_policy_fields,
+    resolve,
+)
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
@@ -17,12 +23,14 @@ from meridian.lib.harness.registry import HarnessRegistry
 from .compiler import (
     CompilerRequest,
     CompilerResult,
+    FieldProvenance,
     ProvenanceLevel,
     compile_launch_params,
     match_model_policy,
 )
 from .launch_types import CompositionWarning
 from .materialize import materialize_harness
+from .request import LaunchCompositionSurface
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -32,6 +40,9 @@ from .resolve import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_DEFAULT_EXECUTION_POLICY_FIELDS: frozenset[ExecutionPolicyField] = frozenset(
+    EXECUTION_POLICY_FIELDS
+)
 
 
 @dataclass(frozen=True)
@@ -47,16 +58,70 @@ class ModelSelectionContext:
 
 
 @dataclass(frozen=True)
-class ResolvedPolicies:
+class SurfacePolicyInput:
+    """Surface-neutral input for shared launch policy resolution."""
+
+    surface: LaunchCompositionSurface
+    catalog: CatalogSession
+    layers: tuple[RuntimeOverrides, ...]
+    config_overrides: RuntimeOverrides
+    config: MeridianConfig
+    harness_registry: HarnessRegistry
+    configured_default_harness: str = "claude"
+    skills_readonly: bool = True
+    requested_skills: tuple[str, ...] = ()
+    supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
+        _DEFAULT_EXECUTION_POLICY_FIELDS
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "supported_execution_policy_fields",
+            frozenset(
+                normalize_execution_policy_fields(self.supported_execution_policy_fields)
+            ),
+        )
+
+    @property
+    def cli_overrides(self) -> RuntimeOverrides:
+        return self.layers[0] if self.layers else RuntimeOverrides()
+
+    @property
+    def env_overrides(self) -> RuntimeOverrides:
+        return self.layers[1] if len(self.layers) > 1 else RuntimeOverrides()
+
+    @property
+    def routing_layers(self) -> tuple[RuntimeOverrides, ...]:
+        return tuple(layer.routing_scope() for layer in (*self.layers, self.config_overrides))
+
+    @property
+    def execution_policy_layers(self) -> tuple[RuntimeOverrides, ...]:
+        return tuple(
+            layer.execution_policy_scope(self.supported_execution_policy_fields)
+            for layer in (*self.layers, self.config_overrides)
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedLaunchPolicy:
+    """Resolved launch policy shared across launch-like surfaces."""
+
     profile: AgentProfile | None
     model: str
     harness: HarnessId
     adapter: SubprocessHarness
     resolved_skills: ResolvedSkills
+    resolved_routing: RuntimeOverrides
+    resolved_execution_policy: RuntimeOverrides
     resolved_overrides: RuntimeOverrides
+    field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
+
+
+ResolvedPolicies = ResolvedLaunchPolicy
 
 
 def _resolve_final_model(
@@ -216,6 +281,47 @@ def _compiler_request_for_base_candidate(
         agent_overlay=overlay,
         profile_model_policies=(),
     )
+
+
+def _supported_policy_scope(
+    overrides: RuntimeOverrides,
+    supported_fields: frozenset[ExecutionPolicyField],
+) -> RuntimeOverrides:
+    return overrides.execution_policy_scope(supported_fields)
+
+
+def _compiler_execution_policy_overrides(
+    compiler_result: CompilerResult,
+) -> RuntimeOverrides:
+    return RuntimeOverrides(
+        effort=compiler_result.effort,
+        approval=compiler_result.approval,
+        sandbox=compiler_result.sandbox,
+        autocompact=compiler_result.autocompact,
+        timeout=compiler_result.timeout,
+    )
+
+
+def _build_final_resolved_views(
+    *,
+    base_resolved: RuntimeOverrides,
+    compiler_result: CompilerResult,
+    harness_id: HarnessId,
+    supported_execution_policy_fields: frozenset[ExecutionPolicyField],
+) -> tuple[RuntimeOverrides, RuntimeOverrides, RuntimeOverrides]:
+    resolved_routing = RuntimeOverrides(
+        model=compiler_result.model_token or None,
+        harness=str(harness_id),
+        agent=base_resolved.agent,
+    )
+    resolved_execution_policy = _supported_policy_scope(
+        _compiler_execution_policy_overrides(compiler_result),
+        supported_execution_policy_fields,
+    )
+    resolved_overrides = resolved_routing.model_copy(
+        update=resolved_execution_policy.model_dump(exclude_none=True)
+    )
+    return resolved_routing, resolved_execution_policy, resolved_overrides
 
 
 def _demoted_base_candidate(
@@ -403,21 +509,12 @@ def resolve_harness_routing(
     return harness_id, provenance_note
 
 
-def resolve_policies(
-    *,
-    catalog: CatalogSession,
-    layers: tuple[RuntimeOverrides, ...],
-    config_overrides: RuntimeOverrides,
-    config: MeridianConfig,
-    harness_registry: HarnessRegistry,
-    configured_default_harness: str = "claude",
-    skills_readonly: bool = True,
-) -> ResolvedPolicies:
-    """Resolve launch policies (model/harness/skills/profile) for one request."""
+def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
+    """Resolve the shared launch policy boundary for one launch-like surface."""
 
-    project_root = catalog.project_root
-    pre_profile_resolved = resolve(*layers, config_overrides)
-    explicit_user_overrides = resolve(*layers)
+    project_root = surface.catalog.project_root
+    pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
+    explicit_user_overrides = resolve(*surface.layers)
     requested_agent = explicit_user_overrides.agent
     configured_default_agent = pre_profile_resolved.agent if not requested_agent else ""
 
@@ -428,12 +525,12 @@ def resolve_policies(
     )
 
     profile_overrides = RuntimeOverrides.from_agent_profile(profile)
-    full_layers = (*layers, profile_overrides, config_overrides)
+    full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
     base_resolved = resolve(*full_layers)
 
     model_layer_index = _first_set_layer_index(full_layers, "model")
     harness_layer_index = _first_set_layer_index(full_layers, "harness")
-    pre_profile_layer_count = len(layers)
+    pre_profile_layer_count = len(surface.layers)
     model_explicit = (
         model_layer_index is not None and model_layer_index < pre_profile_layer_count
     )
@@ -447,32 +544,38 @@ def resolve_policies(
     selected_agent_name = profile.name if profile is not None else (
         requested_agent or configured_default_agent or ""
     )
-    agent_overlay = config.agents.get(selected_agent_name) if selected_agent_name else None
+    agent_overlay = (
+        surface.config.agents.get(selected_agent_name) if selected_agent_name else None
+    )
 
     requested_model_token = (
         explicit_user_overrides.model
         or (agent_overlay.model if agent_overlay is not None else None)
         or (profile.model if profile is not None else None)
-        or config_overrides.model
+        or surface.config_overrides.model
         or ""
     )
     resolved_entry: AliasEntry | None = None
     model_resolution_error: ValueError | None = None
     if requested_model_token:
         try:
-            resolved_entry = catalog.resolve_model(requested_model_token)
+            resolved_entry = surface.catalog.resolve_model(requested_model_token)
         except ValueError as exc:
             model_resolution_error = exc
 
-    alias_catalog = catalog.alias_map()
+    alias_catalog = surface.catalog.alias_map()
     profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
     compiler_request = CompilerRequest(
         requested_agent=requested_agent,
-        requested_model=explicit_user_overrides.model,
-        cli_overrides=explicit_user_overrides,
-        env_overrides=RuntimeOverrides(),
+        requested_model=surface.cli_overrides.model or surface.env_overrides.model,
+        cli_overrides=surface.cli_overrides,
+        env_overrides=surface.env_overrides,
         agent_overlay=agent_overlay,
-        config_defaults=config_overrides,
+        config_defaults=surface.config_overrides.execution_policy_scope(
+            surface.supported_execution_policy_fields
+        ).model_copy(
+            update=surface.config_overrides.routing_scope().model_dump(exclude_none=True)
+        ),
         profile_routing_model=profile.model if profile is not None else None,
         profile_routing_harness=profile.harness if profile is not None else None,
         profile_policy_effort=profile.effort if profile is not None else None,
@@ -485,8 +588,9 @@ def resolve_policies(
         profile_skills=profile_skills,
         resolved_alias_entry=resolved_entry,
         alias_catalog=alias_catalog,
-        configured_default_harness=configured_default_harness,
+        configured_default_harness=surface.configured_default_harness,
         project_root=project_root.as_posix(),
+        supported_execution_policy_fields=tuple(surface.supported_execution_policy_fields),
     )
 
     compiler_result = compile_launch_params(compiler_request)
@@ -496,7 +600,9 @@ def resolve_policies(
 
     materialized = None
     try:
-        materialized = materialize_harness(compiler_result, harness_registry=harness_registry)
+        materialized = materialize_harness(
+            compiler_result, harness_registry=surface.harness_registry
+        )
     except ValueError as primary_error:
         demoted_candidate = _demoted_base_candidate(
             compiler_request=compiler_request,
@@ -511,7 +617,7 @@ def resolve_policies(
                 model_resolution_error = None
                 materialized = materialize_harness(
                     compiler_result,
-                    harness_registry=harness_registry,
+                    harness_registry=surface.harness_registry,
                 )
             except ValueError:
                 demoted_candidate = None
@@ -519,17 +625,19 @@ def resolve_policies(
         if demoted_candidate is None:
             fallback = _try_harness_availability_fallback(
                 harness_id=harness_id,
-                harness_registry=harness_registry,
+                harness_registry=surface.harness_registry,
                 profile=profile,
                 model_explicit=model_explicit,
-                catalog=catalog,
+                catalog=surface.catalog,
             )
             if fallback is None:
                 raise primary_error
             fallback_model, harness_id, resolved_entry = fallback
             compiler_request = replace(
                 compiler_request,
-                cli_overrides=explicit_user_overrides.model_copy(update={"model": fallback_model}),
+                cli_overrides=compiler_request.cli_overrides.model_copy(
+                    update={"model": fallback_model}
+                ),
                 resolved_alias_entry=resolved_entry,
             )
             # Fanout entries are explicit availability-chain candidates.
@@ -545,14 +653,14 @@ def resolve_policies(
             harness_provenance = "availability-fallback"
             materialized = materialize_harness(
                 compiler_result,
-                harness_registry=harness_registry,
+                harness_registry=surface.harness_registry,
             )
     assert materialized is not None
 
     model_token = compiler_result.model_token
     if model_token and resolved_entry is None and model_resolution_error is None:
         try:
-            resolved_entry = catalog.resolve_model(model_token)
+            resolved_entry = surface.catalog.resolve_model(model_token)
         except ValueError:
             resolved_entry = None
 
@@ -576,8 +684,8 @@ def resolve_policies(
         layer_model=model_token,
         resolved_entry=resolved_entry,
         harness_id=harness_id,
-        config=config,
-        catalog=catalog,
+        config=surface.config,
+        catalog=surface.catalog,
     )
 
     if final_model and user_explicit_same_precedence:
@@ -587,7 +695,7 @@ def resolve_policies(
             model=final_model,
             harness_id=harness_id,
             model_entry=resolved_model_entry,
-            harness_registry=harness_registry,
+            harness_registry=surface.harness_registry,
             is_policy_reroute=False,
         )
 
@@ -622,7 +730,7 @@ def resolve_policies(
             selected_entry=selected_entry,
             alias_catalog=alias_catalog,
         )
-    profile_policy_defaults = profile_overrides.model_policy_scope()
+    profile_policy_defaults = profile_overrides.execution_policy_scope()
     if (
         profile is not None
         and profile.model_policies
@@ -643,14 +751,11 @@ def resolve_policies(
         profile_defaults=profile_policy_defaults,
     )
 
-    resolved = base_resolved.model_copy(
-        update=RuntimeOverrides(
-            effort=compiler_result.effort,
-            approval=compiler_result.approval,
-            sandbox=compiler_result.sandbox,
-            autocompact=compiler_result.autocompact,
-            timeout=compiler_result.timeout,
-        ).model_dump(exclude_none=True)
+    resolved_routing, resolved_execution_policy, resolved = _build_final_resolved_views(
+        base_resolved=base_resolved,
+        compiler_result=compiler_result,
+        harness_id=harness_id,
+        supported_execution_policy_fields=surface.supported_execution_policy_fields,
     )
 
     skill_selected_model_token = (
@@ -659,10 +764,11 @@ def resolve_policies(
     skill_canonical_model_id = (
         model_selection.canonical_model_id if model_selection is not None else final_model
     )
+    resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
     resolved_skills = resolve_skills_from_profile(
-        profile_skills=profile_skills,
+        profile_skills=resolved_skill_names,
         project_root=project_root,
-        readonly=skills_readonly,
+        readonly=surface.skills_readonly,
         harness_id=str(harness_id),
         selected_model_token=skill_selected_model_token,
         canonical_model_id=skill_canonical_model_id,
@@ -670,13 +776,16 @@ def resolve_policies(
 
     model_warning = "\n".join(compiler_result.warnings).strip() or None
 
-    return ResolvedPolicies(
+    return ResolvedLaunchPolicy(
         profile=profile,
         model=final_model,
         harness=harness_id,
         adapter=materialized.adapter,
         resolved_skills=resolved_skills,
+        resolved_routing=resolved_routing,
+        resolved_execution_policy=resolved_execution_policy,
         resolved_overrides=resolved,
+        field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
         warnings=_policy_warnings(
             profile_warning=profile_warning,
@@ -686,12 +795,41 @@ def resolve_policies(
     )
 
 
+def resolve_policies(
+    *,
+    catalog: CatalogSession,
+    layers: tuple[RuntimeOverrides, ...],
+    config_overrides: RuntimeOverrides,
+    config: MeridianConfig,
+    harness_registry: HarnessRegistry,
+    configured_default_harness: str = "claude",
+    skills_readonly: bool = True,
+) -> ResolvedLaunchPolicy:
+    """Compatibility wrapper over the public shared launch policy boundary."""
+
+    return resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=catalog,
+            layers=layers,
+            config_overrides=config_overrides,
+            config=config,
+            harness_registry=harness_registry,
+            configured_default_harness=configured_default_harness,
+            skills_readonly=skills_readonly,
+        )
+    )
+
+
 __all__ = [
     "ModelSelectionContext",
+    "ResolvedLaunchPolicy",
     "ResolvedPolicies",
+    "SurfacePolicyInput",
     "_resolve_model_policy_overrides",
     "match_model_policy",
     "resolve_harness_routing",
+    "resolve_launch_policy",
     "resolve_policies",
     "resolve_policy_fields",
     "validate_harness_compatibility",
