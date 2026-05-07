@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -317,7 +318,8 @@ def test_main_allows_nested_chat_management_commands(
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(
         "meridian.cli.chat_cmd.prepare_for_runtime_read",
-        lambda project_root: runtime_reads.append(project_root),
+        lambda project_root: runtime_reads.append(project_root)
+        or SimpleNamespace(project_root=project_root, runtime_root=None, config=None),
     )
     monkeypatch.setattr(
         "meridian.cli.chat_cmd.resolve_project_root",
