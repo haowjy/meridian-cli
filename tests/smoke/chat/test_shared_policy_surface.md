@@ -4,18 +4,15 @@ Purpose: verify that `meridian chat` uses the shared launch-policy pipeline for
 model/harness resolution, agent profiles, skills, approval, restart
 reacquisition, and management-command boundaries.
 
-## Root-session requirement
+## Execution context
 
-Run this guide from a top-level shell where `MERIDIAN_DEPTH` is unset or `0`.
-Do **not** run it from a delegated Meridian spawn.
+This guide can run from a root shell or delegated spawn. Nested launch smoke:
 
-Expected nested-execution failure:
-
-```text
-error: meridian chat requires a root Meridian process. Chat commands cannot run inside a nested spawn or delegated execution.
+```bash
+MERIDIAN_DEPTH=2 uv run meridian chat --headless --port 8765
 ```
 
-If you cannot get a root shell in the current environment, use these automated
+If you cannot run live startup in the current environment, use these automated
 fallback references instead of treating the smoke as passed:
 
 - `tests/integration/chat/test_chat_cli.py::test_chat_policy_resolution_fails_before_runtime_configure_or_discovery_write`

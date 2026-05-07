@@ -165,8 +165,6 @@ def _chat(
 ) -> None:
     """Start the local chat backend server."""
 
-    _require_root_process()
-
     from meridian.cli.main import get_global_options
 
     if not dev and not headless and os.environ.get("MERIDIAN_ENV") == "dev":

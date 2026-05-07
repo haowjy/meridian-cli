@@ -1,22 +1,15 @@
 # Smoke test: `meridian chat` local backend startup
 
 Purpose: prove backend-only chat starts from the CLI with no browser or cloud
-service, and document the root-process requirement for live chat smoke runs.
+service, including nested/delegated executions used by smoke agents.
 
-## Root-session requirement
+## Nested-session check
 
-Run this guide from a top-level terminal, not from a delegated Meridian spawn.
+Nested launch should work for startup commands:
 
-In nested/delegated execution, `meridian chat ...` is expected to fail
-immediately with:
-
-```text
-error: meridian chat requires a root Meridian process. Chat commands cannot run inside a nested spawn or delegated execution.
+```bash
+MERIDIAN_DEPTH=2 uv run meridian chat --headless --port 0
 ```
-
-If you hit that guard, switch to a root shell for the live smoke run. For
-shared-policy regression coverage tied to this rollout, also run
-`tests/smoke/chat/test_shared_policy_surface.md`.
 
 ## Startup
 

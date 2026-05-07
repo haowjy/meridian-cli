@@ -299,14 +299,13 @@ def test_main_does_not_create_segment_telemetry_when_project_root_never_resolves
 @pytest.mark.parametrize(
     "argv",
     [
-        ["chat"],
         ["chat", "ls"],
         ["chat", "show", "c1"],
         ["chat", "log", "c1"],
         ["chat", "close", "c1"],
     ],
 )
-def test_main_rejects_nested_chat_commands_before_chat_runtime_preparation(
+def test_main_rejects_nested_chat_management_commands_before_chat_runtime_preparation(
     argv: list[str],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -345,6 +344,23 @@ def test_main_rejects_nested_chat_commands_before_chat_runtime_preparation(
     assert exc_info.value.code == 1
     assert calls == []
     assert "root Meridian process" in capsys.readouterr().err
+
+
+def test_main_allows_nested_chat_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setenv("MERIDIAN_DEPTH", "2")
+    monkeypatch.setattr(
+        "meridian.cli.chat_cmd.run_chat_server",
+        lambda **kwargs: calls.append(kwargs) or 0,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["chat", "--headless", "--port", "0"])
+
+    assert exc_info.value.code == 0
+    assert len(calls) == 1
+    assert calls[0]["headless"] is True
 
 
 def test_config_help_mentions_meridian_toml() -> None:
