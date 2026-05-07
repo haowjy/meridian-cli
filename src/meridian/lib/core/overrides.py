@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -72,7 +72,7 @@ def _normalize_optional_string(value: str | None) -> str | None:
 
 
 def normalize_execution_policy_fields(
-    fields: Iterable[ExecutionPolicyField | str],
+    fields: Iterable[str],
 ) -> tuple[ExecutionPolicyField, ...]:
     """Validate and normalize execution-policy field names."""
 
@@ -81,11 +81,11 @@ def normalize_execution_policy_fields(
     seen: set[ExecutionPolicyField] = set()
 
     for raw_field in fields:
-        field_name = raw_field.strip() if isinstance(raw_field, str) else raw_field
+        field_name = raw_field.strip()
         if field_name not in _EXECUTION_POLICY_FIELD_SET:
             unknown.append(str(raw_field))
             continue
-        typed_field = cast("ExecutionPolicyField", field_name)
+        typed_field = field_name
         if typed_field in seen:
             continue
         seen.add(typed_field)
@@ -127,7 +127,7 @@ class RuntimeOverrides(BaseModel):
 
     def execution_policy_scope(
         self,
-        allowed_fields: frozenset[ExecutionPolicyField] | None = None,
+        allowed_fields: frozenset[str] | None = None,
     ) -> RuntimeOverrides:
         """Return only execution-policy fields resolved after routing selection."""
 
