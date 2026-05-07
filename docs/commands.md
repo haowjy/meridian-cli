@@ -151,18 +151,45 @@ See [extensions.md](extensions.md) for HTTP API and MCP tool details.
 
 | Command | Description |
 | ------- | ----------- |
-| `meridian chat` | Start the headless chat backend server (Claude, random port) |
-| `meridian chat --harness NAME` | Use a specific harness: `claude`, `codex`, `opencode` |
-| `meridian chat --model NAME` | Override model |
+| `meridian chat` | Start the chat backend server (Claude, random port); serves frontend assets when available, falls back to headless |
+| `meridian chat -m NAME` | Model id or alias; harness derived from the resolved model route |
+| `meridian chat --harness NAME` | Explicit harness: `claude`, `codex`, `opencode`; must be compatible with model |
+| `meridian chat -a AGENT` | Agent profile — same `.mars/agents/*.md` format as spawn |
+| `meridian chat --skills SKILL` | Add skills (repeatable); merged after profile skills |
+| `meridian chat --approval MODE` | Approval mode: `default`, `confirm`, `auto`, `yolo` |
+| `meridian chat --yolo` | Shorthand for `--approval yolo` |
+| `meridian chat --effort LEVEL` | Effort / reasoning level (harness-dependent) |
+| `meridian chat --sandbox MODE` | Sandbox mode value (harness-dependent) |
+| `meridian chat --autocompact PCT` | Enable autocompact at N% context use, integer percentage (harness-dependent) |
+| `meridian chat --headless` | API-only mode; no frontend is started regardless of available assets |
+| `meridian chat --frontend-dist PATH` | Path to pre-built frontend assets (`index.html` + `assets/`); errors if path has no valid assets |
+| `meridian chat --dev` | Dev mode: Vite subprocess + verbose logging. Cannot combine with `--headless` or `--frontend-dist` |
+| `meridian chat --dev --frontend-root PATH` | Path to `meridian-web` source checkout for dev mode (auto-discovered as `../meridian-web` if omitted) |
+| `meridian chat --dev --open` | Open browser after server starts (`--open` ignored in `--headless`) |
+| `meridian chat --dev --tailscale` | Share dev server on Tailscale network via portless |
+| `meridian chat --dev --funnel` | Expose dev UI publicly via Tailscale Funnel (implies `--tailscale`) |
+| `meridian chat --dev --no-portless` | Use raw Vite instead of portless; cannot combine with `--tailscale`/`--funnel` |
+| `meridian chat --dev --portless-force` | Take over an occupied portless dev route at startup |
 | `meridian chat --port PORT` | Bind to a fixed port (`0` = auto-assign) |
 | `meridian chat --host HOST` | Bind interface (default `127.0.0.1`) |
+| `meridian chat ls` | List chats on the running server (runtime management only) |
+| `meridian chat show CHAT_ID` | Show state and recent events for a chat |
+| `meridian chat log CHAT_ID` | Print event log; `--follow` tails live |
+| `meridian chat close CHAT_ID` | Close a chat conversation |
+
+Launch-policy flags (`-m`, `--harness`, `-a`, `--skills`, `--approval`, etc.) are
+resolved once at startup and persisted per chat. A harness/model conflict fails before
+the server binds a port. Management subcommands (`ls`, `show`, `log`, `close`) do not
+accept launch-policy flags — they are runtime management only.
+
+`--timeout` is not supported for `meridian chat`.
 
 The server exposes REST endpoints and a bidirectional WebSocket for creating chats,
 sending prompts, streaming normalized `ChatEvent` frames, handling HITL approvals
 (Codex), and reverting to git checkpoints.
 
-See [chat.md](chat.md) for the full API reference including event types, command types,
-reconnect/replay, persistence, and harness support matrix.
+See [chat.md](chat.md) for the full API reference including launch policy resolution,
+event types, command types, reconnect/replay, persistence, and harness support matrix.
 
 ## Configuration & Diagnostics
 
