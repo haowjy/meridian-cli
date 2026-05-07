@@ -44,6 +44,8 @@ Use `meridian spawn` (not `uv run meridian spawn`) to hand off tasks to subagent
 
 **Model aliases are the interface.** When the user specifies a model name (e.g. `gptmini`, `codex`, `opus`), pass it directly to `-m` as-is — never translate, guess, or expand the alias to an underlying model ID. Meridian resolves aliases at spawn time. If you need to know what an alias maps to, run `meridian mars models list` first. Do not invent model identifiers.
 
+**Use cheap models for trivial spawn/model smoke tests.** When testing harness plumbing, alias resolution, or spawn mechanics with a throwaway prompt (e.g. `Reply with exactly OK`), reach for `haiku`, `gpt-5.4-mini`, or a cheap OpenCode model. Reserve expensive models (Claude Sonnet/Opus, GPT-5) for tasks that need their reasoning.
+
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
 ## Git Hooks
