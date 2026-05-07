@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- Durable launch-boundary observability for background spawns. `launch-boundary.jsonl` per spawn records parent-side launch attempt/spawned/failed events and worker-side boot/takeover/failure events across the startup boundary. Reaper reads this artifact to distinguish pre-takeover startup failures from mid-run orphans.
+- `launch_boundary_no_takeover` reconciliation error. Background spawns whose `launch-boundary.jsonl` shows launch events but no worker takeover reconcile under this code instead of `orphan_run` or `missing_runner_pid`. Pinpoints the startup-phase failure window.
+
+### Added
 - Centralized session reference resolution. `resolve_session_reference()` now recovers missing harness session IDs from durable state (session store, spawn row, primary meta) and harness adapter detection. Recovery provenance is explicit: SESSION_STORE, SPAWN_ROW, PRIMARY_META, DETECTED_UNVERIFIED. `session log`, `--continue`, `--fork`, and `--from` now share the same resolution path instead of divergent fallbacks.
 - New `reference_recovery.py` module — read-only helper for harness session ID recovery. Keeps transcript-source policy separate from reference resolution.
 - `LaunchResult` and `PrimaryLaunchOutput` carry `continue_chat_id` separately from `continue_ref`. Quit message now shows `meridian --continue <chat-id>` instead of UUID, making session resumption human-friendly.
