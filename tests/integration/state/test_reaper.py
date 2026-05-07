@@ -1,3 +1,5 @@
+# pyright: reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportMissingParameterType=false
+
 from __future__ import annotations
 
 import json
@@ -10,13 +12,20 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import SpawnCancelInput
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_boundary import (
+    EVENT_PARENT_LAUNCH_SPAWNED,
+    EVENT_WORKER_TAKEOVER_STARTED,
+    record_launch_boundary_event,
+)
 from meridian.lib.state.managed_primary import terminate_managed_primary_processes
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.primary_meta import PrimaryMetadata
 from meridian.lib.state.reaper import reconcile_active_spawn
+from meridian.lib.state.spawn.model import LaunchMode, SpawnRecord
 
 _OLD_STARTED_AT = "2000-01-01T00:00:00Z"
 
@@ -35,9 +44,10 @@ def _create_spawn(
     tmp_path: Path,
     *,
     spawn_id: str = "p1",
-    status: str = "running",
+    status: SpawnStatus = "running",
     kind: str = "child",
     harness: str = "codex",
+    launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = 123,
     started_at: str | None = _OLD_STARTED_AT,
@@ -53,6 +63,7 @@ def _create_spawn(
         kind=kind,
         prompt="hello",
         worker_pid=worker_pid,
+        launch_mode=launch_mode,
         status=status,
         runner_pid=runner_pid,
         started_at=started_at,
@@ -60,7 +71,7 @@ def _create_spawn(
     return runtime_root, str(created_spawn_id)
 
 
-def _get_spawn(runtime_root: Path, spawn_id: str):
+def _get_spawn(runtime_root: Path, spawn_id: str) -> SpawnRecord:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     assert record is not None
     return record
@@ -133,6 +144,23 @@ def _write_activity_artifact(
         artifact_path.write_text("recent activity\n", encoding="utf-8")
     _set_artifact_age_secs(artifact_path, age_secs=age_secs)
     return artifact_path
+
+
+def _record_launch_boundary(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    event: str,
+    launcher_pid: int | None = None,
+    worker_pid: int | None = None,
+) -> None:
+    record_launch_boundary_event(
+        runtime_root,
+        spawn_id,
+        event=event,
+        launcher_pid=launcher_pid,
+        worker_pid=worker_pid,
+    )
 
 
 def test_terminate_managed_primary_processes_skips_unvalidated_child_pid(
@@ -209,6 +237,98 @@ def test_reconcile_active_spawn_without_runner_pid_fails_after_startup_grace(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "missing_runner_pid"
+
+
+def test_reconcile_active_spawn_background_without_takeover_evidence_gets_boundary_error(
+    tmp_path: Path,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        launch_mode="background",
+        runner_pid=None,
+        started_at=_OLD_STARTED_AT,
+    )
+    _record_launch_boundary(
+        runtime_root,
+        spawn_id,
+        event=EVENT_PARENT_LAUNCH_SPAWNED,
+        launcher_pid=8111,
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+
+    reconciled = reconcile_active_spawn(runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.error == "launch_boundary_no_takeover"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.error == "launch_boundary_no_takeover"
+
+
+def test_reconcile_active_spawn_background_pid_collision_without_takeover_evidence_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher_pid = 8123
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        launch_mode="background",
+        runner_pid=launcher_pid,
+        started_at=_OLD_STARTED_AT,
+    )
+    _record_launch_boundary(
+        runtime_root,
+        spawn_id,
+        event=EVENT_PARENT_LAUNCH_SPAWNED,
+        launcher_pid=launcher_pid,
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: True,
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.error == "launch_boundary_no_takeover"
+
+
+def test_reconcile_active_spawn_background_takeover_evidence_keeps_runner_alive_skip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher_pid = 8124
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        launch_mode="background",
+        runner_pid=launcher_pid,
+        started_at=_OLD_STARTED_AT,
+    )
+    _record_launch_boundary(
+        runtime_root,
+        spawn_id,
+        event=EVENT_PARENT_LAUNCH_SPAWNED,
+        launcher_pid=launcher_pid,
+    )
+    _record_launch_boundary(
+        runtime_root,
+        spawn_id,
+        event=EVENT_WORKER_TAKEOVER_STARTED,
+        worker_pid=9001,
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: True,
+    )
+
+    reconciled = reconcile_active_spawn(runtime_root, record)
+
+    assert reconciled == record
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "running"
+    assert latest.error is None
 
 
 def test_reconcile_active_spawn_returns_unchanged_when_runner_is_alive(

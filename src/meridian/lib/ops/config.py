@@ -700,72 +700,108 @@ def _scaffold_template() -> str:
         f"# max_retries = {defaults['defaults.max_retries']}",
         "# Delay multiplier between retries in seconds (float).",
         f"# retry_backoff_seconds = {defaults['defaults.retry_backoff_seconds']}",
-        "# Default model for spawns when --model and profile model are both unset",
-        "# (str model id).",
+        "# Default model for spawns when --model and profile model are both unset.",
         f"# model = {_toml_literal(cast('str', defaults['defaults.model']))}",
-        "# Default harness for spawns when higher-precedence values and profile harness are unset.",
+        "# Default harness for spawns when higher-precedence values are unset.",
         f"# harness = {_toml_literal(cast('str', defaults['defaults.harness']))}",
         "",
         "# -- Timeout behavior -------------------------------------------------------",
         "[timeouts]",
         "# Grace period before force-killing processes (float minutes).",
         f"# kill_grace_minutes = {defaults['timeouts.kill_grace_minutes']}",
-        "# Max minutes to wait for guardrail checks (float minutes).",
+        "# Max minutes to wait for guardrail checks.",
         f"# guardrail_minutes = {defaults['timeouts.guardrail_minutes']}",
-        "# Max minutes to wait on run completion operations (float minutes).",
+        "# Max minutes to wait on run completion operations.",
         f"# wait_minutes = {defaults['timeouts.wait_minutes']}",
+        "# Prompt-cache yield interval for spawn wait (seconds).",
+        (
+            "# default_wait_yield_seconds = "
+            f"{defaults.get('timeouts.default_wait_yield_seconds', 3000.0)}"
+        ),
+        "# Minimum prompt-cache yield interval (seconds).",
+        f"# min_wait_yield_seconds = {defaults.get('timeouts.min_wait_yield_seconds', 30.0)}",
         "",
-        "# -- Harness default models ------------------------------------------------",
+        "# -- Spawn behavior ---------------------------------------------------------",
+        "[spawn]",
+        "# Per-spawn overrides for wait yield (also accepted under [timeouts]).",
+        (
+            "# default_wait_yield_seconds = "
+            f"{defaults.get('spawn.default_wait_yield_seconds', 3000.0)}"
+        ),
+        f"# min_wait_yield_seconds = {defaults.get('spawn.min_wait_yield_seconds', 30.0)}",
+        "",
+        "# -- Harness default models -------------------------------------------------",
         "[harness]",
-        "# Default model for Claude harness (str model id).",
+        "# Default model for Claude harness (empty = harness picks its own).",
         (
             "# claude = "
-            f"{_toml_literal(cast('str', defaults['harness.claude']))}  "
-            "# empty = harness picks its own default model"
+            f"{_toml_literal(cast('str', defaults['harness.claude']))}"
         ),
-        "# Default model for Codex harness (str model id).",
+        "# Default model for Codex harness (empty = harness picks its own).",
         (
             "# codex = "
-            f"{_toml_literal(cast('str', defaults['harness.codex']))}  "
-            "# empty = harness picks its own default model"
+            f"{_toml_literal(cast('str', defaults['harness.codex']))}"
         ),
-        "# Default model for OpenCode harness (str model id).",
+        "# Default model for OpenCode harness.",
         (
             "# opencode = "
-            f"{_toml_literal(cast('str', defaults['harness.opencode']))}  "
-            "# empty = harness picks its own default model"
+            f"{_toml_literal(cast('str', defaults['harness.opencode']))}"
         ),
         "",
         "# -- Primary agent defaults -------------------------------------------------",
         "[primary]",
-        "# Context compaction threshold for the primary agent (int 1-100).",
-        f"# autocompact_pct = {primary_defaults.autocompact_pct or 65}",
-        "# Model override for the primary agent (str model id; unset = use defaults.model).",
-        '# model = ""',
-        "# Harness override for the primary agent (str; unset = use defaults.harness).",
-        '# harness = ""',
-        "# Agent profile name for the primary session (str; unset = no profile).",
+        "# Default agent profile launched when running `meridian` without `-a`.",
+        "# Without this, meridian launches with no profile.",
         '# agent = ""',
+        "# Model override for the primary agent (unset = use defaults.model).",
+        '# model = ""',
+        "# Harness override for the primary agent (unset = use defaults.harness).",
+        '# harness = ""',
+        "# Context compaction threshold for the primary agent (int 1-100).",
+        f"# autocompact = {primary_defaults.autocompact or 65}",
+        "# Effort level for the primary agent.",
+        '# effort = ""',
+        "# Sandbox policy for the primary agent.",
+        '# sandbox = ""',
+        "# Approval mode for the primary agent.",
+        '# approval = ""',
+        "# Timeout for the primary agent (minutes).",
+        f"# timeout = {primary_defaults.timeout or 30.0}",
         "",
         "# -- Output streaming -------------------------------------------------------",
         "[output]",
-        "# Event categories shown while streaming output (array[str]).",
+        "# Event categories shown while streaming output.",
         f"# show = {_toml_literal(cast('tuple[str, ...]', output_show))}",
-        "# Output verbosity preset (str; valid: quiet, normal, verbose, debug).",
+        "# Output verbosity preset (quiet, normal, verbose, debug).",
         (
             f"# verbosity = {_toml_literal(output_verbosity)}"
             if isinstance(output_verbosity, str)
-            else '# verbosity = "normal"  # example override; default is unset'
+            else '# verbosity = ""'
         ),
+        "# Output format (text, json).",
+        '# format = "text"',
         "",
-        "# -- State retention -------------------------------------------------------",
+        "# -- State retention --------------------------------------------------------",
         "[state]",
-        "# How long to keep historical state before doctor may prune it.",
-        "# retention_days = 30  # -1 keeps everything, 0 prunes immediately",
+        "# Days to retain spawn artifacts and session data (-1 = keep forever).",
+        "# retention_days = 30",
+        "",
+        "# -- Agent runtime overrides ------------------------------------------------",
+        "# Override default model/policy for specific agent profiles without editing",
+        "# generated .mars/agents/ sources.",
+        "# See docs/configuration.md for full semantics.",
+        "",
+        '# [agents.tech-lead]',
+        '# model = "gpt55"',
+        '# effort = "medium"',
+        '# approval = "auto"',
+        "",
+        '# [[agents.tech-lead.model-policies]]',
+        '# match = { model-glob = "gpt*" }',
+        '# override = { effort = "medium", autocompact = 40 }',
         "",
     ]
     return "\n".join(lines)
-
 
 def _has_non_empty_remote(remote: str | None) -> bool:
     return isinstance(remote, str) and bool(remote.strip())

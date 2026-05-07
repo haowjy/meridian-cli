@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnnecessaryCast=false
+
 from __future__ import annotations
 
 import asyncio
@@ -40,6 +42,7 @@ from meridian.lib.ops.spawn.execute import (
     _prepare_execution_handoff,
     _SessionExecutionContext,
     _write_params_json,
+    execute_spawn_background,
     execute_spawn_blocking,
     launch_prepared_spawn,
 )
@@ -49,6 +52,12 @@ from meridian.lib.ops.spawn.failure_policy import (
 )
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 from meridian.lib.state import spawn_store
+from meridian.lib.state.launch_boundary import (
+    EVENT_PARENT_LAUNCH_ATTEMPT,
+    EVENT_PARENT_LAUNCH_FAILED,
+    EVENT_PARENT_LAUNCH_SPAWNED,
+    read_launch_boundary_events,
+)
 
 
 def _resolver() -> TieredPermissionResolver:
@@ -585,6 +594,99 @@ def _background_launch_request(
             project_paths_execution_cwd=tmp_path.as_posix(),
         ),
     )
+
+
+def test_execute_spawn_background_records_parent_launch_boundary_observations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p-bg")
+    marked_running: dict[str, object] = {}
+
+    def fake_init_spawn(**_kwargs: object) -> Any:
+        return SimpleNamespace(
+            spawn=SimpleNamespace(spawn_id=spawn_id),
+            runtime_root=runtime_root,
+            current_depth=0,
+            work_id=None,
+        )
+
+    class _FakeLifecycle:
+        def mark_running(self, _spawn_id: object, **kwargs: object) -> None:
+            marked_running.update(kwargs)
+
+    class _FakeProcess:
+        pid = 4242
+
+    def fake_popen(*_args: object, **_kwargs: object) -> _FakeProcess:
+        return _FakeProcess()
+
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "create_lifecycle_service",
+        lambda *_a, **_kw: _FakeLifecycle(),
+    )
+    monkeypatch.setattr(execute_module.subprocess, "Popen", fake_popen)
+
+    result = execute_spawn_background(
+        payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
+    )
+
+    events = read_launch_boundary_events(runtime_root, str(spawn_id))
+    assert result.status == "running"
+    assert [event.event for event in events] == [
+        EVENT_PARENT_LAUNCH_ATTEMPT,
+        EVENT_PARENT_LAUNCH_SPAWNED,
+    ]
+    assert events[1].launcher_pid == 4242
+    assert marked_running == {"launch_mode": "background", "runner_pid": 4242}
+
+
+def test_execute_spawn_background_records_persist_failure_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p-bg-fail")
+
+    def fake_init_spawn(**_kwargs: object) -> Any:
+        return SimpleNamespace(
+            spawn=SimpleNamespace(spawn_id=spawn_id),
+            runtime_root=runtime_root,
+            current_depth=0,
+            work_id=None,
+        )
+
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "_persist_bg_worker_request",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("persist failed")),
+    )
+    monkeypatch.setattr(execute_module, "finalize_launch_failure_sync", lambda *_a, **_kw: None)
+
+    result = execute_spawn_background(
+        payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
+    )
+
+    events = read_launch_boundary_events(runtime_root, str(spawn_id))
+    assert result.status == "failed"
+    assert [event.event for event in events] == [
+        EVENT_PARENT_LAUNCH_ATTEMPT,
+        EVENT_PARENT_LAUNCH_FAILED,
+    ]
+    assert events[1].stage == "persist_worker_request"
+    assert events[1].error == "persist failed"
 
 
 @pytest.mark.parametrize(

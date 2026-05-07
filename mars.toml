@@ -11,6 +11,9 @@ skills = ["frontend-design"]
 [dependencies.meridian-prompter]
 url = "https://github.com/meridian-flow/meridian-prompter"
 
+[dependencies.microct-analysis]
+path = "/home/jimyao/gitrepos/prompts/microct-analysis"
+
 [settings]
 targets = [
     ".claude",

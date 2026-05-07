@@ -19,9 +19,12 @@ url = "https://github.com/meridian-flow/meridian-prompter"
 version = "v0.1.12"
 commit = "df83e7be065564feaeb6a2e909ab68fc83593eaf"
 
+[dependencies.microct-analysis]
+path = "/home/jimyao/gitrepos/prompts/microct-analysis"
+
 [dependencies.playwright-cli]
 url = "https://github.com/microsoft/playwright-cli"
-commit = "fb2a027f2025f7ba7574f1aa1ce1f8cc09ce421b"
+commit = "695107b8cd9369151838bf31168b9339afe47f2f"
 
 [items."agent/alignment-reviewer"]
 source = "meridian-dev-workflow"
@@ -209,6 +212,66 @@ source_checksum = "sha256:72f0c5060b99af974f19d29d615af9065d49fef34a132b3e1b2b9d
 target_root = ".mars"
 dest_path = "agents/meridian-subagent.md"
 installed_checksum = "sha256:72f0c5060b99af974f19d29d615af9065d49fef34a132b3e1b2b9d163c15fdd2"
+
+[items."agent/microct-analyst"]
+source = "microct-analysis"
+kind = "agent"
+source_checksum = "sha256:aa6d6cf2f7081bbf05316af899a86c4e291001f9969ff57d1d58a1e5198faa70"
+
+[[items."agent/microct-analyst".outputs]]
+target_root = ".mars"
+dest_path = "agents/microct-analyst.md"
+installed_checksum = "sha256:aa6d6cf2f7081bbf05316af899a86c4e291001f9969ff57d1d58a1e5198faa70"
+
+[items."agent/microct-cleanup"]
+source = "microct-analysis"
+kind = "agent"
+source_checksum = "sha256:d8bda16ef12103953814911a6d3592bbd2ec215505ac200ca61f62fb46859c34"
+
+[[items."agent/microct-cleanup".outputs]]
+target_root = ".mars"
+dest_path = "agents/microct-cleanup.md"
+installed_checksum = "sha256:d8bda16ef12103953814911a6d3592bbd2ec215505ac200ca61f62fb46859c34"
+
+[items."agent/microct-landmarker"]
+source = "microct-analysis"
+kind = "agent"
+source_checksum = "sha256:986134a97a74d4fc3a7a1814e2fcba3479c45abda71af26293d8e62202823e90"
+
+[[items."agent/microct-landmarker".outputs]]
+target_root = ".mars"
+dest_path = "agents/microct-landmarker.md"
+installed_checksum = "sha256:986134a97a74d4fc3a7a1814e2fcba3479c45abda71af26293d8e62202823e90"
+
+[items."agent/microct-measurer"]
+source = "microct-analysis"
+kind = "agent"
+source_checksum = "sha256:c4d30c555bea403f5faa26988a25acd1e2196b295c2b52a44ba467d2338458ef"
+
+[[items."agent/microct-measurer".outputs]]
+target_root = ".mars"
+dest_path = "agents/microct-measurer.md"
+installed_checksum = "sha256:c4d30c555bea403f5faa26988a25acd1e2196b295c2b52a44ba467d2338458ef"
+
+[items."agent/microct-segmenter"]
+source = "microct-analysis"
+kind = "agent"
+source_checksum = "sha256:72e0f90f64669d2572894107a332e6683b9e7be0b3736656a59b4de1cbea6792"
+
+[[items."agent/microct-segmenter".outputs]]
+target_root = ".mars"
+dest_path = "agents/microct-segmenter.md"
+installed_checksum = "sha256:72e0f90f64669d2572894107a332e6683b9e7be0b3736656a59b4de1cbea6792"
+
+[items."agent/microct-workflow-creator"]
+source = "microct-analysis"
+kind = "agent"
+source_checksum = "sha256:2fe15059230aa60401a2b161fac67259be7e30f65f8abc66be08a85d46f1d95b"
+
+[[items."agent/microct-workflow-creator".outputs]]
+target_root = ".mars"
+dest_path = "agents/microct-workflow-creator.md"
+installed_checksum = "sha256:2fe15059230aa60401a2b161fac67259be7e30f65f8abc66be08a85d46f1d95b"
 
 [items."agent/mockup-gen"]
 source = "meridian-dev-workflow"
@@ -496,6 +559,26 @@ target_root = ".mars"
 dest_path = "skills/browser-test"
 installed_checksum = "sha256:28211b187ef027e058dc7f460f9b82d270f895f9f8bf0fac9afda6d5ba9136d3"
 
+[items."skill/compaction-cleanup"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:3c1e56e2b045884e89d0445fab18cea6dbb019e251f9d3524368172f353c17b7"
+
+[[items."skill/compaction-cleanup".outputs]]
+target_root = ".mars"
+dest_path = "skills/compaction-cleanup"
+installed_checksum = "sha256:3c1e56e2b045884e89d0445fab18cea6dbb019e251f9d3524368172f353c17b7"
+
+[items."skill/compute-efficiency"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:2dbe85bf1000c95471fe6aa8c7735d10bb996027b72c21dd2a4f3bfc6082aa1a"
+
+[[items."skill/compute-efficiency".outputs]]
+target_root = ".mars"
+dest_path = "skills/compute-efficiency"
+installed_checksum = "sha256:2dbe85bf1000c95471fe6aa8c7735d10bb996027b72c21dd2a4f3bfc6082aa1a"
+
 [items."skill/decision-log"]
 source = "meridian-base"
 kind = "skill"
@@ -616,6 +699,16 @@ target_root = ".mars"
 dest_path = "skills/llm-writing"
 installed_checksum = "sha256:dd619a72aaa413da03c4ef28cc2dba26965b8bae34e5934edc193c75d76ecd58"
 
+[items."skill/mct-visual-review"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:afc456017537f81b0a89e706e73cc11f69efd61f7268f7f66c2af2e9cfc25c94"
+
+[[items."skill/mct-visual-review".outputs]]
+target_root = ".mars"
+dest_path = "skills/mct-visual-review"
+installed_checksum = "sha256:afc456017537f81b0a89e706e73cc11f69efd61f7268f7f66c2af2e9cfc25c94"
+
 [items."skill/md-validation"]
 source = "meridian-base"
 kind = "skill"
@@ -660,6 +753,16 @@ target_root = ".mars"
 dest_path = "skills/meridian-work-coordination"
 installed_checksum = "sha256:80f7e658559b37df8de1095c05e3129469bf1865aa7b254d2e9223a8d030ea2c"
 
+[items."skill/notebook-lineage"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:e02e0d5563d6642a3aae239473e5a178ec693975d928925ba3d38b17e3eea8d0"
+
+[[items."skill/notebook-lineage".outputs]]
+target_root = ".mars"
+dest_path = "skills/notebook-lineage"
+installed_checksum = "sha256:e02e0d5563d6642a3aae239473e5a178ec693975d928925ba3d38b17e3eea8d0"
+
 [items."skill/planning"]
 source = "meridian-dev-workflow"
 kind = "skill"
@@ -674,12 +777,12 @@ installed_checksum = "sha256:1ecb17a639de65f99e8db834f5dc267a284f8de92f38f7bb8c7
 [items."skill/playwright-cli"]
 source = "playwright-cli"
 kind = "skill"
-source_checksum = "sha256:15f8566d8bc7a36e3735c6bed037e8f749f8cb8ae562120dc0e7060001d99cb4"
+source_checksum = "sha256:108643971d8746de2557285863d6f28ad40bcd6fbf406a5ca1d8797b34357f1e"
 
 [[items."skill/playwright-cli".outputs]]
 target_root = ".mars"
 dest_path = "skills/playwright-cli"
-installed_checksum = "sha256:15f8566d8bc7a36e3735c6bed037e8f749f8cb8ae562120dc0e7060001d99cb4"
+installed_checksum = "sha256:108643971d8746de2557285863d6f28ad40bcd6fbf406a5ca1d8797b34357f1e"
 
 [items."skill/prompt-principles"]
 source = "meridian-prompter"
@@ -703,6 +806,16 @@ target_root = ".mars"
 dest_path = "skills/prompt-review"
 installed_checksum = "sha256:a48a8e33a27e887de8ed86c8952818c283c01c2fbbe6f961085491e4fa795179"
 
+[items."skill/pyvista-interactive"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:2a4fd4a2356f4d2db87c06c948341931b619ad28ef602519f691d7a08573f4dd"
+
+[[items."skill/pyvista-interactive".outputs]]
+target_root = ".mars"
+dest_path = "skills/pyvista-interactive"
+installed_checksum = "sha256:2a4fd4a2356f4d2db87c06c948341931b619ad28ef602519f691d7a08573f4dd"
+
 [items."skill/refactoring-principles"]
 source = "meridian-dev-workflow"
 kind = "skill"
@@ -724,6 +837,16 @@ source_checksum = "sha256:12b4b6835ca3dd5d208c12cfe2b609e356d4f61a1ae7757dd9c7bc
 target_root = ".mars"
 dest_path = "skills/review"
 installed_checksum = "sha256:12b4b6835ca3dd5d208c12cfe2b609e356d4f61a1ae7757dd9c7bcb539805b2d"
+
+[items."skill/session-management"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:db4a8c0808a9fec4fe59e7d36d68d86e11d243d68068c81b4a2cca131406bb21"
+
+[[items."skill/session-management".outputs]]
+target_root = ".mars"
+dest_path = "skills/session-management"
+installed_checksum = "sha256:db4a8c0808a9fec4fe59e7d36d68d86e11d243d68068c81b4a2cca131406bb21"
 
 [items."skill/session-mining"]
 source = "meridian-base"
@@ -757,6 +880,16 @@ source_checksum = "sha256:082f744d721c9ee1148a716fa16e5397bcd878ccdd30c93f390a1d
 target_root = ".mars"
 dest_path = "skills/skill-artifacts"
 installed_checksum = "sha256:082f744d721c9ee1148a716fa16e5397bcd878ccdd30c93f390a1def56c7aa87"
+
+[items."skill/slice-examination-loop"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:495156513944247a1ba54f1aafc0bbd1216734ab0d685c2749cb62676346b893"
+
+[[items."skill/slice-examination-loop".outputs]]
+target_root = ".mars"
+dest_path = "skills/slice-examination-loop"
+installed_checksum = "sha256:495156513944247a1ba54f1aafc0bbd1216734ab0d685c2749cb62676346b893"
 
 [items."skill/smoke-test"]
 source = "meridian-dev-workflow"
@@ -812,3 +945,13 @@ source_checksum = "sha256:959708499a62edd9b91d5f713ca76c8b13d5e59725128c9c738534
 target_root = ".mars"
 dest_path = "skills/verification"
 installed_checksum = "sha256:959708499a62edd9b91d5f713ca76c8b13d5e59725128c9c738534366875bf53"
+
+[items."skill/workbench-session"]
+source = "microct-analysis"
+kind = "skill"
+source_checksum = "sha256:cd7ce71fe8041f60cc415036346ee7ba1bae459ff002eca74ec92b5c5ee3303b"
+
+[[items."skill/workbench-session".outputs]]
+target_root = ".mars"
+dest_path = "skills/workbench-session"
+installed_checksum = "sha256:cd7ce71fe8041f60cc415036346ee7ba1bae459ff002eca74ec92b5c5ee3303b"

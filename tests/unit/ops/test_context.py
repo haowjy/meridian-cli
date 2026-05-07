@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=false, reportUnusedFunction=false
+
 """Unit tests for ops context query centralization."""
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from meridian.lib.config.context_config import ContextConfig, ContextSourceType
 from meridian.lib.context.resolver import ResolvedContextPaths
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.ops.context import (
+    ContextEntryOutput,
     ContextInput,
     ContextOutput,
     WorkCurrentInput,
@@ -26,6 +29,14 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 
+def _strategy_context_entry() -> ContextEntryOutput:
+    return ContextEntryOutput(
+        source="git",
+        path="voluma-bio/strategy",
+        resolved="/repo/strategy",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _clear_context_env(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.delenv("MERIDIAN_CONTEXT_WORK_DIR", raising=False)
@@ -34,6 +45,26 @@ def _clear_context_env(monkeypatch: MonkeyPatch) -> None:
     for key in tuple(os.environ):
         if key.startswith("MERIDIAN_CONTEXT_") and key.endswith("_DIR"):
             monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _stub_runtime_context_lookup(monkeypatch: MonkeyPatch) -> None:
+    def fake_resolve_runtime_root_for_read(_project_root: Path) -> Path:
+        return Path("/runtime/state")
+
+    def fake_resolve_runtime_context(
+        _project_root: Path, _runtime_root: Path
+    ) -> ResolvedContext:
+        return ResolvedContext()
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_root_for_read",
+        fake_resolve_runtime_root_for_read,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.ops.context._resolve_runtime_context",
+        fake_resolve_runtime_context,
+    )
 
 
 def test_resolve_runtime_context_passes_explicit_roots(
@@ -233,13 +264,7 @@ def test_context_output_shows_env_var_names_when_matching(monkeypatch: MonkeyPat
         kb_path=".meridian/kb",
         kb_resolved="/repo/.meridian/kb",
         kb_source="local",
-        extra_contexts={
-            "strategy": {
-                "source": "git",
-                "path": "voluma-bio/strategy",
-                "resolved": "/repo/strategy",
-            }
-        },
+        extra_contexts={"strategy": _strategy_context_entry()},
     )
     text = output.format_text()
     assert text == (
@@ -282,13 +307,7 @@ def test_context_output_shows_paths_when_env_not_set(monkeypatch: MonkeyPatch) -
         kb_path=".meridian/kb",
         kb_resolved="/repo/.meridian/kb",
         kb_source="local",
-        extra_contexts={
-            "strategy": {
-                "source": "git",
-                "path": "voluma-bio/strategy",
-                "resolved": "/repo/strategy",
-            }
-        },
+        extra_contexts={"strategy": _strategy_context_entry()},
     )
     text = output.format_text()
     assert text == (
@@ -312,13 +331,7 @@ def test_context_output_text_formats_default_and_verbose(monkeypatch: MonkeyPatc
         kb_path=".meridian/kb",
         kb_resolved="/repo/.meridian/kb",
         kb_source="local",
-        extra_contexts={
-            "strategy": {
-                "source": "git",
-                "path": "voluma-bio/strategy",
-                "resolved": "/repo/strategy",
-            }
-        },
+        extra_contexts={"strategy": _strategy_context_entry()},
     )
 
     assert (
@@ -336,6 +349,7 @@ def test_context_output_text_formats_default_and_verbose(monkeypatch: MonkeyPatc
         "  source: local\n"
         "  path: .meridian/work\n"
         "  resolved: /repo/.meridian/work\n"
+        "  active: (none)\n"
         "  archive: .meridian/archive/work\n"
         "  archive_resolved: /repo/.meridian/archive/work\n"
         "kb:\n"
@@ -359,16 +373,10 @@ def test_context_output_resolve_name_supports_catalog_paths() -> None:
         kb_path=".meridian/kb",
         kb_resolved="/repo/.meridian/kb",
         kb_source="local",
-        extra_contexts={
-            "strategy": {
-                "source": "git",
-                "path": "voluma-bio/strategy",
-                "resolved": "/repo/strategy",
-            }
-        },
+        extra_contexts={"strategy": _strategy_context_entry()},
     )
 
-    assert output.resolve_name("work") == "/repo/.meridian/work"
+    assert output.resolve_name("work") == ""
     assert output.resolve_name("kb") == "/repo/.meridian/kb"
     assert output.resolve_name("work.archive") == "/repo/.meridian/archive/work"
     assert output.resolve_name("strategy") == "/repo/strategy"
@@ -382,6 +390,22 @@ def test_context_output_resolve_name_supports_catalog_paths() -> None:
         )
     else:
         raise AssertionError("Expected KeyError for unknown context lookup")
+
+
+def test_context_output_resolve_name_returns_active_work_dir() -> None:
+    output = ContextOutput(
+        work_path=".meridian/work",
+        work_resolved="/repo/.meridian/work",
+        work_source="local",
+        active_work_dir="/repo/.meridian/work/active-item",
+        work_archive=".meridian/archive/work",
+        work_archive_resolved="/repo/.meridian/archive/work",
+        kb_path=".meridian/kb",
+        kb_resolved="/repo/.meridian/kb",
+        kb_source="local",
+    )
+
+    assert output.resolve_name("work") == "/repo/.meridian/work/active-item"
 
 
 def test_work_current_sync_uses_resolved_context(monkeypatch: MonkeyPatch) -> None:
@@ -490,3 +514,55 @@ def test_context_sync_falls_back_to_config_when_session_env_incomplete(
 
     assert output.work_resolved == "/fallback/work"
     assert output.kb_resolved == "/fallback/kb"
+
+
+def test_context_sync_exposes_active_work_from_resolved_runtime_context(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    project_root = Path("/repo")
+    runtime_root = Path("/runtime/state")
+
+    def fake_resolve_project_root() -> Path:
+        return project_root
+
+    def fake_resolve_runtime_root_for_read(_project_root: Path) -> Path:
+        return runtime_root
+
+    def fake_load_context_config(_repo: Path) -> None:
+        return None
+
+    def fake_resolve_context_paths(
+        _repo: Path,
+        config: ContextConfig,
+    ) -> ResolvedContextPaths:
+        return ResolvedContextPaths(
+            work_root=Path("/resolved/work"),
+            work_archive=Path("/resolved/archive/work"),
+            work_source=config.work.source,
+            kb_root=Path("/resolved/kb"),
+            kb_source=config.kb.source,
+            extra={},
+        )
+
+    def fake_resolve_runtime_context(_repo: Path, _state: Path) -> ResolvedContext:
+        return ResolvedContext(work_dir=Path("/resolved/work/active-work"))
+
+    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_root_for_read",
+        fake_resolve_runtime_root_for_read,
+    )
+    monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_context_paths",
+        fake_resolve_context_paths,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.ops.context._resolve_runtime_context",
+        fake_resolve_runtime_context,
+    )
+
+    output = context_sync(ContextInput())
+
+    assert output.active_work_dir == "/resolved/work/active-work"
+    assert output.resolve_name("work") == "/resolved/work/active-work"

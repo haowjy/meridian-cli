@@ -126,7 +126,7 @@ def register_misc_commands(
             Parameter(
                 help=(
                     "Optional context name to print as an absolute path "
-                    "(work, kb, or work.archive)."
+                    "(work = active work dir, kb, or work.archive)."
                 ),
             ),
         ] = None,

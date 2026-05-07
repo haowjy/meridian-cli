@@ -23,6 +23,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.managed_primary import (
     ManagedPrimaryReconciliationStrategy,
@@ -52,6 +53,7 @@ class ArtifactSnapshot:
     recent_activity_artifact: str | None
     durable_report_completion: bool
     runner_pid_alive: bool
+    launch_boundary: LaunchBoundarySummary
 
 
 @dataclass(frozen=True)
@@ -142,12 +144,14 @@ def _collect_artifact_snapshot(
             record.runner_pid,
             created_after_epoch=started_epoch,
         )
+    launch_boundary = read_launch_boundary_summary(runtime_root, record.id)
     return ArtifactSnapshot(
         started_epoch=started_epoch,
         last_activity_epoch=last_activity_epoch,
         recent_activity_artifact=recent_activity_artifact,
         durable_report_completion=has_durable_report_completion(report_text),
         runner_pid_alive=runner_pid_alive,
+        launch_boundary=launch_boundary,
     )
 
 
@@ -183,6 +187,33 @@ def _is_potential_managed_primary(record: SpawnRecord) -> bool:
     return record.kind == "primary" and harness in {"codex", "opencode"}
 
 
+def _is_pre_worker_launch_boundary_ghost(
+    record: SpawnRecord,
+    snapshot: ArtifactSnapshot,
+    now: float,
+) -> bool:
+    if record.launch_mode != "background":
+        return False
+    if _has_recent_activity(snapshot):
+        return False
+    if _in_startup_grace(snapshot.started_epoch, now):
+        return False
+    boundary = snapshot.launch_boundary
+    if not boundary.has_events or boundary.has_worker_takeover:
+        return False
+    runner_pid = (
+        record.runner_pid
+        if record.runner_pid is not None and record.runner_pid > 0
+        else None
+    )
+    if runner_pid is None:
+        return True
+    parent_observed_launcher_pid = boundary.parent_observed_launcher_pid
+    if parent_observed_launcher_pid is None:
+        return False
+    return runner_pid == parent_observed_launcher_pid
+
+
 def decide_generic_reconciliation(
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
@@ -194,6 +225,11 @@ def decide_generic_reconciliation(
         if snapshot.durable_report_completion:
             return FinalizeSucceededFromReport()
         return FinalizeFailed(error="orphan_finalization")
+
+    if _is_pre_worker_launch_boundary_ghost(record, snapshot, now):
+        if snapshot.durable_report_completion:
+            return FinalizeSucceededFromReport()
+        return FinalizeFailed(error="launch_boundary_no_takeover")
 
     runner_pid = record.runner_pid
     if runner_pid is None or runner_pid <= 0:

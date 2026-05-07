@@ -46,6 +46,7 @@ class ContextOutput(BaseModel):
     work_path: str
     work_resolved: str
     work_source: str
+    active_work_dir: str | None = None
     work_archive: str
     work_archive_resolved: str
     kb_path: str
@@ -85,6 +86,7 @@ class ContextOutput(BaseModel):
             lines.append(f"  source: {self.work_source}")
             lines.append(f"  path: {self.work_path}")
             lines.append(f"  resolved: {self.work_resolved}")
+            lines.append(f"  active: {self.active_work_dir or '(none)'}")
             lines.append(f"  archive: {self.work_archive}")
             lines.append(f"  archive_resolved: {self.work_archive_resolved}")
             lines.append("kb:")
@@ -99,14 +101,21 @@ class ContextOutput(BaseModel):
                 lines.append(f"  resolved: {entry.resolved}")
             return "\n".join(lines)
 
-        return "\n".join(render_context_lines(self._to_resolved_paths(), check_env=True))
+        active_work_dir = Path(self.active_work_dir) if self.active_work_dir else None
+        return "\n".join(
+            render_context_lines(
+                self._to_resolved_paths(),
+                check_env=True,
+                active_work_dir=active_work_dir,
+            )
+        )
 
     def resolve_name(self, name: str) -> str:
         """Resolve one context-name query to its absolute path string."""
 
         normalized = name.strip().lower()
         if normalized == "work":
-            return self.work_resolved
+            return self.active_work_dir or ""
         if normalized == "kb":
             return self.kb_resolved
         if normalized in {"work.archive", "archive", "archive.work"}:
@@ -183,6 +192,8 @@ def context_sync(input: ContextInput) -> ContextOutput:
     """Synchronous handler for context query."""
 
     project_root = resolve_project_root()
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    resolved_runtime_context = _resolve_runtime_context(project_root, runtime_root)
     context_config = load_context_config(project_root) or ContextConfig()
     resolved_paths = resolve_context_paths(project_root, context_config)
     extra_config = _extra_context_config(context_config)
@@ -202,6 +213,11 @@ def context_sync(input: ContextInput) -> ContextOutput:
         work_path=context_config.work.path,
         work_resolved=resolved_paths.work_root.as_posix(),
         work_source=context_config.work.source.value,
+        active_work_dir=(
+            resolved_runtime_context.work_dir.as_posix()
+            if resolved_runtime_context.work_dir is not None
+            else None
+        ),
         work_archive=context_config.work.archive,
         work_archive_resolved=resolved_paths.work_archive.as_posix(),
         kb_path=context_config.kb.path,

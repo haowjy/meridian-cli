@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownMemberType=false
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,6 +12,7 @@ import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.execute as spawn_execute
 import meridian.lib.telemetry.bootstrap as telemetry_bootstrap
 from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.state.launch_boundary import EVENT_WORKER_FAILURE, read_launch_boundary_events
 
 
 class _StopAfterTelemetrySetup(Exception):
@@ -224,6 +227,52 @@ def test_background_worker_main_backstop_finalizes_uncaught_helper_escape(
     assert captured["project_root"] == project_root
     assert str(captured["spawn_id"]) == "p88"
     assert captured["error"] == "background_worker_crash"
+
+
+def test_background_worker_main_records_load_failure_launch_boundary_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    spawn_id = "p99"
+    log_dir = project_root / ".meridian" / "spawns" / spawn_id
+    log_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        spawn_execute,
+        "prepare_for_runtime_write",
+        lambda _root: SimpleNamespace(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            config=SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(spawn_execute, "register_spawn_telemetry_observer", lambda: None)
+    monkeypatch.setattr(telemetry_bootstrap, "install", lambda _plan: SimpleNamespace())
+    monkeypatch.setattr(
+        spawn_execute,
+        "resolve_project_config_paths",
+        lambda *, project_root: SimpleNamespace(project_root=project_root),
+    )
+    monkeypatch.setattr(spawn_execute, "resolve_spawn_log_dir", lambda *_a, **_kw: log_dir)
+    monkeypatch.setattr(
+        spawn_execute,
+        "_load_bg_worker_request",
+        lambda _log_dir: (_ for _ in ()).throw(RuntimeError("missing request")),
+    )
+    monkeypatch.setattr(spawn_execute, "finalize_launch_failure_sync", lambda *_a, **_kw: False)
+
+    result = spawn_execute._background_worker_main(
+        ["--spawn-id", spawn_id, "--project-root", project_root.as_posix()]
+    )
+
+    events = read_launch_boundary_events(runtime_root, spawn_id)
+    assert result == 1
+    assert events[-1].event == EVENT_WORKER_FAILURE
+    assert events[-1].stage == "load_worker_request"
+    assert "missing request" in (events[-1].error or "")
 
 
 def test_run_chat_server_uses_prepared_runtime_write_context(

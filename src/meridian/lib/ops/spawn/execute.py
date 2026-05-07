@@ -58,6 +58,18 @@ from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.claude_config_metadata import (
     persist_durable_claude_config_metadata,
 )
+from meridian.lib.state.current_work import get_current_work_id
+from meridian.lib.state.launch_boundary import (
+    EVENT_HARNESS_SESSION_OBSERVED,
+    EVENT_PARENT_LAUNCH_ATTEMPT,
+    EVENT_PARENT_LAUNCH_FAILED,
+    EVENT_PARENT_LAUNCH_SPAWNED,
+    EVENT_WORKER_BOOT,
+    EVENT_WORKER_FAILURE,
+    EVENT_WORKER_REQUEST_LOADED,
+    EVENT_WORKER_TAKEOVER_STARTED,
+    record_launch_boundary_event,
+)
 from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_spawn_log_dir,
@@ -156,6 +168,48 @@ def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
         target = log_dir / name
         with suppress(FileNotFoundError):
             target.unlink()
+
+
+def _record_launch_boundary_observation(
+    runtime_root: Path,
+    spawn_id: str,
+    *,
+    event: str,
+    stage: str | None = None,
+    parent_pid: int | None = None,
+    launcher_pid: int | None = None,
+    worker_pid: int | None = None,
+    harness_session_id: str | None = None,
+    command: tuple[str, ...] | None = None,
+    cwd: str | None = None,
+    error: str | None = None,
+    exception: BaseException | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    try:
+        record_launch_boundary_event(
+            runtime_root,
+            spawn_id,
+            event=event,
+            stage=stage,
+            parent_pid=parent_pid,
+            launcher_pid=launcher_pid,
+            worker_pid=worker_pid,
+            harness_session_id=harness_session_id,
+            command=command,
+            cwd=cwd,
+            error=error,
+            exception_type=type(exception).__name__ if exception is not None else None,
+            details=details,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist launch-boundary observation.",
+            spawn_id=spawn_id,
+            event=event,
+            stage=stage,
+            exc_info=True,
+        )
 
 
 def depth_limits(max_depth: int, *, ctx: RuntimeContext | None = None) -> tuple[int, int]:
@@ -273,13 +327,16 @@ def _resolve_work_id(
     *,
     payload: SpawnCreateInput,
     runtime_context: RuntimeContext,
+    runtime_root: Path,
     work_id: str | None = None,
 ) -> str | None:
     requested_work_id = (work_id or payload.work).strip()
     if requested_work_id:
         return requested_work_id
     inherited_work_id = (runtime_context.work_id or "").strip()
-    return inherited_work_id or None
+    if inherited_work_id:
+        return inherited_work_id
+    return get_current_work_id(runtime_root)
 
 
 def _init_spawn(
@@ -302,6 +359,7 @@ def _init_spawn(
     resolved_work_id = _resolve_work_id(
         payload=payload,
         runtime_context=resolved_context,
+        runtime_root=runtime_root,
         work_id=work_id,
     )
     if (payload.work or "").strip():
@@ -800,6 +858,7 @@ async def launch_prepared_spawn(
     stream_stdout_to_terminal: bool = False,
     stream_stderr_to_terminal: bool = False,
     event_observer: Callable[[StreamEvent], None] | None = None,
+    harness_session_id_observer: Callable[[str], None] | None = None,
     debug: bool = False,
     ctx: RuntimeContext | None = None,
 ) -> int:
@@ -833,6 +892,15 @@ async def launch_prepared_spawn(
 
     try:
         try:
+            if harness_session_id_observer is not None:
+                handoff_observer = handoff.harness_session_id_observer
+
+                def _combined_harness_session_id_observer(session_id: str) -> None:
+                    handoff_observer(session_id)
+                    harness_session_id_observer(session_id)
+
+                handoff.harness_session_id_observer = _combined_harness_session_id_observer
+
             if handoff.launch_context.harness.id == HarnessId.CLAUDE:
                 claude_overlay = _prepare_child_claude_overlay(
                     handoff=handoff,
@@ -929,12 +997,33 @@ async def _execute_existing_spawn(
         logger.error("Spawn not found for background execution.", spawn_id=str(spawn_id))
         return 1
 
+    _record_launch_boundary_observation(
+        runtime_root,
+        str(spawn_id),
+        event=EVENT_WORKER_BOOT,
+        stage="worker_boot",
+        launcher_pid=(
+            spawn_record.runner_pid
+            if spawn_record.runner_pid is not None and spawn_record.runner_pid > 0
+            else None
+        ),
+        worker_pid=os.getpid(),
+    )
+
     request = launch_request.request
     runtime_request = launch_request.runtime
     resolved_model = (request.model or "").strip()
     resolved_harness_id = (request.harness or "").strip()
     resolved_prompt = (request.prompt or "").strip()
     if not resolved_prompt:
+        _record_launch_boundary_observation(
+            runtime_root,
+            str(spawn_id),
+            event=EVENT_WORKER_FAILURE,
+            stage="validate_request",
+            worker_pid=os.getpid(),
+            error="Missing prompt",
+        )
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
@@ -943,6 +1032,14 @@ async def _execute_existing_spawn(
         )
         return 1
     if not resolved_harness_id:
+        _record_launch_boundary_observation(
+            runtime_root,
+            str(spawn_id),
+            event=EVENT_WORKER_FAILURE,
+            stage="validate_request",
+            worker_pid=os.getpid(),
+            error="Missing harness",
+        )
         await finalize_launch_failure(
             runtime_root,
             project_paths.project_root,
@@ -950,6 +1047,14 @@ async def _execute_existing_spawn(
             "Missing harness",
         )
         return 1
+
+    _record_launch_boundary_observation(
+        runtime_root,
+        str(spawn_id),
+        event=EVENT_WORKER_REQUEST_LOADED,
+        stage="request_loaded",
+        worker_pid=os.getpid(),
+    )
 
     spawn_status: SpawnStatus = (
         spawn_record.status if spawn_record.status != "unknown" else "queued"
@@ -973,6 +1078,14 @@ async def _execute_existing_spawn(
             )
         )
 
+    _record_launch_boundary_observation(
+        runtime_root,
+        str(spawn_id),
+        event=EVENT_WORKER_TAKEOVER_STARTED,
+        stage="launch_prepared_spawn",
+        worker_pid=os.getpid(),
+    )
+
     return await launch_prepared_spawn(
         spawn=spawn,
         request=request.model_copy(
@@ -992,6 +1105,14 @@ async def _execute_existing_spawn(
         execution_cwd=resolved_execution_cwd,
         work_id=spawn_record.work_id,
         autocompact=request.autocompact,
+        harness_session_id_observer=lambda session_id: _record_launch_boundary_observation(
+            runtime_root,
+            str(spawn_id),
+            event=EVENT_HARNESS_SESSION_OBSERVED,
+            stage="session_observed",
+            worker_pid=os.getpid(),
+            harness_session_id=session_id,
+        ),
         debug=runtime_request.debug,
         ctx=resolved_context,
     )
@@ -1066,6 +1187,19 @@ def execute_spawn_background(
 
     warning = request.warning
     context_from_resolved = request.context_from
+    launch_command = _build_background_worker_command(
+        spawn_id=spawn_id_text,
+        project_paths=project_paths,
+    )
+    _record_launch_boundary_observation(
+        context.runtime_root,
+        spawn_id_text,
+        event=EVENT_PARENT_LAUNCH_ATTEMPT,
+        stage="parent_prepare",
+        parent_pid=os.getpid(),
+        command=launch_command,
+        cwd=str(project_paths.execution_cwd),
+    )
     try:
         persisted_request = request.model_copy(update={"work_id_hint": context.work_id})
         launch_runtime = LaunchRuntime(
@@ -1083,6 +1217,17 @@ def execute_spawn_background(
             ),
         )
     except Exception as exc:
+        _record_launch_boundary_observation(
+            context.runtime_root,
+            spawn_id_text,
+            event=EVENT_PARENT_LAUNCH_FAILED,
+            stage="persist_worker_request",
+            parent_pid=os.getpid(),
+            command=launch_command,
+            cwd=str(project_paths.execution_cwd),
+            error=str(exc),
+            exception=exc,
+        )
         finalize_launch_failure_sync(
             context.runtime_root,
             project_paths.project_root,
@@ -1110,10 +1255,6 @@ def execute_spawn_background(
             exit_code=1,
         )
 
-    launch_command = _build_background_worker_command(
-        spawn_id=spawn_id_text,
-        project_paths=project_paths,
-    )
     stdout_path = log_dir / _BACKGROUND_STDOUT_FILENAME
     stderr_path = log_dir / _BACKGROUND_STDERR_FILENAME
 
@@ -1140,6 +1281,17 @@ def execute_spawn_background(
                 **_build_detached_popen_kwargs(),
             )
     except OSError as exc:
+        _record_launch_boundary_observation(
+            context.runtime_root,
+            spawn_id_text,
+            event=EVENT_PARENT_LAUNCH_FAILED,
+            stage="popen",
+            parent_pid=os.getpid(),
+            command=launch_command,
+            cwd=str(project_paths.execution_cwd),
+            error=str(exc),
+            exception=exc,
+        )
         finalize_launch_failure_sync(
             context.runtime_root,
             project_paths.project_root,
@@ -1168,6 +1320,16 @@ def execute_spawn_background(
             exit_code=1,
         )
 
+    _record_launch_boundary_observation(
+        context.runtime_root,
+        spawn_id_text,
+        event=EVENT_PARENT_LAUNCH_SPAWNED,
+        stage="popen",
+        parent_pid=os.getpid(),
+        launcher_pid=process.pid,
+        command=launch_command,
+        cwd=str(project_paths.execution_cwd),
+    )
     create_lifecycle_service(project_paths.project_root, context.runtime_root).mark_running(
         context.spawn.spawn_id,
         launch_mode=BACKGROUND_LAUNCH_MODE,
@@ -1391,6 +1553,15 @@ def _background_worker_main(
             launch_request = _load_bg_worker_request(log_dir)
         except Exception as exc:
             error = f"Failed to load background worker request: {exc}"
+            _record_launch_boundary_observation(
+                runtime_root,
+                str(spawn_id),
+                event=EVENT_WORKER_FAILURE,
+                stage="load_worker_request",
+                worker_pid=os.getpid(),
+                error=error,
+                exception=exc,
+            )
             finalize_launch_failure_sync(
                 runtime_root,
                 project_root,
@@ -1414,7 +1585,16 @@ def _background_worker_main(
                 prepared=prepared,
             )
         )
-    except Exception:
+    except Exception as exc:
+        _record_launch_boundary_observation(
+            runtime_root,
+            str(spawn_id),
+            event=EVENT_WORKER_FAILURE,
+            stage="worker_backstop",
+            worker_pid=os.getpid(),
+            error="background_worker_crash",
+            exception=exc,
+        )
         finalize_launch_failure_sync(
             runtime_root,
             project_root,

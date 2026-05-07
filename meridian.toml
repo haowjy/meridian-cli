@@ -45,6 +45,14 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # Agent profile name for the primary session (str; unset = no profile).
 agent = "product-lead"
 
+[agents.tech-lead]
+model = "gpt55"
+effort = "medium"
+
+[agents.design-lead]
+model = "gpt55"
+effort = "high"
+
 # -- Output streaming -------------------------------------------------------
 [output]
 # Event categories shown while streaming output (array[str]).
@@ -98,3 +106,5 @@ path = "../prompts/microct-analysis"
 
 [workspace.prompts-mouse-ct]
 path = "../prompts/mouse-ct"
+
+
