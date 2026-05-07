@@ -96,7 +96,7 @@ def test_prepare_for_runtime_write_creates_uuid_and_runtime_dirs(
     assert (result.runtime_root / "telemetry").is_dir()
 
 
-def test_build_spawn_entrypoint_adds_lifecycle_for_runtime_write_context(
+def test_build_spawn_entrypoint_keeps_runtime_write_context_carrier_only(
     tmp_path: Path,
 ) -> None:
     project_root = _repo(tmp_path)
@@ -107,7 +107,7 @@ def test_build_spawn_entrypoint_adds_lifecycle_for_runtime_write_context(
     assert entrypoint.context.project_root == project_root
     assert entrypoint.context.runtime_root == prepared.runtime_root
     assert entrypoint.context.config == prepared.config
-    assert entrypoint.services.lifecycle is not None
+    assert entrypoint.services.lifecycle is None
 
 
 def test_build_spawn_application_service_uses_shared_entrypoint_seam(
