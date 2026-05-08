@@ -21,7 +21,7 @@ from meridian.lib.launch.context import (
     compile_prepared_policy_surface,
     prepare_launch_surface,
 )
-from meridian.lib.launch.launch_types import PreparedLaunchRuntimeSeeds
+from meridian.lib.launch.launch_types import PreflightResult, PreparedLaunchRuntimeSeeds
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -449,6 +449,78 @@ def test_bind_launch_context_prefers_forked_runtime_session_without_mutating_pre
 
     assert bound.run_params.continue_harness_session_id == "forked-session"
     assert prepared.seed_harness_session_id == "seed-session"
+
+
+def test_bind_launch_context_reports_env_categories_with_clean_runtime_override_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry = get_default_harness_registry()
+    harness = registry.get_subprocess_harness(HarnessId.CODEX)
+    prepared = PreparedLaunchSurface(
+        request=_build_request(prompt_is_composed=True),
+        harness=harness,
+        composition_warnings=(),
+        content=PreparedLaunchContent(prompt_payload=PreparedPromptPayload()),
+        runtime_seeds=PreparedLaunchRuntimeSeeds(),
+        profile_tools_for_deny_optout=(),
+        has_profile_for_deny_optout=False,
+        model_selection=None,
+        alias_catalog=None,
+        launch_request=None,
+    )
+
+    monkeypatch.setattr(
+        harness,
+        "preflight",
+        lambda **_kwargs: PreflightResult.build(
+            expanded_passthrough_args=(),
+            extra_env={"PREFLIGHT_FLAG": "1"},
+        ),
+    )
+    monkeypatch.setattr(
+        launch_context,
+        "resolve_workspace_snapshot_for_launch",
+        lambda _project_root: SimpleNamespace(),
+    )
+    monkeypatch.setattr(launch_context, "get_projectable_roots", lambda _snapshot: ())
+    monkeypatch.setattr(
+        launch_context,
+        "project_workspace_roots",
+        lambda **_kwargs: SimpleNamespace(env_overrides={"WORKSPACE_FLAG": "1"}, diagnostics=[]),
+    )
+
+    runtime = _build_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    ).model_copy(
+        update={
+            "runtime_override_snapshot": {"approval": "confirm"},
+        }
+    )
+
+    bound = bind_launch_context(
+        prepared=prepared,
+        bindings=RuntimeBindings(
+            spawn_id="p-env-categories",
+            report_output_path=tmp_path / "report.md",
+            plan_overrides={"PLAN_FLAG": "1"},
+        ),
+        runtime=runtime,
+        project_root=tmp_path,
+        harness_registry=registry,
+    )
+
+    assert bound.binding.environment.runtime_override_env == {"MERIDIAN_APPROVAL": "confirm"}
+    assert bound.binding.environment.plan_env == {"PLAN_FLAG": "1"}
+    assert bound.binding.environment.preflight_env == {"PREFLIGHT_FLAG": "1"}
+    assert bound.binding.environment.workspace_env == {"WORKSPACE_FLAG": "1"}
+    assert bound.binding.environment.runner_overlay_env == {}
+    assert bound.binding.environment.bind_env_overrides["MERIDIAN_APPROVAL"] == "confirm"
+    assert bound.binding.environment.bind_env_overrides["PLAN_FLAG"] == "1"
+    assert bound.binding.environment.bind_env_overrides["PREFLIGHT_FLAG"] == "1"
+    assert bound.binding.environment.bind_env_overrides["WORKSPACE_FLAG"] == "1"
+    assert bound.binding.environment.final_env["MERIDIAN_APPROVAL"] == "confirm"
 
 
 def test_build_launch_context_uses_explicit_request_work_for_prepare_and_bind(

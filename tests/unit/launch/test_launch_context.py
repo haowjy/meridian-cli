@@ -191,7 +191,8 @@ def test_build_launch_context_projects_runtime_child_env_paths(
     assert runtime_ctx.env_overrides["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.env["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.binding.environment.child_context_env["MERIDIAN_SPAWN_ID"] == "p-child-env"
-    assert runtime_ctx.binding.environment.runtime_override_env["MERIDIAN_HARNESS"] == "codex"
+    assert runtime_ctx.binding.environment.runtime_override_env == {}
+    assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.binding.environment.final_env["MERIDIAN_HARNESS"] == "codex"
     unexpected = {
         key
@@ -230,6 +231,36 @@ def test_build_launch_context_uses_runtime_override_snapshot_not_live_env(
     )
 
     assert runtime_ctx.resolved_request.approval == "confirm"
+    assert runtime_ctx.binding.environment.runtime_override_env == {
+        "MERIDIAN_APPROVAL": "confirm"
+    }
+    assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_APPROVAL"] == "confirm"
+    assert runtime_ctx.env["MERIDIAN_APPROVAL"] == "confirm"
+
+
+def test_build_launch_context_explicit_empty_snapshot_blocks_live_policy_env_leak(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    ).model_copy(update={"runtime_override_snapshot": {}})
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "yolo")
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-empty-snapshot",
+        request=_build_spawn_request(),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.resolved_request.approval is None
+    assert runtime_ctx.binding.environment.runtime_override_env == {}
+    assert "MERIDIAN_APPROVAL" not in runtime_ctx.binding.environment.bind_env_overrides
+    assert "MERIDIAN_APPROVAL" not in runtime_ctx.env
 
 
 @pytest.mark.parametrize(

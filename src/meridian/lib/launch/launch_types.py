@@ -191,6 +191,8 @@ class ResolvedLaunchEnvironment:
     preflight_env: MappingProxyType[str, str]
     workspace_env: MappingProxyType[str, str]
     runtime_override_env: MappingProxyType[str, str]
+    bind_env_overrides: MappingProxyType[str, str]
+    runner_overlay_env: MappingProxyType[str, str]
     final_env: MappingProxyType[str, str]
 
     @classmethod
@@ -202,6 +204,8 @@ class ResolvedLaunchEnvironment:
         preflight_env: dict[str, str],
         workspace_env: dict[str, str],
         runtime_override_env: dict[str, str],
+        bind_env_overrides: dict[str, str],
+        runner_overlay_env: dict[str, str],
         final_env: dict[str, str],
     ) -> ResolvedLaunchEnvironment:
         return cls(
@@ -210,6 +214,8 @@ class ResolvedLaunchEnvironment:
             preflight_env=MappingProxyType(dict(preflight_env)),
             workspace_env=MappingProxyType(dict(workspace_env)),
             runtime_override_env=MappingProxyType(dict(runtime_override_env)),
+            bind_env_overrides=MappingProxyType(dict(bind_env_overrides)),
+            runner_overlay_env=MappingProxyType(dict(runner_overlay_env)),
             final_env=MappingProxyType(dict(final_env)),
         )
 

@@ -32,6 +32,16 @@ _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
 KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh"})
 KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "yolo"})
+RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
+    "model": "MERIDIAN_MODEL",
+    "agent": "MERIDIAN_AGENT",
+    "effort": "MERIDIAN_EFFORT",
+    "sandbox": "MERIDIAN_SANDBOX",
+    "approval": "MERIDIAN_APPROVAL",
+    "autocompact": "MERIDIAN_AUTOCOMPACT",
+    "timeout": "MERIDIAN_TIMEOUT",
+}
+RUNTIME_OVERRIDE_ENV_VARS = frozenset(RUNTIME_OVERRIDE_ENV_BY_FIELD.values())
 
 
 def _parse_env_int(raw_value: str, *, env_name: str) -> int:
@@ -148,6 +158,17 @@ class RuntimeOverrides(BaseModel):
         """Compatibility wrapper for execution-policy-only model policy precedence."""
 
         return self.execution_policy_scope()
+
+    def to_env(self) -> dict[str, str]:
+        """Render captured runtime overrides back to MERIDIAN_* env vars."""
+
+        rendered: dict[str, str] = {}
+        for field_name, env_name in RUNTIME_OVERRIDE_ENV_BY_FIELD.items():
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            rendered[env_name] = str(value)
+        return rendered
 
     @field_validator("effort")
     @classmethod

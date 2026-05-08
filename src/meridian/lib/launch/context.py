@@ -761,7 +761,7 @@ def compile_prepared_policy_surface(
     cli_overrides = _spawn_request_overrides(request)
     env_overrides = (
         runtime.resolved_runtime_overrides
-        if runtime.runtime_override_snapshot
+        if runtime.has_runtime_override_snapshot
         else RuntimeOverrides.from_env()
     )
     if runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
@@ -1417,25 +1417,32 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["MERIDIAN_HARNESS"] = harness.id.value
-    merged_runtime_overrides = merge_env_overrides(
+    runtime_override_env = (
+        runtime.resolved_runtime_overrides.to_env()
+        if runtime.has_runtime_override_snapshot
+        else RuntimeOverrides.from_env().to_env()
+    )
+    bind_env_overrides = merge_env_overrides(
         plan_overrides=bindings.plan_overrides,
-        runtime_overrides=child_context_env,
+        runtime_overrides={**runtime_override_env, **child_context_env},
         preflight_overrides=preflight.extra_env,
     )
-    merged_runtime_overrides.update(workspace_projection.env_overrides)
+    bind_env_overrides.update(workspace_projection.env_overrides)
     env = build_env_plan(
         base_env=os.environ,
         adapter=harness,
         run_inputs=run_params,
         permission_config=permission_config,
-        runtime_env_overrides=merged_runtime_overrides,
+        runtime_env_overrides=bind_env_overrides,
     )
     environment = ResolvedLaunchEnvironment.build(
         child_context_env=child_context_env,
         plan_env=dict(bindings.plan_overrides),
         preflight_env=dict(preflight.extra_env),
         workspace_env=dict(workspace_projection.env_overrides),
-        runtime_override_env=merged_runtime_overrides,
+        runtime_override_env=runtime_override_env,
+        bind_env_overrides=bind_env_overrides,
+        runner_overlay_env={},
         final_env=env,
     )
     binding = ResolvedLaunchBinding(
@@ -1466,7 +1473,7 @@ def bind_launch_context(
         spec=spec,
         child_cwd=child_cwd,
         env=environment.final_env,
-        env_overrides=environment.runtime_override_env,
+        env_overrides=environment.bind_env_overrides,
         report_output_path=report_output_path,
         harness=harness,
         resolved_request=resolved_request,

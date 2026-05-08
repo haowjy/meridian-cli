@@ -27,6 +27,7 @@ from meridian.lib.core.child_env import build_child_env_overrides
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -770,16 +771,12 @@ def _prepare_child_claude_overlay(
                 )
         updated_environment = replace(
             handoff.launch_context.binding.environment,
-            runtime_override_env=MappingProxyType(
+            runner_overlay_env=MappingProxyType(
                 {
-                    **handoff.launch_context.binding.environment.runtime_override_env,
-                    **{
-                        key: value
-                        for key, value in child_env.items()
-                        if key
-                        not in handoff.launch_context.binding.environment.final_env
-                        or handoff.launch_context.binding.environment.final_env[key] != value
-                    },
+                    key: value
+                    for key, value in child_env.items()
+                    if key not in handoff.launch_context.binding.environment.final_env
+                    or handoff.launch_context.binding.environment.final_env[key] != value
                 }
             ),
             final_env=MappingProxyType(child_env),
@@ -1228,6 +1225,10 @@ def execute_spawn_background(
         launch_runtime = LaunchRuntime(
             argv_intent=LaunchArgvIntent.SPEC_ONLY,
             debug=payload.debug,
+            runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
             runtime_root=context.runtime_root.as_posix(),
             project_paths_project_root=project_paths.project_root.as_posix(),
             project_paths_execution_cwd=execution_cwd_str,
@@ -1451,6 +1452,10 @@ def execute_spawn_blocking(
                 runtime_request=LaunchRuntime(
                     argv_intent=LaunchArgvIntent.SPEC_ONLY,
                     debug=payload.debug,
+                    runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
+                        mode="json",
+                        exclude_none=True,
+                    ),
                     runtime_root=context.runtime_root.as_posix(),
                     project_paths_project_root=project_paths.project_root.as_posix(),
                     project_paths_execution_cwd=project_paths.execution_cwd.as_posix(),

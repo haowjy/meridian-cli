@@ -15,6 +15,7 @@ import pytest
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.lifecycle import create_lifecycle_service
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
@@ -84,6 +85,8 @@ def _make_launch_context(
         preflight_env={},
         workspace_env={},
         runtime_override_env={},
+        bind_env_overrides={},
+        runner_overlay_env={},
         final_env={},
     )
     binding = ResolvedLaunchBinding(
@@ -111,7 +114,7 @@ def _make_launch_context(
         spec=spec,
         child_cwd=binding.child_cwd,
         env=MappingProxyType(dict(binding.environment.final_env)),
-        env_overrides=MappingProxyType(dict(binding.environment.runtime_override_env)),
+        env_overrides=MappingProxyType(dict(binding.environment.bind_env_overrides)),
         report_output_path=binding.report_output_path,
         harness=OpenCodeAdapter(),
         resolved_request=request,
@@ -667,6 +670,62 @@ def test_execute_spawn_background_records_parent_launch_boundary_observations(
     ]
     assert events[1].launcher_pid == 4242
     assert marked_running == {"launch_mode": "background", "runner_pid": 4242}
+
+
+def test_execute_spawn_background_persists_captured_runtime_override_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = SpawnId("p-bg-snapshot")
+    captured: dict[str, object] = {}
+
+    def fake_init_spawn(**_kwargs: object) -> Any:
+        return SimpleNamespace(
+            spawn=SimpleNamespace(spawn_id=spawn_id),
+            runtime_root=runtime_root,
+            current_depth=0,
+            work_id=None,
+        )
+
+    class _FakeLifecycle:
+        def mark_running(self, _spawn_id: object, **_kwargs: object) -> None:
+            return None
+
+    class _FakeProcess:
+        pid = 4242
+
+    def fake_persist(
+        _log_dir: Path,
+        launch_request: BackgroundWorkerLaunchRequest,
+    ) -> None:
+        captured["launch_request"] = launch_request
+
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(execute_module, "_persist_bg_worker_request", fake_persist)
+    monkeypatch.setattr(
+        execute_module,
+        "build_spawn_lifecycle_service_from_roots",
+        lambda *_a, **_kw: _FakeLifecycle(),
+    )
+    monkeypatch.setattr(
+        execute_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _FakeProcess(),
+    )
+
+    execute_spawn_background(
+        payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
+    )
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "yolo")
+
+    launch_request = cast("BackgroundWorkerLaunchRequest", captured["launch_request"])
+    assert launch_request.runtime.runtime_override_snapshot == {"approval": "confirm"}
 
 
 def test_execute_spawn_background_records_persist_failure_observation(
@@ -1549,6 +1608,151 @@ async def test_launch_prepared_spawn_claude_overlay_default_root_fallback_ignore
     assert seeded["target_config_root"] != parent_overlay
     assert spawn_updates == [durable_default_root.as_posix()]
     assert session_updates == [("c1", durable_default_root.as_posix())]
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_claude_overlay_keeps_runtime_override_provenance_clean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    overlay_root = tmp_path / "claude-config" / "p-overlay"
+    overlay_root.mkdir(parents=True)
+    child_cwd = tmp_path / "child"
+    child_cwd.mkdir()
+
+    run_inputs = ResolvedRunInputs(
+        prompt="run it",
+        model=ModelId("gpt-5.4"),
+        project_root=tmp_path.as_posix(),
+    )
+    base_launch_context = _make_launch_context(
+        tmp_path=tmp_path,
+        spec=OpenCodeLaunchSpec(prompt="run it", permission_resolver=_resolver()),
+        run_inputs=run_inputs,
+    )
+    launch_context_with_env = dataclass_replace(
+        base_launch_context,
+        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        child_cwd=child_cwd,
+        env=MappingProxyType(
+            {
+                "MERIDIAN_APPROVAL": "confirm",
+                "BASE": "1",
+            }
+        ),
+        binding=dataclass_replace(
+            base_launch_context.binding,
+            environment=ResolvedLaunchEnvironment.build(
+                child_context_env={"MERIDIAN_HARNESS": "claude"},
+                plan_env={},
+                preflight_env={},
+                workspace_env={},
+                runtime_override_env={"MERIDIAN_APPROVAL": "confirm"},
+                bind_env_overrides={
+                    "MERIDIAN_APPROVAL": "confirm",
+                    "MERIDIAN_HARNESS": "claude",
+                },
+                runner_overlay_env={},
+                final_env={
+                    "MERIDIAN_APPROVAL": "confirm",
+                    "BASE": "1",
+                },
+            ),
+        ),
+    )
+    handoff = PreparedExecutionHandoff(
+        resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        launch_context=launch_context_with_env,
+        session_context=_SessionExecutionContext(
+            chat_id="c1",
+            work_id=None,
+            resolved_agent_name=None,
+            harness_session_id_observer=lambda _session_id: None,
+        ),
+        session_exit_stack=ExitStack(),
+        execution_cwd=tmp_path.as_posix(),
+        work_id=None,
+        harness_session_id_observer=lambda _session_id: None,
+    )
+
+    async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        return handoff
+
+    def fake_prepare_isolated_claude_config(
+        *,
+        runtime_root: Path,
+        spawn_id: str,
+    ) -> tuple[Path, str]:
+        assert runtime_root == tmp_path / ".runtime"
+        assert spawn_id == "p-overlay"
+        return overlay_root, ""
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fake_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(
+        execute_module.spawn_store,
+        "update_spawn",
+        lambda *_args, **_kwargs: SimpleNamespace(wrote=True, entered_finalizing=False),
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "update_session_claude_config_dir",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "ensure_claude_session_accessible",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        execute_module,
+        "_cleanup_child_claude_overlay",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def fake_invoke_runner(
+        prepared_handoff: PreparedExecutionHandoff,
+        **_kwargs: object,
+    ) -> int:
+        environment = prepared_handoff.launch_context.binding.environment
+        assert environment.runtime_override_env == {"MERIDIAN_APPROVAL": "confirm"}
+        assert environment.runner_overlay_env["CLAUDE_CONFIG_DIR"] == overlay_root.as_posix()
+        assert environment.final_env["CLAUDE_CONFIG_DIR"] == overlay_root.as_posix()
+        assert environment.final_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] == ""
+        assert environment.final_env["MERIDIAN_APPROVAL"] == "confirm"
+        return 0
+
+    monkeypatch.setattr(execute_module, "_invoke_runner", fake_invoke_runner)
+
+    result = await launch_prepared_spawn(
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p-overlay"))),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        runtime_request=LaunchRuntime(
+            runtime_root=(tmp_path / ".runtime").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+            runtime_override_snapshot=RuntimeOverrides(approval="confirm").model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
+        ),
+        runtime=cast("Any", SimpleNamespace(harness_registry=SimpleNamespace(), artifacts=None)),
+        runtime_root=tmp_path / ".runtime",
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    assert result == 0
 
 
 @pytest.mark.asyncio
@@ -2474,6 +2678,64 @@ def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(
     assert cast("Any", captured["request"]).prompt == "run it"
     assert cast("Any", captured["project_paths"]).project_root == tmp_path
     assert captured["execution_cwd"] == tmp_path.as_posix()
+
+
+def test_execute_spawn_blocking_threads_captured_runtime_override_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    spawn_id = SpawnId("p123-snapshot")
+    captured: dict[str, object] = {}
+    real_asyncio_run = asyncio.run
+
+    def fake_init_spawn(**_kwargs: object) -> Any:
+        return SimpleNamespace(
+            spawn=SimpleNamespace(spawn_id=spawn_id),
+            runtime_root=tmp_path / ".runtime",
+            current_depth=0,
+            work_id=None,
+        )
+
+    async def fake_launch_prepared_spawn(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+    monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
+    monkeypatch.setattr(
+        execute_module,
+        "resolve_project_config_paths",
+        lambda *, project_root: ProjectConfigPaths(
+            project_root=Path(project_root),
+            execution_cwd=Path(project_root),
+        ),
+    )
+    monkeypatch.setattr(execute_module, "resolve_child_execution_cwd", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr(execute_module, "_write_params_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(execute_module, "launch_prepared_spawn", fake_launch_prepared_spawn)
+    monkeypatch.setattr(execute_module.asyncio, "run", lambda coro: real_asyncio_run(coro))
+    monkeypatch.setattr(
+        execute_module,
+        "read_spawn_row",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status="succeeded",
+            duration_secs=1.25,
+            input_tokens=3,
+            output_tokens=5,
+        ),
+    )
+
+    execute_spawn_blocking(
+        payload=cast("Any", SimpleNamespace(desc="", work="", debug=False, stream=False)),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
+    )
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "yolo")
+
+    runtime_request = cast("LaunchRuntime", captured["runtime_request"])
+    assert runtime_request.runtime_override_snapshot == {"approval": "confirm"}
 
 
 def test_execute_spawn_blocking_backstop_finalizes_uncaught_helper_escape(

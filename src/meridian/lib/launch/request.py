@@ -20,10 +20,6 @@ def _empty_config_snapshot() -> dict[str, object]:
     return {}
 
 
-def _empty_runtime_override_snapshot() -> dict[str, object]:
-    return {}
-
-
 class RetryPolicy(BaseModel):
     """Retry configuration for spawn execution."""
 
@@ -151,9 +147,7 @@ class LaunchRuntime(BaseModel):
     argv_intent: LaunchArgvIntent = LaunchArgvIntent.REQUIRED
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
-    runtime_override_snapshot: dict[str, object] = Field(
-        default_factory=_empty_runtime_override_snapshot
-    )
+    runtime_override_snapshot: dict[str, object] | None = None
     unsafe_no_permissions: bool = False
     debug: bool = False
     report_output_path: str | None = None
@@ -162,8 +156,12 @@ class LaunchRuntime(BaseModel):
     project_paths_execution_cwd: str
 
     @property
+    def has_runtime_override_snapshot(self) -> bool:
+        return self.runtime_override_snapshot is not None
+
+    @property
     def resolved_runtime_overrides(self) -> RuntimeOverrides:
-        if self.runtime_override_snapshot:
+        if self.runtime_override_snapshot is not None:
             return RuntimeOverrides.model_validate(self.runtime_override_snapshot)
         return RuntimeOverrides()
 

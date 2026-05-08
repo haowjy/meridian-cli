@@ -4,6 +4,7 @@ from collections.abc import Callable, Collection, Mapping
 from typing import cast
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
+from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -177,7 +178,7 @@ def build_harness_child_env(
     return inherit_child_env(
         base_env=base_env,
         env_overrides=merged_env,
-        blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked,
+        blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked | RUNTIME_OVERRIDE_ENV_VARS,
     )
 
 
