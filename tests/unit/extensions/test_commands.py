@@ -17,6 +17,7 @@ from meridian.lib.extensions.context import (
     ExtensionCommandServices,
     ExtensionInvocationContext,
     ExtensionInvocationContextBuilder,
+    ExtensionSharedServices,
     build_extension_command_services,
 )
 from meridian.lib.extensions.registry import build_first_party_registry
@@ -211,6 +212,32 @@ def test_build_extension_command_services_carries_application_authority(
     assert services.authority == prepared.authority
     assert services.application.context.authority == prepared.authority
     assert context.authority == prepared.authority
+
+
+def test_extension_command_services_build_spawn_service_uses_shared_factory(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    application = build_extension_entrypoint(prepared)
+    captured: dict[str, object] = {}
+
+    class _FakeService:
+        pass
+
+    def _factory(entrypoint: object) -> object:
+        captured["entrypoint"] = entrypoint
+        return _FakeService()
+
+    services = build_extension_command_services(
+        application=application,
+        shared=ExtensionSharedServices(spawn_service_factory=_factory),
+    )
+    spawn_service = services.build_spawn_service()
+
+    assert captured["entrypoint"] == application
+    assert isinstance(spawn_service, _FakeService)
 
 
 @pytest.mark.asyncio

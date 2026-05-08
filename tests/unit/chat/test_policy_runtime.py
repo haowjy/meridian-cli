@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.bootstrap.services import build_chat_entrypoint, prepare_for_runtime_write
 from meridian.lib.chat.event_log import ChatEventLog
 from meridian.lib.chat.policy import (
     ChatPolicySnapshot,
@@ -11,7 +12,12 @@ from meridian.lib.chat.policy import (
     ChatPromptInputsSnapshot,
     default_chat_policy_snapshot,
 )
-from meridian.lib.chat.runtime import ChatRuntime
+from meridian.lib.chat.runtime import (
+    ChatRuntime,
+    ChatRuntimeRequest,
+    build_chat_runtime,
+    build_chat_runtime_from_entrypoint,
+)
 
 
 class _NoopAcquisition:
@@ -38,6 +44,38 @@ def _snapshot(*, model: str, skill_content: str) -> ChatPolicySnapshot:
             ),
         }
     )
+
+
+def test_build_chat_runtime_from_typed_request(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    project_root = tmp_path / "project"
+    runtime = build_chat_runtime(
+        ChatRuntimeRequest(
+            runtime_root=runtime_root,
+            project_root=project_root,
+            default_policy_snapshot=_snapshot(model="gpt-a", skill_content="alpha"),
+            backend_acquisition=_NoopAcquisition(),
+        )
+    )
+
+    assert runtime.runtime_root == runtime_root
+    assert runtime.project_root == project_root
+
+
+def test_build_chat_runtime_from_entrypoint_uses_shared_roots(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    entrypoint = build_chat_entrypoint(prepared)
+
+    runtime = build_chat_runtime_from_entrypoint(
+        entrypoint=entrypoint,
+        default_policy_snapshot=_snapshot(model="gpt-a", skill_content="alpha"),
+        backend_acquisition=_NoopAcquisition(),
+    )
+
+    assert runtime.project_root == project_root
+    assert runtime.runtime_root == prepared.runtime_root
 
 
 @pytest.mark.asyncio

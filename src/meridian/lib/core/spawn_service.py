@@ -115,6 +115,24 @@ class PreparedSpawn:
     work_id: str | None
 
 
+@dataclass(frozen=True)
+class PrepareSpawnRequest:
+    """Typed request for surface-neutral spawn preparation."""
+
+    request: SpawnRequest
+    runtime: LaunchRuntime
+    harness_registry: HarnessRegistry
+    chat_id: str | None = None
+    parent_id: str | None = None
+    kind: str = "child"
+    desc: str | None = None
+    work_id: str | None = None
+    launch_mode: LaunchMode | None = None
+    runner_pid: int | None = None
+    initial_status: SpawnStatus = "queued"
+    debug_tracer: DebugTracer | None = None
+
+
 class KeyedLockRegistry:
     """In-process keyed lock registry for spawn serialization.
 
@@ -243,23 +261,8 @@ class SpawnApplicationService:
 
     # ---- Spawn Preparation (SEAM-1, SEAM-2, SEAM-3) ----
 
-    async def prepare_spawn(
-        self,
-        *,
-        request: SpawnRequest,
-        runtime: LaunchRuntime,
-        harness_registry: HarnessRegistry,
-        chat_id: str | None = None,
-        parent_id: str | None = None,
-        kind: str = "child",
-        desc: str | None = None,
-        work_id: str | None = None,
-        launch_mode: LaunchMode | None = None,
-        runner_pid: int | None = None,
-        initial_status: SpawnStatus = "queued",
-        debug_tracer: DebugTracer | None = None,
-    ) -> PreparedSpawn:
-        """Resolve launch context, create spawn row, project ConnectionConfig.
+    async def prepare(self, payload: PrepareSpawnRequest) -> PreparedSpawn:
+        """Resolve launch context, create spawn row, and project ConnectionConfig.
 
         SEAM-1: No spawn row is created until build_launch_context() succeeds.
         SEAM-2: Row metadata always reflects resolved values (never "unknown").
@@ -271,16 +274,16 @@ class SpawnApplicationService:
         """
         # Generate a placeholder spawn_id for the first launch-context build.
         # Resolution can fail here; no spawn row or lifecycle event is emitted.
-        temp_spawn_id = f"pending-{id(request)}"
+        temp_spawn_id = f"pending-{id(payload.request)}"
 
         # SEAM-1: Build launch context FIRST. This can fail.
         # If it fails, no spawn row exists.
         launch_ctx = await asyncio.to_thread(
             build_launch_context,
             spawn_id=temp_spawn_id,
-            request=request,
-            runtime=runtime,
-            harness_registry=harness_registry,
+            request=payload.request,
+            runtime=payload.runtime,
+            harness_registry=payload.harness_registry,
         )
 
         # Extract resolved metadata from launch context
@@ -294,7 +297,7 @@ class SpawnApplicationService:
             raise ValueError("Harness resolution failed - harness is required")
 
         # Resolve work_id
-        effective_work_id = (work_id or launch_ctx.work_id or "").strip() or None
+        effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
 
         # Reserve the final ID and rebuild launch context before lifecycle.start
         # so MERIDIAN_SPAWN_ID and related env_overrides are final, while a
@@ -306,9 +309,9 @@ class SpawnApplicationService:
         launch_ctx = await asyncio.to_thread(
             build_launch_context,
             spawn_id=str(final_spawn_id),
-            request=request,
-            runtime=runtime,
-            harness_registry=harness_registry,
+            request=payload.request,
+            runtime=payload.runtime,
+            harness_registry=payload.harness_registry,
         )
         resolved_request = launch_ctx.resolved_request
         resolved_model = (resolved_request.model or "").strip()
@@ -316,7 +319,7 @@ class SpawnApplicationService:
         resolved_agent = (resolved_request.agent or "").strip() or None
         if not resolved_harness:
             raise ValueError("Harness resolution failed - harness is required")
-        effective_work_id = (work_id or launch_ctx.work_id or "").strip() or None
+        effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
 
         # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
         # after launch context composition succeeds. Failed composition leaves no
@@ -324,24 +327,24 @@ class SpawnApplicationService:
         persisted_spawn_id = SpawnId(
             await asyncio.to_thread(
                 self._lifecycle.start,
-                chat_id=chat_id or "",
-                parent_id=parent_id,
+                chat_id=payload.chat_id or "",
+                parent_id=payload.parent_id,
                 model=resolved_model,
                 agent=resolved_agent or "",
                 agent_path=resolved_request.agent_metadata.get("session_agent_path"),
                 skills=resolved_request.skills,
                 skill_paths=resolved_request.skill_paths,
                 harness=resolved_harness,
-                kind=kind,
+                kind=payload.kind,
                 prompt=resolved_request.prompt,
-                desc=desc,
+                desc=payload.desc,
                 work_id=effective_work_id,
                 spawn_id=str(final_spawn_id),
                 harness_session_id=resolved_request.session.requested_harness_session_id,
                 execution_cwd=str(launch_ctx.child_cwd),
-                launch_mode=launch_mode,
-                runner_pid=runner_pid,
-                status=initial_status,
+                launch_mode=payload.launch_mode,
+                runner_pid=payload.runner_pid,
+                status=payload.initial_status,
             )
         )
         if persisted_spawn_id != final_spawn_id:
@@ -358,7 +361,7 @@ class SpawnApplicationService:
             project_root=launch_ctx.child_cwd,
             env_overrides=dict(launch_ctx.env_overrides),
             system=launch_ctx.run_params.appended_system_prompt,
-            debug_tracer=debug_tracer,
+            debug_tracer=payload.debug_tracer,
         )
 
         return PreparedSpawn(
@@ -369,6 +372,41 @@ class SpawnApplicationService:
             resolved_agent=resolved_agent,
             resolved_harness=resolved_harness,
             work_id=effective_work_id,
+        )
+
+    async def prepare_spawn(
+        self,
+        *,
+        request: SpawnRequest,
+        runtime: LaunchRuntime,
+        harness_registry: HarnessRegistry,
+        chat_id: str | None = None,
+        parent_id: str | None = None,
+        kind: str = "child",
+        desc: str | None = None,
+        work_id: str | None = None,
+        launch_mode: LaunchMode | None = None,
+        runner_pid: int | None = None,
+        initial_status: SpawnStatus = "queued",
+        debug_tracer: DebugTracer | None = None,
+    ) -> PreparedSpawn:
+        """Compatibility wrapper over the typed ``prepare`` request API."""
+
+        return await self.prepare(
+            PrepareSpawnRequest(
+                request=request,
+                runtime=runtime,
+                harness_registry=harness_registry,
+                chat_id=chat_id,
+                parent_id=parent_id,
+                kind=kind,
+                desc=desc,
+                work_id=work_id,
+                launch_mode=launch_mode,
+                runner_pid=runner_pid,
+                initial_status=initial_status,
+                debug_tracer=debug_tracer,
+            )
         )
 
     # ---- Spawn Operations ----
@@ -803,6 +841,7 @@ __all__ = [
     "CancelOutcome",
     "CompleteSpawnOutcome",
     "KeyedLockRegistry",
+    "PrepareSpawnRequest",
     "PreparedSpawn",
     "SpawnApplicationService",
 ]

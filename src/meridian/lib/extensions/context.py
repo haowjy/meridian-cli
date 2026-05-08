@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from meridian.lib.service_context import (
     ApplicationContext,
@@ -16,8 +16,28 @@ from meridian.lib.service_context import (
 if TYPE_CHECKING:
     from meridian.lib.config.settings import MeridianConfig
     from meridian.lib.core.lifecycle import SpawnLifecycleService
+    from meridian.lib.core.spawn_service import SpawnApplicationService
     from meridian.lib.extensions.types import ExtensionSurface
     from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
+
+
+class SpawnServiceFactory(Protocol):
+    """Factory contract for extension-facing spawn application services."""
+
+    def __call__(self, entrypoint: ExtensionEntryPoint) -> SpawnApplicationService: ...
+
+
+def _default_spawn_service_factory(entrypoint: ExtensionEntryPoint) -> SpawnApplicationService:
+    from meridian.lib.bootstrap.services import build_spawn_application_service_from_entrypoint
+
+    return build_spawn_application_service_from_entrypoint(entrypoint)
+
+
+@dataclass(frozen=True)
+class ExtensionSharedServices:
+    """Shared service factory bundle extensions can consume."""
+
+    spawn_service_factory: SpawnServiceFactory = _default_spawn_service_factory
 
 
 class ExtensionCapability(StrEnum):
@@ -156,6 +176,12 @@ class ExtensionCommandServices:
     runtime_root: Path | None = None
     meridian_dir: Path | None = None
     application: ExtensionEntryPoint = field(default_factory=ExtensionEntryPoint)
+    shared: ExtensionSharedServices = field(default_factory=ExtensionSharedServices)
+
+    def build_spawn_service(self) -> SpawnApplicationService:
+        """Build spawn service from shared application/service authority."""
+
+        return self.shared.spawn_service_factory(self.application)
 
 
 def build_extension_command_services(
@@ -167,6 +193,7 @@ def build_extension_command_services(
     config: MeridianConfig | None = None,
     lifecycle: SpawnLifecycleService | None = None,
     meridian_dir: Path | None = None,
+    shared: ExtensionSharedServices | None = None,
 ) -> ExtensionCommandServices:
     """Build extension services with the shared application seam attached."""
 
@@ -186,6 +213,7 @@ def build_extension_command_services(
         runtime_root=runtime_root or resolved_application.context.runtime_root,
         meridian_dir=meridian_dir,
         application=resolved_application,
+        shared=shared or ExtensionSharedServices(),
     )
 
 
@@ -195,5 +223,7 @@ __all__ = [
     "ExtensionCommandServices",
     "ExtensionInvocationContext",
     "ExtensionInvocationContextBuilder",
+    "ExtensionSharedServices",
+    "SpawnServiceFactory",
     "build_extension_command_services",
 ]

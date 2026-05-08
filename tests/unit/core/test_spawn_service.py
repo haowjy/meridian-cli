@@ -12,7 +12,11 @@ import pytest
 import meridian.lib.core.telemetry as telemetry
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
-from meridian.lib.core.spawn_service import PreparedSpawn, SpawnApplicationService
+from meridian.lib.core.spawn_service import (
+    PreparedSpawn,
+    PrepareSpawnRequest,
+    SpawnApplicationService,
+)
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
@@ -441,6 +445,50 @@ async def test_complete_spawn_serializes_concurrent_terminal_attempts(
     assert all(isinstance(result.transitioned, bool) for result in results)
     assert record is not None
     assert record.status in {"succeeded", "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_accepts_typed_request_payload(
+    tmp_path: Path,
+    mock_harness_registry: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shared spawn preparation API accepts one typed payload."""
+    from meridian.lib.harness.registry import get_default_harness_registry
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    runtime_root = tmp_path
+
+    def build_launch_context(**kwargs: object) -> SimpleNamespace:
+        return _mock_launch_context(
+            spawn_id=str(kwargs["spawn_id"]),
+            child_cwd=project_root,
+            prompt="resolved prompt",
+        )
+
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.build_launch_context",
+        build_launch_context,
+    )
+
+    lifecycle = SpawnLifecycleService(runtime_root)
+    service = SpawnApplicationService(runtime_root, lifecycle)
+    prepared = await service.prepare(
+        PrepareSpawnRequest(
+            request=SpawnRequest(prompt="request prompt", harness="codex"),
+            runtime=_launch_runtime(project_root, runtime_root),
+            harness_registry=get_default_harness_registry(),
+            chat_id="chat-1",
+            initial_status="running",
+        )
+    )
+
+    record = spawn_store.get_spawn(runtime_root, prepared.spawn_id)
+    assert isinstance(prepared, PreparedSpawn)
+    assert record is not None
+    assert record.prompt == "resolved prompt"
+    assert record.chat_id == "chat-1"
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from meridian.lib.chat.policy import (
 from meridian.lib.chat.protocol import CHAT_EXITED, CHAT_STARTED, ChatEvent, utc_now_iso
 from meridian.lib.chat.session_service import ChatSessionService
 from meridian.lib.chat.ws_fanout import WebSocketFanOut
+from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.telemetry import emit_telemetry
 
@@ -64,6 +65,55 @@ class ChatListItem:
 class ChatStreamSource:
     event_log: ChatEventLog
     fanout: WebSocketFanOut | None
+
+
+@dataclass(frozen=True)
+class ChatRuntimeRequest:
+    """Typed request for constructing a chat runtime service."""
+
+    runtime_root: Path
+    project_root: Path
+    default_policy_snapshot: ChatPolicySnapshot
+    backend_acquisition: BackendAcquisition | None = None
+    acquisition_factory: BackendAcquisitionFactory | None = None
+
+
+def build_chat_runtime(request: ChatRuntimeRequest) -> ChatRuntime:
+    """Construct a chat runtime from one surface-neutral request payload."""
+
+    return ChatRuntime(
+        runtime_root=request.runtime_root,
+        project_root=request.project_root,
+        default_policy_snapshot=request.default_policy_snapshot,
+        backend_acquisition=request.backend_acquisition,
+        acquisition_factory=request.acquisition_factory,
+    )
+
+
+def build_chat_runtime_from_entrypoint(
+    *,
+    entrypoint: ChatEntryPoint,
+    default_policy_snapshot: ChatPolicySnapshot,
+    backend_acquisition: BackendAcquisition | None = None,
+    acquisition_factory: BackendAcquisitionFactory | None = None,
+) -> ChatRuntime:
+    """Build chat runtime using roots carried by the shared entrypoint seam."""
+
+    project_root = entrypoint.context.project_root
+    if project_root is None:
+        raise ValueError("Chat entrypoint is missing project root.")
+    runtime_root = entrypoint.context.runtime_root
+    if runtime_root is None:
+        raise ValueError("Chat entrypoint is missing runtime root.")
+    return build_chat_runtime(
+        ChatRuntimeRequest(
+            runtime_root=runtime_root,
+            project_root=project_root,
+            default_policy_snapshot=default_policy_snapshot,
+            backend_acquisition=backend_acquisition,
+            acquisition_factory=acquisition_factory,
+        )
+    )
 
 
 class PipelineLookup(Protocol):
@@ -531,10 +581,13 @@ def _last_execution_id(events: list[ChatEvent]) -> str:
 __all__ = [
     "ChatListItem",
     "ChatRuntime",
+    "ChatRuntimeRequest",
     "ChatRuntimeView",
     "ChatStreamSource",
     "LiveChatEntry",
     "PersistedChatRecord",
     "PipelineLookup",
+    "build_chat_runtime",
+    "build_chat_runtime_from_entrypoint",
     "build_live_entry",
 ]
