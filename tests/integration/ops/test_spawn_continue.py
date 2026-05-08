@@ -5,7 +5,12 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
-from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
+from meridian.lib.ops.spawn.models import (
+    SpawnActionOutput,
+    SpawnContinueInput,
+    SpawnCreateInput,
+    SpawnForkInput,
+)
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
@@ -272,3 +277,156 @@ def test_spawn_continue_dry_run_with_prepared_context_does_not_require_lifecycle
 
     assert result.status == "dry-run"
     assert result.command == "spawn.continue"
+
+
+def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+
+    captured_input: SpawnCreateInput | None = None
+
+    def _fake_resolve_session_reference(*_args, **_kwargs):
+        return SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-seed",
+            harness="codex",
+            source_model="gpt-5.4",
+            source_agent="reviewer",
+            source_skills=("skill-a", "skill-b"),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd="/tmp/source-cwd",
+            source_claude_config_dir="/tmp/source-claude",
+            tracked=True,
+        )
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_resolve_session_reference)
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="c-source",
+            prompt="fork prompt",
+            project_root=project_root.as_posix(),
+            inherit_source_skills=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.model == "gpt-5.4"
+    assert captured_input.agent == "reviewer"
+    assert captured_input.skills == ("skill-a", "skill-b")
+    assert captured_input.work == "w-source"
+    assert captured_input.harness == "codex"
+    assert captured_input.session.requested_harness_session_id == "session-seed"
+    assert captured_input.session.continue_source_ref == "c-source"
+    assert captured_input.session.continue_fork is True
+    assert captured_input.session.forked_from_chat_id == "c-source"
+    assert captured_input.session.source_execution_cwd == "/tmp/source-cwd"
+    assert captured_input.session.source_claude_config_dir == "/tmp/source-claude"
+
+
+def test_spawn_fork_uses_requested_model_agent_and_skips_source_harness_when_model_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+
+    captured_input: SpawnCreateInput | None = None
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-seed",
+            harness="codex",
+            source_model="gpt-5.4",
+            source_agent="reviewer",
+            source_skills=("skill-a",),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd="/tmp/source-cwd",
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="c-source",
+            prompt="fork prompt",
+            project_root=project_root.as_posix(),
+            model="gptmini",
+            agent="architect",
+            skills=("custom-skill",),
+            inherit_source_skills=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.model == "gptmini"
+    assert captured_input.agent == "architect"
+    assert captured_input.skills == ("custom-skill",)
+    assert captured_input.harness is None
+
+
+def test_spawn_fork_errors_when_reference_has_no_recorded_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(missing_harness_session_id=True),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        spawn_api.spawn_fork_sync(
+            SpawnForkInput(
+                source_ref="c7",
+                prompt="fork prompt",
+                project_root=project_root.as_posix(),
+            )
+        )
+
+    assert (
+        str(exc_info.value)
+        == "Session 'c7' has no recorded harness session — cannot continue/fork."
+    )

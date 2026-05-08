@@ -5,7 +5,12 @@ from types import SimpleNamespace
 
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.ops.spawn import api as spawn_api
-from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnCancelAllInput, SpawnContinueInput
+from meridian.lib.ops.spawn.models import (
+    SpawnActionOutput,
+    SpawnCancelAllInput,
+    SpawnContinueInput,
+    SpawnForkInput,
+)
 
 
 def test_resolve_spawn_operation_services_prefers_prepared_context(
@@ -160,5 +165,70 @@ def test_spawn_continue_sync_resolves_roots_via_read_authority(
     assert captured == {
         "source_spawn_id": "p10",
         "project_root": project_root,
+        "runtime_root": runtime_root,
+    }
+
+
+def test_spawn_fork_sync_resolves_roots_via_read_authority(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    runtime_root = tmp_path / "runtime"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_spawn_read_authority",
+        lambda *, project_root, prepared=None: (
+            Path(project_root) if project_root else Path("/resolved/project"),
+            runtime_root,
+        ),
+    )
+
+    def _fake_resolve_session_reference(
+        resolved_project_root,
+        source_ref,
+        *,
+        runtime_root=None,
+    ):
+        captured["project_root"] = resolved_project_root
+        captured["source_ref"] = source_ref
+        captured["runtime_root"] = runtime_root
+        return SimpleNamespace(
+            missing_harness_session_id=False,
+            source_skills=("skill-1",),
+            source_model="gpt-5.4",
+            source_agent="coder",
+            source_work_id="w-source",
+            harness="codex",
+            harness_session_id="session-10",
+            tracked=True,
+            source_chat_id="c10",
+            source_execution_cwd="/tmp/source",
+            source_claude_config_dir="/tmp/claude",
+        )
+
+    monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_resolve_session_reference)
+    monkeypatch.setattr(
+        spawn_api,
+        "spawn_create_sync",
+        lambda *_args, **_kwargs: SpawnActionOutput(command="spawn.create", status="dry-run"),
+    )
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="c10",
+            prompt="fork",
+            project_root=project_root.as_posix(),
+            inherit_source_skills=True,
+        )
+    )
+
+    assert result.command == "spawn.create"
+    assert result.status == "dry-run"
+    assert captured == {
+        "project_root": project_root,
+        "source_ref": "c10",
         "runtime_root": runtime_root,
     }

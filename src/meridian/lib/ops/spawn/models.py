@@ -775,6 +775,33 @@ class SpawnContinueInput(BaseModel):
     approval: str | None = None
 
 
+class SpawnForkInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_ref: str
+    prompt: str
+    model: str = ""
+    agent: str | None = None
+    skills: tuple[str, ...] = ()
+    inherit_source_skills: bool = False
+    desc: str = ""
+    work: str = ""
+    dry_run: bool = False
+    verbose: bool = False
+    quiet: bool = False
+    stream: bool = False
+    background: bool = False
+    timeout: float | None = None
+    project_root: str | None = None
+    approval: str | None = None
+    autocompact: int | None = None
+    effort: str | None = None
+    sandbox: str | None = None
+    harness: str | None = None
+    passthrough_args: tuple[str, ...] = ()
+    debug: bool = False
+
+
 class SpawnWaitInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 

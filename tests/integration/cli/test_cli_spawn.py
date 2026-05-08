@@ -1,7 +1,6 @@
 import importlib
 import io
 import json
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,6 +9,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnContinueInput,
     SpawnCreateInput,
+    SpawnForkInput,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -123,50 +123,34 @@ def test_spawn_continue_without_prompt_is_allowed(monkeypatch: pytest.MonkeyPatc
     assert captured == {"spawn_id": "p1", "prompt": ""}
 
 
-def test_spawn_fork_threads_source_claude_config_dir_into_session_request(
+def test_spawn_fork_routes_through_spawn_fork_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
     captured: dict[str, object] = {}
 
-    resolved_reference = SimpleNamespace(
-        harness_session_id="session-seed",
-        harness="claude",
-        source_model="claude-sonnet-4-5",
-        source_agent="coder",
-        source_skills=("review",),
-        source_work_id="work-1",
-        source_chat_id="c7",
-        source_execution_cwd="/tmp/source-cwd",
-        source_claude_config_dir="/tmp/source-claude-config",
-        tracked=True,
-        missing_harness_session_id=False,
-    )
-
-    def _fake_spawn_create_sync(
-        payload: SpawnCreateInput,
+    def _fake_spawn_fork_sync(
+        payload: SpawnForkInput,
         *,
         sink: object | None = None,
         prepared: Any | None = None,
     ) -> SpawnActionOutput:
         _ = (sink, prepared)
         captured["payload"] = payload
-        return SpawnActionOutput(command="spawn.create", status="dry-run")
+        return SpawnActionOutput(command="spawn.create", status="dry-run", forked_from="c7")
 
-    monkeypatch.setattr(
-        spawn_cli, "resolve_session_reference", lambda *_args, **_kwargs: resolved_reference
-    )
-    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+    monkeypatch.setattr(spawn_cli, "spawn_fork_sync", _fake_spawn_fork_sync)
 
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(["spawn", "--fork", "c7", "-p", "fork prompt", "--dry-run"])
 
     assert exc_info.value.code == 0
     payload = captured["payload"]
-    assert isinstance(payload, SpawnCreateInput)
-    assert payload.session.source_execution_cwd == "/tmp/source-cwd"
-    assert payload.session.source_claude_config_dir == "/tmp/source-claude-config"
+    assert isinstance(payload, SpawnForkInput)
+    assert payload.source_ref == "c7"
+    assert payload.prompt == "fork prompt"
+    assert payload.inherit_source_skills is True
 
 
 @pytest.mark.parametrize("prompt_value", ["list", "show", "files", "stats"])

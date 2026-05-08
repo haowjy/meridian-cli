@@ -11,7 +11,7 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
-from meridian.cli.utils import missing_fork_session_error, parse_csv_list
+from meridian.cli.utils import parse_csv_list
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
@@ -22,8 +22,6 @@ from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.extensions.registry import get_first_party_registry
-from meridian.lib.launch.request import SessionRequest
-from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
     SpawnCancelAllInput,
@@ -31,6 +29,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnChildrenInput,
     SpawnContinueInput,
     SpawnCreateInput,
+    SpawnForkInput,
     SpawnListInput,
     SpawnShowInput,
     SpawnStatsInput,
@@ -42,6 +41,7 @@ from meridian.lib.ops.spawn.api import (
     spawn_continue_sync,
     spawn_create_sync,
     spawn_files_sync,
+    spawn_fork_sync,
     spawn_list_sync,
     spawn_show_sync,
     spawn_stats_sync,
@@ -347,32 +347,16 @@ def _spawn_create(
     if resolved_fork_from is not None:
         if context_from:
             raise ValueError("Cannot combine --fork with --from (MVP limitation).")
-
-        prepared = _prepare_spawn_runtime_write()
-        resolved_reference = resolve_session_reference(prepared.project_root, resolved_fork_from)
-        if resolved_reference.missing_harness_session_id:
-            raise ValueError(missing_fork_session_error(resolved_fork_from))
-
-        requested_model = model.strip()
-        requested_agent = (agent or "").strip() or None
-        requested_work = work.strip()
-
-        inherited_skills = (
-            resolved_reference.source_skills
-            if skills is None and requested_agent is None
-            else parsed_skills
-        )
-
-        result = spawn_create_sync(
-            SpawnCreateInput(
+        result = spawn_fork_sync(
+            SpawnForkInput(
+                source_ref=resolved_fork_from,
                 prompt=resolved_prompt,
-                model=requested_model or (resolved_reference.source_model or ""),
-                files=references,
-                template_vars=template_vars,
-                agent=requested_agent or resolved_reference.source_agent,
-                skills=inherited_skills,
+                model=model,
+                agent=agent,
+                skills=parsed_skills,
+                inherit_source_skills=skills is None,
                 desc=desc,
-                work=requested_work or (resolved_reference.source_work_id or ""),
+                work=work,
                 dry_run=dry_run,
                 verbose=verbose,
                 quiet=quiet,
@@ -383,23 +367,12 @@ def _spawn_create(
                 autocompact=autocompact,
                 effort=effort,
                 sandbox=sandbox,
-                harness=global_harness
-                or (resolved_reference.harness if not requested_model else None),
+                harness=global_harness,
                 passthrough_args=passthrough,
                 debug=debug,
-                session=SessionRequest(
-                    requested_harness_session_id=resolved_reference.harness_session_id,
-                    continue_harness=resolved_reference.harness,
-                    continue_source_tracked=resolved_reference.tracked,
-                    continue_source_ref=resolved_fork_from,
-                    continue_fork=True,
-                    forked_from_chat_id=resolved_reference.source_chat_id,
-                    source_execution_cwd=resolved_reference.source_execution_cwd,
-                    source_claude_config_dir=resolved_reference.source_claude_config_dir,
-                ),
             ),
             sink=_current_output_sink(),
-            prepared=prepared,
+            prepared=_prepare_spawn_runtime_write(),
         )
     elif resolved_continue_from is not None:
         if context_from:

@@ -64,6 +64,7 @@ from .models import (
     SpawnContinueInput,
     SpawnCreateInput,
     SpawnDetailOutput,
+    SpawnForkInput,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -253,6 +254,13 @@ def _forked_from_output(payload: SpawnCreateInput) -> str | None:
     if source_ref:
         return source_ref
     return None
+
+
+def _missing_follow_up_session_error(source_ref: str) -> str:
+    normalized = source_ref.strip()
+    if normalized.startswith("p") and normalized[1:].isdigit():
+        return f"Spawn '{normalized}' has no recorded session — cannot continue/fork."
+    return f"Session '{normalized}' has no recorded harness session — cannot continue/fork."
 
 
 def spawn_create_sync(
@@ -1441,6 +1449,97 @@ def _model_for_follow_up(source_spawn: SpawnRecord, override_model: str) -> str:
 
 def _with_command(result: SpawnActionOutput, command: str) -> SpawnActionOutput:
     return result.model_copy(update={"command": command})
+
+
+def spawn_fork_sync(
+    payload: SpawnForkInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    normalized_source_ref = payload.source_ref.strip()
+    if not normalized_source_ref:
+        raise ValueError("Session reference is required.")
+
+    resolved_reference = resolve_session_reference(
+        project_root,
+        normalized_source_ref,
+        runtime_root=runtime_root,
+    )
+    if resolved_reference.missing_harness_session_id:
+        raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
+
+    requested_model = payload.model.strip()
+    requested_agent = (payload.agent or "").strip() or None
+    requested_work = payload.work.strip()
+    requested_harness = (payload.harness or "").strip() or None
+
+    inherited_skills = (
+        resolved_reference.source_skills
+        if payload.inherit_source_skills and requested_agent is None
+        else payload.skills
+    )
+
+    create_input = SpawnCreateInput(
+        prompt=payload.prompt,
+        model=requested_model or (resolved_reference.source_model or ""),
+        agent=requested_agent or resolved_reference.source_agent,
+        skills=inherited_skills,
+        desc=payload.desc,
+        work=requested_work or (resolved_reference.source_work_id or ""),
+        dry_run=payload.dry_run,
+        verbose=payload.verbose,
+        quiet=payload.quiet,
+        stream=payload.stream,
+        background=payload.background,
+        timeout=payload.timeout,
+        project_root=payload.project_root,
+        approval=payload.approval,
+        autocompact=payload.autocompact,
+        effort=payload.effort,
+        sandbox=payload.sandbox,
+        harness=(
+            requested_harness
+            if requested_harness is not None
+            else (resolved_reference.harness if not requested_model else None)
+        ),
+        passthrough_args=payload.passthrough_args,
+        session=SessionRequest(
+            requested_harness_session_id=resolved_reference.harness_session_id,
+            continue_harness=resolved_reference.harness,
+            continue_source_tracked=resolved_reference.tracked,
+            continue_source_ref=normalized_source_ref,
+            continue_fork=True,
+            forked_from_chat_id=resolved_reference.source_chat_id,
+            source_execution_cwd=resolved_reference.source_execution_cwd,
+            source_claude_config_dir=resolved_reference.source_claude_config_dir,
+        ),
+        debug=payload.debug,
+    )
+    if prepared is not None:
+        return spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
+    return spawn_create_sync(create_input, ctx=ctx, sink=sink)
+
+
+async def spawn_fork(
+    payload: SpawnForkInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    return await asyncio.to_thread(
+        spawn_fork_sync,
+        payload,
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
 
 
 def spawn_continue_sync(
