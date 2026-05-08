@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from meridian.lib.bootstrap.services import build_spawn_application_service_from_entrypoint
 from meridian.lib.extensions.context import (
     ExtensionCommandServices,
     ExtensionInvocationContext,
@@ -56,7 +55,7 @@ async def archive_spawn_handler(
     spawn_id = args["spawn_id"]
 
     try:
-        spawn_service = build_spawn_application_service_from_entrypoint(services.application)
+        spawn_service = services.build_spawn_service()
         was_new = await spawn_service.archive(spawn_id)
         return ExtensionJSONResult(
             payload={

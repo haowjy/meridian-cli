@@ -158,7 +158,7 @@ async def test_archive_spawn_handler_returns_error_on_invalid_state(
 
 
 @pytest.mark.asyncio
-async def test_archive_spawn_handler_uses_extension_application_runtime_root(
+async def test_archive_spawn_handler_uses_extension_service_builder(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -168,8 +168,8 @@ async def test_archive_spawn_handler_uses_extension_application_runtime_root(
     application = build_extension_entrypoint(prepared)
     captured: dict[str, object] = {}
 
-    def _fake_spawn_service(application_arg: object) -> object:
-        captured["application"] = application_arg
+    def _fake_build_spawn_service(self: ExtensionCommandServices) -> object:
+        captured["application"] = self.application
 
         class _Service:
             async def archive(self, spawn_id: str) -> bool:
@@ -179,14 +179,16 @@ async def test_archive_spawn_handler_uses_extension_application_runtime_root(
         return _Service()
 
     monkeypatch.setattr(
-        "meridian.lib.extensions.commands.sessions.build_spawn_application_service_from_entrypoint",
-        _fake_spawn_service,
+        ExtensionCommandServices,
+        "build_spawn_service",
+        _fake_build_spawn_service,
     )
 
+    services = build_extension_command_services(application=application)
     result = await archive_spawn_handler(
         {"spawn_id": "p321"},
         _build_context(),
-        build_extension_command_services(application=application),
+        services,
     )
 
     assert isinstance(result, ExtensionJSONResult)
