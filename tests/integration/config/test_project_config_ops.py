@@ -474,6 +474,61 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
     assert next(item for item in shown.values if item.key == "hooks").source == "file"
 
 
+def test_config_show_reports_project_hook_suppression_with_file_provenance(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text("hooks = []\n", encoding="utf-8")
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    hook_value = next(item for item in shown.values if item.key == "hooks")
+
+    assert hook_value.value == "[] (suppressed)"
+    assert hook_value.source == "file"
+    assert "hooks: [] (suppressed) [source: file]" in shown.format_text(FormatContext())
+
+
+def test_config_show_reports_user_hook_suppression_with_user_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    user_config = tmp_path / "user-config.toml"
+    user_config.write_text("hooks = []\n", encoding="utf-8")
+    monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    hook_value = next(item for item in shown.values if item.key == "hooks")
+
+    assert hook_value.value == "[] (suppressed)"
+    assert hook_value.source == "user-config"
+    assert "hooks: [] (suppressed) [source: user-config]" in shown.format_text(FormatContext())
+
+
+def test_config_show_reports_project_hook_suppression_over_lower_precedence_user_hooks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text("hooks = []\n", encoding="utf-8")
+    user_config = tmp_path / "user-config.toml"
+    user_config.write_text(
+        "[[hooks]]\n"
+        'name = "user-hook"\n'
+        'event = "spawn"\n'
+        'command = "echo user"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    hook_value = next(item for item in shown.values if item.key == "hooks")
+
+    assert hook_value.value == "[] (suppressed)"
+    assert hook_value.source == "file"
+    assert "hooks: [] (suppressed) [source: file]" in shown.format_text(FormatContext())
+
+
 def test_config_show_and_loader_share_local_over_project_precedence(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.toml").write_text(

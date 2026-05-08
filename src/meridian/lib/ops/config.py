@@ -618,29 +618,33 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                 )
             )
 
-    hooks_section = resolved.get("hooks")
-    if isinstance(hooks_section, list | tuple):
-        hook_rows = cast("list[object] | tuple[object, ...]", hooks_section)
-        if hook_rows:
-            names: list[str] = []
-            for row_value in hook_rows:
-                if not isinstance(row_value, dict):
-                    continue
-                row = cast("dict[str, object]", row_value)
-                label = row.get("name") or row.get("event") or row.get("builtin") or "hook"
-                names.append(str(label))
+    if "hooks" in resolved:
+        hooks_section = resolved.get("hooks")
+        if isinstance(hooks_section, list | tuple):
+            hook_rows = cast("list[object] | tuple[object, ...]", hooks_section)
+            if len(hook_rows) == 0:
+                rendered_hook_value: object = "[] (suppressed)"
+            else:
+                names: list[str] = []
+                for row_value in hook_rows:
+                    if not isinstance(row_value, dict):
+                        continue
+                    row = cast("dict[str, object]", row_value)
+                    label = row.get("name") or row.get("event") or row.get("builtin") or "hook"
+                    names.append(str(label))
+                rendered_hook_value = (
+                    f"{len(hook_rows)} hooks ({', '.join(names)})"
+                    if names
+                    else len(hook_rows)
+                )
             values.append(
                 ConfigResolvedValue(
                     key="hooks",
-                    value=(
-                        f"{len(hook_rows)} hooks ({', '.join(names)})"
-                        if names
-                        else len(hook_rows)
-                    ),
-                    source=(
-                        "file"
-                        if "hooks" in inspection.project_dynamic_overrides
-                        else "user-config"
+                    value=rendered_hook_value,
+                    source=_dynamic_value_source(
+                        path=("hooks",),
+                        project_dynamic_overrides=inspection.project_dynamic_overrides,
+                        user_dynamic_overrides=inspection.user_dynamic_overrides,
                     ),
                 )
             )
