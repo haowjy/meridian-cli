@@ -130,17 +130,18 @@ def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:
 
     if not path.exists():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            payload = json.loads(stripped)
-        except json.JSONDecodeError:
-            # Crash-only tolerance for truncated/corrupt trailing lines.
-            continue
-        if isinstance(payload, dict):
-            yield cast("dict[str, Any]", payload)
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                # Crash-only tolerance for truncated/corrupt trailing lines.
+                continue
+            if isinstance(payload, dict):
+                yield cast("dict[str, Any]", payload)
 
 
 def iter_history_from_seq(
