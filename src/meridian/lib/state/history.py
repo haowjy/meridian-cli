@@ -11,6 +11,7 @@ from typing import Any, cast
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.state.atomic import append_text_line
+from meridian.lib.state.managed_primary import ManagedPrimaryCausalTracker
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,10 @@ class HarnessHistoryWriter:
     history_path: Path
     _seq: int = field(default=0, init=False)
     _byte_offset: int = field(default=0, init=False)
+    _causal_tracker: ManagedPrimaryCausalTracker = field(
+        default_factory=ManagedPrimaryCausalTracker,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         if not self.history_path.exists():
@@ -37,6 +42,7 @@ class HarnessHistoryWriter:
         last_complete_line_end = content.rfind(b"\n") + 1
         self._byte_offset = last_complete_line_end
         self._seq = content[:last_complete_line_end].count(b"\n")
+        self._rehydrate_causal_tracker(content[:last_complete_line_end])
         if last_complete_line_end < len(content):
             with self.history_path.open("r+b") as handle:
                 handle.truncate(last_complete_line_end)
@@ -51,9 +57,15 @@ class HarnessHistoryWriter:
     def write(self, event: HarnessEvent) -> WriteResult:
         """Write one event and return write success metadata."""
 
+        causal = self._causal_tracker.derive(event)
         envelope = {
             "seq": self._seq,
             "byte_offset": self._byte_offset,
+            "turn_id": causal.turn_id,
+            "item_id": causal.item_id,
+            "request_id": causal.request_id,
+            "interrupt_epoch": causal.interrupt_epoch,
+            "stale_after_interrupt": causal.stale_after_interrupt,
             "event_type": event.event_type,
             "harness_id": event.harness_id,
             "payload": event.payload,
@@ -70,6 +82,48 @@ class HarnessHistoryWriter:
         self._seq += 1
         self._byte_offset += len(line.encode("utf-8"))
         return WriteResult(success=True, seq=assigned_seq)
+
+    def _rehydrate_causal_tracker(self, content: bytes) -> None:
+        for line in content.decode("utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                envelope = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(envelope, dict):
+                continue
+            typed_envelope = cast("dict[str, object]", envelope)
+            event_type = typed_envelope.get("event_type")
+            payload = typed_envelope.get("payload")
+            harness_id = typed_envelope.get("harness_id")
+            if (
+                not isinstance(event_type, str)
+                or not event_type.strip()
+                or not isinstance(payload, dict)
+                or not isinstance(harness_id, str)
+                or not harness_id.strip()
+            ):
+                continue
+
+            replay_payload: dict[str, object] = dict(cast("dict[str, object]", payload))
+            for causal_key in (
+                "turn_id",
+                "item_id",
+                "request_id",
+                "interrupt_epoch",
+                "stale_after_interrupt",
+            ):
+                if causal_key in typed_envelope and causal_key not in replay_payload:
+                    replay_payload[causal_key] = typed_envelope[causal_key]
+            self._causal_tracker.derive(
+                HarnessEvent(
+                    event_type=event_type,
+                    payload=replay_payload,
+                    harness_id=harness_id,
+                )
+            )
 
 
 def iter_history_events(path: Path) -> Iterator[dict[str, Any]]:
@@ -150,7 +204,20 @@ def read_history_range(
 def strip_seq_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
     """Strip seq metadata and return the raw harness event shape."""
 
-    return {key: value for key, value in envelope.items() if key not in ("seq", "byte_offset")}
+    return {
+        key: value
+        for key, value in envelope.items()
+        if key
+        not in (
+            "seq",
+            "byte_offset",
+            "turn_id",
+            "item_id",
+            "request_id",
+            "interrupt_epoch",
+            "stale_after_interrupt",
+        )
+    }
 
 
 def _read_legacy_output_events(path: Path) -> Iterator[dict[str, Any]]:

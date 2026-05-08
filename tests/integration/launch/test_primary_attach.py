@@ -318,11 +318,16 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
 
     rows = _read_history_lines(spawn_dir)
     assert [row["event_type"] for row in rows] == ["turn/started", "turn/completed"]
+    assert [row["turn_id"] for row in rows] == ["t1", "t1"]
     for row in rows:
         assert isinstance(row["payload"], dict)
         assert row["harness_id"] == "codex"
         assert isinstance(row["seq"], int)
         assert isinstance(row["byte_offset"], int)
+        assert row["item_id"] is None
+        assert row["request_id"] is None
+        assert row["interrupt_epoch"] == 0
+        assert row["stale_after_interrupt"] is False
 
 
 @pytest.mark.asyncio
