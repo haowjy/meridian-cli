@@ -15,7 +15,7 @@ class OptionCatalog:
     options: tuple[ConfigOptionDescriptor, ...]
     _by_canonical_key: dict[str, ConfigOptionDescriptor] = field(init=False, repr=False)
     _by_lookup_key: dict[str, ConfigOptionDescriptor] = field(init=False, repr=False)
-    _by_file_alias: dict[tuple[str | None, str], ConfigOptionDescriptor] = field(
+    _by_file_alias: dict[tuple[tuple[str, ...], str], ConfigOptionDescriptor] = field(
         init=False,
         repr=False,
     )
@@ -28,7 +28,7 @@ class OptionCatalog:
     def __post_init__(self) -> None:
         canonical: dict[str, ConfigOptionDescriptor] = {}
         lookup: dict[str, ConfigOptionDescriptor] = {}
-        file_aliases: dict[tuple[str | None, str], ConfigOptionDescriptor] = {}
+        file_aliases: dict[tuple[tuple[str, ...], str], ConfigOptionDescriptor] = {}
         env_vars: dict[str, ConfigOptionDescriptor] = {}
         field_paths: dict[tuple[str, ...], ConfigOptionDescriptor] = {}
 
@@ -46,7 +46,7 @@ class OptionCatalog:
                 lookup[alias] = option
 
             for file_alias in option.file_aliases:
-                file_key = (file_alias.section, file_alias.key)
+                file_key = (file_alias.table_path, file_alias.key)
                 existing_file = file_aliases.get(file_key)
                 if existing_file is not None and existing_file != option:
                     raise ValueError(f"Conflicting config file alias '{file_key}'.")
@@ -81,10 +81,10 @@ class OptionCatalog:
     def find_file_alias(
         self,
         *,
-        section: str | None,
+        table_path: tuple[str, ...],
         key: str,
     ) -> ConfigOptionDescriptor | None:
-        return self._by_file_alias.get((section, key))
+        return self._by_file_alias.get((table_path, key))
 
     def option_for_field_path(self, field_path: tuple[str, ...]) -> ConfigOptionDescriptor | None:
         return self._by_field_path.get(field_path)
@@ -146,12 +146,22 @@ def _nested_base_model_type(annotation: Any) -> type[BaseModel] | None:
 def _lookup_aliases(option: ConfigOptionDescriptor) -> tuple[str, ...]:
     aliases: list[str] = [option.canonical_key]
     for file_alias in option.file_aliases:
-        if file_alias.section is None:
+        if not file_alias.table_path:
             aliases.append(file_alias.key)
             continue
-        aliases.append(f"{file_alias.section}.{file_alias.key}")
+        aliases.append(".".join((*file_alias.table_path, file_alias.key)))
     return tuple(dict.fromkeys(aliases))
 
 
-def file_alias(section: str | None, key: str) -> FileAlias:
-    return FileAlias(section=section, key=key)
+def file_alias(
+    section: str | tuple[str, ...] | None,
+    key: str,
+    *nested_sections: str,
+) -> FileAlias:
+    if section is None:
+        table_path: tuple[str, ...] = ()
+    elif isinstance(section, tuple):
+        table_path = section
+    else:
+        table_path = (section, *nested_sections)
+    return FileAlias(table_path=table_path, key=key)

@@ -33,6 +33,10 @@ def test_option_catalog_resolves_canonical_and_alias_keys() -> None:
         OPTION_CATALOG.resolve_key("state.retention_days").canonical_key
         == "state.retention_days"
     )
+    assert OPTION_CATALOG.resolve_key("primary.autocompact").canonical_key == (
+        "primary.autocompact_pct"
+    )
+    assert OPTION_CATALOG.resolve_key("harness.codex.model").canonical_key == "harness.codex"
 
 
 def test_load_config_uses_metadata_aliases_for_scalar_runtime_fields(tmp_path: Path) -> None:

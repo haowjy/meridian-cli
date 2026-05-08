@@ -851,7 +851,7 @@ def _normalize_toml_payload(
             if not isinstance(raw_value, dict):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
             for section_key, section_value in cast("dict[str, object]", raw_value).items():
-                option = OPTION_CATALOG.find_file_alias(section=key, key=section_key)
+                option = OPTION_CATALOG.find_file_alias(table_path=(key,), key=section_key)
                 if option is None:
                     logger.warning(
                         "Ignoring unknown Meridian config key '%s.%s'.",
@@ -872,7 +872,7 @@ def _normalize_toml_payload(
                 _assign_nested_value(normalized, option.field_path, coerced)
             continue
 
-        option = OPTION_CATALOG.find_file_alias(section=None, key=key)
+        option = OPTION_CATALOG.find_file_alias(table_path=(), key=key)
         if option is None:
             logger.warning("Ignoring unknown Meridian config key '%s'.", key)
             continue
@@ -1044,6 +1044,7 @@ class PrimaryConfig(BaseModel):
             value_kind="int",
             file_aliases=(
                 file_alias("primary", "autocompact_pct"),
+                file_alias("primary", "autocompact"),
                 file_alias(None, "autocompact_pct"),
             ),
         ),
@@ -1107,13 +1108,17 @@ class PrimaryConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _copy_autocompact_pct_to_autocompact(cls, values: Any) -> Any:
+    def _sync_autocompact_alias_fields(cls, values: Any) -> Any:
         if not isinstance(values, dict):
             return values
         d: dict[str, Any] = cast("dict[str, Any]", values)
         if d.get("autocompact") is None and d.get("autocompact_pct") is not None:
             d = dict(d)
             d["autocompact"] = d["autocompact_pct"]
+        if d.get("autocompact_pct") is None and d.get("autocompact") is not None:
+            if "autocompact" not in d:
+                d = dict(d)
+            d["autocompact_pct"] = d["autocompact"]
         return d
 
     @field_validator("autocompact_pct")
@@ -1357,7 +1362,10 @@ class ClaudeHarnessProfileConfig(HarnessProfileConfig):
         config_field(
             "harness.claude",
             value_kind="str",
-            file_aliases=(file_alias("harness", "claude"),),
+            file_aliases=(
+                file_alias("harness", "claude"),
+                file_alias(("harness", "claude"), "model"),
+            ),
             env_vars=("MERIDIAN_HARNESS_MODEL_CLAUDE",),
         ),
     ] = ""
@@ -1369,7 +1377,10 @@ class CodexHarnessProfileConfig(HarnessProfileConfig):
         config_field(
             "harness.codex",
             value_kind="str",
-            file_aliases=(file_alias("harness", "codex"),),
+            file_aliases=(
+                file_alias("harness", "codex"),
+                file_alias(("harness", "codex"), "model"),
+            ),
             env_vars=("MERIDIAN_HARNESS_MODEL_CODEX",),
         ),
     ] = ""
@@ -1381,7 +1392,10 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
         config_field(
             "harness.opencode",
             value_kind="str",
-            file_aliases=(file_alias("harness", "opencode"),),
+            file_aliases=(
+                file_alias("harness", "opencode"),
+                file_alias(("harness", "opencode"), "model"),
+            ),
             env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
         ),
     ] = "opencode-go/kimi-k2.6"

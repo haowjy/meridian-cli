@@ -285,29 +285,24 @@ def _read_file_payload(path: Path) -> dict[str, object]:
 def _extract_file_overrides(payload: dict[str, object]) -> dict[str, object]:
     overrides: dict[str, object] = {}
 
-    for key, raw_value in payload.items():
-        if isinstance(raw_value, dict):
-            section_values = cast("dict[str, object]", raw_value)
-            for section_key, section_value in section_values.items():
-                option = OPTION_CATALOG.find_file_alias(section=key, key=section_key)
-                if option is None or not option.command_visible:
-                    continue
-                overrides[option.canonical_key] = parse_toml_scalar(
-                    value_kind=option.value_kind,
-                    raw_value=section_value,
-                    source=f"{key}.{section_key}",
-                )
-            continue
+    def visit(table_path: tuple[str, ...], table: dict[str, object]) -> None:
+        for key, raw_value in table.items():
+            if isinstance(raw_value, dict):
+                visit((*table_path, key), cast("dict[str, object]", raw_value))
+                continue
 
-        option = OPTION_CATALOG.find_file_alias(section=None, key=key)
-        if option is None or not option.command_visible:
-            continue
-        overrides[option.canonical_key] = parse_toml_scalar(
-            value_kind=option.value_kind,
-            raw_value=raw_value,
-            source=key,
-        )
+            option = OPTION_CATALOG.find_file_alias(table_path=table_path, key=key)
+            if option is None or not option.command_visible:
+                continue
 
+            source = ".".join((*table_path, key)) if table_path else key
+            overrides[option.canonical_key] = parse_toml_scalar(
+                value_kind=option.value_kind,
+                raw_value=raw_value,
+                source=source,
+            )
+
+    visit((), payload)
     return overrides
 
 
@@ -338,9 +333,9 @@ def _render_config_toml(overrides: dict[str, object]) -> str:
         if option.canonical_key not in overrides or not option.file_aliases:
             continue
         primary_alias = option.file_aliases[0]
-        if primary_alias.section is None:
+        if len(primary_alias.table_path) != 1:
             continue
-        sections[primary_alias.section][primary_alias.key] = overrides[option.canonical_key]
+        sections[primary_alias.table_path[0]][primary_alias.key] = overrides[option.canonical_key]
 
     lines: list[str] = []
     for section_name in _SECTION_ORDER:

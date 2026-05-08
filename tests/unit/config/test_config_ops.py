@@ -288,3 +288,48 @@ def test_config_get_resolves_aliases_through_option_catalog(tmp_path: Path) -> N
     assert result.key == "defaults.model"
     assert result.value == "gpt-5.4"
     assert result.source == "file"
+
+
+def test_config_show_and_get_support_nested_harness_model_table(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        '[harness.codex]\nmodel = "gpt-5.4"\n',
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    shown_value = next(item for item in shown.values if item.key == "harness.codex")
+    gotten = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="harness.codex")
+    )
+
+    assert shown_value.value == "gpt-5.4"
+    assert shown_value.source == "file"
+    assert gotten.key == "harness.codex"
+    assert gotten.value == "gpt-5.4"
+    assert gotten.source == "file"
+    assert load_config(project_root).harness.codex.model == "gpt-5.4"
+
+
+def test_config_show_and_get_report_primary_autocompact_alias_as_canonical_key(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        "[primary]\nautocompact = 72\n",
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    shown_value = next(item for item in shown.values if item.key == "primary.autocompact_pct")
+    gotten = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="primary.autocompact_pct")
+    )
+
+    assert shown_value.value == 72
+    assert shown_value.source == "file"
+    assert gotten.key == "primary.autocompact_pct"
+    assert gotten.value == 72
+    assert gotten.source == "file"
+    assert load_config(project_root).primary.autocompact == 72
+    assert load_config(project_root).primary.autocompact_pct == 72

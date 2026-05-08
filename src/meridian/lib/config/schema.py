@@ -15,7 +15,7 @@ ValueKind = Literal["int", "float", "str", "str_list", "verbosity"]
 class FileAlias:
     """One accepted TOML key spelling for a scalar config option."""
 
-    section: str | None
+    table_path: tuple[str, ...]
     key: str
 
 
