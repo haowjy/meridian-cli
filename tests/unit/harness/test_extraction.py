@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
-from meridian.lib.harness.bundle import HarnessBundle
+from meridian.lib.harness.bundle import HarnessBundle, HarnessProjectionPorts
 from meridian.lib.harness.claude import ClaudeAdapter, project_slug
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.connections.base import HarnessEvent
@@ -87,6 +87,9 @@ def _bundle_for_extractor(
         spec_cls=CodexLaunchSpec,
         extractor=extractor,
         connections={TransportId.STREAMING: CodexConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=lambda spec, *, base_command: [*base_command, spec.prompt]
+        ),
     )
 
 

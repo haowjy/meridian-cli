@@ -1,12 +1,16 @@
-"""Cross-adapter SpawnParams accounting guard tests."""
+"""Cross-adapter SpawnParams accounting guard tests.
+
+These remain intentionally narrow: SpawnParams field accounting is still an
+internal drift risk not fully expressible through the public contract surface.
+Behavioral contract tests elsewhere cover bundle registration and projection
+conformance.
+"""
 
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,32 +21,6 @@ from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _scan_files_for_pattern(
-    roots: Iterable[str | Path],
-    pattern: str,
-    *,
-    suffixes: tuple[str, ...] = (".py",),
-) -> list[tuple[Path, int, str]]:
-    """Return (path, lineno, line) for every matching line under roots."""
-    compiled = re.compile(pattern)
-    matches: list[tuple[Path, int, str]] = []
-    for root in roots:
-        root_path = Path(root)
-        if root_path.is_file():
-            files = [root_path]
-        else:
-            files = [p for p in root_path.rglob("*") if p.is_file() and p.suffix in suffixes]
-        for file_path in files:
-            try:
-                text = file_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if compiled.search(line):
-                    matches.append((file_path, lineno, line))
-    return matches
 
 
 def test_enforce_spawn_params_accounting_reports_missing_field(
@@ -89,15 +67,6 @@ def test_registered_bundle_handled_fields_union_matches_spawn_params() -> None:
         *(bundle.adapter.handled_fields for bundle in registry.values())
     )
     assert handled_union == frozenset(SpawnParams.model_fields)
-
-
-def test_launch_spec_guard_uses_no_runtime_asserts() -> None:
-    launch_spec_path = Path("src/meridian/lib/harness/launch_spec.py")
-    matches = _scan_files_for_pattern(
-        [_REPO_ROOT / launch_spec_path],
-        r"^\s*assert\s",
-    )
-    assert not matches, f"Found matches: {matches}"
 
 
 @pytest.mark.parametrize("python_optimize", ("0", "1"))
