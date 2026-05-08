@@ -5,12 +5,16 @@ import os
 import tomllib
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
+from meridian.lib.config.project_paths import (
+    ProjectConfigPaths,
+    resolve_project_config_paths,
+)
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
@@ -28,8 +32,14 @@ class _SettingsLoadContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     project_root: Path
+    project_config_paths: ProjectConfigPaths
     user_config: Path | None
     resolve_models: bool = True
+
+
+class _ProjectAuthorityLike(Protocol):
+    project_root: Path
+    project_config_paths: ProjectConfigPaths
 
 
 _SETTINGS_CONTEXT: ContextVar[_SettingsLoadContext | None] = ContextVar(
@@ -196,12 +206,18 @@ def _read_toml(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", payload_obj)
 
 
-def _resolve_project_toml(project_root: Path) -> Path | None:
-    return resolve_project_config_state(project_root).path
+def _resolve_project_toml(
+    project_root: Path,
+    project_config_paths: ProjectConfigPaths,
+) -> Path | None:
+    _ = project_root
+    if project_config_paths.meridian_toml.is_file():
+        return project_config_paths.meridian_toml
+    return resolve_project_config_state(project_config_paths.project_root).path
 
 
-def _resolve_local_toml(project_root: Path) -> Path | None:
-    local_config = project_root / _LOCAL_CONFIG_FILENAME
+def _resolve_local_toml(project_config_paths: ProjectConfigPaths) -> Path | None:
+    local_config = project_config_paths.meridian_local_toml
     if not local_config.is_file():
         return None
     return local_config
@@ -1465,7 +1481,10 @@ class MeridianConfig(BaseSettings):
             context = _SETTINGS_CONTEXT.get()
             if context is None:
                 return {}
-            project_config = _resolve_project_toml(context.project_root)
+            project_config = _resolve_project_toml(
+                context.project_root,
+                context.project_config_paths,
+            )
             if project_config is None:
                 return {}
             payload = _read_toml(project_config)
@@ -1479,7 +1498,7 @@ class MeridianConfig(BaseSettings):
             context = _SETTINGS_CONTEXT.get()
             if context is None:
                 return {}
-            local_config = _resolve_local_toml(context.project_root)
+            local_config = _resolve_local_toml(context.project_config_paths)
             if local_config is None:
                 return {}
             payload = _read_toml(local_config)
@@ -1519,6 +1538,7 @@ class MeridianConfig(BaseSettings):
 def load_config(
     project_root: Path,
     *,
+    authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
     resolve_models: bool = True,
 ) -> MeridianConfig:
@@ -1530,12 +1550,18 @@ def load_config(
 
     from meridian.lib.config.project_root import resolve_user_config_path
 
-    resolved_project_root = project_root.expanduser().resolve()
+    if authority is not None:
+        resolved_project_root = authority.project_root.expanduser().resolve()
+        project_config_paths = authority.project_config_paths
+    else:
+        resolved_project_root = project_root.expanduser().resolve()
+        project_config_paths = resolve_project_config_paths(resolved_project_root)
     resolved_user_config = resolve_user_config_path(user_config)
 
     token = _SETTINGS_CONTEXT.set(
         _SettingsLoadContext(
             project_root=resolved_project_root,
+            project_config_paths=project_config_paths,
             user_config=resolved_user_config,
             resolve_models=resolve_models,
         )

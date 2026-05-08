@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.bootstrap import runtime_state as bootstrap_runtime_state
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
 from meridian.lib.config.project_root import (
     ProjectRootSource,
@@ -20,12 +19,10 @@ from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
-from meridian.lib.state.paths import (
-    resolve_project_paths,
-    resolve_project_runtime_root_for_write,
-)
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.user_paths import (
     get_or_create_project_uuid,
+    get_project_home,
     get_user_home,
 )
 from meridian.lib.state.user_paths import (
@@ -54,6 +51,19 @@ def _runtime_override_env_root(project_root: Path) -> Path | None:
     return candidate if candidate.is_absolute() else project_root / candidate
 
 
+def _root_has_runtime_state(runtime_root: Path) -> bool:
+    return any(
+        path.exists()
+        for path in (
+            runtime_root / "spawns.jsonl",
+            runtime_root / "sessions.jsonl",
+            runtime_root / "spawns",
+            runtime_root / "sessions",
+            runtime_root / "telemetry",
+        )
+    )
+
+
 def async_from_sync(sync_fn: Callable[P, T]) -> Callable[P, Coroutine[Any, Any, T]]:
     @functools.wraps(sync_fn)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
@@ -68,6 +78,7 @@ class OperationRuntime(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     project_root: Path
+    authority: "RuntimeAuthoritySnapshot"
     config: MeridianConfig
     harness_registry: Any  # HarnessRegistry — typed as Any to avoid circular import
     artifacts: LocalStore
@@ -87,6 +98,7 @@ class OperationRuntime(BaseModel):
             raise ValueError("Prepared runtime write context is missing runtime root.")
         return cls(
             project_root=prepared.project_root,
+            authority=prepared.authority,
             config=prepared.config,
             harness_registry=harness_registry,
             artifacts=LocalStore(root_dir=prepared.runtime_root / "artifacts"),
@@ -165,7 +177,28 @@ def resolve_runtime_authority_for_read(
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
     override_root = _runtime_override_env_root(authority.project_root)
     project_uuid = read_project_uuid(authority.project_state_dir)
-    runtime_root = bootstrap_runtime_state.resolve_runtime_root_for_read(authority.project_root)
+    if override_root is not None:
+        runtime_root = override_root
+        if (
+            runtime_root != authority.project_state_dir
+            and not _root_has_runtime_state(runtime_root)
+            and _root_has_runtime_state(authority.project_state_dir)
+        ):
+            runtime_root = authority.project_state_dir
+    elif project_uuid is not None:
+        candidate_runtime_root = get_project_home(project_uuid)
+        runtime_root = (
+            authority.project_state_dir
+            if (
+                not _root_has_runtime_state(candidate_runtime_root)
+                and _root_has_runtime_state(authority.project_state_dir)
+            )
+            else candidate_runtime_root
+        )
+    elif _root_has_runtime_state(authority.project_state_dir):
+        runtime_root = authority.project_state_dir
+    else:
+        runtime_root = None
     if runtime_root is None:
         runtime_source: RuntimeRootSource = "unresolved"
     elif override_root is not None and runtime_root == override_root:
@@ -194,11 +227,13 @@ def resolve_runtime_authority_for_write(
     """Resolve project/runtime authority for mutating callers."""
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    runtime_root = resolve_project_runtime_root_for_write(authority.project_root)
+    override = _runtime_override_env_root(authority.project_root)
+    runtime_root = override or get_project_home(
+        get_or_create_project_uuid(authority.project_state_dir)
+    )
     runtime_source: RuntimeRootSource = (
         "project-state" if runtime_root == authority.project_state_dir else "user-home-project"
     )
-    override = _runtime_override_env_root(authority.project_root)
     if (
         override is not None
         and override == runtime_root
@@ -221,11 +256,11 @@ def resolve_runtime_root_and_config(
     """Resolve repository root and load operational config."""
 
     _ = sink
-    authority = resolve_project_authority(project_root)
+    authority = resolve_runtime_authority_for_write(project_root)
     from meridian.lib.ops.config import ensure_runtime_state_bootstrap_sync
 
     ensure_runtime_state_bootstrap_sync(authority.project_root)
-    return authority.project_root, load_config(authority.project_root)
+    return authority.project_root, load_config(authority.project_root, authority=authority)
 
 
 def resolve_runtime_root_and_config_for_read(
@@ -237,26 +272,29 @@ def resolve_runtime_root_and_config_for_read(
 
     _ = sink
     authority = resolve_project_authority(project_root)
-    return authority.project_root, load_config(authority.project_root)
+    return authority.project_root, load_config(authority.project_root, authority=authority)
 
 
 def build_runtime_from_root_and_config(
     project_root: Path,
     config: MeridianConfig,
     *,
+    authority: RuntimeAuthoritySnapshot | None = None,
     sink: OutputSink | None = None,
 ) -> OperationRuntime:
     """Build a runtime bundle from one pre-resolved root and config."""
 
     from meridian.lib.harness.registry import get_default_harness_registry
 
+    resolved_authority = authority or resolve_runtime_authority_for_write(project_root)
+    if resolved_authority.runtime_root is None:
+        raise ValueError("Runtime write authority did not resolve a runtime root.")
     return OperationRuntime(
-        project_root=project_root,
+        project_root=resolved_authority.project_root,
+        authority=resolved_authority,
         config=config,
         harness_registry=get_default_harness_registry(),
-        artifacts=LocalStore(
-            root_dir=resolve_project_runtime_root_for_write(project_root) / "artifacts"
-        ),
+        artifacts=LocalStore(root_dir=resolved_authority.runtime_root / "artifacts"),
         sink=sink or NullSink(),
     )
 
@@ -268,8 +306,17 @@ def build_runtime(
 ) -> OperationRuntime:
     """Build a runtime bundle rooted at one repository path."""
 
-    resolved_root, config = resolve_runtime_root_and_config(project_root, sink=sink)
-    return build_runtime_from_root_and_config(resolved_root, config, sink=sink)
+    authority = resolve_runtime_authority_for_write(project_root)
+    from meridian.lib.ops.config import ensure_runtime_state_bootstrap_sync
+
+    ensure_runtime_state_bootstrap_sync(authority.project_root)
+    config = load_config(authority.project_root, authority=authority)
+    return build_runtime_from_root_and_config(
+        authority.project_root,
+        config,
+        authority=authority,
+        sink=sink,
+    )
 
 
 def resolve_runtime_root(project_root: Path) -> Path:

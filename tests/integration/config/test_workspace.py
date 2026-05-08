@@ -16,6 +16,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.workspace import ensure_workspace_valid_for_launch
+from meridian.lib.ops.runtime import resolve_project_authority
 
 
 @pytest.fixture(autouse=True)
@@ -183,6 +184,43 @@ def test_workspace_snapshot_uses_state_root_parent_override(
     assert snapshot.status == "present"
     assert snapshot.source_paths == (workspace_path.resolve(),)
     assert snapshot.roots[0].resolved_path == (override_root.parent / "shared-root").resolve()
+
+
+def test_workspace_snapshot_uses_frozen_authority_config_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    first_override = tmp_path / "state-a" / ".meridian"
+    second_override = tmp_path / "state-b" / ".meridian"
+    for override in (first_override, second_override):
+        override.parent.mkdir(parents=True)
+        (override.parent / "shared-root").mkdir()
+    first_workspace_path = first_override.parent / "workspace.local.toml"
+    second_workspace_path = second_override.parent / "workspace.local.toml"
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", first_override.as_posix())
+    first_workspace_path.write_text(
+        "[[context-roots]]\n"
+        'path = "./shared-root"\n',
+        encoding="utf-8",
+    )
+    authority = resolve_project_authority(project_root)
+
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", second_override.as_posix())
+    second_workspace_path.write_text(
+        "[[context-roots]]\n"
+        'path = "./shared-root"\n',
+        encoding="utf-8",
+    )
+
+    snapshot = resolve_workspace_snapshot(
+        project_root,
+        config_paths=authority.project_config_paths,
+    )
+
+    assert snapshot.status == "present"
+    assert snapshot.source_paths == (first_workspace_path.resolve(),)
+    assert snapshot.roots[0].resolved_path == (first_override.parent / "shared-root").resolve()
 
 
 def test_workspace_snapshot_loads_named_committed_and_local_workspace_entries(

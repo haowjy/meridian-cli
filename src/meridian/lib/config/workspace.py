@@ -9,7 +9,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.config.project_paths import resolve_project_config_paths
+from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
 from meridian.lib.state.paths import (
     _load_workspace_table,  # pyright: ignore[reportPrivateUsage]
     _merge_nested_dicts,  # pyright: ignore[reportPrivateUsage]
@@ -463,13 +463,17 @@ def _evaluate_workspace_config(config: WorkspaceConfig) -> WorkspaceSnapshot:
     )
 
 
-def resolve_workspace_snapshot(project_root: Path) -> WorkspaceSnapshot:
+def resolve_workspace_snapshot(
+    project_root: Path,
+    *,
+    config_paths: ProjectConfigPaths | None = None,
+) -> WorkspaceSnapshot:
     """Resolve canonical workspace snapshot from project-root paths."""
 
-    config_paths = resolve_project_config_paths(project_root)
-    committed_path = config_paths.meridian_toml
-    local_path = config_paths.meridian_local_toml
-    legacy_workspace_path = config_paths.workspace_local_toml
+    resolved_config_paths = config_paths or resolve_project_config_paths(project_root)
+    committed_path = resolved_config_paths.meridian_toml
+    local_path = resolved_config_paths.meridian_local_toml
+    legacy_workspace_path = resolved_config_paths.workspace_local_toml
 
     raw_layers: list[tuple[Path, dict[str, object]]] = []
     for config_path in (committed_path, local_path):
@@ -517,7 +521,7 @@ def resolve_workspace_snapshot(project_root: Path) -> WorkspaceSnapshot:
             )
 
         return _evaluate_named_workspace_config(
-            project_root=config_paths.project_root,
+            project_root=resolved_config_paths.project_root,
             committed_path=committed_path.resolve(),
             local_path=local_path.resolve(),
             committed_entries=committed_entries,

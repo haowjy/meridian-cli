@@ -1,6 +1,5 @@
 """Filesystem path helpers for file-authoritative Meridian state."""
 
-import os
 import tomllib
 import warnings
 from pathlib import Path
@@ -9,14 +8,11 @@ from typing import Self, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.user_paths import (
-    get_or_create_project_uuid,
-    get_project_home,
-    get_project_uuid,
-)
+from meridian.lib.state.user_paths import get_or_create_project_uuid, get_project_uuid
 
 _MERIDIAN_DIR = ".meridian"
 _GITIGNORE_CONTENT = (
@@ -180,54 +176,53 @@ class ProjectPaths(BaseModel):
         )
 
 
-def _runtime_root_override_value() -> str:
-    return os.getenv("MERIDIAN_RUNTIME_DIR", "").strip()
-
-
-def _resolve_project_runtime_root(project_root: Path) -> Path:
-    """Resolve runtime root from env override or default `.meridian` location."""
-
-    override = _runtime_root_override_value()
-    if not override:
-        return project_root / _MERIDIAN_DIR
-
-    candidate = Path(override).expanduser()
-    if candidate.is_absolute():
-        return candidate
-    return project_root / candidate
-
-
-def _resolve_runtime_state_override(project_root: Path) -> Path | None:
-    override = _runtime_root_override_value()
-    if not override:
-        return None
-    candidate = Path(override).expanduser()
-    return candidate if candidate.is_absolute() else project_root / candidate
-
-
 def _context_config_paths(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     user_config: Path | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> tuple[Path | None, Path, Path]:
+    resolved_paths = project_config_paths
     return (
         resolve_user_config_path(user_config),
-        project_config or (project_root / "meridian.toml"),
-        local_config or (project_root / "meridian.local.toml"),
+        project_config
+        or (
+            resolved_paths.meridian_toml
+            if resolved_paths is not None
+            else project_root / "meridian.toml"
+        ),
+        local_config
+        or (
+            resolved_paths.meridian_local_toml
+            if resolved_paths is not None
+            else project_root / "meridian.local.toml"
+        ),
     )
 
 
 def _workspace_config_paths(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> tuple[Path, Path]:
+    resolved_paths = project_config_paths
     return (
-        project_config or (project_root / "meridian.toml"),
-        local_config or (project_root / "meridian.local.toml"),
+        project_config
+        or (
+            resolved_paths.meridian_toml
+            if resolved_paths is not None
+            else project_root / "meridian.toml"
+        ),
+        local_config
+        or (
+            resolved_paths.meridian_local_toml
+            if resolved_paths is not None
+            else project_root / "meridian.local.toml"
+        ),
     )
 
 
@@ -303,6 +298,7 @@ def resolve_project_paths_for_write(project_root: Path) -> ProjectPaths:
 def _try_load_context_config(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     user_config: Path | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
@@ -313,6 +309,7 @@ def _try_load_context_config(
     found_context = False
     for config_path in _context_config_paths(
         project_root,
+        project_config_paths=project_config_paths,
         user_config=user_config,
         project_config=project_config,
         local_config=local_config,
@@ -337,6 +334,7 @@ def _try_load_context_config(
 def load_context_config(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     user_config: Path | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
@@ -345,6 +343,7 @@ def load_context_config(
 
     return _try_load_context_config(
         project_root,
+        project_config_paths=project_config_paths,
         user_config=user_config,
         project_config=project_config,
         local_config=local_config,
@@ -354,6 +353,7 @@ def load_context_config(
 def _try_load_workspace_config(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> dict[str, object] | None:
@@ -363,6 +363,7 @@ def _try_load_workspace_config(
     found_workspace = False
     for config_path in _workspace_config_paths(
         project_root,
+        project_config_paths=project_config_paths,
         project_config=project_config,
         local_config=local_config,
     ):
@@ -380,6 +381,7 @@ def _try_load_workspace_config(
 def load_workspace_config(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> dict[str, object] | None:
@@ -387,6 +389,7 @@ def load_workspace_config(
 
     return _try_load_workspace_config(
         project_root,
+        project_config_paths=project_config_paths,
         project_config=project_config,
         local_config=local_config,
     )
@@ -396,12 +399,16 @@ def resolve_project_paths_from_context(
     project_root: Path,
     context_config: ContextConfig | None = None,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     create_project_uuid: bool = False,
 ) -> ProjectPaths:
     """Resolve project paths with optional context config, falling back to defaults."""
 
     if context_config is None:
-        context_config = _try_load_context_config(project_root)
+        context_config = _try_load_context_config(
+            project_root,
+            project_config_paths=project_config_paths,
+        )
 
     if context_config is None:
         return ProjectPaths.from_root_dir(project_root / _MERIDIAN_DIR)
@@ -438,7 +445,7 @@ def resolve_project_paths_from_context(
 def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
     """Resolve all state paths rooted under `.meridian/`."""
 
-    root_dir = _resolve_project_runtime_root(project_root)
+    root_dir = resolve_project_runtime_root(project_root)
     return ProjectPaths.from_root_dir(root_dir)
 
 def resolve_project_runtime_root(project_root: Path) -> Path:
@@ -459,26 +466,19 @@ def resolve_project_runtime_root_or_none(project_root: Path) -> Path | None:
 
     Returns None when no project UUID has been initialized yet.
     """
+    from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 
-    override = _resolve_runtime_state_override(project_root)
-    if override is not None:
-        return override
-
-    project_uuid = get_project_uuid(resolve_project_paths(project_root).root_dir)
-    if project_uuid is None:
-        return None
-    return get_project_home(project_uuid)
+    return resolve_runtime_authority_for_read(project_root).runtime_root
 
 
 def resolve_project_runtime_root_for_write(project_root: Path) -> Path:
     """Resolve runtime state root for write paths, creating project UUID if needed."""
+    from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
 
-    override = _resolve_runtime_state_override(project_root)
-    if override is not None:
-        return override
-
-    project_uuid = get_or_create_project_uuid(resolve_project_paths(project_root).root_dir)
-    return get_project_home(project_uuid)
+    authority = resolve_runtime_authority_for_write(project_root)
+    if authority.runtime_root is None:
+        raise ValueError("Runtime write authority did not resolve a runtime root.")
+    return authority.runtime_root
 
 
 def resolve_cache_dir(project_root: Path) -> Path:

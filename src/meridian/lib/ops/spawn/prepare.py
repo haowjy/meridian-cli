@@ -8,7 +8,6 @@ from typing import cast
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.diagnostics import capture_library_diagnostics
@@ -29,8 +28,7 @@ from meridian.lib.utils.time import minutes_to_seconds
 from ..runtime import (
     OperationRuntime,
     build_runtime,
-    resolve_runtime_root,
-    resolve_runtime_root_for_read,
+    resolve_runtime_authority_for_read,
 )
 from .models import SpawnCreateInput
 
@@ -48,6 +46,8 @@ class _CreateRuntimeView(BaseModel):
     """Subset of runtime dependencies needed for payload composition."""
 
     project_root: Path
+    execution_cwd: Path
+    runtime_root: Path
     config: MeridianConfig
     harness_registry: HarnessRegistry
 
@@ -184,32 +184,37 @@ def _build_create_payload_impl(
     _ = ctx
     runtime_view: _CreateRuntimeView
     if runtime is not None:
+        if runtime.authority.runtime_root is None:
+            raise ValueError("Operation runtime is missing runtime authority root.")
         runtime_view = _CreateRuntimeView(
             project_root=runtime.project_root,
+            execution_cwd=runtime.authority.execution_cwd,
+            runtime_root=runtime.authority.runtime_root,
             config=runtime.config,
             harness_registry=runtime.harness_registry,
         )
-        runtime_root = resolve_runtime_root(runtime_view.project_root)
     elif payload.dry_run:
-        explicit_project_root = (
-            Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-        )
-        project_root = resolve_project_root(explicit_project_root)
-        config = load_config(project_root)
+        authority = resolve_runtime_authority_for_read(payload.project_root)
+        project_root = authority.project_root
+        config = load_config(project_root, authority=authority)
         runtime_view = _CreateRuntimeView(
             project_root=project_root,
+            execution_cwd=authority.execution_cwd,
+            runtime_root=authority.runtime_root or authority.project_state_dir,
             config=config,
             harness_registry=get_default_harness_registry(),
         )
-        runtime_root = resolve_runtime_root_for_read(runtime_view.project_root)
     else:
         runtime_bundle = build_runtime(payload.project_root)
+        if runtime_bundle.authority.runtime_root is None:
+            raise ValueError("Built operation runtime is missing runtime authority root.")
         runtime_view = _CreateRuntimeView(
             project_root=runtime_bundle.project_root,
+            execution_cwd=runtime_bundle.authority.execution_cwd,
+            runtime_root=runtime_bundle.authority.runtime_root,
             config=runtime_bundle.config,
             harness_registry=runtime_bundle.harness_registry,
         )
-        runtime_root = resolve_runtime_root(runtime_view.project_root)
     validated_paths = validate_reference_paths(
         payload.files,
         base_dir=runtime_view.project_root,
@@ -266,9 +271,9 @@ def _build_create_payload_impl(
             composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
             config_snapshot=runtime_view.config.model_dump(mode="json", exclude_none=True),
             report_output_path=_DRY_RUN_REPORT_PATH,
-            runtime_root=runtime_root.as_posix(),
+            runtime_root=runtime_view.runtime_root.as_posix(),
             project_paths_project_root=runtime_view.project_root.as_posix(),
-            project_paths_execution_cwd=runtime_view.project_root.as_posix(),
+            project_paths_execution_cwd=runtime_view.execution_cwd.as_posix(),
         ),
         harness_registry=runtime_view.harness_registry,
         dry_run=True,

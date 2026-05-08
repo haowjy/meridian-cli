@@ -83,7 +83,12 @@ def prepare_for_runtime_read(project_root: Path) -> RuntimeReadContext:
     """Prepare read-only runtime context without creating state."""
 
     authority = resolve_runtime_authority_for_read(project_root)
-    project_context = prepare_for_project_read(authority.project_root)
+    project_context = ProjectReadContext(
+        authority=authority,
+        project_root=authority.project_root,
+        layout=project_state.resolve_layout(authority.project_root),
+        config=bootstrap_config.load_config(authority.project_root),
+    )
     return RuntimeReadContext(
         authority=authority,
         project_root=project_context.project_root,
@@ -112,14 +117,19 @@ def prepare_for_runtime_write(project_root: Path) -> RuntimeWriteContext:
     """Prepare runtime write context, including UUID and runtime dirs."""
 
     authority = resolve_runtime_authority_for_write(project_root)
-    project_write_context = prepare_for_project_write(authority.project_root)
-    runtime_root = runtime_state.ensure_runtime_root(authority.project_root)
+    project_state.migrate_legacy_paths(authority.project_root)
+    project_state.ensure_project_dirs(authority.project_root)
+    project_state.ensure_project_gitignore(authority.project_root)
+    runtime_root = runtime_state.ensure_runtime_root(
+        authority.project_root,
+        authority=authority,
+    )
     runtime_state.ensure_runtime_dirs(runtime_root)
     return RuntimeWriteContext(
         authority=authority.model_copy(update={"runtime_root": runtime_root}),
-        project_root=project_write_context.project_root,
-        layout=project_write_context.layout,
-        config=project_write_context.config,
+        project_root=authority.project_root,
+        layout=project_state.resolve_layout(authority.project_root),
+        config=bootstrap_config.load_config(authority.project_root),
         runtime_root=runtime_root,
     )
 

@@ -25,6 +25,9 @@ from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     build_runtime_from_root_and_config,
+    resolve_project_authority,
+    resolve_runtime_authority_for_read,
+    resolve_runtime_authority_for_write,
     resolve_runtime_root,
     resolve_runtime_root_and_config,
     resolve_runtime_root_and_config_for_read,
@@ -125,8 +128,7 @@ def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float
 
 
 def _resolve_project_root_input(project_root: str | None) -> Path:
-    resolved_root, _ = resolve_runtime_root_and_config_for_read(project_root)
-    return resolved_root
+    return resolve_project_authority(project_root).project_root
 
 
 def _spawn_entrypoint_from_prepared(
@@ -197,20 +199,25 @@ def spawn_create_sync(
     resolved_context = runtime_context(ctx)
     spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
     logical_owner = spawn_env_id if spawn_env_id else "cli"
+    authority = None
     if prepared_context is not None:
         assert entrypoint is not None
         resolved_root = _project_root_from_entrypoint(entrypoint)
         config = _config_from_entrypoint(entrypoint)
+        authority = prepared_context.authority
         register_spawn_telemetry_observer()
     elif payload.dry_run:
-        resolved_root = _resolve_project_root_input(payload.project_root)
-        config = load_config(resolved_root)
+        authority = resolve_runtime_authority_for_read(payload.project_root)
+        resolved_root = authority.project_root
+        config = load_config(resolved_root, authority=authority)
         setup_telemetry(runtime_root=None, logical_owner=logical_owner)
         register_spawn_telemetry_observer()
     else:
-        resolved_root, config = resolve_runtime_root_and_config(payload.project_root)
+        authority = resolve_runtime_authority_for_write(payload.project_root)
+        resolved_root = authority.project_root
+        config = load_config(resolved_root, authority=authority)
         setup_telemetry(
-            runtime_root=resolve_runtime_root(resolved_root),
+            runtime_root=authority.runtime_root,
             logical_owner=logical_owner,
         )
         register_spawn_telemetry_observer()
@@ -235,7 +242,12 @@ def spawn_create_sync(
             sink=sink,
         )
     elif not payload.dry_run:
-        runtime = build_runtime_from_root_and_config(resolved_root, config, sink=sink)
+        runtime = build_runtime_from_root_and_config(
+            resolved_root,
+            config,
+            authority=authority,
+            sink=sink,
+        )
 
     prepared_request = build_create_payload(
         payload,
