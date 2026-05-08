@@ -53,6 +53,7 @@ def test_first_party_registry_contains_wrapped_operations() -> None:
         "meridian.workbench.ping": {"cli", "http", "mcp"},
         "meridian.config.show": {"cli", "http"},
         "meridian.spawn.create": {"http", "mcp"},
+        "meridian.session.repair": {"cli", "http"},
         "meridian.work.list": {"cli", "http"},
     }
 

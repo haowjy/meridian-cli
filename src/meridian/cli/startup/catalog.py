@@ -360,6 +360,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(
         ("session", "search"), "Search session logs.", extension_ref="meridian.session.search"
     ),
+    _write_runtime(
+        ("session", "repair"),
+        "Repair stored session metadata from explicit harness-session detection.",
+        extension_ref="meridian.session.repair",
+    ),
     _read_runtime(("work",), "Show work dashboard."),
     _read_runtime(("work", "list"), "List work items.", extension_ref="meridian.work.list"),
     _read_runtime(("work", "show"), "Show work item.", extension_ref="meridian.work.show"),

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_repair import (
     SessionRepairInput,
     repair_session_reference_sync,
@@ -50,6 +51,25 @@ def _write_codex_rollout(
         encoding="utf-8",
     )
     return rollout_path
+
+
+def _write_spawn_output(
+    runtime_root: Path,
+    spawn_id: str,
+    *events: dict[str, object],
+) -> None:
+    output_path = runtime_root / "spawns" / spawn_id / HISTORY_FILENAME
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_primary_meta(runtime_root: Path, spawn_id: str) -> None:
+    meta_path = runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps({"managed_backend": True}) + "\n", encoding="utf-8")
 
 
 def test_session_repair_updates_chat_and_primary_spawn_when_detectable(
@@ -100,7 +120,8 @@ def test_session_repair_updates_chat_and_primary_spawn_when_detectable(
             SessionRepairInput(ref=chat_id, project_root=project_root.as_posix())
         )
 
-        assert result.session_id == detected_session_id
+        assert result.detected_harness_session_id == detected_session_id
+        assert result.source == "codex transcript"
         assert result.spawn_record_updated is (before_spawn_id != detected_session_id)
         assert session_store.get_session_harness_id(runtime_root, chat_id) == detected_session_id
         updated_spawn = spawn_store.get_spawn(runtime_root, "p42")
@@ -124,3 +145,106 @@ def test_session_repair_rejects_file_mode(tmp_path: Path) -> None:
                 project_root=project_root.as_posix(),
             )
         )
+
+
+def test_session_repair_primary_running_output_fallback_is_explicit_noop(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        chat_id="c42",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id="c42",
+        model="gpt-5.4",
+        agent="dev-orchestrator",
+        harness="codex",
+        kind="primary",
+        prompt="do thing",
+        harness_session_id="",
+        status="running",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    _write_primary_meta(runtime_root, "p42")
+    _write_spawn_output(
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "live output fallback"}},
+        },
+    )
+
+    result = repair_session_reference_sync(
+        SessionRepairInput(ref="p42", project_root=project_root.as_posix())
+    )
+
+    assert result.detected_harness_session_id is None
+    assert result.session_record_updated is False
+    assert result.spawn_record_updated is False
+    assert result.reason is not None
+    assert "no detected harness session id" in result.reason.lower()
+    spawn_row = spawn_store.get_spawn(runtime_root, "p42")
+    assert spawn_row is not None
+    assert (spawn_row.harness_session_id or "") == ""
+    assert session_store.get_session_harness_id(runtime_root, "c42") == ""
+
+
+def test_session_repair_non_primary_output_fallback_is_explicit_noop(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        chat_id="c42",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p43",
+        chat_id="c42",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        kind="child",
+        prompt="do thing",
+        harness_session_id="",
+        status="running",
+        started_at="2026-01-01T00:00:00Z",
+    )
+    _write_spawn_output(
+        runtime_root,
+        "p43",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "child live output fallback"}},
+        },
+    )
+
+    result = repair_session_reference_sync(
+        SessionRepairInput(ref="p43", project_root=project_root.as_posix())
+    )
+
+    assert result.detected_harness_session_id is None
+    assert result.session_record_updated is False
+    assert result.spawn_record_updated is False
+    assert result.reason is not None
+    assert "non-primary" in result.reason.lower()
+    spawn_row = spawn_store.get_spawn(runtime_root, "p43")
+    assert spawn_row is not None
+    assert (spawn_row.harness_session_id or "") == ""
+    assert session_store.get_session_harness_id(runtime_root, "c42") == ""

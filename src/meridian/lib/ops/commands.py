@@ -84,6 +84,12 @@ from meridian.lib.ops.session_log import (
     session_log,
     session_log_sync,
 )
+from meridian.lib.ops.session_repair import (
+    SessionRepairInput,
+    SessionRepairOutput,
+    repair_session_reference_sync,
+    session_repair,
+)
 from meridian.lib.ops.session_search import (
     SessionSearchInput,
     SessionSearchOutput,
@@ -415,6 +421,19 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SessionSearchOutput,
         cli_group="session",
         cli_name="search",
+        agent_default_format="text",
+        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
+        command_id="repair",
+        summary="Repair stored session metadata with an explicitly detected harness session id.",
+        handler=session_repair,
+        sync_handler=repair_session_reference_sync,
+        input_type=SessionRepairInput,
+        output_type=SessionRepairOutput,
+        cli_group="session",
+        cli_name="repair",
         agent_default_format="text",
         surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
     ),

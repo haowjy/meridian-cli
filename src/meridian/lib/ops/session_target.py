@@ -40,6 +40,20 @@ class SessionLogTarget(NamedTuple):
     source: str
 
 
+class SessionRepairTarget(NamedTuple):
+    detected_harness_session_id: str | None
+    source: str | None
+    reason: str | None = None
+
+
+def _is_chat_ref(value: str) -> bool:
+    return value.startswith("c") and value[1:].isdigit()
+
+
+def _is_spawn_ref(value: str) -> bool:
+    return value.startswith("p") and value[1:].isdigit()
+
+
 def _extract_session_id_from_path(path: Path) -> str:
     if path.suffix == ".jsonl" and path.stem:
         codex_match = _CODEX_FILENAME_RE.match(path.name)
@@ -129,6 +143,22 @@ def _resolve_harness_session_file(
     raise FileNotFoundError(
         f"Session file for '{normalized_session_id}' not found. Checked harnesses: {checked}"
     )
+
+
+def _resolve_harness_transcript_target_or_none(
+    *,
+    project_root: Path,
+    session_id: str,
+    harness: str | None,
+) -> SessionLogTarget | None:
+    try:
+        return _resolve_harness_session_file(
+            project_root=project_root,
+            session_id=session_id,
+            harness=harness,
+        )
+    except FileNotFoundError:
+        return None
 
 
 def _primary_transcript_unavailable_message(ref: str) -> str:
@@ -497,6 +527,247 @@ def _resolve_from_session_ref(
     )
 
 
+def _resolve_repair_from_chat_id(
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+) -> SessionRepairTarget:
+    session_record = _read_chat_session_record(runtime_root, chat_id)
+    if session_record is None:
+        raise ValueError(f"Chat '{chat_id}' not found")
+
+    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
+    harness = session_record.harness.strip() or None
+    if harness is None and primary_spawn is not None:
+        harness = (primary_spawn.harness or "").strip() or None
+
+    candidate_ids: list[str] = []
+    if (record_session_id := _latest_harness_session_id(session_record)) is not None:
+        candidate_ids.append(record_session_id)
+    if primary_spawn is not None and (
+        primary_meta_session_id := read_primary_harness_session_id(runtime_root, primary_spawn.id)
+    ) is not None:
+        normalized_primary_meta_session_id = primary_meta_session_id.strip()
+        if normalized_primary_meta_session_id:
+            candidate_ids.append(normalized_primary_meta_session_id)
+
+    for candidate_id in candidate_ids:
+        transcript_target = _resolve_harness_transcript_target_or_none(
+            project_root=project_root,
+            session_id=candidate_id,
+            harness=harness,
+        )
+        if transcript_target is not None:
+            return SessionRepairTarget(
+                detected_harness_session_id=transcript_target.session_id,
+                source=transcript_target.source,
+            )
+
+    if primary_spawn is not None and (
+        detected_session_id := _detect_primary_harness_session_id(
+            project_root=project_root,
+            spawn_row=primary_spawn,
+            harness_hint=harness,
+        )
+    ):
+        if _is_spawn_ref(detected_session_id):
+            return SessionRepairTarget(
+                detected_harness_session_id=None,
+                source=None,
+                reason=(
+                    f"Detected session id '{detected_session_id}' for chat '{chat_id}' "
+                    "looks like a spawn id; refusing repair."
+                ),
+            )
+        transcript_target = _resolve_harness_transcript_target_or_none(
+            project_root=project_root,
+            session_id=detected_session_id,
+            harness=harness,
+        )
+        if transcript_target is not None:
+            return SessionRepairTarget(
+                detected_harness_session_id=transcript_target.session_id,
+                source=transcript_target.source,
+            )
+        return SessionRepairTarget(
+            detected_harness_session_id=detected_session_id,
+            source=f"{harness or 'primary'} detected session id",
+            reason=(
+                f"Detected harness session id '{detected_session_id}' for chat '{chat_id}' "
+                "but transcript file is not available yet."
+            ),
+        )
+
+    return SessionRepairTarget(
+        detected_harness_session_id=None,
+        source=None,
+        reason=_primary_transcript_unavailable_message(chat_id),
+    )
+
+
+def _resolve_repair_from_spawn_id(
+    *,
+    project_root: Path,
+    runtime_root: Path,
+    spawn_id: str,
+) -> SessionRepairTarget:
+    row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
+    if row is None:
+        raise ValueError(f"Spawn '{spawn_id}' not found")
+
+    harness = (row.harness or "").strip() or None
+    row_session_id = (row.harness_session_id or "").strip()
+    if row_session_id and not _is_spawn_ref(row_session_id):
+        transcript_target = _resolve_harness_transcript_target_or_none(
+            project_root=project_root,
+            session_id=row_session_id,
+            harness=harness,
+        )
+        if transcript_target is not None:
+            return SessionRepairTarget(
+                detected_harness_session_id=transcript_target.session_id,
+                source=transcript_target.source,
+            )
+
+    if row.kind != "primary":
+        return SessionRepairTarget(
+            detected_harness_session_id=None,
+            source=None,
+            reason=(
+                f"Spawn '{spawn_id}' has no detected harness session id to repair "
+                "(non-primary spawns may only have output fallback)."
+            ),
+        )
+
+    if row.chat_id:
+        chat_record = _read_chat_session_record(runtime_root, row.chat_id)
+        if chat_record is not None:
+            if harness is None:
+                harness = chat_record.harness.strip() or None
+            if (chat_session_id := _latest_harness_session_id(chat_record)) is not None:
+                transcript_target = _resolve_harness_transcript_target_or_none(
+                    project_root=project_root,
+                    session_id=chat_session_id,
+                    harness=harness,
+                )
+                if transcript_target is not None:
+                    return SessionRepairTarget(
+                        detected_harness_session_id=transcript_target.session_id,
+                        source=transcript_target.source,
+                    )
+
+    if (
+        primary_meta_session_id := read_primary_harness_session_id(runtime_root, spawn_id)
+    ) is not None:
+        normalized_primary_meta_session_id = primary_meta_session_id.strip()
+        if normalized_primary_meta_session_id and not _is_spawn_ref(
+            normalized_primary_meta_session_id
+        ):
+            transcript_target = _resolve_harness_transcript_target_or_none(
+                project_root=project_root,
+                session_id=normalized_primary_meta_session_id,
+                harness=harness,
+            )
+            if transcript_target is not None:
+                return SessionRepairTarget(
+                    detected_harness_session_id=transcript_target.session_id,
+                    source=transcript_target.source,
+                )
+
+    detected_session_id = _detect_primary_harness_session_id(
+        project_root=project_root,
+        spawn_row=row,
+        harness_hint=harness,
+    )
+    if detected_session_id is None or not detected_session_id.strip():
+        return SessionRepairTarget(
+            detected_harness_session_id=None,
+            source=None,
+            reason=(
+                f"Spawn '{spawn_id}' has no detected harness session id to repair "
+                "(no harness transcript available yet)."
+            ),
+        )
+
+    normalized_detected_session_id = detected_session_id.strip()
+    if _is_spawn_ref(normalized_detected_session_id):
+        return SessionRepairTarget(
+            detected_harness_session_id=None,
+            source=None,
+            reason=(
+                f"Detected session id '{normalized_detected_session_id}' for spawn "
+                f"'{spawn_id}' looks like a spawn id; refusing repair."
+            ),
+        )
+
+    transcript_target = _resolve_harness_transcript_target_or_none(
+        project_root=project_root,
+        session_id=normalized_detected_session_id,
+        harness=harness,
+    )
+    if transcript_target is not None:
+        return SessionRepairTarget(
+            detected_harness_session_id=transcript_target.session_id,
+            source=transcript_target.source,
+        )
+    return SessionRepairTarget(
+        detected_harness_session_id=normalized_detected_session_id,
+        source=f"{harness or 'primary'} detected session id",
+        reason=(
+            f"Detected harness session id '{normalized_detected_session_id}' for "
+            f"spawn '{spawn_id}' but transcript file is not available yet."
+        ),
+    )
+
+
+def _resolve_repair_from_session_ref(
+    *,
+    project_root: Path,
+    session_ref: str,
+) -> SessionRepairTarget:
+    inferred = infer_harness_from_untracked_session_ref(project_root, session_ref)
+    harness = str(inferred) if inferred is not None else None
+    transcript_target = _resolve_harness_transcript_target_or_none(
+        project_root=project_root,
+        session_id=session_ref,
+        harness=harness,
+    )
+    if transcript_target is not None:
+        return SessionRepairTarget(
+            detected_harness_session_id=transcript_target.session_id,
+            source=transcript_target.source,
+        )
+    raise FileNotFoundError(f"Session file for '{session_ref}' not found")
+
+
+def resolve_session_repair_target(
+    *,
+    ref: str,
+    project_root: Path,
+    runtime_root: Path,
+) -> SessionRepairTarget:
+    normalized_ref = ref.strip()
+    if not normalized_ref:
+        raise ValueError("Session reference is required")
+    if _is_chat_ref(normalized_ref):
+        return _resolve_repair_from_chat_id(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            chat_id=normalized_ref,
+        )
+    if _is_spawn_ref(normalized_ref):
+        return _resolve_repair_from_spawn_id(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            spawn_id=normalized_ref,
+        )
+    return _resolve_repair_from_session_ref(
+        project_root=project_root,
+        session_ref=normalized_ref,
+    )
+
+
 def resolve_session_log_target(
     *,
     ref: str,
@@ -534,6 +805,8 @@ def resolve_session_log_target(
 
 __all__ = [
     "SessionLogTarget",
+    "SessionRepairTarget",
     "resolve_session_log_target",
+    "resolve_session_repair_target",
     "spawn_output_path_for_target",
 ]

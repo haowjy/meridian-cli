@@ -10,6 +10,7 @@ from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 
 Emitter = Callable[[Any], None]
@@ -136,6 +137,24 @@ def _session_search(
     )
 
 
+def _session_repair(
+    emit: Emitter,
+    ref: Annotated[
+        str,
+        Parameter(
+            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
+        ),
+    ],
+) -> None:
+    emit(
+        repair_session_reference_sync(
+            SessionRepairInput(
+                ref=ref,
+            )
+        )
+    )
+
+
 def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:
     """Register session CLI commands using registry metadata as source of truth."""
 
@@ -143,6 +162,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
         "meridian.session.log": lambda: partial(_session_log, emit),
         "meridian.session.export": lambda: partial(_session_export, emit),
         "meridian.session.search": lambda: partial(_session_search, emit),
+        "meridian.session.repair": lambda: partial(_session_repair, emit),
     }
     return register_extension_cli_group(
         app,
@@ -169,6 +189,12 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session search \"auth bug\" c123\n\n"
                 "Search is case-insensitive. Output includes navigation hints, for example:\n\n"
                 "  Navigate: meridian session log c123 -c 0 --offset 37 --last 10\n"
+            ),
+            "meridian.session.repair": (
+                "Examples:\n\n"
+                "  meridian session repair c123\n\n"
+                "  meridian session repair p107\n\n"
+                "Repair is explicit and opt-in. Normal session reads do not mutate state.\n"
             ),
         },
         emit=emit,
