@@ -6,44 +6,23 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Durable launch-boundary observability for background spawns. `launch-boundary.jsonl` per spawn records parent-side launch attempt/spawned/failed events and worker-side boot/takeover/failure events across the startup boundary. Reaper reads this artifact to distinguish pre-takeover startup failures from mid-run orphans.
 - `launch_boundary_no_takeover` reconciliation error. Background spawns whose `launch-boundary.jsonl` shows launch events but no worker takeover reconcile under this code instead of `orphan_run` or `missing_runner_pid`. Pinpoints the startup-phase failure window.
-- Suite-wide git env scrubbing — all tests run with hermetic `GIT_*` isolation. Shared `tests/support/git.py` helper for git subprocess env. Bootstrap service seam contract test.
-- Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
-
-### Changed
-- **BREAKING**: Removed all legacy state auto-migration from hot paths. Spawn v1→v2 migration, session counter seeding from legacy events, and legacy spawn output fallbacks deleted. Upgrading from pre-0.1.0 requires `rm -rf ~/.meridian`.
-- Spawn store assumes v2 format only — no automatic format detection or conversion.
-
-### Fixed
-- Work-store write flows now initialize project UUIDs before resolving `{project}` context paths, so create/list/archive/reopen use configured work/archive directories instead of falling back to `.meridian/work` on first use.
-- Nested spawns no longer reacquire stale persisted current-work state. `include_persisted_work_fallback` flag gates persisted fallback; `BLOCKED_CHILD_ENV_VARS` blocks stale `MERIDIAN_ACTIVE_WORK_*` from parent env. Chat backend launch explicitly opts in.
-- Spawn ID locking race: `ensure_v2_format()` renamed lock file mid-contention, splitting locks across inodes → duplicate spawn IDs. Fixed by keeping stable lock path, then removed migration entirely.
-- Pre-push hook leaked `GIT_DIR` env var into preflight subprocess, causing test git operations to target the real worktree.
-- structlog `capture_logs()` tests failing in full suite due to `cache_logger_on_first_use` caching module-level loggers.
-
-### Removed
-- `src/meridian/lib/state/spawn/migration.py` — v1→v2 auto-migration
-- `src/meridian/lib/state/spawn/legacy_events.py` — v1 event models and reducer
-- Legacy session counter seeding from `sessions.jsonl` scan
-- Dead `read_spawn_events()` fallback in history module
-
-### Added
 - Centralized session reference resolution. `resolve_session_reference()` now recovers missing harness session IDs from durable state (session store, spawn row, primary meta) and harness adapter detection. Recovery provenance is explicit: SESSION_STORE, SPAWN_ROW, PRIMARY_META, DETECTED_UNVERIFIED. `session log`, `--continue`, `--fork`, and `--from` now share the same resolution path instead of divergent fallbacks.
 - New `reference_recovery.py` module — read-only helper for harness session ID recovery. Keeps transcript-source policy separate from reference resolution.
 - `LaunchResult` and `PrimaryLaunchOutput` carry `continue_chat_id` separately from `continue_ref`. Quit message now shows `meridian --continue <chat-id>` instead of UUID, making session resumption human-friendly.
 - `ResolvedSessionReference` gains `effective_harness_session_id` (any recorded or recovered ID) and `authoritative_harness_session_id` (excludes DETECTED_UNVERIFIED). Continue/fork paths require authoritative recovery; `session log` may use detected IDs for transcript verification.
-
-### Added
 - Spawn state v2: per-spawn `state.json` replaces monolithic `spawns.jsonl` event log. Primary launch drops from ~12s to <1s on large histories.
 - Project-scoped agent runtime overrides via `[agents.<name>]` in config files — override model, harness, effort, approval, sandbox, autocompact per agent without editing generated profiles.
 - Canonical launch-parameter compiler (`src/meridian/lib/launch/compiler.py`) as single authority for launch resolution with typed provenance.
 - Three-state model-policy overlay semantics: inherit, suppress, or replace profile model-policies.
 - Agent overlay rendering in `meridian config show`.
 - Compiler provenance helpers for `meridian spawn --dry-run` output.
-
-### Added
 - Per-harness token usage extraction. Claude, Codex, and OpenCode each have dedicated extractors that parse their native event shapes (camelCase modelUsage, thread/tokenUsage/updated, session.idle) instead of relying on a generic snake_case scanner.
+- Suite-wide git env scrubbing — all tests run with hermetic `GIT_*` isolation. Shared `tests/support/git.py` helper for git subprocess env. Bootstrap service seam contract test.
+- Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
 
 ### Changed
+- **BREAKING**: Removed all legacy state auto-migration from hot paths. Spawn v1→v2 migration, session counter seeding from legacy events, and legacy spawn output fallbacks deleted. Upgrading from pre-0.1.0 requires `rm -rf ~/.meridian`.
+- Spawn store assumes v2 format only — no automatic format detection or conversion.
 - Default `spawn wait` yield intervals raised to **50 minutes** (3000s) for all harnesses, up from 15 min for Claude/Codex and 4 min for OpenCode. Long-running spawns no longer lose prompt-cache warmth mid-flight.
 - `resolve_policies()` now delegates to the compiler internally through a backward-compatible wrapper.
 - Policy-field resolution now uses one generalized N-tier precedence path.
@@ -53,6 +32,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Project `meridian.toml` sets `[defaults] max_depth = 4`, raising the nesting ceiling for workflows that fan-out through multiple spawn tiers.
 
 ### Fixed
+- Work-store write flows now initialize project UUIDs before resolving `{project}` context paths, so create/list/archive/reopen use configured work/archive directories instead of falling back to `.meridian/work` on first use.
+- Nested spawns no longer reacquire stale persisted current-work state. `include_persisted_work_fallback` flag gates persisted fallback; `BLOCKED_CHILD_ENV_VARS` blocks stale `MERIDIAN_ACTIVE_WORK_*` from parent env. Chat backend launch explicitly opts in.
+- Spawn ID locking race: `ensure_v2_format()` renamed lock file mid-contention, splitting locks across inodes → duplicate spawn IDs. Fixed by keeping stable lock path, then removed migration entirely.
+- Pre-push hook leaked `GIT_DIR` env var into preflight subprocess, causing test git operations to target the real worktree.
+- structlog `capture_logs()` tests failing in full suite due to `cache_logger_on_first_use` caching module-level loggers.
 - Chat normalization now maps current Claude, Codex, and OpenCode live event shapes into canonical chat events. Assistant text, reasoning, tool lifecycle, and turn completion now reach `meridian chat` clients instead of dropping output or leaving chats stuck `active`.
 - Profile `approval` and `sandbox` silently dropped during policy resolution. `model_policy_scope()` projection replaces hand-curated field subset — all non-routing fields now flow through the precedence ladder automatically. Agents with `approval: auto` now correctly receive `--permission-mode acceptEdits`.
 - Spawn finalization ownership (R4-R6): streaming runner now owns finalization from function entry via sentinel locals + outer try/finally. Eliminates gap where early setup exceptions escaped without terminal events. `launch_prepared_spawn()` extracted as shared helper for both foreground/background paths — structural ownership replaces `pre_launch_complete` boolean flag. Surface-level panic backstops added as last-resort around entire post-row sections.
@@ -63,6 +47,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Authoritative spawn finalization now correctly replaces reconciler terminals (#152).
 - Spawn execution handoff split into prepare/run/cleanup phases. Post-run session teardown errors now log as secondary cleanup failures instead of rewriting runner terminal state (#154).
 - OpenCode session continuation creates empty session instead of resuming. Root cause: `POST /session` ignores `sessionID` payload and always creates a new empty session. Fix: verify existing session via `GET /session/{id}` before POST; if found, return it directly. Attach then connects to the existing session with full history.
+
+### Removed
+- `src/meridian/lib/state/spawn/migration.py` — v1→v2 auto-migration
+- `src/meridian/lib/state/spawn/legacy_events.py` — v1 event models and reducer
+- Legacy session counter seeding from `sessions.jsonl` scan
+- Dead `read_spawn_events()` fallback in history module
 
 ## [0.0.49] - 2026-05-04
 ### Added
@@ -192,8 +182,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `meridian spawn wait` yield default now harness-aware: unknown 240s, Claude 270s, Codex 900s; mixed waits use shortest. `--yield-after-secs` still overrides.
 - Harness event semantics now live in narrow pure helpers for terminal outcome, activity transitions, and signal clearing.
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - App-server-backed extension invocation now reports no app server while local extension discovery/dispatch stays active.
 - `POST /api/spawns` resolve-before-persist. No spawn row created on composition failure. Row metadata (model, agent, harness) reflects resolved values — no "unknown" placeholders.
 - `POST /api/spawns/{id}/archive` routed through `SpawnApplicationService`. Terminal-only gate: 409 if spawn not yet terminal. Idempotent: returns `{noop: true}` if already archived.
@@ -221,8 +209,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.45] - 2026-04-25
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - `mars-agents` 0.1.18 -> 0.1.19. Mars model listing now uses harness-aware runnable visibility and OpenCode provider/model availability.
 - Background spawn note trimmed. `meridian spawn --bg` now returns a short "Backgrounded. Spawn id: ... Collect later with \`meridian spawn wait\`." hint instead of a long immediate-wait warning.
 - `meridian models list` now fails fast. Use `meridian mars models list`.
@@ -328,8 +314,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Frontend NewSessionDialog**: Submits to `POST /api/spawns` with agent/model/prompt selection.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Agent-mode CLI output defaults to text for all commands. Prior JSON defaults on `config.get`, `spawn.cancel`, `spawn.create`, `spawn.continue`, `spawn.wait`, `context`, `work.current` flipped to text. Explicit `--json` still available.
 - `spawn.wait` omits report body by default; pass `--report` to include. Report path always shown.
 - Lifecycle events (`meridian.spawn.start`, `meridian.spawn.done`) suppressed in agent mode for all commands. Human mode routes `TextSink.event()` to stderr.
@@ -365,8 +349,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Nested Claude managed spawns now deny native delegation tools (Agent, TaskCreate, TaskGet, TaskList, TaskOutput, TaskStop, TaskUpdate) by default. Profiles opt out per-tool via `tools:` frontmatter listing. Prevents untracked sub-agent spawns outside Meridian policy.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - `resolve_child_execution_cwd()` always returns `project_root`. Prior CLAUDECODE→spawn_log_dir redirect removed; `.claude/settings.json` now discovered correctly in nested Claude contexts.
 
 ### Fixed
@@ -375,8 +357,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.42] - 2026-04-22
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Spawn prompt projection now has one shared inline path. Codex and OpenCode inherit base inline projection: system instructions, task context, then user task.
 - Harness adapter docs now name the canonical prompt category routing and inline block order.
 
@@ -396,8 +376,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.40] - 2026-04-22
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - App chat UI migrated from frontend-v2.
 - Thread activity internals now named around spawn activity and stream control.
 - Agent mode output defaults now per command: control-plane -> JSON, read/browse -> text.
@@ -411,8 +389,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.40-rc.2] - 2026-04-22
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Default app server port changed from `8420` to `7676`. Vite proxy config updated to match.
 - **Work items: directory is the work item.** Eliminated `work-items/` metadata index. Work item exists iff its directory exists in `work/` (active) or `archive/work/` (done). `__status.json` inside each dir holds mutable metadata. `meridian work list` scans the actual work directory — no separate index to drift. Auto-heals missing/malformed status files. Fixes #69, #70.
 - `work list --done` now paginated: shows last 10 by default, `-n N` for custom limit, `--all` for everything.
@@ -438,8 +414,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch artifacts now emit `references.json` when references exist, with per-item routing (`inline`, `native-injection`, `omitted`) and native flag detail.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Claude primary launch now separates system instructions from the starting user prompt instead of appending the full prompt to system.
 - Launch artifacts now write from one shared projection path. Primary uses adapter `ProjectedContent` as authority for `system-prompt.md`, `starting-prompt.md`, and `projection-manifest.json`.
 - Spawn prepare now excludes OpenCode native-injected files from inline prompt content, so `--file` delivery is single path, not duplicated inline+native.
@@ -465,8 +439,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Plugin API v1**: Stable contract at `meridian.plugin_api` for hooks/plugins. Exports: hook types, state helpers, git helpers, config helpers, file locking.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - CLI help text updated: root epilogue and `spawn` description now advertise primary launch/resume/fork forms, session ref syntax (`c123`/`p123`/raw), foreground capture fallback (Unix TTY, falls back to subprocess on Windows/non-TTY), and correct `--autocompact` range (1-100). Agent root help updated to match.
 - `spawn show/children/files/cancel/wait/log` accept chat_id refs (e.g. `c213`). Resolves to most recent spawn with that chat_id.
 - `meridian context` command — returns context tuple (`work_id`, `repo_root`, `state_root`, `depth`). JSON when spawned or with `--json`; human-friendly text in TTY.
@@ -512,8 +484,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `ConfigSurface` builder unifies `config show` and `doctor` workspace state.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Bundled `mars-agents` 0.1.2 → 0.1.3.
 - Workspace file location follows `MERIDIAN_PROJECT_ROOT` — lives at `state_root.parent / workspace.local.toml`.
 
@@ -524,8 +494,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `spawn show` renders `orphan_finalization` distinct from `orphan_run` — tells apart drain-window hangs from runner-dead-during-run.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - `meridian-dev-workflow` bumped 0.0.25 → 0.0.26 via `meridian mars sync`.
 - `@impl-orchestrator` now runs a mandatory Explore phase before planning — verifies design against code reality, produces `plan/pre-planning-notes.md` as a gate artifact, terminates to a Redesign Brief when design is falsified.
 - `agent-staffing` skill: new "Fan-Out vs Parallel Lanes" terminology section (same-prompt-different-models vs different-prompts-different-focus-areas); new `@reviewer as Architectural Drift Gate` section (CI-spawned reviewer enforces structural invariants semantically against a declared-invariant prompt).
@@ -554,8 +522,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Primary `meridian` launch startup agent catalog. Fresh and forked sessions now show installed agents before user input. Claude gets it in appended system prompt; Codex and OpenCode inline.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Startup inventory now agent-only. Skills still load through normal harness launch path, but not duplicated in startup catalog.
 
 ### Fixed
@@ -566,8 +532,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.27] - 2026-04-12
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Dev workflow package updated for unified `impl-orchestrator`.
 
 ### Fixed
@@ -587,8 +551,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CHANGELOG.md` resumed after staleness. Now in caveman style.
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - **Reaper rewrite**: 500-line state machine → 119 lines (~30 core). No PID files, no heartbeat, no foreground/background dispatch. Just: is `runner_pid` alive? Branch on `exited_at` presence.
 - **PID/heartbeat file elimination**: `harness.pid`, `background.pid`, `heartbeat` removed. PIDs come from event stream only. Spawn directories are artifact-only.
 - **`SpawnExtractor` protocol**: extraction split from adapter into composable protocol. `StreamingExtractor` wraps harness bundle for connection-aware extraction.
@@ -614,8 +576,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `gpt52` builtin alias for `gpt-5.2`; Claude `tools` passthrough in launch plan
 
 ### Changed
-- `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
-- `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - Auto-resolve builtin aliases from discovered models; manifest-first bootstrap
 
 ## [0.0.4] - 2026-03-17
