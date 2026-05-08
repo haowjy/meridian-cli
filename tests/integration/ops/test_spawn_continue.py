@@ -287,7 +287,11 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     project_root.mkdir()
     (project_root / "README.md").write_text("seed", encoding="utf-8")
     _state_root(project_root)
-    monkeypatch.setattr(spawn_api, "_resolve_effective_fork_target_harness", lambda *_args: "codex")
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda *_args, **_kwargs: "codex",
+    )
 
     captured_input: SpawnCreateInput | None = None
 
@@ -355,7 +359,11 @@ def test_spawn_fork_uses_requested_model_agent_and_resolves_harness_from_policy(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
-    monkeypatch.setattr(spawn_api, "_resolve_effective_fork_target_harness", lambda *_args: "codex")
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda *_args, **_kwargs: "codex",
+    )
 
     captured_input: SpawnCreateInput | None = None
 
@@ -450,6 +458,74 @@ def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
                 project_root=project_root.as_posix(),
             )
         )
+
+
+def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ambient_root = tmp_path / "ambient"
+    ambient_root.mkdir()
+    (ambient_root / "meridian.toml").write_text(
+        '[defaults]\nharness = "claude"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(ambient_root)
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    (project_root / "meridian.toml").write_text(
+        '[defaults]\nharness = "codex"\n',
+        encoding="utf-8",
+    )
+    prepared = prepare_for_runtime_write(project_root)
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-seed",
+            harness="codex",
+            source_model="",
+            source_agent=None,
+            source_skills=(),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd=None,
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    captured_input: SpawnCreateInput | None = None
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+        prepared=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink, prepared)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="c-source",
+            prompt="fork prompt",
+        ),
+        prepared=prepared,
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.harness == "codex"
 
 
 def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(

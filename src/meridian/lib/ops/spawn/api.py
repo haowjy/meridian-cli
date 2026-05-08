@@ -1498,8 +1498,18 @@ def _build_fork_create_input(
     )
 
 
-def _resolve_effective_fork_target_harness(create_input: SpawnCreateInput) -> str:
-    validated_payload, preflight_warning = validate_create_input(create_input)
+def _resolve_effective_fork_target_harness(
+    create_input: SpawnCreateInput,
+    *,
+    resolved_project_root: Path | None = None,
+) -> str:
+    preview_input = create_input
+    if resolved_project_root is not None:
+        preview_input = create_input.model_copy(
+            update={"project_root": resolved_project_root.as_posix()},
+        )
+
+    validated_payload, preflight_warning = validate_create_input(preview_input)
     preview_request = build_create_payload(
         validated_payload,
         preflight_warning=preflight_warning,
@@ -1555,7 +1565,10 @@ def spawn_fork_sync(
         requested_work=requested_work,
         harness=requested_harness,
     )
-    target_harness = _resolve_effective_fork_target_harness(unresolved_create_input)
+    target_harness = _resolve_effective_fork_target_harness(
+        unresolved_create_input,
+        resolved_project_root=project_root,
+    )
     if source_harness is not None and source_harness != target_harness:
         raise ValueError(
             "Cannot fork across harnesses: "

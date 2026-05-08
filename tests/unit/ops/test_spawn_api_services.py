@@ -210,7 +210,11 @@ def test_spawn_fork_sync_resolves_roots_via_read_authority(
         )
 
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_resolve_session_reference)
-    monkeypatch.setattr(spawn_api, "_resolve_effective_fork_target_harness", lambda *_args: "codex")
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda *_args, **_kwargs: "codex",
+    )
     monkeypatch.setattr(
         spawn_api,
         "spawn_create_sync",
