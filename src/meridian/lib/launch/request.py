@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 
 
@@ -16,6 +17,10 @@ def _empty_agent_metadata() -> dict[str, str]:
 
 
 def _empty_config_snapshot() -> dict[str, object]:
+    return {}
+
+
+def _empty_runtime_override_snapshot() -> dict[str, object]:
     return {}
 
 
@@ -146,12 +151,21 @@ class LaunchRuntime(BaseModel):
     argv_intent: LaunchArgvIntent = LaunchArgvIntent.REQUIRED
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
+    runtime_override_snapshot: dict[str, object] = Field(
+        default_factory=_empty_runtime_override_snapshot
+    )
     unsafe_no_permissions: bool = False
     debug: bool = False
     report_output_path: str | None = None
     runtime_root: str
     project_paths_project_root: str
     project_paths_execution_cwd: str
+
+    @property
+    def resolved_runtime_overrides(self) -> RuntimeOverrides:
+        if self.runtime_override_snapshot:
+            return RuntimeOverrides.model_validate(self.runtime_override_snapshot)
+        return RuntimeOverrides()
 
 
 __all__ = [

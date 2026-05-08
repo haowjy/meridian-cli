@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
@@ -270,6 +271,10 @@ def _build_create_payload_impl(
             argv_intent=LaunchArgvIntent.REQUIRED,
             composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
             config_snapshot=runtime_view.config.model_dump(mode="json", exclude_none=True),
+            runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
+                mode="json",
+                exclude_none=True,
+            ),
             report_output_path=_DRY_RUN_REPORT_PATH,
             runtime_root=runtime_view.runtime_root.as_posix(),
             project_paths_project_root=runtime_view.project_root.as_posix(),

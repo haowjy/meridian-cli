@@ -1377,9 +1377,15 @@ def test_run_harness_process_records_generated_claude_command_session_id(
 
     def fake_build_launch_context(*args: object, **kwargs: object) -> Any:
         runtime_context = original_build_launch_context(*args, **kwargs)
+        updated_binding = replace(
+            runtime_context.binding,
+            argv=(*runtime_context.binding.argv, "--session-id", generated_session_id),
+            effective_harness_session_id="",
+        )
         return replace(
             runtime_context,
-            argv=(*runtime_context.argv, "--session-id", generated_session_id),
+            binding=updated_binding,
+            argv=updated_binding.argv,
             seed_harness_session_id="",
         )
 

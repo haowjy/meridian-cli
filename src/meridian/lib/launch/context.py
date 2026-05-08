@@ -7,7 +7,6 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
@@ -38,7 +37,10 @@ from meridian.lib.launch.launch_types import (
     PermissionResolver,
     PreflightResult,
     PreparedLaunchContent,
+    PreparedLaunchRuntimeSeeds,
     PreparedPromptPayload,
+    ResolvedLaunchBinding,
+    ResolvedLaunchEnvironment,
     ResolvedLaunchSpec,
     summarize_composition_warnings,
 )
@@ -227,6 +229,7 @@ class LaunchContext:
     execution_cwd: Path
     runtime_root: Path
     work_id: str | None
+    binding: ResolvedLaunchBinding
     argv: tuple[str, ...]
     run_params: ResolvedRunInputs
     perms: PermissionResolver
@@ -256,14 +259,13 @@ class PreparedLaunchSurface:
 
     request: SpawnRequest
     harness: SubprocessHarness
-    seed_harness_session_id: str | None
     composition_warnings: tuple[CompositionWarning, ...]
     content: PreparedLaunchContent
+    runtime_seeds: PreparedLaunchRuntimeSeeds
     profile_tools_for_deny_optout: tuple[str, ...]
     has_profile_for_deny_optout: bool
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
-    seed_session_args: tuple[str, ...] = ()
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
@@ -287,6 +289,14 @@ class PreparedLaunchSurface:
     @property
     def context_prompt(self) -> str | None:
         return self.content.context_prompt
+
+    @property
+    def seed_harness_session_id(self) -> str | None:
+        return self.runtime_seeds.seed_harness_session_id
+
+    @property
+    def seed_session_args(self) -> tuple[str, ...]:
+        return self.runtime_seeds.seed_session_args
 
 
 @dataclass(frozen=True)
@@ -749,7 +759,11 @@ def compile_prepared_policy_surface(
         else load_config(project_paths.project_root)
     )
     cli_overrides = _spawn_request_overrides(request)
-    env_overrides = RuntimeOverrides.from_env()
+    env_overrides = (
+        runtime.resolved_runtime_overrides
+        if runtime.runtime_override_snapshot
+        else RuntimeOverrides.from_env()
+    )
     if runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
         config_overrides = RuntimeOverrides.from_config(config)
         configured_default_harness = config.primary.harness or "claude"
@@ -1168,14 +1182,16 @@ def prepare_launch_surface(
     return PreparedLaunchSurface(
         request=resolved_request,
         harness=harness,
-        seed_harness_session_id=seed_harness_session_id,
         composition_warnings=composition_warnings,
         content=content,
+        runtime_seeds=PreparedLaunchRuntimeSeeds(
+            seed_harness_session_id=seed_harness_session_id,
+            seed_session_args=seed_session_args,
+        ),
         profile_tools_for_deny_optout=profile_tools_for_deny_optout,
         has_profile_for_deny_optout=has_profile,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
-        seed_session_args=seed_session_args,
         launch_request=request,
     )
 
@@ -1206,10 +1222,6 @@ def _build_direct_surface(
     return PreparedLaunchSurface(
         request=request,
         harness=harness,
-        seed_harness_session_id=(
-            request.session.requested_harness_session_id or ""
-        ).strip()
-        or None,
         composition_warnings=composition_warnings,
         content=PreparedLaunchContent(
             final_prompt=request.prompt,
@@ -1221,11 +1233,16 @@ def _build_direct_surface(
                 user_turn_content=request.prompt_payload.user_turn_content,
             ),
         ),
+        runtime_seeds=PreparedLaunchRuntimeSeeds(
+            seed_harness_session_id=(
+                (request.session.requested_harness_session_id or "").strip() or None
+            ),
+            seed_session_args=(),
+        ),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
         model_selection=None,
         alias_catalog=None,
-        seed_session_args=(),
         launch_request=request,
     )
 
@@ -1390,7 +1407,7 @@ def bind_launch_context(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
-    runtime_overrides = build_child_runtime_env_overrides(
+    child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
         child_spawn_id=bindings.spawn_id,
@@ -1399,19 +1416,40 @@ def bind_launch_context(
     )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
-    runtime_overrides["MERIDIAN_HARNESS"] = harness.id.value
-    merged_overrides = merge_env_overrides(
+    child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    merged_runtime_overrides = merge_env_overrides(
         plan_overrides=bindings.plan_overrides,
-        runtime_overrides=runtime_overrides,
+        runtime_overrides=child_context_env,
         preflight_overrides=preflight.extra_env,
     )
-    merged_overrides.update(workspace_projection.env_overrides)
+    merged_runtime_overrides.update(workspace_projection.env_overrides)
     env = build_env_plan(
         base_env=os.environ,
         adapter=harness,
         run_inputs=run_params,
         permission_config=permission_config,
-        runtime_env_overrides=merged_overrides,
+        runtime_env_overrides=merged_runtime_overrides,
+    )
+    environment = ResolvedLaunchEnvironment.build(
+        child_context_env=child_context_env,
+        plan_env=dict(bindings.plan_overrides),
+        preflight_env=dict(preflight.extra_env),
+        workspace_env=dict(workspace_projection.env_overrides),
+        runtime_override_env=merged_runtime_overrides,
+        final_env=env,
+    )
+    binding = ResolvedLaunchBinding(
+        work_id=effective_work_id,
+        child_cwd=child_cwd,
+        report_output_path=report_output_path,
+        run_params=run_params,
+        permission_config=permission_config,
+        perms=perms,
+        spec=spec,
+        argv=argv,
+        environment=environment,
+        effective_harness_session_id=effective_session_id,
+        seed_harness_session_args=seed_harness_session_args,
     )
 
     return LaunchContext(
@@ -1421,13 +1459,14 @@ def bind_launch_context(
         execution_cwd=execution_cwd,
         runtime_root=runtime_root,
         work_id=effective_work_id,
+        binding=binding,
         argv=argv,
         run_params=run_params,
         perms=perms,
         spec=spec,
         child_cwd=child_cwd,
-        env=MappingProxyType(env),
-        env_overrides=MappingProxyType(merged_overrides),
+        env=environment.final_env,
+        env_overrides=environment.runtime_override_env,
         report_output_path=report_output_path,
         harness=harness,
         resolved_request=resolved_request,

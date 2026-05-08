@@ -3,6 +3,7 @@ from pathlib import Path
 
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 from .request import (
@@ -78,6 +79,10 @@ def build_primary_launch_runtime(
         argv_intent=LaunchArgvIntent.REQUIRED,
         composition_surface=LaunchCompositionSurface.PRIMARY,
         config_snapshot=resolved_config.model_dump(mode="json", exclude_none=True),
+        runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
+            mode="json",
+            exclude_none=True,
+        ),
         report_output_path=_DRY_RUN_REPORT_PATH,
         runtime_root=runtime_root.as_posix(),
         project_paths_project_root=resolved_root.as_posix(),

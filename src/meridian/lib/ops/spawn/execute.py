@@ -768,8 +768,28 @@ def _prepare_child_claude_overlay(
                     handoff.session_context.chat_id,
                     claude_config_dir=effective_config_dir,
                 )
+        updated_environment = replace(
+            handoff.launch_context.binding.environment,
+            runtime_override_env=MappingProxyType(
+                {
+                    **handoff.launch_context.binding.environment.runtime_override_env,
+                    **{
+                        key: value
+                        for key, value in child_env.items()
+                        if key
+                        not in handoff.launch_context.binding.environment.final_env
+                        or handoff.launch_context.binding.environment.final_env[key] != value
+                    },
+                }
+            ),
+            final_env=MappingProxyType(child_env),
+        )
         handoff.launch_context = replace(
             handoff.launch_context,
+            binding=replace(
+                handoff.launch_context.binding,
+                environment=updated_environment,
+            ),
             env=MappingProxyType(child_env),
         )
 

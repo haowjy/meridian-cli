@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from meridian.lib.harness.ids import HarnessId
     from meridian.lib.launch.composition import ProjectedContent
     from meridian.lib.launch.reference import ReferenceItem
+    from meridian.lib.launch.run_inputs import ResolvedRunInputs
     from meridian.lib.safety.permissions import PermissionConfig
 
 
@@ -171,6 +172,63 @@ class PreparedLaunchContent:
     projected_content: ProjectedContent | None = None
     agent_inventory_prompt: str | None = None
     context_prompt: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedLaunchRuntimeSeeds:
+    """Prepare-phase runtime/session facts carried into bind."""
+
+    seed_harness_session_id: str | None = None
+    seed_session_args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResolvedLaunchEnvironment:
+    """Categorized child-environment facts owned by bind/runtime resolution."""
+
+    child_context_env: MappingProxyType[str, str]
+    plan_env: MappingProxyType[str, str]
+    preflight_env: MappingProxyType[str, str]
+    workspace_env: MappingProxyType[str, str]
+    runtime_override_env: MappingProxyType[str, str]
+    final_env: MappingProxyType[str, str]
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        child_context_env: dict[str, str],
+        plan_env: dict[str, str],
+        preflight_env: dict[str, str],
+        workspace_env: dict[str, str],
+        runtime_override_env: dict[str, str],
+        final_env: dict[str, str],
+    ) -> ResolvedLaunchEnvironment:
+        return cls(
+            child_context_env=MappingProxyType(dict(child_context_env)),
+            plan_env=MappingProxyType(dict(plan_env)),
+            preflight_env=MappingProxyType(dict(preflight_env)),
+            workspace_env=MappingProxyType(dict(workspace_env)),
+            runtime_override_env=MappingProxyType(dict(runtime_override_env)),
+            final_env=MappingProxyType(dict(final_env)),
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedLaunchBinding:
+    """Typed runtime/session/launch-spec output produced by bind."""
+
+    work_id: str | None
+    child_cwd: Path
+    report_output_path: Path
+    run_params: ResolvedRunInputs
+    permission_config: PermissionConfig
+    perms: PermissionResolver
+    spec: ResolvedLaunchSpec
+    argv: tuple[str, ...]
+    environment: ResolvedLaunchEnvironment
+    effective_harness_session_id: str | None = None
+    seed_harness_session_args: tuple[str, ...] = ()
 
 
 SpecT = TypeVar("SpecT", bound=ResolvedLaunchSpec)

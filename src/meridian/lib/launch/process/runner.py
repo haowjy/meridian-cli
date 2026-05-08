@@ -547,7 +547,7 @@ def run_harness_process(
     preview_request = preview_context.resolved_request
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
-    resolved_harness_session_id = preview_context.seed_harness_session_id or ""
+    resolved_harness_session_id = preview_context.binding.effective_harness_session_id or ""
     initial_persisted_harness_session_id = resolved_harness_session_id
     session_scope_harness_session_id = resolved_harness_session_id
     if session_mode == SessionMode.FORK:
@@ -652,7 +652,7 @@ def run_harness_process(
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                preview_seed_args = preview_context.seed_harness_session_args
+                preview_seed_args = preview_context.binding.seed_harness_session_args
                 runtime_request = spawn_request.model_copy(
                     update={
                         "extra_args": (*spawn_request.extra_args, *preview_seed_args),
@@ -704,8 +704,10 @@ def run_harness_process(
                     launch_context=runtime_context,
                     surface="primary",
                 )
-                command = runtime_context.argv
-                resolved_harness_session_id = runtime_context.seed_harness_session_id or ""
+                command = runtime_context.binding.argv
+                resolved_harness_session_id = (
+                    runtime_context.binding.effective_harness_session_id or ""
+                )
                 if harness_id == HarnessId.CLAUDE and not resolved_harness_session_id:
                     generated_session_id = extract_session_id_from_args(command)
                     if generated_session_id:
@@ -718,11 +720,11 @@ def run_harness_process(
                             harness_session_id=generated_session_id,
                         )
                         lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
-                child_env = dict(runtime_context.env)
+                child_env = dict(runtime_context.binding.environment.final_env)
                 if managed.chat_id:
                     child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
-                child_cwd = runtime_context.child_cwd
-                launch_spec = runtime_context.spec
+                child_cwd = runtime_context.binding.child_cwd
+                launch_spec = runtime_context.binding.spec
 
                 if harness_id == HarnessId.CLAUDE:
                     isolated_config_root, original_claude_config_dir = (

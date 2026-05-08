@@ -26,6 +26,7 @@ from meridian.lib.launch.composition import (
     ReferenceRouting,
 )
 from meridian.lib.launch.context import LaunchContext
+from meridian.lib.launch.launch_types import ResolvedLaunchBinding, ResolvedLaunchEnvironment
 from meridian.lib.launch.reference import ReferenceItem
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -77,6 +78,25 @@ def _make_launch_context(
         project_paths_project_root=tmp_path.as_posix(),
         project_paths_execution_cwd=tmp_path.as_posix(),
     )
+    environment = ResolvedLaunchEnvironment.build(
+        child_context_env={},
+        plan_env={},
+        preflight_env={},
+        workspace_env={},
+        runtime_override_env={},
+        final_env={},
+    )
+    binding = ResolvedLaunchBinding(
+        work_id=None,
+        child_cwd=tmp_path,
+        report_output_path=tmp_path / "report.md",
+        run_params=run_inputs,
+        permission_config=_resolver().config,
+        perms=_resolver(),
+        spec=spec,
+        argv=("opencode", "run", "-"),
+        environment=environment,
+    )
     return LaunchContext(
         request=request,
         runtime=runtime,
@@ -84,14 +104,15 @@ def _make_launch_context(
         execution_cwd=tmp_path,
         runtime_root=tmp_path / ".meridian",
         work_id=None,
-        argv=("opencode", "run", "-"),
+        binding=binding,
+        argv=binding.argv,
         run_params=run_inputs,
-        perms=_resolver(),
+        perms=binding.perms,
         spec=spec,
-        child_cwd=tmp_path,
-        env=MappingProxyType({}),
-        env_overrides=MappingProxyType({}),
-        report_output_path=tmp_path / "report.md",
+        child_cwd=binding.child_cwd,
+        env=MappingProxyType(dict(binding.environment.final_env)),
+        env_overrides=MappingProxyType(dict(binding.environment.runtime_override_env)),
+        report_output_path=binding.report_output_path,
         harness=OpenCodeAdapter(),
         resolved_request=request,
         projected_content=projected,

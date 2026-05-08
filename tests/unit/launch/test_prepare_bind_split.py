@@ -21,6 +21,7 @@ from meridian.lib.launch.context import (
     compile_prepared_policy_surface,
     prepare_launch_surface,
 )
+from meridian.lib.launch.launch_types import PreparedLaunchRuntimeSeeds
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -235,14 +236,13 @@ def test_bind_launch_context_does_not_call_prepare_phase_helpers(
     prepared = PreparedLaunchSurface(
         request=_build_request(prompt_is_composed=True),
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
-        seed_harness_session_id="seed-session",
         composition_warnings=(),
         content=PreparedLaunchContent(prompt_payload=PreparedPromptPayload()),
+        runtime_seeds=PreparedLaunchRuntimeSeeds(seed_harness_session_id="seed-session"),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
         model_selection=None,
         alias_catalog=None,
-        seed_session_args=(),
         launch_request=None,
     )
     for helper_name in (
@@ -286,7 +286,6 @@ def test_bind_launch_context_consumes_typed_prompt_payload(
             }
         ),
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
-        seed_harness_session_id=None,
         composition_warnings=(),
         content=PreparedLaunchContent(
             prompt_payload=PreparedPromptPayload(
@@ -295,11 +294,11 @@ def test_bind_launch_context_consumes_typed_prompt_payload(
                 user_turn_content="typed-user",
             )
         ),
+        runtime_seeds=PreparedLaunchRuntimeSeeds(),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
         model_selection=None,
         alias_catalog=None,
-        seed_session_args=(),
         launch_request=None,
     )
 
@@ -423,14 +422,13 @@ def test_bind_launch_context_prefers_forked_runtime_session_without_mutating_pre
     prepared = PreparedLaunchSurface(
         request=_build_request(prompt_is_composed=True),
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
-        seed_harness_session_id="seed-session",
         composition_warnings=(),
         content=PreparedLaunchContent(prompt_payload=PreparedPromptPayload()),
+        runtime_seeds=PreparedLaunchRuntimeSeeds(seed_harness_session_id="seed-session"),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
         model_selection=None,
         alias_catalog=None,
-        seed_session_args=(),
         launch_request=None,
     )
 

@@ -697,7 +697,7 @@ async def execute_with_streaming(
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
         output_log_path = log_dir / HISTORY_FILENAME
-        report_path = launch_context.report_output_path
+        report_path = launch_context.binding.report_output_path
 
         timeout_seconds = (
             float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None
@@ -706,9 +706,9 @@ async def execute_with_streaming(
         retry_backoff_seconds = request.retry.backoff_secs
 
         resolved_harness_id = launch_context.harness.id
-        child_cwd = launch_context.child_cwd
-        spec = launch_context.spec
-        child_env = dict(launch_context.env)
+        child_cwd = launch_context.binding.child_cwd
+        spec = launch_context.binding.spec
+        child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
 

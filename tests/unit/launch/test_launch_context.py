@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.composition import PromptDocument
@@ -189,6 +190,9 @@ def test_build_launch_context_projects_runtime_child_env_paths(
     # MERIDIAN_HARNESS is informational (yield timing), not a policy override.
     assert runtime_ctx.env_overrides["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.env["MERIDIAN_HARNESS"] == "codex"
+    assert runtime_ctx.binding.environment.child_context_env["MERIDIAN_SPAWN_ID"] == "p-child-env"
+    assert runtime_ctx.binding.environment.runtime_override_env["MERIDIAN_HARNESS"] == "codex"
+    assert runtime_ctx.binding.environment.final_env["MERIDIAN_HARNESS"] == "codex"
     unexpected = {
         key
         for key in runtime_ctx.env_overrides
@@ -197,6 +201,35 @@ def test_build_launch_context_projects_runtime_child_env_paths(
         and key != "MERIDIAN_HARNESS"
     }
     assert unexpected == set()
+
+
+def test_build_launch_context_uses_runtime_override_snapshot_not_live_env(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    ).model_copy(
+        update={
+            "runtime_override_snapshot": RuntimeOverrides(approval="confirm").model_dump(
+                mode="json",
+                exclude_none=True,
+            )
+        }
+    )
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "yolo")
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-snapshot",
+        request=_build_spawn_request(),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.resolved_request.approval == "confirm"
 
 
 @pytest.mark.parametrize(

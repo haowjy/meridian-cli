@@ -50,6 +50,7 @@ def test_spawn_request_round_trip_json_with_all_fields() -> None:
     )
     runtime = LaunchRuntime(
         argv_intent=LaunchArgvIntent.SPEC_ONLY,
+        runtime_override_snapshot={"approval": "confirm"},
         unsafe_no_permissions=False,
         debug=True,
         report_output_path="/tmp/report.md",
