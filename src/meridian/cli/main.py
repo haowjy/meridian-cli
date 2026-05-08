@@ -3,7 +3,8 @@
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
@@ -94,6 +95,29 @@ class GlobalOptions(BaseModel):
 _GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
 _registered_command_groups: set[str] = set()
 _group_commands_registered = False
+_MANUAL_HOOK_ENV_OVERRIDES: tuple[str, ...] = (
+    "MERIDIAN_PROJECT_DIR",
+    "MERIDIAN_RUNTIME_DIR",
+)
+
+
+def _is_manual_hooks_list_or_run(argv: Sequence[str]) -> bool:
+    return len(argv) >= 2 and argv[0] == "hooks" and argv[1] in {"list", "run"}
+
+
+@contextmanager
+def _manual_hooks_bootstrap_authority_scope(argv: Sequence[str]) -> Iterator[None]:
+    if not _is_manual_hooks_list_or_run(argv):
+        yield
+        return
+
+    previous = {name: os.environ.pop(name, None) for name in _MANUAL_HOOK_ENV_OVERRIDES}
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is not None:
+                os.environ[name] = value
 
 
 def get_global_options() -> GlobalOptions:
@@ -744,6 +768,34 @@ def _validate_top_level_command(argv: Sequence[str], *, global_harness: str | No
     )
 
 
+def _workspace_subcommand(argv: Sequence[str]) -> str | None:
+    if not argv or argv[0] != "workspace":
+        return None
+    for token in argv[1:]:
+        if token.startswith("-"):
+            continue
+        return token
+    return None
+
+
+def _known_child_commands(parent: str) -> set[str]:
+    return {
+        descriptor.command_path[1]
+        for descriptor in COMMAND_CATALOG.all_descriptors()
+        if len(descriptor.command_path) >= 2 and descriptor.command_path[0] == parent
+    }
+
+
+def _validate_workspace_subcommand(argv: Sequence[str]) -> None:
+    subcommand = _workspace_subcommand(argv)
+    if subcommand is None:
+        return
+    if subcommand in _known_child_commands("workspace"):
+        return
+    print(f"error: Unknown command: workspace {subcommand}", file=sys.stderr)
+    raise SystemExit(1)
+
+
 def _is_root_help_request(argv: Sequence[str]) -> bool:
     return _bootstrap_is_root_help_request(argv)
 
@@ -920,6 +972,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
 
     _validate_top_level_command(cleaned_args, global_harness=options.harness)
+    _validate_workspace_subcommand(cleaned_args)
 
     # Handle descriptor-owned redirects before bootstrap work or lazy command registration.
     if descriptor is not None and descriptor.redirect is not None:
@@ -938,12 +991,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     bootstrap_skipped = any(arg in {"--help", "-h"} for arg in cleaned_args)
     state_requirement = descriptor.state_requirement if descriptor is not None else None
     project_root = None
-    if not bootstrap_skipped:
-        project_root = maybe_bootstrap_runtime_state(
-            cleaned_args,
-            agent_mode=agent_mode_enabled(),
-            state_requirement=state_requirement,
-        )
+    with _manual_hooks_bootstrap_authority_scope(cleaned_args):
+        if not bootstrap_skipped:
+            project_root = maybe_bootstrap_runtime_state(
+                cleaned_args,
+                agent_mode=agent_mode_enabled(),
+                state_requirement=state_requirement,
+            )
     _install_cli_telemetry(
         telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
         startup_class=startup_class,

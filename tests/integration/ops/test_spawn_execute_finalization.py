@@ -10,8 +10,10 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.harness.adapter import ForkMaterializationMode
+from meridian.lib.launch.request import LaunchRuntime, SessionRequest, SpawnRequest
 from meridian.lib.ops.spawn.execute import (
+    LaunchUserInputError,
     PreparedExecutionHandoff,
     _SessionExecutionContext,
     launch_prepared_spawn,
@@ -197,6 +199,189 @@ async def test_launch_prepared_spawn_terminalizes_launch_failure_when_prepare_ha
     assert row.exit_code == 1
     assert row.terminal_origin == "launch_failure"
     assert row.error == "prep boom"
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_logs_expected_prepare_failure_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = _start_spawn(project_root=tmp_path, runtime_root=runtime_root, status="queued")
+    warning_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    exception_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def fail_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        raise LaunchUserInputError("invalid fork/session reference")
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fail_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module.logger,
+        "warning",
+        lambda *args, **kwargs: warning_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        execute_module.logger,
+        "exception",
+        lambda *args, **kwargs: exception_calls.append((args, kwargs)),
+    )
+
+    result = await launch_prepared_spawn(
+        spawn=_spawn(spawn_id, status="queued"),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex", agent="coder"),
+        runtime_request=_runtime_request(tmp_path, runtime_root),
+        runtime=cast("Any", _runtime(tmp_path)),
+        runtime_root=runtime_root,
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert result == 1
+    assert row is not None
+    assert row.status == "failed"
+    assert row.error == "invalid fork/session reference"
+    assert warning_calls and warning_calls[0][0][0] == "Pre-launch setup failed."
+    assert exception_calls == []
+
+
+@pytest.mark.asyncio
+async def test_launch_prepared_spawn_converts_materialized_fork_value_error_to_user_input_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = _start_spawn(project_root=tmp_path, runtime_root=runtime_root, status="queued")
+    warning_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    exception_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    failure_message = "Codex session 'p9999' not found in threads table."
+
+    class _ForkingHarnessAdapter:
+        capabilities = SimpleNamespace(
+            supports_session_resume=True,
+            supports_session_fork=True,
+        )
+        contract = SimpleNamespace(
+            bootstrap=SimpleNamespace(
+                fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
+            )
+        )
+
+        def fork_session(self, _source_session_id: str) -> str:
+            raise ValueError(failure_message)
+
+    class _ForkingHarnessRegistry:
+        def __init__(self) -> None:
+            self._adapter = _ForkingHarnessAdapter()
+
+        def get_subprocess_harness(self, _harness_id: object) -> _ForkingHarnessAdapter:
+            return self._adapter
+
+    runtime = SimpleNamespace(
+        project_root=tmp_path,
+        harness_registry=_ForkingHarnessRegistry(),
+        artifacts=None,
+    )
+
+    monkeypatch.setattr(
+        execute_module.logger,
+        "warning",
+        lambda *args, **kwargs: warning_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        execute_module.logger,
+        "exception",
+        lambda *args, **kwargs: exception_calls.append((args, kwargs)),
+    )
+
+    result = await launch_prepared_spawn(
+        spawn=_spawn(spawn_id, status="queued"),
+        request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="codex",
+            agent="coder",
+            session=SessionRequest(
+                requested_harness_session_id="p9999",
+                continue_fork=True,
+                continue_source_ref="p9999",
+            ),
+        ),
+        runtime_request=_runtime_request(tmp_path, runtime_root),
+        runtime=cast("Any", runtime),
+        runtime_root=runtime_root,
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert result == 1
+    assert row is not None
+    assert row.status == "failed"
+    assert row.error == failure_message
+    assert warning_calls and warning_calls[0][0][0] == "Pre-launch setup failed."
+    assert exception_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exception_factory", "message"),
+    [
+        (lambda: TypeError("unexpected boom"), "unexpected boom"),
+        (lambda: RuntimeError("runtime boom"), "runtime boom"),
+        (lambda: OSError("oserror boom"), "oserror boom"),
+    ],
+)
+async def test_launch_prepared_spawn_logs_unexpected_prepare_failure_with_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_factory: Any,
+    message: str,
+) -> None:
+    import meridian.lib.ops.spawn.execute as execute_module
+
+    runtime_root = tmp_path / ".runtime"
+    spawn_id = _start_spawn(project_root=tmp_path, runtime_root=runtime_root, status="queued")
+    exception_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def fail_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
+        raise exception_factory()
+
+    monkeypatch.setattr(
+        execute_module,
+        "_prepare_execution_handoff",
+        fail_prepare_execution_handoff,
+    )
+    monkeypatch.setattr(
+        execute_module.logger,
+        "exception",
+        lambda *args, **kwargs: exception_calls.append((args, kwargs)),
+    )
+
+    result = await launch_prepared_spawn(
+        spawn=_spawn(spawn_id, status="queued"),
+        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex", agent="coder"),
+        runtime_request=_runtime_request(tmp_path, runtime_root),
+        runtime=cast("Any", _runtime(tmp_path)),
+        runtime_root=runtime_root,
+        project_paths=ProjectConfigPaths(project_root=tmp_path, execution_cwd=tmp_path),
+        execution_cwd=tmp_path.as_posix(),
+    )
+
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert result == 1
+    assert row is not None
+    assert row.status == "failed"
+    assert row.error == message
+    assert exception_calls and exception_calls[0][0][0] == "Pre-launch setup failed."
 
 
 @pytest.mark.asyncio

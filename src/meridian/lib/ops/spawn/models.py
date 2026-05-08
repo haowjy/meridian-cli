@@ -495,6 +495,7 @@ class SpawnCancelAllOutput(BaseModel):
     work: str | None = None
     total_running: int
     cancelled_count: int
+    finalizing_count: int = 0
     failed_count: int = 0
     results: tuple["SpawnActionOutput", ...] = ()
 
@@ -504,7 +505,9 @@ class SpawnCancelAllOutput(BaseModel):
         if self.total_running == 0:
             return f"No running spawns to cancel{scope}."
 
-        lines = [f"Cancelled {self.cancelled_count} running spawn(s){scope}."]
+        lines = [f"Requested cancellation for {self.cancelled_count} running spawn(s){scope}."]
+        if self.finalizing_count:
+            lines.append(f"{self.finalizing_count} cancellation(s) still finalizing.")
         if self.failed_count:
             lines.append(f"{self.failed_count} cancellation(s) failed.")
             for result in self.results:

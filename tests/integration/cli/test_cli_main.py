@@ -1,4 +1,5 @@
 import importlib
+import os
 from pathlib import Path
 from typing import Any
 
@@ -107,3 +108,67 @@ def test_bootstrap_command_enables_bootstrap_documents(
 
     assert exc_info.value.code == 0
     assert captured["include_bootstrap_documents"] is True
+
+
+def test_workspace_unknown_subcommand_help_exits_non_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["workspace", "migrate", "--help"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Unknown command: workspace migrate\n"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expects_override"),
+    [
+        (["hooks", "list"], True),
+        (["hooks", "run", "record-finalized"], True),
+        (["hooks", "check"], False),
+    ],
+)
+def test_hooks_bootstrap_authority_override_applies_only_to_list_and_run(
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    expects_override: bool,
+) -> None:
+    parent_project_dir = "/tmp/parent-project"
+    parent_runtime_dir = "/tmp/parent-runtime"
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", parent_project_dir)
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", parent_runtime_dir)
+    captured_env: list[tuple[str | None, str | None]] = []
+
+    def _fake_bootstrap(*_args: object, **_kwargs: object) -> Path | None:
+        captured_env.append(
+            (
+                os.environ.get("MERIDIAN_PROJECT_DIR"),
+                os.environ.get("MERIDIAN_RUNTIME_DIR"),
+            )
+        )
+        return None
+
+    monkeypatch.setattr(cli_main, "maybe_bootstrap_runtime_state", _fake_bootstrap)
+    monkeypatch.setattr(cli_main, "_register_commands_for_invocation", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        cli_main,
+        "_emit_usage_command_invoked",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(cli_main, "app", lambda _argv: None)
+
+    cli_main.main(argv)
+
+    assert captured_env == [
+        (
+            None if expects_override else parent_project_dir,
+            None if expects_override else parent_runtime_dir,
+        )
+    ]
+    assert os.environ.get("MERIDIAN_PROJECT_DIR") == parent_project_dir
+    assert os.environ.get("MERIDIAN_RUNTIME_DIR") == parent_runtime_dir

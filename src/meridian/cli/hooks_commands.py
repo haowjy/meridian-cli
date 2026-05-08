@@ -1,12 +1,16 @@
 """CLI command handlers for hooks.* operations."""
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.hooks.types import HookEventName
 from meridian.lib.ops.hooks import (
@@ -19,10 +23,36 @@ from meridian.lib.ops.hooks import (
 )
 
 Emitter = Callable[[Any], None]
+_MANUAL_HOOK_ENV_OVERRIDES: tuple[str, ...] = (
+    "MERIDIAN_PROJECT_DIR",
+    "MERIDIAN_RUNTIME_DIR",
+)
+
+
+@contextmanager
+def _manual_hook_authority_scope() -> Iterator[None]:
+    previous = {name: os.environ.pop(name, None) for name in _MANUAL_HOOK_ENV_OVERRIDES}
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is not None:
+                os.environ[name] = value
+
+
+def _resolved_project_root() -> str:
+    return resolve_project_root_resolution(
+        execution_cwd=Path.cwd().resolve()
+    ).project_root.as_posix()
 
 
 def _hooks_list(emit: Emitter) -> None:
-    emit(hooks_list_sync(HookListInput()))
+    with _manual_hook_authority_scope():
+        emit(
+            hooks_list_sync(
+                HookListInput(project_root=_resolved_project_root())
+            )
+        )
 
 
 def _hooks_check(emit: Emitter) -> None:
@@ -46,7 +76,16 @@ def _hooks_run(
         ),
     ] = None,
 ) -> None:
-    emit(hooks_run_sync(HookRunInput(name=name, event=event)))
+    with _manual_hook_authority_scope():
+        emit(
+            hooks_run_sync(
+                HookRunInput(
+                    name=name,
+                    event=event,
+                    project_root=_resolved_project_root(),
+                )
+            )
+        )
 
 
 def register_hooks_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:

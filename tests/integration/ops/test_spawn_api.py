@@ -9,6 +9,9 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import (
+    SpawnActionOutput,
+    SpawnCancelAllInput,
+    SpawnCancelInput,
     SpawnCreateInput,
     SpawnListInput,
     SpawnShowInput,
@@ -238,6 +241,58 @@ def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
     assert model_stats.running == 1
     assert model_stats.finalizing == 1
     assert running_id != finalizing_id
+
+
+def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    runtime_root = prepared.runtime_root
+    assert runtime_root is not None
+
+    spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p11",
+        chat_id="c11",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="running",
+    )
+
+    def _fake_spawn_cancel_sync(
+        _payload: SpawnCancelInput,
+        ctx=None,
+        *,
+        sink=None,
+        prepared=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink, prepared)
+        return SpawnActionOutput(
+            command="spawn.cancel",
+            status="finalizing",
+            spawn_id=str(spawn_id),
+            message="Spawn did not terminate within grace; reaper will reconcile.",
+        )
+
+    monkeypatch.setattr(spawn_api, "spawn_cancel_sync", _fake_spawn_cancel_sync)
+
+    output = spawn_api.spawn_cancel_all_sync(
+        SpawnCancelAllInput(project_root=project_root.as_posix()),
+        prepared=prepared,
+    )
+
+    assert output.total_running == 1
+    assert output.cancelled_count == 1
+    assert output.finalizing_count == 1
+    assert output.failed_count == 0
+    assert (
+        output.format_text()
+        == "Requested cancellation for 1 running spawn(s).\n1 cancellation(s) still finalizing."
+    )
 
 
 def test_spawn_list_does_not_infer_running_star_from_exited_at(

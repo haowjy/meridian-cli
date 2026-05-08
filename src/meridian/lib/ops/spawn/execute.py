@@ -118,6 +118,10 @@ _BACKGROUND_RUNTIME_ARTIFACTS = (
 )
 
 
+class LaunchUserInputError(ValueError):
+    """Expected launch-input failure that should not emit traceback logging."""
+
+
 class _SpawnContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -215,6 +219,18 @@ def _record_launch_boundary_observation(
             stage=stage,
             exc_info=True,
         )
+
+
+def _log_launch_failure_without_traceback(
+    *,
+    message: str,
+    spawn_id: SpawnId,
+    exc: Exception,
+) -> None:
+    if isinstance(exc, LaunchUserInputError):
+        logger.warning(message, spawn_id=str(spawn_id), error=str(exc))
+        return
+    logger.exception(message, spawn_id=str(spawn_id))
 
 
 def depth_limits(max_depth: int, *, ctx: RuntimeContext | None = None) -> tuple[int, int]:
@@ -482,7 +498,7 @@ def _resolve_session_continuation(
     requested_continue_fork = request.session.continue_fork
     requested_harness = (request.session.continue_harness or "").strip()
     if request.session.continue_source_tracked and requested_harness_session_id is None:
-        raise ValueError(
+        raise LaunchUserInputError(
             "Source reference has no recorded harness session — cannot continue/fork."
         )
 
@@ -636,12 +652,15 @@ async def _prepare_execution_handoff(
             and resolved_session.continue_fork
             and resolved_session.requested_harness_session_id
         ):
-            forked_session_id = materialize_fork(
-                adapter=harness_adapter,
-                source_session_id=resolved_session.requested_harness_session_id,
-                runtime_root=runtime_root,
-                spawn_id=spawn.spawn_id,
-            )
+            try:
+                forked_session_id = materialize_fork(
+                    adapter=harness_adapter,
+                    source_session_id=resolved_session.requested_harness_session_id,
+                    runtime_root=runtime_root,
+                    spawn_id=spawn.spawn_id,
+                )
+            except ValueError as exc:
+                raise LaunchUserInputError(str(exc)) from exc
             resolved_request = resolved_request.model_copy(
                 update={
                     "session": resolved_request.session.model_copy(
@@ -910,7 +929,11 @@ async def launch_prepared_spawn(
             spawn.spawn_id,
             str(exc),
         )
-        logger.exception("Pre-launch setup failed.", spawn_id=str(spawn.spawn_id))
+        _log_launch_failure_without_traceback(
+            message="Pre-launch setup failed.",
+            spawn_id=spawn.spawn_id,
+            exc=exc,
+        )
         return 1
 
     try:
@@ -982,7 +1005,11 @@ async def launch_prepared_spawn(
                 spawn.spawn_id,
                 str(exc),
             )
-            logger.exception("Child harness pre-run setup failed.", spawn_id=str(spawn.spawn_id))
+            _log_launch_failure_without_traceback(
+                message="Child harness pre-run setup failed.",
+                spawn_id=spawn.spawn_id,
+                exc=exc,
+            )
             return 1
 
         return await _invoke_runner(
