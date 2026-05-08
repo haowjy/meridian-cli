@@ -17,13 +17,16 @@ from typing import Any, cast
 import structlog
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.bootstrap.services import RuntimeWriteContext, prepare_for_runtime_write
+from meridian.lib.bootstrap.services import (
+    RuntimeWriteContext,
+    build_spawn_lifecycle_service_from_roots,
+    prepare_for_runtime_write,
+)
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
 from meridian.lib.core.child_env import build_child_env_overrides
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
@@ -366,7 +369,7 @@ def _init_spawn(
         resolved_work_id = cast("str", resolved_work_id)
         resolved_work_id = ensure_explicit_work_item(project_local_root, resolved_work_id)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
-    service = create_lifecycle_service(project_paths.project_root, runtime_root)
+    service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
     spawn_id = service.start(
         chat_id=resolve_chat_id(ctx=resolved_context, fallback="c0"),
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
@@ -1330,7 +1333,10 @@ def execute_spawn_background(
         command=launch_command,
         cwd=str(project_paths.execution_cwd),
     )
-    create_lifecycle_service(project_paths.project_root, context.runtime_root).mark_running(
+    build_spawn_lifecycle_service_from_roots(
+        project_paths.project_root,
+        context.runtime_root,
+    ).mark_running(
         context.spawn.spawn_id,
         launch_mode=BACKGROUND_LAUNCH_MODE,
         runner_pid=process.pid,

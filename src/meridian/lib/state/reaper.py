@@ -12,15 +12,14 @@ from pathlib import Path
 
 import structlog
 
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
     has_durable_report_completion,
     is_active_spawn_status,
     resolve_reconciled_terminal_state,
 )
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
@@ -360,11 +359,14 @@ def _finalize_and_log(
     *,
     status: SpawnStatus,
     exit_code: int,
-    error: str | None, reason: str, snapshot: ArtifactSnapshot, now: float
+    error: str | None,
+    reason: str,
+    snapshot: ArtifactSnapshot,
+    now: float,
 ) -> SpawnRecord:
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+    service = build_spawn_application_service_from_roots(project_root, runtime_root)
     outcome = asyncio.run(
-        SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
+        service.complete_spawn(
             SpawnId(record.id),
             status,
             exit_code,
@@ -372,7 +374,10 @@ def _finalize_and_log(
             error=error,
         )
     )
+    resolved_record = outcome.snapshot or record
     if not outcome.wrote:
+        return resolved_record
+    if outcome.snapshot is None:
         return record
     inactivity_secs = (
         max(0.0, now - snapshot.last_activity_epoch)
@@ -389,7 +394,7 @@ def _finalize_and_log(
         recent_activity_artifact=snapshot.recent_activity_artifact,
         inactivity_secs=inactivity_secs,
     )
-    return record.model_copy(update={"status": status, "exit_code": exit_code, "error": error})
+    return resolved_record
 
 
 def _finalize_failed(

@@ -92,13 +92,9 @@ class SignalCanceller:
         if runner_pid is None:
             complete_spawn = self._complete_spawn
             if complete_spawn is None:
-                from meridian.lib.core.lifecycle import SpawnLifecycleService
-                from meridian.lib.core.spawn_service import SpawnApplicationService
-
-                complete_spawn = SpawnApplicationService(
-                    self._runtime_root,
-                    SpawnLifecycleService(self._runtime_root),
-                ).complete_spawn
+                raise RuntimeError(
+                    "SignalCanceller requires lifecycle authority when runner_pid is missing."
+                )
             outcome = await complete_spawn(
                 spawn_id,
                 "cancelled",

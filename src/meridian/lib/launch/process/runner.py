@@ -14,8 +14,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
@@ -565,8 +565,8 @@ def run_harness_process(
     effective_config_root: Path | None = None
     claude_materialization_root: Path | None = None
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-    spawn_service = SpawnApplicationService(runtime_root, lifecycle_service)
+    spawn_service = build_spawn_application_service_from_roots(project_root, runtime_root)
+    lifecycle_service = spawn_service.lifecycle
 
     resume_chat_id = (
         preview_request.session.continue_chat_id if session_mode == SessionMode.RESUME else None

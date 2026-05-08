@@ -36,6 +36,13 @@ def _build_context() -> ExtensionInvocationContext:
     )
 
 
+def _build_application(tmp_path: Path):
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    return build_extension_entrypoint(prepared)
+
+
 def test_first_party_registry_contains_wrapped_operations() -> None:
     registry = build_first_party_registry()
     by_fqid = {spec.fqid: spec for spec in registry.list_all()}
@@ -77,11 +84,12 @@ async def test_archive_spawn_handler_routes_through_service(
         return True  # was_new=True
 
     monkeypatch.setattr(service_mod.SpawnApplicationService, "archive", _fake_archive)
+    application = _build_application(tmp_path)
 
     result = await archive_spawn_handler(
         {"spawn_id": "p123"},
         _build_context(),
-        ExtensionCommandServices(runtime_root=tmp_path),
+        build_extension_command_services(application=application),
     )
 
     assert isinstance(result, ExtensionJSONResult)
@@ -106,11 +114,12 @@ async def test_archive_spawn_handler_reports_already_archived(
         return False  # was_new=False (already archived)
 
     monkeypatch.setattr(service_mod.SpawnApplicationService, "archive", _fake_archive)
+    application = _build_application(tmp_path)
 
     result = await archive_spawn_handler(
         {"spawn_id": "p456"},
         _build_context(),
-        ExtensionCommandServices(runtime_root=tmp_path),
+        build_extension_command_services(application=application),
     )
 
     assert isinstance(result, ExtensionJSONResult)
@@ -134,11 +143,12 @@ async def test_archive_spawn_handler_returns_error_on_invalid_state(
         raise ValueError("Cannot archive non-terminal spawn (status: running)")
 
     monkeypatch.setattr(service_mod.SpawnApplicationService, "archive", _fake_archive)
+    application = _build_application(tmp_path)
 
     result = await archive_spawn_handler(
         {"spawn_id": "p789"},
         _build_context(),
-        ExtensionCommandServices(runtime_root=tmp_path),
+        build_extension_command_services(application=application),
     )
 
     assert isinstance(result, ExtensionErrorResult)
@@ -151,21 +161,14 @@ async def test_archive_spawn_handler_uses_extension_application_runtime_root(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from meridian.lib.core import spawn_service as service_mod
-
     project_root = tmp_path / "repo"
     project_root.mkdir()
     prepared = prepare_for_runtime_write(project_root)
     application = build_extension_entrypoint(prepared)
     captured: dict[str, object] = {}
 
-    def _fake_lifecycle(runtime_root: Path) -> object:
-        captured["lifecycle_runtime_root"] = runtime_root
-        return object()
-
-    def _fake_spawn_service(runtime_root: Path, lifecycle: object) -> object:
-        captured["service_runtime_root"] = runtime_root
-        captured["service_lifecycle"] = lifecycle
+    def _fake_spawn_service(application_arg: object) -> object:
+        captured["application"] = application_arg
 
         class _Service:
             async def archive(self, spawn_id: str) -> bool:
@@ -174,8 +177,10 @@ async def test_archive_spawn_handler_uses_extension_application_runtime_root(
 
         return _Service()
 
-    monkeypatch.setattr(service_mod, "SpawnApplicationService", _fake_spawn_service)
-    monkeypatch.setattr("meridian.lib.core.lifecycle.SpawnLifecycleService", _fake_lifecycle)
+    monkeypatch.setattr(
+        "meridian.lib.extensions.commands.sessions.build_spawn_application_service_from_entrypoint",
+        _fake_spawn_service,
+    )
 
     result = await archive_spawn_handler(
         {"spawn_id": "p321"},
@@ -184,8 +189,7 @@ async def test_archive_spawn_handler_uses_extension_application_runtime_root(
     )
 
     assert isinstance(result, ExtensionJSONResult)
-    assert captured["lifecycle_runtime_root"] == prepared.runtime_root
-    assert captured["service_runtime_root"] == prepared.runtime_root
+    assert captured["application"] == application
     assert captured["spawn_id"] == "p321"
 
 

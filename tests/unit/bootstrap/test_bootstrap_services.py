@@ -8,7 +8,10 @@ from meridian.lib.bootstrap.services import (
     build_chat_entrypoint,
     build_extension_entrypoint,
     build_spawn_application_service,
+    build_spawn_application_service_from_entrypoint,
+    build_spawn_application_service_from_roots,
     build_spawn_entrypoint,
+    build_spawn_lifecycle_service_from_roots,
     prepare_for_project_read,
     prepare_for_project_write,
     prepare_for_runtime_read,
@@ -204,5 +207,33 @@ def test_build_spawn_application_service_uses_shared_entrypoint_seam(
     prepared = prepare_for_runtime_write(project_root)
 
     service = build_spawn_application_service(prepared)
+
+    assert service.runtime_root == prepared.runtime_root
+
+
+def test_build_spawn_application_service_from_entrypoint_uses_shared_context(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    prepared = prepare_for_runtime_write(project_root)
+    entrypoint = build_spawn_entrypoint(prepared)
+
+    service = build_spawn_application_service_from_entrypoint(entrypoint)
+
+    assert service.runtime_root == prepared.runtime_root
+
+
+def test_build_spawn_application_service_from_roots_matches_lifecycle_runtime(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    prepared = prepare_for_runtime_write(project_root)
+
+    lifecycle = build_spawn_lifecycle_service_from_roots(project_root, prepared.runtime_root)
+    service = build_spawn_application_service_from_roots(
+        project_root,
+        prepared.runtime_root,
+        lifecycle=lifecycle,
+    )
 
     assert service.runtime_root == prepared.runtime_root

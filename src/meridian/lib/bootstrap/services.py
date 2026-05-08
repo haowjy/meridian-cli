@@ -27,6 +27,7 @@ from meridian.lib.service_context import (
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.core.spawn_service import SpawnApplicationService
+    from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 @dataclass(frozen=True)
@@ -153,24 +154,72 @@ def build_spawn_application_service(
     prepared: RuntimeWriteContext,
     *,
     lifecycle: SpawnLifecycleService | None = None,
+    spawn_manager: SpawnManager | None = None,
 ) -> SpawnApplicationService:
     """Build a spawn application service from the shared spawn entrypoint seam."""
 
+    entrypoint = build_spawn_entrypoint(prepared, lifecycle=lifecycle)
+    return build_spawn_application_service_from_entrypoint(
+        entrypoint,
+        spawn_manager=spawn_manager,
+    )
+
+
+def build_spawn_lifecycle_service_from_roots(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    lifecycle: SpawnLifecycleService | None = None,
+) -> SpawnLifecycleService:
+    """Resolve lifecycle authority for explicit project/runtime roots."""
+
     from meridian.lib.core.lifecycle import create_lifecycle_service
+
+    return lifecycle or create_lifecycle_service(project_root, runtime_root)
+
+
+def build_spawn_application_service_from_roots(
+    project_root: Path,
+    runtime_root: Path,
+    *,
+    lifecycle: SpawnLifecycleService | None = None,
+    spawn_manager: SpawnManager | None = None,
+) -> SpawnApplicationService:
+    """Build a spawn application service for explicit project/runtime roots."""
+
     from meridian.lib.core.spawn_service import SpawnApplicationService
 
-    entrypoint = build_spawn_entrypoint(prepared, lifecycle=lifecycle)
+    lifecycle_service = build_spawn_lifecycle_service_from_roots(
+        project_root,
+        runtime_root,
+        lifecycle=lifecycle,
+    )
+    return SpawnApplicationService(
+        runtime_root,
+        lifecycle_service,
+        spawn_manager=spawn_manager,
+    )
+
+
+def build_spawn_application_service_from_entrypoint(
+    entrypoint: SpawnEntryPoint | ChatEntryPoint | ExtensionEntryPoint,
+    *,
+    spawn_manager: SpawnManager | None = None,
+) -> SpawnApplicationService:
+    """Build a spawn application service from a shared application entrypoint."""
+
     project_root = entrypoint.context.project_root
     runtime_root = entrypoint.context.runtime_root
     if project_root is None:
         raise ValueError("Spawn entrypoint is missing project root.")
     if runtime_root is None:
         raise ValueError("Spawn entrypoint is missing runtime root.")
-    lifecycle_service = entrypoint.services.lifecycle or create_lifecycle_service(
+    return build_spawn_application_service_from_roots(
         project_root,
         runtime_root,
+        lifecycle=entrypoint.services.lifecycle,
+        spawn_manager=spawn_manager,
     )
-    return SpawnApplicationService(runtime_root, lifecycle_service)
 
 
 def build_chat_entrypoint(

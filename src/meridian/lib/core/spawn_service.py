@@ -172,6 +172,11 @@ class SpawnApplicationService:
         """Return the runtime root directory."""
         return self._runtime_root
 
+    @property
+    def lifecycle(self) -> SpawnLifecycleService:
+        """Return the lifecycle authority backing this application service."""
+        return self._lifecycle
+
     def register_observer(
         self,
         observer: LifecycleObserver,

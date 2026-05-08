@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_entrypoint
 from meridian.lib.extensions.context import (
     ExtensionCommandServices,
     ExtensionInvocationContext,
@@ -52,17 +53,10 @@ async def archive_spawn_handler(
             message="runtime_root not available",
         )
 
-    from meridian.lib.core.lifecycle import SpawnLifecycleService
-    from meridian.lib.core.spawn_service import SpawnApplicationService
-
     spawn_id = args["spawn_id"]
 
-    # Create a minimal lifecycle service without hooks - archive doesn't
-    # require project-level hook wiring
-    lifecycle = services.application.services.lifecycle or SpawnLifecycleService(runtime_root)
-    spawn_service = SpawnApplicationService(runtime_root, lifecycle)
-
     try:
+        spawn_service = build_spawn_application_service_from_entrypoint(services.application)
         was_new = await spawn_service.archive(spawn_id)
         return ExtensionJSONResult(
             payload={

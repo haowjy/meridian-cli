@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from meridian.lib.core.lifecycle import create_lifecycle_service
-from meridian.lib.core.spawn_service import CompleteSpawnOutcome, SpawnApplicationService
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
+from meridian.lib.core.spawn_service import CompleteSpawnOutcome
 from meridian.lib.core.types import SpawnId
 
 
@@ -21,8 +21,7 @@ async def finalize_launch_failure(
     error: str,
 ) -> CompleteSpawnOutcome:
     """Finalize a spawn as launch_failure. Owns the fixed tuple."""
-    lifecycle = create_lifecycle_service(project_root, runtime_root)
-    service = SpawnApplicationService(runtime_root, lifecycle)
+    service = build_spawn_application_service_from_roots(project_root, runtime_root)
     return await service.complete_spawn(
         spawn_id,
         "failed",

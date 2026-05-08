@@ -272,9 +272,15 @@ def test_reconcile_active_spawn_uses_authority_project_root_for_lifecycle_servic
     def _capture_factory(captured_project_root: Path, captured_runtime_root: Path):
         captured["project_root"] = captured_project_root
         captured["runtime_root"] = captured_runtime_root
-        return make_lifecycle_service(captured_project_root, captured_runtime_root)
+        service = make_lifecycle_service(captured_project_root, captured_runtime_root)
+        from meridian.lib.core.spawn_service import SpawnApplicationService
 
-    monkeypatch.setattr("meridian.lib.state.reaper.create_lifecycle_service", _capture_factory)
+        return SpawnApplicationService(captured_runtime_root, service)
+
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.build_spawn_application_service_from_roots",
+        _capture_factory,
+    )
 
     reconciled = _reconcile(project_root, runtime_root, record)
 

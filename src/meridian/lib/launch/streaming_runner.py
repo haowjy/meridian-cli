@@ -15,15 +15,17 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from meridian.lib.bootstrap.services import (
+    build_spawn_application_service_from_roots,
+    build_spawn_lifecycle_service_from_roots,
+)
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import Spawn
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
 )
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
@@ -390,7 +392,7 @@ async def run_streaming_spawn(
         spawn_id,
         runner_pid=os.getpid(),
     )
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+    lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
     try:
         await manager.start_spawn(config, run_spec)
         await manager._start_heartbeat(spawn_id)  # pyright: ignore[reportPrivateUsage]
@@ -499,7 +501,10 @@ async def _run_streaming_attempt(
     timed_out = False
     terminated_by_report_watchdog = False
     terminal_outcome: TerminalEventOutcome | None = None
-    lifecycle_service = create_lifecycle_service(manager.project_root, runtime_root)
+    lifecycle_service = build_spawn_lifecycle_service_from_roots(
+        manager.project_root,
+        runtime_root,
+    )
 
     try:
         connection = await manager.start_spawn(config, run_spec)
@@ -791,7 +796,10 @@ async def execute_with_streaming(
             heartbeat_interval_secs=heartbeat_interval_secs,
             heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
         )
-        lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+        lifecycle_service = build_spawn_lifecycle_service_from_roots(
+            project_root,
+            runtime_root,
+        )
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
@@ -1100,15 +1108,19 @@ async def execute_with_streaming(
         except Exception:
             duration_seconds = 0.0
         if lifecycle_service is None:
-            lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+            lifecycle_service = build_spawn_lifecycle_service_from_roots(
+                project_root,
+                runtime_root,
+            )
         finalized_usage = (
             conclusion.extracted.usage if conclusion.extracted is not None else None
         )
         terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
         with signal_coordinator().mask_sigterm():
-            spawn_service = SpawnApplicationService(
+            spawn_service = build_spawn_application_service_from_roots(
+                project_root,
                 runtime_root,
-                lifecycle_service,
+                lifecycle=lifecycle_service,
                 spawn_manager=manager,
             )
             execution_outcome = await spawn_service.complete_execution(

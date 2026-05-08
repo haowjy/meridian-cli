@@ -9,15 +9,15 @@ from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
     build_spawn_application_service,
+    build_spawn_application_service_from_roots,
     build_spawn_entrypoint,
 )
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
-from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
+from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SessionRequest
@@ -792,10 +792,7 @@ async def _spawn_cancel_impl(
     spawn_service = (
         build_spawn_application_service(prepared)
         if prepared is not None
-        else SpawnApplicationService(
-            runtime_root,
-            create_lifecycle_service(project_root, runtime_root),
-        )
+        else build_spawn_application_service_from_roots(project_root, runtime_root)
     )
     register_debug_trace_observer()
     cancel_owner = os.environ.get("MERIDIAN_SPAWN_ID") or "cli"
