@@ -7,6 +7,7 @@ behavioral pytest lane.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from collections.abc import Callable, Sequence
@@ -39,6 +40,199 @@ def _source_lines(path: Path) -> list[tuple[int, str]]:
 def _search(path: Path, pattern: str) -> list[tuple[int, str]]:
     compiled = re.compile(pattern)
     return [(lineno, line) for lineno, line in _source_lines(path) if compiled.search(line)]
+
+
+@dataclass(frozen=True)
+class _PlatformBoundaryWaiver:
+    """Explicitly approved module-level PLAT-04 exception."""
+
+    path: str
+    rationale: str
+
+
+_PLAT04_APPROVED_PREFIXES: tuple[str, ...] = (
+    # Capability adapters that intentionally isolate OS-specific imports/branches.
+    "src/meridian/lib/platform/",
+)
+_PLAT04_APPROVED_WAIVERS: tuple[_PlatformBoundaryWaiver, ...] = (
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/launch/process/pty_launcher.py",
+        rationale="posix-only PTY launch mechanism boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/launch/process/windows_launcher.py",
+        rationale="windows console launch mechanism boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/launch/signals.py",
+        rationale="signal semantics adapter",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/state/user_paths.py",
+        rationale="user-state-root authority boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/state/atomic.py",
+        rationale="cross-platform atomic-write mechanism",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/state/session_store.py",
+        rationale="session-store lock and file-mode mechanics",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/streaming/control_socket.py",
+        rationale="control-channel transport boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/streaming/signal_canceller.py",
+        rationale="cancellation transport boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/plugin_api/fs.py",
+        rationale="plugin file-lock primitive boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/cli/spawn_inject.py",
+        rationale="CLI bridge for transport discovery path selection",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/harness/claude_preflight.py",
+        rationale="harness-specific launch preflight behavior",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/harness/codex.py",
+        rationale="harness-specific shell/env behavior",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/safety/guardrails.py",
+        rationale="cross-platform shell safety boundary",
+    ),
+    _PlatformBoundaryWaiver(
+        path="src/meridian/lib/ops/spawn/execute.py",
+        rationale="runtime transport selection bridge",
+    ),
+)
+_PLAT04_APPROVED_WAIVER_PATHS = frozenset(waiver.path for waiver in _PLAT04_APPROVED_WAIVERS)
+_PLAT04_PLATFORM_MODULES = frozenset({"os", "sys", "platform", "meridian.lib.platform"})
+_PLAT04_PLATFORM_SPECIFIC_MODULES = frozenset({"fcntl", "pty", "termios", "msvcrt", "winreg"})
+
+
+def _is_plat04_approved(relative_path: str) -> bool:
+    return relative_path.startswith(_PLAT04_APPROVED_PREFIXES) or (
+        relative_path in _PLAT04_APPROVED_WAIVER_PATHS
+    )
+
+
+def _line_text(lines: Sequence[str], lineno: int) -> str:
+    if 1 <= lineno <= len(lines):
+        return lines[lineno - 1].strip()
+    return ""
+
+
+def _plat04_violation(*, relative_path: str, lineno: int, name: str, line: str) -> str:
+    return (
+        f"{relative_path}:{lineno}: PLAT-04 platform boundary drift — "
+        f"unapproved {name} usage in non-adapter module: {line}"
+    )
+
+
+def _check_platform_boundary_drift_in_file(path: Path, *, relative_path: str) -> list[str]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    source_lines = text.splitlines()
+    tree = ast.parse(text, filename=relative_path)
+
+    module_aliases: dict[str, str] = {}
+    imported_symbol_aliases: dict[str, str] = {}
+    platform_system_aliases: set[str] = set()
+    banned_import_hits: list[tuple[int, str]] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local_name = alias.asname or alias.name
+                if alias.name in _PLAT04_PLATFORM_MODULES:
+                    module_aliases[local_name] = alias.name
+                if alias.name in _PLAT04_PLATFORM_SPECIFIC_MODULES:
+                    banned_import_hits.append((node.lineno, f"import {alias.name}"))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module
+            if module is None:
+                continue
+            if module in _PLAT04_PLATFORM_SPECIFIC_MODULES:
+                banned_import_hits.extend((node.lineno, f"import {module}") for _ in node.names)
+                continue
+            if module == "sys":
+                for alias in node.names:
+                    if alias.name == "platform":
+                        imported_symbol_aliases[alias.asname or alias.name] = "sys.platform"
+            elif module == "os":
+                for alias in node.names:
+                    if alias.name == "name":
+                        imported_symbol_aliases[alias.asname or alias.name] = "os.name"
+            elif module == "platform":
+                for alias in node.names:
+                    if alias.name == "system":
+                        platform_system_aliases.add(alias.asname or alias.name)
+            elif module == "meridian.lib.platform":
+                for alias in node.names:
+                    if alias.name == "*":
+                        banned_import_hits.append((node.lineno, "IS_WINDOWS"))
+                    elif alias.name == "IS_WINDOWS":
+                        banned_import_hits.append((node.lineno, "IS_WINDOWS"))
+                        imported_symbol_aliases[alias.asname or alias.name] = "IS_WINDOWS"
+
+    hits: list[tuple[int, str]] = []
+    hits.extend(banned_import_hits)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if not isinstance(node.value, ast.Name):
+                continue
+            module_name = module_aliases.get(node.value.id)
+            if module_name == "os" and node.attr == "name":
+                hits.append((node.lineno, "os.name"))
+            elif module_name == "sys" and node.attr == "platform":
+                hits.append((node.lineno, "sys.platform"))
+            elif module_name == "meridian.lib.platform" and node.attr == "IS_WINDOWS":
+                hits.append((node.lineno, "IS_WINDOWS"))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            symbol = imported_symbol_aliases.get(node.id)
+            if symbol is not None:
+                hits.append((node.lineno, symbol))
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                module_name = module_aliases.get(node.func.value.id)
+                if module_name == "platform" and node.func.attr == "system":
+                    hits.append((node.lineno, "platform.system()"))
+            elif isinstance(node.func, ast.Name) and node.func.id in platform_system_aliases:
+                hits.append((node.lineno, "platform.system()"))
+
+    unique_hits = sorted(set(hits))
+    return [
+        _plat04_violation(
+            relative_path=relative_path,
+            lineno=lineno,
+            name=name,
+            line=_line_text(source_lines, lineno),
+        )
+        for lineno, name in unique_hits
+    ]
+
+
+def _check_platform_boundary_drift(project_root: Path) -> list[str]:
+    source_root = project_root / "src"
+    this_module = Path(__file__).resolve()
+
+    violations: list[str] = []
+    for path in _iter_python_files(source_root):
+        if path.resolve() == this_module:
+            continue
+
+        relative = path.relative_to(project_root).as_posix()
+        if _is_plat04_approved(relative):
+            continue
+
+        violations.extend(_check_platform_boundary_drift_in_file(path, relative_path=relative))
+    return violations
 
 
 def _check_spawn_store_lifecycle_transitions(project_root: Path) -> list[str]:
@@ -260,6 +454,11 @@ CHECKS: tuple[ArchitectureCheck, ...] = (
         check_id="LAUNCH-BOUNDARY-03",
         description="deleted placeholder modules remain deleted",
         run=_check_deleted_placeholder_modules,
+    ),
+    ArchitectureCheck(
+        check_id="PLAT-04",
+        description="platform boundary drift remains scoped to approved adapter modules",
+        run=_check_platform_boundary_drift,
     ),
 )
 
