@@ -65,7 +65,7 @@ def register_spawn_telemetry_observer() -> None:
 def _extract_terminal_data(event: LifecycleEvent) -> dict[str, object]:
     """Extract relevant data from a sparse spawn lifecycle event."""
     data: dict[str, object] = {}
-    for key in ("exit_code", "status", "duration_secs", "reason"):
+    for key in ("exit_code", "status", "duration_secs", "reason", "category"):
         value = event.payload.get(key)
         if value is not None:
             data[key] = value

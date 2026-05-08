@@ -325,6 +325,10 @@ async def test_get_spawn_failure_returns_failure_sentinel(tmp_path: Path) -> Non
     assert failure.spawn_id == str(spawn_id)
     assert failure.exit_code == 2
     assert failure.reason == "runner"
+    assert str(failure.category) == "harness_failure"
+    assert failure.status == "failed"
+    assert failure.origin == "runner"
+    assert failure.correlation["spawn_id"] == str(spawn_id)
 
 
 @pytest.mark.asyncio

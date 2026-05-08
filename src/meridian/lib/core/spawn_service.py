@@ -19,6 +19,7 @@ from meridian.lib.core.telemetry import (
     LifecycleObserver,
     LifecycleObserverTier,
     SpawnFailure,
+    SpawnFailureCategory,
     next_spawn_sequence,
     notify_observers,
     register_observer,
@@ -215,6 +216,9 @@ class SpawnApplicationService:
         try:
             data = json.loads(sentinel_path.read_text(encoding="utf-8"))
             data["ts"] = datetime.fromisoformat(data["ts"])
+            category = data.get("category")
+            if isinstance(category, str):
+                data["category"] = SpawnFailureCategory(category)
             return SpawnFailure(**data)
         except Exception:
             return None

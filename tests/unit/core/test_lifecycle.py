@@ -10,10 +10,12 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import structlog
 
 import meridian.lib.core.telemetry as telemetry
 from meridian.lib.core.lifecycle import (
     LifecycleEvent,
+    LifecycleOutcomeCategory,
     SpawnLifecycleService,
     create_lifecycle_service,
     generate_event_id,
@@ -77,6 +79,17 @@ class UpdatingCreatedHook:
             event.spawn_id,
             desc="updated from hook",
         )
+
+
+class CorrelationCapturingHook:
+    """Captures structlog contextvars visible during lifecycle dispatch."""
+
+    def __init__(self) -> None:
+        self.contexts: list[dict[str, str]] = []
+
+    def on_event(self, event: LifecycleEvent) -> None:
+        _ = event
+        self.contexts.append(dict(structlog.contextvars.get_contextvars()))
 
 
 # ---------------------------------------------------------------------------
@@ -928,3 +941,66 @@ def test_create_lifecycle_service_centralizes_hook_enablement(
     assert disabled_service._hooks == []
     assert len(enabled_service._hooks) == 1
     assert enabled_service._hooks[0].__class__.__name__ == "HookDispatcher"
+
+
+def test_finalized_event_exposes_typed_outcome_category(tmp_path: Path) -> None:
+    hook = RecordingHook()
+    svc = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(svc, status="running")
+
+    svc.finalize(spawn_id, "failed", 1, origin="launch_failure", error="launch died")
+
+    event = next(e for e in hook.events if e.event_type == "spawn.finalized")
+    assert event.outcome_category == LifecycleOutcomeCategory.LAUNCH_FAILURE
+
+
+def test_failure_sentinel_uses_canonical_terminal_diagnostic_shape(tmp_path: Path) -> None:
+    svc = _make_service(tmp_path)
+    spawn_id = _start_spawn(svc, status="running", work_id="W1")
+
+    svc.finalize(spawn_id, "failed", 7, origin="launch_failure", error="launch died")
+
+    sentinel_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "failure.json"
+    data = json.loads(sentinel_path.read_text(encoding="utf-8"))
+    assert data["category"] == "launch_failure"
+    assert data["status"] == "failed"
+    assert data["origin"] == "launch_failure"
+    assert data["correlation"]["spawn_id"] == spawn_id
+    assert data["correlation"]["work_id"] == "W1"
+    assert data["correlation"]["failure_category"] == "launch_failure"
+
+
+def test_lifecycle_correlation_binds_and_resets_without_cross_spawn_bleed(tmp_path: Path) -> None:
+    hook_a = CorrelationCapturingHook()
+    hook_b = CorrelationCapturingHook()
+    svc_a = _make_service(tmp_path, hooks=[hook_a])
+    svc_b = _make_service(tmp_path, hooks=[hook_b])
+
+    spawn_a = _start_spawn(svc_a, work_id="WA")
+    assert structlog.contextvars.get_contextvars() == {}
+
+    spawn_b = _start_spawn(svc_b, work_id="WB")
+    assert structlog.contextvars.get_contextvars() == {}
+
+    assert hook_a.contexts[0]["spawn_id"] == spawn_a
+    assert hook_a.contexts[0]["work_id"] == "WA"
+    assert hook_b.contexts[0]["spawn_id"] == spawn_b
+    assert hook_b.contexts[0]["work_id"] == "WB"
+    assert hook_b.contexts[0]["spawn_id"] != hook_a.contexts[0]["spawn_id"]
+
+
+def test_failed_terminal_telemetry_includes_category(tmp_path: Path) -> None:
+    telemetry_events: list[telemetry.LifecycleEvent] = []
+
+    class RecordingTelemetryObserver:
+        def on_event(self, event: telemetry.LifecycleEvent) -> None:
+            telemetry_events.append(event)
+
+    telemetry.register_observer(RecordingTelemetryObserver())
+    svc = _make_service(tmp_path)
+    spawn_id = _start_spawn(svc, status="running")
+
+    svc.finalize(spawn_id, "failed", 1, origin="reconciler", error="orphaned")
+
+    failed = next(event for event in telemetry_events if event.event == "spawn.failed")
+    assert failed.payload["category"] == "reconciler_orphan"
