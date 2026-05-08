@@ -21,6 +21,7 @@ from meridian.lib.harness.adapter import (
     BootstrapContract,
     BootstrapMode,
     ExtractionContract,
+    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
@@ -319,6 +320,7 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
             ),
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+                fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
                 primary_attach_failure_policy="raise",
                 observer_controller=observer,
             ),

@@ -63,6 +63,13 @@ class BootstrapMode(StrEnum):
     MANAGED_PRIMARY_ATTACH = "managed_primary_attach"
 
 
+class ForkMaterializationMode(StrEnum):
+    """How continue-fork requests are materialized for one harness."""
+
+    NATIVE_CONTINUE_FORK = "native_continue_fork"
+    MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
+
+
 class HarnessCapabilities(BaseModel):
     """Feature flags for one harness implementation."""
 
@@ -150,6 +157,9 @@ class BootstrapContract(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     mode: BootstrapMode
+    fork_materialization: ForkMaterializationMode = (
+        ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    )
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     seeds_resume_metadata: bool = True
     observer_controller: ObserverControllerContract | None = None

@@ -18,6 +18,7 @@ from meridian.lib.harness.adapter import (
     BootstrapContract,
     BootstrapMode,
     ExtractionContract,
+    ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
     McpConfig,
@@ -278,7 +279,10 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
                 )
             ),
             approval=ApprovalContract(),
-            bootstrap=BootstrapContract(mode=BootstrapMode.SUBPROCESS_ONLY),
+            bootstrap=BootstrapContract(
+                mode=BootstrapMode.SUBPROCESS_ONLY,
+                fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+            ),
             capability_limits=(
                 "terminal_surface_mode limited to pty_mediated",
                 "no observer/controller backend contract",

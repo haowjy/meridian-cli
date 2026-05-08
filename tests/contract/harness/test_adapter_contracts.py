@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness import HARNESS_EXTENSION_TOUCHPOINTS, ensure_bootstrap
-from meridian.lib.harness.adapter import BootstrapMode, RuntimeHitlMode
+from meridian.lib.harness.adapter import (
+    BootstrapMode,
+    ForkMaterializationMode,
+    RuntimeHitlMode,
+)
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     get_bundle_registry,
@@ -36,6 +40,7 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
         TerminalSurfaceMode.PTY_MEDIATED,
     )
     assert claude.bootstrap.mode.value == "subprocess_only"
+    assert claude.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK
     assert claude.bootstrap.observer_controller is None
 
     for harness_id in (HarnessId.CODEX, HarnessId.OPENCODE):
@@ -50,6 +55,14 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
         assert contract.bootstrap.mode.value == "managed_primary_attach"
         assert contract.bootstrap.observer_controller is not None
         assert contract.transport.observer_controller_required is True
+    assert (
+        registry.get_contract(HarnessId.CODEX).bootstrap.fork_materialization
+        is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
+    )
+    assert (
+        registry.get_contract(HarnessId.OPENCODE).bootstrap.fork_materialization
+        is ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    )
 
 
 def test_harness_contracts_match_registered_transport_maps() -> None:

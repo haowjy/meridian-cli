@@ -159,13 +159,12 @@ class AutoAcceptHandler:
 
 
 class InteractiveHandler:
-    """Future HITL request policy seam for externally resolved decisions.
+    """HITL request policy seam for externally resolved decisions.
 
     This handler surfaces harness requests as events instead of auto-answering
     them, then expects external code to respond later through the connection.
-    It is intentionally kept as a policy boundary for future chat/HITL
-    integration; the current production codebase has no instantiation path for
-    it.
+    It remains the policy boundary used by managed-primary flows that surface
+    runtime requests (`request/opened`) to launch observers.
     """
 
     no_runtime_hitl: bool = False

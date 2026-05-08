@@ -17,6 +17,7 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.harness.adapter import ForkMaterializationMode
 from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
@@ -395,7 +396,7 @@ async def test_prepare_execution_handoff_closes_session_scope_when_later_prepara
 
 @pytest.mark.parametrize("harness", ["claude", "opencode"])
 @pytest.mark.asyncio
-async def test_prepare_execution_handoff_keeps_native_child_fork_for_non_codex_harnesses(
+async def test_prepare_execution_handoff_keeps_native_child_fork_when_contract_declares_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     harness: str,
@@ -408,7 +409,12 @@ async def test_prepare_execution_handoff_keeps_native_child_fork_for_non_codex_h
                 capabilities=SimpleNamespace(
                     supports_session_resume=True,
                     supports_session_fork=True,
-                )
+                ),
+                contract=SimpleNamespace(
+                    bootstrap=SimpleNamespace(
+                        fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK
+                    )
+                ),
             )
 
     @contextmanager
@@ -487,7 +493,7 @@ async def test_prepare_execution_handoff_keeps_native_child_fork_for_non_codex_h
 
 
 @pytest.mark.asyncio
-async def test_prepare_execution_handoff_materializes_child_fork_for_codex(
+async def test_prepare_execution_handoff_materializes_child_fork_when_contract_declares_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -499,7 +505,14 @@ async def test_prepare_execution_handoff_materializes_child_fork_for_codex(
                 capabilities=SimpleNamespace(
                     supports_session_resume=True,
                     supports_session_fork=True,
-                )
+                ),
+                contract=SimpleNamespace(
+                    bootstrap=SimpleNamespace(
+                        fork_materialization=(
+                            ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
+                        )
+                    )
+                ),
             )
 
     @contextmanager
@@ -541,14 +554,14 @@ async def test_prepare_execution_handoff_materializes_child_fork_for_codex(
     monkeypatch.setattr(execute_module, "materialize_fork", fake_materialize_fork)
 
     handoff = await _prepare_execution_handoff(
-        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p-codex"))),
+        spawn=cast("Any", SimpleNamespace(spawn_id=SpawnId("p-materialized"))),
         request=SpawnRequest(
             prompt="run it",
             model="gpt-5.4",
-            harness="codex",
+            harness="opencode",
             session=SessionRequest(
                 requested_harness_session_id="source-session",
-                continue_harness="codex",
+                continue_harness="opencode",
                 continue_fork=True,
             ),
         ),
@@ -571,7 +584,7 @@ async def test_prepare_execution_handoff_materializes_child_fork_for_codex(
     )
     try:
         assert materialize_args["source_session_id"] == "source-session"
-        assert materialize_args["spawn_id"] == SpawnId("p-codex")
+        assert materialize_args["spawn_id"] == SpawnId("p-materialized")
         assert handoff.resolved_request.session.requested_harness_session_id == "forked-session"
         assert handoff.resolved_request.session.continue_fork is False
     finally:

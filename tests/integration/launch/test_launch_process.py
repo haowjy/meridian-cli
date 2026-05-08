@@ -13,7 +13,7 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.adapter import BootstrapMode
+from meridian.lib.harness.adapter import BootstrapMode, ForkMaterializationMode
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
     ClaudeOverlayCleanupResult,
@@ -335,6 +335,109 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns) == 1
     assert spawns[0].terminal_origin == "launcher"
+
+
+@pytest.mark.slow
+def test_run_harness_process_fork_materialization_comes_from_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    monkeypatch.delenv(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, raising=False)
+    project_root = tmp_path
+    _write_minimal_mars_config(project_root)
+    harness_registry = get_default_harness_registry()
+    config = load_config(project_root)
+    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    native_fork_contract = codex_adapter.contract.model_copy(
+        update={
+            "bootstrap": codex_adapter.contract.bootstrap.model_copy(
+                update={
+                    "fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK
+                }
+            )
+        }
+    )
+    monkeypatch.setattr(
+        type(codex_adapter),
+        "contract",
+        property(lambda _self: native_fork_contract),
+    )
+    launch_context = build_launch_context(
+        spawn_id="dry-run-primary",
+        request=SpawnRequest(
+            prompt="fork prompt",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness=HarnessId.CODEX.value,
+            session=SessionRequest(
+                requested_harness_session_id="source-session",
+                continue_chat_id="c7",
+                forked_from_chat_id="c7",
+                continue_fork=True,
+                primary_session_mode=SessionMode.FORK.value,
+            ),
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.PRIMARY,
+            config_snapshot=config.model_dump(mode="json", exclude_none=True),
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=project_root.as_posix(),
+            project_paths_execution_cwd=project_root.as_posix(),
+        ),
+        harness_registry=harness_registry,
+        dry_run=True,
+    )
+
+    captured: dict[str, str | None] = {}
+
+    def fake_project_subprocess_spec(
+        harness_id: HarnessId,
+        spec: CodexLaunchSpec,
+        *,
+        base_command: tuple[str, ...],
+    ) -> list[str]:
+        assert harness_id is HarnessId.CODEX
+        captured["build_continue_session"] = spec.continue_session_id
+        return [*base_command, "resume", spec.continue_session_id or ""]
+
+    def fail_if_forked(source_session_id: str) -> str:
+        raise AssertionError(f"Unexpected fork materialization for session {source_session_id}")
+
+    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
+        captured["env_chat_id"] = dict(kwargs["env"]).get("MERIDIAN_CHAT_ID")
+        return process.PrimaryAttachOutcome(
+            exit_code=0,
+            session_id="source-session",
+            tui_pid=111,
+        )
+
+    monkeypatch.setattr(
+        launch_command,
+        "project_subprocess_spec",
+        fake_project_subprocess_spec,
+    )
+    monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
+    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "source-session")
+    monkeypatch.setattr(
+        process,
+        "_run_primary_attach",
+        fake_run_primary_attach,
+    )
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        process,
+        "start_session",
+        lambda *args, **kwargs: "c999",
+    )
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert captured["build_continue_session"] == "source-session"
+    assert captured["env_chat_id"] == "c999"
+    assert outcome.chat_id == "c999"
 
 
 @pytest.mark.slow

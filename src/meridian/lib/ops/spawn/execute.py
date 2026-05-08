@@ -30,7 +30,7 @@ from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.harness.adapter import StreamEvent
+from meridian.lib.harness.adapter import ForkMaterializationMode, StreamEvent
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
     cleanup_claude_overlay,
@@ -624,12 +624,14 @@ async def _prepare_execution_handoff(
         resolved_request = resolved_request.model_copy(
             update={"agent": session_context.resolved_agent_name}
         )
-        # I-10/I-11: spawn row AND chat row now both exist. Codex forking is
-        # Meridian-materialized so the spawn row receives the forked session ID
-        # via update_spawn (not pre-populated on the start row). Other harnesses
-        # keep continue_fork native for launch projection.
+        # I-10/I-11: spawn row AND chat row now both exist. Harnesses that
+        # declare MERIDIAN_MATERIALIZED_FORK fork here so the spawn row
+        # receives the forked session ID via update_spawn (not pre-populated on
+        # the start row). Other harnesses keep continue_fork native for launch
+        # projection.
         if (
-            harness_id == HarnessId.CODEX
+            harness_adapter.contract.bootstrap.fork_materialization
+            is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
             and resolved_session.continue_fork
             and resolved_session.requested_harness_session_id
         ):

@@ -22,7 +22,7 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.adapter import HarnessContract
+from meridian.lib.harness.adapter import ForkMaterializationMode, HarnessContract
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
@@ -670,7 +670,8 @@ def run_harness_process(
             try:
                 should_fork = (
                     session_mode == SessionMode.FORK
-                    and harness_id == HarnessId.CODEX
+                    and harness_adapter.contract.bootstrap.fork_materialization
+                    is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )
                 primary_spawn_id = SpawnId(
