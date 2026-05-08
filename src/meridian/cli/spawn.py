@@ -352,6 +352,8 @@ def _spawn_create(
                 source_ref=resolved_fork_from,
                 prompt=resolved_prompt,
                 model=model,
+                files=references,
+                template_vars=template_vars,
                 agent=agent,
                 skills=parsed_skills,
                 inherit_source_skills=skills is None,

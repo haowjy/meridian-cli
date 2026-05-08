@@ -1488,6 +1488,8 @@ def spawn_fork_sync(
     create_input = SpawnCreateInput(
         prompt=payload.prompt,
         model=requested_model or (resolved_reference.source_model or ""),
+        files=payload.files,
+        template_vars=payload.template_vars,
         agent=requested_agent or resolved_reference.source_agent,
         skills=inherited_skills,
         desc=payload.desc,

@@ -143,13 +143,28 @@ def test_spawn_fork_routes_through_spawn_fork_service(
     monkeypatch.setattr(spawn_cli, "spawn_fork_sync", _fake_spawn_fork_sync)
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["spawn", "--fork", "c7", "-p", "fork prompt", "--dry-run"])
+        cli_main.main(
+            [
+                "spawn",
+                "--fork",
+                "c7",
+                "-p",
+                "fork prompt",
+                "--file",
+                "README.md",
+                "--prompt-var",
+                "ticket=123",
+                "--dry-run",
+            ]
+        )
 
     assert exc_info.value.code == 0
     payload = captured["payload"]
     assert isinstance(payload, SpawnForkInput)
     assert payload.source_ref == "c7"
     assert payload.prompt == "fork prompt"
+    assert payload.files == ("README.md",)
+    assert payload.template_vars == ("ticket=123",)
     assert payload.inherit_source_skills is True
 
 

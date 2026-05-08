@@ -781,6 +781,8 @@ class SpawnForkInput(BaseModel):
     source_ref: str
     prompt: str
     model: str = ""
+    files: tuple[str, ...] = ()
+    template_vars: tuple[str, ...] = ()
     agent: str | None = None
     skills: tuple[str, ...] = ()
     inherit_source_skills: bool = False

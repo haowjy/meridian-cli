@@ -322,6 +322,8 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
         SpawnForkInput(
             source_ref="c-source",
             prompt="fork prompt",
+            files=("README.md",),
+            template_vars=("ticket=123",),
             project_root=project_root.as_posix(),
             inherit_source_skills=True,
         )
@@ -332,6 +334,8 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     assert captured_input.model == "gpt-5.4"
     assert captured_input.agent == "reviewer"
     assert captured_input.skills == ("skill-a", "skill-b")
+    assert captured_input.files == ("README.md",)
+    assert captured_input.template_vars == ("ticket=123",)
     assert captured_input.work == "w-source"
     assert captured_input.harness == "codex"
     assert captured_input.session.requested_harness_session_id == "session-seed"
