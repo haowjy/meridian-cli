@@ -1657,6 +1657,17 @@ def spawn_continue_sync(
         passthrough_args=payload.passthrough_args,
         approval=payload.approval,
     )
+    target_harness = _resolve_effective_fork_target_harness(
+        create_input,
+        resolved_project_root=project_root,
+    )
+    if source_harness is not None and source_harness != target_harness:
+        raise ValueError(
+            "Cannot continue across harnesses: "
+            f"source is '{source_harness}', target is '{target_harness}'."
+        )
+
+    create_input = create_input.model_copy(update={"harness": target_harness})
     if prepared is not None:
         result = spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
     else:
