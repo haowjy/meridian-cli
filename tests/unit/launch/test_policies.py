@@ -1017,6 +1017,96 @@ def test_resolve_policies_errors_on_invalid_same_layer_user_model_with_harness(
         )
 
 
+def test_resolve_policies_allows_invalid_user_model_with_explicit_cross_layer_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+
+    def reject_model(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
+        raise ValueError(f"Invalid model '{name}'.")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", reject_model)
+
+    policies = resolve_policies(
+        project_root=tmp_path,
+        layers=(
+            RuntimeOverrides(model="bad-model"),
+            RuntimeOverrides(harness="codex"),
+        ),
+        config_overrides=RuntimeOverrides(),
+        config=MeridianConfig(),
+        harness_registry=get_default_harness_registry(),
+        configured_default_harness="claude",
+    )
+
+    assert policies.model == "bad-model"
+    assert policies.harness == HarnessId.CODEX
+    assert policies.routing.model == "bad-model"
+    assert policies.model_selection is not None
+    assert policies.model_selection.canonical_model_id == "bad-model"
+    assert policies.model_selection.harness_provenance == "explicit-override"
+
+
+def test_resolve_policies_errors_on_invalid_user_model_with_config_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+
+    def reject_model(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
+        raise ValueError(f"Invalid model '{name}'.")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", reject_model)
+
+    with pytest.raises(ValueError, match="Invalid model 'bad-model'"):
+        resolve_policies(
+            project_root=tmp_path,
+            layers=(RuntimeOverrides(model="bad-model"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides(harness="codex"),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+            configured_default_harness="claude",
+        )
+
+
+def test_resolve_policies_errors_on_invalid_user_model_with_profile_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: gpt\n"
+            "harness: codex\n"
+        ),
+    )
+
+    def reject_model(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
+        raise ValueError(f"Invalid model '{name}'.")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", reject_model)
+
+    with pytest.raises(ValueError, match="Invalid model 'bad-model'"):
+        resolve_policies(
+            project_root=tmp_path,
+            layers=(
+                RuntimeOverrides(agent="reviewer", model="bad-model"),
+                RuntimeOverrides(),
+            ),
+            config_overrides=RuntimeOverrides(),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+            configured_default_harness="claude",
+        )
+
+
 def test_resolve_policies_profile_model_overrides_win_over_config_and_alias_defaults(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1813,6 +1903,47 @@ def test_resolve_policies_primary_harness_does_not_override_model_routing(
     )
 
     assert policies.harness == HarnessId.CODEX
+
+
+def test_resolve_policies_explicit_cli_model_derives_harness_over_profile_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude-haiku-4-5\n"
+            "harness: claude\n"
+        ),
+    )
+    aliases = {
+        "gpt": _mock_alias(alias="gpt", model_id="gpt-5.5", harness=HarnessId.CODEX),
+        "claude-haiku-4-5": _mock_alias(
+            alias="claude-haiku-4-5",
+            model_id="claude-haiku-4-5",
+            harness=HarnessId.CLAUDE,
+        ),
+    }
+    _patch_alias_resolution(monkeypatch, resolved_entries=aliases)
+
+    policies = resolve_policies(
+        project_root=tmp_path,
+        layers=(
+            RuntimeOverrides(agent="reviewer", model="gpt"),
+            RuntimeOverrides(),
+        ),
+        config_overrides=RuntimeOverrides(),
+        config=MeridianConfig(),
+        harness_registry=get_default_harness_registry(),
+        configured_default_harness="claude",
+    )
+
+    assert policies.harness == HarnessId.CODEX
+    assert policies.model_selection is not None
+    assert policies.model_selection.harness_provenance == "model-derived-override"
 
 
 def test_resolve_policies_user_effort_override_wins_over_model_profile_and_alias(

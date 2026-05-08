@@ -183,6 +183,14 @@ def _first_set_layer_index(
     return None
 
 
+def _is_pre_profile_explicit_layer(
+    *,
+    layer_index: int | None,
+    pre_profile_layer_count: int,
+) -> bool:
+    return layer_index is not None and layer_index < pre_profile_layer_count
+
+
 def _policy_warnings(
     *,
     profile_warning: str | None,
@@ -490,7 +498,10 @@ def resolve_harness_routing(
 
     explicit_harness = (
         resolved.harness
-        if harness_layer_index is not None and harness_layer_index < pre_profile_layer_count
+        if _is_pre_profile_explicit_layer(
+            layer_index=harness_layer_index,
+            pre_profile_layer_count=pre_profile_layer_count,
+        )
         else None
     )
 
@@ -513,8 +524,9 @@ def resolve_harness_routing(
         harness_id = HarnessId(configured_default_harness or "claude")
         provenance_note = "configured-default"
 
-    model_set_in_pre_profile_layers = (
-        model_layer_index is not None and model_layer_index < pre_profile_layer_count
+    model_set_in_pre_profile_layers = _is_pre_profile_explicit_layer(
+        layer_index=model_layer_index,
+        pre_profile_layer_count=pre_profile_layer_count,
     )
     harness_from_profile_or_config = (
         harness_layer_index is not None and harness_layer_index >= pre_profile_layer_count
@@ -695,19 +707,20 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
 
     # If model resolution failed but harness is explicit, bind the raw
     # model string to the explicit harness instead of failing.
-    if (
-        base_resolved.harness
-        and not user_explicit_same_precedence
-        and model_resolution_error is not None
-        and resolved_entry is None
-        and model_token
-    ):
-        resolved_entry = AliasEntry(
-            alias="",
-            model_id=ModelId(model_token),
-            resolved_harness=harness_id,
-        )
-        model_resolution_error = None
+    explicit_request_harness = _is_pre_profile_explicit_layer(
+        layer_index=harness_layer_index,
+        pre_profile_layer_count=pre_profile_layer_count,
+    )
+    if model_resolution_error is not None and resolved_entry is None and model_token:
+        if explicit_request_harness and not user_explicit_same_precedence:
+            resolved_entry = AliasEntry(
+                alias="",
+                model_id=ModelId(model_token),
+                resolved_harness=harness_id,
+            )
+            model_resolution_error = None
+        else:
+            raise model_resolution_error
 
     final_model, resolved_model_entry = _resolve_final_model(
         layer_model=model_token,
