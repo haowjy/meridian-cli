@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import utc_now_iso
-from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.paths import ProjectPaths, resolve_project_paths
 
 _MAX_SLUG_LENGTH = 64
 _NON_ALNUM_HYPHEN = re.compile(r"[^a-z0-9-]+")
@@ -56,11 +56,26 @@ def _status_path(work_dir: Path) -> Path:
     return work_dir / _STATUS_FILENAME
 
 
-def _active_dir(paths: RuntimePaths, work_id: str) -> Path:
+def _project_paths_for_work_store(project_state_dir: Path) -> ProjectPaths:
+    """Resolve authoritative work/archive paths for one project state dir.
+
+    Work-store callers pass the project-owned ``.meridian`` state directory,
+    not the user-home runtime root. When that directory is the canonical
+    project-local ``.meridian``, honor any configured ``[context.work]`` paths.
+    Synthetic test roots that are not attached to a project continue to use the
+    passed directory as their literal state root.
+    """
+
+    if project_state_dir.name == ".meridian":
+        return resolve_project_paths(project_state_dir.parent)
+    return ProjectPaths.from_root_dir(project_state_dir)
+
+
+def _active_dir(paths: ProjectPaths, work_id: str) -> Path:
     return paths.work_dir / work_id
 
 
-def _archived_dir(paths: RuntimePaths, work_id: str) -> Path:
+def _archived_dir(paths: ProjectPaths, work_id: str) -> Path:
     return paths.work_archive_dir / work_id
 
 
@@ -186,7 +201,7 @@ def _work_item_from_dir(
     )
 
 
-def _locate_dirs(paths: RuntimePaths, work_id: str) -> tuple[Path | None, Path | None]:
+def _locate_dirs(paths: ProjectPaths, work_id: str) -> tuple[Path | None, Path | None]:
     active = _active_dir(paths, work_id)
     archived = _archived_dir(paths, work_id)
     active_dir = active if active.is_dir() else None
@@ -245,7 +260,7 @@ def _validate_exact_slug(raw_name: str) -> str:
 def create_work_item(runtime_root: Path, label: str, description: str = "") -> WorkItem:
     """Create a new active work item directory with ``__status.json`` metadata."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     slug = slugify(label)
     if not slug:
         raise ValueError("Work item label must contain at least one letter or number.")
@@ -286,7 +301,7 @@ def ensure_work_item_metadata(
     if status == "done":
         raise ValueError("'done' is reserved for archived work items.")
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     with lock_file(paths.root_dir / "work-store.flock"):
         active_dir, archived_dir = _locate_dirs(paths, normalized)
         _ensure_not_both_locations(normalized, active_dir, archived_dir)
@@ -318,7 +333,7 @@ def ensure_work_item_metadata(
 def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     """Load one work item from active or archived directories."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _ensure_not_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
@@ -331,7 +346,7 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
 def work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
     """Return current active/archive work directory if present, otherwise active path."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _ensure_not_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
@@ -348,7 +363,7 @@ def list_work_items(runtime_root: Path) -> tuple[list[WorkItem], list[str]]:
     the active directory with a warning rather than raising.
     """
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dirs = _list_work_item_dirs(paths.work_dir)
     if not active_dirs:
         return [], []
@@ -378,7 +393,7 @@ def list_archived_work_items(
     the archived listing (the active copy takes precedence) with a warning.
     """
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     archived_dirs = _list_work_item_dirs(paths.work_archive_dir)
     if not archived_dirs:
         return [], []
@@ -420,7 +435,7 @@ def update_work_item(
 ) -> WorkItem:
     """Update active work item metadata and rewrite ``__status.json`` atomically."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _ensure_not_both_locations(work_id, active_dir, archived_dir)
     if active_dir is None:
@@ -464,7 +479,7 @@ def archive_work_item(
 ) -> WorkItem:
     """Archive active work by moving directory first, then setting done status."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _ensure_not_both_locations(work_id, active_dir, archived_dir)
 
@@ -507,7 +522,7 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
     if status == "done":
         raise ValueError("'done' is reserved for archived work items.")
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     _ensure_not_both_locations(work_id, active_dir, archived_dir)
     if archived_dir is None:
@@ -537,7 +552,7 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
 def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> WorkItem:
     """Rename active or archived work directory in one atomic directory rename."""
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, old_work_id)
     _ensure_not_both_locations(old_work_id, active_dir, archived_dir)
     if active_dir is None and archived_dir is None:
@@ -584,7 +599,7 @@ def delete_work_item(
     files beyond ``__status.json``.
     """
 
-    paths = RuntimePaths.from_root_dir(runtime_root)
+    paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
     if active_dir is None and archived_dir is None:
         raise ValueError(f"Work item '{work_id}' not found")
