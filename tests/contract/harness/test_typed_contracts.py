@@ -12,6 +12,7 @@ from types import MappingProxyType
 import pytest
 from pydantic import ValidationError
 
+from meridian.lib.harness import ensure_bootstrap
 from meridian.lib.harness.adapter import (
     ApprovalContract,
     BaseHarnessAdapter,
@@ -23,10 +24,13 @@ from meridian.lib.harness.adapter import (
     HarnessContract,
     ProjectionContract,
     ProjectionMode,
+    RuntimeHitlMode,
     SpawnParams,
     TransportContract,
 )
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.harness.bundle import get_connection_cls
+from meridian.lib.harness.ids import HarnessId, TransportId
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import (
     PermissionResolver,
     PreflightResult,
@@ -286,3 +290,34 @@ def test_leaf_imports_do_not_form_a_cycle() -> None:
         f"stdout:\n{completed.stdout}\n"
         f"stderr:\n{completed.stderr}"
     )
+
+
+def test_runtime_hitl_contracts_align_with_default_connection_capabilities() -> None:
+    ensure_bootstrap()
+    expected_shared_policy_projection = {
+        HarnessId.CLAUDE: True,
+        HarnessId.CODEX: True,
+        HarnessId.OPENCODE: False,
+    }
+
+    for harness_id, expects_shared_projection in expected_shared_policy_projection.items():
+        connection_cls = get_connection_cls(harness_id, TransportId.STREAMING)
+        connection = connection_cls()
+        harness_contract = get_default_harness_registry().get_contract(harness_id)
+        supports_runtime_responses = (
+            "respond_request" in connection_cls.__dict__
+            and "respond_user_input" in connection_cls.__dict__
+        )
+
+        if supports_runtime_responses:
+            assert harness_contract.approval.runtime_hitl is RuntimeHitlMode.CONNECTION_REQUESTS
+            assert harness_contract.approval.default_runtime_request_policy == "auto_accept"
+        else:
+            assert harness_contract.approval.runtime_hitl is RuntimeHitlMode.NONE
+            assert harness_contract.approval.default_runtime_request_policy == "none"
+            assert connection.capabilities.supports_runtime_hitl is False
+
+        assert (
+            harness_contract.approval.subprocess_permission_flags_projected_by_shared_policy
+            is expects_shared_projection
+        )

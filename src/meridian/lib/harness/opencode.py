@@ -359,8 +359,9 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
                 )
             ),
             approval=ApprovalContract(
-                runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
-                default_runtime_request_policy="auto_accept",
+                runtime_hitl=RuntimeHitlMode.NONE,
+                subprocess_permission_flags_projected_by_shared_policy=False,
+                default_runtime_request_policy="none",
             ),
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
