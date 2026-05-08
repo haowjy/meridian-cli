@@ -3,19 +3,13 @@
 from __future__ import annotations
 
 import shlex
-from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.harness.transcript import parse_transcript_file
-from meridian.lib.ops.runtime import (
-    async_from_sync,
-    resolve_runtime_root_for_read,
-)
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.ops.session_read import read_session_transcript
 
 _PREVIEW_LIMIT = 200
 _NAV_WINDOW_SIZE = 10
@@ -131,24 +125,16 @@ def session_search_sync(
     if not query:
         raise ValueError("query must not be empty")
 
-    explicit_project_root = (
-        Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-    )
-    project_root = resolve_project_root(explicit_project_root)
-    runtime_root = resolve_runtime_root_for_read(project_root)
-
-    target = resolve_session_log_target(
+    read = read_session_transcript(
         ref=payload.ref,
         file_path=payload.file_path,
-        project_root=project_root,
-        runtime_root=runtime_root,
+        project_root=payload.project_root,
     )
-    segments, total_compactions = parse_transcript_file(target.file_path)
 
     query_lower = query.lower()
     matches: list[SessionSearchMatch] = []
-    for segment_index, messages in enumerate(segments):
-        segment = total_compactions - segment_index
+    for segment_index, messages in enumerate(read.segments):
+        segment = read.total_compactions - segment_index
         segment_message_count = len(messages)
         for message_index, message in enumerate(messages, start=1):
             normalized_content = _normalize_content(message.content)
@@ -164,7 +150,7 @@ def session_search_sync(
                     content_preview=_build_preview(normalized_content, query=query),
                     nav_command=_build_nav_command(
                         payload=payload,
-                        resolved_session_id=target.session_id,
+                        resolved_session_id=read.target.session_id,
                         segment=segment,
                         message_index=message_index,
                         segment_message_count=segment_message_count,
@@ -173,7 +159,7 @@ def session_search_sync(
             )
 
     return SessionSearchOutput(
-        session_id=target.session_id,
+        session_id=read.target.session_id,
         matches=tuple(matches),
     )
 

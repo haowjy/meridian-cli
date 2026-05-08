@@ -8,15 +8,10 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.claude import project_slug
+from meridian.lib.harness.transcript import DefaultTranscriptEventParser, parse_transcript_file
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME, PRIMARY_META_FILENAME
-from meridian.lib.ops.session_log import (
-    SessionLogInput,
-    _extract_from_event,
-    _spawn_output_path,
-    parse_session_file,
-    resolve_target,
-    session_log_sync,
-)
+from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
+from meridian.lib.ops.session_target import resolve_session_log_target, spawn_output_path_for_target
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
@@ -159,7 +154,7 @@ def test_parse_session_file_splits_segments_on_compaction_boundary(tmp_path) -> 
     ]
     session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    segments, total_compactions = parse_session_file(session_file)
+    segments, total_compactions = parse_transcript_file(session_file)
 
     assert total_compactions == 1
     assert len(segments) == 2
@@ -172,13 +167,13 @@ def test_parse_session_file_splits_segments_on_compaction_boundary(tmp_path) -> 
 
 
 def test_extract_from_event_claude_assistant_and_user_messages() -> None:
-    assistant_messages, assistant_boundary = _extract_from_event(
+    assistant_messages, assistant_boundary = DefaultTranscriptEventParser().parse(
         {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "assistant text"}]},
         }
     )
-    user_messages, user_boundary = _extract_from_event(
+    user_messages, user_boundary = DefaultTranscriptEventParser().parse(
         {
             "type": "user",
             "message": {"content": [{"type": "text", "text": "user text"}]},
@@ -194,7 +189,7 @@ def test_extract_from_event_claude_assistant_and_user_messages() -> None:
 
 
 def test_extract_from_event_codex_response_and_exec_events() -> None:
-    response_messages, response_boundary = _extract_from_event(
+    response_messages, response_boundary = DefaultTranscriptEventParser().parse(
         {
             "type": "response_item",
             "payload": {
@@ -204,7 +199,7 @@ def test_extract_from_event_codex_response_and_exec_events() -> None:
             },
         }
     )
-    exec_messages, exec_boundary = _extract_from_event(
+    exec_messages, exec_boundary = DefaultTranscriptEventParser().parse(
         {
             "type": "item.completed",
             "item": {"type": "agent_message", "text": "codex exec"},
@@ -380,8 +375,9 @@ def test_resolve_target_chat_missing_harness_session_id_reports_unavailable_tran
 
     try:
         with pytest.raises(ValueError) as exc:
-            resolve_target(
-                SessionLogInput(ref=chat_id),
+            resolve_session_log_target(
+                ref=chat_id,
+                file_path=None,
                 project_root=project_root,
                 runtime_root=runtime_root,
             )
@@ -502,10 +498,10 @@ def test_spawn_output_path_legacy_precedence_with_both_files(tmp_path: Path) -> 
         filename=OUTPUT_FILENAME,
     )
 
-    assert _spawn_output_path(runtime_root, "p42", live_first=True) == (
+    assert spawn_output_path_for_target(runtime_root, "p42", live_first=True) == (
         runtime_root / "spawns" / "p42" / OUTPUT_FILENAME
     )
-    assert _spawn_output_path(runtime_root, "p42", live_first=False) == (
+    assert spawn_output_path_for_target(runtime_root, "p42", live_first=False) == (
         runtime_root / "artifacts" / "p42" / OUTPUT_FILENAME
     )
 
@@ -1248,8 +1244,9 @@ def test_resolve_target_chat_detected_primary_session_without_transcript_is_not_
         )
 
         with pytest.raises(FileNotFoundError):
-            resolve_target(
-                SessionLogInput(ref=chat_id),
+            resolve_session_log_target(
+                ref=chat_id,
+                file_path=None,
                 project_root=project_root,
                 runtime_root=runtime_root,
             )
@@ -1297,8 +1294,9 @@ def test_resolve_target_spawn_detected_primary_session_without_transcript_is_not
     )
 
     with pytest.raises(FileNotFoundError):
-        resolve_target(
-            SessionLogInput(ref="p42"),
+        resolve_session_log_target(
+            ref="p42",
+            file_path=None,
             project_root=project_root,
             runtime_root=runtime_root,
         )
@@ -1315,8 +1313,9 @@ def test_resolve_target_chat_not_found_preserves_missing_chat_error(tmp_path: Pa
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     with pytest.raises(ValueError) as exc:
-        resolve_target(
-            SessionLogInput(ref="c999"),
+        resolve_session_log_target(
+            ref="c999",
+            file_path=None,
             project_root=project_root,
             runtime_root=runtime_root,
         )
@@ -1362,8 +1361,9 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
-    resolved = resolve_target(
-        SessionLogInput(ref="p1"),
+    resolved = resolve_session_log_target(
+        ref="p1",
+        file_path=None,
         project_root=project_root,
         runtime_root=runtime_root,
     )
@@ -1421,8 +1421,9 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
     monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
-    resolved = resolve_target(
-        SessionLogInput(ref="c1"),
+    resolved = resolve_session_log_target(
+        ref="c1",
+        file_path=None,
         project_root=project_root,
         runtime_root=runtime_root,
     )

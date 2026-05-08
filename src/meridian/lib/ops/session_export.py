@@ -8,12 +8,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.harness.transcript import TranscriptMessage, parse_transcript_file
-from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
-from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.harness.transcript import TranscriptMessage
+from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.ops.session_read import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
@@ -267,34 +266,27 @@ def session_export_sync(
     ctx: RuntimeContext | None = None,
 ) -> SessionExportOutput:
     _ = ctx
-    explicit_project_root = (
-        Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-    )
-    project_root = resolve_project_root(explicit_project_root)
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    target = resolve_session_log_target(
+    read = read_session_transcript(
         ref=payload.ref,
         file_path=payload.file_path,
-        project_root=project_root,
-        runtime_root=runtime_root,
+        project_root=payload.project_root,
     )
-    segments, _total_compactions = parse_transcript_file(target.file_path)
-    ref = payload.ref.strip() or target.session_id
-    chat_id = _chat_id_for_ref(runtime_root, ref)
+    ref = payload.ref.strip() or read.target.session_id
+    chat_id = _chat_id_for_ref(read.runtime_root, ref)
     parent_id = ref if ref.startswith("p") and ref[1:].isdigit() else None
     appendices = (
-        _spawn_appendices(runtime_root, chat_id=chat_id, parent_id=parent_id)
+        _spawn_appendices(read.runtime_root, chat_id=chat_id, parent_id=parent_id)
         if payload.include_spawns
         else []
     )
     markdown = _render_markdown(
-        session_id=target.session_id,
-        source=target.source,
-        metadata=_session_metadata(runtime_root, ref),
-        messages=_flatten_segments(segments),
+        session_id=read.target.session_id,
+        source=read.target.source,
+        metadata=_session_metadata(read.runtime_root, ref),
+        messages=_flatten_segments(read.segments),
         appendices=appendices,
     )
-    return SessionExportOutput(session_id=target.session_id, markdown=markdown)
+    return SessionExportOutput(session_id=read.target.session_id, markdown=markdown)
 
 
 session_export = async_from_sync(session_export_sync)
