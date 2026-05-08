@@ -74,6 +74,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Run architecture checks
+        run: uv run architecture-check
+
       - name: Run full gate
         run: uv run pytest -n auto -m "not windows_only"
 

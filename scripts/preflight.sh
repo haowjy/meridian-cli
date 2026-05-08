@@ -19,6 +19,7 @@ case "$MODE" in
     cd "$ROOT_DIR"
     run_step uv run ruff check .
     run_step uv run pyright
+    run_step uv run architecture-check
     run_step uv run pytest -x -q
     ;;
   *)
