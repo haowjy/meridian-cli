@@ -50,6 +50,7 @@ def _stub_spawn_create_dry_run(
             model_selection_requested_token=None,
             model_selection_canonical_id=None,
             model_selection_harness_provenance=None,
+            terminal_surface_mode=None,
             cli_command=(),
         ),
     )

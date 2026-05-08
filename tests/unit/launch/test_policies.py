@@ -1908,6 +1908,63 @@ def test_resolve_policies_primary_harness_does_not_override_model_routing(
     assert policies.harness == HarnessId.CODEX
 
 
+def test_resolve_policies_cli_model_derives_harness_over_env_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    aliases = {
+        "gpt-5.5": _mock_alias(alias="gpt-5.5", model_id="gpt-5.5", harness=HarnessId.CODEX),
+    }
+    _patch_alias_resolution(monkeypatch, resolved_entries=aliases)
+
+    policies = resolve_policies(
+        project_root=tmp_path,
+        layers=(
+            RuntimeOverrides(model="gpt-5.5"),
+            RuntimeOverrides(harness="claude"),
+        ),
+        config_overrides=RuntimeOverrides(),
+        config=MeridianConfig(),
+        harness_registry=get_default_harness_registry(),
+        configured_default_harness="claude",
+    )
+
+    assert policies.harness == HarnessId.CODEX
+    assert policies.model_selection is not None
+    assert policies.model_selection.harness_provenance == "model-derived-override"
+
+
+def test_resolve_policies_cli_model_derives_harness_over_overlay_default_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\n",
+    )
+    aliases = {
+        "gpt-5.5": _mock_alias(alias="gpt-5.5", model_id="gpt-5.5", harness=HarnessId.CODEX),
+    }
+    _patch_alias_resolution(monkeypatch, resolved_entries=aliases)
+    config = MeridianConfig.model_validate({"agents": {"reviewer": {"harness": "claude"}}})
+
+    policies = resolve_policies(
+        project_root=tmp_path,
+        layers=(RuntimeOverrides(agent="reviewer", model="gpt-5.5"), RuntimeOverrides()),
+        config_overrides=RuntimeOverrides(),
+        config=config,
+        harness_registry=get_default_harness_registry(),
+        configured_default_harness="claude",
+    )
+
+    assert policies.harness == HarnessId.CODEX
+    assert policies.model_selection is not None
+    assert policies.model_selection.harness_provenance == "model-derived-override"
+
+
 def test_resolve_policies_explicit_cli_model_derives_harness_over_profile_harness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

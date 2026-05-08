@@ -513,6 +513,33 @@ def _model_derived_harness(request: CompilerRequest) -> tuple[str | None, str]:
     return str(entry.harness), "pattern-fallback"
 
 
+def _provenance_rank(level: ProvenanceLevel) -> int:
+    order = {
+        ProvenanceLevel.CLI: 0,
+        ProvenanceLevel.ENV: 1,
+        ProvenanceLevel.AGENT_OVERLAY_POLICY: 2,
+        ProvenanceLevel.AGENT_OVERLAY_DEFAULT: 3,
+        ProvenanceLevel.PROFILE_MODEL_POLICY: 4,
+        ProvenanceLevel.PROFILE_DEFAULT: 5,
+        ProvenanceLevel.CONFIG_DEFAULT: 6,
+        ProvenanceLevel.ALIAS_DEFAULT: 7,
+        ProvenanceLevel.HARNESS_FALLBACK: 8,
+        ProvenanceLevel.UNSET: 9,
+    }
+    return order[level]
+
+
+def _should_override_harness_with_model(
+    *,
+    model_token: str,
+    model_source: ProvenanceLevel,
+    harness_source: ProvenanceLevel,
+) -> bool:
+    if not model_token or model_source is ProvenanceLevel.UNSET:
+        return False
+    return _provenance_rank(model_source) < _provenance_rank(harness_source)
+
+
 def _resolve_harness(
     *,
     request: CompilerRequest,
@@ -544,16 +571,11 @@ def _resolve_harness(
         harness = request.config_defaults.harness or request.configured_default_harness or "claude"
         return harness, ProvenanceLevel.CONFIG_DEFAULT, "configured-default"
 
-    if model_token and model_source in {
-        ProvenanceLevel.CLI,
-        ProvenanceLevel.ENV,
-        ProvenanceLevel.AGENT_OVERLAY_DEFAULT,
-    } and harness_source in {
-        ProvenanceLevel.AGENT_OVERLAY_POLICY,
-        ProvenanceLevel.PROFILE_MODEL_POLICY,
-        ProvenanceLevel.PROFILE_DEFAULT,
-        ProvenanceLevel.CONFIG_DEFAULT,
-    }:
+    if _should_override_harness_with_model(
+        model_token=model_token,
+        model_source=model_source,
+        harness_source=harness_source,
+    ):
         model_derived, _model_derived_provenance = _model_derived_harness(request)
         if model_derived is not None and model_derived != harness:
             return model_derived, ProvenanceLevel.ALIAS_DEFAULT, "model-derived-override"

@@ -1631,3 +1631,21 @@ def test_run_harness_process_fresh_codex_primary_routes_to_managed_path(
     assert managed_calls == 1
     assert outcome.exit_code == 0
     assert outcome.resolved_harness_session_id == "fresh-thread-id"
+
+
+def test_launch_primary_dry_run_returns_terminal_surface_mode(tmp_path: Path) -> None:
+    project_root = tmp_path
+    _write_minimal_mars_config(project_root)
+
+    result = __import__("meridian.lib.launch", fromlist=["launch_primary"]).launch_primary(
+        project_root=project_root,
+        request=__import__("meridian.lib.launch.types", fromlist=["LaunchRequest"]).LaunchRequest(
+            model="gpt-5.4",
+            harness=HarnessId.CODEX.value,
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert result.exit_code == 0
+    assert result.terminal_surface_mode == "pty_mediated"

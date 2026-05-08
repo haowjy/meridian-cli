@@ -98,6 +98,7 @@ class LaunchResult(BaseModel):
     continue_ref: str | None = None
     continue_chat_id: str | None = None
     warning: str | None = None
+    terminal_surface_mode: str | None = None
 
 
 class PrimarySessionMetadata(BaseModel):

@@ -255,6 +255,7 @@ def test_spawn_continue_dry_run_with_prepared_context_does_not_require_lifecycle
             model_selection_requested_token=None,
             model_selection_canonical_id=None,
             model_selection_harness_provenance=None,
+            terminal_surface_mode=None,
             cli_command=("codex",),
         ),
     )

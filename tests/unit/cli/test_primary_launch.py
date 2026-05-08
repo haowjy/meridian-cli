@@ -322,3 +322,54 @@ def test_run_primary_launch_fork_failure_uses_failure_wording(
 
     assert result.exit_code == 2
     assert result.message == "Session fork failed."
+
+
+def test_run_primary_launch_dry_run_threads_terminal_surface_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        primary_launch,
+        "launch_primary",
+        lambda **_kwargs: SimpleNamespace(
+            exit_code=0,
+            command=("codex", "exec"),
+            continue_ref=None,
+            continue_chat_id=None,
+            warning=None,
+            terminal_surface_mode="pty_mediated",
+        ),
+    )
+
+    result = primary_launch.run_primary_launch(
+        project_root=tmp_path,
+        continue_ref=None,
+        fork_ref=None,
+        model="gpt-5.5",
+        harness="codex",
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    assert result.terminal_surface_mode == "pty_mediated"
+
+
+def test_primary_launch_output_format_text_includes_terminal_surface_mode() -> None:
+    output = primary_launch.PrimaryLaunchOutput(
+        message="Launch dry-run.",
+        exit_code=0,
+        command=("codex", "exec"),
+        terminal_surface_mode="pty_mediated",
+    )
+
+    rendered = output.format_text()
+
+    assert "Terminal surface mode: pty_mediated" in rendered

@@ -27,6 +27,7 @@ class PrimaryLaunchOutput(BaseModel):
     forked_from: str | None = None
     resume_command: str | None = None
     warning: str | None = None
+    terminal_surface_mode: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -38,6 +39,8 @@ class PrimaryLaunchOutput(BaseModel):
                 lines.append(f"{self.message} (from {self.forked_from})")
             else:
                 lines.append(self.message)
+            if self.terminal_surface_mode:
+                lines.append(f"Terminal surface mode: {self.terminal_surface_mode}")
             lines.append(shlex.join(self.command))
             return "\n".join(lines)
         if self.resume_command:
@@ -315,4 +318,5 @@ def run_primary_launch(
             )
         ),
         warning=_merge_warnings(continue_warning, launch_result.warning),
+        terminal_surface_mode=getattr(launch_result, "terminal_surface_mode", None),
     )

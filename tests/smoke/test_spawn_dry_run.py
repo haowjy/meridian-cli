@@ -157,3 +157,41 @@ def test_empty_prompt_handled_gracefully(cli, scratch_dir):
     # May succeed or fail, but should not traceback
     assert "Traceback" not in result.stdout
     assert "Traceback" not in result.stderr
+
+
+def test_worktree_like_cwd_uses_env_project_root_authority(tmp_path):
+    """MERIDIAN_PROJECT_DIR intentionally wins over a worktree-like cwd boundary."""
+    import subprocess
+
+    from tests.smoke.conftest import _cli_cmd, _isolated_env
+
+    canonical_root = tmp_path / "canonical-root"
+    worktree_cwd = tmp_path / "worktrees" / "arch-exec"
+    agents_dir = canonical_root / ".mars" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    worktree_cwd.mkdir(parents=True, exist_ok=True)
+    (canonical_root / "mars.toml").write_text(
+        "[settings]\ntargets = [\".claude\"]\n",
+        encoding="utf-8",
+    )
+    (agents_dir / "reviewer.md").write_text("# Reviewer\n", encoding="utf-8")
+    (worktree_cwd / ".git").write_text("gitdir: /tmp/fake-worktree-git\n", encoding="utf-8")
+
+    env = _isolated_env()
+    env["MERIDIAN_PROJECT_DIR"] = str(canonical_root)
+    env["MERIDIAN_HOME"] = str(tmp_path / "home")
+
+    proc = subprocess.run(
+        _cli_cmd("spawn", "-a", "reviewer", "-p", "test", "--dry-run", json_mode=True),
+        cwd=str(worktree_cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    data = __import__("json").loads(proc.stdout)
+    assert data["resolved_authority"]["project_root"] == canonical_root.resolve().as_posix()
+    assert data["resolved_authority"]["project_root_source"] == "explicit"

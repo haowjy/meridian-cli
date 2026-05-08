@@ -158,6 +158,11 @@ def launch_primary(
             continue_ref=None,
             continue_chat_id=None,
             warning=warning,
+            terminal_surface_mode=(
+                preview_context.resolved_request.terminal_surface_mode.value
+                if preview_context.resolved_request.terminal_surface_mode is not None
+                else None
+            ),
         )
 
     outcome = run_harness_process(preview_context, harness_registry, prepared=prepared)
