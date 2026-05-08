@@ -404,53 +404,6 @@ class SpawnLifecycleService:
                 terminal_origin=origin,
             )
         ):
-            if self._owns_record(spawn_id):
-                assert self._record is not None
-                was_active = self._record.status not in _TERMINAL_STATUS_VALUES
-                updated = _spawn_transitions().apply_finalize(
-                    self._record,
-                    status,
-                    exit_code,
-                    origin=origin,
-                    finished_at=finished_at or _utc_now_iso(clock),
-                    duration_secs=duration_secs,
-                    total_cost_usd=total_cost_usd,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_input_tokens=cache_read_input_tokens,
-                    cache_creation_input_tokens=cache_creation_input_tokens,
-                    reasoning_tokens=reasoning_tokens,
-                    cost_is_estimate=cost_is_estimate,
-                    error=error,
-                    validate_status_transition=False,
-                )
-                if not self._write_finalized_owner_record(updated):
-                    return _spawn_store().FinalizeOutcome(
-                        transitioned=False,
-                        wrote=False,
-                        snapshot=self._read_owner_record_from_disk(spawn_id),
-                    )
-                outcome = _spawn_store().FinalizeOutcome(
-                    transitioned=was_active,
-                    wrote=True,
-                    snapshot=self._record,
-                )
-                if self._record.status == "failed":
-                    _write_failure_sentinel(
-                        self._runtime_root,
-                        spawn_id,
-                        self._build_terminal_failure_diagnostic(
-                            self._record,
-                            origin=origin,
-                            error=error,
-                        ),
-                    )
-                event = self._build_event("spawn.finalized", self._record)
-                self._dispatch(event)
-                self._emit_telemetry_event_for_record(f"spawn.{self._record.status}", self._record)
-                return outcome
-
-            # Authoritative transition write still happens in _spawn_store().
             outcome = _spawn_store().finalize_spawn(
                 self._runtime_root,
                 spawn_id,
@@ -470,16 +423,13 @@ class SpawnLifecycleService:
                 clock=clock,
             )
             if outcome.wrote and outcome.snapshot is not None:
-                if outcome.snapshot.status == "failed":
-                    _write_failure_sentinel(
-                        self._runtime_root,
-                        spawn_id,
-                        self._build_terminal_failure_diagnostic(
-                            outcome.snapshot,
-                            origin=origin,
-                            error=error,
-                        ),
-                    )
+                if self._owns_record(spawn_id):
+                    self._record = outcome.snapshot
+                self._reconcile_failure_sentinel(
+                    outcome.snapshot,
+                    origin=origin,
+                    error=error,
+                )
                 event = self._build_event("spawn.finalized", outcome.snapshot)
                 self._dispatch(event)
                 self._emit_telemetry_event_for_record(
@@ -664,36 +614,31 @@ class SpawnLifecycleService:
         self._record = record
         return True
 
-    def _write_finalized_owner_record(self, record: SpawnRecord) -> bool:
-        """Write owner final state, preserving stale-rejection visibility.
-
-        The owner hot path keeps an in-memory record for fast lifecycle updates.
-        If another writer has already persisted terminal state, the repository
-        guard rejects this write.  Callers then need the on-disk snapshot, not
-        the stale owner record, so finalization catches the guard separately
-        from other owner writes.
-        """
-
-        try:
-            from meridian.lib.state.paths import RuntimePaths
-            from meridian.lib.state.spawn.repository import write_state
-
-            write_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, record)
-        except ValueError:
-            logger.debug(
-                "Owner lifecycle write dropped by terminal monotonicity guard.",
-                spawn_id=record.id,
-                transition="finalize",
-            )
-            return False
-        self._record = record
-        return True
-
     def _read_owner_record_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         from meridian.lib.state.paths import RuntimePaths
         from meridian.lib.state.spawn.repository import read_state
 
         return read_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, spawn_id)
+
+    def _reconcile_failure_sentinel(
+        self,
+        record: SpawnRecord,
+        *,
+        origin: TerminalOrigin | None = None,
+        error: str | None = None,
+    ) -> None:
+        if record.status == "failed":
+            _write_failure_sentinel(
+                self._runtime_root,
+                record.id,
+                self._build_terminal_failure_diagnostic(
+                    record,
+                    origin=origin,
+                    error=error,
+                ),
+            )
+            return
+        _delete_failure_sentinel(self._runtime_root, record.id)
 
     def _dispatch(self, event: LifecycleEvent) -> None:
         correlation = LifecycleCorrelation(
@@ -942,6 +887,19 @@ def _write_failure_sentinel(
         sentinel_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
         logger.exception("Failed to write failure sentinel for %s", spawn_id)
+
+
+def _delete_failure_sentinel(runtime_root: Path, spawn_id: str) -> None:
+    """Best-effort removal of stale failure sentinel after non-failed replacement."""
+    try:
+        from meridian.lib.state.paths import RuntimePaths
+
+        sentinel_path = (
+            RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
+        )
+        sentinel_path.unlink(missing_ok=True)
+    except Exception:
+        logger.exception("Failed to remove failure sentinel for %s", spawn_id)
 
 
 # ---------------------------------------------------------------------------

@@ -280,6 +280,47 @@ def test_cancelled_finalize_does_not_write_failure_sentinel(tmp_path: Path) -> N
     assert not sentinel_path.exists()
 
 
+@pytest.mark.parametrize(
+    ("replacement_status", "replacement_origin", "replacement_exit_code"),
+    [
+        ("succeeded", "runner", 0),
+        ("cancelled", "launcher", 130),
+    ],
+)
+def test_authoritative_non_failed_finalize_removes_stale_failure_sentinel(
+    tmp_path: Path,
+    replacement_status: str,
+    replacement_origin: str,
+    replacement_exit_code: int,
+) -> None:
+    """Accepted non-failed replacement must clear stale failure.json."""
+    reconciler = _make_service(tmp_path)
+    authoritative = _make_service(tmp_path)
+    spawn_id = _start_spawn(reconciler, status="running")
+
+    reconciler.finalize(spawn_id, "failed", 7, origin="reconciler", error="orphan")
+    sentinel_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "failure.json"
+    assert sentinel_path.exists()
+
+    outcome = authoritative.finalize(
+        spawn_id,
+        replacement_status,
+        replacement_exit_code,
+        origin=replacement_origin,
+    )
+
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert outcome.transitioned is False
+    assert outcome.wrote is True
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == replacement_status
+    assert outcome.snapshot.terminal_origin == replacement_origin
+    assert record is not None
+    assert record.status == replacement_status
+    assert record.terminal_origin == replacement_origin
+    assert not sentinel_path.exists()
+
+
 def test_failure_sentinel_write_failure_does_not_block_finalize(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -553,6 +594,40 @@ def test_spawn_finalized_dispatched_when_authoritative_overrides_reconciler(
     assert len(finalized) == 1
     assert finalized[0].status == "succeeded"
     assert finalized[0].origin == "runner"
+
+
+@pytest.mark.parametrize("replacement_origin", ["launcher", "runner"])
+def test_owner_finalize_replaces_reconciler_terminal_with_authoritative_snapshot(
+    tmp_path: Path,
+    replacement_origin: str,
+) -> None:
+    """Owner finalize must use store terminal policy and refresh in-memory state."""
+    hook = RecordingHook()
+    owner = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(owner, status="running")
+    reconciler = _make_service(tmp_path)
+
+    reconciler.finalize(spawn_id, "failed", 9, origin="reconciler", error="orphan")
+    hook.events.clear()
+
+    outcome = owner.finalize(spawn_id, "succeeded", 0, origin=replacement_origin)
+
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert outcome.transitioned is False
+    assert outcome.wrote is True
+    assert outcome.snapshot is not None
+    assert outcome.snapshot.status == "succeeded"
+    assert outcome.snapshot.terminal_origin == replacement_origin
+    assert owner._record is not None
+    assert owner._record.status == "succeeded"
+    assert owner._record.terminal_origin == replacement_origin
+    assert record is not None
+    assert record.status == "succeeded"
+    assert record.terminal_origin == replacement_origin
+    finalized = [event for event in hook.events if event.event_type == "spawn.finalized"]
+    assert len(finalized) == 1
+    assert finalized[0].status == "succeeded"
+    assert finalized[0].origin == replacement_origin
 
 
 def test_spawn_finalized_not_dispatched_for_rejected_authoritative_loser(

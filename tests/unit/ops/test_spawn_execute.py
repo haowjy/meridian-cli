@@ -627,7 +627,7 @@ def test_execute_spawn_background_records_parent_launch_boundary_observations(
     monkeypatch.setattr(execute_module, "_init_spawn", fake_init_spawn)
     monkeypatch.setattr(
         execute_module,
-        "create_lifecycle_service",
+        "build_spawn_lifecycle_service_from_roots",
         lambda *_a, **_kw: _FakeLifecycle(),
     )
     monkeypatch.setattr(execute_module.subprocess, "Popen", fake_popen)
