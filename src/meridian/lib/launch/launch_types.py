@@ -1,8 +1,8 @@
-"""Leaf launch contracts shared across harness adapters and runners."""
+"""Leaf launch contracts shared across launch policy, content, and runners."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkable
@@ -14,9 +14,11 @@ from meridian.lib.core.overrides import (
     RuntimeOverrides,
     normalize_execution_policy_fields,
 )
-from meridian.lib.harness.ids import HarnessId
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.ids import HarnessId
+    from meridian.lib.launch.composition import ProjectedContent
+    from meridian.lib.launch.reference import ReferenceItem
     from meridian.lib.safety.permissions import PermissionConfig
 
 
@@ -147,6 +149,28 @@ class ResolvedExecutionPolicy:
         return RuntimeOverrides.model_validate(
             {field_name: value for field_name, value in values.items() if value is not None}
         )
+
+
+@dataclass(frozen=True)
+class PreparedPromptPayload:
+    """Typed prompt-channel payload carried from content composition into bind."""
+
+    adhoc_agent_payload: str = ""
+    appended_system_prompt: str | None = None
+    user_turn_content: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedLaunchContent:
+    """Typed content-composition output consumed by later launch binding."""
+
+    final_prompt: str = ""
+    resolved_context_from: tuple[str, ...] = ()
+    loaded_references: tuple[ReferenceItem, ...] = ()
+    prompt_payload: PreparedPromptPayload = field(default_factory=PreparedPromptPayload)
+    projected_content: ProjectedContent | None = None
+    agent_inventory_prompt: str | None = None
+    context_prompt: str | None = None
 
 
 SpecT = TypeVar("SpecT", bound=ResolvedLaunchSpec)

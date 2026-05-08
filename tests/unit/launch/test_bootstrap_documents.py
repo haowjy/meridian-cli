@@ -159,19 +159,23 @@ def test_launch_primary_dry_run_uses_explicit_work_for_prompt_and_env_preview(
 
     captured_active_work_dirs: list[object] = []
     captured_env_overrides: dict[str, str] = {}
-    original_build_context_prompt = launch_context.build_context_prompt
+    original_build_launch_context_documents = launch_context.build_launch_context_documents
     original_bind_launch_context = launch_context.bind_launch_context
 
-    def fake_build_context_prompt(**kwargs):
+    def fake_build_launch_context_documents(**kwargs):
         captured_active_work_dirs.append(kwargs['active_work_dir'])
-        return original_build_context_prompt(**kwargs)
+        return original_build_launch_context_documents(**kwargs)
 
     def capture_bind_launch_context(**kwargs):
         bound = original_bind_launch_context(**kwargs)
         captured_env_overrides.update(bound.env_overrides)
         return bound
 
-    monkeypatch.setattr(launch_context, 'build_context_prompt', fake_build_context_prompt)
+    monkeypatch.setattr(
+        launch_context,
+        'build_launch_context_documents',
+        fake_build_launch_context_documents,
+    )
     monkeypatch.setattr(launch_context, 'bind_launch_context', capture_bind_launch_context)
 
     launch_primary(

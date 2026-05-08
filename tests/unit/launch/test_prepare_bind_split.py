@@ -11,6 +11,7 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import (
+    PreparedLaunchContent,
     PreparedLaunchSurface,
     PreparedPolicySurface,
     PreparedPromptPayload,
@@ -107,9 +108,7 @@ def test_compile_prepared_policy_surface_does_not_call_projector_helpers(
 
     for helper_name in (
         "load_reference_items",
-        "scan_agent_profiles",
-        "build_agent_inventory_prompt",
-        "build_context_prompt",
+        "build_launch_context_documents",
         "compose_skill_prompt_documents",
         "normalize_system_prompt_passthrough_args",
     ):
@@ -238,24 +237,18 @@ def test_bind_launch_context_does_not_call_prepare_phase_helpers(
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
         seed_harness_session_id="seed-session",
         composition_warnings=(),
-        prompt_payload=PreparedPromptPayload(),
-        loaded_references=(),
+        content=PreparedLaunchContent(prompt_payload=PreparedPromptPayload()),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
-        projected_content=None,
         model_selection=None,
         alias_catalog=None,
-        agent_inventory_prompt=None,
-        context_prompt=None,
         seed_session_args=(),
         launch_request=None,
     )
     for helper_name in (
         "load_reference_items",
         "resolve_launch_policy",
-        "scan_agent_profiles",
-        "build_agent_inventory_prompt",
-        "build_context_prompt",
+        "build_launch_context_documents",
         "compose_skill_prompt_documents",
     ):
         monkeypatch.setattr(launch_context, helper_name, _forbidden(helper_name))
@@ -295,19 +288,17 @@ def test_bind_launch_context_consumes_typed_prompt_payload(
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
         seed_harness_session_id=None,
         composition_warnings=(),
-        prompt_payload=PreparedPromptPayload(
-            adhoc_agent_payload="typed-adhoc",
-            appended_system_prompt="typed-system",
-            user_turn_content="typed-user",
+        content=PreparedLaunchContent(
+            prompt_payload=PreparedPromptPayload(
+                adhoc_agent_payload="typed-adhoc",
+                appended_system_prompt="typed-system",
+                user_turn_content="typed-user",
+            )
         ),
-        loaded_references=(),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
-        projected_content=None,
         model_selection=None,
         alias_catalog=None,
-        agent_inventory_prompt=None,
-        context_prompt=None,
         seed_session_args=(),
         launch_request=None,
     )
@@ -434,15 +425,11 @@ def test_bind_launch_context_prefers_forked_runtime_session_without_mutating_pre
         harness=registry.get_subprocess_harness(HarnessId.CODEX),
         seed_harness_session_id="seed-session",
         composition_warnings=(),
-        prompt_payload=PreparedPromptPayload(),
-        loaded_references=(),
+        content=PreparedLaunchContent(prompt_payload=PreparedPromptPayload()),
         profile_tools_for_deny_optout=(),
         has_profile_for_deny_optout=False,
-        projected_content=None,
         model_selection=None,
         alias_catalog=None,
-        agent_inventory_prompt=None,
-        context_prompt=None,
         seed_session_args=(),
         launch_request=None,
     )
@@ -475,14 +462,15 @@ def test_build_launch_context_uses_explicit_request_work_for_prepare_and_bind(
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_DIR", raising=False)
 
     captured_active_work_dirs: list[Path | None] = []
-    monkeypatch.setattr(launch_context, "scan_agent_profiles", lambda **_kwargs: [])
-    monkeypatch.setattr(launch_context, "build_agent_inventory_prompt", lambda **_kwargs: "")
-
-    def fake_build_context_prompt(**kwargs: object) -> str:
+    def fake_build_launch_context_documents(**kwargs: object) -> tuple[str, str]:
         captured_active_work_dirs.append(kwargs["active_work_dir"])
-        return ""
+        return ("", "")
 
-    monkeypatch.setattr(launch_context, "build_context_prompt", fake_build_context_prompt)
+    monkeypatch.setattr(
+        launch_context,
+        "build_launch_context_documents",
+        fake_build_launch_context_documents,
+    )
 
     request = _build_request(prompt_is_composed=False).model_copy(
         update={"work_id_hint": "work-explicit"}
@@ -519,14 +507,15 @@ def test_build_launch_context_runtime_work_overrides_inherited_work_for_prepare_
     )
 
     captured_active_work_dirs: list[Path | None] = []
-    monkeypatch.setattr(launch_context, "scan_agent_profiles", lambda **_kwargs: [])
-    monkeypatch.setattr(launch_context, "build_agent_inventory_prompt", lambda **_kwargs: "")
-
-    def fake_build_context_prompt(**kwargs: object) -> str:
+    def fake_build_launch_context_documents(**kwargs: object) -> tuple[str, str]:
         captured_active_work_dirs.append(kwargs["active_work_dir"])
-        return ""
+        return ("", "")
 
-    monkeypatch.setattr(launch_context, "build_context_prompt", fake_build_context_prompt)
+    monkeypatch.setattr(
+        launch_context,
+        "build_launch_context_documents",
+        fake_build_launch_context_documents,
+    )
 
     request = _build_request(prompt_is_composed=False).model_copy(
         update={"work_id_hint": "work-request"}

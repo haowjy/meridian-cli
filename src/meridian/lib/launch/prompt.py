@@ -277,6 +277,39 @@ def build_context_prompt(
     return "\n".join([*header, *context_lines]).strip()
 
 
+def build_launch_context_documents(
+    *,
+    project_root: Path,
+    alias_catalog: Mapping[str, AliasEntry] | None = None,
+    active_work_dir: Path | None = None,
+    include_inventory: bool = True,
+    include_context: bool = True,
+) -> tuple[str | None, str | None]:
+    """Resolve inventory/context prompt documents for launch composition."""
+
+    agent_inventory_prompt: str | None = None
+    context_prompt: str | None = None
+
+    if include_inventory:
+        agent_profiles = sorted(
+            scan_agent_profiles(project_root=project_root),
+            key=lambda profile: profile.name,
+        )
+        agent_inventory_prompt = build_agent_inventory_prompt(
+            project_root=project_root,
+            alias_catalog=dict(alias_catalog) if alias_catalog is not None else None,
+            agents=agent_profiles,
+        )
+
+    if include_context:
+        context_prompt = build_context_prompt(
+            project_root=project_root,
+            active_work_dir=active_work_dir,
+        )
+
+    return agent_inventory_prompt, context_prompt
+
+
 def build_agent_inventory_prompt(
     *,
     project_root: Path,
@@ -475,6 +508,7 @@ def render_file_template(
 __all__ = [
     "ReferenceItem",
     "build_context_prompt",
+    "build_launch_context_documents",
     "build_report_instruction",
     "compose_run_prompt",
     "compose_run_prompt_text",
