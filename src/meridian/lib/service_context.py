@@ -10,6 +10,7 @@ from meridian.lib.config.settings import MeridianConfig
 
 if TYPE_CHECKING:
     from meridian.lib.core.lifecycle import SpawnLifecycleService
+    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class ApplicationContext:
     project_root: Path | None = None
     runtime_root: Path | None = None
     config: MeridianConfig | None = None
+    authority: RuntimeAuthoritySnapshot | None = None
 
 
 @dataclass(frozen=True)

@@ -399,6 +399,24 @@ def test_spawn_action_output_to_wire_includes_dry_run_model_selection() -> None:
     }
 
 
+def test_spawn_action_output_to_wire_includes_resolved_authority_for_dry_run() -> None:
+    payload = SpawnActionOutput(
+        command="spawn.create",
+        status="dry-run",
+        project_root="/repo",
+        project_root_source="explicit",
+        runtime_root="/runtime",
+        runtime_root_source="env",
+    ).to_wire()
+
+    assert payload["resolved_authority"] == {
+        "project_root": "/repo",
+        "project_root_source": "explicit",
+        "runtime_root": "/runtime",
+        "runtime_root_source": "env",
+    }
+
+
 def test_spawn_explicit_json_error_is_structured(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -624,7 +642,7 @@ def test_spawn_children_resolves_parent_reference_before_filtering(
     )
     monkeypatch.setattr(
         "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _state_root, spawns: spawns,
+        lambda _project_root, _runtime_root, spawns: spawns,
     )
     monkeypatch.setattr(
         spawn_cli,
@@ -668,7 +686,7 @@ def test_spawn_children_includes_agent_and_desc_in_output(
     monkeypatch.setattr(spawn_cli.spawn_store, "list_spawns", lambda _root, filters=None: rows)
     monkeypatch.setattr(
         "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _state_root, spawns: spawns,
+        lambda _project_root, _runtime_root, spawns: spawns,
     )
     monkeypatch.setattr(
         spawn_cli,
@@ -715,7 +733,7 @@ def test_spawn_children_json_includes_agent_and_desc(
     monkeypatch.setattr(spawn_cli.spawn_store, "list_spawns", lambda _root, filters=None: rows)
     monkeypatch.setattr(
         "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _state_root, spawns: spawns,
+        lambda _project_root, _runtime_root, spawns: spawns,
     )
     monkeypatch.setattr(
         spawn_cli,
@@ -761,7 +779,7 @@ def test_spawn_children_agent_mode_uses_children_text_view(
     monkeypatch.setattr(spawn_cli.spawn_store, "list_spawns", lambda _root, filters=None: rows)
     monkeypatch.setattr(
         "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _state_root, spawns: spawns,
+        lambda _project_root, _runtime_root, spawns: spawns,
     )
 
     with pytest.raises(SystemExit) as exc_info:

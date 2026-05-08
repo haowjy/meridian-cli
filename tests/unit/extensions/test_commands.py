@@ -189,6 +189,26 @@ async def test_archive_spawn_handler_uses_extension_application_runtime_root(
     assert captured["spawn_id"] == "p321"
 
 
+def test_build_extension_command_services_carries_application_authority(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    application = build_extension_entrypoint(prepared)
+
+    services = build_extension_command_services(application=application)
+    context = (
+        ExtensionInvocationContextBuilder(ExtensionSurface.CLI)
+        .with_authority(prepared.authority)
+        .build()
+    )
+
+    assert services.authority == prepared.authority
+    assert services.application.context.authority == prepared.authority
+    assert context.authority == prepared.authority
+
+
 @pytest.mark.asyncio
 async def test_get_spawn_stats_returns_spawn_stats_output_compatible_data(
     monkeypatch: pytest.MonkeyPatch,

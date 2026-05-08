@@ -64,6 +64,7 @@ def _application_context_from_runtime(
         project_root=prepared.project_root,
         runtime_root=prepared.runtime_root,
         config=prepared.config,
+        authority=prepared.authority,
     )
 
 

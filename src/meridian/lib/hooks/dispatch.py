@@ -293,12 +293,12 @@ class HookDispatcher(LifecycleHook):
         return policy != "fail"
 
     def _build_context(self, event: LifecycleEvent) -> HookContext:
-        return HookContext(
+        return HookContext.from_roots(
+            project_root=self._project_root,
+            runtime_root=self._runtime_root,
             event_name=cast("HookEventName", event.event_type),
             event_id=event.event_id,
             timestamp=event.timestamp.isoformat(),
-            project_root=self._project_root.as_posix(),
-            runtime_root=self._runtime_root.as_posix(),
             spawn_id=event.spawn_id,
             spawn_status=_normalize_spawn_status(event.status),
             spawn_agent=event.agent,

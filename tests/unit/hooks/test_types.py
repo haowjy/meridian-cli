@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 from typing import get_args
 from uuid import uuid4
 
+from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.lifecycle import generate_lifecycle_event_id
 from meridian.lib.hooks.types import HookContext, HookEventName, HookResult
+from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 
 def test_hook_event_name_literals_exclude_session_idle() -> None:
@@ -74,6 +77,33 @@ def test_hook_context_to_json_serializes_spawn_and_work_payloads() -> None:
         "dir": "/repo/.meridian/work/hook-system-design",
     }
     assert payload["spawn"] is None
+
+
+def test_hook_context_from_authority_uses_consistent_root_values() -> None:
+    project_root = Path("/repo")
+    authority = RuntimeAuthoritySnapshot(
+        execution_cwd=project_root,
+        project_root=project_root,
+        project_root_source="explicit",
+        project_config_paths=ProjectConfigPaths(
+            project_root=project_root,
+            execution_cwd=project_root,
+        ),
+        project_state_dir=project_root / ".meridian",
+        user_home=Path("/home/test/.meridian"),
+        runtime_root=Path("/runtime"),
+        runtime_root_source="env",
+    )
+
+    context = HookContext.from_authority(
+        authority=authority,
+        event_name="spawn.created",
+        event_id=uuid4(),
+        timestamp="2026-04-19T12:00:00+00:00",
+    )
+
+    assert context.project_root == "/repo"
+    assert context.runtime_root == "/runtime"
 
 
 def test_hook_result_is_dataclass_serializable() -> None:

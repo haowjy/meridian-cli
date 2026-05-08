@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from meridian.lib.config.settings import MeridianConfig
     from meridian.lib.core.lifecycle import SpawnLifecycleService
     from meridian.lib.extensions.types import ExtensionSurface
+    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 
 class ExtensionCapability(StrEnum):
@@ -58,6 +59,7 @@ class ExtensionInvocationContext:
     """Context available to extension command handlers."""
 
     caller_surface: ExtensionSurface
+    authority: RuntimeAuthoritySnapshot | None
     project_uuid: str | None
     work_id: str | None
     work_path: Path | None
@@ -71,12 +73,20 @@ class ExtensionInvocationContextBuilder:
 
     def __init__(self, surface: ExtensionSurface) -> None:
         self._surface = surface
+        self._authority: RuntimeAuthoritySnapshot | None = None
         self._project_uuid: str | None = None
         self._work_id: str | None = None
         self._work_path: Path | None = None
         self._spawn_id: str | None = None
         self._capabilities: ExtensionCapabilities | None = None
         self._request_id: str | None = None
+
+    def with_authority(
+        self,
+        authority: RuntimeAuthoritySnapshot | None,
+    ) -> ExtensionInvocationContextBuilder:
+        self._authority = authority
+        return self
 
     def with_project_uuid(self, uuid: str | None) -> ExtensionInvocationContextBuilder:
         self._project_uuid = uuid
@@ -128,6 +138,7 @@ class ExtensionInvocationContextBuilder:
 
         return ExtensionInvocationContext(
             caller_surface=self._surface,
+            authority=self._authority,
             project_uuid=self._project_uuid,
             work_id=self._work_id,
             work_path=resolved_work_path,
@@ -141,6 +152,7 @@ class ExtensionInvocationContextBuilder:
 class ExtensionCommandServices:
     """Services available to extension command handlers."""
 
+    authority: RuntimeAuthoritySnapshot | None = None
     runtime_root: Path | None = None
     meridian_dir: Path | None = None
     application: ExtensionEntryPoint = field(default_factory=ExtensionEntryPoint)
@@ -149,6 +161,7 @@ class ExtensionCommandServices:
 def build_extension_command_services(
     *,
     application: ExtensionEntryPoint | None = None,
+    authority: RuntimeAuthoritySnapshot | None = None,
     project_root: Path | None = None,
     runtime_root: Path | None = None,
     config: MeridianConfig | None = None,
@@ -162,11 +175,14 @@ def build_extension_command_services(
             project_root=project_root,
             runtime_root=runtime_root,
             config=config,
+            authority=authority,
         ),
         services=ApplicationServices(lifecycle=lifecycle),
     )
+    resolved_authority = authority or resolved_application.context.authority
 
     return ExtensionCommandServices(
+        authority=resolved_authority,
         runtime_root=runtime_root or resolved_application.context.runtime_root,
         meridian_dir=meridian_dir,
         application=resolved_application,

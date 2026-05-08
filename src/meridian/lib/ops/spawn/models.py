@@ -89,6 +89,10 @@ class SpawnActionOutput(BaseModel):
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    project_root: str | None = None
+    project_root_source: str | None = None
+    runtime_root: str | None = None
+    runtime_root_source: str | None = None
     cli_command: tuple[str, ...] = ()
     exit_code: int | None = None
     duration_secs: float | None = None
@@ -120,6 +124,17 @@ class SpawnActionOutput(BaseModel):
         if self.context_from_resolved:
             wire["context_from_resolved"] = list(self.context_from_resolved)
         if self.status == "dry-run":
+            if self.project_root is not None or self.runtime_root is not None:
+                wire["resolved_authority"] = {
+                    key: value
+                    for key, value in {
+                        "project_root": self.project_root,
+                        "project_root_source": self.project_root_source,
+                        "runtime_root": self.runtime_root,
+                        "runtime_root_source": self.runtime_root_source,
+                    }.items()
+                    if value is not None
+                }
             if self.model is not None:
                 wire["model"] = self.model
             if self.harness_id is not None:
@@ -204,6 +219,14 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Model: {self.model}")
         if self.status == "dry-run" and self.model_selection_harness_provenance:
             lines.append(f"Routing: {self.model_selection_harness_provenance}")
+        if self.status == "dry-run" and self.project_root:
+            lines.append(f"Project root: {self.project_root}")
+            if self.project_root_source:
+                lines.append(f"Project root source: {self.project_root_source}")
+        if self.status == "dry-run" and self.runtime_root:
+            lines.append(f"Write root: {self.runtime_root}")
+            if self.runtime_root_source:
+                lines.append(f"Write root source: {self.runtime_root_source}")
         if self.error:
             lines.append(f"Error: {self.error}")
         if self.warning:

@@ -277,6 +277,12 @@ def spawn_create_sync(
             model_selection_harness_provenance=(
                 prepared_request.model_selection_harness_provenance
             ),
+            project_root=authority.project_root.as_posix(),
+            project_root_source=authority.project_root_source,
+            runtime_root=authority.runtime_root.as_posix()
+            if authority.runtime_root is not None
+            else None,
+            runtime_root_source=authority.runtime_root_source,
             cli_command=prepared_request.cli_command,
             message="Dry run complete.",
             forked_from=forked_from,

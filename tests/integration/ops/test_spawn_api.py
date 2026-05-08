@@ -103,6 +103,10 @@ def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
     )
 
     assert result.status == "dry-run"
+    assert result.project_root == project_root.resolve().as_posix()
+    assert result.project_root_source == "mars"
+    assert result.runtime_root is None
+    assert result.runtime_root_source == "unresolved"
     resolved_reference = reference_file.resolve()
     assert len(result.reference_files) == 1
     assert Path(result.reference_files[0]).resolve() == resolved_reference
