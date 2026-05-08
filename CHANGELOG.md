@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Work-store write flows now initialize project UUIDs before resolving `{project}` context paths, so create/list/archive/reopen use configured work/archive directories instead of falling back to `.meridian/work` on first use.
+- Nested spawns no longer reacquire stale persisted current-work state. `include_persisted_work_fallback` flag gates persisted fallback; `BLOCKED_CHILD_ENV_VARS` blocks stale `MERIDIAN_ACTIVE_WORK_*` from parent env. Chat backend launch explicitly opts in.
 - Spawn ID locking race: `ensure_v2_format()` renamed lock file mid-contention, splitting locks across inodes → duplicate spawn IDs. Fixed by keeping stable lock path, then removed migration entirely.
 - Pre-push hook leaked `GIT_DIR` env var into preflight subprocess, causing test git operations to target the real worktree.
 - structlog `capture_logs()` tests failing in full suite due to `cache_logger_on_first_use` caching module-level loggers.
