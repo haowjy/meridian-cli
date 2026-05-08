@@ -104,16 +104,16 @@ Spawn create is the most complex operation — it illustrates how ops/commands/l
    - Renders `--file` references and `--from` prior context into prompt
    - Computes permission/approval policy
    - Returns `PreparedSpawn` ready for the launch layer
-4. `lib/launch/` takes over from there (see `fs/launch/overview.md`)
+4. `lib/launch/` takes over from there (see `../launch/overview.md`)
 
 ## Config Bootstrap and Mars Init
 
-`ops/config.py:ensure_state_bootstrap_sync()` runs on `meridian init` and lazily during first spawn:
-- Creates `.meridian/` directory structure (root, artifacts, cache, spawns, fs, work, work-archive, work-items)
+`ops/config.py:ensure_runtime_state_bootstrap_sync()` runs on `meridian init` and lazily during first spawn:
+- Creates the configured repo context directories (default `.meridian/kb/`, `.meridian/work/`, `.meridian/archive/work/`) and runtime directories (`spawns/`, `sessions/`, `artifacts/`, `cache/`) under the project runtime root
 - Seeds `.meridian/.gitignore` (non-destructive: keeps tracked entries, removes deprecated ones)
 - Calls `_ensure_mars_init()`:
   - If no `mars.toml`: runs `mars init [--link ...]` to scaffold an empty managed root
   - If `mars.toml` exists but `--link` dirs requested: runs `mars link <dir>` for each
 - Scaffolds `.meridian/config.toml` with commented defaults if absent
 
-This is the integration point where state initialization and mars bootstrap happen together. See `fs/mars/overview.md` for the full mars integration picture.
+This is the integration point where state initialization and mars bootstrap happen together. See `../mars/overview.md` for the full mars integration picture.

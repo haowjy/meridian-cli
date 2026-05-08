@@ -2,7 +2,7 @@
 
 ## What It Is
 
-Meridian state splits across two roots: repo-local `.meridian/` (committed scaffolding) and a user-level runtime directory keyed by project UUID (high-churn JSONL, artifacts). No database, no service, no hidden in-memory state. Runtime state (spawn/session event stores, per-spawn artifacts) lives under `~/.meridian/projects/<uuid>/`; committed scaffolding (`fs/`, `work/`, `work-archive/`) stays under repo `.meridian/`. To inspect spawns: `cat ~/.meridian/projects/<uuid>/spawns.jsonl | jq` (substitute the UUID from `.meridian/id`).
+Meridian state splits across two roots: repo-local `.meridian/` (committed scaffolding) and a user-level runtime directory keyed by project UUID (high-churn JSONL, artifacts). No database, no service, no hidden in-memory state. Runtime state (spawn/session event stores, per-spawn artifacts) lives under `~/.meridian/projects/<uuid>/`; committed scaffolding (`kb/`, `work/`, `archive/work/`) stays under repo `.meridian/`. To inspect spawns: `cat ~/.meridian/projects/<uuid>/spawns.jsonl | jq` (substitute the UUID from `.meridian/id`).
 
 Source: `src/meridian/lib/state/` (paths, user_paths, atomic, locks, reaper, spawn store, session store)
 
@@ -16,9 +16,9 @@ Source: `src/meridian/lib/state/` (paths, user_paths, atomic, locks, reaper, spa
   id.lock                  # exclusive lock used during UUID generation
   .migrations.json         # repo-side migration tracking (gitignored)
   .gitignore               # seeded/maintained non-destructively
-  fs/                      # agent-facing codebase mirror (committed)
+  kb/                      # durable knowledge base (committed)
   work/                    # active work scratch dirs (committed)
-  work-archive/            # archived work scratch dirs (committed)
+  archive/work/            # archived work scratch dirs (committed)
   work-items/              # mutable JSON per work item (gitignored, not committed)
     <work_id>.json
   work-items.rename.intent.json    # crash-safe rename intent (transient; sibling of work-items/)
@@ -87,21 +87,21 @@ UUID generation in `get_or_create_project_uuid()` is double-checked under `id.lo
 
 Two path model classes:
 
-**`ProjectPaths`** — repo-owned paths only (`root_dir`, `id_file`, `fs_dir`, `work_dir`, `work_archive_dir`). Built by `ProjectPaths.from_root_dir()`.
+**`ProjectPaths`** — repo-owned paths only (`root_dir`, `id_file`, `kb_dir`, `work_dir`, `work_archive_dir`). Built by `ProjectPaths.from_root_dir()`.
 
-**`RuntimePaths`** — runtime state paths (spawn/session indexes, per-spawn artifact dirs). Built by `RuntimePaths.from_root_dir()`. Still carries `fs_dir`, `work_dir`, `work_archive_dir` fields for transitional callers — these will be removed when all callers migrate to `ProjectPaths`. The authoritative repo paths come through `ProjectPaths`.
+**`RuntimePaths`** — runtime state paths (spawn/session indexes, per-spawn artifact dirs). Built by `RuntimePaths.from_root_dir()`. Runtime roots may still expose `kb/`, `work/`, and `archive/work/` paths for fallback/uninitialized reads, but authoritative repo context paths come through `ProjectPaths`.
 
 Convenience resolvers:
 
 - `resolve_project_paths(project_root)` → `ProjectPaths` for repo `.meridian/` (ignores runtime overrides)
 - `resolve_runtime_paths(project_root)` → `ProjectPaths` honoring `MERIDIAN_RUNTIME_DIR`
 - `resolve_cache_dir(project_root)` → runtime `cache/` directory
-- `resolve_fs_dir(project_root)` → repo `fs/` directory
+- `resolve_kb_dir(project_root)` → configured knowledge base directory (default repo `.meridian/kb/`)
 - `resolve_spawn_log_dir(project_root, spawn_id)` → per-spawn artifact dir under runtime root
 
 ## Storage Patterns
 
-**JSONL event stores** (spawns, sessions): append-only, crash-tolerant. Reads skip malformed lines. Writes go through `append_event()` under `platform.locking.lock_file()` (cross-platform: `fcntl.flock` on POSIX, `msvcrt.locking` on Windows — see `fs/platform/overview.md`). State is derived by replaying from the beginning. See `spawns.md` and `sessions.md` for store-specific detail.
+**JSONL event stores** (spawns, sessions): append-only, crash-tolerant. Reads skip malformed lines. Writes go through `append_event()` under `platform.locking.lock_file()` (cross-platform: `fcntl.flock` on POSIX, `msvcrt.locking` on Windows — see `../platform/overview.md`). State is derived by replaying from the beginning. See `spawns.md` and `sessions.md` for store-specific detail.
 
 **Per-file mutable JSON** (work items): one `<slug>.json` per item under `work-items/`. Atomic overwrites via `tmp + os.replace()`. Better for mutable records correlated with a directory that moves on rename.
 
@@ -117,7 +117,7 @@ Crash-only design: every write path is safely restartable.
 
 ## Locking
 
-- JSONL stores: `platform.locking.lock_file()` on `.flock` sidecar — exclusive, cross-platform (fcntl on POSIX, msvcrt on Windows), thread-local reentrant (depth counter). See `fs/platform/overview.md`.
+- JSONL stores: `platform.locking.lock_file()` on `.flock` sidecar — exclusive, cross-platform (fcntl on POSIX, msvcrt on Windows), thread-local reentrant (depth counter). See `../platform/overview.md`.
 - Session locks: per-session lock file (`<chat_id>.lock`) held for active session duration. Lease file (`<chat_id>.lease.json`) carries PID + generation token for staleness detection.
 - UUID creation: `id.lock` exclusive lock; double-checked read inside lock.
 

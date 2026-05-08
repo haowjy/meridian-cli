@@ -45,7 +45,7 @@ harness = "..."
 agent = "..."
 effort = "high"
 approval = "auto"
-autocompact = 80                       # autocompact_pct alias also accepted
+autocompact = 80
 timeout = 3600.0
 
 [output]
@@ -92,15 +92,19 @@ This two-pass design is required because the profile may influence model/harness
 
 ## resolve_project_root()
 
-`resolve_project_root(explicit=None)` in `settings.py` determines the project root:
+`resolve_project_root(explicit=None)` in `src/meridian/lib/config/project_root.py` determines the project root:
 
 1. Explicit argument
 2. `MERIDIAN_PROJECT_DIR` env var
-3. Walk up from cwd looking for `.agents/skills/` directory
-4. Walk up looking for `.git` boundary
-5. Fallback to cwd
+3. Walk up from cwd; first directory matching any of:
+   - `.mars/` directory (mars package marker)
+   - `meridian.toml` file
+   - `meridian.local.toml` file
+   - `.meridian/id` file (project state marker)
+   - `.git` entry (repo boundary)
+4. Fallback to cwd
 
-The `.agents/skills/` check is the primary heuristic — it finds the meridian project root regardless of where you are in the tree.
+Provenance of the discovery is recorded in `ProjectRootResolution.source` (one of `explicit`, `env`, `mars`, `meridian-toml`, `meridian-local-toml`, `project-state`, `git`, `cwd`).
 
 ## Config CLI
 
@@ -108,63 +112,79 @@ The `.agents/skills/` check is the primary heuristic — it finds the meridian p
 
 `config.init` (alias: `meridian init`) seeds `.meridian/` directories, `.gitignore`, and runs `mars init/link` for first-run bootstrap. The `--link` flag symlinks `.agents/` into an external tool directory (e.g., for IDE integration).
 
-## Workspace Config (`workspace.local.toml`)
+## Workspace Config
 
-`src/meridian/lib/config/workspace.py` — local-only multi-repo context injection. Parsed on every launch to extend the harness's file access beyond the project root.
+`src/meridian/lib/config/workspace.py` — multi-repo context injection via named workspace entries. Parsed on every launch to extend harness file access beyond the project root.
 
-### File Location
+### File Locations
 
-`resolve_project_config_paths(project_root).workspace_local_toml` resolves to `<state-root-parent>/workspace.local.toml` (one level above `.meridian/`). The file is local-only: `meridian workspace init` writes it and adds it to `.git/info/exclude` so it never gets committed.
+Workspace config uses two TOML files at the project root (not inside `.meridian/`):
 
-### Two-Stage Model
+- **`meridian.toml`** — committed entries; describes expected repository layout shared with the team
+- **`meridian.local.toml`** — local additions/overrides; machine-specific, never committed (gitignored by default)
 
-**Stage 1 — parse:** `parse_workspace_config(path) → WorkspaceConfig`
+`resolve_project_config_paths(project_root)` resolves both: `.meridian_toml` → `<project_root>/meridian.toml`, `.meridian_local_toml` → `<project_root>/meridian.local.toml`.
 
-Pure TOML parse — no filesystem access. Schema: one `[[context-roots]]` array; each entry requires `path` (str) and accepts `enabled` (bool, default `True`). Unknown top-level keys and unknown per-entry keys are collected and preserved, not rejected.
+### Schema
+
+Each workspace entry is a named TOML table `[workspace.<name>]` with a required `path` field. Entry names must match `^[a-z][a-z0-9_-]*$`. Unknown keys are collected as findings and ignored.
 
 ```toml
-[[context-roots]]
-path = "../sibling-repo"
-enabled = true
+# meridian.toml — committed
+[workspace.frontend]
+path = "../meridian-web"
+
+[workspace.prompts]
+path = "../prompts/meridian-base"
+
+# meridian.local.toml — local additions/overrides
+[workspace.frontend]
+path = "../my-fork/meridian-web"   # overrides committed path for this machine
+
+[workspace.local-data]
+path = "/data/large-dataset"       # local-only entry
 ```
 
-**Stage 2 — resolve:** `resolve_workspace_snapshot(project_root) → WorkspaceSnapshot`
+There is no `enabled` field and no subtractive override — a committed entry can only be redirected by a local entry with the same name, not disabled.
 
-Filesystem evaluation on top of the parsed config. Resolves each declared path (relative paths resolved against the workspace file's parent; `~` expanded), checks `is_dir()`, and assembles `ResolvedContextRoot` entries.
+### Two-Layer Merge
+
+`resolve_workspace_snapshot(project_root) → WorkspaceSnapshot`:
+
+1. Reads committed entries from `meridian.toml` and local entries from `meridian.local.toml`
+2. Merges: local entries with the same name override the committed path; local-only entries are appended after committed entries
+3. Resolves each declared path (relative paths resolved against `project_root`; `~` expanded), checks `is_dir()`
 
 ```
-WorkspaceConfig              WorkspaceSnapshot
-  context_roots: tuple        roots: tuple[ResolvedContextRoot]
-  unknown_top_level_keys        - declared_path, resolved_path
-                                - enabled, exists
+WorkspaceSnapshot
+  status: "none" | "present" | "invalid"
+  source_paths: tuple[Path, ...]
+  roots: tuple[ResolvedWorkspaceRoot]
+    - name, declared_path, resolved_path
+    - enabled (always True), exists, source ("committed" | "local" | "merged")
 ```
 
-`WorkspaceSnapshot.status` is one of `"none"` (file absent), `"present"` (parsed successfully), or `"invalid"` (TOML decode error or schema violation). Invalid blocks launch; none and present do not.
+`status = "invalid"` (TOML parse or schema error) blocks launch. `"none"` (no workspace tables) and `"present"` (parsed OK) do not.
 
 ### Findings (non-blocking diagnostics)
 
-A `"present"` snapshot may carry `WorkspaceFinding` entries:
-- `workspace_unknown_key` — unrecognized top-level or per-entry keys (typo guard)
-- `workspace_missing_root` — an enabled root's resolved path does not exist on disk
+- `workspace_unknown_key` — unrecognized keys inside a workspace entry (typo guard)
+- `workspace_missing_root` — a committed entry path does not exist on disk
+- `workspace_local_missing_root` — a local or merged entry path does not exist (likely stale override)
 
-These surface in `meridian config show` and `meridian doctor` but do not block launch.
+Surface in `meridian config show` and `meridian doctor`; do not block launch.
 
 ### Projectable Roots
 
-`get_projectable_roots(snapshot) → tuple[Path, ...]` — filters to enabled + existing roots. This is the input to the harness projection stage in `launch/`. See `.meridian/fs/launch/overview.md`.
+`get_projectable_roots(snapshot) → tuple[Path, ...]` — filters to enabled + existing roots. Input to the harness projection stage in `launch/`. See `launch/overview.md`.
 
 ### Config Show Integration
 
-`lib/ops/config_surface.py:build_config_surface()` calls `resolve_workspace_snapshot()` directly and wraps the result into `ConfigSurface.workspace` (`ConfigSurfaceWorkspace`). That model carries:
-- `status`, `path`
-- `roots`: count / enabled / missing tallies (`ConfigSurfaceWorkspaceRoots`)
-- `applicability`: per-harness `WorkspaceApplicability` (from `project_workspace_roots()` called for each known harness id)
-
-`ConfigSurface.workspace_findings` carries the raw `WorkspaceFinding` tuple for doctor/diagnostics output.
+`lib/ops/config_surface.py:build_config_surface()` calls `resolve_workspace_snapshot()` and wraps the result into `ConfigSurface.workspace` (`ConfigSurfaceWorkspace`): status, source paths, root tallies, and per-harness `WorkspaceApplicability`.
 
 ### Workspace Init
 
-`lib/ops/workspace.py:workspace_init_sync()` — creates the template file if absent (atomic write), then ensures `.git/info/exclude` contains the ignore entries via `_ensure_local_gitignore_entries()`. This is the one write path; everything else is read-only.
+`meridian workspace init` — `lib/ops/workspace.py:workspace_init_sync()`. Creates or appends to `meridian.local.toml` with example `[workspace]` entries, then ensures `.git/info/exclude` contains the gitignore entries. Single write path; everything else is read-only.
 
 ## Why Two Separate Systems
 

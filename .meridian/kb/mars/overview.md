@@ -84,4 +84,4 @@ It does not attempt to run `mars sync` — diagnosis only.
 
 `lib/catalog/agent.py` and `lib/catalog/skill.py` load profiles from `.agents/` at spawn time. They warn (not error) on missing files so spawns can proceed with degraded configuration rather than failing. The default agent policy (`lib/launch/default_agent_policy.py`) warns when no suitable default agent is found in `.agents/agents/`.
 
-See `fs/catalog/overview.md` for the full profile loading and model resolution pipeline.
+See `../catalog/overview.md` for the full profile loading and model resolution pipeline.

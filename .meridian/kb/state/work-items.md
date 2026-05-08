@@ -15,7 +15,7 @@ Work items deliberately use per-file mutable JSON rather than the JSONL event mo
     work-items.rename.intent.json  # crash-safe rename intent (only present mid-rename)
   work/
     <work_id>/           # scratch directory for active work item
-  work-archive/
+  archive/work/
     <work_id>/           # scratch directory for done/archived work item
 ```
 
@@ -62,7 +62,7 @@ This means even a crash mid-rename recovers correctly on next access.
 
 Work items transition through:
 - `open` → scratch dir under `.meridian/work/<id>/`
-- `done` → scratch dir moves to `.meridian/work-archive/<id>/`
+- `done` → scratch dir moves to `.meridian/archive/work/<id>/`
 
 `archive_work_item()` only moves the scratch dir and flips status to `done`. It does NOT update child spawn `work_id` fields or detach active sessions. `work_done_sync()` checks for active attachments (sessions and running spawns) and returns a warning if any exist, but takes no action to detach them.
 

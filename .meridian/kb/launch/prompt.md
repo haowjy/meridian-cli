@@ -106,7 +106,7 @@ Two rendering modes controlled by `reference_mode` parameter:
 
 Paths mode is preferred for large files to avoid ballooning prompt size.
 
-`@path` syntax under `.meridian/fs/` is supported via `resolve_fs_dir()`.
+`@path` syntax resolves relative to the configured KB context (default `.meridian/kb/`) via `resolve_kb_dir()`.
 
 ## Injection Mitigation
 

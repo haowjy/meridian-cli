@@ -14,7 +14,7 @@ src/meridian/
     state/        JSONL event stores (spawns, sessions), mutable JSON (work items)
     catalog/      Model resolution, agent/skill loading, default agent policy
     launch/       Spawn lifecycle: prepare → resolve → process → finalize
-    config/       Settings model, precedence chain, TOML read/write, workspace.local.toml
+    config/       Settings model, precedence chain, TOML read/write, workspace config
     context/      Context path resolver: work/kb backend config (local vs git-backed)
     hooks/        Hook dispatch system: lifecycle events → builtins or shell commands
     core/         Shared primitives: type aliases, JSONL codec, signal handling, output sink
@@ -23,10 +23,10 @@ src/meridian/
     app/          REST server exposing spawn management as HTTP API (SPEC_ONLY launch path)
     streaming/    Connection abstractions for harness subprocess output; streaming runner
     observability/ Structured logging context, debug tracing, spawn-scoped log binding
-    safety/       Env sanitization, security constraints (undocumented in fs/)
-    sync/         Idempotent sync operations, mars sync integration (undocumented in fs/)
-    adapters/     Harness adapter registration (undocumented in fs/; see harness/)
-    utils/        Additional utilities beyond core/ (undocumented in fs/)
+    safety/       Env sanitization, security constraints
+    sync/         Idempotent sync operations, mars sync integration
+    adapters/     Harness adapter registration (see harness/)
+    utils/        Additional utilities beyond core/
   dev/            Token-efficient pytest wrapper
 ```
 
@@ -36,11 +36,11 @@ src/meridian/
 - `meridian spawn ...` (CLI) and `spawn_create` (MCP tool) both call `spawn_create_sync` from `ops/spawn/api.py`
 - All user-facing operations are declared in `ops/commands.py` as `OperationSpec` instances
 - CLI commands are auto-generated or explicitly registered from the manifest; the MCP server registers the same ops as FastMCP tools
-- See `fs/ops/overview.md` for the manifest architecture
+- See `ops/overview.md` for the manifest architecture
 
 **Launch flow:**
 
-Composition is centralized in `lib/launch/context.py:build_launch_context()`. Every launch path builds a `SpawnRequest` (caller intent DTO) and `LaunchRuntime` (surface/env/paths), calls the factory, then executes or observes. Driving adapters do not compose directly — see `fs/launch/overview.md` for invariant details.
+Composition is centralized in `lib/launch/context.py:build_launch_context()`. Every launch path builds a `SpawnRequest` (caller intent DTO) and `LaunchRuntime` (surface/env/paths), calls the factory, then executes or observes. Driving adapters do not compose directly — see `launch/overview.md` for invariant details.
 
 1. `ops/spawn/prepare.py` — validates input, resolves model aliases (via catalog), builds `SpawnRequest` with `SPAWN_PREPARE` surface, calls `build_launch_context(dry_run=True)` for prompt composition and preview argv
 2. `lib/launch/context.py:build_launch_context()` — sole composition seam: resolves policies (via `policies.py:resolve_policies()`), permission pipeline, prompt, argv, child env — returns `LaunchContext`
@@ -63,7 +63,7 @@ Composition is centralized in `lib/launch/context.py:build_launch_context()`. Ev
 - `meridian mars ...` is a passthrough to the bundled `mars` binary
 - Mars manages `.agents/` (agent profiles, skill content) from package sources
 - Model alias resolution calls `mars models list --json` at resolve time
-- See `fs/mars/overview.md`
+- See `mars/overview.md`
 
 ## Key Design Decisions
 
@@ -77,21 +77,20 @@ Composition is centralized in `lib/launch/context.py:build_launch_context()`. Ev
 
 **Config precedence:** CLI flags > ENV vars > agent profile > project config > user config > harness defaults. Each field resolves independently — a CLI model override forces harness re-derivation from the overridden model, not from the profile's harness.
 
-**Workspace config:** `workspace.local.toml` at `state_root.parent` declares sibling-repo roots projected to harness launches (`--add-dir` for Claude, `OPENCODE_CONFIG_CONTENT` env for OpenCode). Local-only; gitignored by default. Invalid workspace blocks any spawn before harness contact. See `fs/config/overview.md` and `fs/launch/overview.md`.
+**Workspace config:** Named `[workspace.NAME]` tables in `meridian.toml` (committed) and `meridian.local.toml` (local additions/overrides) declare sibling-repo roots projected to harness launches (`--add-dir` for Claude, `OPENCODE_CONFIG_CONTENT` env for OpenCode). `meridian workspace init` scaffolds `meridian.local.toml`. Invalid workspace blocks any spawn before harness contact. See `config/overview.md` and `launch/overview.md`.
 
 ## State Root Layout
 
-State splits across two roots keyed by a per-project UUID. See `fs/state/overview.md` for the full layout, path resolvers, and read-vs-write separation.
+State splits across two roots keyed by a per-project UUID. See `state/overview.md` for the full layout, path resolvers, and read-vs-write separation.
 
 **Repo `.meridian/`** — committed scaffolding:
 ```
 .meridian/
   id                    project UUID (gitignored; generated on first write)
   .gitignore            seeded/maintained non-destructively
-  fs/                   agent-facing codebase mirror (this directory)
+  kb/                   agent-facing knowledge base (this directory)
   work/                 active work scratch dirs
-  work-archive/         archived work scratch dirs
-  work-items/           mutable JSON per work item (gitignored, not committed)
+  archive/work/         archived work scratch dirs
 ```
 
 **User `~/.meridian/projects/<uuid>/`** — runtime state (local, never committed):
