@@ -69,7 +69,7 @@ High-churn runtime state lives outside the repo, keyed by project UUID so the re
 
 The UUID is stored in `.meridian/id` (gitignored). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
 
-`work/` and `work-archive/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
+By default, `work/` and `archive/work/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
 
 ## `meridian.toml` Keys
 
@@ -322,22 +322,6 @@ failure_policy = "warn"
 
 See [hooks.md](hooks.md) for the full hook schema, event names, and builtin reference.
 
-### `repo` → `remote`
-
-`repo` is a deprecated alias for `remote`. Meridian accepts it with a warning. Replace `repo` with `remote` in your config:
-
-```toml
-# deprecated
-[[hooks]]
-builtin = "git-autosync"
-repo = "git@github.com:team/docs.git"
-
-# correct
-[[hooks]]
-builtin = "git-autosync"
-remote = "git@github.com:team/docs.git"
-```
-
 ## Context
 
 Context paths point Meridian at directories for active work, knowledge bases, and work archives. They can be backed by a local path (default) or a remote Git repo that Meridian clones and resolves at runtime.
@@ -415,7 +399,7 @@ Use `meridian models refresh` to force a cache refresh from the models.dev catal
 | `MERIDIAN_PROJECT_DIR` | Force repo root resolution |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/` on Unix/macOS, `%LOCALAPPDATA%\meridian\` on Windows) |
-| `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned paths (`fs/`, `work/`, `work-archive/`) always stay in `.meridian/` regardless of this setting. |
+| `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
 | `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Scratch/docs directory for the active work item, when one exists |

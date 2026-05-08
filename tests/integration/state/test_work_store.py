@@ -160,6 +160,62 @@ def test_archive_and_reopen_use_context_archive_path(
     assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
 
 
+def test_create_archive_and_reopen_use_project_templated_context_work_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    runtime_root = project_root / ".meridian"
+    user_state_root = tmp_path / "user-state"
+    project_root.mkdir()
+    user_state_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", user_state_root.as_posix())
+    monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
+    (project_root / ".git").write_text("gitdir: .git/worktrees/repo\n", encoding="utf-8")
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "meridian.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "contexts/{project}/work"',
+                'archive = "contexts/{project}/archive/work"',
+                "",
+                "[context.kb]",
+                'path = "contexts/{project}/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert not (runtime_root / "id").exists()
+
+    item = create_work_item(runtime_root, "My feature")
+    project_uuid = (runtime_root / "id").read_text(encoding="utf-8").strip()
+    active_dir = project_root / "contexts" / project_uuid / "work" / item.name
+    archived_dir = project_root / "contexts" / project_uuid / "archive" / "work" / item.name
+
+    assert project_uuid
+    assert active_dir.is_dir()
+    assert not (runtime_root / "work" / item.name).exists()
+
+    listed, warnings = list_work_items(runtime_root)
+    assert warnings == []
+    assert [work.name for work in listed] == [item.name]
+
+    (active_dir / "notes.md").write_text("hello", encoding="utf-8")
+
+    archived = archive_work_item(runtime_root, item.name)
+    assert archived.status == "done"
+    assert not active_dir.exists()
+    assert (archived_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+    reopened = reopen_work_item(runtime_root, item.name)
+    assert reopened.status == "open"
+    assert reopened.archived_at is None
+    assert not archived_dir.exists()
+    assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+
 def test_list_work_items_detects_manual_work_directory(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     manual_dir = runtime_root / "work" / "manual-item"
