@@ -217,7 +217,30 @@ class ExtensionCommandServices:
     def build_spawn_service(self) -> SpawnApplicationService:
         """Build spawn service from shared application/service authority."""
 
-        return self.shared.spawn_service_factory(self.application)
+        return self.shared.spawn_service_factory(self._resolved_spawn_entrypoint())
+
+    def _resolved_spawn_entrypoint(self) -> ExtensionEntryPoint:
+        """Return entrypoint with roots materialized from shared authority."""
+
+        project_root = self.resolved_project_root()
+        runtime_root = self.resolved_runtime_root()
+        context = self.application.context
+        authority = self.authority or context.authority
+        if (
+            context.project_root == project_root
+            and context.runtime_root == runtime_root
+            and context.authority == authority
+        ):
+            return self.application
+        return ExtensionEntryPoint(
+            context=ApplicationContext(
+                project_root=project_root,
+                runtime_root=runtime_root,
+                config=context.config,
+                authority=authority,
+            ),
+            services=self.application.services,
+        )
 
 
 def build_extension_command_services(
@@ -233,20 +256,29 @@ def build_extension_command_services(
 ) -> ExtensionCommandServices:
     """Build extension services with the shared application seam attached."""
 
-    resolved_application = application or ExtensionEntryPoint(
-        context=ApplicationContext(
-            project_root=project_root,
-            runtime_root=runtime_root,
-            config=config,
-            authority=authority,
-        ),
+    base_application = application or ExtensionEntryPoint(
+        context=ApplicationContext(config=config, authority=authority),
         services=ApplicationServices(lifecycle=lifecycle),
     )
-    resolved_authority = authority or resolved_application.context.authority
+    resolved_authority = authority or base_application.context.authority
+    resolved_project_root = (
+        base_application.context.project_root
+        or (resolved_authority.project_root if resolved_authority is not None else None)
+        or project_root
+    )
     resolved_runtime_root = (
-        resolved_application.context.runtime_root
+        base_application.context.runtime_root
         or (resolved_authority.runtime_root if resolved_authority is not None else None)
         or runtime_root
+    )
+    resolved_application = ExtensionEntryPoint(
+        context=ApplicationContext(
+            project_root=resolved_project_root,
+            runtime_root=resolved_runtime_root,
+            config=base_application.context.config,
+            authority=resolved_authority,
+        ),
+        services=base_application.services,
     )
 
     return ExtensionCommandServices(

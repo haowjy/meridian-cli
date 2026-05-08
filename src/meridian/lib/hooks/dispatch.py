@@ -104,8 +104,13 @@ class HookDispatcher(LifecycleHook):
     ) -> HookDispatcher:
         """Build a dispatcher from shared application context authority."""
 
-        project_root = context.project_root
-        runtime_root = context.runtime_root
+        authority = context.authority
+        project_root = context.project_root or (
+            authority.project_root if authority is not None else None
+        )
+        runtime_root = context.runtime_root or (
+            authority.runtime_root if authority is not None else None
+        )
         if project_root is None:
             raise ValueError("Hook dispatcher context is missing project_root.")
         if runtime_root is None:
@@ -113,7 +118,7 @@ class HookDispatcher(LifecycleHook):
         return cls(
             project_root=project_root,
             runtime_root=runtime_root,
-            authority=context.authority,
+            authority=authority,
             registry=registry,
             interval_tracker=interval_tracker,
             external_runner=external_runner,

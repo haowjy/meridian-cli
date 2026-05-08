@@ -196,6 +196,41 @@ async def test_archive_spawn_handler_uses_extension_service_builder(
     assert captured["spawn_id"] == "p321"
 
 
+@pytest.mark.asyncio
+async def test_archive_spawn_handler_supports_authority_only_service_builder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Authority-only services still build spawn service through shared seam."""
+    from meridian.lib.core import spawn_service as service_mod
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    captured: list[str] = []
+
+    async def _fake_archive(self: object, spawn_id: str) -> bool:
+        _ = self
+        captured.append(spawn_id)
+        return True
+
+    monkeypatch.setattr(service_mod.SpawnApplicationService, "archive", _fake_archive)
+
+    result = await archive_spawn_handler(
+        {"spawn_id": "p654"},
+        _build_context(),
+        build_extension_command_services(authority=prepared.authority),
+    )
+
+    assert isinstance(result, ExtensionJSONResult)
+    assert result.payload == {
+        "spawn_id": "p654",
+        "archived": True,
+        "was_already_archived": False,
+    }
+    assert captured == ["p654"]
+
+
 def test_build_extension_command_services_carries_application_authority(
     tmp_path: Path,
 ) -> None:
@@ -253,6 +288,8 @@ def test_extension_command_services_resolve_project_and_runtime_from_authority(
 
     assert services.resolved_project_root() == project_root
     assert services.resolved_runtime_root() == prepared.runtime_root
+    assert services.application.context.project_root == project_root
+    assert services.application.context.runtime_root == prepared.runtime_root
     assert services.require_project_root() == project_root
     assert services.require_runtime_root() == prepared.runtime_root
 

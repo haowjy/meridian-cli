@@ -283,6 +283,25 @@ def test_dispatch_from_application_context_requires_runtime_root(tmp_path: Path)
         )
 
 
+def test_dispatch_from_application_context_uses_authority_roots_when_missing(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    authority = resolve_runtime_authority_for_write(project_root)
+
+    dispatcher = HookDispatcher.from_application_context(
+        ApplicationContext(project_root=None, runtime_root=None, authority=authority),
+        registry=StubRegistry(tuple()),
+        interval_tracker=StubIntervalTracker(),
+        external_runner=StubExternalRunner(results={}),
+    )
+
+    assert authority.runtime_root is not None
+    assert dispatcher._project_root == authority.project_root.resolve()
+    assert dispatcher._runtime_root == authority.runtime_root.resolve()
+
+
 def test_dispatch_on_event_normalizes_lifecycle_terminal_status(tmp_path: Path) -> None:
     hook = _hook(
         "notify",
