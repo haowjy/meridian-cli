@@ -15,13 +15,13 @@ import structlog
 import meridian.lib.core.telemetry as telemetry
 from meridian.lib.core.lifecycle import (
     LifecycleEvent,
-    LifecycleOutcomeCategory,
     SpawnLifecycleService,
     create_lifecycle_service,
     generate_event_id,
     generate_lifecycle_event_id,
     get_hook_dispatcher,
 )
+from meridian.lib.core.telemetry import SpawnFailureCategory
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
 
@@ -951,7 +951,7 @@ def test_finalized_event_exposes_typed_outcome_category(tmp_path: Path) -> None:
     svc.finalize(spawn_id, "failed", 1, origin="launch_failure", error="launch died")
 
     event = next(e for e in hook.events if e.event_type == "spawn.finalized")
-    assert event.outcome_category == LifecycleOutcomeCategory.LAUNCH_FAILURE
+    assert event.outcome_category == SpawnFailureCategory.LAUNCH_FAILURE
 
 
 def test_failure_sentinel_uses_canonical_terminal_diagnostic_shape(tmp_path: Path) -> None:
@@ -1004,3 +1004,35 @@ def test_failed_terminal_telemetry_includes_category(tmp_path: Path) -> None:
 
     failed = next(event for event in telemetry_events if event.event == "spawn.failed")
     assert failed.payload["category"] == "reconciler_orphan"
+
+
+def test_failed_terminal_uses_unknown_category_for_unclassified_launcher_failures(
+    tmp_path: Path,
+) -> None:
+    hook = RecordingHook()
+    svc = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(svc, status="running")
+
+    svc.finalize(spawn_id, "failed", 9, origin="launcher", error="plain launcher failure")
+
+    event = next(e for e in hook.events if e.event_type == "spawn.finalized")
+    assert event.outcome_category == SpawnFailureCategory.UNKNOWN_FAILURE
+
+    sentinel_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "failure.json"
+    data = json.loads(sentinel_path.read_text(encoding="utf-8"))
+    assert data["category"] == "unknown_failure"
+
+
+def test_failed_terminal_does_not_infer_teardown_from_error_text(tmp_path: Path) -> None:
+    hook = RecordingHook()
+    svc = _make_service(tmp_path, hooks=[hook])
+    spawn_id = _start_spawn(svc, status="running")
+
+    svc.finalize(spawn_id, "failed", 5, origin="launcher", error="teardown boom")
+
+    event = next(e for e in hook.events if e.event_type == "spawn.finalized")
+    assert event.outcome_category == SpawnFailureCategory.UNKNOWN_FAILURE
+
+    sentinel_path = RuntimePaths.from_root_dir(tmp_path).spawns_dir / spawn_id / "failure.json"
+    data = json.loads(sentinel_path.read_text(encoding="utf-8"))
+    assert data["category"] == "unknown_failure"

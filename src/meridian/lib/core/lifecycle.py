@@ -28,7 +28,6 @@ import os
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
@@ -85,16 +84,7 @@ TerminalStatus = Literal["succeeded", "failed", "cancelled"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
 
 
-class LifecycleOutcomeCategory(StrEnum):
-    """Typed terminal lifecycle outcome categories for diagnostics and tests."""
-
-    SUCCEEDED = "succeeded"
-    CANCELLATION = SpawnFailureCategory.CANCELLATION
-    LAUNCH_FAILURE = SpawnFailureCategory.LAUNCH_FAILURE
-    HARNESS_FAILURE = SpawnFailureCategory.HARNESS_FAILURE
-    TEARDOWN_FAILURE = SpawnFailureCategory.TEARDOWN_FAILURE
-    RECONCILER_ORPHAN = SpawnFailureCategory.RECONCILER_ORPHAN
-    UNKNOWN_FAILURE = SpawnFailureCategory.UNKNOWN_FAILURE
+type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
 
 
 _TERMINAL_STATUS_VALUES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
@@ -163,7 +153,7 @@ class LifecycleEvent:
     status: TerminalStatus | None = None
     origin: TerminalOrigin | None = None
 
-    outcome_category: LifecycleOutcomeCategory | None = None
+    outcome_category: TerminalOutcomeCategory | None = None
 
     # Metrics (may be None even on terminal events — reducer may merge later)
     duration_secs: float | None = None
@@ -543,7 +533,7 @@ class SpawnLifecycleService:
             self._correlation(
                 operation="cancel",
                 spawn_id=spawn_id,
-                outcome_category=LifecycleOutcomeCategory.CANCELLATION,
+                outcome_category=SpawnFailureCategory.CANCELLATION,
                 terminal_status="cancelled",
                 terminal_origin="cancel",
             )
@@ -578,7 +568,7 @@ class SpawnLifecycleService:
         record: SpawnRecord | None = None,
         spawn_id: str | None = None,
         event_type: str | None = None,
-        outcome_category: LifecycleOutcomeCategory | None = None,
+        outcome_category: TerminalOutcomeCategory | None = None,
         terminal_status: str | None = None,
         terminal_origin: str | None = None,
     ) -> LifecycleCorrelation:
@@ -614,7 +604,7 @@ class SpawnLifecycleService:
         status: str,
         origin: str | None,
         error: str | None = None,
-    ) -> LifecycleOutcomeCategory:
+    ) -> TerminalOutcomeCategory:
         return _terminal_outcome_category(status=status, origin=origin, error=error)
 
     def _build_terminal_failure_diagnostic(
@@ -624,10 +614,9 @@ class SpawnLifecycleService:
         origin: TerminalOrigin | None = None,
         error: str | None = None,
     ) -> SpawnFailure:
-        outcome_category = self._terminal_outcome_category(
+        outcome_category = _terminal_failure_category(
             status=record.status,
             origin=origin or record.terminal_origin,
-            error=error or record.error,
         )
         correlation = self._correlation(
             operation="finalize",
@@ -640,7 +629,7 @@ class SpawnLifecycleService:
             ts=datetime.now(tz=UTC),
             exit_code=record.exit_code,
             reason=record.error or error or record.terminal_origin or origin or "spawn failed",
-            category=SpawnFailureCategory(str(outcome_category)),
+            category=outcome_category or SpawnFailureCategory.UNKNOWN_FAILURE,
             status=record.status,
             origin=record.terminal_origin or origin,
             correlation=correlation.to_context(),
@@ -787,7 +776,7 @@ class SpawnLifecycleService:
         cache_creation_input_tokens: int | None = None
         reasoning_tokens: int | None = None
         cost_is_estimate = False
-        outcome_category: LifecycleOutcomeCategory | None = None
+        outcome_category: TerminalOutcomeCategory | None = None
 
         if event_type == "spawn.finalized" and record is not None:
             rec_status = record.status
@@ -877,39 +866,52 @@ def _emit_lifecycle_event(
     notify_observers(event)
 
 
+def _terminal_failure_category(
+    *,
+    status: str,
+    origin: str | None,
+    error: str | None = None,
+) -> SpawnFailureCategory | None:
+    _ = error
+    if status == "succeeded":
+        return None
+    if status == "cancelled" or origin == "cancel":
+        return SpawnFailureCategory.CANCELLATION
+    if origin == "launch_failure":
+        return SpawnFailureCategory.LAUNCH_FAILURE
+    if origin == "reconciler":
+        return SpawnFailureCategory.RECONCILER_ORPHAN
+    if status != "failed":
+        return SpawnFailureCategory.UNKNOWN_FAILURE
+    if origin == "runner":
+        return SpawnFailureCategory.HARNESS_FAILURE
+    return SpawnFailureCategory.UNKNOWN_FAILURE
+
+
 def _terminal_outcome_category(
     *,
     status: str,
     origin: str | None,
     error: str | None,
-) -> LifecycleOutcomeCategory:
-    if status == "succeeded":
-        return LifecycleOutcomeCategory.SUCCEEDED
-    if status == "cancelled" or origin == "cancel":
-        return LifecycleOutcomeCategory.CANCELLATION
-    if origin == "launch_failure":
-        return LifecycleOutcomeCategory.LAUNCH_FAILURE
-    if origin == "reconciler":
-        return LifecycleOutcomeCategory.RECONCILER_ORPHAN
-    if error and "teardown" in error.lower():
-        return LifecycleOutcomeCategory.TEARDOWN_FAILURE
-    if status == "failed":
-        return LifecycleOutcomeCategory.HARNESS_FAILURE
-    return LifecycleOutcomeCategory.UNKNOWN_FAILURE
+) -> TerminalOutcomeCategory:
+    failure_category = _terminal_failure_category(status=status, origin=origin, error=error)
+    if failure_category is not None:
+        return failure_category
+    return "succeeded"
 
 
 def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     """Build sparse terminal lifecycle payload for observer projections."""
     payload: dict[str, Any] = {
         "status": spawn.status,
-        "category": str(
-            _terminal_outcome_category(
-                status=spawn.status,
-                origin=spawn.terminal_origin,
-                error=spawn.error,
-            )
-        ),
     }
+    failure_category = _terminal_failure_category(
+        status=spawn.status,
+        origin=spawn.terminal_origin,
+        error=spawn.error,
+    )
+    if failure_category is not None:
+        payload["category"] = str(failure_category)
     if spawn.exit_code is not None:
         payload["exit_code"] = spawn.exit_code
     if spawn.duration_secs is not None:

@@ -299,6 +299,7 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
         "exit_code": 0,
         "duration_secs": 1.5,
     }
+    assert "category" not in succeeded["data"]
     assert failed["severity"] == "error"
     assert failed["ids"] == {"spawn_id": failed_id}
     assert failed["data"] == {
@@ -307,6 +308,7 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
         "reason": "boom",
         "error": {"type": "SpawnFailed", "message": "boom"},
     }
+    assert "category" not in failed["data"]
 
 
 def test_non_terminal_spawn_lifecycle_events_are_not_projected(
