@@ -74,7 +74,14 @@ def test_chat_management_commands_use_runtime_read_preparation(
     def fake_runtime_write(project_root: Path) -> None:
         calls.append(f"write:{project_root}")
 
-    def fake_request_json(_method: str, path: str, *, url: str | None) -> dict[str, object]:
+    def fake_request_json(
+        _method: str,
+        path: str,
+        *,
+        url: str | None,
+        runtime_root: Path | None = None,
+    ) -> dict[str, object]:
+        _ = runtime_root
         if path.endswith("/state"):
             return {"chat_id": "c1", "state": "idle"}
         return response

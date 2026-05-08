@@ -195,8 +195,8 @@ def _chat(
 def _chat_ls(
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    _prepare_chat_runtime_read_entrypoint()
-    response = _request_json("GET", "/chat", url=url)
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    response = _request_json("GET", "/chat", url=url, runtime_root=entrypoint.context.runtime_root)
     rows = response.get("chats", [])
     if not isinstance(rows, list):
         raise ValueError("invalid chat server response: chats must be a list")
@@ -207,9 +207,15 @@ def _chat_show(
     chat_id: Annotated[str, Parameter(help="Chat id to inspect.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    _prepare_chat_runtime_read_entrypoint()
-    state = _request_json("GET", f"/chat/{chat_id}/state", url=url)
-    events = _request_json("GET", f"/chat/{chat_id}/events?last=5", url=url)
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    runtime_root = entrypoint.context.runtime_root
+    state = _request_json("GET", f"/chat/{chat_id}/state", url=url, runtime_root=runtime_root)
+    events = _request_json(
+        "GET",
+        f"/chat/{chat_id}/events?last=5",
+        url=url,
+        runtime_root=runtime_root,
+    )
     print(f"chat_id: {state.get('chat_id', chat_id)}")
     print(f"state: {state.get('state', 'unknown')}")
     print("events:")
@@ -229,23 +235,36 @@ def _chat_log(
         Parameter(name="--follow", help="Follow live events over WebSocket."),
     ] = False,
 ) -> None:
-    _prepare_chat_runtime_read_entrypoint()
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    runtime_root = entrypoint.context.runtime_root
     query = f"?last={last}" if last is not None else ""
-    response = _request_json("GET", f"/chat/{chat_id}/events{query}", url=url)
+    response = _request_json(
+        "GET",
+        f"/chat/{chat_id}/events{query}",
+        url=url,
+        runtime_root=runtime_root,
+    )
     events = _events_from_response(response)
     for event in events:
         print(json.dumps(event, sort_keys=True))
     if follow:
         last_seq = _last_seq(events)
-        asyncio.run(_follow_chat_log(chat_id, url=url, last_seq=last_seq))
+        asyncio.run(
+            _follow_chat_log(chat_id, url=url, last_seq=last_seq, runtime_root=runtime_root)
+        )
 
 
 def _chat_close(
     chat_id: Annotated[str, Parameter(help="Chat id to close.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    _prepare_chat_runtime_read_entrypoint()
-    response = _request_json("POST", f"/chat/{chat_id}/close", url=url)
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    response = _request_json(
+        "POST",
+        f"/chat/{chat_id}/close",
+        url=url,
+        runtime_root=entrypoint.context.runtime_root,
+    )
     status = response.get("status", "unknown")
     if status != "accepted":
         error = response.get("error", "unknown")
@@ -344,6 +363,7 @@ def run_chat_server(
             policy_snapshot=policy_snapshot,
         ),
     )
+    discovery_runtime_root = entrypoint.context.runtime_root
     configure(runtime=runtime)
     env_port = int(os.environ.get("PORT", "0") or "0")
     actual_port = port if port != 0 else (env_port or _find_free_port(host))
@@ -399,7 +419,11 @@ def run_chat_server(
                 flush=True,
             )
 
-        _write_server_discovery(host=display_host, port=actual_port)
+        _write_server_discovery(
+            host=display_host,
+            port=actual_port,
+            runtime_root=discovery_runtime_root,
+        )
         supervisor = DevSupervisor(
             backend_host=host,
             backend_port=actual_port,
@@ -451,7 +475,11 @@ def run_chat_server(
     if headless:
         print(f"Chat backend: {url}", file=output, flush=True)
 
-    _write_server_discovery(host=display_host, port=actual_port)
+    _write_server_discovery(
+        host=display_host,
+        port=actual_port,
+        runtime_root=discovery_runtime_root,
+    )
     if not headless and open_browser:
         webbrowser.open(url)
 
@@ -576,8 +604,8 @@ def _find_free_port(host: str) -> int:
         return int(sock.getsockname()[1])
 
 
-def _write_server_discovery(*, host: str, port: int) -> None:
-    path = _server_discovery_path()
+def _write_server_discovery(*, host: str, port: int, runtime_root: Path | None = None) -> None:
+    path = _server_discovery_path(runtime_root=runtime_root)
     display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     payload = {"host": host, "port": port, "url": f"http://{display_host}:{port}"}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -586,14 +614,16 @@ def _write_server_discovery(*, host: str, port: int) -> None:
     tmp.replace(path)
 
 
-def _server_discovery_path() -> Path:
+def _server_discovery_path(*, runtime_root: Path | None = None) -> Path:
+    if runtime_root is not None:
+        return runtime_root / CHAT_SERVER_FILE
     return get_user_home() / CHAT_SERVER_FILE
 
 
-def _resolve_server_url(url: str | None) -> str:
+def _resolve_server_url(url: str | None, *, runtime_root: Path | None = None) -> str:
     if url is not None and url.strip():
         return url.rstrip("/")
-    path = _server_discovery_path()
+    path = _server_discovery_path(runtime_root=runtime_root)
     if not path.exists():
         raise ValueError("chat server URL not found; start `meridian chat` or pass --url")
     try:
@@ -606,10 +636,16 @@ def _resolve_server_url(url: str | None) -> str:
     return discovered.rstrip("/")
 
 
-def _request_json(method: str, path: str, *, url: str | None) -> dict[str, object]:
+def _request_json(
+    method: str,
+    path: str,
+    *,
+    url: str | None,
+    runtime_root: Path | None = None,
+) -> dict[str, object]:
     import httpx
 
-    base_url = _resolve_server_url(url)
+    base_url = _resolve_server_url(url, runtime_root=runtime_root)
     try:
         response = httpx.request(method, f"{base_url}{path}", timeout=5.0)
     except httpx.HTTPError as exc:
@@ -667,10 +703,16 @@ def _last_seq(events: list[dict[str, object]]) -> int | None:
     return None
 
 
-async def _follow_chat_log(chat_id: str, *, url: str | None, last_seq: int | None) -> None:
+async def _follow_chat_log(
+    chat_id: str,
+    *,
+    url: str | None,
+    last_seq: int | None,
+    runtime_root: Path | None = None,
+) -> None:
     import websockets
 
-    base_url = _resolve_server_url(url)
+    base_url = _resolve_server_url(url, runtime_root=runtime_root)
     parsed = urlparse(base_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     netloc = parsed.netloc

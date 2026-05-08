@@ -326,7 +326,14 @@ def test_main_allows_nested_chat_management_commands(
         lambda: Path("/tmp/project"),
     )
 
-    def _fake_request_json(method: str, path: str, *, url: str | None) -> dict[str, object]:
+    def _fake_request_json(
+        method: str,
+        path: str,
+        *,
+        url: str | None,
+        runtime_root: Path | None = None,
+    ) -> dict[str, object]:
+        _ = runtime_root
         request_calls.append((method, path, url))
         if path == "/chat":
             return {"chats": [{"chat_id": "c1", "state": "idle", "created_at": "now"}]}

@@ -172,6 +172,10 @@ def test_chat_cli_static_mode_mounts_assets_and_writes_server_discovery(
         host="0.0.0.0",
         port=8765,
         frontend_dist=str(dist),
+        entrypoint=ChatEntryPoint(
+            context=ApplicationContext(project_root=tmp_path, runtime_root=runtime_root),
+            services=ApplicationServices(),
+        ),
         uvicorn_run=lambda *_args, **_kwargs: None,
         stdout=stdout,
     )
@@ -203,6 +207,10 @@ def test_chat_cli_static_mode_uses_default_asset_resolution(monkeypatch, tmp_pat
 
     actual_port = run_chat_server(
         port=8765,
+        entrypoint=ChatEntryPoint(
+            context=ApplicationContext(project_root=tmp_path, runtime_root=runtime_root),
+            services=ApplicationServices(),
+        ),
         uvicorn_run=lambda *_args, **_kwargs: None,
         stdout=stdout,
     )
@@ -277,12 +285,21 @@ def test_chat_cli_default_static_mode_falls_back_to_headless_when_assets_do_not_
 
 
 def test_chat_ls_uses_discovered_server_url(monkeypatch, tmp_path, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
     (runtime_root / "chat-server.json").write_text(
         '{"url":"http://127.0.0.1:9999"}\n', encoding="utf-8"
     )
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
+    monkeypatch.setattr(
+        chat_cmd,
+        "_prepare_chat_runtime_read_entrypoint",
+        lambda: ChatEntryPoint(
+            context=ApplicationContext(project_root=project_root, runtime_root=runtime_root),
+            services=ApplicationServices(),
+        ),
+    )
 
     def fake_request(method, path, *, timeout):
         assert method == "GET"
@@ -310,6 +327,52 @@ def test_chat_ls_uses_discovered_server_url(monkeypatch, tmp_path, capsys) -> No
     assert "chat_id" in output
     assert "c-1" in output
     assert "idle" in output
+
+
+def test_chat_close_uses_runtime_scoped_discovery_over_global_discovery(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    project_root = tmp_path / "project-b"
+    project_root.mkdir()
+    runtime_root = tmp_path / "runtime-b"
+    runtime_root.mkdir()
+    user_home = tmp_path / "user-home"
+    user_home.mkdir()
+    (runtime_root / "chat-server.json").write_text(
+        '{"url":"http://127.0.0.1:2222"}\n', encoding="utf-8"
+    )
+    (user_home / "chat-server.json").write_text(
+        '{"url":"http://127.0.0.1:1111"}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: user_home)
+    monkeypatch.setattr(
+        chat_cmd,
+        "_prepare_chat_runtime_read_entrypoint",
+        lambda: ChatEntryPoint(
+            context=ApplicationContext(project_root=project_root, runtime_root=runtime_root),
+            services=ApplicationServices(),
+        ),
+    )
+
+    def fake_request(method, path, *, timeout):
+        assert method == "POST"
+        assert path == "http://127.0.0.1:2222/chat/c1/close"
+        assert timeout == 5.0
+
+        class Response:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return {"status": "accepted"}
+
+        return Response()
+
+    monkeypatch.setattr("httpx.request", fake_request)
+
+    chat_cmd._chat_close("c1")
+
+    assert capsys.readouterr().out == "closed c1\n"
 
 
 def test_chat_command_falls_back_to_globally_parsed_harness(monkeypatch) -> None:
@@ -1221,6 +1284,7 @@ def test_chat_cli_dev_mode_uses_frontend_root_launcher_supervisor_and_warning(
         lambda **_kwargs: launcher,
     )
     monkeypatch.setattr("meridian.lib.chat.dev_frontend.DevSupervisor", FakeSupervisor)
+    monkeypatch.chdir(tmp_path)
     stdout = StringIO()
 
     actual_port = run_chat_server(
@@ -1229,6 +1293,10 @@ def test_chat_cli_dev_mode_uses_frontend_root_launcher_supervisor_and_warning(
         dev=True,
         frontend_root=str(frontend_root),
         open_browser=True,
+        entrypoint=ChatEntryPoint(
+            context=ApplicationContext(project_root=tmp_path, runtime_root=runtime_root),
+            services=ApplicationServices(),
+        ),
         stdout=stdout,
     )
 
