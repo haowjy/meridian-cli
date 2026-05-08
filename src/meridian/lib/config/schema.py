@@ -9,6 +9,7 @@ from typing import Literal, cast
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 
 ValueKind = Literal["int", "float", "str", "str_list", "verbosity"]
+DynamicMergeKind = Literal["nested_dict", "replace", "external"]
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,15 @@ class ConfigOptionDescriptor:
     @property
     def primary_env_var(self) -> str | None:
         return self.env_vars[0] if self.env_vars else None
+
+
+@dataclass(frozen=True)
+class DynamicSectionDescriptor:
+    """Metadata for one non-scalar config section."""
+
+    section_key: str
+    merge_kind: DynamicMergeKind
+    scaffold_lines: tuple[str, ...] = ()
 
 
 def config_field(

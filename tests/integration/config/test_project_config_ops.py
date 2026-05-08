@@ -56,6 +56,21 @@ def test_config_init_creates_meridian_toml_and_is_idempotent(
     assert not (project_root / ".mars").exists()
 
 
+def test_config_init_scaffold_includes_dynamic_section_examples(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+
+    result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+    content = Path(result.path).read_text(encoding="utf-8")
+
+    assert result.created is True
+    assert "[defaults]" in content
+    assert "[state]" in content
+    assert "# [agents.tech-lead]" in content
+    assert "# [[hooks]]" in content
+    assert "# [context.work]" in content
+    assert "# [workspace.docs]" in content
+
+
 def test_runtime_bootstrap_does_not_create_meridian_toml(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -388,6 +403,75 @@ def test_config_show_and_get_resolve_env_selected_user_config_like_loader(
     assert gotten.value == "opencode"
     assert gotten.source == "user-config"
     assert load_config(project_root).default_harness == "opencode"
+
+
+def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        "[context.work]\n"
+        'source = "git"\n'
+        "\n"
+        "[agents.reviewer]\n"
+        'model = "gpt55"\n'
+        "\n"
+        "[[hooks]]\n"
+        'event = "spawn"\n'
+        'command = "echo project"\n',
+        encoding="utf-8",
+    )
+    user_config = tmp_path / "user-config.toml"
+    user_config.write_text(
+        "[context.work]\n"
+        'remote = "https://example.com/work.git"\n'
+        "\n"
+        "[context.kb]\n"
+        'path = "./kb"\n'
+        "\n"
+        "[work.artifacts]\n"
+        'sync = "project"\n',
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(
+        ConfigShowInput(project_root=project_root.as_posix())
+    )
+    # write env after initial project-only check
+    assert (
+        next(item for item in shown.values if item.key == "agents.reviewer.model").source
+        == "file"
+    )
+    assert (
+        next(item for item in shown.values if item.key == "context.work.source").source
+        == "file"
+    )
+
+    monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+
+    assert (
+        next(item for item in shown.values if item.key == "agents.reviewer.model").source
+        == "file"
+    )
+    assert (
+        next(item for item in shown.values if item.key == "context.work.source").source
+        == "file"
+    )
+    assert (
+        next(item for item in shown.values if item.key == "context.work.remote").source
+        == "user-config"
+    )
+    assert (
+        next(item for item in shown.values if item.key == "context.kb.path").source
+        == "user-config"
+    )
+    assert (
+        next(item for item in shown.values if item.key == "work.artifacts.sync").source
+        == "user-config"
+    )
+    assert next(item for item in shown.values if item.key == "hooks").source == "file"
 
 
 def test_config_show_and_loader_share_local_over_project_precedence(tmp_path: Path) -> None:

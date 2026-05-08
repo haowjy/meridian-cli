@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.config.settings import OPTION_CATALOG, load_config
+from meridian.lib.config.settings import DYNAMIC_SECTION_DESCRIPTORS, OPTION_CATALOG, load_config
 
 
 @pytest.fixture(autouse=True)
@@ -54,3 +54,16 @@ def test_load_config_uses_metadata_aliases_for_scalar_runtime_fields(tmp_path: P
     assert config.kill_grace_minutes == 0.5
     assert config.guardrail_timeout_minutes == 3.0
     assert config.default_model == "gpt-5.4-mini"
+
+
+def test_dynamic_section_descriptors_cover_supported_dynamic_sections() -> None:
+    assert tuple(DYNAMIC_SECTION_DESCRIPTORS) == (
+        "agents",
+        "hooks",
+        "work",
+        "context",
+        "workspace",
+    )
+    assert DYNAMIC_SECTION_DESCRIPTORS["agents"].merge_kind == "nested_dict"
+    assert DYNAMIC_SECTION_DESCRIPTORS["hooks"].merge_kind == "replace"
+    assert DYNAMIC_SECTION_DESCRIPTORS["workspace"].merge_kind == "external"

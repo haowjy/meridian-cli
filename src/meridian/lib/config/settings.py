@@ -16,7 +16,12 @@ from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
     resolve_project_config_paths,
 )
-from meridian.lib.config.schema import config_field, parse_env_scalar, parse_toml_scalar
+from meridian.lib.config.schema import (
+    DynamicSectionDescriptor,
+    config_field,
+    parse_env_scalar,
+    parse_toml_scalar,
+)
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
@@ -785,6 +790,147 @@ def normalize_context_table(raw_value: object, *, source: str) -> dict[str, obje
     return _normalize_context_table(raw_value, source=source)
 
 
+def _normalize_workspace_section(
+    raw_value: object,
+    *,
+    source: str,
+    project_root: Path,
+) -> None:
+    _ = raw_value
+    _ = source
+    _ = project_root
+    return None
+
+
+DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
+    "agents": DynamicSectionDescriptor(
+        section_key="agents",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Agent runtime overrides ------------------------------------------------",
+            "# Override default model/policy for specific agent profiles without editing",
+            "# generated .mars/agents/ sources.",
+            "# See docs/configuration.md for full semantics.",
+            "",
+            "# [agents.tech-lead]",
+            '# model = "gpt55"',
+            '# effort = "medium"',
+            '# approval = "auto"',
+            "",
+            "# [[agents.tech-lead.model-policies]]",
+            '# match = { model-glob = "gpt*" }',
+            '# override = { effort = "medium", autocompact = 40 }',
+            "",
+        ),
+    ),
+    "hooks": DynamicSectionDescriptor(
+        section_key="hooks",
+        merge_kind="replace",
+        scaffold_lines=(
+            "# -- Hook examples -----------------------------------------------------------",
+            "# Hooks are dynamic arrays of tables. Keep examples commented until needed.",
+            "",
+            "# [[hooks]]",
+            '# name = "notify-on-failure"',
+            '# event = "spawn"',
+            '# command = "echo spawn-hook"',
+            "# timeout_secs = 30",
+            "",
+        ),
+    ),
+    "work": DynamicSectionDescriptor(
+        section_key="work",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Work artifact behavior --------------------------------------------------",
+            "# [work.artifacts]",
+            '# sync = "project"',
+            "",
+        ),
+    ),
+    "context": DynamicSectionDescriptor(
+        section_key="context",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Context source examples -------------------------------------------------",
+            "# [context.work]",
+            '# source = "git"',
+            '# remote = "https://example.com/work.git"',
+            '# path = ".meridian/work"',
+            '# archive = ".meridian/archive/work"',
+            "",
+        ),
+    ),
+    "workspace": DynamicSectionDescriptor(
+        section_key="workspace",
+        merge_kind="external",
+        scaffold_lines=(
+            "# -- Workspace root examples -------------------------------------------------",
+            "# Named workspace entries live in meridian.toml / meridian.local.toml.",
+            "",
+            "# [workspace.docs]",
+            '# path = "./docs"',
+            "",
+        ),
+    ),
+}
+
+
+def normalize_dynamic_sections(
+    *,
+    payload: dict[str, object],
+    project_root: Path,
+) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for section_key, descriptor in DYNAMIC_SECTION_DESCRIPTORS.items():
+        if section_key not in payload:
+            continue
+        raw_value = payload[section_key]
+        if section_key == "agents":
+            value = _normalize_agents_table(raw_value, source=section_key)
+        elif section_key == "hooks":
+            value = _normalize_hooks_array(raw_value, source=section_key)
+        elif section_key == "work":
+            value = _normalize_work_table(raw_value, source=section_key)
+        elif section_key == "context":
+            value = _normalize_context_table(raw_value, source=section_key)
+        elif section_key == "workspace":
+            value = _normalize_workspace_section(
+                raw_value,
+                source=section_key,
+                project_root=project_root,
+            )
+        else:
+            continue
+        if descriptor.merge_kind != "external" and value is not None:
+            normalized[section_key] = value
+    return normalized
+
+
+def merge_dynamic_sections(
+    base: dict[str, object],
+    overrides: dict[str, object],
+) -> dict[str, object]:
+    merged = dict(base)
+    for section_key, value in overrides.items():
+        descriptor = DYNAMIC_SECTION_DESCRIPTORS.get(section_key)
+        if descriptor is None or descriptor.merge_kind == "external":
+            continue
+        current = merged.get(section_key)
+        if (
+            descriptor.merge_kind == "nested_dict"
+            and isinstance(current, dict)
+            and isinstance(value, dict)
+        ):
+            merged[section_key] = _merge_nested_dicts(
+                cast("dict[str, object]", current),
+                cast("dict[str, object]", value),
+            )
+            continue
+        merged[section_key] = value
+    return merged
+
+
 def _normalize_toml_payload(
     *,
     payload: dict[str, object],
@@ -812,9 +958,12 @@ def _normalize_toml_payload(
             )
             continue
         if key == "agents":
-            normalized["agents"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("agents", {})),
-                _normalize_agents_table(raw_value, source="agents"),
+            normalized = merge_dynamic_sections(
+                normalized,
+                normalize_dynamic_sections(
+                    payload={key: raw_value},
+                    project_root=project_root,
+                ),
             )
             continue
         if key == "harness":
@@ -829,22 +978,14 @@ def _normalize_toml_payload(
                 _normalize_spawn_table(raw_value, source="spawn"),
             )
             continue
-        if key == "hooks":
-            normalized["hooks"] = _normalize_hooks_array(raw_value, source="hooks")
-            continue
-        if key == "work":
-            normalized["work"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("work", {})),
-                _normalize_work_table(raw_value, source="work"),
+        if key in DYNAMIC_SECTION_DESCRIPTORS:
+            normalized = merge_dynamic_sections(
+                normalized,
+                normalize_dynamic_sections(
+                    payload={key: raw_value},
+                    project_root=project_root,
+                ),
             )
-            continue
-        if key == "context":
-            normalized["context"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("context", {})),
-                _normalize_context_table(raw_value, source="context"),
-            )
-            continue
-        if key == "workspace":
             continue
 
         if key in {"defaults", "timeouts"}:

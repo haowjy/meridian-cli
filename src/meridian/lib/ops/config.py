@@ -23,9 +23,12 @@ from meridian.lib.config.schema import (
     parse_toml_scalar,
 )
 from meridian.lib.config.settings import (
+    DYNAMIC_SECTION_DESCRIPTORS,
     OPTION_CATALOG,
     MeridianConfig,
     PrimaryConfig,
+    merge_dynamic_sections,
+    normalize_dynamic_sections,
 )
 from meridian.lib.config.workspace import WorkspaceFinding
 from meridian.lib.context import auto_migrate_contexts
@@ -217,6 +220,9 @@ class _ConfigInspectionState:
     project_overrides: dict[str, object]
     user_overrides: dict[str, object]
     resolved_values: dict[str, object]
+    project_dynamic_overrides: dict[str, object]
+    user_dynamic_overrides: dict[str, object]
+    resolved_dynamic_overrides: dict[str, object]
 
 
 def _resolve_project_config_state(project_root: Path) -> ProjectConfigState:
@@ -340,24 +346,44 @@ def _build_config_inspection_state(
 ) -> _ConfigInspectionState:
     surface = build_config_surface(authority)
     project_root = surface.project_root
-    project_overrides = _extract_file_overrides(
-        _read_file_payload(surface.project_config.write_path)
+    project_payload = _read_file_payload(surface.project_config.write_path)
+    project_overrides = _extract_file_overrides(project_payload)
+    project_dynamic_overrides = normalize_dynamic_sections(
+        payload=project_payload,
+        project_root=project_root,
     )
     local_config_path = project_root / _LOCAL_CONFIG_FILENAME
     if local_config_path.is_file():
-        local_overrides = _extract_file_overrides(_read_file_payload(local_config_path))
+        local_payload = _read_file_payload(local_config_path)
+        local_overrides = _extract_file_overrides(local_payload)
         project_overrides = {**project_overrides, **local_overrides}
-    user_overrides = (
-        _extract_file_overrides(_read_file_payload(surface.user_config_path))
-        if surface.user_config_path is not None
-        else {}
-    )
+        project_dynamic_overrides = merge_dynamic_sections(
+            project_dynamic_overrides,
+            normalize_dynamic_sections(payload=local_payload, project_root=project_root),
+        )
+    if surface.user_config_path is not None:
+        user_payload = _read_file_payload(surface.user_config_path)
+        user_overrides = _extract_file_overrides(user_payload)
+        user_dynamic_overrides = normalize_dynamic_sections(
+            payload=user_payload,
+            project_root=project_root,
+        )
+    else:
+        user_overrides = {}
+        user_dynamic_overrides = {}
     resolved_values = _resolved_values(surface.resolved_config)
+    resolved_dynamic_overrides = merge_dynamic_sections(
+        user_dynamic_overrides,
+        project_dynamic_overrides,
+    )
     return _ConfigInspectionState(
         surface=surface,
         project_overrides=project_overrides,
         user_overrides=user_overrides,
         resolved_values=resolved_values,
+        project_dynamic_overrides=project_dynamic_overrides,
+        user_dynamic_overrides=user_dynamic_overrides,
+        resolved_dynamic_overrides=resolved_dynamic_overrides,
     )
 
 
@@ -370,125 +396,256 @@ def _format_value_for_text(value: object) -> str:
 
 def _scaffold_template() -> str:
     defaults = _default_values()
-    output_show = defaults["output.show"]
-    output_verbosity = defaults["output.verbosity"]
     primary_defaults = PrimaryConfig()
+    sections: tuple[tuple[str, ...], ...] = (
+        (
+            "# Meridian configuration.",
+            "# All values shown are built-in defaults. Uncomment to override.",
+            "# Environment variables (MERIDIAN_*) take precedence over file values.",
+            "",
+            "# -- Execution defaults -----------------------------------------------------",
+            "[defaults]",
+            "# Maximum agent nesting depth (int).",
+            f"# max_depth = {defaults['defaults.max_depth']}",
+            "# Retry attempts per failed spawn (int).",
+            f"# max_retries = {defaults['defaults.max_retries']}",
+            "# Delay multiplier between retries in seconds (float).",
+            f"# retry_backoff_seconds = {defaults['defaults.retry_backoff_seconds']}",
+            "# Default model for spawns when --model and profile model are both unset.",
+            f"# model = {_toml_literal(cast('str', defaults['defaults.model']))}",
+            "# Default harness for spawns when higher-precedence values are unset.",
+            f"# harness = {_toml_literal(cast('str', defaults['defaults.harness']))}",
+            "",
+            "# -- Timeout behavior -------------------------------------------------------",
+            "[timeouts]",
+            "# Grace period before force-killing processes (float minutes).",
+            f"# kill_grace_minutes = {defaults['timeouts.kill_grace_minutes']}",
+            "# Max minutes to wait for guardrail checks.",
+            f"# guardrail_minutes = {defaults['timeouts.guardrail_minutes']}",
+            "# Max minutes to wait on run completion operations.",
+            f"# wait_minutes = {defaults['timeouts.wait_minutes']}",
+            "",
+            "# -- Spawn behavior ---------------------------------------------------------",
+            "[spawn]",
+            "# Per-spawn overrides for wait yield (also accepted under [timeouts]).",
+            "# default_wait_yield_seconds = 3000.0",
+            "# min_wait_yield_seconds = 30.0",
+            "",
+            "# -- Harness default models -------------------------------------------------",
+            "[harness]",
+            "# Default model for Claude harness (empty = harness picks its own).",
+            f"# claude = {_toml_literal(cast('str', defaults['harness.claude']))}",
+            "# Default model for Codex harness (empty = harness picks its own).",
+            f"# codex = {_toml_literal(cast('str', defaults['harness.codex']))}",
+            "# Default model for OpenCode harness.",
+            f"# opencode = {_toml_literal(cast('str', defaults['harness.opencode']))}",
+            "",
+            "# -- Primary agent defaults -------------------------------------------------",
+            "[primary]",
+            "# Default agent profile launched when running `meridian` without `-a`.",
+            "# Without this, meridian launches with no profile.",
+            '# agent = ""',
+            "# Model override for the primary agent (unset = use defaults.model).",
+            '# model = ""',
+            "# Harness override for the primary agent (unset = use defaults.harness).",
+            '# harness = ""',
+            "# Context compaction threshold for the primary agent (int 1-100).",
+            f"# autocompact = {primary_defaults.autocompact or 65}",
+            "# Effort level for the primary agent.",
+            '# effort = ""',
+            "# Sandbox policy for the primary agent.",
+            '# sandbox = ""',
+            "# Approval mode for the primary agent.",
+            '# approval = ""',
+            "# Timeout for the primary agent (minutes).",
+            f"# timeout = {primary_defaults.timeout or 30.0}",
+            "",
+            "# -- Output streaming -------------------------------------------------------",
+            "[output]",
+            "# Event categories shown while streaming output.",
+            f"# show = {_toml_literal(cast('tuple[str, ...]', defaults['output.show']))}",
+            "# Output verbosity preset (quiet, normal, verbose, debug).",
+            '# verbosity = ""',
+            "# Output format (text, json).",
+            '# format = "text"',
+            "",
+            "# -- State retention --------------------------------------------------------",
+            "[state]",
+            "# Days to retain spawn artifacts and session data (-1 = keep forever).",
+            f"# retention_days = {defaults['state.retention_days']}",
+            "",
+        ),
+        *(
+            descriptor.scaffold_lines
+            for descriptor in DYNAMIC_SECTION_DESCRIPTORS.values()
+            if descriptor.scaffold_lines
+        ),
+    )
+    return "\n".join(line for section in sections for line in section)
 
-    lines = [
-        "# Meridian configuration.",
-        "# All values shown are built-in defaults. Uncomment to override.",
-        "# Environment variables (MERIDIAN_*) take precedence over file values.",
-        "",
-        "# -- Execution defaults -----------------------------------------------------",
-        "[defaults]",
-        "# Maximum agent nesting depth (int).",
-        f"# max_depth = {defaults['defaults.max_depth']}",
-        "# Retry attempts per failed spawn (int).",
-        f"# max_retries = {defaults['defaults.max_retries']}",
-        "# Delay multiplier between retries in seconds (float).",
-        f"# retry_backoff_seconds = {defaults['defaults.retry_backoff_seconds']}",
-        "# Default model for spawns when --model and profile model are both unset.",
-        f"# model = {_toml_literal(cast('str', defaults['defaults.model']))}",
-        "# Default harness for spawns when higher-precedence values are unset.",
-        f"# harness = {_toml_literal(cast('str', defaults['defaults.harness']))}",
-        "",
-        "# -- Timeout behavior -------------------------------------------------------",
-        "[timeouts]",
-        "# Grace period before force-killing processes (float minutes).",
-        f"# kill_grace_minutes = {defaults['timeouts.kill_grace_minutes']}",
-        "# Max minutes to wait for guardrail checks.",
-        f"# guardrail_minutes = {defaults['timeouts.guardrail_minutes']}",
-        "# Max minutes to wait on run completion operations.",
-        f"# wait_minutes = {defaults['timeouts.wait_minutes']}",
-        "# Prompt-cache yield interval for spawn wait (seconds).",
-        (
-            "# default_wait_yield_seconds = "
-            f"{defaults.get('timeouts.default_wait_yield_seconds', 3000.0)}"
-        ),
-        "# Minimum prompt-cache yield interval (seconds).",
-        f"# min_wait_yield_seconds = {defaults.get('timeouts.min_wait_yield_seconds', 30.0)}",
-        "",
-        "# -- Spawn behavior ---------------------------------------------------------",
-        "[spawn]",
-        "# Per-spawn overrides for wait yield (also accepted under [timeouts]).",
-        (
-            "# default_wait_yield_seconds = "
-            f"{defaults.get('spawn.default_wait_yield_seconds', 3000.0)}"
-        ),
-        f"# min_wait_yield_seconds = {defaults.get('spawn.min_wait_yield_seconds', 30.0)}",
-        "",
-        "# -- Harness default models -------------------------------------------------",
-        "[harness]",
-        "# Default model for Claude harness (empty = harness picks its own).",
-        (
-            "# claude = "
-            f"{_toml_literal(cast('str', defaults['harness.claude']))}"
-        ),
-        "# Default model for Codex harness (empty = harness picks its own).",
-        (
-            "# codex = "
-            f"{_toml_literal(cast('str', defaults['harness.codex']))}"
-        ),
-        "# Default model for OpenCode harness.",
-        (
-            "# opencode = "
-            f"{_toml_literal(cast('str', defaults['harness.opencode']))}"
-        ),
-        "",
-        "# -- Primary agent defaults -------------------------------------------------",
-        "[primary]",
-        "# Default agent profile launched when running `meridian` without `-a`.",
-        "# Without this, meridian launches with no profile.",
-        '# agent = ""',
-        "# Model override for the primary agent (unset = use defaults.model).",
-        '# model = ""',
-        "# Harness override for the primary agent (unset = use defaults.harness).",
-        '# harness = ""',
-        "# Context compaction threshold for the primary agent (int 1-100).",
-        f"# autocompact = {primary_defaults.autocompact or 65}",
-        "# Effort level for the primary agent.",
-        '# effort = ""',
-        "# Sandbox policy for the primary agent.",
-        '# sandbox = ""',
-        "# Approval mode for the primary agent.",
-        '# approval = ""',
-        "# Timeout for the primary agent (minutes).",
-        f"# timeout = {primary_defaults.timeout or 30.0}",
-        "",
-        "# -- Output streaming -------------------------------------------------------",
-        "[output]",
-        "# Event categories shown while streaming output.",
-        f"# show = {_toml_literal(cast('tuple[str, ...]', output_show))}",
-        "# Output verbosity preset (quiet, normal, verbose, debug).",
-        (
-            f"# verbosity = {_toml_literal(output_verbosity)}"
-            if isinstance(output_verbosity, str)
-            else '# verbosity = ""'
-        ),
-        "# Output format (text, json).",
-        '# format = "text"',
-        "",
-        "# -- State retention --------------------------------------------------------",
-        "[state]",
-        "# Days to retain spawn artifacts and session data (-1 = keep forever).",
-        "# retention_days = 30",
-        "",
-        "# -- Agent runtime overrides ------------------------------------------------",
-        "# Override default model/policy for specific agent profiles without editing",
-        "# generated .mars/agents/ sources.",
-        "# See docs/configuration.md for full semantics.",
-        "",
-        '# [agents.tech-lead]',
-        '# model = "gpt55"',
-        '# effort = "medium"',
-        '# approval = "auto"',
-        "",
-        '# [[agents.tech-lead.model-policies]]',
-        '# match = { model-glob = "gpt*" }',
-        '# override = { effort = "medium", autocompact = 40 }',
-        "",
-    ]
-    return "\n".join(lines)
+
+def _dynamic_value_source(
+    *,
+    path: tuple[str, ...],
+    project_dynamic_overrides: dict[str, object],
+    user_dynamic_overrides: dict[str, object],
+) -> Literal["builtin", "file", "user-config", "env var"]:
+    current: object = project_dynamic_overrides
+    for part in path:
+        if not isinstance(current, dict) or part not in current:
+            break
+        current = cast("dict[str, object]", current)[part]
+    else:
+        return "file"
+
+    current = user_dynamic_overrides
+    for part in path:
+        if not isinstance(current, dict) or part not in current:
+            break
+        current = cast("dict[str, object]", current)[part]
+    else:
+        return "user-config"
+
+    return "builtin"
+
+
+def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigResolvedValue]:
+    values: list[ConfigResolvedValue] = []
+    resolved = inspection.resolved_dynamic_overrides
+
+    context_section = resolved.get("context")
+    if isinstance(context_section, dict):
+        context_items = sorted(cast("dict[str, object]", context_section).items())
+        for context_name, context_value in context_items:
+            if not isinstance(context_value, dict):
+                continue
+            for field_name, field_value in sorted(cast("dict[str, object]", context_value).items()):
+                values.append(
+                    ConfigResolvedValue(
+                        key=f"context.{context_name}.{field_name}",
+                        value=field_value,
+                        source=_dynamic_value_source(
+                            path=("context", context_name, field_name),
+                            project_dynamic_overrides=inspection.project_dynamic_overrides,
+                            user_dynamic_overrides=inspection.user_dynamic_overrides,
+                        ),
+                    )
+                )
+
+    work_section = resolved.get("work")
+    if isinstance(work_section, dict):
+        artifacts = cast("dict[str, object]", work_section).get("artifacts")
+        if isinstance(artifacts, dict):
+            for field_name, field_value in sorted(cast("dict[str, object]", artifacts).items()):
+                values.append(
+                    ConfigResolvedValue(
+                        key=f"work.artifacts.{field_name}",
+                        value=field_value,
+                        source=_dynamic_value_source(
+                            path=("work", "artifacts", field_name),
+                            project_dynamic_overrides=inspection.project_dynamic_overrides,
+                            user_dynamic_overrides=inspection.user_dynamic_overrides,
+                        ),
+                    )
+                )
+
+    agents_section = resolved.get("agents")
+    if isinstance(agents_section, dict):
+        for agent_name, overlay_value in sorted(cast("dict[str, object]", agents_section).items()):
+            if not isinstance(overlay_value, dict):
+                continue
+            overlay = cast("dict[str, object]", overlay_value)
+            for field_name in (
+                "model",
+                "harness",
+                "effort",
+                "approval",
+                "sandbox",
+                "autocompact",
+            ):
+                if field_name not in overlay:
+                    continue
+                values.append(
+                    ConfigResolvedValue(
+                        key=f"agents.{agent_name}.{field_name}",
+                        value=overlay[field_name],
+                        source=_dynamic_value_source(
+                            path=("agents", agent_name, field_name),
+                            project_dynamic_overrides=inspection.project_dynamic_overrides,
+                            user_dynamic_overrides=inspection.user_dynamic_overrides,
+                        ),
+                    )
+                )
+
+            policies = overlay.get("model_policies")
+            if policies is None:
+                continue
+            if not isinstance(policies, list | tuple):
+                continue
+            if len(policies) == 0:
+                rendered_policy_value = "[] (suppressed)"
+            else:
+                rules_desc: list[str] = []
+                for policy_value in cast("list[object] | tuple[object, ...]", policies):
+                    if not isinstance(policy_value, dict):
+                        continue
+                    policy = cast("dict[str, object]", policy_value)
+                    overrides = policy.get("overrides")
+                    override_items = (
+                        sorted(cast("dict[str, object]", overrides).items())
+                        if isinstance(overrides, dict)
+                        else []
+                    )
+                    override_keys = ", ".join(f"{key}={value}" for key, value in override_items)
+                    rules_desc.append(
+                        f'match: {policy.get("match_type")} "{policy.get("match_value")}"'
+                        + (f" → {override_keys}" if override_keys else "")
+                    )
+                rendered_policy_value = (
+                    f"{len(policies)} rules ({'; '.join(rules_desc)})"
+                    if rules_desc
+                    else f"{len(policies)} rules"
+                )
+            values.append(
+                ConfigResolvedValue(
+                    key=f"agents.{agent_name}.model-policies",
+                    value=rendered_policy_value,
+                    source=_dynamic_value_source(
+                        path=("agents", agent_name, "model_policies"),
+                        project_dynamic_overrides=inspection.project_dynamic_overrides,
+                        user_dynamic_overrides=inspection.user_dynamic_overrides,
+                    ),
+                )
+            )
+
+    hooks_section = resolved.get("hooks")
+    if isinstance(hooks_section, list | tuple):
+        hook_rows = cast("list[object] | tuple[object, ...]", hooks_section)
+        if hook_rows:
+            names: list[str] = []
+            for row_value in hook_rows:
+                if not isinstance(row_value, dict):
+                    continue
+                row = cast("dict[str, object]", row_value)
+                label = row.get("name") or row.get("event") or row.get("builtin") or "hook"
+                names.append(str(label))
+            values.append(
+                ConfigResolvedValue(
+                    key="hooks",
+                    value=(
+                        f"{len(hook_rows)} hooks ({', '.join(names)})"
+                        if names
+                        else len(hook_rows)
+                    ),
+                    source=(
+                        "file"
+                        if "hooks" in inspection.project_dynamic_overrides
+                        else "user-config"
+                    ),
+                )
+            )
+
+    return values
 
 def _has_non_empty_remote(remote: str | None) -> bool:
     return isinstance(remote, str) and bool(remote.strip())
@@ -597,59 +754,7 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
             )
         )
 
-    config = inspection.surface.resolved_config
-    if config.agents:
-        for agent_name, overlay in sorted(config.agents.items()):
-            for field_name in (
-                "model",
-                "harness",
-                "effort",
-                "approval",
-                "sandbox",
-                "autocompact",
-            ):
-                field_value = getattr(overlay, field_name, None)
-                if field_value is None:
-                    continue
-                values.append(
-                    ConfigResolvedValue(
-                        key=f"agents.{agent_name}.{field_name}",
-                        value=str(field_value),
-                        source="file",
-                        env_var=None,
-                    )
-                )
-
-            if overlay.model_policies is None:
-                continue
-
-            if len(overlay.model_policies) == 0:
-                values.append(
-                    ConfigResolvedValue(
-                        key=f"agents.{agent_name}.model-policies",
-                        value="[] (suppressed)",
-                        source="file",
-                        env_var=None,
-                    )
-                )
-                continue
-
-            rules_desc: list[str] = []
-            for rule in overlay.model_policies:
-                override_keys = ", ".join(
-                    f"{key}={value}" for key, value in sorted(rule.overrides.items())
-                )
-                rules_desc.append(
-                    f'match: {rule.match_type} "{rule.match_value}" → {override_keys}'
-                )
-            values.append(
-                ConfigResolvedValue(
-                    key=f"agents.{agent_name}.model-policies",
-                    value=f"{len(overlay.model_policies)} rules ({'; '.join(rules_desc)})",
-                    source="file",
-                    env_var=None,
-                )
-            )
+    values.extend(_dynamic_config_values(inspection))
 
     return ConfigShowOutput(
         path=inspection.surface.project_config.write_path.as_posix(),
