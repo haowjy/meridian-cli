@@ -197,8 +197,6 @@ event types, command types, reconnect/replay, persistence, and harness support m
 | ------- | ----------- |
 | `meridian init [--link DIR]` | Initialize project config/runtime state; optional convenience link wiring via mars |
 | `meridian workspace init` | Create or update local `[workspace]` examples in `meridian.local.toml` |
-| `meridian workspace migrate` | Convert legacy `workspace.local.toml` roots to `[workspace.NAME]` entries in `meridian.local.toml` |
-| `meridian workspace migrate --force` | Replace existing local `[workspace]` entries while migrating legacy roots |
 | `meridian config show` | Show resolved configuration |
 | `meridian config set KEY VALUE` | Set a config value |
 | `meridian config get KEY` | Read a config value |

@@ -221,8 +221,10 @@ def test_config_set_and_reset_require_project_config_file(
 
 def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
-    (project_root / "workspace.local.toml").write_text(
-        'future = "value"\n[[context-roots]]\npath = "./missing-root"\nextra = "yes"\n',
+    (project_root / "meridian.local.toml").write_text(
+        "[workspace.docs]\n"
+        'path = "./missing-root"\n'
+        'extra = "yes"\n',
         encoding="utf-8",
     )
 
@@ -230,7 +232,7 @@ def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
 
     assert result.workspace.status == "present"
     assert result.workspace.sources == (
-        (project_root / "workspace.local.toml").resolve().as_posix(),
+        (project_root / "meridian.local.toml").resolve().as_posix(),
     )
     assert result.workspace.roots.count == 1
     assert result.workspace.roots.projected == 0
@@ -238,9 +240,7 @@ def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
     finding_codes = {finding.code for finding in result.workspace_findings}
     assert finding_codes == {
         "workspace_unknown_key",
-        "workspace_missing_root",
-        "workspace_deprecated_legacy",
-        "workspace_legacy_file_present",
+        "workspace_local_missing_root",
     }
     payload = to_jsonable(result)
     assert {finding["code"] for finding in payload["workspace_findings"]} == finding_codes
@@ -250,9 +250,7 @@ def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
     )
     text = result.format_text()
     assert "warning: workspace_unknown_key:" in text
-    assert "warning: workspace_missing_root:" in text
-    assert "warning: workspace_deprecated_legacy:" in text
-    assert "warning: workspace_legacy_file_present:" in text
+    assert "warning: workspace_local_missing_root:" in text
 
 
 def test_config_show_ignores_user_global_workspace_entries(
@@ -551,6 +549,40 @@ def test_config_show_and_loader_share_local_over_project_precedence(tmp_path: Pa
     assert gotten.value == "opencode"
     assert gotten.source == "file"
     assert load_config(project_root).default_harness == "opencode"
+
+
+def test_config_show_and_get_report_spawn_wait_yield_env_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    monkeypatch.setenv("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", "120")
+    monkeypatch.setenv("MERIDIAN_MIN_WAIT_YIELD_SECONDS", "45")
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    shown_default = next(
+        item for item in shown.values if item.key == "spawn.default_wait_yield_seconds"
+    )
+    shown_min = next(item for item in shown.values if item.key == "spawn.min_wait_yield_seconds")
+    gotten_default = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="spawn.default_wait_yield_seconds")
+    )
+    gotten_min = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="spawn.min_wait_yield_seconds")
+    )
+
+    assert shown_default.value == 120.0
+    assert shown_default.source == "env var"
+    assert shown_default.env_var == "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS"
+    assert shown_min.value == 45.0
+    assert shown_min.source == "env var"
+    assert shown_min.env_var == "MERIDIAN_MIN_WAIT_YIELD_SECONDS"
+    assert gotten_default.value == 120.0
+    assert gotten_default.source == "env var"
+    assert gotten_default.env_var == "MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS"
+    assert gotten_min.value == 45.0
+    assert gotten_min.source == "env var"
+    assert gotten_min.env_var == "MERIDIAN_MIN_WAIT_YIELD_SECONDS"
 
 
 def test_config_state_retention_days_round_trip(tmp_path: Path) -> None:

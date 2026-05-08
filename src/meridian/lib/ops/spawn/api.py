@@ -1187,25 +1187,21 @@ def _emit_wait_progress(message: str, *, sink: OutputSink) -> None:
     sink.status(message)
 
 
-def _resolve_wait_yield_after_seconds(
+def _resolve_wait_checkpoint_seconds(
     *,
     payload: SpawnWaitInput,
     spawn_ids: tuple[str, ...],
     project_root: Path,
-    config: object,
+    config: MeridianConfig,
 ) -> float:
     """Resolve per-invocation or harness-aware wait-yield interval."""
 
     if payload.yield_after_secs is not None:
         return payload.yield_after_secs
 
-    resolver = getattr(config, "wait_yield_seconds_for_harness", None)
-    if resolver is None:
-        return float(getattr(config, "wait_yield_after_seconds", 240.0))
-
     _ = (spawn_ids, project_root)
     parent_harness = os.getenv("MERIDIAN_HARNESS")
-    return float(resolver(parent_harness))
+    return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 
 def spawn_wait_sync(
@@ -1260,7 +1256,7 @@ def spawn_wait_sync(
     )
     timeout_seconds = minutes_to_seconds(timeout_minutes) or 0.0
     checkpoint_seconds = (
-        _resolve_wait_yield_after_seconds(
+        _resolve_wait_checkpoint_seconds(
             payload=payload,
             spawn_ids=spawn_ids,
             project_root=project_root,

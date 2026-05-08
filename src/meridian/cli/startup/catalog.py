@@ -414,11 +414,6 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Initialize workspace config.",
         extension_ref="meridian.workspace.init",
     ),
-    _write_project(
-        ("workspace", "migrate"),
-        "Migrate workspace config.",
-        extension_ref="meridian.workspace.migrate",
-    ),
     _read_project(("kg", "graph"), "Render knowledge graph."),
     _read_project(("kg", "check"), "Check knowledge graph links."),
     _read_project(("mermaid", "check"), "Check Mermaid diagrams."),

@@ -388,13 +388,13 @@ def test_doctor_surfaces_workspace_invalid_warning(
 ) -> None:
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
-    (project_root / "workspace.local.toml").write_text("[[context-roots]]\n", encoding="utf-8")
+    (project_root / "meridian.toml").write_text("[workspace.bad]\n", encoding="utf-8")
 
     result = _run_doctor_without_upgrade_noise(project_root, monkeypatch)
 
     warning = _warning_by_code(result, "workspace_invalid")
     assert "Invalid workspace schema" in warning.message
-    assert warning.payload == {"path": (project_root / "workspace.local.toml").resolve().as_posix()}
+    assert warning.payload == {"path": (project_root / "meridian.toml").resolve().as_posix()}
 
 
 def test_doctor_surfaces_workspace_unknown_and_missing_root_warnings(
@@ -403,25 +403,34 @@ def test_doctor_surfaces_workspace_unknown_and_missing_root_warnings(
 ) -> None:
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
-    (project_root / "workspace.local.toml").write_text(
-        'future = "value"\n'
-        "[[context-roots]]\n"
+    (project_root / "meridian.toml").write_text(
+        "[workspace.docs]\n"
         'path = "./missing-root"\n'
         'note = "kept"\n',
+        encoding="utf-8",
+    )
+    (project_root / "meridian.local.toml").write_text(
+        "[workspace.local]\n"
+        'path = "./missing-local"\n',
         encoding="utf-8",
     )
 
     result = _run_doctor_without_upgrade_noise(project_root, monkeypatch)
 
     unknown = _warning_by_code(result, "workspace_unknown_key")
-    assert unknown.payload == {"keys": ["future", "context-roots[1].note"]}
+    assert unknown.payload == {"keys": ["workspace.docs.note"]}
+    local_missing = _warning_by_code(result, "workspace_local_missing_root")
+    assert local_missing.payload == {
+        "name": "local",
+        "path": (project_root / "missing-local").resolve().as_posix(),
+    }
     missing = _warning_by_code(result, "workspace_missing_root")
     assert missing.payload == {
         "roots": [(project_root / "missing-root").resolve().as_posix()],
     }
 
 
-def test_doctor_surfaces_named_workspace_local_missing_and_legacy_warning(
+def test_doctor_surfaces_named_workspace_local_missing_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -432,11 +441,6 @@ def test_doctor_surfaces_named_workspace_local_missing_and_legacy_warning(
         'path = "./missing-local"\n',
         encoding="utf-8",
     )
-    (project_root / "workspace.local.toml").write_text(
-        "[[context-roots]]\n"
-        'path = "./legacy"\n',
-        encoding="utf-8",
-    )
 
     result = _run_doctor_without_upgrade_noise(project_root, monkeypatch)
 
@@ -445,8 +449,6 @@ def test_doctor_surfaces_named_workspace_local_missing_and_legacy_warning(
         "name": "local_missing",
         "path": (project_root / "missing-local").resolve().as_posix(),
     }
-    legacy = _warning_by_code(result, "workspace_legacy_file_present")
-    assert legacy.payload == {"path": (project_root / "workspace.local.toml").resolve().as_posix()}
 
 
 # test_doctor_surfaces_workspace_unsupported_harness_for_codex was removed

@@ -42,7 +42,7 @@ If you cannot extend cache TTL, lower Meridian's yield interval instead:
 meridian spawn wait --yield-after-secs 240
 
 # Global override via environment variable
-export MERIDIAN_WAIT_YIELD_AFTER_SECONDS=240
+export MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS=240
 ```
 
 
@@ -112,7 +112,7 @@ Edit `meridian.local.toml` if your checkout differs from the committed conventio
 path = "../sibling-repo"
 ```
 
-Existing roots are projected to harness launches automatically — `--add-dir` for Claude Code and Codex, `OPENCODE_CONFIG_CONTENT` for OpenCode. See [configuration.md](configuration.md#workspace) for full schema and migration details.
+Existing roots are projected to harness launches automatically — `--add-dir` for Claude Code and Codex, `OPENCODE_CONFIG_CONTENT` for OpenCode. See [configuration.md](configuration.md#workspace) for full schema.
 
 ## Next Steps
 

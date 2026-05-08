@@ -28,7 +28,6 @@ def test_workspace_init_updates_local_config_and_is_idempotent(cli_with_git, scr
     assert "(updated)" in first.stdout
     assert 'model = "gpt-5"' in content
     assert content.count("[workspace.example]") == 1
-    assert exclude_lines.count("workspace.local.toml") == 1
     assert exclude_lines.count("meridian.local.toml") == 1
 
     second = cli_with_git("workspace", "init")
@@ -76,65 +75,6 @@ def test_doctor_surfaces_missing_local_workspace_root_warning(cli_with_git, scra
     assert workspace_warning["payload"]["name"] == "missing"
     assert workspace_warning["payload"]["path"].endswith("/missing-local")
     assert "does not exist" in workspace_warning["message"]
-
-
-def test_workspace_migrate_converts_legacy_file_and_refuses_plain_rerun(
-    cli_with_git, scratch_dir
-):
-    """workspace migrate converts legacy roots once and asks for --force on rerun."""
-    (scratch_dir / "workspace.local.toml").write_text(
-        "[[context-roots]]\n"
-        'path = "../meridian-web"\n'
-        "\n"
-        "[[context-roots]]\n"
-        'path = "../disabled"\n'
-        "enabled = false\n",
-        encoding="utf-8",
-    )
-
-    first = cli_with_git("workspace", "migrate", json_mode=True)
-    first.assert_success()
-    migrated = first.json
-    local_content = (scratch_dir / "meridian.local.toml").read_text(encoding="utf-8")
-
-    assert migrated["migrated_entries"] == 1
-    assert migrated["entries"] == [{"name": "meridian-web", "original_path": "../meridian-web"}]
-    assert any("Skipped 1 disabled legacy root" in warning for warning in migrated["warnings"])
-    assert "[workspace.meridian-web]" in local_content
-    assert 'path = "../meridian-web"' in local_content
-
-    second = cli_with_git("workspace", "migrate", json_mode=True)
-    second.assert_failure()
-    error = _failure_json(second)["error"]
-
-    assert "already exists" in error
-    assert "Use --force to overwrite." in error
-
-
-def test_workspace_migrate_refuses_to_clobber_preexisting_workspace_config(
-    cli_with_git, scratch_dir
-):
-    """workspace migrate leaves an existing named workspace config untouched."""
-    (scratch_dir / "workspace.local.toml").write_text(
-        '[[context-roots]]\npath = "../new-web"\n',
-        encoding="utf-8",
-    )
-    local_path = scratch_dir / "meridian.local.toml"
-    local_path.write_text(
-        '[workspace.old]\npath = "../old"\n',
-        encoding="utf-8",
-    )
-
-    result = cli_with_git("workspace", "migrate", json_mode=True)
-    result.assert_failure()
-
-    error = _failure_json(result)["error"]
-    content = local_path.read_text(encoding="utf-8")
-
-    assert "already exists" in error
-    assert "Use --force to overwrite." in error
-    assert "[workspace.old]" in content
-    assert "[workspace.new-web]" not in content
 
 
 def test_invalid_named_workspace_blocks_spawn_dry_run_with_actionable_guidance(

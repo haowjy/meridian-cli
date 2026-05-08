@@ -13,7 +13,6 @@ ProjectRootSource = Literal[
     "mars",
     "meridian-toml",
     "meridian-local-toml",
-    "workspace-local-toml",
     "project-state",
     "git",
     "cwd",
@@ -50,8 +49,6 @@ def _discover_project_root(candidate: Path) -> ProjectRootSource | None:
         return "meridian-toml"
     if (candidate / "meridian.local.toml").is_file():
         return "meridian-local-toml"
-    if (candidate / "workspace.local.toml").is_file():
-        return "workspace-local-toml"
     if _has_project_state_marker(candidate):
         return "project-state"
     git_marker = candidate / ".git"

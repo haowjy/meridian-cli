@@ -286,8 +286,8 @@ def test_workspace_roots_append_after_claude_preflight_projection(
     _write_minimal_mars_config(tmp_path)
     shared_root = tmp_path / "shared"
     shared_root.mkdir()
-    (tmp_path / "workspace.local.toml").write_text(
-        "[[context-roots]]\n"
+    (tmp_path / "meridian.local.toml").write_text(
+        "[workspace.shared]\n"
         'path = "./shared"\n',
         encoding="utf-8",
     )
@@ -329,8 +329,7 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     committed_root = tmp_path / "committed-root"
     local_override_root = tmp_path / "local-override-root"
     local_only_root = tmp_path / "local-only-root"
-    legacy_root = tmp_path / "legacy-root"
-    for path in (committed_root, local_override_root, local_only_root, legacy_root):
+    for path in (committed_root, local_override_root, local_only_root):
         path.mkdir()
     (tmp_path / "meridian.toml").write_text(
         "[workspace.shared]\n"
@@ -342,12 +341,10 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     )
     (tmp_path / "meridian.local.toml").write_text(
         "[workspace.shared]\n"
-        'path = "./local-override-root"\n',
-        encoding="utf-8",
-    )
-    (tmp_path / "workspace.local.toml").write_text(
-        "[[context-roots]]\n"
-        'path = "./legacy-root"\n',
+        'path = "./local-override-root"\n'
+        "\n"
+        "[workspace.local_only]\n"
+        'path = "./local-only-root"\n',
         encoding="utf-8",
     )
 
@@ -374,7 +371,6 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     assert local_override_root.as_posix() in projected_roots
     assert local_only_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
-    assert legacy_root.as_posix() not in projected_roots
     codex_add_dir_pairs = {
         (preview.argv[index], preview.argv[index + 1])
         for index, token in enumerate(preview.argv[:-1])
@@ -469,11 +465,6 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
         'path = "./docs-root"\n',
         encoding="utf-8",
     )
-    (tmp_path / "workspace.local.toml").write_text(
-        "[[context-roots]]\n"
-        'path = "./ignored-legacy"\n',
-        encoding="utf-8",
-    )
 
     preview = build_launch_context(
         spawn_id="dry-run-opencode-named-workspace",
@@ -512,8 +503,8 @@ def test_opencode_workspace_projection_merges_parent_env(
     _write_minimal_mars_config(tmp_path)
     shared_root = tmp_path / "shared"
     shared_root.mkdir()
-    (tmp_path / "workspace.local.toml").write_text(
-        "[[context-roots]]\n"
+    (tmp_path / "meridian.local.toml").write_text(
+        "[workspace.shared]\n"
         'path = "./shared"\n',
         encoding="utf-8",
     )

@@ -101,9 +101,9 @@ def test_config_show_json_workspace_includes_empty_findings(tmp_path: Path) -> N
 
 def test_config_show_json_workspace_includes_path_when_present(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
-    workspace_path = project_root / "workspace.local.toml"
+    workspace_path = project_root / "meridian.local.toml"
     workspace_path.write_text(
-        '[[context-roots]]\npath = "./missing-root"\n',
+        "[workspace.missing]\npath = \"./missing-root\"\n",
         encoding="utf-8",
     )
 
@@ -115,8 +115,8 @@ def test_config_show_json_workspace_includes_path_when_present(tmp_path: Path) -
     assert workspace["roots"] == {"count": 1, "projected": 0, "skipped": 1}
     assert workspace["roots_detail"] == [
         {
-            "name": "legacy-1",
-            "source": "legacy",
+            "name": "missing",
+            "source": "local",
             "declared_path": "./missing-root",
             "resolved_path": (project_root / "missing-root").resolve().as_posix(),
             "status": "skipped",
@@ -129,11 +129,11 @@ def test_config_show_json_workspace_includes_path_when_present(tmp_path: Path) -
     }
 
 
-def test_config_show_skips_disabled_existing_legacy_roots(tmp_path: Path) -> None:
+def test_config_show_skips_missing_committed_roots(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
-    (project_root / "existing").mkdir()
-    (project_root / "workspace.local.toml").write_text(
-        '[[context-roots]]\npath = "./existing"\nenabled = false\n',
+    (project_root / "meridian.toml").write_text(
+        "[workspace.missing]\n"
+        'path = "./missing-root"\n',
         encoding="utf-8",
     )
 
@@ -315,7 +315,7 @@ def test_config_show_and_get_support_nested_harness_model_table(tmp_path: Path) 
     assert load_config(project_root).harness.codex.model == "gpt-5.4"
 
 
-def test_config_show_and_get_report_primary_autocompact_alias_as_canonical_key(
+def test_config_show_and_get_report_primary_autocompact_key(
     tmp_path: Path,
 ) -> None:
     project_root = _repo(tmp_path)
@@ -325,21 +325,57 @@ def test_config_show_and_get_report_primary_autocompact_alias_as_canonical_key(
     )
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    shown_value = next(item for item in shown.values if item.key == "primary.autocompact_pct")
+    shown_value = next(item for item in shown.values if item.key == "primary.autocompact")
     gotten = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="primary.autocompact_pct")
+        ConfigGetInput(project_root=project_root.as_posix(), key="primary.autocompact")
     )
 
     assert shown_value.value == 72
     assert shown_value.source == "file"
-    assert gotten.key == "primary.autocompact_pct"
+    assert gotten.key == "primary.autocompact"
     assert gotten.value == 72
     assert gotten.source == "file"
     assert load_config(project_root).primary.autocompact == 72
-    assert load_config(project_root).primary.autocompact_pct == 72
 
 
-def test_config_set_normalizes_legacy_alias_to_canonical_spelling(tmp_path: Path) -> None:
+def test_config_show_and_get_report_spawn_wait_yield_keys(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        "[spawn]\n"
+        "default_wait_yield_seconds = 120\n"
+        "min_wait_yield_seconds = 45\n",
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    shown_default = next(
+        item for item in shown.values if item.key == "spawn.default_wait_yield_seconds"
+    )
+    shown_min = next(item for item in shown.values if item.key == "spawn.min_wait_yield_seconds")
+
+    gotten_default = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="spawn.default_wait_yield_seconds")
+    )
+    gotten_min = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="spawn.min_wait_yield_seconds")
+    )
+
+    assert shown_default.value == 120.0
+    assert shown_default.source == "file"
+    assert shown_min.value == 45.0
+    assert shown_min.source == "file"
+    assert gotten_default.key == "spawn.default_wait_yield_seconds"
+    assert gotten_default.value == 120.0
+    assert gotten_default.source == "file"
+    assert gotten_min.key == "spawn.min_wait_yield_seconds"
+    assert gotten_min.value == 45.0
+    assert gotten_min.source == "file"
+    config = load_config(project_root)
+    assert config.default_wait_yield_seconds == 120.0
+    assert config.min_wait_yield_seconds == 45.0
+
+
+def test_config_set_updates_primary_autocompact(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     config_path = project_root / "meridian.toml"
     config_path.write_text(
@@ -351,32 +387,31 @@ def test_config_set_normalizes_legacy_alias_to_canonical_spelling(tmp_path: Path
     result = config_set_sync(
         ConfigSetInput(
             project_root=project_root.as_posix(),
-            key="primary.autocompact_pct",
+            key="primary.autocompact",
             value="81",
         )
     )
 
-    assert result.key == "primary.autocompact_pct"
+    assert result.key == "primary.autocompact"
     assert result.value == 81
     assert config_path.read_text(encoding="utf-8") == (
         "[primary]\n"
-        "autocompact_pct = 81\n"
+        "autocompact = 81 # keep legacy comment only until rewrite\n"
     )
     assert load_config(project_root).primary.autocompact == 81
 
 
-def test_config_reset_removes_all_declared_aliases(tmp_path: Path) -> None:
+def test_config_reset_removes_primary_autocompact(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     config_path = project_root / "meridian.toml"
     config_path.write_text(
         "[primary]\n"
-        "autocompact_pct = 65\n"
         "autocompact = 72\n",
         encoding="utf-8",
     )
 
     result = config_reset_sync(
-        ConfigResetInput(project_root=project_root.as_posix(), key="primary.autocompact_pct")
+        ConfigResetInput(project_root=project_root.as_posix(), key="primary.autocompact")
     )
 
     assert result.removed is True

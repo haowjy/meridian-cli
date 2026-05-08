@@ -92,8 +92,7 @@ workspace_app = App(
     help=(
         "Workspace topology commands.\n\n"
         "Shared conventions live in meridian.toml [workspace.NAME] entries; "
-        "local overrides and additions live in meridian.local.toml. "
-        "Use `meridian workspace migrate` for legacy workspace.local.toml files."
+        "local overrides and additions live in meridian.local.toml."
     ),
     help_formatter="plain",
 )

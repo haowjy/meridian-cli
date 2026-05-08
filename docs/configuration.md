@@ -90,12 +90,11 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |
 | `state.retention_days` | int | TTL for stale state pruning (`-1` = never, `0` = immediate, default `30`) |
+| `spawn.default_wait_yield_seconds` | float | Default yield interval for `spawn wait` (seconds) |
+| `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
+| `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
 
 Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile.
-
-Scaffolded but not exposed via `config set` shorthand keys:
-
-- `[primary] autocompact_pct`
 
 ## Config Precedence
 
@@ -179,7 +178,7 @@ show = ["lifecycle", "error"]
 verbosity = "verbose"
 
 [primary]
-autocompact_pct = 70
+autocompact = 70
 
 [state]
 retention_days = 30   # -1 = never prune, 0 = prune immediately
@@ -229,7 +228,7 @@ Unknown keys inside entries produce `workspace_unknown_key` findings and are ign
 
 ### Committed conventions and local overrides
 
-Committed entries in `meridian.toml` describe the expected repository layout. They are conventions, not enforcement. If a committed path does not exist on a developer's machine, Meridian silently skips it during projection; this supports partial checkouts.
+Committed entries in `meridian.toml` describe the expected repository layout. They are conventions, not enforcement. If a committed path does not exist on a developer's machine, Meridian skips it during projection and reports a `workspace_missing_root` finding; this supports partial checkouts while still surfacing drift.
 
 Local entries in `meridian.local.toml` are explicit machine-specific instructions. A local entry with the same name as a committed entry replaces that entry's path. Local-only entries are appended after committed entries. If a local path does not exist, Meridian skips it and emits `workspace_local_missing_root` because the local override is likely stale or mistyped.
 
@@ -293,14 +292,11 @@ workspace.roots[2].status = projected
 
 Status values: `none` (no workspace entries), `present` (parsed OK), `invalid` (parse or schema error). Workspace findings, when present, render as separate `warning:` lines.
 
-### Setup and migration
+### Setup
 
 ```bash
 meridian workspace init      # creates or updates meridian.local.toml with [workspace] examples
-meridian workspace migrate   # converts legacy workspace.local.toml to [workspace] entries
 ```
-
-`workspace.local.toml` is deprecated. During the migration period Meridian can read it as a fallback when no `[workspace]` entries exist in `meridian.toml` or `meridian.local.toml`, but new setup should use `[workspace]` in `meridian.local.toml`.
 
 ## Hooks
 

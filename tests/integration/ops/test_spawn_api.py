@@ -342,7 +342,7 @@ def test_wait_yield_default_uses_parent_harness_interval(
 
     monkeypatch.setenv("MERIDIAN_HARNESS", "claude")
     assert (
-        spawn_api._resolve_wait_yield_after_seconds(
+        spawn_api._resolve_wait_checkpoint_seconds(
             payload=SpawnWaitInput(),
             spawn_ids=("p-claude-child", "p-codex-child"),
             project_root=project_root,
@@ -353,7 +353,7 @@ def test_wait_yield_default_uses_parent_harness_interval(
 
     monkeypatch.setenv("MERIDIAN_HARNESS", "codex")
     assert (
-        spawn_api._resolve_wait_yield_after_seconds(
+        spawn_api._resolve_wait_checkpoint_seconds(
             payload=SpawnWaitInput(),
             spawn_ids=("p-claude-child", "p-unknown-child"),
             project_root=project_root,
@@ -364,7 +364,7 @@ def test_wait_yield_default_uses_parent_harness_interval(
 
     monkeypatch.delenv("MERIDIAN_HARNESS", raising=False)
     assert (
-        spawn_api._resolve_wait_yield_after_seconds(
+        spawn_api._resolve_wait_checkpoint_seconds(
             payload=SpawnWaitInput(),
             spawn_ids=("p-codex-child",),
             project_root=project_root,
@@ -389,7 +389,7 @@ def test_wait_yield_override_wins_over_harness_defaults(tmp_path: Path) -> None:
     config = spawn_api.load_config(project_root)
 
     assert (
-        spawn_api._resolve_wait_yield_after_seconds(
+        spawn_api._resolve_wait_checkpoint_seconds(
             payload=SpawnWaitInput(yield_after_secs=12),
             spawn_ids=(str(spawn_id),),
             project_root=project_root,

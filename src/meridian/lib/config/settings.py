@@ -240,21 +240,6 @@ def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, obj
 
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
-        if key == "autocompact_pct":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact_pct': expected int, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact_pct': expected int between "
-                    f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                    f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-                )
-            values[key] = value
-            continue
-
         if key in {"model", "harness", "agent", "effort", "sandbox", "approval"}:
             if not isinstance(value, str):
                 raise ValueError(
@@ -293,10 +278,6 @@ def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, obj
             continue
 
         logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-
-    # Copy autocompact_pct → autocompact if autocompact is not explicitly set.
-    if values.get("autocompact_pct") is not None and values.get("autocompact") is None:
-        values["autocompact"] = values["autocompact_pct"]
 
     return values
 
@@ -1055,9 +1036,6 @@ def _env_alias_overrides(project_root: Path) -> dict[str, object]:
         _assign_nested_value(values, option.field_path, parsed)
 
     hidden_env_specs: tuple[tuple[str, tuple[str, ...], Literal["float", "str"]], ...] = (
-        ("MERIDIAN_WAIT_YIELD_AFTER_SECONDS", ("default_wait_yield_seconds",), "float"),
-        ("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", ("default_wait_yield_seconds",), "float"),
-        ("MERIDIAN_MIN_WAIT_YIELD_SECONDS", ("min_wait_yield_seconds",), "float"),
         (
             "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE",
             ("harness", "claude", "wait_yield_seconds"),
@@ -1178,16 +1156,12 @@ class PrimaryConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    autocompact_pct: Annotated[
+    autocompact: Annotated[
         int | None,
         config_field(
-            "primary.autocompact_pct",
+            "primary.autocompact",
             value_kind="int",
-            file_aliases=(
-                file_alias("primary", "autocompact_pct"),
-                file_alias("primary", "autocompact"),
-                file_alias(None, "autocompact_pct"),
-            ),
+            file_aliases=(file_alias("primary", "autocompact"),),
         ),
     ] = None
     model: Annotated[
@@ -1245,35 +1219,6 @@ class PrimaryConfig(BaseModel):
         ),
     ] = None
     timeout: float | None = None
-    autocompact: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _sync_autocompact_alias_fields(cls, values: Any) -> Any:
-        if not isinstance(values, dict):
-            return values
-        d: dict[str, Any] = cast("dict[str, Any]", values)
-        if d.get("autocompact") is None and d.get("autocompact_pct") is not None:
-            d = dict(d)
-            d["autocompact"] = d["autocompact_pct"]
-        if d.get("autocompact_pct") is None and d.get("autocompact") is not None:
-            if "autocompact" not in d:
-                d = dict(d)
-            d["autocompact_pct"] = d["autocompact"]
-        return d
-
-    @field_validator("autocompact_pct")
-    @classmethod
-    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-            raise ValueError(
-                "Invalid value for 'primary.autocompact_pct': expected int between "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-            )
-        return value
 
     @field_validator("autocompact")
     @classmethod
@@ -1636,8 +1581,24 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
         ),
     ] = 30.0
-    default_wait_yield_seconds: float = 3000.0
-    min_wait_yield_seconds: float = 30.0
+    default_wait_yield_seconds: Annotated[
+        float,
+        config_field(
+            "spawn.default_wait_yield_seconds",
+            value_kind="float",
+            file_aliases=(file_alias("spawn", "default_wait_yield_seconds"),),
+            env_vars=("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS",),
+        ),
+    ] = 3000.0
+    min_wait_yield_seconds: Annotated[
+        float,
+        config_field(
+            "spawn.min_wait_yield_seconds",
+            value_kind="float",
+            file_aliases=(file_alias("spawn", "min_wait_yield_seconds"),),
+            env_vars=("MERIDIAN_MIN_WAIT_YIELD_SECONDS",),
+        ),
+    ] = 30.0
     default_model: Annotated[
         str,
         config_field(
@@ -1705,12 +1666,6 @@ class MeridianConfig(BaseSettings):
         }
         profile = mapping.get(normalized)
         return None if profile is None else profile.model
-
-    @property
-    def wait_yield_after_seconds(self) -> float:
-        """Compatibility alias for the unknown/default wait-yield interval."""
-
-        return self.default_wait_yield_seconds
 
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
         """Return clamped wait-yield seconds for a harness or the unknown default."""

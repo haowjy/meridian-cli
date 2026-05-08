@@ -19,7 +19,7 @@ If long-running spawns feel expensive or slow to resume, the harness prompt cach
 meridian spawn wait --yield-after-secs 240
 
 # Global override
-export MERIDIAN_WAIT_YIELD_AFTER_SECONDS=240
+export MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS=240
 ```
 
 ## `meridian` not found
@@ -168,7 +168,7 @@ A CLI `-m MODEL` override must also drive harness selection — a profile-level 
 
 ## Workspace issues
 
-`meridian doctor` surfaces workspace findings as distinct codes. Fix new workspace config by editing `[workspace.NAME]` entries in `meridian.toml` or `meridian.local.toml`; use `meridian workspace init` to scaffold local examples. If you still have legacy `workspace.local.toml`, run `meridian workspace migrate` to convert it to `[workspace]` entries in `meridian.local.toml`.
+`meridian doctor` surfaces workspace findings as distinct codes. Fix workspace config by editing `[workspace.NAME]` entries in `meridian.toml` or `meridian.local.toml`; use `meridian workspace init` to scaffold local examples.
 
 ### `workspace_invalid`
 
@@ -188,19 +188,7 @@ A local `[workspace.NAME]` entry in `meridian.local.toml` points to a path that 
 
 Check the entry name and path in `meridian.local.toml`. Relative workspace paths resolve against the project root. Use an absolute path if the local checkout is outside the standard repo layout.
 
-Committed workspace entries in `meridian.toml` behave differently: missing committed paths are silently skipped because they usually mean this machine has a partial checkout.
-
-### `workspace_legacy_file_present`
-
-A legacy `workspace.local.toml` file exists. During the migration period Meridian may read it only as a fallback when no `[workspace]` entries exist in `meridian.toml` or `meridian.local.toml`; otherwise it is ignored.
-
-Run:
-
-```bash
-meridian workspace migrate
-```
-
-If `meridian.local.toml` already contains `[workspace]` entries, migration aborts to avoid overwriting local configuration. Use `meridian workspace migrate --force` only when you intend to replace existing local workspace entries with migrated legacy roots. Review the generated names after migration; they are basename-derived and may not match future committed convention names.
+Committed workspace entries in `meridian.toml` behave differently: missing committed paths are skipped from projection and surfaced as `workspace_missing_root` findings (warnings), which usually indicate a partial checkout on this machine.
 
 ### `workspace_unsupported_harness`
 

@@ -27,7 +27,7 @@ codex resume <session-id> --remote ws://127.0.0.1:<port> \
 
 This matters because Codex's remote-TUI mode sends per-turn sandbox policy constructed from the TUI's local permission profile. Without the `--add-dir` flags the remote TUI's per-turn overrides would narrow writable scope below what the app-server was originally configured with, causing approval prompts or write failures for paths that should be freely writable.
 
-Roots are deduplicated and resolved to absolute paths before projection. Paths that do not exist on disk are silently skipped for committed entries; a warning is emitted for missing local-only entries (see `workspace_local_missing_root`).
+Roots are deduplicated and resolved to absolute paths before projection. Paths that do not exist on disk are skipped and surfaced as findings: committed entries emit `workspace_missing_root`, and missing local-only entries emit `workspace_local_missing_root`.
 
 ## Approval Routing
 

@@ -37,7 +37,7 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # -- Primary agent defaults -------------------------------------------------
 [primary]
 # Context compaction threshold for the primary agent (int 1-100).
-# autocompact_pct = 65
+# autocompact = 65
 # Model override for the primary agent (str model id; unset = use defaults.model).
 # model = ""
 # Harness override for the primary agent (str; unset = use defaults.harness).
@@ -106,5 +106,4 @@ path = "../prompts/microct-analysis"
 
 [workspace.prompts-mouse-ct]
 path = "../prompts/mouse-ct"
-
 

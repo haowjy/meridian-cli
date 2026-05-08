@@ -372,8 +372,8 @@ def test_config_help_mentions_meridian_toml() -> None:
     assert ".meridian/config.toml" not in cli_main.config_app.help
 
 
-def test_workspace_help_mentions_workspace_local_toml() -> None:
-    assert "workspace.local.toml" in cli_main.workspace_app.help
+def test_workspace_help_mentions_meridian_local_toml() -> None:
+    assert "meridian.local.toml" in cli_main.workspace_app.help
     assert "workspace.toml" not in cli_main.workspace_app.help
 
 

@@ -7,7 +7,7 @@ from meridian.lib.config.workspace import WorkspaceSnapshot, resolve_workspace_s
 
 def _format_workspace_source_path(*, project_root: Path, source_paths: tuple[Path, ...]) -> str:
     if not source_paths:
-        return "workspace.local.toml"
+        return "meridian.toml or meridian.local.toml"
     labels: list[str] = []
     for path in source_paths:
         try:

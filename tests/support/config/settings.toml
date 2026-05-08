@@ -15,4 +15,4 @@ codex = "gpt-5.3-codex"
 opencode = "gemini-3.1-pro"
 
 [primary]
-autocompact_pct = 61
+autocompact = 61

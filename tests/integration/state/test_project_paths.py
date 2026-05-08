@@ -56,20 +56,4 @@ def test_project_paths_exposes_root_file_policy(tmp_path: Path) -> None:
 
     assert paths.meridian_toml == project_root.resolve() / "meridian.toml"
     assert paths.meridian_local_toml == project_root.resolve() / "meridian.local.toml"
-    assert paths.workspace_local_toml == project_root.resolve() / "workspace.local.toml"
     assert paths.workspace_ignore_targets == PROJECT_ROOT_IGNORE_TARGETS
-
-
-def test_project_paths_workspace_local_toml_uses_state_root_parent_override(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    override_root = tmp_path / "custom-state" / ".meridian"
-    project_root.mkdir()
-    override_root.parent.mkdir(parents=True)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override_root.as_posix())
-
-    paths = resolve_project_config_paths(project_root=project_root)
-
-    assert paths.workspace_local_toml == override_root.parent / "workspace.local.toml"

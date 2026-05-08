@@ -15,15 +15,15 @@ from meridian.lib.config.workspace import (
 
 
 def test_workspace_snapshot_invalid_normalizes_blank_messages() -> None:
-    snapshot = WorkspaceSnapshot.invalid(path=Path("/tmp/workspace.local.toml"), message="   ")
+    snapshot = WorkspaceSnapshot.invalid(path=Path("/tmp/meridian.local.toml"), message="   ")
 
     assert snapshot.status == "invalid"
-    assert snapshot.source_paths == (Path("/tmp/workspace.local.toml"),)
+    assert snapshot.source_paths == (Path("/tmp/meridian.local.toml"),)
     assert snapshot.findings == (
         WorkspaceFinding(
             code="workspace_invalid",
             message="Workspace file is invalid.",
-            payload={"path": "/tmp/workspace.local.toml"},
+            payload={"path": "/tmp/meridian.local.toml"},
         ),
     )
 
@@ -163,7 +163,7 @@ def test_get_projectable_roots_skips_disabled_and_missing_entries(tmp_path: Path
                 resolved_path=existing,
                 enabled=True,
                 exists=True,
-                source="legacy",
+                source="committed",
             ),
             ResolvedWorkspaceRoot(
                 name="disabled",
@@ -171,7 +171,7 @@ def test_get_projectable_roots_skips_disabled_and_missing_entries(tmp_path: Path
                 resolved_path=(tmp_path / "disabled").resolve(),
                 enabled=False,
                 exists=True,
-                source="legacy",
+                source="local",
             ),
             ResolvedWorkspaceRoot(
                 name="missing",
@@ -179,7 +179,7 @@ def test_get_projectable_roots_skips_disabled_and_missing_entries(tmp_path: Path
                 resolved_path=(tmp_path / "missing").resolve(),
                 enabled=True,
                 exists=False,
-                source="legacy",
+                source="merged",
             ),
         ),
     )

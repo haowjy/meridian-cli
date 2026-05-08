@@ -236,7 +236,7 @@ def test_project_authority_keeps_nested_plain_dir_root_and_paths(
     assert authority.project_config_paths.execution_cwd == nested.resolve()
 
 
-def test_project_authority_freezes_workspace_local_path_at_resolution_time(
+def test_project_authority_freezes_meridian_local_path_at_resolution_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -246,8 +246,8 @@ def test_project_authority_freezes_workspace_local_path_at_resolution_time(
 
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-b" / ".meridian").as_posix())
 
-    assert authority.project_config_paths.workspace_local_toml == (
-        project_root.resolve() / "workspace.local.toml"
+    assert authority.project_config_paths.meridian_local_toml == (
+        project_root.resolve() / "meridian.local.toml"
     )
 
 
@@ -258,19 +258,19 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
     project_root = tmp_path / "repo"
     project_root.mkdir()
     authority = resolve_project_authority(project_root)
-    frozen_workspace_path = tmp_path / "frozen-workspace.local.toml"
+    frozen_local_path = tmp_path / "frozen-meridian.local.toml"
     frozen_workspace_root = tmp_path / "frozen-root"
     frozen_workspace_root.mkdir()
-    frozen_workspace_path.write_text(
-        "[[context-roots]]\n"
-        'path = "./frozen-root"\n',
+    frozen_local_path.write_text(
+        "[workspace.frozen]\n"
+        f'path = "{frozen_workspace_root.as_posix()}"\n',
         encoding="utf-8",
     )
-    live_workspace_path = project_root / "workspace.local.toml"
+    live_workspace_path = project_root / "meridian.local.toml"
     live_workspace_root = project_root / "live-root"
     live_workspace_root.mkdir()
     live_workspace_path.write_text(
-        "[[context-roots]]\n"
+        "[workspace.live]\n"
         'path = "./live-root"\n',
         encoding="utf-8",
     )
@@ -278,8 +278,7 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
         project_root=authority.project_root,
         execution_cwd=authority.execution_cwd,
         meridian_toml=authority.project_config_paths.meridian_toml,
-        workspace_local_toml=frozen_workspace_path,
-        meridian_local_toml=authority.project_config_paths.meridian_local_toml,
+        meridian_local_toml=frozen_local_path,
     )
     frozen_authority = authority.model_copy(update={"project_config_paths": frozen_paths})
 
@@ -287,7 +286,7 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
 
     surface = build_config_surface(frozen_authority)
 
-    assert surface.workspace.sources == (frozen_workspace_path.resolve().as_posix(),)
+    assert surface.workspace.sources == (frozen_local_path.resolve().as_posix(),)
     assert surface.workspace.roots_detail[0].resolved_path == (
         frozen_workspace_root.resolve().as_posix()
     )
