@@ -6,6 +6,7 @@ spawn from succeeded to failed.
 """
 
 import json
+from dataclasses import dataclass
 from typing import cast
 
 from meridian.lib.core.domain import SpawnStatus
@@ -18,6 +19,26 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "running": frozenset({"finalizing", "succeeded", "failed", "cancelled"}),
     "finalizing": frozenset({"succeeded", "failed", "cancelled"}),
 }
+
+
+@dataclass(frozen=True)
+class ExecutionTerminalFacts:
+    """Execution evidence reported by runners before lifecycle finalization."""
+
+    exit_code: int
+    failure_reason: str | None = None
+    cancellation_observed: bool = False
+    durable_report_completion: bool = False
+    terminated_after_completion: bool = False
+
+
+@dataclass(frozen=True)
+class ExecutionTerminalOutcome:
+    """Lifecycle-resolved terminal tuple derived from execution facts."""
+
+    status: SpawnStatus
+    exit_code: int
+    error: str | None
 
 
 def is_active_spawn_status(status: str) -> bool:
@@ -83,6 +104,25 @@ def resolve_execution_terminal_state(
     if exit_code == 0:
         return "succeeded", 0, failure_reason
     return "failed", exit_code, failure_reason
+
+
+def resolve_execution_terminal_outcome(
+    facts: ExecutionTerminalFacts,
+) -> ExecutionTerminalOutcome:
+    """Resolve runner facts into the authoritative terminal tuple."""
+
+    status, exit_code, error = resolve_execution_terminal_state(
+        exit_code=facts.exit_code,
+        failure_reason=facts.failure_reason,
+        cancelled=facts.cancellation_observed,
+        durable_report_completion=facts.durable_report_completion,
+        terminated_after_completion=facts.terminated_after_completion,
+    )
+    return ExecutionTerminalOutcome(
+        status=status,
+        exit_code=exit_code,
+        error=error,
+    )
 
 
 def resolve_reconciled_terminal_state(

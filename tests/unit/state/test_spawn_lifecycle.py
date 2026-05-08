@@ -4,8 +4,10 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
     TERMINAL_SPAWN_STATUSES,
+    ExecutionTerminalFacts,
     has_durable_report_completion,
     is_active_spawn_status,
+    resolve_execution_terminal_outcome,
     resolve_execution_terminal_state,
     validate_transition,
 )
@@ -42,6 +44,20 @@ def test_resolve_execution_terminal_state_prefers_durable_completion_over_cancel
     assert status == "succeeded"
     assert exit_code == 0
     assert error is None
+
+
+def test_resolve_execution_terminal_outcome_projects_runner_facts() -> None:
+    outcome = resolve_execution_terminal_outcome(
+        ExecutionTerminalFacts(
+            exit_code=143,
+            failure_reason="terminated",
+            cancellation_observed=True,
+        )
+    )
+
+    assert outcome.status == "cancelled"
+    assert outcome.exit_code == 143
+    assert outcome.error == "terminated"
 
 
 @pytest.mark.parametrize(

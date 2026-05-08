@@ -11,6 +11,7 @@ import pytest
 
 import meridian.lib.core.telemetry as telemetry
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.spawn_service import PreparedSpawn, SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
@@ -310,6 +311,37 @@ async def test_complete_spawn_on_queued_spawn_does_not_enter_finalizing(
     assert outcome.already_terminal is False
     assert outcome.snapshot is not None
     assert outcome.snapshot.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_complete_execution_resolves_runner_facts_through_lifecycle_authority(
+    tmp_path: Path,
+) -> None:
+    lifecycle = SpawnLifecycleService(tmp_path)
+    service = SpawnApplicationService(tmp_path, lifecycle)
+    spawn_id = _start_running_spawn(lifecycle)
+
+    execution = await service.complete_execution(
+        spawn_id,
+        ExecutionTerminalFacts(
+            exit_code=143,
+            failure_reason="terminated",
+            cancellation_observed=True,
+        ),
+        origin="runner",
+        duration_secs=1.0,
+    )
+
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert execution.resolved.status == "cancelled"
+    assert execution.resolved.exit_code == 143
+    assert execution.resolved.error == "terminated"
+    assert execution.completion.wrote is True
+    assert record is not None
+    assert record.status == "cancelled"
+    assert record.exit_code == 143
+    assert record.error == "terminated"
+    assert record.terminal_origin == "runner"
 
 
 @pytest.mark.asyncio

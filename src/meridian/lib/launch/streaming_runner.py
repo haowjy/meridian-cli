@@ -1,4 +1,4 @@
-"""Bidirectional spawn execution with runner-owned finalization and retries."""
+"""Bidirectional spawn execution with lifecycle-owned terminal finalization."""
 
 from __future__ import annotations
 
@@ -17,11 +17,11 @@ import structlog
 
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn, SpawnStatus
+from meridian.lib.core.domain import Spawn
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
     has_durable_report_completion,
-    resolve_execution_terminal_state,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -132,26 +132,25 @@ class StreamingRunConclusion:
         )
         self.final_attempt_terminal_observed = attempt.terminal_observed
 
-    def resolve_terminal_state(
+    def terminal_facts(
         self,
         *,
         received_signal: signal.Signals | None,
-    ) -> tuple[SpawnStatus, int, str | None]:
-        """Compute the persisted terminal state from accumulated execution evidence."""
+    ) -> ExecutionTerminalFacts:
+        """Project accumulated runner evidence into lifecycle terminal facts."""
 
-        cancelled = not self.final_attempt_terminal_observed and (
+        cancellation_observed = not self.final_attempt_terminal_observed and (
             self.failure_reason in {"cancelled", "terminated"}
             or received_signal in {signal.SIGINT, signal.SIGTERM}
         )
-        durable_report_completion = (
-            self.extracted is not None
-            and has_durable_report_completion(self.extracted.report.content)
-        )
-        return resolve_execution_terminal_state(
+        return ExecutionTerminalFacts(
             exit_code=self.exit_code,
             failure_reason=self.failure_reason,
-            cancelled=cancelled,
-            durable_report_completion=durable_report_completion,
+            cancellation_observed=cancellation_observed,
+            durable_report_completion=(
+                self.extracted is not None
+                and has_durable_report_completion(self.extracted.report.content)
+            ),
             terminated_after_completion=self.terminated_after_completion,
         )
 
@@ -1105,21 +1104,16 @@ async def execute_with_streaming(
         finalized_usage = (
             conclusion.extracted.usage if conclusion.extracted is not None else None
         )
-        status, resolved_exit_code, resolved_failure_reason = conclusion.resolve_terminal_state(
-            received_signal=received_signal[0],
-        )
-        conclusion.exit_code = resolved_exit_code
-        conclusion.failure_reason = resolved_failure_reason
+        terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
         with signal_coordinator().mask_sigterm():
             spawn_service = SpawnApplicationService(
                 runtime_root,
                 lifecycle_service,
                 spawn_manager=manager,
             )
-            outcome = await spawn_service.complete_spawn(
+            execution_outcome = await spawn_service.complete_execution(
                 run.spawn_id,
-                status,
-                conclusion.exit_code,
+                terminal_facts,
                 origin="runner",
                 duration_secs=duration_seconds,
                 total_cost_usd=(
@@ -1143,8 +1137,10 @@ async def execute_with_streaming(
                 cost_is_estimate=(
                     finalized_usage.cost_is_estimate if finalized_usage is not None else False
                 ),
-                error=conclusion.failure_reason,
             )
+            conclusion.exit_code = execution_outcome.resolved.exit_code
+            conclusion.failure_reason = execution_outcome.resolved.error
+            outcome = execution_outcome.completion
             if outcome.entered_finalizing:
                 try:
                     resolved_heartbeat_touch()

@@ -17,8 +17,8 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
     has_durable_report_completion,
-    resolve_execution_terminal_state,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -338,41 +338,35 @@ def _finalize_lifecycle_and_observe_session(
     primary_started_epoch: float,
     primary_started_local_iso: str | None,
     managed: Any,
-    lifecycle_service: Any,
+    spawn_service: SpawnApplicationService,
 ) -> tuple[int, str]:
     """Finalize lifecycle state and persist best-effort observed session ids."""
 
-    durable_report = False
-    terminated_after_completion = False
+    resolved_exit_code = exit_code
     if primary_spawn_id is not None:
         report_path = resolve_spawn_log_dir(project_root, primary_spawn_id) / "report.md"
         try:
             report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
         except OSError:
             report_text = None
-        durable_report = has_durable_report_completion(report_text)
-        terminated_after_completion = durable_report and exit_code in (143, -15)
-    status, resolved_exit_code, _failure_reason = resolve_execution_terminal_state(
-        exit_code=exit_code,
-        failure_reason=None,
-        cancelled=False,
-        durable_report_completion=durable_report,
-        terminated_after_completion=terminated_after_completion,
-    )
-    if primary_spawn_id is not None:
         duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
-        outcome = asyncio.run(
-            SpawnApplicationService(
-                runtime_root,
-                lifecycle_service,
-            ).complete_spawn(
+        durable_report_completion = has_durable_report_completion(report_text)
+        execution_outcome = asyncio.run(
+            spawn_service.complete_execution(
                 primary_spawn_id,
-                status,
-                resolved_exit_code,
+                ExecutionTerminalFacts(
+                    exit_code=exit_code,
+                    durable_report_completion=durable_report_completion,
+                    terminated_after_completion=(
+                        durable_report_completion and exit_code in (143, -15)
+                    ),
+                ),
                 origin="launcher",
                 duration_secs=duration,
             )
         )
+        resolved_exit_code = execution_outcome.resolved.exit_code
+        outcome = execution_outcome.completion
         if not outcome.wrote:
             logger.info(
                 "Launcher finalize skipped; spawn already terminal or missing: %s",
@@ -572,6 +566,7 @@ def run_harness_process(
     claude_materialization_root: Path | None = None
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+    spawn_service = SpawnApplicationService(runtime_root, lifecycle_service)
 
     resume_chat_id = (
         preview_request.session.continue_chat_id if session_mode == SessionMode.RESUME else None
@@ -831,7 +826,7 @@ def run_harness_process(
                     primary_started_epoch=primary_started_epoch,
                     primary_started_local_iso=primary_started_local_iso,
                     managed=managed,
-                    lifecycle_service=lifecycle_service,
+                    spawn_service=spawn_service,
                 )
                 cleanup_result = cleanup_claude_overlay(
                     isolated_config_root,

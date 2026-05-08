@@ -14,6 +14,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
+    ExecutionTerminalOutcome,
+    resolve_execution_terminal_outcome,
+)
 from meridian.lib.core.telemetry import (
     LifecycleEvent,
     LifecycleObserver,
@@ -78,6 +83,14 @@ class CompleteSpawnOutcome:
     def accepted(self) -> bool:
         """True when finalization was written (first OR replacement)."""
         return self.wrote
+
+
+@dataclass(frozen=True)
+class CompleteExecutionOutcome:
+    """Lifecycle-owned terminal resolution plus persisted completion result."""
+
+    resolved: ExecutionTerminalOutcome
+    completion: CompleteSpawnOutcome
 
 
 @dataclass(frozen=True)
@@ -551,6 +564,32 @@ class SpawnApplicationService:
                 duration_secs=duration_secs,
                 **metrics,
             )
+
+    async def complete_execution(
+        self,
+        spawn_id: SpawnId,
+        facts: ExecutionTerminalFacts,
+        *,
+        origin: str,
+        duration_secs: float | None = None,
+        **metrics: object,
+    ) -> CompleteExecutionOutcome:
+        """Resolve execution facts, then finalize through the lifecycle authority."""
+
+        resolved = resolve_execution_terminal_outcome(facts)
+        completion = await self.complete_spawn(
+            spawn_id,
+            resolved.status,
+            resolved.exit_code,
+            origin=origin,
+            duration_secs=duration_secs,
+            error=resolved.error,
+            **metrics,
+        )
+        return CompleteExecutionOutcome(
+            resolved=resolved,
+            completion=completion,
+        )
 
     async def _complete_spawn_unlocked(
         self,
