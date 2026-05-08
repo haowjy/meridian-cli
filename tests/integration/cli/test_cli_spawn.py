@@ -123,6 +123,78 @@ def test_spawn_continue_without_prompt_is_allowed(monkeypatch: pytest.MonkeyPatc
     assert captured == {"spawn_id": "p1", "prompt": ""}
 
 
+def test_spawn_continue_forwards_shared_create_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, SpawnContinueInput] = {}
+
+    def _fake_spawn_continue_sync(
+        payload: SpawnContinueInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["payload"] = payload
+        return SpawnActionOutput(command="spawn.continue", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_continue_sync", _fake_spawn_continue_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--harness",
+                "codex",
+                "spawn",
+                "--continue",
+                "p1",
+                "-p",
+                "follow-up",
+                "--file",
+                "README.md",
+                "--prompt-var",
+                "ticket=123",
+                "--work",
+                "w-continue",
+                "--desc",
+                "continue desc",
+                "--quiet",
+                "--stream",
+                "--background",
+                "--autocompact",
+                "55",
+                "--effort",
+                "high",
+                "--sandbox",
+                "workspace-write",
+                "--debug",
+                "--approval",
+                "auto",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    payload = captured["payload"]
+    assert payload.spawn_id == "p1"
+    assert payload.prompt == "follow-up"
+    assert payload.files == ("README.md",)
+    assert payload.template_vars == ("ticket=123",)
+    assert payload.work == "w-continue"
+    assert payload.desc == "continue desc"
+    assert payload.quiet is True
+    assert payload.stream is True
+    assert payload.background is True
+    assert payload.autocompact == 55
+    assert payload.effort == "high"
+    assert payload.sandbox == "workspace-write"
+    assert payload.debug is True
+    assert payload.approval == "auto"
+    assert payload.harness == "codex"
+
+
 def test_spawn_fork_routes_through_spawn_fork_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

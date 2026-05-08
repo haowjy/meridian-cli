@@ -763,16 +763,27 @@ class SpawnContinueInput(BaseModel):
     spawn_id: str
     prompt: str
     model: str = ""
+    files: tuple[str, ...] = ()
+    template_vars: tuple[str, ...] = ()
     harness: str | None = None
     agent: str | None = None
     skills: tuple[str, ...] = ()
+    desc: str = ""
+    work: str = ""
     fork: bool = False
     dry_run: bool = False
+    verbose: bool = False
+    quiet: bool = False
+    stream: bool = False
     timeout: float | None = None
     background: bool = False
     project_root: str | None = None
     passthrough_args: tuple[str, ...] = ()
     approval: str | None = None
+    autocompact: int | None = None
+    effort: str | None = None
+    sandbox: str | None = None
+    debug: bool = False
 
 
 class SpawnForkInput(BaseModel):

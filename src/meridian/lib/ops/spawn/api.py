@@ -1636,11 +1636,18 @@ def spawn_continue_sync(
     create_input = SpawnCreateInput(
         prompt=derived_prompt,
         model=_model_for_follow_up(source_spawn, payload.model),
+        files=payload.files,
+        template_vars=payload.template_vars,
         harness=requested_harness,
         agent=payload.agent,
         skills=payload.skills,
+        desc=payload.desc,
+        work=payload.work,
         project_root=payload.project_root,
         dry_run=payload.dry_run,
+        verbose=payload.verbose,
+        quiet=payload.quiet,
+        stream=payload.stream,
         timeout=payload.timeout,
         background=payload.background,
         session=SessionRequest(
@@ -1656,6 +1663,10 @@ def spawn_continue_sync(
         ),
         passthrough_args=payload.passthrough_args,
         approval=payload.approval,
+        autocompact=payload.autocompact,
+        effort=payload.effort,
+        sandbox=payload.sandbox,
+        debug=payload.debug,
     )
     target_harness = _resolve_effective_fork_target_harness(
         create_input,

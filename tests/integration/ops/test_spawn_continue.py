@@ -228,6 +228,67 @@ def test_spawn_continue_passes_explicit_harness_to_create_input(
     assert captured_input.harness == "codex"
 
 
+def test_spawn_continue_forwards_shared_create_fields_to_spawn_create(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "README.md").write_text("seed", encoding="utf-8")
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p23a", harness_session_id="session-23a")
+
+    captured_input: SpawnCreateInput | None = None
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p23a",
+            prompt="follow-up prompt",
+            files=("README.md",),
+            template_vars=("ticket=123",),
+            desc="continue desc",
+            work="w-continue",
+            verbose=True,
+            quiet=True,
+            stream=True,
+            autocompact=44,
+            effort="high",
+            sandbox="workspace-write",
+            approval="auto",
+            debug=True,
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.files == ("README.md",)
+    assert captured_input.template_vars == ("ticket=123",)
+    assert captured_input.desc == "continue desc"
+    assert captured_input.work == "w-continue"
+    assert captured_input.verbose is True
+    assert captured_input.quiet is True
+    assert captured_input.stream is True
+    assert captured_input.autocompact == 44
+    assert captured_input.effort == "high"
+    assert captured_input.sandbox == "workspace-write"
+    assert captured_input.approval == "auto"
+    assert captured_input.debug is True
+
+
 def test_spawn_continue_errors_on_explicit_harness_conflict(
     tmp_path: Path,
 ) -> None:
