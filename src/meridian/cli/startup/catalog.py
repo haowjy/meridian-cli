@@ -208,7 +208,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "text",
         "List available models.",
         redirect=RedirectPolicy(
-            target="mars models list", message="Redirecting to mars models list"
+            target="meridian mars models list", message="Redirecting to meridian mars models list"
         ),
         extension_ref="meridian.models.list",
     ),

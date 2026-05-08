@@ -47,7 +47,7 @@ def test_models_list_descriptor_owns_redirect_policy() -> None:
     assert descriptor is not None
     assert descriptor.command_path == ("models", "list")
     assert descriptor.redirect is not None
-    assert descriptor.redirect.target == "mars models list"
+    assert descriptor.redirect.target == "meridian mars models list"
 
 
 def test_init_descriptor_uses_argument_root_source() -> None:

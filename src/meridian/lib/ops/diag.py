@@ -353,7 +353,10 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         warnings.append(
             DoctorWarning(
                 code="updates_check_failed",
-                message="Could not check for dependency updates (`mars outdated --json` failed).",
+                message=(
+                    "Could not check for dependency updates "
+                    "(`meridian mars outdated --json` failed)."
+                ),
             )
         )
     elif availability.count > 0:

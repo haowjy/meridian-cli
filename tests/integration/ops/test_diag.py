@@ -311,7 +311,7 @@ def test_doctor_reports_update_check_failure_warning(
 
     updates_check = _warning_by_code(result, "updates_check_failed")
     assert updates_check.message == (
-        "Could not check for dependency updates (`mars outdated --json` failed)."
+        "Could not check for dependency updates (`meridian mars outdated --json` failed)."
     )
     assert updates_check.payload is None
     assert all(warning.code != "outdated_dependencies" for warning in result.warnings)
