@@ -3,8 +3,7 @@
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
@@ -48,6 +47,10 @@ from meridian.cli.bootstrap import (
 )
 from meridian.cli.bootstrap import (
     validate_top_level_command as _bootstrap_validate_top_level_command,
+)
+from meridian.cli.hooks_authority import (
+    manual_hook_authority_scope,
+    should_suppress_manual_hook_authority,
 )
 from meridian.cli.output import (
     CLIOutputProtocol,
@@ -95,29 +98,6 @@ class GlobalOptions(BaseModel):
 _GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
 _registered_command_groups: set[str] = set()
 _group_commands_registered = False
-_MANUAL_HOOK_ENV_OVERRIDES: tuple[str, ...] = (
-    "MERIDIAN_PROJECT_DIR",
-    "MERIDIAN_RUNTIME_DIR",
-)
-
-
-def _is_manual_hooks_list_or_run(argv: Sequence[str]) -> bool:
-    return len(argv) >= 2 and argv[0] == "hooks" and argv[1] in {"list", "run"}
-
-
-@contextmanager
-def _manual_hooks_bootstrap_authority_scope(argv: Sequence[str]) -> Iterator[None]:
-    if not _is_manual_hooks_list_or_run(argv):
-        yield
-        return
-
-    previous = {name: os.environ.pop(name, None) for name in _MANUAL_HOOK_ENV_OVERRIDES}
-    try:
-        yield
-    finally:
-        for name, value in previous.items():
-            if value is not None:
-                os.environ[name] = value
 
 
 def get_global_options() -> GlobalOptions:
@@ -991,7 +971,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     bootstrap_skipped = any(arg in {"--help", "-h"} for arg in cleaned_args)
     state_requirement = descriptor.state_requirement if descriptor is not None else None
     project_root = None
-    with _manual_hooks_bootstrap_authority_scope(cleaned_args):
+    with manual_hook_authority_scope(
+        suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
+    ):
         if not bootstrap_skipped:
             project_root = maybe_bootstrap_runtime_state(
                 cleaned_args,

@@ -1,8 +1,6 @@
 """CLI command handlers for hooks.* operations."""
 
-import os
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any
@@ -10,6 +8,10 @@ from typing import Annotated, Any
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.hooks_authority import (
+    manual_hook_authority_scope,
+    should_suppress_manual_hook_authority,
+)
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.hooks.types import HookEventName
@@ -23,21 +25,6 @@ from meridian.lib.ops.hooks import (
 )
 
 Emitter = Callable[[Any], None]
-_MANUAL_HOOK_ENV_OVERRIDES: tuple[str, ...] = (
-    "MERIDIAN_PROJECT_DIR",
-    "MERIDIAN_RUNTIME_DIR",
-)
-
-
-@contextmanager
-def _manual_hook_authority_scope() -> Iterator[None]:
-    previous = {name: os.environ.pop(name, None) for name in _MANUAL_HOOK_ENV_OVERRIDES}
-    try:
-        yield
-    finally:
-        for name, value in previous.items():
-            if value is not None:
-                os.environ[name] = value
 
 
 def _resolved_project_root() -> str:
@@ -47,7 +34,7 @@ def _resolved_project_root() -> str:
 
 
 def _hooks_list(emit: Emitter) -> None:
-    with _manual_hook_authority_scope():
+    with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
         emit(
             hooks_list_sync(
                 HookListInput(project_root=_resolved_project_root())
@@ -76,7 +63,7 @@ def _hooks_run(
         ),
     ] = None,
 ) -> None:
-    with _manual_hook_authority_scope():
+    with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
         emit(
             hooks_run_sync(
                 HookRunInput(

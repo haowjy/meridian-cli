@@ -126,20 +126,31 @@ def test_workspace_unknown_subcommand_help_exits_non_zero(
 
 
 @pytest.mark.parametrize(
-    ("argv", "expects_override"),
+    ("argv", "nested", "expects_override"),
     [
-        (["hooks", "list"], True),
-        (["hooks", "run", "record-finalized"], True),
-        (["hooks", "check"], False),
+        (["hooks"], True, True),
+        (["hooks", "list"], True, True),
+        (["hooks", "run", "record-finalized"], True, True),
+        (["hooks"], False, False),
+        (["hooks", "list"], False, False),
+        (["hooks", "run", "record-finalized"], False, False),
+        (["hooks", "check"], True, False),
+        (["hooks", "check"], False, False),
     ],
 )
-def test_hooks_bootstrap_authority_override_applies_only_to_list_and_run(
+def test_hooks_bootstrap_authority_override_applies_only_to_manual_paths(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     argv: list[str],
+    nested: bool,
     expects_override: bool,
 ) -> None:
-    parent_project_dir = "/tmp/parent-project"
-    parent_runtime_dir = "/tmp/parent-runtime"
+    parent_project_dir = str((tmp_path / "parent-project").resolve())
+    parent_runtime_dir = str((tmp_path / "parent-runtime").resolve())
+    if nested:
+        monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    else:
+        monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", parent_project_dir)
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", parent_runtime_dir)
     captured_env: list[tuple[str | None, str | None]] = []
