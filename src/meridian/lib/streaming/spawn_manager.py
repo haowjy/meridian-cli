@@ -22,10 +22,13 @@ from meridian.lib.harness.control_action import (
     ControlActionType,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.ids import HarnessId
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
@@ -110,8 +113,33 @@ async def dispatch_start(
         )
 
     connection_class = get_connection_class(config.harness_id)
-    connection_factory = cast("Callable[[], HarnessConnection[Any]]", connection_class)
-    connection = connection_factory()
+    request_handler: PermissionBroker | None = None
+    connection_ref: dict[str, HarnessConnection[Any]] = {}
+
+    async def _runtime_event_sink(event: HarnessEvent) -> None:
+        await connection_ref["connection"].inject_runtime_event(event)
+
+    if config.harness_id is HarnessId.CODEX:
+        request_handler = PermissionBroker(
+            spawn_dir=resolve_spawn_log_dir(config.project_root, config.spawn_id),
+            event_sink=_runtime_event_sink,
+        )
+
+    connection: HarnessConnection[Any]
+    if request_handler is not None:
+        connection_factory = cast(
+            "Callable[..., HarnessConnection[Any]]",
+            connection_class,
+        )
+        try:
+            connection = connection_factory(request_handler=request_handler)
+        except TypeError:
+            connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
+    else:
+        connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
+
+    connection_ref["connection"] = connection
+
     try:
         await connection.start(config, spec)
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -598,7 +626,15 @@ class SpawnManager:
 
         coordinator = session.control_actions
         if coordinator is None:
-            await _respond()
+            try:
+                await _respond()
+            except Exception as exc:
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=str(exc),
+                )
+                raise
             return
 
         response_payload: dict[str, object] = {
@@ -615,7 +651,14 @@ class SpawnManager:
             send=_respond,
         )
         if not outcome.success:
-            raise RuntimeError(outcome.error or "permission_reply_failed")
+            error = outcome.error or "permission_reply_failed"
+            if error != "stale_after_interrupt":
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=error,
+                )
+            raise RuntimeError(error)
 
     async def respond_user_input(
         self,
@@ -636,7 +679,15 @@ class SpawnManager:
 
         coordinator = session.control_actions
         if coordinator is None:
-            await _respond()
+            try:
+                await _respond()
+            except Exception as exc:
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=str(exc),
+                )
+                raise
             return
 
         outcome = await coordinator.run_action(
@@ -646,7 +697,33 @@ class SpawnManager:
             send=_respond,
         )
         if not outcome.success:
-            raise RuntimeError(outcome.error or "user_input_reply_failed")
+            error = outcome.error or "user_input_reply_failed"
+            if error != "stale_after_interrupt":
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=error,
+                )
+            raise RuntimeError(error)
+
+    async def _notify_runtime_request_failed(
+        self,
+        connection: HarnessConnection[Any],
+        *,
+        request_id: str,
+        error: str,
+    ) -> None:
+        callback = getattr(connection, "_notify_request_failed", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
+        except Exception:
+            logger.debug(
+                "Runtime request failure callback raised for request %s",
+                request_id,
+                exc_info=True,
+            )
 
     async def _record_inbound(
         self,

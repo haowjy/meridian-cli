@@ -489,8 +489,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             result.update(payload)
         try:
             await self._send_jsonrpc_result(jsonrpc_id, result)
-        except Exception as exc:
-            await self._notify_request_failed(request_id, error=str(exc))
+        except Exception:
             raise
         self._hitl_requests.pop(request_id, None)
         await self._notify_request_resolved(
@@ -508,8 +507,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             raise ValueError(f"No pending Codex HITL request: {request_id}")
         try:
             await self._send_jsonrpc_result(jsonrpc_id, {"answers": answers})
-        except Exception as exc:
-            await self._notify_request_failed(request_id, error=str(exc))
+        except Exception:
             raise
         self._hitl_requests.pop(request_id, None)
         await self._notify_request_resolved(
