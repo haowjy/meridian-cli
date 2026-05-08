@@ -26,6 +26,7 @@ from meridian.lib.chat.policy import (
 from meridian.lib.chat.protocol import CHAT_EXITED, CHAT_STARTED, ChatEvent, utc_now_iso
 from meridian.lib.chat.session_service import ChatSessionService
 from meridian.lib.chat.ws_fanout import WebSocketFanOut
+from meridian.lib.core.depth import is_nested_meridian_process
 from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.telemetry import emit_telemetry
@@ -99,6 +100,11 @@ def build_chat_runtime_from_entrypoint(
 ) -> ChatRuntime:
     """Build chat runtime using roots carried by the shared entrypoint seam."""
 
+    if is_nested_meridian_process():
+        raise ValueError(
+            "Chat startup is blocked in nested/delegated Meridian execution; "
+            "run `meridian chat` from a root Meridian process."
+        )
     project_root = entrypoint.context.project_root
     if project_root is None:
         raise ValueError("Chat entrypoint is missing project root.")

@@ -78,6 +78,24 @@ def test_build_chat_runtime_from_entrypoint_uses_shared_roots(tmp_path: Path) ->
     assert runtime.runtime_root == prepared.runtime_root
 
 
+def test_build_chat_runtime_from_entrypoint_blocks_nested_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    entrypoint = build_chat_entrypoint(prepared)
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(ValueError, match="blocked in nested/delegated Meridian execution"):
+        build_chat_runtime_from_entrypoint(
+            entrypoint=entrypoint,
+            default_policy_snapshot=_snapshot(model="gpt-a", skill_content="alpha"),
+            backend_acquisition=_NoopAcquisition(),
+        )
+
+
 @pytest.mark.asyncio
 async def test_chat_runtime_persists_policy_snapshot_on_create_before_first_acquire(
     tmp_path: Path,

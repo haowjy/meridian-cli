@@ -21,13 +21,19 @@ from meridian.lib.chat.frontend import FrontendAssets
 from meridian.lib.chat.policy import ChatPolicySnapshot, default_chat_policy_snapshot
 from meridian.lib.chat.protocol import utc_now_iso
 from meridian.lib.chat.replay import ReplayService
-from meridian.lib.chat.runtime import ChatRuntime
+from meridian.lib.chat.runtime import (
+    ChatRuntime,
+    ChatRuntimeRequest,
+    build_chat_runtime,
+    build_chat_runtime_from_entrypoint,
+)
+from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.telemetry.events import make_error_data
 
 if TYPE_CHECKING:
-    from meridian.lib.chat.backend_acquisition import BackendAcquisition
+    from meridian.lib.chat.backend_acquisition import BackendAcquisition, BackendAcquisitionFactory
 
 
 @asynccontextmanager
@@ -126,8 +132,10 @@ def _configured_runtime() -> ChatRuntime:
 def configure(
     *,
     runtime: ChatRuntime | None = None,
+    entrypoint: ChatEntryPoint | None = None,
     runtime_root: Path | None = None,
     backend_acquisition: BackendAcquisition | None = None,
+    acquisition_factory: BackendAcquisitionFactory | None = None,
     project_root: Path | None = None,
     default_policy_snapshot: ChatPolicySnapshot | None = None,
 ) -> None:
@@ -137,11 +145,24 @@ def configure(
     if runtime is not None:
         _runtime = runtime
         return
-    _runtime = ChatRuntime(
-        runtime_root=runtime_root or get_user_home(),
-        project_root=project_root or Path.cwd(),
-        default_policy_snapshot=default_policy_snapshot or default_chat_policy_snapshot(),
-        backend_acquisition=backend_acquisition or _UnavailableAcquisition(),
+    snapshot = default_policy_snapshot or default_chat_policy_snapshot()
+    resolved_backend = backend_acquisition or _UnavailableAcquisition()
+    if entrypoint is not None:
+        _runtime = build_chat_runtime_from_entrypoint(
+            entrypoint=entrypoint,
+            default_policy_snapshot=snapshot,
+            backend_acquisition=resolved_backend,
+            acquisition_factory=acquisition_factory,
+        )
+        return
+    _runtime = build_chat_runtime(
+        ChatRuntimeRequest(
+            runtime_root=runtime_root or get_user_home(),
+            project_root=project_root or Path.cwd(),
+            default_policy_snapshot=snapshot,
+            backend_acquisition=resolved_backend,
+            acquisition_factory=acquisition_factory,
+        )
     )
 
 

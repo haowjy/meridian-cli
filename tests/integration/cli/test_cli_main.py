@@ -351,21 +351,13 @@ def test_main_allows_nested_chat_management_commands(
     assert len(request_calls) >= 1
 
 
-def test_main_allows_nested_chat_launch(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[dict[str, object]] = []
-
+def test_main_blocks_nested_chat_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "2")
-    monkeypatch.setattr(
-        "meridian.cli.chat_cmd.run_chat_server",
-        lambda **kwargs: calls.append(kwargs) or 0,
-    )
 
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(["chat", "--headless", "--port", "0"])
 
-    assert exc_info.value.code == 0
-    assert len(calls) == 1
-    assert calls[0]["headless"] is True
+    assert exc_info.value.code == 1
 
 
 def test_config_help_mentions_meridian_toml() -> None:

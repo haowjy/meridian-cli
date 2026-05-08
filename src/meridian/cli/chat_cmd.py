@@ -34,7 +34,7 @@ from meridian.lib.chat.policy import (
     build_chat_backend_launch_plan,
     snapshot_from_resolved_policy,
 )
-from meridian.lib.chat.runtime import ChatRuntime, PipelineLookup
+from meridian.lib.chat.runtime import PipelineLookup, build_chat_runtime_from_entrypoint
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -337,10 +337,8 @@ def run_chat_server(
         prepared = prepare_for_runtime_write(project_root)
         entrypoint = build_chat_entrypoint(prepared)
     project_root = _chat_project_root(entrypoint)
-    runtime_root = get_user_home()  # kept for ChatRuntime — not telemetry
-    runtime = ChatRuntime(
-        runtime_root=runtime_root,
-        project_root=project_root,
+    runtime = build_chat_runtime_from_entrypoint(
+        entrypoint=entrypoint,
         default_policy_snapshot=policy_snapshot,
         acquisition_factory=_ChatBackendAcquisitionFactory(
             policy_snapshot=policy_snapshot,
@@ -401,7 +399,7 @@ def run_chat_server(
                 flush=True,
             )
 
-        _write_server_discovery(host=display_host, port=actual_port, runtime_root=runtime_root)
+        _write_server_discovery(host=display_host, port=actual_port)
         supervisor = DevSupervisor(
             backend_host=host,
             backend_port=actual_port,
@@ -453,7 +451,7 @@ def run_chat_server(
     if headless:
         print(f"Chat backend: {url}", file=output, flush=True)
 
-    _write_server_discovery(host=display_host, port=actual_port, runtime_root=runtime_root)
+    _write_server_discovery(host=display_host, port=actual_port)
     if not headless and open_browser:
         webbrowser.open(url)
 
@@ -578,8 +576,8 @@ def _find_free_port(host: str) -> int:
         return int(sock.getsockname()[1])
 
 
-def _write_server_discovery(*, host: str, port: int, runtime_root: Path) -> None:
-    path = runtime_root / CHAT_SERVER_FILE
+def _write_server_discovery(*, host: str, port: int) -> None:
+    path = _server_discovery_path()
     display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     payload = {"host": host, "port": port, "url": f"http://{display_host}:{port}"}
     path.parent.mkdir(parents=True, exist_ok=True)

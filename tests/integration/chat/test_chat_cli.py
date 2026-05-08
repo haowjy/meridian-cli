@@ -20,6 +20,7 @@ from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.service_context import ApplicationContext, ApplicationServices, ChatEntryPoint
 from tests.support.fixtures import write_skill
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -403,28 +404,39 @@ def test_backend_acquisition_preserves_requested_harness(tmp_path, harness: Harn
 def test_chat_cli_builds_runtime_with_factory_inputs(
     monkeypatch, tmp_path, harness_name: str, expected_harness: HarnessId
 ) -> None:
-    runtime_root = tmp_path / "runtime"
     captured: dict[str, object] = {}
     snapshot = default_chat_policy_snapshot(harness=expected_harness, model="model-x")
+    runtime = object()
+    entrypoint = ChatEntryPoint(
+        context=ApplicationContext(
+            project_root=tmp_path,
+            runtime_root=tmp_path / "runtime",
+        ),
+        services=ApplicationServices(),
+    )
 
-    class FakeRuntime:
-        def __init__(
-            self, *, runtime_root, project_root, default_policy_snapshot, acquisition_factory
-        ) -> None:
-            captured["runtime_root"] = runtime_root
-            captured["project_root"] = project_root
-            captured["default_policy_snapshot"] = default_policy_snapshot
-            captured["acquisition_factory"] = acquisition_factory
-            captured["runtime"] = self
+    def fake_build_chat_runtime_from_entrypoint(
+        *,
+        entrypoint,
+        default_policy_snapshot,
+        backend_acquisition=None,
+        acquisition_factory=None,
+    ):
+        _ = backend_acquisition
+        captured["entrypoint"] = entrypoint
+        captured["default_policy_snapshot"] = default_policy_snapshot
+        captured["acquisition_factory"] = acquisition_factory
+        return runtime
 
     def fake_configure(*, runtime) -> None:
         captured["configured_runtime"] = runtime
 
-    monkeypatch.setattr(chat_cmd, "ChatRuntime", FakeRuntime)
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        chat_cmd,
+        "build_chat_runtime_from_entrypoint",
+        fake_build_chat_runtime_from_entrypoint,
+    )
     monkeypatch.setattr(chat_cmd, "_resolve_chat_policy_snapshot", lambda **_kwargs: snapshot)
-    monkeypatch.chdir(tmp_path)
 
     import meridian.lib.chat.server as chat_server
 
@@ -438,12 +450,12 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
         headless=True,
         uvicorn_run=lambda *_args, **_kwargs: None,
         stdout=StringIO(),
+        entrypoint=entrypoint,
     )
 
-    assert captured["runtime_root"] == runtime_root
-    assert captured["project_root"] == tmp_path
+    assert captured["entrypoint"] is entrypoint
     assert captured["default_policy_snapshot"] == snapshot
-    assert captured["configured_runtime"] is captured["runtime"]
+    assert captured["configured_runtime"] is runtime
 
     factory = cast("chat_cmd._ChatBackendAcquisitionFactory", captured["acquisition_factory"])
     assert factory.policy_snapshot == snapshot
@@ -452,7 +464,7 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
     acquisition = factory.build(
         pipeline_lookup=lookup,
         project_root=tmp_path,
-        runtime_root=runtime_root,
+        runtime_root=cast("Path", entrypoint.context.runtime_root),
     )
     plan = acquisition._build_launch_plan("c1", "hello")
     config = plan.connection_config
@@ -461,6 +473,32 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
     assert config.harness_id == expected_harness
     assert config.project_root == tmp_path
     assert spec.model == "model-x"
+
+
+def test_chat_cli_blocks_nested_launch(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    configured: list[object] = []
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
+
+    import meridian.lib.chat.server as chat_server
+
+    monkeypatch.setattr(chat_server, "configure", lambda **kwargs: configured.append(kwargs))
+    monkeypatch.setattr(chat_server, "app", object())
+
+    with pytest.raises(
+        ValueError,
+        match="blocked in nested/delegated Meridian execution",
+    ):
+        run_chat_server(
+            port=8765,
+            headless=True,
+            uvicorn_run=lambda *_args, **_kwargs: None,
+            stdout=StringIO(),
+        )
+
+    assert configured == []
+    assert not (runtime_root / "chat-server.json").exists()
 
 
 def test_stale_asset_warning_mentions_rebuild(monkeypatch, tmp_path) -> None:
