@@ -10,11 +10,11 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.transcript import parse_transcript_file
 from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_root_for_read,
 )
-from meridian.lib.ops.session_log import parse_session_file
 from meridian.lib.ops.session_target import resolve_session_log_target
 
 _PREVIEW_LIMIT = 200
@@ -143,7 +143,7 @@ def session_search_sync(
         project_root=project_root,
         runtime_root=runtime_root,
     )
-    segments, total_compactions = parse_session_file(target.file_path)
+    segments, total_compactions = parse_transcript_file(target.file_path)
 
     query_lower = query.lower()
     matches: list[SessionSearchMatch] = []

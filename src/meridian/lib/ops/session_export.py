@@ -11,9 +11,8 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.harness.transcript import TranscriptMessage
+from meridian.lib.harness.transcript import TranscriptMessage, parse_transcript_file
 from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
-from meridian.lib.ops.session_log import parse_session_file
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
 
@@ -279,7 +278,7 @@ def session_export_sync(
         project_root=project_root,
         runtime_root=runtime_root,
     )
-    segments, _total_compactions = parse_session_file(target.file_path)
+    segments, _total_compactions = parse_transcript_file(target.file_path)
     ref = payload.ref.strip() or target.session_id
     chat_id = _chat_id_for_ref(runtime_root, ref)
     parent_id = ref if ref.startswith("p") and ref[1:].isdigit() else None
