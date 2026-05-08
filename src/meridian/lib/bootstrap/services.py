@@ -156,11 +156,15 @@ def build_spawn_application_service(
     lifecycle: SpawnLifecycleService | None = None,
     spawn_manager: SpawnManager | None = None,
 ) -> SpawnApplicationService:
-    """Build a spawn application service from the shared spawn entrypoint seam."""
+    """Build a spawn application service directly from prepared runtime authority."""
 
-    entrypoint = build_spawn_entrypoint(prepared, lifecycle=lifecycle)
-    return build_spawn_application_service_from_entrypoint(
-        entrypoint,
+    runtime_root = prepared.runtime_root
+    if runtime_root is None:
+        raise ValueError("Prepared runtime context is missing runtime root.")
+    return build_spawn_application_service_from_roots(
+        prepared.project_root,
+        runtime_root,
+        lifecycle=lifecycle,
         spawn_manager=spawn_manager,
     )
 

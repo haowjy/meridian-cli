@@ -11,7 +11,6 @@ from meridian.lib.bootstrap.services import (
     RuntimeWriteContext,
     build_spawn_application_service,
     build_spawn_application_service_from_roots,
-    build_spawn_entrypoint,
 )
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
@@ -36,7 +35,6 @@ from meridian.lib.ops.runtime import (
     runtime_context,
 )
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
-from meridian.lib.service_context import SpawnEntryPoint
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
@@ -143,32 +141,23 @@ def _resolve_project_root_input(project_root: str | None) -> Path:
     return resolve_project_authority(project_root).project_root
 
 
-def _spawn_entrypoint_from_prepared(
-    prepared: RuntimeReadContext | RuntimeWriteContext,
-) -> SpawnEntryPoint:
-    return build_spawn_entrypoint(prepared)
+def _project_root_from_prepared(prepared: RuntimeReadContext | RuntimeWriteContext) -> Path:
+    return prepared.project_root
 
 
-def _project_root_from_entrypoint(entrypoint: SpawnEntryPoint) -> Path:
-    project_root = entrypoint.context.project_root
-    if project_root is None:
-        raise ValueError("Prepared spawn entrypoint is missing project root.")
-    return project_root
-
-
-def _config_from_entrypoint(entrypoint: SpawnEntryPoint) -> MeridianConfig:
-    config = entrypoint.context.config
+def _config_from_prepared(prepared: RuntimeReadContext | RuntimeWriteContext) -> MeridianConfig:
+    config = prepared.config
     if config is None:
-        raise ValueError("Prepared spawn entrypoint is missing config.")
+        raise ValueError("Prepared runtime context is missing config.")
     return config
 
 
-def _runtime_root_from_entrypoint_for_read(
-    entrypoint: SpawnEntryPoint,
+def _runtime_root_from_prepared_for_read(
+    prepared: RuntimeReadContext | RuntimeWriteContext,
     *,
     project_root: Path,
 ) -> Path:
-    runtime_root = entrypoint.context.runtime_root
+    runtime_root = prepared.runtime_root
     return runtime_root or resolve_runtime_root_for_read(project_root)
 
 
@@ -177,11 +166,10 @@ def _resolve_spawn_read_authority(
     project_root: str | None,
     prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
 ) -> tuple[Path, Path]:
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
-    if entrypoint is not None:
-        resolved_project_root = _project_root_from_entrypoint(entrypoint)
-        resolved_runtime_root = _runtime_root_from_entrypoint_for_read(
-            entrypoint,
+    if prepared is not None:
+        resolved_project_root = _project_root_from_prepared(prepared)
+        resolved_runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
             project_root=resolved_project_root,
         )
         return resolved_project_root, resolved_runtime_root
@@ -198,12 +186,10 @@ def resolve_spawn_operation_services(
 ) -> SpawnOperationServices:
     """Resolve roots and spawn service from shared authority seams."""
 
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
     if prepared is not None:
-        assert entrypoint is not None
-        resolved_project_root = _project_root_from_entrypoint(entrypoint)
-        resolved_runtime_root = _runtime_root_from_entrypoint_for_read(
-            entrypoint,
+        resolved_project_root = _project_root_from_prepared(prepared)
+        resolved_runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
             project_root=resolved_project_root,
         )
         spawn_service = build_spawn_application_service(prepared)
@@ -271,20 +257,14 @@ def spawn_create_sync(
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     prepared_context = prepared
-    entrypoint = (
-        _spawn_entrypoint_from_prepared(prepared_context)
-        if prepared_context is not None
-        else None
-    )
     register_debug_trace_observer()
     resolved_context = runtime_context(ctx)
     spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
     logical_owner = spawn_env_id if spawn_env_id else "cli"
     authority = None
     if prepared_context is not None:
-        assert entrypoint is not None
-        resolved_root = _project_root_from_entrypoint(entrypoint)
-        config = _config_from_entrypoint(entrypoint)
+        resolved_root = _project_root_from_prepared(prepared_context)
+        config = _config_from_prepared(prepared_context)
         authority = prepared_context.authority
         register_spawn_telemetry_observer()
     elif payload.dry_run:
@@ -1237,12 +1217,10 @@ def spawn_wait_sync(
 ) -> SpawnWaitMultiOutput:
     active_sink = sink or NullSink()
     resolved_context = runtime_context(ctx)
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
     if prepared is not None:
-        assert entrypoint is not None
-        project_root = _project_root_from_entrypoint(entrypoint)
-        config = _config_from_entrypoint(entrypoint)
-        runtime_root = _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
+        project_root = _project_root_from_prepared(prepared)
+        config = _config_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(prepared, project_root=project_root)
     else:
         project_root, config = resolve_runtime_root_and_config_for_read(payload.project_root)
         runtime_root = resolve_runtime_root_for_read(project_root)

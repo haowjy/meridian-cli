@@ -298,11 +298,12 @@ def test_run_chat_server_uses_prepared_runtime_write_context(
     )
 
     def _capture_chat_runtime(**kwargs):
-        captured["chat_project_root"] = kwargs["project_root"]
-        captured["chat_runtime_root"] = kwargs["runtime_root"]
+        entrypoint = kwargs["entrypoint"]
+        captured["chat_project_root"] = entrypoint.context.project_root
+        captured["chat_runtime_root"] = entrypoint.context.runtime_root
         return object()
 
-    monkeypatch.setattr(chat_cmd, "ChatRuntime", _capture_chat_runtime)
+    monkeypatch.setattr(chat_cmd, "build_chat_runtime_from_entrypoint", _capture_chat_runtime)
     monkeypatch.setattr(
         "meridian.lib.chat.server.configure",
         lambda **_kwargs: (_ for _ in ()).throw(_StopAfterTelemetrySetup()),
@@ -339,18 +340,21 @@ def test_run_chat_server_accepts_prebuilt_chat_entrypoint(
     monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: pytest.fail("should not resolve"))
 
     def _capture_chat_runtime(**kwargs):
-        captured["chat_project_root"] = kwargs["project_root"]
-        captured["chat_runtime_root"] = kwargs["runtime_root"]
+        entrypoint = kwargs["entrypoint"]
+        captured["chat_project_root"] = entrypoint.context.project_root
+        captured["chat_runtime_root"] = entrypoint.context.runtime_root
         return object()
 
-    monkeypatch.setattr(chat_cmd, "ChatRuntime", _capture_chat_runtime)
+    monkeypatch.setattr(chat_cmd, "build_chat_runtime_from_entrypoint", _capture_chat_runtime)
     monkeypatch.setattr(
         "meridian.lib.chat.server.configure",
         lambda **_kwargs: (_ for _ in ()).throw(_StopAfterTelemetrySetup()),
     )
     monkeypatch.setattr(chat_cmd, "get_user_home", lambda: runtime_root)
 
-    entrypoint = ChatEntryPoint(context=ApplicationContext(project_root=project_root))
+    entrypoint = ChatEntryPoint(
+        context=ApplicationContext(project_root=project_root, runtime_root=runtime_root)
+    )
 
     with pytest.raises(_StopAfterTelemetrySetup):
         chat_cmd.run_chat_server(harness="codex", headless=True, entrypoint=entrypoint)

@@ -31,31 +31,21 @@ class ApplicationServices:
 
 
 @dataclass(frozen=True)
-class SpawnEntryPoint:
-    """Typed carrier for spawn entrypoints."""
+class ApplicationEntryPoint:
+    """Typed carrier shared by chat, spawn, and extension entrypoints."""
 
     context: ApplicationContext = field(default_factory=ApplicationContext)
     services: ApplicationServices = field(default_factory=ApplicationServices)
 
 
-@dataclass(frozen=True)
-class ChatEntryPoint:
-    """Typed carrier for chat entrypoints."""
-
-    context: ApplicationContext = field(default_factory=ApplicationContext)
-    services: ApplicationServices = field(default_factory=ApplicationServices)
-
-
-@dataclass(frozen=True)
-class ExtensionEntryPoint:
-    """Typed carrier for extension entrypoints."""
-
-    context: ApplicationContext = field(default_factory=ApplicationContext)
-    services: ApplicationServices = field(default_factory=ApplicationServices)
+SpawnEntryPoint = ApplicationEntryPoint
+ChatEntryPoint = ApplicationEntryPoint
+ExtensionEntryPoint = ApplicationEntryPoint
 
 
 __all__ = [
     "ApplicationContext",
+    "ApplicationEntryPoint",
     "ApplicationServices",
     "ChatEntryPoint",
     "ExtensionEntryPoint",
