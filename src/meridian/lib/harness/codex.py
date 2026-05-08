@@ -48,6 +48,10 @@ from meridian.lib.harness.common import (
     extract_codex_report,
     extract_session_id_from_artifacts_with_patterns,
 )
+from meridian.lib.harness.connections.base import (
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
+)
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.ids import HarnessId, TransportId
@@ -306,9 +310,16 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
             approval=ApprovalContract(
                 runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
                 default_runtime_request_policy="auto_accept",
+                primary_session_runtime_request_policy=(
+                    PrimaryRuntimeRequestPolicy.SURFACE_EVENTS
+                ),
+                primary_session_runtime_event_surface=(
+                    PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
+                ),
             ),
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+                primary_attach_failure_policy="raise",
                 observer_controller=observer,
             ),
             capability_limits=(

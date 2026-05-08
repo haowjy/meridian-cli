@@ -16,6 +16,10 @@ from meridian.lib.harness.bundle import (
     project_managed_primary_bootstrap,
     project_subprocess_spec,
 )
+from meridian.lib.harness.connections.base import (
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
+)
 from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -79,8 +83,31 @@ def test_opencode_contract_matches_current_runtime_hitl_and_permission_projectio
 
     assert contract.approval.runtime_hitl is RuntimeHitlMode.NONE
     assert contract.approval.default_runtime_request_policy == "none"
+    assert contract.approval.primary_session_runtime_request_policy is (
+        PrimaryRuntimeRequestPolicy.NONE
+    )
+    assert contract.approval.primary_session_runtime_event_surface is (
+        PrimaryRuntimeEventSurface.NONE
+    )
     assert contract.approval.subprocess_permission_flags_projected_by_shared_policy is False
+    assert contract.bootstrap.primary_attach_failure_policy == "fallback_to_blackbox"
     assert connection.capabilities.supports_runtime_hitl is False
+
+
+def test_codex_contract_declares_primary_runtime_event_surfacing() -> None:
+    ensure_bootstrap()
+    registry = get_default_harness_registry()
+
+    contract = registry.get_contract(HarnessId.CODEX)
+
+    assert contract.approval.runtime_hitl is RuntimeHitlMode.CONNECTION_REQUESTS
+    assert contract.approval.primary_session_runtime_request_policy is (
+        PrimaryRuntimeRequestPolicy.SURFACE_EVENTS
+    )
+    assert contract.approval.primary_session_runtime_event_surface is (
+        PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
+    )
+    assert contract.bootstrap.primary_attach_failure_policy == "raise"
 
 
 def test_bundle_projection_helpers_reject_spec_mismatch() -> None:

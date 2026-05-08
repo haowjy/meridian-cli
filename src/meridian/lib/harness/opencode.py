@@ -386,6 +386,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
             ),
             bootstrap=BootstrapContract(
                 mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+                primary_attach_failure_policy="fallback_to_blackbox",
                 observer_controller=observer,
             ),
             capability_limits=(

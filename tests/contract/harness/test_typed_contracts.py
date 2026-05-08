@@ -44,6 +44,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionState,
     HarnessConnection,
     HarnessEvent,
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.connections.codex_ws import CodexConnection
@@ -460,9 +462,21 @@ def test_runtime_hitl_contracts_align_with_default_connection_capabilities() -> 
         if overrides_runtime_hitl_responses:
             assert harness_contract.approval.runtime_hitl is RuntimeHitlMode.CONNECTION_REQUESTS
             assert harness_contract.approval.default_runtime_request_policy == "auto_accept"
+            assert harness_contract.approval.primary_session_runtime_request_policy is (
+                PrimaryRuntimeRequestPolicy.SURFACE_EVENTS
+            )
+            assert harness_contract.approval.primary_session_runtime_event_surface is (
+                PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
+            )
         else:
             assert harness_contract.approval.runtime_hitl is RuntimeHitlMode.NONE
             assert harness_contract.approval.default_runtime_request_policy == "none"
+            assert harness_contract.approval.primary_session_runtime_request_policy is (
+                PrimaryRuntimeRequestPolicy.NONE
+            )
+            assert harness_contract.approval.primary_session_runtime_event_surface is (
+                PrimaryRuntimeEventSurface.NONE
+            )
             assert connection.capabilities.supports_runtime_hitl is False
 
         assert (

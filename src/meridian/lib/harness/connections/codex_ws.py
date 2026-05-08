@@ -11,7 +11,7 @@ import logging
 import os
 import socket
 from asyncio.subprocess import Process
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BufferedWriter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -42,7 +42,9 @@ from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessEvent,
     HarnessRequest,
+    InteractiveHandler,
     ObserverEndpoint,
+    PrimaryRuntimeRequestPolicy,
     ServerRequestHandler,
     validate_prompt_size,
 )
@@ -388,6 +390,28 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
 
         self._primary_observer_mode = True
         await self.start(config, spec)
+
+    def configure_primary_runtime_requests(
+        self,
+        *,
+        policy: PrimaryRuntimeRequestPolicy,
+        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+    ) -> None:
+        if policy in (
+            PrimaryRuntimeRequestPolicy.NONE,
+            PrimaryRuntimeRequestPolicy.AUTO_ACCEPT,
+        ):
+            self._request_handler = AutoAcceptHandler()
+            return
+        if policy is PrimaryRuntimeRequestPolicy.SURFACE_EVENTS:
+            if event_sink is None:
+                raise ValueError("Codex primary runtime event surfacing requires an event sink")
+            self._request_handler = InteractiveHandler(event_sink)
+            return
+        raise ValueError(f"Unsupported Codex primary runtime request policy: {policy}")
+
+    async def inject_runtime_event(self, event: HarnessEvent) -> None:
+        await self._event_queue.put(event)
 
     async def stop(self) -> None:
         if self._state in {"stopped"}:

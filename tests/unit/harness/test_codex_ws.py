@@ -15,6 +15,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     HarnessRequest,
     InteractiveHandler,
+    PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.projections.project_codex_common import (
@@ -25,6 +26,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
 )
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.safety.permissions import (
     PermissionConfig,
@@ -545,8 +547,8 @@ async def test_codex_ws_confirm_mode_rejects_only_when_handler_has_no_runtime_hi
 @pytest.mark.asyncio
 async def test_codex_ws_managed_primary_uses_interactive_handler() -> None:
     connection = process_runner._create_managed_primary_connection(
-        harness_id=HarnessId.CODEX,
         connection_factory=codex_ws.CodexConnection,
+        harness_contract=get_default_harness_registry().get_contract(HarnessId.CODEX),
     )
     assert isinstance(connection, codex_ws.CodexConnection)
     assert isinstance(connection._request_handler, InteractiveHandler)
@@ -559,10 +561,18 @@ async def test_codex_ws_managed_primary_uses_interactive_handler() -> None:
             payload={"command": "echo"},
         ),
     )
-    event = await asyncio.wait_for(connection._event_queue.get(), timeout=1.0)
+    event = await asyncio.wait_for(connection.events().__anext__(), timeout=1.0)
     assert event is not None
     assert event.event_type == "request/opened"
     assert event.payload["request_id"] == "approval-queue-test"
+
+
+def test_codex_ws_primary_runtime_request_policy_none_keeps_auto_accept() -> None:
+    connection = codex_ws.CodexConnection()
+
+    connection.configure_primary_runtime_requests(policy=PrimaryRuntimeRequestPolicy.NONE)
+
+    assert isinstance(connection._request_handler, AutoAcceptHandler)
 
 
 @pytest.mark.asyncio

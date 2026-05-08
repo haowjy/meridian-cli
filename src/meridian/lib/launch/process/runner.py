@@ -22,6 +22,8 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.adapter import HarnessContract
+from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
     cleanup_claude_overlay,
@@ -34,7 +36,8 @@ from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessEvent,
-    InteractiveHandler,
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
@@ -317,6 +320,7 @@ def _execute_primary_process(
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
     command: tuple[str, ...],
+    harness_contract: HarnessContract,
     managed: Any,
     runtime_root: Path,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
@@ -325,7 +329,9 @@ def _execute_primary_process(
 ) -> tuple[int, str | None]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
-    use_managed_backend = harness_id in {HarnessId.CODEX, HarnessId.OPENCODE}
+    use_managed_backend = (
+        harness_contract.bootstrap.mode.value == "managed_primary_attach"
+    )
     if use_managed_backend:
         try:
             exit_code, managed_session_id = _execute_via_managed_attach(
@@ -342,9 +348,7 @@ def _execute_primary_process(
             )
             return exit_code, managed_session_id
         except PrimaryAttachError as exc:
-            # Codex primary must use managed backend; fail loudly on startup error.
-            # OpenCode can fall back to black-box subprocess for compatibility.
-            if harness_id == HarnessId.CODEX:
+            if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
                 raise
             logger.warning(
                 "Managed backend failed, falling back to black-box TUI: %s",
@@ -353,7 +357,7 @@ def _execute_primary_process(
             _cleanup_managed_primary_sidecars(log_dir)
             use_managed_backend = False
 
-    if harness_id == HarnessId.CLAUDE or not use_managed_backend:
+    if not use_managed_backend:
         output_log_path = (
             log_dir / OUTPUT_FILENAME
             if _should_capture_blackbox_output(
@@ -471,24 +475,34 @@ def _finalize_lifecycle_and_observe_session(
 
 def _create_managed_primary_connection(
     *,
-    harness_id: HarnessId,
     connection_factory: Callable[..., HarnessConnection[Any]],
+    harness_contract: HarnessContract,
 ) -> HarnessConnection[Any]:
-    """Build one managed-primary connection with harness-specific request policy."""
-
-    if harness_id != HarnessId.CODEX:
-        return connection_factory()
+    """Build one managed-primary connection configured from harness contract data."""
 
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
-    async def _event_sink(event: HarnessEvent) -> None:
-        connection = connection_ref["connection"]
-        await cast("Any", connection)._event_queue.put(event)
+    policy = harness_contract.approval.primary_session_runtime_request_policy
+    event_surface = harness_contract.approval.primary_session_runtime_event_surface
 
-    connection = connection_factory(
-        request_handler=InteractiveHandler(event_sink=_event_sink)
-    )
+    connection = connection_factory()
     connection_ref["connection"] = connection
+    if policy is PrimaryRuntimeRequestPolicy.SURFACE_EVENTS:
+        if event_surface is not PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM:
+            raise PrimaryAttachError(
+                "Managed primary runtime request surfacing requires connection event stream"
+            )
+
+        async def _event_sink(event: HarnessEvent) -> None:
+            await connection_ref["connection"].inject_runtime_event(event)
+
+        connection.configure_primary_runtime_requests(
+            policy=policy,
+            event_sink=_event_sink,
+        )
+        return connection
+
+    connection.configure_primary_runtime_requests(policy=policy)
     return connection
 
 
@@ -507,13 +521,14 @@ async def _run_primary_attach(
 
     try:
         passthrough = get_passthrough(harness_id)
+        harness_contract = get_harness_bundle(harness_id).adapter.contract
         connection_factory = cast(
             "Callable[..., HarnessConnection[Any]]",
             get_connection_class(harness_id),
         )
         connection = _create_managed_primary_connection(
-            harness_id=harness_id,
             connection_factory=connection_factory,
+            harness_contract=harness_contract,
         )
         config = passthrough.build_config(
             spawn_id=spawn_id,
@@ -846,6 +861,7 @@ def run_harness_process(
                     child_env=child_env,
                     launch_spec=launch_spec,
                     command=command,
+                    harness_contract=harness_adapter.contract,
                     managed=managed,
                     runtime_root=runtime_root,
                     run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,

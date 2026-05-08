@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
@@ -110,6 +111,21 @@ class HarnessRequest:
     request_type: Literal["approval", "user_input"]
     method: str
     payload: dict[str, object]
+
+
+class PrimaryRuntimeRequestPolicy(StrEnum):
+    """Runner policy for runtime requests during primary-session launches."""
+
+    NONE = "none"
+    AUTO_ACCEPT = "auto_accept"
+    SURFACE_EVENTS = "surface_events"
+
+
+class PrimaryRuntimeEventSurface(StrEnum):
+    """Where primary-session runtime requests should be surfaced."""
+
+    NONE = "none"
+    CONNECTION_EVENT_STREAM = "connection_event_stream"
 
 
 class ServerRequestHandler(Protocol):
@@ -256,6 +272,29 @@ class HarnessConnection(Generic[SpecT], ABC):
             )
         await self.start(config, spec)
 
+    def configure_primary_runtime_requests(
+        self,
+        *,
+        policy: PrimaryRuntimeRequestPolicy,
+        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+    ) -> None:
+        """Configure runtime-request handling for one primary-session launch."""
+
+        _ = event_sink
+        if policy is PrimaryRuntimeRequestPolicy.NONE:
+            return
+        raise NotImplementedError(
+            f"{self.harness_id.value} does not support primary runtime request policy overrides"
+        )
+
+    async def inject_runtime_event(self, event: HarnessEvent) -> None:
+        """Inject one synthesized runtime event into the connection event stream."""
+
+        _ = event
+        raise NotImplementedError(
+            f"{self.harness_id.value} does not support runtime event injection"
+        )
+
     async def respond_request(
         self,
         request_id: str,
@@ -310,6 +349,8 @@ __all__ = [
     "HarnessRequest",
     "InteractiveHandler",
     "ObserverEndpoint",
+    "PrimaryRuntimeEventSurface",
+    "PrimaryRuntimeRequestPolicy",
     "PromptTooLargeError",
     "ServerRequestHandler",
     "validate_prompt_size",

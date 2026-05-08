@@ -11,6 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, ModelId, SpawnId
+from meridian.lib.harness.connections.base import (
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
+)
 from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.launch.composition import (
@@ -120,6 +124,12 @@ class ApprovalContract(BaseModel):
     runtime_hitl: RuntimeHitlMode = RuntimeHitlMode.NONE
     subprocess_permission_flags_projected_by_shared_policy: bool = True
     default_runtime_request_policy: Literal["none", "auto_accept"] = "none"
+    primary_session_runtime_request_policy: PrimaryRuntimeRequestPolicy = (
+        PrimaryRuntimeRequestPolicy.NONE
+    )
+    primary_session_runtime_event_surface: PrimaryRuntimeEventSurface = (
+        PrimaryRuntimeEventSurface.NONE
+    )
 
 
 class ObserverControllerContract(BaseModel):
@@ -140,6 +150,7 @@ class BootstrapContract(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     mode: BootstrapMode
+    primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     seeds_resume_metadata: bool = True
     observer_controller: ObserverControllerContract | None = None
 
