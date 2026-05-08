@@ -552,10 +552,10 @@ def test_build_launch_context_opencode_includes_context_paths_in_external_direct
     config = json.loads(runtime_ctx.env_overrides["OPENCODE_CONFIG_CONTENT"])
     external_dirs = config.get("permission", {}).get("external_directory", {})
 
-    work_path = (tmp_path / "ctx" / "work").as_posix() + "/*"
-    kb_path = (tmp_path / "ctx" / "kb").as_posix() + "/*"
-    archive_path = (tmp_path / "ctx" / "archive" / "work").as_posix() + "/*"
-    strategy_path = (tmp_path / "ctx" / "strategy").as_posix() + "/*"
+    work_path = (tmp_path / "ctx" / "work").as_posix() + "/**"
+    kb_path = (tmp_path / "ctx" / "kb").as_posix() + "/**"
+    archive_path = (tmp_path / "ctx" / "archive" / "work").as_posix() + "/**"
+    strategy_path = (tmp_path / "ctx" / "strategy").as_posix() + "/**"
 
     assert work_path in external_dirs
     assert kb_path in external_dirs

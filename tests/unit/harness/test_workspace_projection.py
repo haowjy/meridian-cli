@@ -61,8 +61,8 @@ def test_workspace_projection_projects_opencode_external_directories() -> None:
     assert payload == {
         "permission": {
             "external_directory": {
-                "/tmp/workspace/root-a/*": "allow",
-                "/tmp/workspace/root-b/*": "allow",
+                "/tmp/workspace/root-a/**": "allow",
+                "/tmp/workspace/root-b/**": "allow",
             }
         }
     }
@@ -86,7 +86,7 @@ def test_workspace_projection_opencode_merges_parent_env_additively() -> None:
     assert payload["permission"]["other"] == "keep"
     assert payload["permission"]["external_directory"] == {
         "/preexisting/*": "ask",
-        "/tmp/workspace/root-a/*": "allow",
+        "/tmp/workspace/root-a/**": "allow",
     }
 
 
@@ -100,7 +100,7 @@ def test_workspace_projection_opencode_coerces_legacy_list_external_directory() 
     payload = json.loads(result.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
     assert payload["permission"]["external_directory"] == {
         "/legacy/*": "allow",
-        "/tmp/workspace/root-a/*": "allow",
+        "/tmp/workspace/root-a/**": "allow",
     }
 
 

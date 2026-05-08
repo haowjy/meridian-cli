@@ -486,8 +486,8 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     runtime_root = tmp_path / ".meridian"
     payload = json.loads(preview.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
     external_dirs = payload["permission"]["external_directory"]
-    assert external_dirs[docs_root.as_posix() + "/*"] == "allow"
-    assert external_dirs[runtime_root.as_posix() + "/*"] == "allow"
+    assert external_dirs[docs_root.as_posix() + "/**"] == "allow"
+    assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
 
 
 @pytest.mark.parametrize(
@@ -539,8 +539,8 @@ def test_opencode_workspace_projection_merges_parent_env(
     runtime_root = tmp_path / ".meridian"
     payload = json.loads(preview.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
     external_dirs = payload["permission"]["external_directory"]
-    assert external_dirs[shared_root.as_posix() + "/*"] == "allow"
-    assert external_dirs[runtime_root.as_posix() + "/*"] == "allow"
+    assert external_dirs[shared_root.as_posix() + "/**"] == "allow"
+    assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
     if parent_env_present:
         assert payload["instructions"] == ["/tmp/system.md"]
         assert external_dirs["/existing/*"] == "ask"

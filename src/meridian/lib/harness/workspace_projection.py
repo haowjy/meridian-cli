@@ -85,7 +85,7 @@ def _merge_opencode_workspace_config(
     )
     external_directory = _coerce_external_directory_entries(permission.get("external_directory"))
     for root in roots:
-        external_directory[root.as_posix() + "/*"] = "allow"
+        external_directory[root.as_posix() + "/**"] = "allow"
     permission["external_directory"] = external_directory
     merged["permission"] = permission
     return json.dumps(merged, separators=(",", ":"), sort_keys=True)
