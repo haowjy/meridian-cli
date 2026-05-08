@@ -11,6 +11,7 @@ import meridian.lib.chat.server as server
 from meridian.lib.chat.protocol import ChatEvent, utc_now_iso
 from meridian.lib.chat.server import app, configure
 from meridian.lib.core.types import SpawnId
+from tests.support.git import isolated_git_env
 
 
 class Handle:
@@ -45,24 +46,24 @@ class Acquisition:
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git CLI is required")
 
 
-
-def run(cmd: list[str], cwd: Path) -> None:
-    subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
-
-
+def run(cmd: list[str], cwd: Path, *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, env=env, check=True, capture_output=True, text=True)
 
 def test_turn_completed_callback_creates_checkpoint_and_revert_restores_file(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    run(["git", "init"], project)
-    run(["git", "config", "user.email", "test@example.com"], project)
-    run(["git", "config", "user.name", "Test User"], project)
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    run(["git", "init"], project, env=git_env)
+    repo_root = run(["git", "rev-parse", "--show-toplevel"], project, env=git_env)
+    assert Path(repo_root.stdout.strip()).resolve() == project.resolve()
+    run(["git", "config", "user.email", "test@example.com"], project, env=git_env)
+    run(["git", "config", "user.name", "Test User"], project, env=git_env)
     tracked = project / "tracked.txt"
     tracked.write_text("base\n", encoding="utf-8")
-    run(["git", "add", "tracked.txt"], project)
-    run(["git", "commit", "-m", "base"], project)
+    run(["git", "add", "tracked.txt"], project, env=git_env)
+    run(["git", "commit", "-m", "base"], project, env=git_env)
 
     runtime = tmp_path / "runtime"
     configure(runtime_root=runtime, backend_acquisition=Acquisition(), project_root=project)

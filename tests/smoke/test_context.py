@@ -3,6 +3,8 @@
 Fills CLI-level gap for context command.
 """
 
+import json
+
 
 def _write_strategy_context_config(scratch_dir):
     (scratch_dir / "meridian.toml").write_text(
@@ -17,24 +19,24 @@ path = "voluma-bio/strategy"
 
 
 def test_context_work_outputs_path_or_null(cli):
-    """context work outputs path or null."""
+    """context work is empty when no active work item is attached."""
     result = cli("context", "work")
-    # Should succeed and output something (path or null/none)
-    assert result.returncode == 0 or "Traceback" not in result.stderr
+    result.assert_success()
+    assert result.stdout.strip() == ""
 
 
-def test_context_kb_outputs_path(cli):
-    """context kb outputs path."""
+def test_context_kb_outputs_path(cli, scratch_dir):
+    """context kb resolves to the project-local KB path."""
     result = cli("context", "kb")
     result.assert_success()
-    # Should output some path
-    assert len(result.stdout.strip()) > 0 or result.returncode == 0
+    assert result.stdout.strip() == str(scratch_dir / ".meridian" / "kb")
 
 
-def test_context_work_archive_outputs_path(cli):
-    """context work.archive outputs path."""
+def test_context_work_archive_outputs_path(cli, scratch_dir):
+    """context work.archive resolves to the project-local work archive."""
     result = cli("context", "work.archive")
     result.assert_success()
+    assert result.stdout.strip() == str(scratch_dir / ".meridian" / "archive" / "work")
 
 
 def test_context_strategy_outputs_path(cli, scratch_dir):
@@ -50,16 +52,21 @@ def test_context_verbose_shows_details(cli, scratch_dir):
     _write_strategy_context_config(scratch_dir)
     result = cli("context", "--verbose")
     result.assert_success()
-    # Should have more output than non-verbose
-    assert len(result.stdout) > 0
     assert "strategy:" in result.stdout
     assert "path: voluma-bio/strategy" in result.stdout
+    assert f"resolved: {scratch_dir / '.meridian' / 'kb'}" in result.stdout
+    assert f"archive_resolved: {scratch_dir / '.meridian' / 'archive' / 'work'}" in result.stdout
 
 
-def test_context_json_format(cli):
+def test_context_json_format(cli, scratch_dir):
     """context with --json outputs valid JSON."""
     result = cli("context", json_mode=True)
-    if result.returncode == 0 and result.stdout.strip():
-        import json
-        data = json.loads(result.stdout)
-        assert isinstance(data, dict)
+    result.assert_success()
+    data = json.loads(result.stdout)
+    assert data["active_work_dir"] is None
+    assert data["kb_source"] == "local"
+    assert data["kb_resolved"] == str(scratch_dir / ".meridian" / "kb")
+    assert data["work_resolved"] == str(scratch_dir / ".meridian" / "work")
+    assert data["work_archive_resolved"] == str(
+        scratch_dir / ".meridian" / "archive" / "work"
+    )

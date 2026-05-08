@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import structlog
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
@@ -48,6 +49,44 @@ def _clean_meridian_runtime_env(
 
     if session_home is not None:
         monkeypatch.setenv("MERIDIAN_HOME", session_home)
+
+
+@pytest.fixture(autouse=True)
+def _clean_git_runtime_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Isolate tests from parent git environment and host git config.
+
+    Some integration tests shell out to real ``git`` in temporary repos. If a
+    parent process leaks ``GIT_DIR`` / ``GIT_WORK_TREE`` / related overrides
+    into pytest, those commands can silently target the real checkout instead
+    of the temp repo. Strip inherited git env and point global config at a temp
+    file so machine-local signing, aliases, or hooks cannot affect the suite.
+    """
+
+    for key in tuple(os.environ):
+        if key.startswith("GIT_"):
+            monkeypatch.delenv(key, raising=False)
+
+    git_config = tmp_path / "gitconfig"
+    git_config.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(git_config))
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_state() -> None:
+    """Reset structlog defaults between tests.
+
+    CLI paths configure structlog with ``cache_logger_on_first_use=True``.
+    Without a reset, cached logger/config state can leak across tests and make
+    capture or stderr assertions depend on collection order.
+    """
+
+    structlog.reset_defaults()
+    yield
+    structlog.reset_defaults()
 
 
 @pytest.fixture(autouse=True)

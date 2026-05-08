@@ -6,9 +6,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Durable launch-boundary observability for background spawns. `launch-boundary.jsonl` per spawn records parent-side launch attempt/spawned/failed events and worker-side boot/takeover/failure events across the startup boundary. Reaper reads this artifact to distinguish pre-takeover startup failures from mid-run orphans.
 - `launch_boundary_no_takeover` reconciliation error. Background spawns whose `launch-boundary.jsonl` shows launch events but no worker takeover reconcile under this code instead of `orphan_run` or `missing_runner_pid`. Pinpoints the startup-phase failure window.
+- Suite-wide git env scrubbing — all tests run with hermetic `GIT_*` isolation. Shared `tests/support/git.py` helper for git subprocess env. Bootstrap service seam contract test.
+- Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
+
+### Changed
+- **BREAKING**: Removed all legacy state auto-migration from hot paths. Spawn v1→v2 migration, session counter seeding from legacy events, and legacy spawn output fallbacks deleted. Upgrading from pre-0.1.0 requires `rm -rf ~/.meridian`.
+- Spawn store assumes v2 format only — no automatic format detection or conversion.
 
 ### Fixed
 - Work-store write flows now initialize project UUIDs before resolving `{project}` context paths, so create/list/archive/reopen use configured work/archive directories instead of falling back to `.meridian/work` on first use.
+- Spawn ID locking race: `ensure_v2_format()` renamed lock file mid-contention, splitting locks across inodes → duplicate spawn IDs. Fixed by keeping stable lock path, then removed migration entirely.
+- Pre-push hook leaked `GIT_DIR` env var into preflight subprocess, causing test git operations to target the real worktree.
+- structlog `capture_logs()` tests failing in full suite due to `cache_logger_on_first_use` caching module-level loggers.
+
+### Removed
+- `src/meridian/lib/state/spawn/migration.py` — v1→v2 auto-migration
+- `src/meridian/lib/state/spawn/legacy_events.py` — v1 event models and reducer
+- Legacy session counter seeding from `sessions.jsonl` scan
+- Dead `read_spawn_events()` fallback in history module
 
 ### Added
 - Centralized session reference resolution. `resolve_session_reference()` now recovers missing harness session IDs from durable state (session store, spawn row, primary meta) and harness adapter detection. Recovery provenance is explicit: SESSION_STORE, SPAWN_ROW, PRIMARY_META, DETECTED_UNVERIFIED. `session log`, `--continue`, `--fork`, and `--from` now share the same resolution path instead of divergent fallbacks.
@@ -17,7 +32,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `ResolvedSessionReference` gains `effective_harness_session_id` (any recorded or recovered ID) and `authoritative_harness_session_id` (excludes DETECTED_UNVERIFIED). Continue/fork paths require authoritative recovery; `session log` may use detected IDs for transcript verification.
 
 ### Added
-- Spawn state v2: per-spawn `state.json` replaces monolithic `spawns.jsonl` event log. Primary launch drops from ~12s to <1s on large histories. One-time migration runs automatically on first access after upgrade; legacy file archived to `spawns.legacy-v1.jsonl`.
+- Spawn state v2: per-spawn `state.json` replaces monolithic `spawns.jsonl` event log. Primary launch drops from ~12s to <1s on large histories.
 - Project-scoped agent runtime overrides via `[agents.<name>]` in config files — override model, harness, effort, approval, sandbox, autocompact per agent without editing generated profiles.
 - Canonical launch-parameter compiler (`src/meridian/lib/launch/compiler.py`) as single authority for launch resolution with typed provenance.
 - Three-state model-policy overlay semantics: inherit, suppress, or replace profile model-policies.
