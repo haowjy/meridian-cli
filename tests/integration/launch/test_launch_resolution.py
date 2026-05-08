@@ -9,6 +9,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
@@ -111,6 +112,37 @@ def test_primary_launch_injects_inventory_by_harness_family(
     assert f"- {peer_name}" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_harness"),
+    [
+        ("claude-sonnet-4", HarnessId.CLAUDE),
+        ("gpt-5.4", HarnessId.CODEX),
+        ("gemini-2.5-pro", HarnessId.OPENCODE),
+    ],
+    ids=["claude", "codex", "opencode"],
+)
+def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
+    tmp_path: Path,
+    model: str,
+    expected_harness: HarnessId,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(tmp_path, name="dev-orchestrator", model=model)
+
+    preview = build_launch_context(
+        spawn_id=f"dry-run-{expected_harness.value}-terminal-surface",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model=model, agent="dev-orchestrator")
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.harness.id is expected_harness
+    assert preview.resolved_request.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
 
 
 def test_launch_skill_variants_use_alias_then_canonical_then_harness(

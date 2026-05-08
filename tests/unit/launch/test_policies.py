@@ -15,6 +15,7 @@ from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     ResolvedLaunchRouting,
+    TerminalSurfaceMode,
 )
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
@@ -409,6 +410,7 @@ def test_resolve_launch_policy_boundary_returns_split_routing_and_policy(
     assert resolved.execution_policy.approval == "auto"
     assert resolved.execution_policy.sandbox == "workspace-write"
     assert resolved.execution_policy.autocompact == 30
+    assert resolved.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
     assert resolved.resolved_routing == RuntimeOverrides(
         model="gptmini",
         harness="codex",
@@ -456,6 +458,7 @@ def test_resolved_launch_policy_compatibility_views_round_trip_typed_output() ->
             sandbox="workspace-write",
             autocompact=40,
         ),
+        terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
     )
 
     assert policy.resolved_routing == RuntimeOverrides(

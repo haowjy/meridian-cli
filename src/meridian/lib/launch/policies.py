@@ -32,6 +32,7 @@ from .launch_types import (
     CompositionWarning,
     ResolvedExecutionPolicy,
     ResolvedLaunchRouting,
+    TerminalSurfaceMode,
 )
 from .materialize import materialize_harness
 from .request import LaunchCompositionSurface
@@ -118,6 +119,7 @@ class ResolvedLaunchPolicy:
     resolved_skills: ResolvedSkills
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
+    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None
     warnings: tuple[CompositionWarning, ...] = ()
@@ -145,6 +147,19 @@ class ResolvedLaunchPolicy:
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
+
+
+def _resolve_terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
+    """Resolve the interactive terminal surface mode at the policy boundary.
+
+    Stage 3.4 lands the typed policy field without changing interactive launch
+    behavior. The compatibility default remains PTY-mediated for every harness.
+    Claude is permanently pinned to PTY-mediated; Codex/OpenCode also remain on
+    PTY-mediated until later rollout gates enable native inherit.
+    """
+
+    _ = harness_id
+    return TerminalSurfaceMode.PTY_MEDIATED
 
 
 def _resolve_final_model(
@@ -826,6 +841,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         resolved_skills=resolved_skills,
         routing=resolved_routing,
         execution_policy=resolved_execution_policy,
+        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=harness_id),
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
         warnings=_policy_warnings(

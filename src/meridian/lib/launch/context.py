@@ -1176,6 +1176,7 @@ def prepare_launch_surface(
             "agent_metadata": agent_metadata,
             "prompt_payload": _request_prompt_payload(content.prompt_payload),
             "skill_paths": resolve_skill_paths(resolved_skills.loaded_skills),
+            "terminal_surface_mode": policies.terminal_surface_mode,
             **model_selection_update,
         }
     )

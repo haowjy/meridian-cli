@@ -29,6 +29,7 @@ from meridian.lib.launch.launch_types import (
     CompositionWarning,
     ResolvedExecutionPolicy,
     ResolvedLaunchRouting,
+    TerminalSurfaceMode,
 )
 from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
 from meridian.lib.launch.resolve import ResolvedSkills
@@ -96,6 +97,7 @@ def _policy(*, profile: AgentProfile | None, supports_native_agents: bool) -> Re
             approval="auto",
             autocompact=33,
         ),
+        terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         field_provenance=FieldProvenance(
             model_source=ProvenanceLevel.CLI,
             harness_source=ProvenanceLevel.ALIAS_DEFAULT,
@@ -135,6 +137,7 @@ def test_snapshot_from_resolved_policy_captures_serializable_prompt_inputs_and_p
     assert snapshot.canonical_model_id == "gpt-5.3-codex"
     assert snapshot.harness == "codex"
     assert snapshot.harness_provenance == "mars-provided"
+    assert snapshot.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
     assert snapshot.agent_name == "reviewer"
     assert snapshot.agent_profile_path == profile_path.resolve().as_posix()
     assert snapshot.skills == ("profile-skill", "cli-skill")

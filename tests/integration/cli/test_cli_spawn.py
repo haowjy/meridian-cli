@@ -413,6 +413,36 @@ def test_spawn_dry_run_explicit_json_includes_model_selection(
     }
 
 
+def test_spawn_dry_run_explicit_json_includes_terminal_surface_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (payload, sink, prepared)
+        return SpawnActionOutput(
+            command="spawn.create",
+            status="dry-run",
+            terminal_surface_mode="pty_mediated",
+        )
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--format", "json", "spawn", "-p", "build", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["terminal_surface_mode"] == "pty_mediated"
+
+
 def test_spawn_action_output_to_wire_includes_dry_run_model_selection() -> None:
     payload = SpawnActionOutput(
         command="spawn.create",
@@ -445,6 +475,16 @@ def test_spawn_action_output_to_wire_includes_resolved_authority_for_dry_run() -
         "runtime_root": "/runtime",
         "runtime_root_source": "env",
     }
+
+
+def test_spawn_action_output_to_wire_includes_terminal_surface_mode_for_dry_run() -> None:
+    payload = SpawnActionOutput(
+        command="spawn.create",
+        status="dry-run",
+        terminal_surface_mode="pty_mediated",
+    ).to_wire()
+
+    assert payload["terminal_surface_mode"] == "pty_mediated"
 
 
 def test_spawn_explicit_json_error_is_structured(

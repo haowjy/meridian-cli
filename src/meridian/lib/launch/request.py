@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -112,6 +113,7 @@ class SpawnRequest(BaseModel):
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
 

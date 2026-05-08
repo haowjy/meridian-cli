@@ -20,6 +20,7 @@ def test_basic_dry_run(cli, scratch_dir):
     assert data["status"] == "dry-run"
     assert "Write hello world" in data["composed_prompt"]
     assert "model" in data
+    assert data["terminal_surface_mode"] == "pty_mediated"
 
 
 def test_model_override(cli, scratch_dir):
@@ -45,6 +46,7 @@ def test_model_override(cli, scratch_dir):
     assert data["model_selection"]["requested_token"] == "gpt-5.5"
     assert data["model_selection"]["canonical_model_id"] == "gpt-5.5"
     assert data["harness_id"] == "codex"
+    assert data["terminal_surface_mode"] == "pty_mediated"
 
 
 def test_agent_overlay_model_precedence_visible_in_dry_run(cli, scratch_dir):
@@ -79,6 +81,7 @@ def test_agent_overlay_model_precedence_visible_in_dry_run(cli, scratch_dir):
     assert overlay_data["model_selection"]["requested_token"] == "gpt-5.5"
     assert overlay_data["model_selection"]["canonical_model_id"] == "gpt-5.5"
     assert overlay_data["harness_id"] == "codex"
+    assert overlay_data["terminal_surface_mode"] == "pty_mediated"
 
     cli_override_result = cli(
         "spawn", "-a", "reviewer", "-p", "test",
@@ -92,6 +95,7 @@ def test_agent_overlay_model_precedence_visible_in_dry_run(cli, scratch_dir):
     assert cli_override_data["model_selection"]["requested_token"] == "gpt-5.4"
     assert cli_override_data["model_selection"]["canonical_model_id"] == "gpt-5.4"
     assert cli_override_data["harness_id"] == "codex"
+    assert cli_override_data["terminal_surface_mode"] == "pty_mediated"
 
 
 def test_template_vars_substitution(cli, scratch_dir):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkable
@@ -21,6 +22,13 @@ if TYPE_CHECKING:
     from meridian.lib.launch.reference import ReferenceItem
     from meridian.lib.launch.run_inputs import ResolvedRunInputs
     from meridian.lib.safety.permissions import PermissionConfig
+
+
+class TerminalSurfaceMode(StrEnum):
+    """How Meridian surfaces an interactive harness terminal."""
+
+    PTY_MEDIATED = "pty_mediated"
+    NATIVE_INHERIT = "native_inherit"
 
 
 class CompositionWarning(BaseModel):

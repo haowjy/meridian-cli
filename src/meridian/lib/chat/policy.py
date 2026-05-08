@@ -21,7 +21,11 @@ from meridian.lib.launch.context import (
     materialize_launch_artifacts,
     prepare_prompt_payload,
 )
-from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import (
+    CompositionWarning,
+    ResolvedLaunchSpec,
+    TerminalSurfaceMode,
+)
 from meridian.lib.launch.policies import ResolvedLaunchPolicy
 from meridian.lib.launch.prompt import compose_skill_prompt_documents
 from meridian.lib.launch.resolve import format_missing_skills_warning, resolve_profile_path
@@ -72,6 +76,7 @@ class ChatPolicySnapshot(BaseModel):
     canonical_model_id: str = ""
     harness: str
     harness_provenance: str = ""
+    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
     effort: str | None = None
     sandbox: str | None = None
@@ -166,6 +171,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         harness_provenance=(
             model_selection.harness_provenance if model_selection is not None else ""
         ),
+        terminal_surface_mode=policy.terminal_surface_mode,
         effort=policy.execution_policy.effort,
         sandbox=policy.execution_policy.sandbox,
         approval=policy.execution_policy.approval,
