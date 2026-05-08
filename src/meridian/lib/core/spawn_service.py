@@ -19,6 +19,7 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalOutcome,
     resolve_execution_terminal_outcome,
 )
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     LifecycleEvent,
     LifecycleObserver,
@@ -320,6 +321,11 @@ class SpawnApplicationService:
         if not resolved_harness:
             raise ValueError("Harness resolution failed - harness is required")
         effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
+        start_metadata = SpawnStartMetadata(
+            desc=payload.desc,
+            work_id=effective_work_id,
+            goal=getattr(resolved_request, "goal", None),
+        )
 
         # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
         # after launch context composition succeeds. Failed composition leaves no
@@ -337,8 +343,7 @@ class SpawnApplicationService:
                 harness=resolved_harness,
                 kind=payload.kind,
                 prompt=resolved_request.prompt,
-                desc=payload.desc,
-                work_id=effective_work_id,
+                metadata=start_metadata,
                 spawn_id=str(final_spawn_id),
                 harness_session_id=resolved_request.session.requested_harness_session_id,
                 execution_cwd=str(launch_ctx.child_cwd),

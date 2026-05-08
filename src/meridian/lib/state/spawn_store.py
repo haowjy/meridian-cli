@@ -22,6 +22,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status as _is_active_spawn_status,
 )
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
@@ -114,6 +115,22 @@ ACTIVE_SPAWN_STATUSES = _ACTIVE_SPAWN_STATUSES
 is_active_spawn_status = _is_active_spawn_status
 
 
+def _resolve_start_metadata(
+    *,
+    metadata: SpawnStartMetadata | None,
+    desc: str | None,
+    work_id: str | None,
+    goal: str | None,
+) -> SpawnStartMetadata:
+    if metadata is None:
+        return SpawnStartMetadata(desc=desc, work_id=work_id, goal=goal)
+    return SpawnStartMetadata(
+        desc=metadata.desc if metadata.desc is not None else desc,
+        work_id=metadata.work_id if metadata.work_id is not None else work_id,
+        goal=metadata.goal if metadata.goal is not None else goal,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Spawn event store
 # ---------------------------------------------------------------------------
@@ -195,8 +212,10 @@ def start_spawn(
     harness: str,
     kind: str = "child",
     prompt: str,
+    metadata: SpawnStartMetadata | None = None,
     desc: str | None = None,
     work_id: str | None = None,
+    goal: str | None = None,
     spawn_id: SpawnId | str | None = None,
     harness_session_id: str | None = None,
     execution_cwd: str | None = None,
@@ -212,6 +231,17 @@ def start_spawn(
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
     started = started_at or resolved_clock.utc_now_iso()
+    start_metadata = _resolve_start_metadata(
+        metadata=metadata,
+        desc=desc,
+        work_id=work_id,
+        goal=goal,
+    )
+    normalized_goal: str | None = None
+    if start_metadata.goal is not None:
+        normalized_goal = start_metadata.goal.strip()
+        if not normalized_goal:
+            raise ValueError("--goal cannot be empty")
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -234,8 +264,13 @@ def start_spawn(
             skill_paths=skill_paths,
             harness=harness,
             kind=kind,
-            desc=desc,
-            work_id=work_id.strip() or None if work_id is not None else None,
+            desc=start_metadata.desc,
+            work_id=(
+                start_metadata.work_id.strip() or None
+                if start_metadata.work_id is not None
+                else None
+            ),
+            goal=normalized_goal,
             harness_session_id=harness_session_id,
             execution_cwd=execution_cwd,
             claude_config_dir=None,

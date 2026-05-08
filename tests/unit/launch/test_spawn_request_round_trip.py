@@ -45,6 +45,7 @@ def test_spawn_request_round_trip_json_with_all_fields() -> None:
         reference_files=("/tmp/a.md", "/tmp/b.md"),
         template_vars={"ticket": "123"},
         work_id_hint="launch-core-refactor",
+        goal="ship typed persistence",
         warning="normalized request warning",
         agent_metadata={"session_agent_path": "/tmp/agent.md"},
     )

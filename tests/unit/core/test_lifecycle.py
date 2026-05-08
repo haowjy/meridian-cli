@@ -15,6 +15,7 @@ from meridian.lib.core.lifecycle import (
     generate_event_id,
     generate_lifecycle_event_id,
 )
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
 
@@ -166,3 +167,26 @@ def test_finalize_dispatches_hooks_after_terminal_state_is_persisted(tmp_path: P
     service.finalize(spawn_id, "succeeded", 0, origin="runner")
 
     assert snapshot_hook.snapshots[-1] == ("spawn.finalized", "succeeded", "runner")
+
+
+def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
+    service = _make_service(tmp_path)
+
+    spawn_id = service.start(
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="run it",
+        metadata=SpawnStartMetadata(
+            desc="goal metadata",
+            work_id="  w-lifecycle  ",
+            goal="  finish migration  ",
+        ),
+    )
+
+    record = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert record is not None
+    assert record.desc == "goal metadata"
+    assert record.work_id == "w-lifecycle"
+    assert record.goal == "finish migration"

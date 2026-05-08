@@ -4,7 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -93,6 +96,104 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row is not None
     assert row.launch_mode == "foreground"
     assert row.runner_pid == 2222
+
+
+def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            metadata=SpawnStartMetadata(
+                desc="goal test",
+                work_id="  w-goal  ",
+                goal="  keep scope tight  ",
+            ),
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.desc == "goal test"
+    assert row.work_id == "w-goal"
+    assert row.goal == "keep scope tight"
+
+
+def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+
+    with pytest.raises(ValueError, match="--goal cannot be empty"):
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            goal="   ",
+        )
+
+    assert list_spawns(runtime_root) == []
+
+
+def test_start_spawn_merges_direct_fields_when_typed_metadata_omits_values(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            metadata=SpawnStartMetadata(),
+            desc="fallback desc",
+            work_id="  w-fallback  ",
+            goal="  keep fallback goal  ",
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.desc == "fallback desc"
+    assert row.work_id == "w-fallback"
+    assert row.goal == "keep fallback goal"
+
+
+def test_start_spawn_metadata_values_override_direct_values_when_present(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            metadata=SpawnStartMetadata(
+                desc="metadata desc",
+                work_id="  w-meta  ",
+                goal="  keep metadata goal  ",
+            ),
+            desc="fallback desc",
+            work_id="  w-fallback  ",
+            goal="  keep fallback goal  ",
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.desc == "metadata desc"
+    assert row.work_id == "w-meta"
+    assert row.goal == "keep metadata goal"
 
 
 def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Path) -> None:

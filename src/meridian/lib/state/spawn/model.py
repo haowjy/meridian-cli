@@ -49,6 +49,7 @@ class SpawnRecord(BaseModel):
     kind: str
     desc: str | None
     work_id: str | None
+    goal: str | None = None
     harness_session_id: str | None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None

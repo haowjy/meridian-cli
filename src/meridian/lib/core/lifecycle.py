@@ -33,6 +33,7 @@ from uuid import UUID
 
 import structlog
 
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
     SpawnFailure,
@@ -225,8 +226,10 @@ class SpawnLifecycleService:
         harness: str,
         kind: str = "child",
         prompt: str,
+        metadata: SpawnStartMetadata | None = None,
         desc: str | None = None,
         work_id: str | None = None,
+        goal: str | None = None,
         spawn_id: str | None = None,
         harness_session_id: str | None = None,
         execution_cwd: str | None = None,
@@ -254,8 +257,10 @@ class SpawnLifecycleService:
                 harness=harness,
                 kind=kind,
                 prompt=prompt,
+                metadata=metadata,
                 desc=desc,
                 work_id=work_id,
+                goal=goal,
                 spawn_id=spawn_id,
                 harness_session_id=harness_session_id,
                 execution_cwd=execution_cwd,

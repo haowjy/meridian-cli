@@ -104,6 +104,7 @@ class SpawnRequest(BaseModel):
 
     # Routing & metadata
     work_id_hint: str | None = None
+    goal: str | None = None
     warning: str | None = None
     agent_metadata: dict[str, str] = Field(default_factory=_empty_agent_metadata)
     prompt_payload: RequestPromptPayload = Field(default_factory=RequestPromptPayload)
