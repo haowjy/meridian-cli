@@ -73,7 +73,7 @@ from meridian.lib.state.launch_boundary import (
 from meridian.lib.state.paths import (
     resolve_project_paths,
     resolve_spawn_log_dir,
-    resolve_work_scratch_dir,
+    resolve_work_scratch_dir_for_project,
 )
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
@@ -281,8 +281,8 @@ def _spawn_background_worker_env(
     normalized_work_id = (work_id or "").strip() or None
     work_dir: Path | None = None
     if normalized_work_id:
-        work_dir = resolve_work_scratch_dir(
-            resolve_project_paths(project_root).root_dir,
+        work_dir = resolve_work_scratch_dir_for_project(
+            project_root,
             normalized_work_id,
         )
 

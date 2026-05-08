@@ -54,14 +54,6 @@ _DEPRECATED_GITIGNORE_LINES = (
     "!agents.lock",
     "!config.toml",
 )
-
-
-def _is_project_local_root(root_dir: Path) -> bool:
-    """Return True when a `.meridian` root belongs to a git repo parent."""
-
-    return root_dir.name == _MERIDIAN_DIR and (root_dir.parent / ".git").exists()
-
-
 class RuntimePaths(BaseModel):
     """Resolved runtime paths for one Meridian state root.
 
@@ -117,10 +109,6 @@ class RuntimePaths(BaseModel):
     def from_root_dir(cls, root_dir: Path) -> Self:
         """Build state-root-relative paths from an absolute state directory."""
 
-        resolved_project_paths: ProjectPaths | None = None
-        if _is_project_local_root(root_dir):
-            resolved_project_paths = resolve_project_paths(root_dir.parent)
-
         return cls(
             root_dir=root_dir,
             spawns_jsonl=root_dir / "spawns.jsonl",
@@ -133,21 +121,9 @@ class RuntimePaths(BaseModel):
             current_work_json=root_dir / "current-work.json",
             current_work_flock=root_dir / "current-work.json.flock",
             sessions_dir=root_dir / "sessions",
-            kb_dir=(
-                resolved_project_paths.kb_dir
-                if resolved_project_paths is not None
-                else root_dir / "kb"
-            ),
-            work_dir=(
-                resolved_project_paths.work_dir
-                if resolved_project_paths is not None
-                else root_dir / "work"
-            ),
-            work_archive_dir=(
-                resolved_project_paths.work_archive_dir
-                if resolved_project_paths is not None
-                else root_dir / "archive" / "work"
-            ),
+            kb_dir=root_dir / "kb",
+            work_dir=root_dir / "work",
+            work_archive_dir=root_dir / "archive" / "work",
             spawns_dir=root_dir / "spawns",
         )
 
@@ -505,9 +481,21 @@ def resolve_fs_dir(project_root: Path) -> Path:
 
 
 def resolve_work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
-    """Return the work-scoped scratch directory for a work item."""
+    """Return the runtime-root-local scratch directory for a work item."""
 
     return RuntimePaths.from_root_dir(runtime_root).work_dir / work_id
+
+
+def resolve_work_scratch_dir_for_project(
+    project_root: Path,
+    work_id: str,
+    *,
+    project_paths: ProjectPaths | None = None,
+) -> Path:
+    """Return the authority-resolved work directory for a work item."""
+
+    resolved_project_paths = project_paths or resolve_project_paths(project_root)
+    return resolved_project_paths.work_dir / work_id
 
 
 def spawn_log_subpath(spawn_id: SpawnId | str) -> Path:

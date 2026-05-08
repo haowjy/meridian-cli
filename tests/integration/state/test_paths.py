@@ -11,6 +11,7 @@ from meridian.lib.state.paths import (
     resolve_project_paths_for_write,
     resolve_project_paths_from_context,
     resolve_runtime_paths,
+    resolve_work_scratch_dir_for_project,
 )
 
 
@@ -87,7 +88,7 @@ def test_state_root_paths_override_meridian_dir_stays_root_local(
     assert paths.kb_dir == override_root / "kb"
 
 
-def test_state_root_paths_repo_meridian_uses_context_paths(
+def test_state_root_paths_repo_meridian_stays_runtime_root_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_root = tmp_path / "repo"
@@ -115,9 +116,37 @@ def test_state_root_paths_repo_meridian_uses_context_paths(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
-    assert paths.work_dir == project_root / "ctx/work"
-    assert paths.work_archive_dir == project_root / "ctx/archive/work"
-    assert paths.kb_dir == project_root / "ctx/kb"
+    assert paths.work_dir == runtime_root / "work"
+    assert paths.work_archive_dir == runtime_root / "archive" / "work"
+    assert paths.kb_dir == runtime_root / "kb"
+
+
+def test_resolve_work_scratch_dir_for_project_uses_context_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    user_state_root = tmp_path / "user-state"
+    user_state_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", user_state_root.as_posix())
+    (project_root / "meridian.local.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "ctx/work"',
+                'archive = "ctx/archive/work"',
+                "",
+                "[context.kb]",
+                'path = "ctx/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    work_dir = resolve_work_scratch_dir_for_project(project_root, "w123")
+
+    assert work_dir == project_root / "ctx/work" / "w123"
 
 
 def test_resolve_project_paths_from_context_uses_custom_paths(tmp_path: Path) -> None:

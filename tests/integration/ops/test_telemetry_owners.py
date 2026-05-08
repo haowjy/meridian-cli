@@ -25,7 +25,11 @@ def _stub_spawn_create_dry_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(spawn_api, "_resolve_project_root_input", lambda _path: project_root)
-    monkeypatch.setattr(spawn_api, "load_config", lambda _root: SimpleNamespace(max_depth=1))
+    monkeypatch.setattr(
+        spawn_api,
+        "load_config",
+        lambda _root, *, authority=None: SimpleNamespace(max_depth=1),
+    )
     monkeypatch.setattr(spawn_api, "validate_create_input", lambda payload: (payload, None))
     monkeypatch.setattr(spawn_api, "_emit_usage_spawn_launched", lambda harness: None)
     monkeypatch.setattr(

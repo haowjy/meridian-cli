@@ -344,7 +344,11 @@ def spawn_list_sync(
         if entrypoint is not None
         else resolve_runtime_root_for_read(project_root)
     )
-    spawns = list(reversed(reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))))
+    spawns = list(
+        reversed(
+            reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
+        )
+    )
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
@@ -473,7 +477,7 @@ def spawn_stats_sync(
         if entrypoint is not None
         else resolve_runtime_root_for_read(project_root)
     )
-    all_spawns = reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))
+    all_spawns = reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
 
     if payload.session is not None and payload.session.strip():
         wanted_session = payload.session.strip()
@@ -826,7 +830,11 @@ def spawn_cancel_all_sync(
 
     from meridian.lib.state.reaper import reconcile_spawns
 
-    active_rows = reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))
+    active_rows = reconcile_spawns(
+        project_root,
+        runtime_root,
+        spawn_store.list_spawns(runtime_root),
+    )
     if work_id is not None:
         active_session_work_ids = {
             record.chat_id: record.active_work_id
@@ -931,6 +939,7 @@ def _spawn_is_terminal(status: str) -> bool:
 
 def _resolve_wait_targets(
     payload: SpawnWaitInput,
+    project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext,
 ) -> tuple[str, ...]:
@@ -955,11 +964,17 @@ def _resolve_wait_targets(
         )
 
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
-    pending = _discover_pending_spawns(runtime_root, chat_id, exclude_spawn_id=self_spawn_id)
+    pending = _discover_pending_spawns(
+        project_root,
+        runtime_root,
+        chat_id,
+        exclude_spawn_id=self_spawn_id,
+    )
     return tuple(row.id for row in pending)
 
 
 def _discover_pending_spawns(
+    project_root: Path,
     runtime_root: Path,
     chat_id: str,
     *,
@@ -968,7 +983,11 @@ def _discover_pending_spawns(
     """Discover all active spawns for a given chat ID."""
     from meridian.lib.state.reaper import reconcile_spawns
 
-    all_spawns = reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))
+    all_spawns = reconcile_spawns(
+        project_root,
+        runtime_root,
+        spawn_store.list_spawns(runtime_root),
+    )
     pending = [
         row
         for row in all_spawns
@@ -1111,7 +1130,7 @@ def spawn_wait_sync(
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
-    spawn_ids = _resolve_wait_targets(payload, runtime_root, resolved_context)
+    spawn_ids = _resolve_wait_targets(payload, project_root, runtime_root, resolved_context)
     wait_chat_id: str | None = None
     if not has_explicit_ids:
         wait_chat_id = (resolved_context.chat_id or "").strip() or None

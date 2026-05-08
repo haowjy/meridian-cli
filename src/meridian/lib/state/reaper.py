@@ -354,10 +354,15 @@ def _log_orphan_primary_diagnostics(
 
 
 def _finalize_and_log(
-    runtime_root: Path, record: SpawnRecord, *, status: SpawnStatus, exit_code: int,
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    *,
+    status: SpawnStatus,
+    exit_code: int,
     error: str | None, reason: str, snapshot: ArtifactSnapshot, now: float
 ) -> SpawnRecord:
-    lifecycle_service = create_lifecycle_service(runtime_root.parent, runtime_root)
+    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
     outcome = asyncio.run(
         SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
             SpawnId(record.id),
@@ -388,9 +393,15 @@ def _finalize_and_log(
 
 
 def _finalize_failed(
-    runtime_root: Path, record: SpawnRecord, error: str, snapshot: ArtifactSnapshot, now: float
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    error: str,
+    snapshot: ArtifactSnapshot,
+    now: float,
 ) -> SpawnRecord:
     return _finalize_and_log(
+        project_root,
         runtime_root,
         record,
         status="failed",
@@ -403,13 +414,18 @@ def _finalize_failed(
 
 
 def _finalize_completed_report(
-    runtime_root: Path, record: SpawnRecord, snapshot: ArtifactSnapshot, now: float
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    snapshot: ArtifactSnapshot,
+    now: float,
 ) -> SpawnRecord:
     status, exit_code, error = resolve_reconciled_terminal_state(
         durable_report_completion=True,
         fallback_error="harness_completed",
     )
     return _finalize_and_log(
+        project_root,
         runtime_root,
         record,
         status=status,
@@ -425,7 +441,11 @@ def _in_startup_grace(started_epoch: float | None, now: float) -> bool:
     return started_epoch is not None and now - started_epoch < _STARTUP_GRACE_SECS
 
 
-def reconcile_active_spawn(runtime_root: Path, record: SpawnRecord) -> SpawnRecord:
+def reconcile_active_spawn(
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+) -> SpawnRecord:
     """Reconcile one active spawn. Is the responsible process alive?"""
     if not is_root_side_effect_process():
         return record
@@ -443,7 +463,13 @@ def reconcile_active_spawn(runtime_root: Path, record: SpawnRecord) -> SpawnReco
     if isinstance(decision, Skip):
         return record
     if isinstance(decision, FinalizeSucceededFromReport):
-        return _finalize_completed_report(runtime_root, record, generic_snapshot, now)
+        return _finalize_completed_report(
+            project_root,
+            runtime_root,
+            record,
+            generic_snapshot,
+            now,
+        )
     if decision.error == "orphan_primary" and (
         managed_snapshot is not None or _is_potential_managed_primary(record)
     ):
@@ -455,14 +481,25 @@ def reconcile_active_spawn(runtime_root: Path, record: SpawnRecord) -> SpawnReco
         and not _is_potential_managed_primary(record)
     ):
         _terminate_worker_pid(record.worker_pid, generic_snapshot.started_epoch)
-    return _finalize_failed(runtime_root, record, decision.error, generic_snapshot, now)
+    return _finalize_failed(
+        project_root,
+        runtime_root,
+        record,
+        decision.error,
+        generic_snapshot,
+        now,
+    )
 
 
-def reconcile_spawns(runtime_root: Path, spawns: list[SpawnRecord]) -> list[SpawnRecord]:
+def reconcile_spawns(
+    project_root: Path,
+    runtime_root: Path,
+    spawns: list[SpawnRecord],
+) -> list[SpawnRecord]:
     """Batch reconciliation. Only touches active spawns."""
     return [
         (
-            reconcile_active_spawn(runtime_root, spawn)
+            reconcile_active_spawn(project_root, runtime_root, spawn)
             if is_active_spawn_status(spawn.status)
             else spawn
         )

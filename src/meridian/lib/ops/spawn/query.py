@@ -33,6 +33,7 @@ def _select_latest_spawn_id(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     spawns = reconcile_spawns(
+        project_root,
         resolved_runtime_root,
         spawn_store.list_spawns(resolved_runtime_root),
     )
@@ -100,7 +101,7 @@ def read_spawn_row(
     if record is not None and is_active_spawn_status(record.status):
         from meridian.lib.state.reaper import reconcile_active_spawn
 
-        record = reconcile_active_spawn(resolved_runtime_root, record)
+        record = reconcile_active_spawn(project_root, resolved_runtime_root, record)
     return record
 
 

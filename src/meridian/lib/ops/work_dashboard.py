@@ -336,6 +336,7 @@ def _resolve_work_id(
 
 
 def _work_session_chat_ids(
+    project_root: Path,
     runtime_root: Path,
     work_id: str,
     *,
@@ -352,7 +353,11 @@ def _work_session_chat_ids(
         chat_ids.update(
             session_store.chat_ids_ever_attached_to_work(runtime_root, normalized_work_id)
         )
-        for spawn in reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root)):
+        for spawn in reconcile_spawns(
+            project_root,
+            runtime_root,
+            spawn_store.list_spawns(runtime_root),
+        ):
             if (spawn.work_id or "").strip() != normalized_work_id:
                 continue
             chat_id = (spawn.chat_id or "").strip()
@@ -363,7 +368,11 @@ def _work_session_chat_ids(
     for record in session_store.list_active_session_records(runtime_root):
         if record.active_work_id == normalized_work_id:
             chat_ids.add(record.chat_id)
-    for spawn in reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root)):
+    for spawn in reconcile_spawns(
+        project_root,
+        runtime_root,
+        spawn_store.list_spawns(runtime_root),
+    ):
         if spawn.kind == "primary":
             continue
         if not is_active_spawn_status(spawn.status):
@@ -377,13 +386,19 @@ def _work_session_chat_ids(
 
 
 def _work_sessions_for_work_id(
+    project_root: Path,
     runtime_root: Path,
     work_id: str,
     *,
     include_all: bool,
 ) -> tuple[WorkSessionItem, ...]:
     active_chat_ids = set(session_store.list_active_sessions(runtime_root))
-    chat_ids = _work_session_chat_ids(runtime_root, work_id, include_all=include_all)
+    chat_ids = _work_session_chat_ids(
+        project_root,
+        runtime_root,
+        work_id,
+        include_all=include_all,
+    )
     records = session_store.get_session_records(runtime_root, chat_ids)
     records.sort(key=lambda record: (record.started_at, record.chat_id))
     return tuple(
@@ -405,6 +420,7 @@ def work_dashboard_sync(
 ) -> WorkDashboardOutput:
     _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
+    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     work_items, work_warnings = work_store.list_work_items(project_state_dir)
@@ -416,7 +432,9 @@ def work_dashboard_sync(
     from meridian.lib.state.reaper import reconcile_spawns
 
     for spawn in reconcile_spawns(
-        runtime_state_root, spawn_store.list_spawns(runtime_state_root)
+        project_root,
+        runtime_state_root,
+        spawn_store.list_spawns(runtime_state_root),
     ):
         if not is_active_spawn_status(spawn.status):
             continue
@@ -501,7 +519,9 @@ def work_show_sync(
     associated_spawns = [
         _dashboard_spawn(spawn)
         for spawn in reconcile_spawns(
-            runtime_state_root, spawn_store.list_spawns(runtime_state_root)
+            project_root,
+            runtime_state_root,
+            spawn_store.list_spawns(runtime_state_root),
         )
         if _associated_with_work_item(
             spawn,
@@ -518,7 +538,12 @@ def work_show_sync(
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         spawns=tuple(associated_spawns),
-        sessions=_work_sessions_for_work_id(runtime_state_root, item.name, include_all=False),
+        sessions=_work_sessions_for_work_id(
+            project_root,
+            runtime_state_root,
+            item.name,
+            include_all=False,
+        ),
     )
 
 
@@ -527,6 +552,7 @@ def work_sessions_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkSessionsOutput:
     roots = resolve_roots_for_read(payload.project_root)
+    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     resolved_work_id = _resolve_work_id(
@@ -542,6 +568,7 @@ def work_sessions_sync(
     return WorkSessionsOutput(
         work_id=item.name,
         sessions=_work_sessions_for_work_id(
+            project_root,
             runtime_state_root,
             item.name,
             include_all=payload.all,

@@ -579,6 +579,7 @@ def _spawn_children(
     children = list(
         reversed(
             reconcile_spawns(
+                prepared.project_root,
                 runtime_root,
                 spawn_store.list_spawns(
                     runtime_root,

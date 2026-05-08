@@ -572,10 +572,15 @@ def _target_from_spawn_output(
     )
 
 
-def _primary_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnRecord | None:
+def _primary_spawn_for_chat(
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+) -> SpawnRecord | None:
     from meridian.lib.state.reaper import reconcile_spawns
 
     spawns = reconcile_spawns(
+        project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
     )
@@ -594,7 +599,7 @@ def _resolve_from_chat_id(
     resolved = resolve_session_reference(project_root, chat_id)
     if not resolved.tracked:
         raise ValueError(f"Chat '{chat_id}' not found")
-    primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
+    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
     normalized_harness = (resolved.harness or "").strip() or None
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
         normalized_harness = primary_spawn.harness.strip() or None

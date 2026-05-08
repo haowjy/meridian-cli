@@ -46,7 +46,7 @@ from meridian.lib.state.paths import (
     load_context_config,
     resolve_project_paths,
     resolve_spawn_log_dir,
-    resolve_work_scratch_dir,
+    resolve_work_scratch_dir_for_project,
 )
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.telemetry import emit_telemetry
@@ -158,7 +158,11 @@ class ChildEnvContext:
         work_dir = (
             parent_ctx.work_dir
             if parent_ctx.work_dir is not None and parent_ctx.work_id == work_id
-            else resolve_work_scratch_dir(repo_paths.root_dir, work_id)
+            else resolve_work_scratch_dir_for_project(
+                resolved_project_root,
+                work_id,
+                project_paths=repo_paths,
+            )
             if work_id is not None
             else None
         )

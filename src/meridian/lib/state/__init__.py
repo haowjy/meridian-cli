@@ -23,6 +23,7 @@ from meridian.lib.state.paths import (
     resolve_runtime_paths,
     resolve_spawn_log_dir,
     resolve_work_scratch_dir,
+    resolve_work_scratch_dir_for_project,
     spawn_log_subpath,
 )
 from meridian.lib.state.spawn_store import (
@@ -64,6 +65,7 @@ __all__ = [
     "resolve_runtime_paths",
     "resolve_spawn_log_dir",
     "resolve_work_scratch_dir",
+    "resolve_work_scratch_dir_for_project",
     "spawn_log_subpath",
     "spawn_stats",
     "start_spawn",

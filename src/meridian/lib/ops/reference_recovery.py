@@ -51,10 +51,15 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
     return _normalize(record.harness_session_id)
 
 
-def _primary_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnRecord | None:
+def _primary_spawn_for_chat(
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+) -> SpawnRecord | None:
     from meridian.lib.state.reaper import reconcile_spawns
 
     spawns = reconcile_spawns(
+        project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
     )
@@ -171,7 +176,7 @@ def _recover_from_detection(
 ) -> RecoveryResult | None:
     if chat_id is None:
         return None
-    primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
+    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
     if primary_spawn is None:
         return None
     detected = _detect_primary_harness_session_id(
@@ -230,7 +235,7 @@ def recover_harness_session_id(
         if result is not None:
             return result
 
-        primary_spawn = _primary_spawn_for_chat(runtime_root, normalized_ref)
+        primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, normalized_ref)
         if primary_spawn is not None:
             result = _recover_from_primary_meta(
                 runtime_root, primary_spawn.id, normalized_ref

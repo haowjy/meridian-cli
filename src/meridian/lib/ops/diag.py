@@ -151,7 +151,7 @@ def _repair_orphan_runs(project_root: Path) -> int:
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(runtime_root)
     running_before = sum(1 for s in spawns if is_active_spawn_status(s.status))
-    reconciled = reconcile_spawns(runtime_root, spawns)
+    reconciled = reconcile_spawns(project_root, runtime_root, spawns)
     running_after = sum(1 for s in reconciled if is_active_spawn_status(s.status))
     return running_before - running_after
 

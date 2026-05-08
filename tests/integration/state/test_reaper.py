@@ -13,6 +13,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.lifecycle import create_lifecycle_service as make_lifecycle_service
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import SpawnCancelInput
 from meridian.lib.state import spawn_store
@@ -75,6 +76,10 @@ def _get_spawn(runtime_root: Path, spawn_id: str) -> SpawnRecord:
     record = spawn_store.get_spawn(runtime_root, spawn_id)
     assert record is not None
     return record
+
+
+def _reconcile(project_root: Path, runtime_root: Path, record: SpawnRecord) -> SpawnRecord:
+    return reconcile_active_spawn(project_root, runtime_root, record)
 
 
 def _write_report(
@@ -199,7 +204,7 @@ def test_reconcile_active_spawn_returns_terminal_record_unchanged(
     runtime_root, spawn_id = _create_spawn(tmp_path, status="succeeded")
     record = _get_spawn(runtime_root, spawn_id)
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     assert _get_spawn(runtime_root, spawn_id).status == "succeeded"
@@ -215,7 +220,7 @@ def test_reconcile_active_spawn_without_runner_pid_stays_unchanged_during_startu
     )
     record = _get_spawn(runtime_root, spawn_id)
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -229,7 +234,7 @@ def test_reconcile_active_spawn_without_runner_pid_fails_after_startup_grace(
     runtime_root, spawn_id = _create_spawn(tmp_path, runner_pid=None, started_at=_OLD_STARTED_AT)
     record = _get_spawn(runtime_root, spawn_id)
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -237,6 +242,47 @@ def test_reconcile_active_spawn_without_runner_pid_fails_after_startup_grace(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "missing_runner_pid"
+
+
+def test_reconcile_active_spawn_uses_authority_project_root_for_lifecycle_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project-root"
+    runtime_root = tmp_path / "detached-runtime"
+    project_root.mkdir()
+    runtime_root.mkdir()
+    spawn_id = str(
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p1",
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="tester",
+            harness="codex",
+            kind="child",
+            prompt="hello",
+            status="running",
+            runner_pid=None,
+            started_at=_OLD_STARTED_AT,
+        )
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    captured: dict[str, Path] = {}
+    def _capture_factory(captured_project_root: Path, captured_runtime_root: Path):
+        captured["project_root"] = captured_project_root
+        captured["runtime_root"] = captured_runtime_root
+        return make_lifecycle_service(captured_project_root, captured_runtime_root)
+
+    monkeypatch.setattr("meridian.lib.state.reaper.create_lifecycle_service", _capture_factory)
+
+    reconciled = _reconcile(project_root, runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert captured == {
+        "project_root": project_root,
+        "runtime_root": runtime_root,
+    }
 
 
 def test_reconcile_active_spawn_background_without_takeover_evidence_gets_boundary_error(
@@ -256,7 +302,7 @@ def test_reconcile_active_spawn_background_without_takeover_evidence_gets_bounda
     )
     record = _get_spawn(runtime_root, spawn_id)
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.error == "launch_boundary_no_takeover"
@@ -288,7 +334,7 @@ def test_reconcile_active_spawn_background_pid_collision_without_takeover_eviden
         lambda *_args, **_kwargs: True,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.error == "launch_boundary_no_takeover"
@@ -323,7 +369,7 @@ def test_reconcile_active_spawn_background_takeover_evidence_keeps_runner_alive_
         lambda *_args, **_kwargs: True,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -341,7 +387,7 @@ def test_reconcile_active_spawn_returns_unchanged_when_runner_is_alive(
         lambda *_args, **_kwargs: True,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -370,7 +416,7 @@ def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
         lambda pid, created_after_epoch=None: pid == 7771,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -399,7 +445,7 @@ def test_reconcile_active_spawn_managed_primary_launcher_alive_skips_when_finali
         lambda pid, created_after_epoch=None: pid == 7774,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -439,7 +485,7 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
 
     monkeypatch.setattr("meridian.lib.state.managed_primary.os.kill", _fake_kill)
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -482,7 +528,7 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_sk
         lambda pid, sig: sent_signals.append((pid, sig)),
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -519,7 +565,7 @@ def test_reconcile_active_spawn_orphan_primary_diagnostics_include_launcher_aliv
         lambda event, **kwargs: warnings.append((event, kwargs)),
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.error == "orphan_primary"
@@ -563,7 +609,7 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
         lambda pid, sig: sent_signals.append((pid, sig)),
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "succeeded"
     assert reconciled.exit_code == 0
@@ -586,7 +632,7 @@ def test_reconcile_active_spawn_finalizing_stale_heartbeat_marks_orphan_finaliza
         age_secs=300,
     )
     record = _get_spawn(runtime_root, spawn_id)
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -613,7 +659,7 @@ def test_reconcile_active_spawn_finalizing_recent_activity_skips(
         age_secs=5,
     )
     record = _get_spawn(runtime_root, spawn_id)
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -633,7 +679,7 @@ def test_reconcile_active_spawn_with_dead_runner_and_report_succeeds_without_exi
         lambda *_args, **_kwargs: False,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "succeeded"
     assert reconciled.exit_code == 0
@@ -654,7 +700,7 @@ def test_reconcile_active_spawn_with_dead_runner_and_no_exit_or_report_fails(
         lambda *_args, **_kwargs: False,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -689,7 +735,7 @@ def test_reconcile_active_spawn_depth_gate_respects_env_matrix(
     record = _get_spawn(runtime_root, spawn_id)
     monkeypatch.setenv("MERIDIAN_DEPTH", depth_value)
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == expected_status
     assert reconciled.error == expected_error
@@ -719,7 +765,7 @@ def test_reconcile_active_spawn_treats_exact_heartbeat_window_boundary_as_recent
         lambda *_args, **_kwargs: False,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -749,7 +795,7 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifac
         lambda *_args, **_kwargs: False,
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled == record
     latest = _get_spawn(runtime_root, spawn_id)
@@ -782,7 +828,7 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_pid(
         lambda pid, sig: sent_signals.append((pid, sig)),
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, record)
+    reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -845,7 +891,7 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
         lambda pid, sig: sent_signals.append((pid, sig)),
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, _get_spawn(runtime_root, spawn_id))
+    reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
@@ -904,7 +950,7 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
         lambda pid, sig: passive_signals.append((pid, sig)),
     )
 
-    reconciled = reconcile_active_spawn(runtime_root, _get_spawn(runtime_root, spawn_id))
+    reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
 
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
