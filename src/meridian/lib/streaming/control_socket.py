@@ -141,6 +141,47 @@ class ControlSocketServer:
                 on_result=_on_result,
             )
             return response or self._result_to_response(result)
+        if message_type == "interrupt":
+            await self._manager.interrupt(self._spawn_id, source="control_socket")
+            return {"ok": True}
+        if message_type == "permission_reply":
+            request_id = payload.get("request_id")
+            decision = payload.get("decision")
+            reply_payload = payload.get("payload")
+            if not isinstance(request_id, str) or not request_id:
+                return {"ok": False, "error": "permission_reply requires request_id"}
+            if not isinstance(decision, str) or not decision:
+                return {"ok": False, "error": "permission_reply requires decision"}
+            if reply_payload is not None and not isinstance(reply_payload, dict):
+                return {"ok": False, "error": "permission_reply payload must be an object"}
+            typed_payload = (
+                cast("dict[str, object]", reply_payload)
+                if isinstance(reply_payload, dict)
+                else None
+            )
+            await self._manager.respond_request(
+                self._spawn_id,
+                request_id=request_id,
+                decision=decision,
+                payload=typed_payload,
+                source="control_socket",
+            )
+            return {"ok": True}
+        if message_type == "user_input_reply":
+            request_id = payload.get("request_id")
+            answers = payload.get("answers")
+            if not isinstance(request_id, str) or not request_id:
+                return {"ok": False, "error": "user_input_reply requires request_id"}
+            if not isinstance(answers, dict):
+                return {"ok": False, "error": "user_input_reply requires answers object"}
+            typed_answers = cast("dict[str, object]", answers)
+            await self._manager.respond_user_input(
+                self._spawn_id,
+                request_id=request_id,
+                answers=typed_answers,
+                source="control_socket",
+            )
+            return {"ok": True}
         else:
             return {"ok": False, "error": f"unsupported request type: {message_type}"}
 

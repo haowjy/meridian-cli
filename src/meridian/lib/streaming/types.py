@@ -13,7 +13,35 @@ class UserMessageControl(TypedDict):
     text: str
 
 
-ControlMessage = UserMessageControl
+class InterruptControl(TypedDict):
+    """Interrupt the active runtime turn."""
+
+    type: Literal["interrupt"]
+
+
+class PermissionReplyControl(TypedDict):
+    """Reply to a pending runtime permission request."""
+
+    type: Literal["permission_reply"]
+    request_id: str
+    decision: str
+    payload: dict[str, object]
+
+
+class UserInputReplyControl(TypedDict):
+    """Reply to a pending runtime user-input request."""
+
+    type: Literal["user_input_reply"]
+    request_id: str
+    answers: dict[str, object]
+
+
+ControlMessage = (
+    UserMessageControl
+    | InterruptControl
+    | PermissionReplyControl
+    | UserInputReplyControl
+)
 
 
 @dataclass(frozen=True)
@@ -28,5 +56,8 @@ class InjectResult:
 __all__ = [
     "ControlMessage",
     "InjectResult",
+    "InterruptControl",
+    "PermissionReplyControl",
+    "UserInputReplyControl",
     "UserMessageControl",
 ]

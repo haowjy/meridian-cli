@@ -17,6 +17,10 @@ from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.control_action import (
+    ControlActionCoordinator,
+    ControlActionType,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
@@ -36,7 +40,6 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.inject_lock import drop_lock, get_lock
 from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
@@ -80,6 +83,7 @@ class SpawnSession:
     debug_tracer: DebugTracer | None = None
     cancel_sent: bool = False
     cancel_event_emitted: bool = False
+    control_actions: ControlActionCoordinator | None = None
 
 
 def _ensure_harness_bootstrap() -> None:
@@ -292,6 +296,10 @@ class SpawnManager:
             started_monotonic=started_monotonic,
             completion_future=completion_future,
             debug_tracer=tracer,
+            control_actions=ControlActionCoordinator(
+                spawn_id=spawn_id,
+                spawn_dir=self._spawn_dir(spawn_id),
+            ),
         )
         self._completion_futures[spawn_id] = completion_future
         return connection
@@ -489,35 +497,156 @@ class SpawnManager:
                 on_result(result)
             return result
 
-        async with get_lock(spawn_id):
-            session = self._sessions.get(spawn_id)
-            if session is None:
-                result = InjectResult(
-                    success=False,
-                    error=f"Spawn {spawn_id} is not active",
-                )
-                if on_result is not None:
-                    on_result(result)
-                return result
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            result = InjectResult(
+                success=False,
+                error=f"Spawn {spawn_id} is not active",
+            )
+            if on_result is not None:
+                on_result(result)
+            return result
 
+        async def _send_message() -> int:
+            inbound_seq = await self._record_inbound(
+                spawn_id,
+                action="user_message",
+                data={"text": message},
+                source=source,
+            )
+            await session.connection.send_user_message(message)
+            return inbound_seq
+
+        coordinator = session.control_actions
+        if coordinator is None:
             try:
-                inbound_seq = await self._record_inbound(
-                    spawn_id,
-                    action="user_message",
-                    data={"text": message},
-                    source=source,
-                )
-                await session.connection.send_user_message(message)
+                inbound_seq = await _send_message()
             except Exception as exc:
                 result = InjectResult(success=False, error=str(exc))
                 if on_result is not None:
                     on_result(result)
                 return result
-
             result = InjectResult(success=True, inbound_seq=inbound_seq)
             if on_result is not None:
                 on_result(result)
             return result
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.INJECT,
+            payload={"text": message},
+            source=source,
+            send=_send_message,
+        )
+        if not outcome.success:
+            result = InjectResult(success=False, error=outcome.error or "inject_failed")
+            if on_result is not None:
+                on_result(result)
+            return result
+
+        inbound_seq = outcome.value
+        result = InjectResult(
+            success=True,
+            inbound_seq=inbound_seq if isinstance(inbound_seq, int) else None,
+        )
+        if on_result is not None:
+            on_result(result)
+        return result
+
+    async def interrupt(
+        self,
+        spawn_id: SpawnId,
+        *,
+        source: str = "runtime",
+    ) -> None:
+        """Send one serialized interrupt to an active spawn connection."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            raise RuntimeError(f"Spawn {spawn_id} is not active")
+
+        coordinator = session.control_actions
+        if coordinator is None:
+            await session.connection.send_cancel()
+            return
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.INTERRUPT,
+            payload={},
+            source=source,
+            send=session.connection.send_cancel,
+        )
+        if not outcome.success:
+            raise RuntimeError(outcome.error or "interrupt_failed")
+
+    async def respond_request(
+        self,
+        spawn_id: SpawnId,
+        *,
+        request_id: str,
+        decision: str,
+        payload: dict[str, object] | None = None,
+        source: str = "chat",
+    ) -> None:
+        """Send one serialized permission decision for a pending harness request."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            raise RuntimeError(f"Spawn {spawn_id} is not active")
+
+        async def _respond() -> None:
+            await session.connection.respond_request(request_id, decision, payload)
+
+        coordinator = session.control_actions
+        if coordinator is None:
+            await _respond()
+            return
+
+        response_payload: dict[str, object] = {
+            "request_id": request_id,
+            "decision": decision,
+        }
+        if payload is not None:
+            response_payload["payload"] = payload
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.PERMISSION_REPLY,
+            payload=response_payload,
+            source=source,
+            send=_respond,
+        )
+        if not outcome.success:
+            raise RuntimeError(outcome.error or "permission_reply_failed")
+
+    async def respond_user_input(
+        self,
+        spawn_id: SpawnId,
+        *,
+        request_id: str,
+        answers: dict[str, object],
+        source: str = "chat",
+    ) -> None:
+        """Send one serialized user-input response for a pending harness request."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            raise RuntimeError(f"Spawn {spawn_id} is not active")
+
+        async def _respond() -> None:
+            await session.connection.respond_user_input(request_id, answers)
+
+        coordinator = session.control_actions
+        if coordinator is None:
+            await _respond()
+            return
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.USER_INPUT_REPLY,
+            payload={"request_id": request_id, "answers": answers},
+            source=source,
+            send=_respond,
+        )
+        if not outcome.success:
+            raise RuntimeError(outcome.error or "user_input_reply_failed")
 
     async def _record_inbound(
         self,
@@ -575,13 +704,12 @@ class SpawnManager:
         if session is None:
             await self._stop_heartbeat(spawn_id)
             await self._observers.shutdown(spawn_id)
-            drop_lock(spawn_id)
             return None
 
         if status == "cancelled" and not session.cancel_sent:
             session.cancel_sent = True
             with suppress(Exception):
-                await session.connection.send_cancel()
+                await self.interrupt(spawn_id, source="spawn_manager.stop_spawn")
             if not session.cancel_event_emitted:
                 session.cancel_event_emitted = True
                 await self._emit_cancelled_terminal_event(
@@ -629,7 +757,6 @@ class SpawnManager:
         self._sessions.pop(spawn_id, None)
         self._completion_futures.pop(spawn_id, None)
         self._history_writers.pop(spawn_id, None)
-        drop_lock(spawn_id)
         return outcome
 
     async def _emit_cancelled_terminal_event(
@@ -788,7 +915,6 @@ class SpawnManager:
         session = self._sessions.pop(spawn_id, None)
         if session is None:
             await self._observers.shutdown(spawn_id)
-            drop_lock(spawn_id)
             return
         if session.debug_tracer is not None:
             session.debug_tracer.close()
@@ -804,7 +930,6 @@ class SpawnManager:
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)
         self._history_writers.pop(spawn_id, None)
-        drop_lock(spawn_id)
 
     def _resolve_completion_future(
         self,
