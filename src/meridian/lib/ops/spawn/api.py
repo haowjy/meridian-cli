@@ -60,6 +60,7 @@ from .models import (
     SpawnCancelAllInput,
     SpawnCancelAllOutput,
     SpawnCancelInput,
+    SpawnChildrenInput,
     SpawnContinueInput,
     SpawnCreateInput,
     SpawnDetailOutput,
@@ -170,6 +171,25 @@ def _runtime_root_from_entrypoint_for_read(
     return runtime_root or resolve_runtime_root_for_read(project_root)
 
 
+def _resolve_spawn_read_authority(
+    *,
+    project_root: str | None,
+    prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
+) -> tuple[Path, Path]:
+    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
+    if entrypoint is not None:
+        resolved_project_root = _project_root_from_entrypoint(entrypoint)
+        resolved_runtime_root = _runtime_root_from_entrypoint_for_read(
+            entrypoint,
+            project_root=resolved_project_root,
+        )
+        return resolved_project_root, resolved_runtime_root
+
+    resolved_project_root = _resolve_project_root_input(project_root)
+    resolved_runtime_root = resolve_runtime_root_for_read(resolved_project_root)
+    return resolved_project_root, resolved_runtime_root
+
+
 def resolve_spawn_operation_services(
     *,
     project_root: str | None,
@@ -207,6 +227,19 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     if not is_active_spawn_status(status):
         return None
     return normalized
+
+
+def _desc_or_prompt_summary(desc: str | None, prompt: str | None) -> str | None:
+    normalized_desc = (desc or "").strip()
+    if normalized_desc:
+        return normalized_desc
+    normalized_prompt = (prompt or "").strip()
+    if not normalized_prompt:
+        return None
+    compact_prompt = " ".join(normalized_prompt.split()).strip()
+    if len(compact_prompt) <= 50:
+        return compact_prompt
+    return f"{compact_prompt[:47].rstrip()}..."
 
 
 def _forked_from_output(payload: SpawnCreateInput) -> str | None:
@@ -382,19 +415,12 @@ def spawn_list_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnListOutput:
     _ = (ctx, sink)
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
-    project_root = (
-        _project_root_from_entrypoint(entrypoint)
-        if entrypoint is not None
-        else _resolve_project_root_input(payload.project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = (
-        _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
-        if entrypoint is not None
-        else resolve_runtime_root_for_read(project_root)
-    )
     spawns = list(
         reversed(
             reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
@@ -482,6 +508,72 @@ async def spawn_list(
     return await asyncio.to_thread(spawn_list_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
 
 
+def spawn_children_sync(
+    payload: SpawnChildrenInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnListOutput:
+    _ = (ctx, sink)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    normalized_ref = payload.spawn_id.strip()
+    if not normalized_ref:
+        raise ValueError("spawn_id is required")
+    spawn_id = resolve_spawn_reference(
+        project_root,
+        normalized_ref,
+        runtime_root=runtime_root,
+    )
+
+    from meridian.lib.state.reaper import reconcile_spawns
+
+    children = list(
+        reversed(
+            reconcile_spawns(
+                project_root,
+                runtime_root,
+                spawn_store.list_spawns(
+                    runtime_root,
+                    filters={"parent_id": spawn_id},
+                ),
+            )
+        )
+    )
+    entries = tuple(
+        SpawnListEntry(
+            spawn_id=row.id,
+            status=row.status,
+            model=row.model or "",
+            agent=row.agent or None,
+            desc=_desc_or_prompt_summary(row.desc, row.prompt),
+            duration_secs=row.duration_secs,
+            cost_usd=row.total_cost_usd,
+        )
+        for row in children
+    )
+    return SpawnListOutput(spawns=entries, text_view="children")
+
+
+async def spawn_children(
+    payload: SpawnChildrenInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnListOutput:
+    return await asyncio.to_thread(
+        spawn_children_sync,
+        payload,
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
+
+
 def _collect_descendants(
     root_id: str,
     all_spawns: list[SpawnRecord],
@@ -515,19 +607,12 @@ def spawn_stats_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnStatsOutput:
     _ = (ctx, sink)
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
-    project_root = (
-        _project_root_from_entrypoint(entrypoint)
-        if entrypoint is not None
-        else _resolve_project_root_input(payload.project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = (
-        _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
-        if entrypoint is not None
-        else resolve_runtime_root_for_read(project_root)
-    )
     all_spawns = reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
 
     if payload.session is not None and payload.session.strip():
@@ -641,16 +726,9 @@ def spawn_show_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnDetailOutput:
     _ = (ctx, sink)
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
-    project_root = (
-        _project_root_from_entrypoint(entrypoint)
-        if entrypoint is not None
-        else _resolve_project_root_input(payload.project_root)
-    )
-    runtime_root = (
-        _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
-        if entrypoint is not None
-        else resolve_runtime_root_for_read(project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
@@ -717,16 +795,9 @@ def spawn_files_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnWrittenFilesOutput:
     _ = (ctx, sink)
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
-    project_root = (
-        _project_root_from_entrypoint(entrypoint)
-        if entrypoint is not None
-        else _resolve_project_root_input(payload.project_root)
-    )
-    runtime_root = (
-        _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
-        if entrypoint is not None
-        else resolve_runtime_root_for_read(project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
@@ -860,14 +931,12 @@ def spawn_cancel_all_sync(
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnCancelAllOutput:
     _ = ctx
-    entrypoint = _spawn_entrypoint_from_prepared(prepared) if prepared is not None else None
-    if prepared is not None:
-        assert entrypoint is not None
-        project_root = _project_root_from_entrypoint(entrypoint)
-        runtime_root = _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
-    else:
-        project_root, _ = resolve_runtime_root_and_config(payload.project_root)
-        runtime_root = resolve_runtime_root(project_root)
+    services = resolve_spawn_operation_services(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    project_root = services.project_root
+    runtime_root = services.runtime_root
     work_id = _normalize_work_filter(payload.work)
 
     from meridian.lib.state.reaper import reconcile_spawns
@@ -1381,13 +1450,10 @@ def spawn_continue_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
-    if prepared is not None:
-        entrypoint = _spawn_entrypoint_from_prepared(prepared)
-        project_root = _project_root_from_entrypoint(entrypoint)
-        runtime_root = _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
-    else:
-        project_root, _ = resolve_runtime_root_and_config_for_read(payload.project_root)
-        runtime_root = resolve_runtime_root_for_read(project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
     resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
         payload.spawn_id,
         project_root,

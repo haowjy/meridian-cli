@@ -24,22 +24,21 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
     SpawnCancelAllInput,
     SpawnCancelInput,
+    SpawnChildrenInput,
     SpawnContinueInput,
     SpawnCreateInput,
-    SpawnListEntry,
     SpawnListInput,
-    SpawnListOutput,
     SpawnShowInput,
     SpawnStatsInput,
     SpawnWaitInput,
     SpawnWrittenFilesInput,
     spawn_cancel_all_sync,
     spawn_cancel_sync,
+    spawn_children_sync,
     spawn_continue_sync,
     spawn_create_sync,
     spawn_files_sync,
@@ -48,8 +47,6 @@ from meridian.lib.ops.spawn.api import (
     spawn_stats_sync,
     spawn_wait_sync,
 )
-from meridian.lib.ops.spawn.query import resolve_spawn_reference
-from meridian.lib.state import spawn_store
 
 Emitter = Callable[[Any], None]
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
@@ -92,19 +89,6 @@ def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
     if result.status in {"succeeded", "running", "finalizing", "dry-run"}:
         return 0
     return 1
-
-
-def _desc_or_prompt_summary(desc: str | None, prompt: str | None) -> str | None:
-    normalized_desc = (desc or "").strip()
-    if normalized_desc:
-        return normalized_desc
-    normalized_prompt = (prompt or "").strip()
-    if not normalized_prompt:
-        return None
-    compact_prompt = " ".join(normalized_prompt.split()).strip()
-    if len(compact_prompt) <= 50:
-        return compact_prompt
-    return f"{compact_prompt[:47].rstrip()}..."
 
 
 def _read_prompt_from_stdin(*, explicit_prompt_file_stdin: bool, allow_empty: bool = False) -> str:
@@ -564,43 +548,13 @@ def _spawn_children(
         Parameter(name="spawn_id", help="Parent spawn ID."),
     ],
 ) -> None:
-    normalized_ref = spawn_id.strip()
-    if not normalized_ref:
-        raise ValueError("spawn_id is required")
-    prepared = _prepare_spawn_runtime_read()
-    normalized_spawn_id = resolve_spawn_reference(
-        prepared.project_root,
-        normalized_ref,
-        runtime_root=prepared.runtime_root,
-    )
-    runtime_root = prepared.runtime_root or resolve_runtime_root_for_read(prepared.project_root)
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    children = list(
-        reversed(
-            reconcile_spawns(
-                prepared.project_root,
-                runtime_root,
-                spawn_store.list_spawns(
-                    runtime_root,
-                    filters={"parent_id": normalized_spawn_id},
-                ),
-            )
+    emit(
+        spawn_children_sync(
+            SpawnChildrenInput(spawn_id=spawn_id),
+            sink=_current_output_sink(),
+            prepared=_prepare_spawn_runtime_read(),
         )
     )
-    entries = tuple(
-        SpawnListEntry(
-            spawn_id=row.id,
-            status=row.status,
-            model=row.model or "",
-            agent=row.agent or None,
-            desc=_desc_or_prompt_summary(row.desc, row.prompt),
-            duration_secs=row.duration_secs,
-            cost_usd=row.total_cost_usd,
-        )
-        for row in children
-    )
-    emit(SpawnListOutput(spawns=entries, text_view="children"))
 
 
 def _spawn_show(
@@ -676,18 +630,12 @@ def _spawn_cancel(
     emit: Any,
     spawn_id: str,
 ) -> None:
-    prepared = _prepare_spawn_runtime_write()
-    resolved_spawn_id = resolve_spawn_reference(
-        prepared.project_root,
-        spawn_id,
-        runtime_root=prepared.runtime_root,
-    )
     result = spawn_cancel_sync(
         SpawnCancelInput(
-            spawn_id=resolved_spawn_id,
+            spawn_id=spawn_id,
         ),
         sink=_current_output_sink(),
-        prepared=prepared,
+        prepared=_prepare_spawn_runtime_write(),
     )
     emit(result)
     if result.status == "failed":

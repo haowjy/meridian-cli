@@ -10,6 +10,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnContinueInput,
     SpawnCreateInput,
+    SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
 )
@@ -689,80 +690,79 @@ def test_spawn_list_primary_filter_routes_to_spawn_input(
     assert "finalizing" in statuses
 
 
-def test_spawn_children_resolves_parent_reference_before_filtering(
+def test_spawn_cancel_routes_raw_spawn_id_to_spawn_api(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
 ) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = project_root / ".meridian"
-    seen: dict[str, object] = {}
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
 
-    monkeypatch.setattr(spawn_cli, "resolve_project_root", lambda: project_root)
-    monkeypatch.setattr(spawn_cli, "resolve_runtime_root_for_read", lambda _root: runtime_root)
-    monkeypatch.setattr(
-        spawn_cli,
-        "resolve_spawn_reference",
-        lambda _project_root, ref, runtime_root=None: "p77" if ref == "c213" else ref,
-    )
-    monkeypatch.setattr(
-        spawn_cli.spawn_store,
-        "list_spawns",
-        lambda _state_root, filters=None: _capture_filters_and_return_empty(seen, filters),
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _project_root, _runtime_root, spawns: spawns,
-    )
-    monkeypatch.setattr(
-        spawn_cli,
-        "_get_global_options",
-        lambda: SimpleNamespace(output=SimpleNamespace(format="json"), project_root=None),
-    )
+    def _fake_spawn_cancel_sync(
+        payload,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        captured["spawn_id"] = payload.spawn_id
+        captured["prepared"] = prepared
+        _ = sink
+        return SpawnActionOutput(command="spawn.cancel", status="cancelled")
 
+    monkeypatch.setattr(spawn_cli, "spawn_cancel_sync", _fake_spawn_cancel_sync)
+    monkeypatch.setattr(spawn_cli, "_prepare_spawn_runtime_write", lambda: "prepared")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "cancel", "c213"])
+
+    assert exc_info.value.code == 0
+    assert captured == {"spawn_id": "c213", "prepared": "prepared"}
+
+
+def test_spawn_children_routes_to_spawn_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_children_sync(
+        payload,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnListOutput:
+        captured["payload"] = payload
+        captured["sink"] = sink
+        captured["prepared"] = prepared
+        return SpawnListOutput(spawns=())
+
+    monkeypatch.setattr(spawn_cli, "spawn_children_sync", _fake_spawn_children_sync)
     emitted: list[SpawnListOutput] = []
     spawn_cli._spawn_children(emitted.append, "c213")
 
-    assert seen["filters"] == {"parent_id": "p77"}
+    assert captured["payload"].spawn_id == "c213"
+    assert captured["prepared"] is not None
     assert len(emitted) == 1
     assert emitted[0].spawns == ()
 
 
 def test_spawn_children_includes_agent_and_desc_in_output(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
 ) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = project_root / ".meridian"
-    rows = [
-        SimpleNamespace(
-            id="p101",
-            status="succeeded",
-            model="gpt-5.4",
-            agent="coder",
-            desc=None,
-            prompt="summarize these long launch semantics for output table",
-            duration_secs=1.2,
-            total_cost_usd=0.02,
-        )
-    ]
-
-    monkeypatch.setattr(spawn_cli, "resolve_project_root", lambda: project_root)
-    monkeypatch.setattr(spawn_cli, "resolve_runtime_root_for_read", lambda _root: runtime_root)
-    monkeypatch.setattr(
-        spawn_cli, "resolve_spawn_reference", lambda _root, ref, runtime_root=None: ref
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    output = SpawnListOutput(
+        spawns=(
+            SpawnListEntry(
+                spawn_id="p101",
+                status="succeeded",
+                model="gpt-5.4",
+                agent="coder",
+                desc="summarize these long launch semantics for output table",
+                duration_secs=1.2,
+                cost_usd=0.02,
+            ),
+        ),
+        text_view="children",
     )
-    monkeypatch.setattr(spawn_cli.spawn_store, "list_spawns", lambda _root, filters=None: rows)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _project_root, _runtime_root, spawns: spawns,
-    )
-    monkeypatch.setattr(
-        spawn_cli,
-        "_get_global_options",
-        lambda: SimpleNamespace(output=SimpleNamespace(format="text"), project_root=None),
-    )
+    monkeypatch.setattr(spawn_cli, "spawn_children_sync", lambda *_args, **_kwargs: output)
 
     emitted: list[SpawnListOutput] = []
     spawn_cli._spawn_children(emitted.append, "p100")
@@ -777,39 +777,23 @@ def test_spawn_children_includes_agent_and_desc_in_output(
 
 def test_spawn_children_json_includes_agent_and_desc(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
 ) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = project_root / ".meridian"
-    rows = [
-        SimpleNamespace(
-            id="p101",
-            status="succeeded",
-            model="gpt-5.4",
-            agent="reviewer",
-            desc="quick desc",
-            prompt="ignored because desc exists",
-            duration_secs=0.7,
-            total_cost_usd=0.01,
-        )
-    ]
-
-    monkeypatch.setattr(spawn_cli, "resolve_project_root", lambda: project_root)
-    monkeypatch.setattr(spawn_cli, "resolve_runtime_root_for_read", lambda _root: runtime_root)
-    monkeypatch.setattr(
-        spawn_cli, "resolve_spawn_reference", lambda _root, ref, runtime_root=None: ref
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    output = SpawnListOutput(
+        spawns=(
+            SpawnListEntry(
+                spawn_id="p101",
+                status="succeeded",
+                model="gpt-5.4",
+                agent="reviewer",
+                desc="quick desc",
+                duration_secs=0.7,
+                cost_usd=0.01,
+            ),
+        ),
+        text_view="children",
     )
-    monkeypatch.setattr(spawn_cli.spawn_store, "list_spawns", lambda _root, filters=None: rows)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _project_root, _runtime_root, spawns: spawns,
-    )
-    monkeypatch.setattr(
-        spawn_cli,
-        "_get_global_options",
-        lambda: SimpleNamespace(output=SimpleNamespace(format="json"), project_root=None),
-    )
+    monkeypatch.setattr(spawn_cli, "spawn_children_sync", lambda *_args, **_kwargs: output)
 
     emitted: list[SpawnListOutput] = []
     spawn_cli._spawn_children(emitted.append, "p100")
@@ -821,36 +805,24 @@ def test_spawn_children_json_includes_agent_and_desc(
 
 def test_spawn_children_agent_mode_uses_children_text_view(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = project_root / ".meridian"
-    rows = [
-        SimpleNamespace(
-            id="p101",
-            status="succeeded",
-            model="gpt-5.4",
-            agent="reviewer",
-            desc="review child",
-            prompt="ignored because desc exists",
-            duration_secs=0.7,
-            total_cost_usd=0.01,
-        )
-    ]
-
-    monkeypatch.setattr(spawn_cli, "resolve_project_root", lambda: project_root)
-    monkeypatch.setattr(spawn_cli, "resolve_runtime_root_for_read", lambda _root: runtime_root)
-    monkeypatch.setattr(
-        spawn_cli, "resolve_spawn_reference", lambda _root, ref, runtime_root=None: ref
+    output = SpawnListOutput(
+        spawns=(
+            SpawnListEntry(
+                spawn_id="p101",
+                status="succeeded",
+                model="gpt-5.4",
+                agent="reviewer",
+                desc="review child",
+                duration_secs=0.7,
+                cost_usd=0.01,
+            ),
+        ),
+        text_view="children",
     )
-    monkeypatch.setattr(spawn_cli.spawn_store, "list_spawns", lambda _root, filters=None: rows)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.reconcile_spawns",
-        lambda _project_root, _runtime_root, spawns: spawns,
-    )
+    monkeypatch.setattr(spawn_cli, "spawn_children_sync", lambda *_args, **_kwargs: output)
 
     with pytest.raises(SystemExit) as exc_info:
         cli_main.main(["spawn", "children", "p100"])
@@ -859,11 +831,3 @@ def test_spawn_children_agent_mode_uses_children_text_view(
     output = capsys.readouterr().out
     assert "reviewer" in output
     assert "review child" in output
-
-
-def _capture_filters_and_return_empty(
-    seen: dict[str, object],
-    filters: object,
-) -> list[object]:
-    seen["filters"] = filters
-    return []

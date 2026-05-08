@@ -253,6 +253,13 @@ class SpawnListInput(BaseModel):
     project_root: str | None = None
 
 
+class SpawnChildrenInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    spawn_id: str
+    project_root: str | None = None
+
+
 class SpawnStatsInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
