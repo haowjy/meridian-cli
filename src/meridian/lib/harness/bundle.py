@@ -84,6 +84,14 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
     frozen_connections: Mapping[TransportId, type[HarnessConnection[Any]]] = MappingProxyType(
         dict(validated_connections)
     )
+    declared_transport_ids = frozenset(bundle.adapter.contract.transport.transport_ids)
+    actual_transport_ids = frozenset(frozen_connections)
+    if declared_transport_ids != actual_transport_ids:
+        raise ValueError(
+            f"HarnessBundle for {bundle.harness_id} declares transport contract "
+            f"{sorted(t.value for t in declared_transport_ids)} but registers "
+            f"{sorted(t.value for t in actual_transport_ids)}"
+        )
     _REGISTRY[bundle.harness_id] = HarnessBundle(
         harness_id=bundle.harness_id,
         adapter=bundle.adapter,

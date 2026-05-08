@@ -12,16 +12,31 @@ from types import MappingProxyType
 import pytest
 from pydantic import ValidationError
 
-from meridian.lib.harness.adapter import BaseHarnessAdapter, HarnessAdapter, SpawnParams
+from meridian.lib.harness.adapter import (
+    ApprovalContract,
+    BaseHarnessAdapter,
+    BootstrapContract,
+    BootstrapMode,
+    ExtractionContract,
+    HarnessAdapter,
+    HarnessCapabilities,
+    HarnessContract,
+    ProjectionContract,
+    ProjectionMode,
+    SpawnParams,
+    TransportContract,
+)
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.launch_types import (
     PermissionResolver,
     PreflightResult,
     ResolvedLaunchSpec,
+    TerminalSurfaceMode,
 )
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 _REQUIRED_ABSTRACT_MEMBERS = {
+    "contract",
     "id",
     "consumed_fields",
     "explicitly_ignored_fields",
@@ -70,6 +85,10 @@ class _MissingResolveLaunchSpecHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return HarnessId.CLAUDE
 
     @property
+    def contract(self) -> HarnessContract:
+        return _test_contract()
+
+    @property
     def consumed_fields(self) -> frozenset[str]:
         return frozenset({"prompt"})
 
@@ -84,6 +103,7 @@ def test_s001_missing_only_resolve_launch_spec_mentions_that_method() -> None:
 
     message = str(exc_info.value)
     assert "resolve_launch_spec" in message
+    assert "contract" not in message
     assert "id" not in message
     assert "consumed_fields" not in message
     assert "explicitly_ignored_fields" not in message
@@ -105,6 +125,10 @@ def test_s040_protocol_and_abc_required_member_sets_reconcile() -> None:
 
 
 class _MissingIdHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
+    @property
+    def contract(self) -> HarnessContract:
+        return _test_contract()
+
     @property
     def consumed_fields(self) -> frozenset[str]:
         return frozenset({"prompt"})
@@ -148,6 +172,7 @@ def test_s040_incomplete_adapter_lists_all_missing_members() -> None:
         _IncompleteHarness()
 
     message = str(exc_info.value)
+    assert "contract" in message
     assert "id" in message
     assert "consumed_fields" in message
     assert "explicitly_ignored_fields" in message
@@ -157,6 +182,10 @@ class _CompleteHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
     @property
     def id(self) -> HarnessId:
         return HarnessId.CLAUDE
+
+    @property
+    def contract(self) -> HarnessContract:
+        return _test_contract()
 
     @property
     def consumed_fields(self) -> frozenset[str]:
@@ -180,6 +209,23 @@ class _CompleteHarness(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
 def test_handled_fields_unions_consumed_and_ignored() -> None:
     assert _CompleteHarness().handled_fields == frozenset({"prompt"})
+
+
+def _test_contract() -> HarnessContract:
+    return HarnessContract(
+        capabilities=HarnessCapabilities(
+            terminal_surface_modes=(TerminalSurfaceMode.PTY_MEDIATED,),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
+        ),
+        transport=TransportContract(transport_ids=()),
+        projection=ProjectionContract(
+            launch_spec_cls="ResolvedLaunchSpec",
+            mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
+        ),
+        extraction=ExtractionContract(session_observation_order=()),
+        approval=ApprovalContract(),
+        bootstrap=BootstrapContract(mode=BootstrapMode.SUBPROCESS_ONLY),
+    )
 
 
 def test_resolved_launch_spec_rejects_continue_fork_without_session_id() -> None:

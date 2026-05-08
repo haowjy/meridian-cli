@@ -11,13 +11,23 @@ from typing import ClassVar
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import (
+    ApprovalContract,
     ArtifactStore,
     BaseHarnessAdapter,
+    BootstrapContract,
+    BootstrapMode,
+    ExtractionContract,
     HarnessCapabilities,
+    HarnessContract,
     McpConfig,
+    ObserverControllerContract,
     PermissionResolver,
+    ProjectionContract,
+    ProjectionMode,
     RunPromptPolicy,
+    RuntimeHitlMode,
     SpawnParams,
+    TransportContract,
 )
 from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
 from meridian.lib.harness.common import (
@@ -46,6 +56,7 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_OPENCODE_SUBPROCESS,
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -325,6 +336,42 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
         return HarnessId.OPENCODE
 
     @property
+    def contract(self) -> HarnessContract:
+        observer = ObserverControllerContract(
+            supports_input_injection=False,
+        )
+        return HarnessContract(
+            capabilities=self.capabilities,
+            transport=TransportContract(
+                transport_ids=(TransportId.STREAMING,),
+                observer_controller_required=True,
+            ),
+            projection=ProjectionContract(
+                launch_spec_cls="OpenCodeLaunchSpec",
+                mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
+            ),
+            extraction=ExtractionContract(
+                session_observation_order=(
+                    "connection_session",
+                    "artifacts",
+                    "current_session",
+                    "primary_detection",
+                )
+            ),
+            approval=ApprovalContract(
+                runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
+                default_runtime_request_policy="auto_accept",
+            ),
+            bootstrap=BootstrapContract(
+                mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+                observer_controller=observer,
+            ),
+            capability_limits=(
+                "native_inherit declared as contract capability only; policy remains pty_mediated",
+            ),
+        )
+
+    @property
     def consumed_fields(self) -> frozenset[str]:
         return self._CONSUMED_FIELDS
 
@@ -342,6 +389,11 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
             supports_native_skills=True,
             supports_primary_launch=True,
             supports_native_file_injection=False,
+            terminal_surface_modes=(
+                TerminalSurfaceMode.PTY_MEDIATED,
+                TerminalSurfaceMode.NATIVE_INHERIT,
+            ),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:

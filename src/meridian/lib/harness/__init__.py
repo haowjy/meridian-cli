@@ -15,7 +15,7 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
     "src/meridian/lib/harness/ids.py (HarnessId registration)",
     (
         "src/meridian/lib/harness/<new_harness>.py "
-        "(adapter + bundle registration + transport map side effect)"
+        "(adapter + explicit HarnessContract + bundle registration + transport map side effect)"
     ),
     "src/meridian/lib/harness/__init__.py::_run_bootstrap() (bootstrap import wiring)",
     (

@@ -75,7 +75,14 @@ from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
-from .ports import ProcessLauncher, ProcessLauncherSelector
+from .ports import (
+    ProcessBackendId,
+    ProcessLauncher,
+    ProcessLauncherSelector,
+    ProcessPlatformContract,
+    ProcessSurfaceMode,
+    SelectedProcessLauncher,
+)
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
 from .pty_launcher import PtyProcessLauncher, can_use_pty
 from .session import (
@@ -126,15 +133,61 @@ RunPrimaryAttach = Callable[
 def select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
     """Choose the launch backend for one primary process invocation."""
 
+    return select_process_backend(output_log_path).launcher
+
+
+def select_process_backend(output_log_path: Path | None) -> SelectedProcessLauncher:
+    """Choose the launch backend plus explicit process/platform contract."""
+
     if output_log_path is not None:
         if can_use_pty():
-            return PtyProcessLauncher()
-        return SubprocessProcessLauncher()
+            return SelectedProcessLauncher(
+                launcher=PtyProcessLauncher(),
+                contract=ProcessPlatformContract(
+                    backend_id=ProcessBackendId.PTY,
+                    surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
+                    captures_output_to_artifact=True,
+                    platform_family="posix",
+                ),
+            )
+        return SelectedProcessLauncher(
+            launcher=SubprocessProcessLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.SUBPROCESS,
+                surface_mode=ProcessSurfaceMode.PIPE_CAPTURE,
+                captures_output_to_artifact=True,
+                platform_family="portable",
+            ),
+        )
     if can_use_windows_console_launcher():
-        return WindowsConsoleLauncher()
+        return SelectedProcessLauncher(
+            launcher=WindowsConsoleLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.WINDOWS_CONSOLE,
+                surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
+                captures_output_to_artifact=False,
+                platform_family="windows",
+            ),
+        )
     if can_use_pty():
-        return PtyProcessLauncher()
-    return SubprocessProcessLauncher()
+        return SelectedProcessLauncher(
+            launcher=PtyProcessLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.PTY,
+                surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
+                captures_output_to_artifact=False,
+                platform_family="posix",
+            ),
+        )
+    return SelectedProcessLauncher(
+        launcher=SubprocessProcessLauncher(),
+        contract=ProcessPlatformContract(
+            backend_id=ProcessBackendId.SUBPROCESS,
+            surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
+            captures_output_to_artifact=False,
+            platform_family="portable",
+        ),
+    )
 
 
 def run_primary_process_with_capture(
@@ -877,5 +930,6 @@ __all__ = [
     "run_harness_process",
     "run_primary_attach",
     "run_primary_process_with_capture",
+    "select_process_backend",
     "select_process_launcher",
 ]

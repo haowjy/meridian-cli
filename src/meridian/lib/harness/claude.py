@@ -12,13 +12,21 @@ from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolC
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.adapter import (
+    ApprovalContract,
     ArtifactStore,
     BaseHarnessAdapter,
+    BootstrapContract,
+    BootstrapMode,
+    ExtractionContract,
     HarnessCapabilities,
+    HarnessContract,
     McpConfig,
     PermissionResolver,
+    ProjectionContract,
+    ProjectionMode,
     RunPromptPolicy,
     SpawnParams,
+    TransportContract,
 )
 from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
 from meridian.lib.harness.claude_preflight import build_claude_preflight_result
@@ -47,7 +55,7 @@ from meridian.lib.launch.constants import (
     OUTPUT_FILENAME,
     PRIMARY_BASE_COMMAND_CLAUDE,
 )
-from meridian.lib.launch.launch_types import PreflightResult
+from meridian.lib.launch.launch_types import PreflightResult, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -246,6 +254,33 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         return HarnessId.CLAUDE
 
     @property
+    def contract(self) -> HarnessContract:
+        return HarnessContract(
+            capabilities=self.capabilities,
+            transport=TransportContract(
+                transport_ids=(TransportId.STREAMING,),
+                observer_controller_required=False,
+            ),
+            projection=ProjectionContract(
+                launch_spec_cls="ClaudeLaunchSpec",
+                mode=ProjectionMode.PROMPT_FILE_APPEND_SYSTEM,
+            ),
+            extraction=ExtractionContract(
+                session_observation_order=(
+                    "artifacts",
+                    "current_session",
+                    "primary_detection",
+                )
+            ),
+            approval=ApprovalContract(),
+            bootstrap=BootstrapContract(mode=BootstrapMode.SUBPROCESS_ONLY),
+            capability_limits=(
+                "terminal_surface_mode limited to pty_mediated",
+                "no observer/controller backend contract",
+            ),
+        )
+
+    @property
     def consumed_fields(self) -> frozenset[str]:
         return self._CONSUMED_FIELDS
 
@@ -264,6 +299,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             supports_native_agents=True,
             supports_primary_launch=True,
             supports_native_file_injection=False,
+            terminal_surface_modes=(TerminalSurfaceMode.PTY_MEDIATED,),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:

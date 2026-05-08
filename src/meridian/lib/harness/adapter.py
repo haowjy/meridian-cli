@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from pathlib import Path
 from typing import Generic, Literal, Protocol, TypeVar, runtime_checkable
 
@@ -10,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, ModelId, SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -22,6 +23,7 @@ from meridian.lib.launch.launch_types import (
     PreflightResult,
     ResolvedLaunchSpec,
     SpecT,
+    TerminalSurfaceMode,
 )
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -34,6 +36,27 @@ def _empty_metadata() -> dict[str, object]:
 
 def _empty_env_overrides() -> dict[str, str]:
     return {}
+
+
+class ProjectionMode(StrEnum):
+    """How one adapter projects semantic launch content onto harness channels."""
+
+    PROMPT_FILE_APPEND_SYSTEM = "prompt_file_append_system"
+    SYSTEM_FIELD_WITH_USER_TURN = "system_field_with_user_turn"
+
+
+class RuntimeHitlMode(StrEnum):
+    """How one harness exposes runtime approval/user-input requests."""
+
+    NONE = "none"
+    CONNECTION_REQUESTS = "connection_requests"
+
+
+class BootstrapMode(StrEnum):
+    """How one harness boots or materializes interactive primary runs."""
+
+    SUBPROCESS_ONLY = "subprocess_only"
+    MANAGED_PRIMARY_ATTACH = "managed_primary_attach"
 
 
 class HarnessCapabilities(BaseModel):
@@ -51,6 +74,88 @@ class HarnessCapabilities(BaseModel):
 
     # Whether native file injection is available (e.g., OpenCode --file)
     supports_native_file_injection: bool = False
+    terminal_surface_modes: tuple[TerminalSurfaceMode, ...] = (
+        TerminalSurfaceMode.PTY_MEDIATED,
+    )
+    default_terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
+
+
+class TransportContract(BaseModel):
+    """Explicit transport responsibility declaration for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    transport_ids: tuple[TransportId, ...]
+    observer_controller_required: bool = False
+
+
+class ProjectionContract(BaseModel):
+    """Explicit projection responsibility declaration for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    launch_spec_cls: str
+    mode: ProjectionMode
+    owns_prompt_policy: bool = True
+    owns_mcp_projection: bool = True
+    owns_env_overrides: bool = True
+
+
+class ExtractionContract(BaseModel):
+    """Explicit extraction responsibility declaration for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    extracts_usage: bool = True
+    extracts_session_id: bool = True
+    extracts_report: bool = True
+    session_observation_order: tuple[str, ...] = ()
+
+
+class ApprovalContract(BaseModel):
+    """Explicit approval/HITL contract for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    runtime_hitl: RuntimeHitlMode = RuntimeHitlMode.NONE
+    subprocess_permission_flags_projected_by_shared_policy: bool = True
+    default_runtime_request_policy: Literal["none", "auto_accept"] = "none"
+
+
+class ObserverControllerContract(BaseModel):
+    """Managed primary observer/controller backend contract."""
+
+    model_config = ConfigDict(frozen=True)
+
+    starts_sidecar_backend: bool = True
+    exposes_ordered_event_stream: bool = True
+    supports_cancel: bool = True
+    supports_input_injection: bool = True
+    obtains_session_id_during_startup: bool = True
+
+
+class BootstrapContract(BaseModel):
+    """Explicit bootstrap/materialization contract for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: BootstrapMode
+    seeds_resume_metadata: bool = True
+    observer_controller: ObserverControllerContract | None = None
+
+
+class HarnessContract(BaseModel):
+    """Inspectable contract surface for one harness adapter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    capabilities: HarnessCapabilities
+    transport: TransportContract
+    projection: ProjectionContract
+    extraction: ExtractionContract
+    approval: ApprovalContract
+    bootstrap: BootstrapContract
+    capability_limits: tuple[str, ...] = ()
 
 
 class RunPromptPolicy(BaseModel):
@@ -145,6 +250,9 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
 
     @property
     def id(self) -> HarnessId: ...
+
+    @property
+    def contract(self) -> HarnessContract: ...
 
     @property
     def consumed_fields(self) -> frozenset[str]: ...
@@ -264,6 +372,12 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
     @abstractmethod
     def id(self) -> HarnessId:
         """Harness identifier for this adapter."""
+        ...
+
+    @property
+    @abstractmethod
+    def contract(self) -> HarnessContract:
+        """Explicit inspectable contract for this adapter."""
         ...
 
     @property
