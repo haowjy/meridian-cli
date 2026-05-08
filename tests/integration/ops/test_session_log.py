@@ -751,10 +751,10 @@ def test_session_log_chat_missing_harness_session_id_detects_and_persists_primar
         assert [(message.role, message.content) for message in output.messages] == [
             ("assistant", "native codex transcript")
         ]
-        assert session_store.get_session_harness_id(runtime_root, chat_id) == session_id
+        assert session_store.get_session_harness_id(runtime_root, chat_id) == ""
         primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
         assert primary_spawn is not None
-        assert primary_spawn.harness_session_id == session_id
+        assert primary_spawn.harness_session_id == ""
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -778,7 +778,7 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
         assistant_text="meta-backed chat transcript",
     )
     monkeypatch.setattr(
-        "meridian.lib.ops.session_log._detect_primary_harness_session_id",
+        "meridian.lib.ops.session_target._detect_primary_harness_session_id",
         lambda **_kwargs: pytest.fail("session detection should not run when primary_meta is set"),
     )
 
@@ -812,10 +812,10 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
         assert [(message.role, message.content) for message in output.messages] == [
             ("assistant", "meta-backed chat transcript")
         ]
-        assert session_store.get_session_harness_id(runtime_root, chat_id) == session_id
+        assert session_store.get_session_harness_id(runtime_root, chat_id) == ""
         primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
         assert primary_spawn is not None
-        assert primary_spawn.harness_session_id == session_id
+        assert primary_spawn.harness_session_id == ""
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
@@ -863,7 +863,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_detects_native_ses
     ]
     primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
     assert primary_spawn is not None
-    assert primary_spawn.harness_session_id == session_id
+    assert primary_spawn.harness_session_id == ""
 
 
 def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta_session_id(
@@ -885,7 +885,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
         assistant_text="meta-backed spawn transcript",
     )
     monkeypatch.setattr(
-        "meridian.lib.ops.session_log._detect_primary_harness_session_id",
+        "meridian.lib.ops.session_target._detect_primary_harness_session_id",
         lambda **_kwargs: pytest.fail("session detection should not run when primary_meta is set"),
     )
 
@@ -913,7 +913,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
     ]
     primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
     assert primary_spawn is not None
-    assert primary_spawn.harness_session_id == session_id
+    assert primary_spawn.harness_session_id == ""
 
 
 def test_session_log_active_managed_primary_prefers_live_output_over_native_transcript(

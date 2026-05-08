@@ -13,7 +13,8 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
 from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
-from meridian.lib.ops.session_log import SessionLogInput, parse_session_file, resolve_target
+from meridian.lib.ops.session_log import parse_session_file
+from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.state import session_store, spawn_store
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
@@ -272,8 +273,9 @@ def session_export_sync(
     )
     project_root = resolve_project_root(explicit_project_root)
     runtime_root = resolve_runtime_root_for_read(project_root)
-    target = resolve_target(
-        SessionLogInput(ref=payload.ref, file_path=payload.file_path),
+    target = resolve_session_log_target(
+        ref=payload.ref,
+        file_path=payload.file_path,
         project_root=project_root,
         runtime_root=runtime_root,
     )

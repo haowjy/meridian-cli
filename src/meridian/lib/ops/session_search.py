@@ -14,7 +14,8 @@ from meridian.lib.ops.runtime import (
     async_from_sync,
     resolve_runtime_root_for_read,
 )
-from meridian.lib.ops.session_log import SessionLogInput, parse_session_file, resolve_target
+from meridian.lib.ops.session_log import parse_session_file
+from meridian.lib.ops.session_target import resolve_session_log_target
 
 _PREVIEW_LIMIT = 200
 _NAV_WINDOW_SIZE = 10
@@ -136,12 +137,9 @@ def session_search_sync(
     project_root = resolve_project_root(explicit_project_root)
     runtime_root = resolve_runtime_root_for_read(project_root)
 
-    target = resolve_target(
-        SessionLogInput(
-            ref=payload.ref,
-            file_path=payload.file_path,
-            project_root=payload.project_root,
-        ),
+    target = resolve_session_log_target(
+        ref=payload.ref,
+        file_path=payload.file_path,
         project_root=project_root,
         runtime_root=runtime_root,
     )
