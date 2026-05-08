@@ -280,6 +280,7 @@ def build_chat_backend_launch_plan(
         ),
         runtime_root=runtime_root,
         child_spawn_id=str(spawn_id),
+        include_persisted_work_fallback=True,
     )
     runtime_env["MERIDIAN_HARNESS"] = snapshot.harness
     autocompact_supported = _supports_launch_autocompact(harness_id)

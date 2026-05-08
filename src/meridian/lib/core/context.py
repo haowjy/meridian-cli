@@ -5,10 +5,20 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.core.depth import is_nested_meridian_depth
+from meridian.lib.core.depth import current_meridian_depth, is_nested_meridian_depth
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import resolve_work_scratch_dir, resolve_work_scratch_dir_for_project
+
+
+def _include_persisted_work_fallback_for_runtime_env() -> bool:
+    """Return whether persisted current-work fallback should be enabled.
+
+    Nested/session-scoped child processes (depth > 0) must not reacquire
+    global persisted current-work state when no scoped work is present.
+    """
+
+    return not is_nested_meridian_depth(current_meridian_depth())
 
 
 class RuntimeContext(BaseModel):
@@ -29,7 +39,9 @@ class RuntimeContext(BaseModel):
     @classmethod
     def from_environment(cls) -> Self:
         """Build context from MERIDIAN_* environment variables."""
-        resolved = ResolvedContext.from_environment()
+        resolved = ResolvedContext.from_environment(
+            include_persisted_work_fallback=_include_persisted_work_fallback_for_runtime_env()
+        )
 
         return cls(
             spawn_id=resolved.spawn_id,
@@ -73,4 +85,5 @@ def resolve_runtime_context(*, project_root: Path, runtime_root: Path) -> Resolv
     return ResolvedContext.from_environment(
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
+        include_persisted_work_fallback=_include_persisted_work_fallback_for_runtime_env(),
     )

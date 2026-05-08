@@ -27,8 +27,8 @@ def test_runtime_context_from_environment_delegates_to_resolved_context(
         kb_dir=Path("/repo/.meridian/kb"),
     )
 
-    def fake_from_environment(cls) -> ResolvedContext:
-        _ = cls
+    def fake_from_environment(cls, **kwargs: object) -> ResolvedContext:
+        _ = cls, kwargs
         return expected
 
     monkeypatch.setattr(ResolvedContext, "from_environment", classmethod(fake_from_environment))

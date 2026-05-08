@@ -73,6 +73,7 @@ class ResolvedContext:
         explicit_work_id: str | None = None,
         explicit_project_root: Path | None = None,
         explicit_runtime_root: Path | None = None,
+        include_persisted_work_fallback: bool = True,
         backend: ContextBackend | None = None,
         context_config: ContextConfig | None = None,
     ) -> Self:
@@ -113,7 +114,7 @@ class ResolvedContext:
 
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment
-        # > persisted active-work state.
+        # > optional persisted active-work state.
         work_id: str | None = None
         if explicit_work_id_raw:
             work_id = explicit_work_id_raw
@@ -121,7 +122,7 @@ class ResolvedContext:
             work_id = work_id_raw
         elif runtime_root is not None and chat_id_raw:
             work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
-        if work_id is None and runtime_root is not None:
+        if include_persisted_work_fallback and work_id is None and runtime_root is not None:
             work_id = backend_impl.get_persisted_active_work_id(runtime_root)
 
         project_paths = (

@@ -357,6 +357,8 @@ def _resolve_work_id(
     inherited_work_id = (runtime_context.work_id or "").strip()
     if inherited_work_id:
         return inherited_work_id
+    if runtime_context.is_nested:
+        return None
     return get_current_work_id(runtime_root)
 
 

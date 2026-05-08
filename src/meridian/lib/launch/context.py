@@ -128,6 +128,7 @@ class ChildEnvContext:
         project_paths: ProjectConfigPaths,
         runtime_root: Path,
         explicit_work_id: str | None = None,
+        include_persisted_work_fallback: bool = False,
     ) -> ChildEnvContext:
         resolved_project_root = project_paths.project_root.resolve()
         resolved_runtime_root = runtime_root.resolve()
@@ -137,6 +138,7 @@ class ChildEnvContext:
             explicit_work_id=normalized_explicit_work_id,
             explicit_project_root=resolved_project_root,
             explicit_runtime_root=resolved_runtime_root,
+            include_persisted_work_fallback=include_persisted_work_fallback,
             context_config=context_config,
         )
         parent_spawn_id = str(parent_ctx.spawn_id) if parent_ctx.spawn_id else None
@@ -159,7 +161,11 @@ class ChildEnvContext:
         repo_paths = resolve_project_paths(resolved_project_root)
         work_dir = (
             parent_ctx.work_dir
-            if parent_ctx.work_dir is not None and parent_ctx.work_id == work_id
+            if (
+                work_id is not None
+                and parent_ctx.work_dir is not None
+                and parent_ctx.work_id == work_id
+            )
             else resolve_work_scratch_dir_for_project(
                 resolved_project_root,
                 work_id,
@@ -662,12 +668,14 @@ def _resolve_active_work_dir(
     project_paths: ProjectConfigPaths,
     runtime_root: Path,
     explicit_work_id: str | None,
+    include_persisted_work_fallback: bool = True,
 ) -> Path | None:
     context_config = load_context_config(project_paths.project_root) or ContextConfig()
     return ResolvedContext.from_environment(
         explicit_work_id=explicit_work_id,
         explicit_project_root=project_paths.project_root,
         explicit_runtime_root=runtime_root,
+        include_persisted_work_fallback=include_persisted_work_fallback,
         context_config=context_config,
     ).work_dir
 
@@ -678,15 +686,21 @@ def build_child_runtime_env_overrides(
     runtime_root: Path,
     child_spawn_id: str,
     work_id: str | None = None,
+    include_persisted_work_fallback: bool = False,
     increment_depth: bool = True,
     additional_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build child runtime env overrides shared by launch/chat callers."""
+    """Build child runtime env overrides shared by launch/chat callers.
+
+    ``include_persisted_work_fallback`` should only be enabled for top-level
+    PRIMARY launches that intentionally inherit global current-work state.
+    """
 
     runtime_ctx = ChildEnvContext.from_environment(
         project_paths=project_paths,
         runtime_root=runtime_root,
         explicit_work_id=work_id,
+        include_persisted_work_fallback=include_persisted_work_fallback,
     )
     runtime_overrides = runtime_ctx.child_context(
         child_spawn_id=child_spawn_id,
@@ -787,10 +801,14 @@ def compile_prepared_policy_surface(
 
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     if active_work_dir is None:
+        include_persisted_work_fallback = (
+            runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+        )
         active_work_dir = _resolve_active_work_dir(
             project_paths=project_paths,
             runtime_root=runtime_root,
             explicit_work_id=explicit_work_id,
+            include_persisted_work_fallback=include_persisted_work_fallback,
         )
 
     return PreparedPolicySurface(
@@ -1404,7 +1422,8 @@ def bind_launch_context(
             projected_spec=spec,
         )
 
-    effective_work_id = _normalize_explicit_work_id(
+    is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    requested_work_id = _normalize_explicit_work_id(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
@@ -1412,8 +1431,12 @@ def bind_launch_context(
         project_paths=project_paths,
         runtime_root=runtime_root,
         child_spawn_id=bindings.spawn_id,
-        work_id=effective_work_id,
-        increment_depth=runtime.composition_surface != LaunchCompositionSurface.PRIMARY,
+        work_id=requested_work_id,
+        include_persisted_work_fallback=is_primary_launch,
+        increment_depth=not is_primary_launch,
+    )
+    effective_work_id = (
+        child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
