@@ -31,6 +31,9 @@ from meridian.plugin_api import HookContext as PluginHookContext
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
+    from meridian.lib.service_context import ApplicationContext
+
 
 class _HookRegistryLike(Protocol):
     def get_hooks_for_event(self, event: HookEventName) -> list[Hook]:
@@ -60,17 +63,62 @@ class HookDispatcher(LifecycleHook):
         project_root: Path,
         runtime_root: Path,
         *,
+        authority: RuntimeAuthoritySnapshot | None = None,
         registry: _HookRegistryLike | None = None,
         interval_tracker: _IntervalTrackerLike | None = None,
         external_runner: _ExternalRunnerLike | None = None,
         builtin_hooks: Mapping[str, BuiltinHook] | None = None,
     ) -> None:
-        self._project_root = project_root.expanduser().resolve()
-        self._runtime_root = runtime_root.expanduser().resolve()
-        self._registry = registry or HookRegistry(self._project_root)
+        if authority is not None:
+            self._project_root = authority.project_root.expanduser().resolve()
+            if authority.runtime_root is None:
+                raise ValueError("Hook dispatcher authority is missing runtime_root.")
+            self._runtime_root = authority.runtime_root.expanduser().resolve()
+            self._authority = authority.model_copy(
+                update={
+                    "project_root": self._project_root,
+                    "runtime_root": self._runtime_root,
+                }
+            )
+        else:
+            self._project_root = project_root.expanduser().resolve()
+            self._runtime_root = runtime_root.expanduser().resolve()
+            self._authority = None
+        self._registry = registry or HookRegistry(
+            self._project_root,
+            authority=self._authority,
+        )
         self._interval_tracker = interval_tracker or IntervalTracker(self._runtime_root)
         self._external_runner = external_runner or ExternalHookRunner(self._project_root)
         self._builtin_hooks = builtin_hooks or BUILTIN_HOOKS
+
+    @classmethod
+    def from_application_context(
+        cls,
+        context: ApplicationContext,
+        *,
+        registry: _HookRegistryLike | None = None,
+        interval_tracker: _IntervalTrackerLike | None = None,
+        external_runner: _ExternalRunnerLike | None = None,
+        builtin_hooks: Mapping[str, BuiltinHook] | None = None,
+    ) -> HookDispatcher:
+        """Build a dispatcher from shared application context authority."""
+
+        project_root = context.project_root
+        runtime_root = context.runtime_root
+        if project_root is None:
+            raise ValueError("Hook dispatcher context is missing project_root.")
+        if runtime_root is None:
+            raise ValueError("Hook dispatcher context is missing runtime_root.")
+        return cls(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            authority=context.authority,
+            registry=registry,
+            interval_tracker=interval_tracker,
+            external_runner=external_runner,
+            builtin_hooks=builtin_hooks,
+        )
 
     def on_event(self, event: LifecycleEvent) -> None:
         """LifecycleHook protocol implementation."""
@@ -293,6 +341,22 @@ class HookDispatcher(LifecycleHook):
         return policy != "fail"
 
     def _build_context(self, event: LifecycleEvent) -> HookContext:
+        authority = self._authority
+        if authority is not None:
+            return HookContext.from_authority(
+                authority=authority,
+                event_name=cast("HookEventName", event.event_type),
+                event_id=event.event_id,
+                timestamp=event.timestamp.isoformat(),
+                spawn_id=event.spawn_id,
+                spawn_status=_normalize_spawn_status(event.status),
+                spawn_agent=event.agent,
+                spawn_model=event.model,
+                spawn_duration_secs=event.duration_secs,
+                spawn_cost_usd=event.total_cost_usd,
+                work_id=event.work_id,
+            )
+
         return HookContext.from_roots(
             project_root=self._project_root,
             runtime_root=self._runtime_root,

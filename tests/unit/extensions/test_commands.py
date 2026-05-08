@@ -242,6 +242,40 @@ def test_extension_command_services_build_spawn_service_uses_shared_factory(
     assert isinstance(spawn_service, _FakeService)
 
 
+def test_extension_command_services_resolve_project_and_runtime_from_authority(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+
+    services = build_extension_command_services(authority=prepared.authority)
+
+    assert services.resolved_project_root() == project_root
+    assert services.resolved_runtime_root() == prepared.runtime_root
+    assert services.require_project_root() == project_root
+    assert services.require_runtime_root() == prepared.runtime_root
+
+
+def test_extension_command_services_prefer_application_roots_over_overrides(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    application = build_extension_entrypoint(prepared)
+    wrong_runtime = tmp_path / "wrong-runtime"
+
+    services = build_extension_command_services(
+        application=application,
+        runtime_root=wrong_runtime,
+    )
+
+    assert services.resolved_project_root() == application.context.project_root
+    assert services.resolved_runtime_root() == application.context.runtime_root
+    assert services.require_runtime_root() == application.context.runtime_root
+
+
 @pytest.mark.asyncio
 async def test_get_spawn_stats_returns_spawn_stats_output_compatible_data(
     monkeypatch: pytest.MonkeyPatch,

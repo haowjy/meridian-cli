@@ -45,17 +45,18 @@ async def archive_spawn_handler(
     coordination (SEAM-5).
     """
     _ = context
-    runtime_root = services.application.context.runtime_root or services.runtime_root
-    if runtime_root is None:
+    try:
+        services.require_runtime_root()
+        spawn_service = services.build_spawn_service()
+    except ValueError as exc:
         return ExtensionErrorResult(
             code="service_unavailable",
-            message="runtime_root not available",
+            message=str(exc),
         )
 
     spawn_id = args["spawn_id"]
 
     try:
-        spawn_service = services.build_spawn_service()
         was_new = await spawn_service.archive(spawn_id)
         return ExtensionJSONResult(
             payload={
@@ -104,13 +105,12 @@ async def get_spawn_stats_handler(
     """Wrap spawn_stats operation output for extension command surface."""
 
     _ = context
-    project_root = services.application.context.project_root
-    if project_root is None and services.authority is not None:
-        project_root = services.authority.project_root
-    if project_root is None:
+    try:
+        project_root = services.require_project_root()
+    except ValueError as exc:
         return ExtensionErrorResult(
             code="service_unavailable",
-            message="project_root not available",
+            message=str(exc),
         )
 
     from meridian.lib.ops.spawn.api import spawn_stats_sync

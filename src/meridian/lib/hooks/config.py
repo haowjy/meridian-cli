@@ -7,9 +7,10 @@ import tomllib
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast, get_args
+from typing import TYPE_CHECKING, cast, get_args
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
+from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.config.settings import normalize_hooks_array
 from meridian.lib.hooks.builtin_registry import (
@@ -26,6 +27,9 @@ from meridian.lib.hooks.types import (
     SpawnStatus,
 )
 
+if TYPE_CHECKING:
+    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
+
 HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("builtin", "context", "user", "project", "local")
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
@@ -41,6 +45,42 @@ class HooksConfig:
     """Resolved hook config after source layering and override semantics."""
 
     hooks: tuple[Hook, ...]
+
+
+@dataclass(frozen=True)
+class HookConfigPaths:
+    """Shared authority paths for hook config source layering."""
+
+    project_root: Path
+    user_config: Path | None
+    project_config: Path | None
+    local_config: Path
+
+
+def _resolve_hook_config_paths(
+    project_root: Path,
+    *,
+    user_config: Path | None = None,
+    authority: RuntimeAuthoritySnapshot | None = None,
+) -> HookConfigPaths:
+    if authority is not None:
+        resolved_project_root = authority.project_root.expanduser().resolve()
+        project_paths = authority.project_config_paths
+    else:
+        resolved_project_root = project_root.expanduser().resolve()
+        project_paths = resolve_project_config_paths(resolved_project_root)
+
+    resolved_user_config = resolve_user_config_path(user_config)
+    project_config = resolve_project_config_state(
+        resolved_project_root,
+        project_paths=project_paths,
+    ).path
+    return HookConfigPaths(
+        project_root=resolved_project_root,
+        user_config=resolved_user_config,
+        project_config=project_config,
+        local_config=resolved_project_root / _LOCAL_CONFIG_FILENAME,
+    )
 
 
 def _read_toml(path: Path) -> dict[str, object]:
@@ -281,24 +321,30 @@ def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:
     return tuple(effective.values())
 
 
-def load_hooks_config(project_root: Path, *, user_config: Path | None = None) -> HooksConfig:
+def load_hooks_config(
+    project_root: Path,
+    *,
+    user_config: Path | None = None,
+    authority: RuntimeAuthoritySnapshot | None = None,
+) -> HooksConfig:
     """Load hook config with precedence: builtin < context < user < project < local."""
 
-    resolved_project_root = project_root.expanduser().resolve()
-    resolved_user_config = resolve_user_config_path(user_config)
-    project_config = resolve_project_config_state(resolved_project_root).path
-    local_config = resolved_project_root / _LOCAL_CONFIG_FILENAME
+    paths = _resolve_hook_config_paths(
+        project_root,
+        user_config=user_config,
+        authority=authority,
+    )
 
     hooks: list[Hook] = []
     hooks.extend(_hooks_from_payload({}, source="builtin"))
 
-    if resolved_user_config is not None:
-        hooks.extend(_hooks_from_payload(_read_toml(resolved_user_config), source="user"))
+    if paths.user_config is not None:
+        hooks.extend(_hooks_from_payload(_read_toml(paths.user_config), source="user"))
 
-    if project_config is not None:
-        hooks.extend(_hooks_from_payload(_read_toml(project_config), source="project"))
+    if paths.project_config is not None:
+        hooks.extend(_hooks_from_payload(_read_toml(paths.project_config), source="project"))
 
-    if local_config.is_file():
-        hooks.extend(_hooks_from_payload(_read_toml(local_config), source="local"))
+    if paths.local_config.is_file():
+        hooks.extend(_hooks_from_payload(_read_toml(paths.local_config), source="local"))
 
     return HooksConfig(hooks=_apply_name_overrides(tuple(hooks)))

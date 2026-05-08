@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.hooks.config import load_hooks_config
+from meridian.lib.ops.runtime import resolve_project_authority
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -241,3 +242,28 @@ def test_load_hooks_config_explicit_builtin_works_with_context_settings_present(
     assert hook.auto_registered is False
     assert hook.interval == "5m"
     assert hook.remote == "https://github.com/acme/project.git"
+
+
+def test_load_hooks_config_prefers_shared_authority_paths(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    authority_root = tmp_path / "authority-repo"
+    authority_root.mkdir()
+    authority = resolve_project_authority(authority_root)
+    authority.project_config_paths.meridian_toml.write_text(
+        "[[hooks]]\n"
+        'name = "authority-hook"\n'
+        'event = "spawn.finalized"\n'
+        'command = "./authority.sh"\n',
+        encoding="utf-8",
+    )
+
+    config = load_hooks_config(
+        project_root,
+        user_config=_empty_user_config(tmp_path),
+        authority=authority,
+    )
+
+    assert len(config.hooks) == 1
+    assert config.hooks[0].name == "authority-hook"
+    assert config.hooks[0].command == "./authority.sh"
+    assert config.hooks[0].source == "project"

@@ -178,6 +178,42 @@ class ExtensionCommandServices:
     application: ExtensionEntryPoint = field(default_factory=ExtensionEntryPoint)
     shared: ExtensionSharedServices = field(default_factory=ExtensionSharedServices)
 
+    def resolved_project_root(self) -> Path | None:
+        """Resolve project root from shared application/authority inputs."""
+
+        project_root = self.application.context.project_root
+        if project_root is not None:
+            return project_root
+        if self.authority is not None:
+            return self.authority.project_root
+        return None
+
+    def resolved_runtime_root(self) -> Path | None:
+        """Resolve runtime root from shared application/authority inputs."""
+
+        runtime_root = self.application.context.runtime_root
+        if runtime_root is not None:
+            return runtime_root
+        if self.authority is not None:
+            return self.authority.runtime_root
+        return self.runtime_root
+
+    def require_project_root(self) -> Path:
+        """Return project root or raise if authority is unavailable."""
+
+        project_root = self.resolved_project_root()
+        if project_root is None:
+            raise ValueError("project_root not available")
+        return project_root
+
+    def require_runtime_root(self) -> Path:
+        """Return runtime root or raise if authority is unavailable."""
+
+        runtime_root = self.resolved_runtime_root()
+        if runtime_root is None:
+            raise ValueError("runtime_root not available")
+        return runtime_root
+
     def build_spawn_service(self) -> SpawnApplicationService:
         """Build spawn service from shared application/service authority."""
 
@@ -207,10 +243,15 @@ def build_extension_command_services(
         services=ApplicationServices(lifecycle=lifecycle),
     )
     resolved_authority = authority or resolved_application.context.authority
+    resolved_runtime_root = (
+        resolved_application.context.runtime_root
+        or (resolved_authority.runtime_root if resolved_authority is not None else None)
+        or runtime_root
+    )
 
     return ExtensionCommandServices(
         authority=resolved_authority,
-        runtime_root=runtime_root or resolved_application.context.runtime_root,
+        runtime_root=resolved_runtime_root,
         meridian_dir=meridian_dir,
         application=resolved_application,
         shared=shared or ExtensionSharedServices(),

@@ -17,6 +17,8 @@ from meridian.lib.hooks.types import (
     HookWhen,
     SpawnStatus,
 )
+from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
+from meridian.lib.service_context import ApplicationContext
 
 
 class StubRegistry:
@@ -45,9 +47,11 @@ class StubExternalRunner:
     def __init__(self, *, results: dict[str, HookResult | Exception]) -> None:
         self._results = results
         self.calls: list[tuple[str, int]] = []
+        self.contexts: list[HookContext] = []
 
     def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult:
         self.calls.append((hook.name, timeout_secs))
+        self.contexts.append(context)
         result = self._results[hook.name]
         if isinstance(result, Exception):
             raise result
@@ -233,6 +237,50 @@ def test_dispatch_runs_hook_without_when_filters_on_matching_event(tmp_path: Pat
 
     assert result[0].outcome == "success"
     assert runner.calls == [("notify", 60)]
+
+
+def test_dispatch_builds_context_from_shared_authority(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    authority = resolve_runtime_authority_for_write(project_root)
+    hook = _hook("notify")
+    runner = StubExternalRunner(results={"notify": _result("notify", "spawn.finalized")})
+    dispatcher = HookDispatcher(
+        tmp_path / "other-project",
+        tmp_path / "other-runtime",
+        authority=authority,
+        registry=StubRegistry((hook,)),
+        interval_tracker=StubIntervalTracker(),
+        external_runner=runner,
+    )
+
+    event = LifecycleEvent(
+        event_id=uuid4(),
+        event_type="spawn.finalized",
+        timestamp=datetime.now(UTC),
+        spawn_id="p123",
+        parent_id=None,
+        chat_id="chat-1",
+        work_id=None,
+        agent="reviewer",
+        model="gpt-5.4",
+        harness="codex",
+        status="succeeded",
+        origin="runner",
+    )
+
+    dispatcher.on_event(event)
+
+    assert runner.calls == [("notify", 60)]
+    assert runner.contexts[0].project_root == authority.project_root.as_posix()
+    assert runner.contexts[0].runtime_root == authority.runtime_root.as_posix()
+
+
+def test_dispatch_from_application_context_requires_runtime_root(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="runtime_root"):
+        HookDispatcher.from_application_context(
+            ApplicationContext(project_root=tmp_path, runtime_root=None)
+        )
 
 
 def test_dispatch_on_event_normalizes_lifecycle_terminal_status(tmp_path: Path) -> None:
