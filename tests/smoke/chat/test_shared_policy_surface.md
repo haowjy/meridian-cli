@@ -20,8 +20,13 @@ fallback references instead of treating the smoke as passed:
 - `tests/integration/chat/test_chat_cli.py::test_chat_policy_snapshot_rejects_incompatible_explicit_harness`
 - `tests/integration/chat/test_chat_cli.py::test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan`
 - `tests/integration/chat/test_chat_cli.py::test_chat_management_subcommands_reject_launch_policy_flags`
-- `tests/unit/chat/test_policy_runtime.py::test_chat_runtime_persists_policy_snapshot_on_create_before_first_acquire`
-- `tests/unit/chat/test_policy_runtime.py::test_chat_runtime_recovery_uses_persisted_snapshot_not_new_runtime_default`
+- `tests/integration/chat/test_chat_cli.py::test_chat_cli_builds_runtime_with_factory_inputs`
+- `tests/integration/chat/test_concurrency_recovery.py::test_restart_recovery_restores_non_closed_chat_to_idle_and_emits_runtime_error`
+
+Coverage gap after Phase 8.3 unit-test removal: no automated test now directly
+asserts "persist policy snapshot before first acquire" or "recovery reuses
+persisted snapshot over new runtime defaults." Treat sections 3-4 in this smoke
+as required evidence for that seam.
 
 ## Disposable setup
 
@@ -187,7 +192,8 @@ of the repo:
   prompt inputs rather than reloading edited source files
 
 If you cannot safely run that stronger source-drift probe live, rely on the
-policy snapshot fallback tests listed above.
+fallback seams listed above and record that persisted-snapshot reuse remains a
+manual smoke-only check.
 
 ## 5. Management subcommands reject launch-policy flags
 
