@@ -71,12 +71,6 @@ def parse_segment_owner(path: Path) -> SegmentOwner | None:
     return None
 
 
-def parse_segment_pid(path: Path) -> int | None:
-    """Deprecated compatibility wrapper for compound segment PID parsing."""
-    owner = parse_segment_owner(path)
-    return owner.pid if owner is not None else None
-
-
 @dataclass(frozen=True)
 class RetentionStats:
     """Summary of a retention scan or cleanup pass."""

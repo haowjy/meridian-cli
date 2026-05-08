@@ -25,7 +25,6 @@ from meridian.lib.launch.policies import (
     ResolvedLaunchPolicy,
     SurfacePolicyInput,
     _policy_warnings,
-    _resolve_model_policy_overrides,
     match_model_policy,
     resolve_launch_policy,
     resolve_policy_fields,
@@ -108,7 +107,7 @@ def resolve_policies(*, project_root: Path, **kwargs: Any):
     )
 
 
-def test_resolve_model_policy_overrides_resolves_full_runtime_policy_fields() -> None:
+def test_resolve_policy_fields_resolves_full_runtime_policy_fields() -> None:
     resolved = resolve_policy_fields(
         RuntimeOverrides(
             model="user-model",
@@ -135,19 +134,6 @@ def test_resolve_model_policy_overrides_resolves_full_runtime_policy_fields() ->
     assert resolved.approval == "auto"
     assert resolved.effort == "medium"
     assert resolved.autocompact == 70
-
-
-def test_resolve_model_policy_overrides_legacy_wrapper_preserves_named_signature() -> None:
-    resolved = _resolve_model_policy_overrides(
-        explicit_user_overrides=RuntimeOverrides(),
-        profile_model_overrides=RuntimeOverrides(effort="high"),
-        profile_defaults=RuntimeOverrides(effort="medium"),
-        config_overrides=RuntimeOverrides(effort="low"),
-        alias_defaults=RuntimeOverrides(effort="xhigh"),
-    )
-
-    assert resolved.effort == "high"
-
 
 def test_resolve_policy_fields_accepts_tier_tuple() -> None:
     resolved = resolve_policy_fields(

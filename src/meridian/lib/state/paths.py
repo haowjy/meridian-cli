@@ -1,7 +1,6 @@
 """Filesystem path helpers for file-authoritative Meridian state."""
 
 import tomllib
-import warnings
 from pathlib import Path
 from typing import Self, cast
 
@@ -467,18 +466,6 @@ def resolve_kb_dir(project_root: Path) -> Path:
     """Return `.meridian/kb/` for a repository root."""
 
     return resolve_project_paths(project_root).kb_dir
-
-
-def resolve_fs_dir(project_root: Path) -> Path:
-    """Deprecated alias for :func:`resolve_kb_dir`."""
-
-    warnings.warn(
-        "resolve_fs_dir() is deprecated; use resolve_kb_dir() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_kb_dir(project_root)
-
 
 def resolve_work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
     """Return the runtime-root-local scratch directory for a work item."""

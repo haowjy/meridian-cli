@@ -66,15 +66,8 @@ Individual checks:
 ```bash
 uv run ruff check .
 uv run pytest-llm
-uv run architecture-check
 uv run pyright
 ```
-
-Architecture/source-drift checks intentionally live in their own lane. Run
-`uv run architecture-check` separately from behavioral pytest so failures are
-high-signal and easy to triage. This lane includes durable platform-boundary
-drift enforcement (`PLAT-04`) so new OS-specific branches/imports stay inside
-approved adapter modules.
 
 ## Release
 

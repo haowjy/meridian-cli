@@ -313,21 +313,6 @@ def _state_requirement_for_argv(argv: Sequence[str]) -> StateRequirement | None:
     return descriptor.state_requirement
 
 
-def should_startup_bootstrap(argv: Sequence[str]) -> bool:
-    """Return whether legacy startup callers should prepare write runtime state.
-
-    Kept for compatibility with older callers. New startup flow should use the
-    catalog descriptor's ``state_requirement`` directly so read/write bootstrap
-    policy stays in one place.
-    """
-
-    state_requirement = _state_requirement_for_argv(argv)
-    return state_requirement in {
-        StateRequirement.PROJECT_WRITE,
-        StateRequirement.RUNTIME_WRITE,
-    }
-
-
 def maybe_bootstrap_runtime_state(
     argv: Sequence[str],
     *,

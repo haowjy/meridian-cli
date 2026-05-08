@@ -45,7 +45,6 @@ Issues = "https://github.com/meridian-flow/meridian-cli/issues"
 [project.scripts]
 meridian = "meridian.cli.entrypoint:main"
 pyright = "pyright.cli:entrypoint"
-architecture-check = "meridian.dev.architecture_checks:main"
 pytests = "meridian.dev.pytests:main"
 pytest-llm = "meridian.dev.pytests:main"
 

@@ -119,7 +119,6 @@ graph TB
 uv sync --extra dev
 uv run ruff check .
 uv run pytest-llm
-uv run architecture-check
 uv run pyright
 ```
 

@@ -447,27 +447,8 @@ def _require_policy_tier(
     if isinstance(tier, tuple):
         raise TypeError(
             "resolve_policy_fields() accepts a tier tuple only as its sole argument."
-        )
-    return tier
-
-
-def _resolve_model_policy_overrides(
-    *,
-    explicit_user_overrides: RuntimeOverrides,
-    profile_model_overrides: RuntimeOverrides,
-    profile_defaults: RuntimeOverrides,
-    config_overrides: RuntimeOverrides,
-    alias_defaults: RuntimeOverrides,
-) -> RuntimeOverrides:
-    """Deprecated compatibility wrapper for the legacy five-tier policy helper."""
-
-    return resolve_policy_fields(
-        explicit_user_overrides,
-        profile_model_overrides,
-        profile_defaults,
-        config_overrides,
-        alias_defaults,
     )
+    return tier
 
 
 def _log_unmatched_profile_policy_defaults(
@@ -883,7 +864,6 @@ __all__ = [
     "ResolvedLaunchPolicy",
     "ResolvedPolicies",
     "SurfacePolicyInput",
-    "_resolve_model_policy_overrides",
     "match_model_policy",
     "resolve_harness_routing",
     "resolve_launch_policy",
