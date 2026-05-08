@@ -9,6 +9,7 @@ import pytest
 
 from meridian.lib.core.telemetry import StartupPhase
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness import ensure_bootstrap
 from meridian.lib.harness.connections import codex_ws
 from meridian.lib.harness.connections.base import (
     AutoAcceptHandler,
@@ -18,6 +19,7 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.projections.project_codex_common import (
     HarnessCapabilityMismatch,
     map_codex_approval_policy,
@@ -37,6 +39,11 @@ from meridian.lib.safety.permissions import (
 CODEX_TURN_STARTED_EVENT = "turn/started"
 CODEX_TURN_COMPLETED_EVENT = "turn/completed"
 CODEX_THREAD_ACTIVITY_EVENTS = ("thread/start", "thread/started")
+
+
+@pytest.fixture(autouse=True)
+def _bootstrap_harness_registry() -> None:
+    ensure_bootstrap()
 
 
 class _FakeProcess:
@@ -545,13 +552,14 @@ async def test_codex_ws_confirm_mode_rejects_only_when_handler_has_no_runtime_hi
 
 
 @pytest.mark.asyncio
-async def test_codex_ws_managed_primary_uses_interactive_handler() -> None:
+async def test_codex_ws_managed_primary_uses_permission_broker(tmp_path: Path) -> None:
     connection = process_runner._create_managed_primary_connection(
         connection_factory=codex_ws.CodexConnection,
         harness_contract=get_default_harness_registry().get_contract(HarnessId.CODEX),
+        spawn_dir=tmp_path / "spawn",
     )
     assert isinstance(connection, codex_ws.CodexConnection)
-    assert isinstance(connection._request_handler, InteractiveHandler)
+    assert isinstance(connection._request_handler, PermissionBroker)
     await connection._request_handler.handle_request(
         connection,
         HarnessRequest(

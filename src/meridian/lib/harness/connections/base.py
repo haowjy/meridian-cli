@@ -276,10 +276,11 @@ class HarnessConnection(Generic[SpecT], ABC):
         *,
         policy: PrimaryRuntimeRequestPolicy,
         event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        request_handler: ServerRequestHandler | None = None,
     ) -> None:
         """Configure runtime-request handling for one primary-session launch."""
 
-        _ = event_sink
+        _ = event_sink, request_handler
         if policy is PrimaryRuntimeRequestPolicy.NONE:
             return
         raise NotImplementedError(

@@ -37,6 +37,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
@@ -467,6 +468,7 @@ def _create_managed_primary_connection(
     *,
     connection_factory: Callable[..., HarnessConnection[Any]],
     harness_contract: HarnessContract,
+    spawn_dir: Path,
 ) -> HarnessConnection[Any]:
     """Build one managed-primary connection configured from harness contract data."""
 
@@ -486,9 +488,17 @@ def _create_managed_primary_connection(
         async def _event_sink(event: HarnessEvent) -> None:
             await connection_ref["connection"].inject_runtime_event(event)
 
+        request_handler = None
+        if connection.harness_id is HarnessId.CODEX:
+            request_handler = PermissionBroker(
+                spawn_dir=spawn_dir,
+                event_sink=_event_sink,
+            )
+
         connection.configure_primary_runtime_requests(
             policy=policy,
             event_sink=_event_sink,
+            request_handler=request_handler,
         )
         return connection
 
@@ -519,6 +529,7 @@ async def _run_primary_attach(
         connection = _create_managed_primary_connection(
             connection_factory=connection_factory,
             harness_contract=harness_contract,
+            spawn_dir=spawn_dir,
         )
         config = passthrough.build_config(
             spawn_id=spawn_id,

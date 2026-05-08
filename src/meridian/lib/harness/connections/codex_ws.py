@@ -396,6 +396,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         *,
         policy: PrimaryRuntimeRequestPolicy,
         event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        request_handler: ServerRequestHandler | None = None,
     ) -> None:
         if policy in (
             PrimaryRuntimeRequestPolicy.NONE,
@@ -404,6 +405,9 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             self._request_handler = AutoAcceptHandler()
             return
         if policy is PrimaryRuntimeRequestPolicy.SURFACE_EVENTS:
+            if request_handler is not None:
+                self._request_handler = request_handler
+                return
             if event_sink is None:
                 raise ValueError("Codex primary runtime event surfacing requires an event sink")
             self._request_handler = InteractiveHandler(event_sink)
@@ -483,8 +487,16 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         result: dict[str, object] = {"decision": decision}
         if payload:
             result.update(payload)
-        await self._send_jsonrpc_result(jsonrpc_id, result)
+        try:
+            await self._send_jsonrpc_result(jsonrpc_id, result)
+        except Exception as exc:
+            await self._notify_request_failed(request_id, error=str(exc))
+            raise
         self._hitl_requests.pop(request_id, None)
+        await self._notify_request_resolved(
+            request_id,
+            resolution={"decision": decision, **(payload or {})},
+        )
 
     async def respond_user_input(
         self,
@@ -494,8 +506,16 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         jsonrpc_id = self._hitl_requests.get(request_id)
         if jsonrpc_id is None:
             raise ValueError(f"No pending Codex HITL request: {request_id}")
-        await self._send_jsonrpc_result(jsonrpc_id, {"answers": answers})
+        try:
+            await self._send_jsonrpc_result(jsonrpc_id, {"answers": answers})
+        except Exception as exc:
+            await self._notify_request_failed(request_id, error=str(exc))
+            raise
         self._hitl_requests.pop(request_id, None)
+        await self._notify_request_resolved(
+            request_id,
+            resolution={"answers": answers},
+        )
 
     async def _connect_with_retry(self, ws_url: str, timeout_seconds: float) -> Any:
         loop = asyncio.get_running_loop()
@@ -658,7 +678,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                 )
         finally:
             self._fail_pending_requests(RuntimeError("Codex websocket closed"))
-            self._clear_stale_hitl_requests(reason="websocket_closed")
+            await self._clear_stale_hitl_requests(reason="websocket_closed")
             await self._event_queue.put(None)
 
     async def _cleanup_resources(self, *, mark_stopped: bool) -> None:
@@ -682,7 +702,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             self._process = None
 
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
-        self._clear_stale_hitl_requests(reason="connection_stopped")
+        await self._clear_stale_hitl_requests(reason="connection_stopped")
         self._current_turn_id = None
         self._thread_id = None
         self._cancel_requested = False
@@ -846,7 +866,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         raw_text: str,
     ) -> None:
         if method == "serverRequest/resolved":
-            self._resolve_server_request(payload)
+            await self._resolve_server_request(payload)
         self._update_turn_state(method=method, payload=payload)
         await self._event_queue.put(
             HarnessEvent(
@@ -857,22 +877,77 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             )
         )
 
-    def _resolve_server_request(self, payload: dict[str, object]) -> None:
+    async def _resolve_server_request(self, payload: dict[str, object]) -> None:
         resolved_request_id = _extract_server_request_id(payload)
         if resolved_request_id is None:
             return
-        self._hitl_requests.pop(resolved_request_id, None)
+        if self._hitl_requests.pop(resolved_request_id, None) is None:
+            return
+        await self._notify_request_resolved(
+            resolved_request_id,
+            resolution={"source": "serverRequest/resolved"},
+        )
 
-    def _clear_stale_hitl_requests(self, *, reason: str) -> None:
+    async def _clear_stale_hitl_requests(self, *, reason: str) -> None:
         pending_count = len(self._hitl_requests)
         if pending_count == 0:
             return
+        stale_ids = list(self._hitl_requests.keys())
         logger.debug(
             "Dropping %d stale Codex HITL request(s) during %s",
             pending_count,
             reason,
         )
         self._hitl_requests = {}
+        await self._notify_requests_cancelled(stale_ids, reason=reason)
+
+    async def _notify_request_resolved(
+        self,
+        request_id: str,
+        *,
+        resolution: dict[str, object] | None = None,
+    ) -> None:
+        callback = getattr(self._request_handler, "on_request_resolved", None)
+        if callback is None:
+            return
+        try:
+            await cast(
+                "Callable[..., Awaitable[None]]",
+                callback,
+            )(request_id, resolution=resolution)
+        except Exception:
+            logger.warning(
+                "Codex request handler failed to persist resolved state for request %s",
+                request_id,
+                exc_info=True,
+            )
+
+    async def _notify_request_failed(self, request_id: str, *, error: str) -> None:
+        callback = getattr(self._request_handler, "on_request_failed", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
+        except Exception:
+            logger.warning(
+                "Codex request handler failed to persist failure state for request %s",
+                request_id,
+                exc_info=True,
+            )
+
+    async def _notify_requests_cancelled(self, request_ids: list[str], *, reason: str) -> None:
+        if not request_ids:
+            return
+        callback = getattr(self._request_handler, "on_requests_cancelled", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(request_ids, reason=reason)
+        except Exception:
+            logger.warning(
+                "Codex request handler failed to persist cancelled request state",
+                exc_info=True,
+            )
 
     def _fail_pending_requests(self, error: Exception) -> None:
         for request_id in list(self._pending_requests.keys()):
