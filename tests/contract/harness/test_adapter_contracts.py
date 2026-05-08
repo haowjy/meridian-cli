@@ -10,7 +10,9 @@ from meridian.lib.harness import HARNESS_EXTENSION_TOUCHPOINTS, ensure_bootstrap
 from meridian.lib.harness.adapter import (
     BootstrapMode,
     ForkMaterializationMode,
+    PrelaunchBootstrapMode,
     RuntimeHitlMode,
+    SessionSeedMode,
 )
 from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
@@ -41,6 +43,12 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
     )
     assert claude.bootstrap.mode.value == "subprocess_only"
     assert claude.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    assert claude.bootstrap.primary_session_seed_mode is SessionSeedMode.PROJECTED_ARGS
+    assert claude.bootstrap.streaming_session_seed_mode is SessionSeedMode.PROJECTED_ARGS
+    assert (
+        claude.bootstrap.prelaunch_bootstrap_mode
+        is PrelaunchBootstrapMode.ENV_OVERLAY_AND_SESSION_ACCESS
+    )
     assert claude.bootstrap.observer_controller is None
 
     for harness_id in (HarnessId.CODEX, HarnessId.OPENCODE):
@@ -53,6 +61,9 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
             TerminalSurfaceMode.PTY_MEDIATED
         )
         assert contract.bootstrap.mode.value == "managed_primary_attach"
+        assert contract.bootstrap.primary_session_seed_mode is SessionSeedMode.NONE
+        assert contract.bootstrap.streaming_session_seed_mode is SessionSeedMode.NONE
+        assert contract.bootstrap.prelaunch_bootstrap_mode is PrelaunchBootstrapMode.NONE
         assert contract.bootstrap.observer_controller is not None
         assert contract.transport.observer_controller_required is True
     assert (

@@ -17,10 +17,12 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.harness import claude as claude_harness
 from meridian.lib.harness.adapter import ForkMaterializationMode
 from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.composition import (
     ProjectedContent,
@@ -1191,7 +1193,7 @@ async def test_launch_prepared_spawn_claude_overlay_updates_env_metadata_and_see
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
         env=MappingProxyType({"BASE": "1"}),
     )
@@ -1279,7 +1281,7 @@ async def test_launch_prepared_spawn_claude_overlay_updates_env_metadata_and_see
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -1290,7 +1292,12 @@ async def test_launch_prepared_spawn_claude_overlay_updates_env_metadata_and_see
         fake_update_session_claude_config_dir,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        fake_update_session_claude_config_dir,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "ensure_claude_session_accessible",
         fake_seed_session_access,
     )
@@ -1343,7 +1350,7 @@ async def test_launch_prepared_spawn_claude_overlay_fallback_root_seeds_explicit
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
         env=MappingProxyType({"BASE": "1"}),
     )
@@ -1414,7 +1421,7 @@ async def test_launch_prepared_spawn_claude_overlay_fallback_root_seeds_explicit
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -1425,7 +1432,12 @@ async def test_launch_prepared_spawn_claude_overlay_fallback_root_seeds_explicit
         fake_update_session,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "ensure_claude_session_accessible",
         fake_seed_session_access,
     )
@@ -1476,7 +1488,7 @@ async def test_launch_prepared_spawn_claude_overlay_default_root_fallback_ignore
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
         env=MappingProxyType({"CLAUDE_CONFIG_DIR": parent_overlay.as_posix(), "BASE": "1"}),
     )
@@ -1578,12 +1590,12 @@ async def test_launch_prepared_spawn_claude_overlay_default_root_fallback_ignore
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "resolve_claude_overlay_roots",
         fake_resolve_claude_overlay_roots,
     )
@@ -1594,7 +1606,12 @@ async def test_launch_prepared_spawn_claude_overlay_default_root_fallback_ignore
         fake_update_session,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "ensure_claude_session_accessible",
         fake_seed_session_access,
     )
@@ -1647,7 +1664,7 @@ async def test_launch_prepared_spawn_claude_overlay_keeps_runtime_override_prove
     )
     launch_context_with_env = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
         env=MappingProxyType(
             {
@@ -1676,7 +1693,12 @@ async def test_launch_prepared_spawn_claude_overlay_keeps_runtime_override_prove
         ),
     )
     handoff = PreparedExecutionHandoff(
-        resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
+        resolved_request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="claude",
+            session=SessionRequest(requested_harness_session_id="session-1"),
+        ),
         launch_context=launch_context_with_env,
         session_context=_SessionExecutionContext(
             chat_id="c1",
@@ -1708,7 +1730,7 @@ async def test_launch_prepared_spawn_claude_overlay_keeps_runtime_override_prove
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -1723,7 +1745,12 @@ async def test_launch_prepared_spawn_claude_overlay_keeps_runtime_override_prove
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "ensure_claude_session_accessible",
         lambda **_kwargs: None,
     )
@@ -1793,7 +1820,7 @@ async def test_launch_prepared_spawn_claude_overlay_reseeds_same_cwd_across_root
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
         env=MappingProxyType({"CLAUDE_CONFIG_DIR": parent_overlay.as_posix(), "BASE": "1"}),
     )
@@ -1864,7 +1891,7 @@ async def test_launch_prepared_spawn_claude_overlay_reseeds_same_cwd_across_root
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -1875,7 +1902,12 @@ async def test_launch_prepared_spawn_claude_overlay_reseeds_same_cwd_across_root
         fake_update_session,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "ensure_claude_session_accessible",
         fake_seed_session_access,
     )
@@ -1929,7 +1961,7 @@ async def test_launch_prepared_spawn_claude_overlay_cleanup_materializes_before_
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
     )
     handoff = PreparedExecutionHandoff(
@@ -2004,7 +2036,7 @@ async def test_launch_prepared_spawn_claude_overlay_cleanup_materializes_before_
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -2016,7 +2048,12 @@ async def test_launch_prepared_spawn_claude_overlay_cleanup_materializes_before_
         fake_update_session,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "cleanup_claude_overlay",
         fake_cleanup_claude_overlay,
     )
@@ -2070,7 +2107,7 @@ async def test_launch_prepared_spawn_skips_durable_metadata_on_partial_materiali
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=child_cwd,
     )
     handoff = PreparedExecutionHandoff(
@@ -2148,7 +2185,7 @@ async def test_launch_prepared_spawn_skips_durable_metadata_on_partial_materiali
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -2160,7 +2197,12 @@ async def test_launch_prepared_spawn_skips_durable_metadata_on_partial_materiali
         fake_update_session,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
+        "update_session_claude_config_dir",
+        fake_update_session,
+    )
+    monkeypatch.setattr(
+        claude_harness,
         "cleanup_claude_overlay",
         fake_cleanup_claude_overlay,
     )
@@ -2290,7 +2332,7 @@ async def test_launch_prepared_spawn_claude_overlay_metadata_failure_cleans_over
     )
     claude_launch_context = dataclass_replace(
         base_launch_context,
-        harness=cast("Any", SimpleNamespace(id=HarnessId.CLAUDE)),
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
         child_cwd=tmp_path,
         env=MappingProxyType({"CLAUDE_CONFIG_DIR": parent_overlay_root.as_posix()}),
     )
@@ -2373,18 +2415,18 @@ async def test_launch_prepared_spawn_claude_overlay_metadata_failure_cleans_over
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "resolve_claude_overlay_roots",
         fake_resolve_claude_overlay_roots,
     )
     monkeypatch.setattr(execute_module.spawn_store, "update_spawn", fake_update_spawn)
     monkeypatch.setattr(
-        execute_module,
+        claude_harness,
         "cleanup_claude_overlay",
         fake_cleanup_claude_overlay,
     )
@@ -2508,17 +2550,31 @@ async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_ha
 
     overlay_root = tmp_path / "claude-config" / "p3"
     overlay_root.mkdir(parents=True)
+    run_inputs = ResolvedRunInputs(
+        prompt="run it",
+        model=ModelId("gpt-5.4"),
+        project_root=tmp_path.as_posix(),
+    )
+    base_launch_context = _make_launch_context(
+        tmp_path=tmp_path,
+        spec=OpenCodeLaunchSpec(prompt="run it", permission_resolver=_resolver()),
+        run_inputs=run_inputs,
+    )
+    claude_launch_context = dataclass_replace(
+        base_launch_context,
+        harness=get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE),
+        child_cwd=tmp_path,
+        env=MappingProxyType({}),
+    )
     exit_stack = _TrackingExitStack()
     handoff = PreparedExecutionHandoff(
-        resolved_request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="claude"),
-        launch_context=cast(
-            "Any",
-            SimpleNamespace(
-                harness=SimpleNamespace(id=HarnessId.CLAUDE),
-                child_cwd=tmp_path,
-                env=MappingProxyType({}),
-            ),
+        resolved_request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="claude",
+            session=SessionRequest(requested_harness_session_id="session-1"),
         ),
+        launch_context=claude_launch_context,
         session_context=_SessionExecutionContext(
             chat_id="c1",
             work_id=None,
@@ -2532,19 +2588,21 @@ async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_ha
     )
 
     finalized_errors: list[str] = []
-    cleaned_overlays: list[tuple[Path, SpawnId]] = []
+    cleaned_overlays: list[tuple[Path | None, Path | None]] = []
 
     async def fake_prepare_execution_handoff(**_kwargs: object) -> PreparedExecutionHandoff:
         return handoff
 
-    def fake_prepare_child_claude_overlay(**_kwargs: object) -> object:
-        return SimpleNamespace(
-            isolated_config_root=overlay_root,
-            materialization_root=overlay_root,
-            effective_config_root=overlay_root,
-        )
+    def fake_prepare_isolated_claude_config(
+        *,
+        runtime_root: Path,
+        spawn_id: str,
+    ) -> tuple[Path, str]:
+        assert runtime_root == tmp_path / ".runtime"
+        assert spawn_id == "p3"
+        return overlay_root, ""
 
-    def fake_seed_child_claude_session_access(**_kwargs: object) -> None:
+    def fake_seed_session_access(**_kwargs: object) -> None:
         raise RuntimeError("seed failed")
 
     async def fake_finalize_launch_failure(
@@ -2558,14 +2616,19 @@ async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_ha
     async def fail_if_called(*_args: object, **_kwargs: object) -> int:
         raise AssertionError("runner should not execute after Claude pre-run setup failure")
 
-    def fake_cleanup_child_claude_overlay(
+    def fake_cleanup_claude_overlay(
+        overlay_root_arg: Path | None,
         *,
-        isolated_config_root: Path | None,
-        spawn_id: SpawnId,
         canonical_root: Path | None = None,
-    ) -> None:
-        assert isolated_config_root is not None
-        cleaned_overlays.append((isolated_config_root, spawn_id))
+        remove_overlay: object | None = None,
+    ) -> SimpleNamespace:
+        _ = remove_overlay
+        cleaned_overlays.append((overlay_root_arg, canonical_root))
+        return SimpleNamespace(
+            materialization_root=canonical_root,
+            removed=True,
+            materialized=True,
+        )
 
     monkeypatch.setattr(
         execute_module,
@@ -2573,14 +2636,29 @@ async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_ha
         fake_prepare_execution_handoff,
     )
     monkeypatch.setattr(
-        execute_module,
-        "_prepare_child_claude_overlay",
-        fake_prepare_child_claude_overlay,
+        claude_harness,
+        "prepare_isolated_claude_config",
+        fake_prepare_isolated_claude_config,
+    )
+    monkeypatch.setattr(
+        claude_harness,
+        "ensure_claude_session_accessible",
+        fake_seed_session_access,
+    )
+    monkeypatch.setattr(
+        execute_module.spawn_store,
+        "update_spawn",
+        lambda *_args, **_kwargs: SimpleNamespace(wrote=True, entered_finalizing=False),
     )
     monkeypatch.setattr(
         execute_module,
-        "_seed_child_claude_session_access",
-        fake_seed_child_claude_session_access,
+        "update_session_claude_config_dir",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        claude_harness,
+        "update_session_claude_config_dir",
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
         execute_module,
@@ -2589,9 +2667,9 @@ async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_ha
     )
     monkeypatch.setattr(execute_module, "_invoke_runner", fail_if_called)
     monkeypatch.setattr(
-        execute_module,
-        "_cleanup_child_claude_overlay",
-        fake_cleanup_child_claude_overlay,
+        claude_harness,
+        "cleanup_claude_overlay",
+        fake_cleanup_claude_overlay,
     )
 
     result = await launch_prepared_spawn(
@@ -2611,7 +2689,8 @@ async def test_launch_prepared_spawn_claude_prerun_failure_cleans_overlay_and_ha
     assert result == 1
     assert finalized_errors == ["seed failed"]
     assert exit_stack.closed is True
-    assert cleaned_overlays == [(overlay_root, SpawnId("p3"))]
+    assert cleaned_overlays
+    assert cleaned_overlays[0][0] == overlay_root
 
 
 def test_execute_spawn_blocking_routes_through_launch_prepared_spawn(

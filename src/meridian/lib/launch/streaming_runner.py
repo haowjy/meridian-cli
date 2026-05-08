@@ -26,10 +26,9 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
 )
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
@@ -761,8 +760,8 @@ async def execute_with_streaming(
 
         materialized_session_id = (spec.continue_session_id or "").strip()
         observed_harness_session_id: str | None = None
-        if resolved_harness_id == HarnessId.CLAUDE and not materialized_session_id:
-            seeded_session_id = extract_session_id_from_args(spec.extra_args)
+        if not materialized_session_id:
+            seeded_session_id = harness.derive_streaming_seeded_session_id(spec=spec)
             if seeded_session_id:
                 spawn_store.update_spawn(
                     runtime_root,

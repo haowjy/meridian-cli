@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Generic, Literal, Protocol, TypeVar, runtime_checkable
@@ -29,6 +30,7 @@ from meridian.lib.launch.launch_types import (
     SpecT,
     TerminalSurfaceMode,
 )
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
@@ -68,6 +70,20 @@ class ForkMaterializationMode(StrEnum):
 
     NATIVE_CONTINUE_FORK = "native_continue_fork"
     MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
+
+
+class SessionSeedMode(StrEnum):
+    """How one harness derives a seeded session id before runtime events begin."""
+
+    NONE = "none"
+    PROJECTED_ARGS = "projected_args"
+
+
+class PrelaunchBootstrapMode(StrEnum):
+    """How one harness performs prelaunch environment/bootstrap work."""
+
+    NONE = "none"
+    ENV_OVERLAY_AND_SESSION_ACCESS = "env_overlay_and_session_access"
 
 
 class HarnessCapabilities(BaseModel):
@@ -162,6 +178,9 @@ class BootstrapContract(BaseModel):
     )
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     seeds_resume_metadata: bool = True
+    primary_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
+    streaming_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
+    prelaunch_bootstrap_mode: PrelaunchBootstrapMode = PrelaunchBootstrapMode.NONE
     observer_controller: ObserverControllerContract | None = None
 
 
@@ -245,6 +264,24 @@ class SpawnResult(BaseModel):
     raw_response: dict[str, object] | None = None
 
 
+def _empty_prelaunch_metadata() -> dict[str, str]:
+    return {}
+
+
+class HarnessPrelaunchState(BaseModel):
+    """Adapter-owned prelaunch result consumed by launch orchestrators."""
+
+    model_config = ConfigDict(frozen=True)
+
+    env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
+    cleanup_overlay_root: str | None = None
+    cleanup_canonical_root: str | None = None
+    metadata: dict[str, str] = Field(default_factory=_empty_prelaunch_metadata)
+
+
+RecordConfigDirFn = Callable[[str], None]
+
+
 @runtime_checkable
 class ArtifactStore(Protocol):
     """Artifact access used for usage/session extraction."""
@@ -315,6 +352,40 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]: ...
 
     def blocked_child_env_vars(self) -> frozenset[str]: ...
+
+    def derive_primary_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        command: tuple[str, ...],
+    ) -> str | None: ...
+
+    def derive_streaming_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+    ) -> str | None: ...
+
+    def prepare_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        session: SessionRequest,
+        child_cwd: Path,
+        child_env: dict[str, str],
+        resolved_harness_session_id: str,
+        record_effective_config_dir: RecordConfigDirFn | None = None,
+    ) -> HarnessPrelaunchState: ...
+
+    def cleanup_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        chat_id: str | None,
+        state: HarnessPrelaunchState,
+    ) -> None: ...
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
 
@@ -451,6 +522,56 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
+
+    def derive_primary_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        command: tuple[str, ...],
+    ) -> str | None:
+        _ = spec, command
+        return None
+
+    def derive_streaming_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+    ) -> str | None:
+        _ = spec
+        return None
+
+    def prepare_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        session: SessionRequest,
+        child_cwd: Path,
+        child_env: dict[str, str],
+        resolved_harness_session_id: str,
+        record_effective_config_dir: RecordConfigDirFn | None = None,
+    ) -> HarnessPrelaunchState:
+        _ = (
+            runtime_root,
+            spawn_id,
+            session,
+            child_cwd,
+            child_env,
+            resolved_harness_session_id,
+            record_effective_config_dir,
+        )
+        return HarnessPrelaunchState()
+
+    def cleanup_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        chat_id: str | None,
+        state: HarnessPrelaunchState,
+    ) -> None:
+        _ = runtime_root, spawn_id, chat_id, state
+        return None
 
     def seed_session(
         self,

@@ -22,16 +22,12 @@ from meridian.lib.core.spawn_lifecycle import (
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.adapter import ForkMaterializationMode, HarnessContract
-from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.claude_preflight import (
-    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
-    cleanup_claude_overlay,
-    ensure_claude_session_accessible,
-    prepare_isolated_claude_config,
-    resolve_claude_overlay_roots,
+from meridian.lib.harness.adapter import (
+    ForkMaterializationMode,
+    HarnessContract,
+    HarnessPrelaunchState,
 )
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
+from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
@@ -43,9 +39,6 @@ from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
-from meridian.lib.launch.claude_session_access import (
-    resolve_claude_session_access_source,
-)
 from meridian.lib.launch.constants import (
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
@@ -53,9 +46,6 @@ from meridian.lib.launch.constants import (
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
-from meridian.lib.state.claude_config_metadata import (
-    persist_durable_claude_config_metadata,
-)
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
@@ -629,9 +619,7 @@ def run_harness_process(
     primary_started = 0.0
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
-    isolated_config_root: Path | None = None
-    effective_config_root: Path | None = None
-    claude_materialization_root: Path | None = None
+    prelaunch_state = HarnessPrelaunchState()
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     spawn_service = build_spawn_application_service_from_roots(project_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
@@ -777,8 +765,16 @@ def run_harness_process(
                 resolved_harness_session_id = (
                     runtime_context.binding.effective_harness_session_id or ""
                 )
-                if harness_id == HarnessId.CLAUDE and not resolved_harness_session_id:
-                    generated_session_id = extract_session_id_from_args(command)
+                child_env = dict(runtime_context.binding.environment.final_env)
+                if managed.chat_id:
+                    child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
+                child_cwd = runtime_context.binding.child_cwd
+                launch_spec = runtime_context.binding.spec
+                if not resolved_harness_session_id:
+                    generated_session_id = harness_adapter.derive_primary_seeded_session_id(
+                        spec=launch_spec,
+                        command=command,
+                    )
                     if generated_session_id:
                         resolved_harness_session_id = generated_session_id
                         initial_persisted_harness_session_id = generated_session_id
@@ -789,60 +785,31 @@ def run_harness_process(
                             harness_session_id=generated_session_id,
                         )
                         lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
-                child_env = dict(runtime_context.binding.environment.final_env)
-                if managed.chat_id:
-                    child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
-                child_cwd = runtime_context.binding.child_cwd
-                launch_spec = runtime_context.binding.spec
 
-                if harness_id == HarnessId.CLAUDE:
-                    isolated_config_root, original_claude_config_dir = (
-                        prepare_isolated_claude_config(
-                            runtime_root=runtime_root,
-                            spawn_id=str(primary_spawn_id),
-                        )
+                def _record_effective_config_dir(config_dir: str) -> None:
+                    spawn_store.update_spawn(
+                        runtime_root,
+                        primary_spawn_id,
+                        claude_config_dir=config_dir,
                     )
-                    child_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] = (
-                        original_claude_config_dir
-                    )
-                    overlay_roots = resolve_claude_overlay_roots(
-                        isolated_config_root=isolated_config_root,
-                        original_config_env=original_claude_config_dir,
-                    )
-                    effective_config_root = overlay_roots.effective_config_root
-                    claude_materialization_root = overlay_roots.materialization_root
-                    effective_config_dir = str(effective_config_root)
-
-                    if effective_config_dir:
-                        child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
-                        spawn_store.update_spawn(
+                    if managed.chat_id:
+                        update_session_claude_config_dir(
                             runtime_root,
-                            primary_spawn_id,
-                            claude_config_dir=effective_config_dir,
+                            managed.chat_id,
+                            claude_config_dir=config_dir,
                         )
-                        if managed.chat_id:
-                            update_session_claude_config_dir(
-                                runtime_root,
-                                managed.chat_id,
-                                claude_config_dir=effective_config_dir,
-                            )
 
-                if harness_adapter.id == HarnessId.CLAUDE and resolved_harness_session_id:
-                    session_access = resolve_claude_session_access_source(
-                        preview_request.session,
-                        child_cwd=child_cwd,
-                        materialization_root=claude_materialization_root,
-                        target_config_root=effective_config_root,
-                    )
-                    if session_access.should_seed:
-                        ensure_claude_session_accessible(
-                            source_session_id=session_access.source_session_id
-                            or resolved_harness_session_id,
-                            source_cwd=session_access.source_cwd,
-                            child_cwd=child_cwd,
-                            source_config_root=session_access.source_config_root,
-                            target_config_root=session_access.target_config_root,
-                        )
+                prelaunch_state = harness_adapter.prepare_prelaunch(
+                    runtime_root=runtime_root,
+                    spawn_id=primary_spawn_id,
+                    session=preview_request.session,
+                    child_cwd=child_cwd,
+                    child_env=child_env,
+                    resolved_harness_session_id=resolved_harness_session_id,
+                    record_effective_config_dir=_record_effective_config_dir,
+                )
+                if prelaunch_state.env_overrides:
+                    child_env.update(prelaunch_state.env_overrides)
 
                 def _record_primary_started(child_pid: int) -> None:
                     lifecycle_service.mark_running(
@@ -900,30 +867,17 @@ def run_harness_process(
                     managed=managed,
                     spawn_service=spawn_service,
                 )
-                cleanup_result = cleanup_claude_overlay(
-                    isolated_config_root,
-                    canonical_root=claude_materialization_root,
-                )
-                if (
-                    primary_spawn_id is not None
-                    and cleanup_result.removed
-                    and cleanup_result.materialized
-                ):
+                if primary_spawn_id is not None:
                     try:
-                        persist_durable_claude_config_metadata(
+                        harness_adapter.cleanup_prelaunch(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
                             chat_id=managed.chat_id,
-                            materialization_root=cleanup_result.materialization_root,
-                            update_spawn=spawn_store.update_spawn,
-                            update_session_claude_config_dir=update_session_claude_config_dir,
+                            state=prelaunch_state,
                         )
                     except Exception:
                         logger.warning(
-                            (
-                                "Failed to persist post-cleanup Claude config metadata "
-                                "for primary spawn"
-                            ),
+                            "Failed to clean up adapter prelaunch state for primary spawn",
                             exc_info=True,
                         )
     except FileNotFoundError:

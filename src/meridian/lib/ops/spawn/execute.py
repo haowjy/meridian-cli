@@ -30,7 +30,11 @@ from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.harness.adapter import ForkMaterializationMode, StreamEvent
+from meridian.lib.harness.adapter import (
+    ForkMaterializationMode,
+    HarnessPrelaunchState,
+    StreamEvent,
+)
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
     cleanup_claude_overlay,
@@ -59,9 +63,6 @@ from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.claude_config_metadata import (
-    persist_durable_claude_config_metadata,
-)
 from meridian.lib.state.current_work import get_current_work_id
 from meridian.lib.state.launch_boundary import (
     EVENT_HARNESS_SESSION_OBSERVED,
@@ -887,7 +888,7 @@ async def launch_prepared_spawn(
     """Shared post-row, pre-run launch handoff for foreground/background spawns."""
 
     handoff: PreparedExecutionHandoff
-    claude_overlay: PreparedClaudeOverlay | None = None
+    prelaunch_state = HarnessPrelaunchState()
     try:
         handoff = await _prepare_execution_handoff(
             spawn=spawn,
@@ -923,17 +924,56 @@ async def launch_prepared_spawn(
 
                 handoff.harness_session_id_observer = _combined_harness_session_id_observer
 
-            if handoff.launch_context.harness.id == HarnessId.CLAUDE:
-                claude_overlay = _prepare_child_claude_overlay(
-                    handoff=handoff,
-                    spawn_id=spawn.spawn_id,
+            prepare_prelaunch = getattr(handoff.launch_context.harness, "prepare_prelaunch", None)
+            child_env: dict[str, str] | None = None
+            if callable(prepare_prelaunch):
+                child_env = dict(handoff.launch_context.env)
+
+                def _record_effective_config_dir(config_dir: str) -> None:
+                    spawn_store.update_spawn(
+                        runtime_root,
+                        spawn.spawn_id,
+                        claude_config_dir=config_dir,
+                    )
+                    if handoff.session_context.chat_id:
+                        update_session_claude_config_dir(
+                            runtime_root,
+                            handoff.session_context.chat_id,
+                            claude_config_dir=config_dir,
+                        )
+
+                maybe_prelaunch_state = prepare_prelaunch(
                     runtime_root=runtime_root,
-                )
-                _seed_child_claude_session_access(
-                    request=handoff.resolved_request,
+                    spawn_id=spawn.spawn_id,
+                    session=handoff.resolved_request.session,
                     child_cwd=handoff.launch_context.child_cwd,
-                    materialization_root=claude_overlay.materialization_root,
-                    target_config_root=claude_overlay.effective_config_root,
+                    child_env=child_env,
+                    resolved_harness_session_id="",
+                    record_effective_config_dir=_record_effective_config_dir,
+                )
+                if isinstance(maybe_prelaunch_state, HarnessPrelaunchState):
+                    prelaunch_state = maybe_prelaunch_state
+            if child_env is not None and prelaunch_state.env_overrides:
+                child_env.update(prelaunch_state.env_overrides)
+                updated_environment = replace(
+                    handoff.launch_context.binding.environment,
+                    runner_overlay_env=MappingProxyType(
+                        {
+                            key: value
+                            for key, value in child_env.items()
+                            if key not in handoff.launch_context.binding.environment.final_env
+                            or handoff.launch_context.binding.environment.final_env[key] != value
+                        }
+                    ),
+                    final_env=MappingProxyType(child_env),
+                )
+                handoff.launch_context = replace(
+                    handoff.launch_context,
+                    binding=replace(
+                        handoff.launch_context.binding,
+                        environment=updated_environment,
+                    ),
+                    env=MappingProxyType(child_env),
                 )
         except Exception as exc:
             await finalize_launch_failure(
@@ -942,7 +982,7 @@ async def launch_prepared_spawn(
                 spawn.spawn_id,
                 str(exc),
             )
-            logger.exception("Child Claude pre-run setup failed.", spawn_id=str(spawn.spawn_id))
+            logger.exception("Child harness pre-run setup failed.", spawn_id=str(spawn.spawn_id))
             return 1
 
         return await _invoke_runner(
@@ -957,29 +997,21 @@ async def launch_prepared_spawn(
             debug=debug,
         )
     finally:
-        if claude_overlay is not None and claude_overlay.isolated_config_root is not None:
-            materialized_root = _cleanup_child_claude_overlay(
-                isolated_config_root=claude_overlay.isolated_config_root,
-                spawn_id=spawn.spawn_id,
-                canonical_root=resolve_overlay_materialization_canonical_root(
-                    handoff.launch_context.env
-                ),
-            )
-            try:
-                persist_durable_claude_config_metadata(
+        try:
+            cleanup_prelaunch = getattr(handoff.launch_context.harness, "cleanup_prelaunch", None)
+            if callable(cleanup_prelaunch):
+                cleanup_prelaunch(
                     runtime_root=runtime_root,
                     spawn_id=spawn.spawn_id,
                     chat_id=handoff.session_context.chat_id,
-                    materialization_root=materialized_root,
-                    update_spawn=spawn_store.update_spawn,
-                    update_session_claude_config_dir=update_session_claude_config_dir,
+                    state=prelaunch_state,
                 )
-            except Exception:
-                logger.warning(
-                    "Failed to persist post-cleanup Claude config metadata for child spawn",
-                    spawn_id=str(spawn.spawn_id),
-                    exc_info=True,
-                )
+        except Exception:
+            logger.warning(
+                "Failed to clean up adapter prelaunch state for child spawn",
+                spawn_id=str(spawn.spawn_id),
+                exc_info=True,
+            )
         try:
             _close_execution_handoff(handoff)
         except Exception:

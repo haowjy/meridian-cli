@@ -13,6 +13,7 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness import claude as claude_harness
 from meridian.lib.harness.adapter import BootstrapMode, ForkMaterializationMode
 from meridian.lib.harness.claude_preflight import (
     MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
@@ -229,6 +230,55 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
     assert black_box_calls == 1
     assert exit_code == 0
     assert managed_session_id is None
+
+
+@pytest.mark.slow
+def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "codex-seed-port"
+    project_root.mkdir()
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CODEX,
+        model="gpt-5.4",
+    )
+    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    seeded_session_id = "seeded-via-adapter-port"
+
+    def fake_run_primary_attach(**_kwargs: object) -> process.PrimaryAttachOutcome:
+        return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=5150)
+
+    monkeypatch.setattr(
+        codex_adapter,
+        "derive_primary_seeded_session_id",
+        lambda **_kwargs: seeded_session_id,
+    )
+    monkeypatch.setattr(
+        codex_adapter,
+        "observe_session_id",
+        lambda **kwargs: kwargs.get("current_session_id"),
+    )
+    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
+    monkeypatch.setattr(
+        process,
+        "_run_primary_process_with_capture",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("managed primary path should avoid black-box launcher")
+        ),
+    )
+    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
+    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
+
+    outcome = process.run_harness_process(launch_context, harness_registry)
+
+    assert outcome.exit_code == 0
+    assert outcome.resolved_harness_session_id == seeded_session_id
+    spawns = list_spawns(launch_context.runtime_root)
+    assert len(spawns) == 1
+    assert spawns[0].harness_session_id == seeded_session_id
 
 
 @pytest.mark.slow
@@ -1185,7 +1235,7 @@ def test_run_harness_process_restores_claude_config_dir_when_isolation_fails(
         return (0, 777)
 
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
@@ -1275,13 +1325,13 @@ def test_run_harness_process_uses_durable_default_root_when_claude_isolation_fal
         return (0, 778)
 
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
     monkeypatch.setenv(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, "")
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "resolve_claude_overlay_roots",
         fake_resolve_claude_overlay_roots,
     )
@@ -1371,11 +1421,11 @@ def test_run_harness_process_materializes_claude_overlay_before_cleanup(
         )
 
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
-    monkeypatch.setattr(process_runner, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
+    monkeypatch.setattr(claude_harness, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
     monkeypatch.setattr(
         process,
         "_run_primary_process_with_capture",
@@ -1434,11 +1484,11 @@ def test_run_harness_process_continues_cleanup_when_overlay_materialization_fail
         )
 
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
-    monkeypatch.setattr(process_runner, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
+    monkeypatch.setattr(claude_harness, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
     monkeypatch.setattr(
         process,
         "_run_primary_process_with_capture",
@@ -1516,11 +1566,11 @@ def test_run_harness_process_skips_primary_metadata_repair_on_partial_materializ
         return None
 
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
-    monkeypatch.setattr(process_runner, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
+    monkeypatch.setattr(claude_harness, "cleanup_claude_overlay", fake_cleanup_claude_overlay)
     monkeypatch.setattr(process_runner.spawn_store, "update_spawn", fake_update_spawn)
     monkeypatch.setattr(
         process,
@@ -1709,17 +1759,17 @@ def test_run_harness_process_resume_raw_claude_session_seeds_overlay_with_fallba
         return (0, 557)
 
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "prepare_isolated_claude_config",
         fake_prepare_isolated_claude_config,
     )
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "resolve_claude_overlay_roots",
         fake_resolve_claude_overlay_roots,
     )
     monkeypatch.setattr(
-        process_runner,
+        claude_harness,
         "ensure_claude_session_accessible",
         fake_ensure_claude_session_accessible,
     )
