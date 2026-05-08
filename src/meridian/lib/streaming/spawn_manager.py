@@ -306,6 +306,14 @@ class SpawnManager:
 
         self._observers.unregister(spawn_id, observer)
 
+    def control_endpoint(self, spawn_id: SpawnId) -> str | None:
+        """Return the current platform-aware control endpoint for one active spawn."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            return None
+        return session.control_server.endpoint
+
     async def _drain_loop(
         self,
         spawn_id: SpawnId,

@@ -357,6 +357,7 @@ async def run_streaming_spawn(
     heartbeat_touch: HeartbeatTouch | None = None,
     heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
     lifecycle_service: SpawnLifecycleService | None = None,
+    on_control_endpoint_ready: Callable[[str], None] | None = None,
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
@@ -398,6 +399,17 @@ async def run_streaming_spawn(
     )
     try:
         await manager.start_spawn(config, run_spec)
+        if on_control_endpoint_ready is not None:
+            endpoint = manager.control_endpoint(spawn_id)
+            if endpoint is not None:
+                try:
+                    on_control_endpoint_ready(endpoint)
+                except Exception:
+                    logger.warning(
+                        "Control endpoint callback failed.",
+                        spawn_id=str(spawn_id),
+                        exc_info=True,
+                    )
         await manager.start_heartbeat(spawn_id)
         subscriber = manager.subscribe(spawn_id)
         if subscriber is None:

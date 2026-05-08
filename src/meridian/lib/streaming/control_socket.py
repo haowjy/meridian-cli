@@ -27,6 +27,26 @@ class ControlSocketServer:
         self._server: asyncio.AbstractServer | None = None
         self._port: int | None = None
 
+    @property
+    def discovery_path(self) -> Path:
+        """Return the platform-specific discovery artifact path."""
+
+        return self._port_file if IS_WINDOWS else self._socket_path
+
+    @property
+    def endpoint(self) -> str:
+        """Return the platform-aware control endpoint for operator display."""
+
+        if IS_WINDOWS:
+            port = self._port
+            if port is None:
+                with suppress(OSError, ValueError):
+                    port = int(self._port_file.read_text(encoding="utf-8").strip())
+            if isinstance(port, int):
+                return f"tcp://127.0.0.1:{port}"
+            return f"tcp://127.0.0.1:<pending> (port file: {self._port_file})"
+        return f"unix://{self._socket_path}"
+
     async def start(self) -> None:
         """Create and bind the per-spawn control endpoint."""
 

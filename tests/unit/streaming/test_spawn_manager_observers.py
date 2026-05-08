@@ -54,6 +54,10 @@ class FakeControlSocketServer:
     async def stop(self) -> None:
         return None
 
+    @property
+    def endpoint(self) -> str:
+        return f"unix://{self.socket_path}"
+
 
 class ScriptedConnection:
     def __init__(
@@ -320,13 +324,15 @@ async def test_start_spawn_uses_injected_ports(tmp_path: Path) -> None:
     first = await asyncio.wait_for(subscriber.get(), timeout=1.0)
     assert first is not None
     assert first.event_type == "turn/completed"
-    await manager.stop_spawn(spawn_id)
+    expected_endpoint = f"unix://{runtime_root / 'spawns' / str(spawn_id) / 'control.sock'}"
+    assert manager.control_endpoint(spawn_id) == expected_endpoint
 
     assert captured["start_spawn_id"] == str(spawn_id)
     assert captured["control_spawn_id"] == str(spawn_id)
     assert str(runtime_root / "spawns" / str(spawn_id) / "control.sock") == captured[
         "control_socket_path"
     ]
+    await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio

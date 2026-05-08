@@ -95,11 +95,12 @@ async def streaming_serve(
         connection_config = replace(connection_config, debug_tracer=tracer)
 
     output_path = spawn_output_path(runtime_root, spawn_id)
-    socket_path = runtime_root / "spawns" / str(spawn_id) / "control.sock"
 
     print(f"Started spawn {spawn_id} (harness={prepared.resolved_harness})")
-    print(f"Control socket: {socket_path}")
     print(f"Events: {output_path}")
+
+    def _report_control_endpoint(endpoint: str) -> None:
+        print(f"Control endpoint: {endpoint}")
 
     outcome_status: SpawnStatus = "failed"
     outcome_exit_code = 1
@@ -113,6 +114,7 @@ async def streaming_serve(
             project_root=project_root,
             spawn_id=spawn_id,
             lifecycle_service=lifecycle_service,
+            on_control_endpoint_ready=_report_control_endpoint,
         )
         outcome_status = outcome.status
         outcome_exit_code = outcome.exit_code
