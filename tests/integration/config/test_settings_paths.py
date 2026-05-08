@@ -77,7 +77,9 @@ def test_resolve_project_root_prefers_project_state_in_plain_directory(
 ) -> None:
     project_root = tmp_path / "plain-project"
     nested = project_root / "pkg" / "module"
-    (project_root / ".meridian").mkdir(parents=True)
+    project_state_dir = project_root / ".meridian"
+    project_state_dir.mkdir(parents=True)
+    (project_state_dir / "id").write_text("project-uuid", encoding="utf-8")
     nested.mkdir(parents=True)
     monkeypatch.chdir(nested)
 
@@ -85,6 +87,24 @@ def test_resolve_project_root_prefers_project_state_in_plain_directory(
 
     assert resolution.project_root == project_root.resolve()
     assert resolution.source == "project-state"
+
+
+def test_resolve_project_root_does_not_treat_user_home_state_dir_as_project_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home_root = tmp_path / "home"
+    nested = home_root / "notes" / "daily"
+    (home_root / ".meridian").mkdir(parents=True)
+    nested.mkdir(parents=True)
+    monkeypatch.setenv("HOME", home_root.as_posix())
+    monkeypatch.delenv("MERIDIAN_HOME", raising=False)
+    monkeypatch.chdir(nested)
+
+    resolution = resolve_project_root_resolution()
+
+    assert resolution.project_root != home_root.resolve()
+    assert resolution.source != "project-state"
 
 
 def test_load_config_reads_meridian_toml_at_project_root(tmp_path: Path) -> None:
@@ -227,6 +247,27 @@ def test_project_authority_keeps_nested_plain_dir_root_and_paths(
     assert authority.project_config_paths.execution_cwd == nested.resolve()
 
 
+def test_project_authority_freezes_workspace_local_path_at_resolution_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "plain-project"
+    project_root.mkdir()
+    first_override = tmp_path / "runtime-a" / ".meridian"
+    second_override = tmp_path / "runtime-b" / ".meridian"
+    first_override.parent.mkdir(parents=True)
+    second_override.parent.mkdir(parents=True)
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", first_override.as_posix())
+
+    authority = resolve_project_authority(project_root)
+
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", second_override.as_posix())
+
+    assert authority.project_config_paths.workspace_local_toml == (
+        first_override.parent / "workspace.local.toml"
+    )
+
+
 def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directory(
     tmp_path: Path,
 ) -> None:
@@ -235,6 +276,7 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     runtime_root = project_root / ".meridian"
     nested.mkdir(parents=True)
     runtime_root.mkdir()
+    (runtime_root / "id").write_text("project-uuid", encoding="utf-8")
     (runtime_root / "spawns.jsonl").write_text("", encoding="utf-8")
 
     authority = resolve_runtime_authority_for_read(execution_cwd=nested)
@@ -242,3 +284,20 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     assert authority.project_root == project_root.resolve()
     assert authority.runtime_root == runtime_root.resolve()
     assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
+
+
+def test_config_show_preserves_discovered_project_root_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "plain-project"
+    nested = project_root / "tools" / "scripts"
+    project_root.mkdir()
+    nested.mkdir(parents=True)
+    (project_root / "meridian.local.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(nested)
+
+    result = config_show_sync(ConfigShowInput())
+
+    assert result.project_root == project_root.resolve().as_posix()
+    assert result.project_root_source == "meridian-local-toml"

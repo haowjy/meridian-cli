@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from meridian.lib.config.context_config import ContextConfig, ContextSourceType
+from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.context.resolver import ResolvedContextPaths
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.ops.context import (
@@ -24,6 +25,7 @@ from meridian.lib.ops.context import (
     work_current_sync,
     work_root_sync,
 )
+from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -34,6 +36,23 @@ def _strategy_context_entry() -> ContextEntryOutput:
         source="git",
         path="voluma-bio/strategy",
         resolved="/repo/strategy",
+    )
+
+
+def _authority(
+    *,
+    project_root: Path = Path("/repo"),
+    runtime_root: Path | None = Path("/runtime/state"),
+) -> RuntimeAuthoritySnapshot:
+    return RuntimeAuthoritySnapshot(
+        execution_cwd=project_root,
+        project_root=project_root,
+        project_root_source="explicit",
+        project_config_paths=resolve_project_config_paths(project_root),
+        project_state_dir=project_root / ".meridian",
+        user_home=Path("/home/user/.meridian"),
+        runtime_root=runtime_root,
+        runtime_root_source="env" if runtime_root is not None else "unresolved",
     )
 
 
@@ -49,8 +68,8 @@ def _clear_context_env(monkeypatch: MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _stub_runtime_context_lookup(monkeypatch: MonkeyPatch) -> None:
-    def fake_resolve_runtime_root_for_read(_project_root: Path) -> Path:
-        return Path("/runtime/state")
+    def fake_resolve_runtime_authority_for_read() -> RuntimeAuthoritySnapshot:
+        return _authority()
 
     def fake_resolve_runtime_context(
         _project_root: Path, _runtime_root: Path
@@ -58,8 +77,8 @@ def _stub_runtime_context_lookup(monkeypatch: MonkeyPatch) -> None:
         return ResolvedContext()
 
     monkeypatch.setattr(
-        "meridian.lib.ops.context.resolve_runtime_root_for_read",
-        fake_resolve_runtime_root_for_read,
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        fake_resolve_runtime_authority_for_read,
     )
     monkeypatch.setattr(
         "meridian.lib.ops.context._resolve_runtime_context",
@@ -100,9 +119,7 @@ def test_context_sync_returns_catalog_fields_from_context_resolution(
     monkeypatch: MonkeyPatch,
 ) -> None:
     project_root = Path("/repo")
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
+    authority = _authority(project_root=project_root)
 
     def fake_load_context_config(_repo: Path) -> None:
         return None
@@ -120,7 +137,10 @@ def test_context_sync_returns_catalog_fields_from_context_resolution(
             extra={},
         )
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
+    )
     monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
     monkeypatch.setattr(
         "meridian.lib.ops.context.resolve_context_paths",
@@ -141,6 +161,7 @@ def test_context_sync_returns_catalog_fields_from_context_resolution(
 
 def test_context_sync_uses_loaded_config_paths_and_sources(monkeypatch: MonkeyPatch) -> None:
     project_root = Path("/repo")
+    authority = _authority(project_root=project_root)
     config = ContextConfig.model_validate(
         {
             "work": {
@@ -154,9 +175,6 @@ def test_context_sync_uses_loaded_config_paths_and_sources(monkeypatch: MonkeyPa
             },
         }
     )
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
 
     def fake_load_context_config(_repo: Path) -> ContextConfig:
         return config
@@ -174,7 +192,10 @@ def test_context_sync_uses_loaded_config_paths_and_sources(monkeypatch: MonkeyPa
             extra={},
         )
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
+    )
     monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
     monkeypatch.setattr(
         "meridian.lib.ops.context.resolve_context_paths",
@@ -195,6 +216,7 @@ def test_context_sync_uses_loaded_config_paths_and_sources(monkeypatch: MonkeyPa
 
 def test_context_sync_includes_arbitrary_named_contexts(monkeypatch: MonkeyPatch) -> None:
     project_root = Path("/repo")
+    authority = _authority(project_root=project_root)
     config = ContextConfig.model_validate(
         {
             "strategy": {
@@ -204,9 +226,6 @@ def test_context_sync_includes_arbitrary_named_contexts(monkeypatch: MonkeyPatch
             },
         }
     )
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
 
     def fake_load_context_config(_repo: Path) -> ContextConfig:
         return config
@@ -229,7 +248,10 @@ def test_context_sync_includes_arbitrary_named_contexts(monkeypatch: MonkeyPatch
             },
         )
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
+    )
     monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
     monkeypatch.setattr(
         "meridian.lib.ops.context.resolve_context_paths",
@@ -411,20 +433,14 @@ def test_context_output_resolve_name_returns_active_work_dir() -> None:
 def test_work_current_sync_uses_resolved_context(monkeypatch: MonkeyPatch) -> None:
     project_root = Path("/repo")
     runtime_root = Path("/runtime/state")
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
-
-    def fake_resolve_runtime_root_for_read(_project_root: Path) -> Path:
-        return runtime_root
+    authority = _authority(project_root=project_root, runtime_root=runtime_root)
 
     def fake_resolve_runtime_context(_repo: Path, _state: Path) -> ResolvedContext:
         return ResolvedContext(work_dir=Path("/repo/.meridian/work/current"))
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
     monkeypatch.setattr(
-        "meridian.lib.ops.context.resolve_runtime_root_for_read",
-        fake_resolve_runtime_root_for_read,
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
     )
     monkeypatch.setattr(
         "meridian.lib.ops.context._resolve_runtime_context",
@@ -446,9 +462,7 @@ def test_work_root_sync_prefers_env(monkeypatch: MonkeyPatch) -> None:
 
 def test_work_root_sync_falls_back_to_context_config(monkeypatch: MonkeyPatch) -> None:
     project_root = Path("/repo")
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
+    authority = _authority(project_root=project_root)
 
     def fake_load_context_config(_repo: Path) -> None:
         return None
@@ -466,7 +480,10 @@ def test_work_root_sync_falls_back_to_context_config(monkeypatch: MonkeyPatch) -
             extra={},
         )
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
+    )
     monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
     monkeypatch.setattr(
         "meridian.lib.ops.context.resolve_context_paths",
@@ -483,9 +500,7 @@ def test_context_sync_falls_back_to_config_when_session_env_incomplete(
 ) -> None:
     monkeypatch.setenv("MERIDIAN_CONTEXT_WORK_DIR", "/env/work/current")
     project_root = Path("/repo")
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
+    authority = _authority(project_root=project_root)
 
     def fake_load_context_config(_repo: Path) -> None:
         return None
@@ -503,7 +518,10 @@ def test_context_sync_falls_back_to_config_when_session_env_incomplete(
             extra={},
         )
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
+    monkeypatch.setattr(
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
+    )
     monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
     monkeypatch.setattr(
         "meridian.lib.ops.context.resolve_context_paths",
@@ -521,12 +539,7 @@ def test_context_sync_exposes_active_work_from_resolved_runtime_context(
 ) -> None:
     project_root = Path("/repo")
     runtime_root = Path("/runtime/state")
-
-    def fake_resolve_project_root() -> Path:
-        return project_root
-
-    def fake_resolve_runtime_root_for_read(_project_root: Path) -> Path:
-        return runtime_root
+    authority = _authority(project_root=project_root, runtime_root=runtime_root)
 
     def fake_load_context_config(_repo: Path) -> None:
         return None
@@ -547,10 +560,9 @@ def test_context_sync_exposes_active_work_from_resolved_runtime_context(
     def fake_resolve_runtime_context(_repo: Path, _state: Path) -> ResolvedContext:
         return ResolvedContext(work_dir=Path("/resolved/work/active-work"))
 
-    monkeypatch.setattr("meridian.lib.ops.context.resolve_project_root", fake_resolve_project_root)
     monkeypatch.setattr(
-        "meridian.lib.ops.context.resolve_runtime_root_for_read",
-        fake_resolve_runtime_root_for_read,
+        "meridian.lib.ops.context.resolve_runtime_authority_for_read",
+        lambda: authority,
     )
     monkeypatch.setattr("meridian.lib.ops.context.load_context_config", fake_load_context_config)
     monkeypatch.setattr(

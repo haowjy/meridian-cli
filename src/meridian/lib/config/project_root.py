@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.state.user_paths import get_user_home
+
 USER_CONFIG_ENV_VAR = "MERIDIAN_CONFIG"
 ProjectRootSource = Literal[
     "explicit",
@@ -31,6 +33,17 @@ class ProjectRootResolution(BaseModel):
     source: ProjectRootSource
 
 
+def _has_project_state_marker(candidate: Path) -> bool:
+    """Return True when ``candidate`` has project-local state evidence."""
+
+    meridian_dir = candidate / ".meridian"
+    if not meridian_dir.is_dir():
+        return False
+    if meridian_dir.resolve() == get_user_home().resolve():
+        return False
+    return (meridian_dir / "id").is_file()
+
+
 def _discover_project_root(candidate: Path) -> ProjectRootSource | None:
     if (candidate / ".mars").is_dir():
         return "mars"
@@ -42,7 +55,7 @@ def _discover_project_root(candidate: Path) -> ProjectRootSource | None:
         return "meridian-local-toml"
     if (candidate / "workspace.local.toml").is_file():
         return "workspace-local-toml"
-    if (candidate / ".meridian").is_dir():
+    if _has_project_state_marker(candidate):
         return "project-state"
     git_marker = candidate / ".git"
     if git_marker.exists():
@@ -117,8 +130,6 @@ def resolve_project_root(
 
 
 def resolve_user_config_path(user_config: Path | None) -> Path | None:
-    from meridian.lib.state.user_paths import get_user_home
-
     resolved = user_config.expanduser() if user_config is not None else None
     if resolved is None:
         raw_env = os.getenv(USER_CONFIG_ENV_VAR, "").strip()

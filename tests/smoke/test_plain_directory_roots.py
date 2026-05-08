@@ -65,3 +65,29 @@ def test_plain_directory_nested_config_show_and_workspace_init_use_same_authorit
     )
     assert init.returncode == 0, init.stderr
     assert (project_root / "meridian.local.toml").is_file()
+
+
+def test_plain_directory_under_home_does_not_misroot_to_user_state_dir(tmp_path: Path) -> None:
+    home_root = tmp_path / "home"
+    nested = home_root / "notes" / "daily"
+    (home_root / ".meridian").mkdir(parents=True)
+    nested.mkdir(parents=True)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    env = _base_env(tmp_path)
+    env.pop("MERIDIAN_HOME", None)
+    env["HOME"] = str(home_root)
+
+    show = subprocess.run(
+        ["uv", "run", "--project", str(repo_root), "meridian", "--json", "config", "show"],
+        cwd=nested,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert show.returncode == 0, show.stderr
+
+    payload = json.loads(show.stdout)
+    assert payload["project_root"] != home_root.resolve().as_posix()
+    assert payload["project_root_source"] != "project-state"

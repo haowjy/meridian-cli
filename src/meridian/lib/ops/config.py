@@ -15,7 +15,6 @@ from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
 )
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import (
     MeridianConfig,
     PrimaryConfig,
@@ -28,7 +27,11 @@ from meridian.lib.ops.config_surface import (
     ConfigSurfaceWorkspace,
     build_config_surface,
 )
-from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.ops.runtime import (
+    RuntimeAuthoritySnapshot,
+    async_from_sync,
+    resolve_runtime_authority_for_read,
+)
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import (
     RuntimePaths,
@@ -405,9 +408,13 @@ def _require_project_config_path(state: ProjectConfigState) -> Path:
     return state.path
 
 
-def _resolve_project_root(project_root: str | None) -> Path:
+def _resolve_project_authority(project_root: str | None) -> RuntimeAuthoritySnapshot:
     explicit = Path(project_root).expanduser().resolve() if project_root else None
-    return resolve_project_root(explicit)
+    return resolve_runtime_authority_for_read(explicit)
+
+
+def _resolve_project_root(project_root: str | None) -> Path:
+    return _resolve_project_authority(project_root).project_root
 
 
 def _resolve_key_spec(key: str) -> _ConfigKeySpec:
@@ -661,8 +668,11 @@ def _source_for_key(
     return "builtin", None
 
 
-def _build_config_inspection_state(project_root: Path) -> _ConfigInspectionState:
-    surface = build_config_surface(project_root)
+def _build_config_inspection_state(
+    authority: RuntimeAuthoritySnapshot | Path,
+) -> _ConfigInspectionState:
+    surface = build_config_surface(authority)
+    project_root = surface.project_root
     project_overrides = _extract_file_overrides(
         _read_file_payload(surface.project_config.write_path)
     )
@@ -901,8 +911,8 @@ def config_init_sync(payload: ConfigInitInput) -> ConfigInitOutput:
 
 
 def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
-    project_root = _resolve_project_root(payload.project_root)
-    inspection = _build_config_inspection_state(project_root)
+    authority = _resolve_project_authority(payload.project_root)
+    inspection = _build_config_inspection_state(authority)
 
     values: list[ConfigResolvedValue] = []
     for spec in _CONFIG_KEY_SPECS:
