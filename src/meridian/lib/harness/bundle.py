@@ -4,25 +4,64 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Generic, cast
+from typing import Any, Generic, Protocol, TypeVar, cast
 
-from meridian.lib.harness.adapter import HarnessAdapter
+from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.launch.launch_types import SpecT
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
+
+ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)
+BootstrapPayloadT = TypeVar("BootstrapPayloadT", covariant=True)
+
+
+class SubprocessProjector(Protocol[ProjectorSpecT]):
+    """Project a resolved launch spec onto one subprocess argv."""
+
+    def __call__(self, spec: ProjectorSpecT, *, base_command: tuple[str, ...]) -> list[str]: ...
+
+
+class ManagedPrimaryBackendProjector(Protocol[ProjectorSpecT]):
+    """Project one managed-primary observer backend command."""
+
+    def __call__(self, spec: ProjectorSpecT, *, host: str, port: int) -> list[str]: ...
+
+
+class ManagedPrimaryBootstrapProjector(Protocol[ProjectorSpecT, BootstrapPayloadT]):
+    """Project one managed-primary bootstrap payload."""
+
+    def __call__(self, spec: ProjectorSpecT, *, project_root: Path) -> BootstrapPayloadT: ...
+
+
+@dataclass(frozen=True)
+class ManagedPrimaryProjectionPorts(Generic[SpecT, BootstrapPayloadT]):
+    """Projection helpers for observer/controller-backed primary launches."""
+
+    backend_command: ManagedPrimaryBackendProjector[SpecT]
+    bootstrap_payload: ManagedPrimaryBootstrapProjector[SpecT, BootstrapPayloadT]
+
+
+@dataclass(frozen=True)
+class HarnessProjectionPorts(Generic[SpecT]):
+    """Projection helpers registered for one harness bundle."""
+
+    subprocess_cli_args: SubprocessProjector[SpecT]
+    managed_primary: ManagedPrimaryProjectionPorts[SpecT, object] | None = None
 
 
 @dataclass(frozen=True)
 class HarnessBundle(Generic[SpecT]):
-    """Bundle binding one harness adapter to spec, extractor, and transports."""
+    """Bundle binding one harness adapter to spec, extractor, transports, and projections."""
 
     harness_id: HarnessId
     adapter: HarnessAdapter[SpecT]
     spec_cls: type[SpecT]
     extractor: HarnessExtractor[SpecT]
     connections: Mapping[TransportId, type[HarnessConnection[SpecT]]]
+    projections: HarnessProjectionPorts[SpecT]
 
 
 _REGISTRY: dict[HarnessId, HarnessBundle[Any]] = {}
@@ -84,6 +123,7 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
     frozen_connections: Mapping[TransportId, type[HarnessConnection[Any]]] = MappingProxyType(
         dict(validated_connections)
     )
+    _validate_contract_alignment(bundle)
     declared_transport_ids = frozenset(bundle.adapter.contract.transport.transport_ids)
     actual_transport_ids = frozenset(frozen_connections)
     if declared_transport_ids != actual_transport_ids:
@@ -98,7 +138,34 @@ def register_harness_bundle(bundle: HarnessBundle[Any]) -> None:
         spec_cls=bundle.spec_cls,
         extractor=bundle.extractor,
         connections=frozen_connections,
+        projections=bundle.projections,
     )
+
+
+def _validate_contract_alignment(bundle: HarnessBundle[Any]) -> None:
+    contract: HarnessContract = bundle.adapter.contract
+
+    if contract.projection.launch_spec_cls != bundle.spec_cls.__name__:
+        raise ValueError(
+            f"HarnessBundle for {bundle.harness_id} declares projection launch_spec_cls "
+            f"{contract.projection.launch_spec_cls!r} but registers spec_cls "
+            f"{bundle.spec_cls.__name__!r}"
+        )
+
+    has_managed_primary_ports = bundle.projections.managed_primary is not None
+    if contract.bootstrap.mode is BootstrapMode.MANAGED_PRIMARY_ATTACH:
+        if not has_managed_primary_ports:
+            raise ValueError(
+                f"HarnessBundle for {bundle.harness_id} requires managed-primary "
+                "projection ports but none were registered"
+            )
+        return
+
+    if has_managed_primary_ports:
+        raise ValueError(
+            f"HarnessBundle for {bundle.harness_id} registered managed-primary "
+            "projection ports but bootstrap mode is not managed_primary_attach"
+        )
 
 
 def get_harness_bundle(harness_id: HarnessId) -> HarnessBundle[Any]:
@@ -131,10 +198,77 @@ def get_connection_cls(
         ) from exc
 
 
+def _require_bundle_spec(
+    harness_id: HarnessId,
+    spec: object,
+) -> HarnessBundle[Any]:
+    bundle = get_harness_bundle(harness_id)
+    if not isinstance(spec, bundle.spec_cls):
+        raise TypeError(
+            f"harness {harness_id} expected {bundle.spec_cls.__name__}, "
+            f"got {type(spec).__name__}"
+        )
+    return bundle
+
+
+def project_subprocess_spec(
+    harness_id: HarnessId,
+    spec: object,
+    *,
+    base_command: tuple[str, ...],
+) -> list[str]:
+    """Project one resolved spec to subprocess argv through the bundle registry."""
+
+    bundle = _require_bundle_spec(harness_id, spec)
+    return bundle.projections.subprocess_cli_args(
+        cast("Any", spec),
+        base_command=base_command,
+    )
+
+
+def project_managed_primary_backend_command(
+    harness_id: HarnessId,
+    spec: object,
+    *,
+    host: str,
+    port: int,
+) -> list[str]:
+    """Project one managed-primary backend command through the bundle registry."""
+
+    bundle = _require_bundle_spec(harness_id, spec)
+    managed_primary = bundle.projections.managed_primary
+    if managed_primary is None:
+        raise ValueError(f"harness {harness_id} does not declare managed-primary ports")
+    return managed_primary.backend_command(cast("Any", spec), host=host, port=port)
+
+
+def project_managed_primary_bootstrap(
+    harness_id: HarnessId,
+    spec: object,
+    *,
+    project_root: Path,
+) -> object:
+    """Project one managed-primary bootstrap payload through the bundle registry."""
+
+    bundle = _require_bundle_spec(harness_id, spec)
+    managed_primary = bundle.projections.managed_primary
+    if managed_primary is None:
+        raise ValueError(f"harness {harness_id} does not declare managed-primary ports")
+    return managed_primary.bootstrap_payload(
+        cast("Any", spec),
+        project_root=project_root,
+    )
+
+
 __all__ = [
     "HarnessBundle",
+    "HarnessProjectionPorts",
+    "ManagedPrimaryProjectionPorts",
     "get_bundle_registry",
     "get_connection_cls",
     "get_harness_bundle",
+    "project_managed_primary_backend_command",
+    "project_managed_primary_bootstrap",
+    "project_subprocess_spec",
     "register_harness_bundle",
 ]

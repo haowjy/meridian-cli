@@ -28,7 +28,12 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     TransportContract,
 )
-from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
+from meridian.lib.harness.bundle import (
+    HarnessBundle,
+    HarnessProjectionPorts,
+    project_subprocess_spec,
+    register_harness_bundle,
+)
 from meridian.lib.harness.claude_preflight import build_claude_preflight_result
 from meridian.lib.harness.claude_utils import has_session_identity_in_args
 from meridian.lib.harness.common import (
@@ -378,7 +383,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         base_command = self.PRIMARY_BASE_COMMAND
         if not spec.interactive:
             base_command = (*self.BASE_COMMAND, "-")
-        return project_claude_spec_to_cli_args(spec, base_command=base_command)
+        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -541,5 +546,8 @@ register_harness_bundle(
         spec_cls=ClaudeLaunchSpec,
         extractor=CLAUDE_EXTRACTOR,
         connections={TransportId.STREAMING: ClaudeConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=project_claude_spec_to_cli_args,
+        ),
     )
 )

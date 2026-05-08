@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -29,7 +30,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
-from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_STREAMING,
@@ -372,7 +372,8 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
 
     def _build_command(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> list[str]:
         _ = config
-        return project_claude_spec_to_cli_args(
+        return project_subprocess_spec(
+            self.harness_id,
             spec,
             base_command=BASE_COMMAND_CLAUDE_STREAMING,
         )

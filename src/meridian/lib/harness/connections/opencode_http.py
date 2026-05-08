@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.bundle import (
+    project_managed_primary_backend_command,
+    project_managed_primary_bootstrap,
+)
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -36,8 +40,7 @@ from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.projections.project_opencode_streaming import (
-    project_opencode_spec_to_serve_command,
-    project_opencode_spec_to_session_payload,
+    project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.harness.semantics import clears_signal
@@ -58,6 +61,42 @@ _ADDRESS_IN_USE_MARKERS = ("address already in use", "address in use", "eaddrinu
 
 class SessionNotReadyError(RuntimeError):
     """Retryable OpenCode session readiness failure."""
+
+
+def project_opencode_spec_to_serve_command(
+    spec: OpenCodeLaunchSpec,
+    *,
+    host: str,
+    port: int,
+) -> list[str]:
+    """Project OpenCode managed-primary backend command through the contract seam."""
+
+    return project_managed_primary_backend_command(
+        HarnessId.OPENCODE,
+        spec,
+        host=host,
+        port=port,
+    )
+
+
+def project_opencode_spec_to_session_payload(
+    spec: OpenCodeLaunchSpec,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, object]:
+    """Project OpenCode managed-primary session payload through the contract seam."""
+
+    if project_root is None:
+        return _project_opencode_spec_to_session_payload(spec)
+
+    projected = project_managed_primary_bootstrap(
+        HarnessId.OPENCODE,
+        spec,
+        project_root=project_root,
+    )
+    if not isinstance(projected, dict):
+        raise TypeError("OpenCode managed-primary bootstrap must be a dict payload")
+    return cast("dict[str, object]", projected)
 
 
 class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
@@ -350,7 +389,8 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
     async def _launch_process(self, config: ConnectionConfig, spec: OpenCodeLaunchSpec) -> None:
         port = _find_free_port()
         self._base_url = f"http://127.0.0.1:{port}"
-        command = project_opencode_spec_to_serve_command(
+        command = project_managed_primary_backend_command(
+            self.harness_id,
             spec,
             host="127.0.0.1",
             port=port,
@@ -454,7 +494,10 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 f"OpenCode session resume: GET failed with status={status}"
             )
 
-        payload = project_opencode_spec_to_session_payload(spec)
+        payload = project_opencode_spec_to_session_payload(
+            spec,
+            project_root=self._config.project_root if self._config is not None else None,
+        )
         payload_variants: tuple[dict[str, object], ...] = (payload, {}) if payload else ({},)
 
         last_error: str | None = None

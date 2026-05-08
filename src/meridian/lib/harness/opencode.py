@@ -29,7 +29,13 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     TransportContract,
 )
-from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
+from meridian.lib.harness.bundle import (
+    HarnessBundle,
+    HarnessProjectionPorts,
+    ManagedPrimaryProjectionPorts,
+    project_subprocess_spec,
+    register_harness_bundle,
+)
 from meridian.lib.harness.common import (
     extract_opencode_report,
     extract_session_id_from_artifacts_with_patterns,
@@ -40,6 +46,10 @@ from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
+from meridian.lib.harness.projections.project_opencode_streaming import (
+    project_opencode_spec_to_serve_command,
+    project_opencode_spec_to_session_payload,
+)
 from meridian.lib.harness.projections.project_opencode_subprocess import (
     project_opencode_spec_to_cli_args,
 )
@@ -247,6 +257,17 @@ def _detect_primary_session_id(
     return _legacy_detect_primary_session_id(project_root, started_at_epoch, started_at_local_iso)
 
 
+def project_opencode_spec_to_session_payload_for_project(
+    spec: OpenCodeLaunchSpec,
+    *,
+    project_root: Path,
+) -> dict[str, object]:
+    """Project OpenCode managed-primary bootstrap payload for one project root."""
+
+    _ = project_root
+    return project_opencode_spec_to_session_payload(spec)
+
+
 def _legacy_owns_session(project_root: Path, session_ref: str) -> bool:
     opencode_logs = _opencode_data_root() / "opencode" / "log"
     if not opencode_logs.is_dir():
@@ -430,7 +451,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_opencode_spec_to_cli_args(spec, base_command=base_command)
+        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -523,5 +544,12 @@ register_harness_bundle(
         spec_cls=OpenCodeLaunchSpec,
         extractor=OPENCODE_EXTRACTOR,
         connections={TransportId.STREAMING: OpenCodeConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=project_opencode_spec_to_cli_args,
+            managed_primary=ManagedPrimaryProjectionPorts(
+                backend_command=project_opencode_spec_to_serve_command,
+                bootstrap_payload=project_opencode_spec_to_session_payload_for_project,
+            ),
+        ),
     )
 )

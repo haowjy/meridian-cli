@@ -33,7 +33,13 @@ from meridian.lib.harness.adapter import (
     SpawnParams,
     TransportContract,
 )
-from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
+from meridian.lib.harness.bundle import (
+    HarnessBundle,
+    HarnessProjectionPorts,
+    ManagedPrimaryProjectionPorts,
+    project_subprocess_spec,
+    register_harness_bundle,
+)
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     resolve_rollout_session_id,
@@ -46,6 +52,10 @@ from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
+from meridian.lib.harness.projections.project_codex_streaming import (
+    project_codex_spec_to_appserver_command,
+    project_codex_spec_to_thread_request,
+)
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
 )
@@ -140,6 +150,16 @@ def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session
 
 def _resolve_rollout_session_id(path: Path, resolved_repo: Path) -> str | None:
     return resolve_rollout_session_id(path, resolved_repo)
+
+
+def project_codex_spec_to_thread_request_for_project(
+    spec: CodexLaunchSpec,
+    *,
+    project_root: Path,
+) -> tuple[str, dict[str, object]]:
+    """Project Codex managed-primary bootstrap payload for one project root."""
+
+    return project_codex_spec_to_thread_request(spec, cwd=str(project_root))
 
 
 def _detect_primary_session_id(project_root: Path, started_at_epoch: float) -> str | None:
@@ -351,7 +371,7 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_codex_spec_to_cli_args(spec, base_command=base_command)
+        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -513,5 +533,12 @@ register_harness_bundle(
         spec_cls=CodexLaunchSpec,
         extractor=CODEX_EXTRACTOR,
         connections={TransportId.STREAMING: CodexConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=project_codex_spec_to_cli_args,
+            managed_primary=ManagedPrimaryProjectionPorts(
+                backend_command=project_codex_spec_to_appserver_command,
+                bootstrap_payload=project_codex_spec_to_thread_request_for_project,
+            ),
+        ),
     )
 )

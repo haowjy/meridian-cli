@@ -151,11 +151,13 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
 
     captured: dict[str, str | None] = {}
 
-    def fake_project_codex_spec_to_cli_args(
+    def fake_project_subprocess_spec(
+        harness_id: HarnessId,
         spec: CodexLaunchSpec,
         *,
         base_command: tuple[str, ...],
     ) -> list[str]:
+        assert harness_id is HarnessId.CODEX
         captured["build_continue_session"] = spec.continue_session_id
         return [*base_command, "resume", spec.continue_session_id or ""]
 
@@ -185,8 +187,8 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
 
     monkeypatch.setattr(
         launch_command,
-        "project_codex_spec_to_cli_args",
-        fake_project_codex_spec_to_cli_args,
+        "project_subprocess_spec",
+        fake_project_subprocess_spec,
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "forked-session")

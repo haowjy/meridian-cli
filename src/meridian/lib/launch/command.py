@@ -4,29 +4,12 @@ from __future__ import annotations
 
 from typing import cast
 
-from meridian.lib.core.types import ModelId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
-from meridian.lib.harness.launch_spec import (
-    ClaudeLaunchSpec,
-    CodexLaunchSpec,
-    OpenCodeLaunchSpec,
-)
-from meridian.lib.harness.projections.project_claude import (
-    project_claude_spec_to_cli_args,
-)
-from meridian.lib.harness.projections.project_codex_subprocess import (
-    project_codex_spec_to_cli_args,
-)
-from meridian.lib.harness.projections.project_opencode_subprocess import (
-    project_opencode_spec_to_cli_args,
-)
+from meridian.lib.harness.bundle import project_subprocess_spec
+from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
 
-from .run_inputs import (
-    ResolvedRunInputs,
-    coerce_resolved_run_inputs,
-    to_spawn_params,
-)
+from .run_inputs import ResolvedRunInputs, to_spawn_params
 
 
 def normalize_system_prompt_passthrough_args(
@@ -98,83 +81,23 @@ def resolve_launch_spec_stage(
     return spec
 
 
-def _projected_spec_to_run_inputs(
-    *,
-    run_inputs: ResolvedRunInputs,
-    projected_spec: ResolvedLaunchSpec,
-) -> ResolvedRunInputs:
-    projected_model = projected_spec.model.strip() if projected_spec.model else ""
-    return run_inputs.model_copy(
-        update={
-            "prompt": projected_spec.prompt,
-            "model": ModelId(projected_model) if projected_model else None,
-            "effort": projected_spec.effort,
-            "extra_args": projected_spec.extra_args,
-            "projected_roots": projected_spec.projected_roots,
-            "continue_harness_session_id": projected_spec.continue_session_id,
-            "continue_fork": projected_spec.continue_fork,
-            "interactive": projected_spec.interactive,
-            "mcp_tools": projected_spec.mcp_tools,
-        }
-    )
-
-
-def _base_command(adapter: SubprocessHarness, attribute: str) -> tuple[str, ...]:
+def _tuple_attr(adapter: SubprocessHarness, attribute: str) -> tuple[str, ...]:
     value = getattr(adapter, attribute, ())
     if not isinstance(value, tuple):
         return ()
     return cast("tuple[str, ...]", value)
 
 
-def _project_known_spec_argv(
-    *,
-    adapter: SubprocessHarness,
-    projected_spec: ResolvedLaunchSpec,
-) -> tuple[str, ...] | None:
-    if isinstance(projected_spec, ClaudeLaunchSpec):
-        base_command = _base_command(adapter, "PRIMARY_BASE_COMMAND")
-        if not projected_spec.interactive:
-            base_command = (*_base_command(adapter, "BASE_COMMAND"), "-")
-        if base_command:
-            return tuple(
-                project_claude_spec_to_cli_args(
-                    projected_spec,
-                    base_command=base_command,
-                )
-            )
-        return None
+def _base_command(adapter: SubprocessHarness, *, interactive: bool) -> tuple[str, ...]:
+    primary_base_command = _tuple_attr(adapter, "PRIMARY_BASE_COMMAND")
+    subprocess_base_command = _tuple_attr(adapter, "BASE_COMMAND")
 
-    if isinstance(projected_spec, CodexLaunchSpec):
-        base_command = (
-            _base_command(adapter, "PRIMARY_BASE_COMMAND")
-            if projected_spec.interactive
-            else _base_command(adapter, "BASE_COMMAND")
-        )
-        if base_command:
-            return tuple(
-                project_codex_spec_to_cli_args(
-                    projected_spec,
-                    base_command=base_command,
-                )
-            )
-        return None
+    if interactive:
+        return primary_base_command
 
-    if isinstance(projected_spec, OpenCodeLaunchSpec):
-        base_command = (
-            _base_command(adapter, "PRIMARY_BASE_COMMAND")
-            if projected_spec.interactive
-            else _base_command(adapter, "BASE_COMMAND")
-        )
-        if base_command:
-            return tuple(
-                project_opencode_spec_to_cli_args(
-                    projected_spec,
-                    base_command=base_command,
-                )
-            )
-        return None
-
-    return None
+    if adapter.id is HarnessId.CLAUDE:
+        return (*subprocess_base_command, "-")
+    return subprocess_base_command
 
 
 def build_launch_argv(
@@ -184,25 +107,21 @@ def build_launch_argv(
     perms: PermissionResolver,
     projected_spec: ResolvedLaunchSpec,
 ) -> tuple[str, ...]:
-    """Stage-owned adapter callsite for `build_command` from projected spec."""
+    """Stage-owned subprocess argv assembly from one resolved launch spec."""
 
-    known_projection = _project_known_spec_argv(
-        adapter=adapter,
-        projected_spec=projected_spec,
+    _ = run_inputs, perms
+    return tuple(
+        project_subprocess_spec(
+            adapter.id,
+            projected_spec,
+            base_command=_base_command(adapter, interactive=projected_spec.interactive),
+        )
     )
-    if known_projection is not None:
-        return known_projection
-
-    normalized_inputs = coerce_resolved_run_inputs(run_inputs)
-    argv_inputs = _projected_spec_to_run_inputs(
-        run_inputs=normalized_inputs,
-        projected_spec=projected_spec,
-    )
-    return tuple(adapter.build_command(to_spawn_params(argv_inputs), perms))
 
 
 __all__ = [
     "build_launch_argv",
     "normalize_system_prompt_passthrough_args",
+    "project_subprocess_spec",
     "resolve_launch_spec_stage",
 ]

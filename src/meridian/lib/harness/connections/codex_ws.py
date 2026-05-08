@@ -24,6 +24,10 @@ if TYPE_CHECKING:
 from meridian import __version__
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import SpawnId
+from meridian.lib.harness.bundle import (
+    project_managed_primary_backend_command,
+    project_managed_primary_bootstrap,
+)
 from meridian.lib.harness.codex_rollout import (
     find_attachable_rollout_session_id,
     resolve_codex_home,
@@ -46,10 +50,6 @@ from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
-from meridian.lib.harness.projections.project_codex_streaming import (
-    project_codex_spec_to_appserver_command,
-    project_codex_spec_to_thread_request,
-)
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.observability.trace_helpers import (
@@ -301,7 +301,8 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         self._stderr_read_offset = self._stderr_handle.tell()
 
         try:
-            appserver_command = project_codex_spec_to_appserver_command(
+            appserver_command = project_managed_primary_backend_command(
+                self.harness_id,
                 spec,
                 host=host,
                 port=port,
@@ -1009,7 +1010,20 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         config = self._config
         if config is None:
             raise RuntimeError("Codex connection config is unavailable for thread bootstrap")
-        return project_codex_spec_to_thread_request(spec, cwd=str(config.project_root))
+        projected = project_managed_primary_bootstrap(
+            self.harness_id,
+            spec,
+            project_root=config.project_root,
+        )
+        if not isinstance(projected, tuple):
+            raise TypeError("Codex managed-primary bootstrap must be (method, payload)")
+        projected_tuple = cast("tuple[object, ...]", projected)
+        if len(projected_tuple) != 2:
+            raise TypeError("Codex managed-primary bootstrap must be (method, payload)")
+        method_obj, payload_obj = projected_tuple
+        if not isinstance(method_obj, str) or not isinstance(payload_obj, dict):
+            raise TypeError("Codex managed-primary bootstrap returned invalid types")
+        return method_obj, cast("dict[str, object]", payload_obj)
 
     def _update_turn_state(self, *, method: str, payload: dict[str, object]) -> None:
         event = HarnessEvent(
