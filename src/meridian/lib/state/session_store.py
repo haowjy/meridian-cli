@@ -210,27 +210,10 @@ def _read_session_counter(paths: RuntimePaths) -> int:
         return 0
 
 
-def _seed_counter_from_events(paths: RuntimePaths) -> int:
-    """Scan sessions.jsonl for the highest c<N> chat ID to seed the counter on upgrade."""
-
-    max_id = 0
-    if not paths.sessions_jsonl.is_file():
-        return max_id
-    for event in read_events(paths.sessions_jsonl, _parse_event):
-        if not isinstance(event, SessionStartEvent):
-            continue
-        chat_id = event.chat_id
-        if chat_id.startswith("c") and chat_id[1:].isdigit():
-            max_id = max(max_id, int(chat_id[1:]))
-    return max_id
-
-
 def reserve_chat_id(runtime_root: Path) -> str:
     paths = RuntimePaths.from_root_dir(runtime_root)
     with lock_file(paths.session_id_counter_flock):
         current = _read_session_counter(paths)
-        if current == 0 and not paths.session_id_counter.is_file():
-            current = _seed_counter_from_events(paths)
         next_value = current + 1
         atomic_write_text(paths.session_id_counter, f"{next_value}\n")
         return f"c{next_value}"
