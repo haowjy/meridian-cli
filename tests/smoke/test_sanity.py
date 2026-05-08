@@ -50,12 +50,13 @@ def test_doctor_exits_zero(cli):
     result.assert_success()
 
 
-def test_doctor_help_exposes_prune_and_global_flags(cli):
-    """meridian doctor --help mentions the prune and global flags."""
+def test_doctor_help_exposes_prune_global_and_kill_orphans_flags(cli):
+    """meridian doctor --help mentions prune, global, and kill-orphans flags."""
     result = cli("doctor", "--help")
     result.assert_success()
     assert "--prune" in result.stdout
     assert "--global" in result.stdout
+    assert "--kill-orphans" in result.stdout
 
 
 def test_spawn_list_exits_zero(cli, scratch_dir):

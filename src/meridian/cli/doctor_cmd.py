@@ -13,8 +13,21 @@ Emitter = Callable[[Any], None]
 
 
 def _make_doctor_handler(emit: Emitter) -> Callable[..., None]:
-    def handler(*, prune: bool = False, global_: bool = False) -> None:
-        emit(doctor_sync(DoctorInput(prune=prune, global_=global_)))
+    def handler(
+        *,
+        prune: bool = False,
+        global_: bool = False,
+        kill_orphans: bool = False,
+    ) -> None:
+        emit(
+            doctor_sync(
+                DoctorInput(
+                    prune=prune,
+                    global_=global_,
+                    kill_orphans=kill_orphans,
+                )
+            )
+        )
 
     return handler
 
@@ -30,6 +43,8 @@ def register_doctor_command(
         "Reconciles orphaned spawns (dead PIDs, missing spawn directories),\n"
         "cleans stale session locks, scans telemetry retention, and warns about\n"
         "missing or malformed configuration.\n\n"
+        "Use --kill-orphans to terminate orphaned spawn process groups before\n"
+        "finalizing stale runs.\n\n"
         "Use --prune to delete stale spawn artifacts, telemetry segments, and\n"
         "stale Claude overlay dirs for the current project.\n"
         "Before pruning a stale Claude overlay, Meridian makes a best-effort\n"
@@ -45,6 +60,7 @@ def register_doctor_command(
         "  meridian doctor                        # check and repair\n\n"
         "  meridian doctor --prune   # prune artifacts + stale Claude overlays\n\n"
         "  meridian doctor --prune --global      # also prune other stale projects\n\n"
+        "  meridian doctor --kill-orphans        # terminate orphaned process groups\n\n"
         "  meridian doctor --format text          # human-readable summary\n"
     )
     if agent_mode:

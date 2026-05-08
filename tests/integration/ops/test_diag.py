@@ -125,7 +125,7 @@ def test_doctor_warning_shape_for_non_mars_warnings(
 
 
 @pytest.mark.parametrize("depth_value", ["1", "garbage", "1.5", "-1"])
-def test_doctor_skips_orphan_run_repair_when_depth_is_not_clearly_root(
+def test_doctor_kill_orphans_skips_repair_when_depth_is_not_clearly_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     depth_value: str,
@@ -140,13 +140,13 @@ def test_doctor_skips_orphan_run_repair_when_depth_is_not_clearly_root(
         lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
     )
 
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), kill_orphans=True))
 
     assert "orphan_runs" not in result.repaired
 
 
 @pytest.mark.parametrize("depth_value", [None, "", "0"])
-def test_doctor_repairs_orphan_runs_when_depth_is_clearly_root(
+def test_doctor_kill_orphans_repairs_orphan_runs_when_depth_is_clearly_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     depth_value: str | None,
@@ -164,11 +164,36 @@ def test_doctor_repairs_orphan_runs_when_depth_is_clearly_root(
         lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
     )
 
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), kill_orphans=True))
 
     assert "orphan_runs" in result.repaired
     runtime_root = resolve_project_runtime_root_for_write(project_root)
     assert spawn_store.get_spawn(runtime_root, spawn_id).status == "failed"
+    assert result.killed_orphan_spawns == (spawn_id,)
+
+
+def test_doctor_does_not_reconcile_orphans_without_kill_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _create_project_root(tmp_path)
+    _create_agent_skill_dirs(project_root)
+    spawn_id = _seed_active_spawn(project_root, started_at="2020-01-01T00:00:00Z")
+    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    monkeypatch.setattr(
+        diag,
+        "check_upgrade_availability",
+        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
+    )
+
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
+
+    assert "orphan_runs" not in result.repaired
+    assert result.killed_orphan_spawns == ()
+    warning = _warning_by_code(result, "live_active_spawns_remain")
+    assert warning.payload == {"spawn_ids": [spawn_id]}
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    assert spawn_store.get_spawn(runtime_root, spawn_id).status == "running"
 
 
 def test_doctor_live_active_warning_uses_post_repair_spawns(
@@ -186,7 +211,7 @@ def test_doctor_live_active_warning_uses_post_repair_spawns(
         lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
     )
 
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
+    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), kill_orphans=True))
 
     assert "orphan_runs" in result.repaired
     warning = _warning_by_code(result, "live_active_spawns_remain")
@@ -215,7 +240,9 @@ def test_doctor_prune_preserves_v2_state_dir_after_same_run_reconcile(
         lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
     )
 
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
+    result = doctor_sync(
+        DoctorInput(project_root=project_root.as_posix(), prune=True, kill_orphans=True)
+    )
 
     assert "orphan_runs" in result.repaired
     assert result.pruned_spawn_artifacts == 0

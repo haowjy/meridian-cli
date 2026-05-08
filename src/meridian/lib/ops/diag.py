@@ -41,6 +41,7 @@ class DoctorInput(BaseModel):
     project_root: str | None = None
     prune: bool = False
     global_: bool = False
+    kill_orphans: bool = False
 
 
 class TelemetryCleanupStats(BaseModel):
@@ -75,6 +76,7 @@ class DoctorOutput(BaseModel):
     telemetry_cleanup: TelemetryCleanupStats | None = None
     warnings: tuple["DoctorWarning", ...] = ()
     repaired: tuple[str, ...] = ()
+    killed_orphan_spawns: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         """Key-value health check output for text output mode."""
@@ -96,6 +98,7 @@ class DoctorOutput(BaseModel):
             ("pruned_orphan_dirs", str(self.pruned_orphan_dirs)),
             ("pruned_claude_overlays", str(self.pruned_claude_overlays)),
             ("pruned_spawn_artifacts", str(self.pruned_spawn_artifacts)),
+            ("killed_orphan_spawns", ", ".join(self.killed_orphan_spawns) or "none"),
             ("repaired", ", ".join(self.repaired) if self.repaired else "none"),
         ]
         if self.telemetry_cleanup is not None:
@@ -143,17 +146,18 @@ def _repair_stale_session_locks(project_root: Path) -> int:
     return len(cleanup.cleaned_ids)
 
 
-def _repair_orphan_runs(project_root: Path) -> int:
+def _repair_orphan_runs(project_root: Path) -> tuple[int, tuple[str, ...]]:
     from meridian.lib.state.reaper import reconcile_spawns
 
     runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
     if runtime_root is None:
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(runtime_root)
-    running_before = sum(1 for s in spawns if is_active_spawn_status(s.status))
+    running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
     reconciled = reconcile_spawns(project_root, runtime_root, spawns)
-    running_after = sum(1 for s in reconciled if is_active_spawn_status(s.status))
-    return running_before - running_after
+    running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
+    reconciled_orphans = tuple(sorted(running_before - running_after))
+    return len(reconciled_orphans), reconciled_orphans
 
 
 def doctor_sync(payload: DoctorInput) -> DoctorOutput:
@@ -169,12 +173,13 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     now = time.time()
 
     repaired: list[str] = []
+    killed_orphan_spawns: tuple[str, ...] = ()
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
         repaired.append("stale_session_locks")
 
-    if is_root_side_effect_process():
-        orphan_runs = _repair_orphan_runs(project_root)
+    if payload.kill_orphans and is_root_side_effect_process():
+        orphan_runs, killed_orphan_spawns = _repair_orphan_runs(project_root)
         if orphan_runs > 0:
             repaired.append("orphan_runs")
 
@@ -366,11 +371,16 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     running = [row.id for row in spawns if is_active_spawn_status(row.status)]
     if running:
+        reconciliation_mode = (
+            "after orphan-kill reconciliation"
+            if payload.kill_orphans
+            else "without orphan-kill reconciliation"
+        )
         warnings.append(
             DoctorWarning(
                 code="live_active_spawns_remain",
                 message=(
-                    "Live active spawns remain after reconciliation and were not pruned: "
+                    f"Live active spawns remain {reconciliation_mode} and were not pruned: "
                     + ", ".join(running)
                 ),
                 payload={"spawn_ids": running},
@@ -395,6 +405,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         telemetry_cleanup=telemetry_cleanup,
         warnings=tuple(warnings),
         repaired=tuple(sorted(set(repaired))),
+        killed_orphan_spawns=killed_orphan_spawns,
     )
 
 

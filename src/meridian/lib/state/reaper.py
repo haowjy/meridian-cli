@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from meridian.lib.state.managed_primary import (
     ManagedPrimarySnapshot,
     ReconciliationContext,
     read_managed_primary_snapshot,
+    terminate_managed_primary_processes,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -154,17 +156,57 @@ def _collect_artifact_snapshot(
     )
 
 
-def _terminate_worker_pid(worker_pid: int, started_epoch: float | None) -> None:
-    """Terminate a leaked harness subprocess during orphan reconciliation.
+def _terminate_process_group(worker_pid: int, started_epoch: float | None) -> None:
+    """Terminate an orphaned spawn worker process group when possible.
 
     Uses PID-reuse guard to avoid killing unrelated processes.
     Suppresses all errors -- best-effort cleanup in a crash-recovery path.
     """
+    created_after = started_epoch if started_epoch is not None else 0.0
+    if not is_process_alive(worker_pid, created_after_epoch=created_after):
+        return
+
+    if sys.platform == "win32":
+        try:
+            os.kill(worker_pid, signal.SIGTERM)
+            logger.warning(
+                "Terminated orphan worker process.",
+                worker_pid=worker_pid,
+                signal="SIGTERM",
+                scope="pid",
+            )
+        except OSError:
+            pass
+        return
+
+    process_group_id: int | None = None
     try:
-        created_after = started_epoch if started_epoch is not None else 0.0
-        if not is_process_alive(worker_pid, created_after_epoch=created_after):
+        process_group_id = os.getpgid(worker_pid)
+    except OSError:
+        process_group_id = None
+
+    if process_group_id is not None:
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+            logger.warning(
+                "Terminated orphan worker process group.",
+                worker_pid=worker_pid,
+                process_group_id=process_group_id,
+                signal="SIGTERM",
+                scope="process_group",
+            )
             return
+        except OSError:
+            pass
+
+    try:
         os.kill(worker_pid, signal.SIGTERM)
+        logger.warning(
+            "Terminated orphan worker process via PID fallback.",
+            worker_pid=worker_pid,
+            signal="SIGTERM",
+            scope="pid_fallback",
+        )
     except OSError:
         pass
 
@@ -316,7 +358,7 @@ def _log_orphan_primary_diagnostics(
             else None
         )
         logger.warning(
-            "Managed primary launcher dead; reconciler did not terminate tracked children.",
+            "Managed primary launcher dead during orphan reconciliation.",
             spawn_id=record.id,
             managed_metadata_readable=True,
             launcher_pid=launcher_pid,
@@ -337,8 +379,7 @@ def _log_orphan_primary_diagnostics(
     launcher_alive = snapshot.runner_pid_alive if launcher_pid is not None else None
     logger.warning(
         (
-            "Managed primary candidate reconciled without readable metadata; "
-            "skipped worker termination."
+            "Managed primary candidate reconciled without readable metadata."
         ),
         spawn_id=record.id,
         managed_metadata_readable=False,
@@ -479,13 +520,21 @@ def reconcile_active_spawn(
         managed_snapshot is not None or _is_potential_managed_primary(record)
     ):
         _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
-    if (
-        managed_snapshot is None
-        and record.worker_pid is not None
-        and record.worker_pid > 0
-        and not _is_potential_managed_primary(record)
-    ):
-        _terminate_worker_pid(record.worker_pid, generic_snapshot.started_epoch)
+    if record.worker_pid is not None and record.worker_pid > 0:
+        _terminate_process_group(record.worker_pid, generic_snapshot.started_epoch)
+    if managed_snapshot is not None:
+        signaled = terminate_managed_primary_processes(
+            managed_snapshot.metadata,
+            started_epoch=managed_snapshot.started_epoch,
+            include_launcher=False,
+            include_runtime_children=True,
+        )
+        if signaled:
+            logger.warning(
+                "Terminated managed primary tracked runtime children during orphan reconciliation.",
+                spawn_id=record.id,
+                signaled_pids=signaled,
+            )
     return _finalize_failed(
         project_root,
         runtime_root,

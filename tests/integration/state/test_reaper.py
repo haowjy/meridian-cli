@@ -499,12 +499,12 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
-    assert sent_signals == []
+    assert sent_signals == [(8882, signal.SIGTERM), (9992, signal.SIGTERM)]
 
 
 @pytest.mark.parametrize("harness", ["codex", "opencode"])
 @pytest.mark.parametrize("corrupt_primary_meta", [False, True])
-def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_skips_worker_sigterm(
+def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_kills_worker_pg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     harness: str,
@@ -529,9 +529,10 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_sk
         lambda pid, created_after_epoch=None: pid == worker_pid,
     )
     sent_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr("meridian.lib.state.reaper.os.getpgid", lambda pid: pid)
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.os.kill",
-        lambda pid, sig: sent_signals.append((pid, sig)),
+        "meridian.lib.state.reaper.os.killpg",
+        lambda pgid, sig: sent_signals.append((pgid, sig)),
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
@@ -542,7 +543,7 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_sk
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
-    assert sent_signals == []
+    assert sent_signals == [(worker_pid, signal.SIGTERM)]
 
 
 def test_reconcile_active_spawn_orphan_primary_diagnostics_include_launcher_alive(
@@ -809,7 +810,7 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifac
     assert latest.error is None
 
 
-def test_reconcile_active_spawn_child_orphan_terminates_worker_pid(
+def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -829,9 +830,10 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_pid(
         lambda pid, created_after_epoch=None: pid == worker_pid,
     )
     sent_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr("meridian.lib.state.reaper.os.getpgid", lambda pid: pid)
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.os.kill",
-        lambda pid, sig: sent_signals.append((pid, sig)),
+        "meridian.lib.state.reaper.os.killpg",
+        lambda pgid, sig: sent_signals.append((pgid, sig)),
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
@@ -902,7 +904,7 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
     assert reconciled.error == "orphan_primary"
-    assert sent_signals == []
+    assert sent_signals == [(7302, signal.SIGTERM), (7303, signal.SIGTERM)]
 
     output = spawn_api.spawn_cancel_sync(
         SpawnCancelInput(
@@ -914,7 +916,12 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     assert output.status == "failed"
     assert output.exit_code == 1
     assert output.message == f"Spawn '{spawn_id}' is already failed."
-    assert sent_signals == [(7302, signal.SIGTERM), (7303, signal.SIGTERM)]
+    assert sent_signals == [
+        (7302, signal.SIGTERM),
+        (7303, signal.SIGTERM),
+        (7302, signal.SIGTERM),
+        (7303, signal.SIGTERM),
+    ]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
@@ -951,9 +958,10 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
         lambda pid, created_after_epoch=None: pid == worker_pid,
     )
     passive_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr("meridian.lib.state.reaper.os.getpgid", lambda pid: pid)
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.os.kill",
-        lambda pid, sig: passive_signals.append((pid, sig)),
+        "meridian.lib.state.reaper.os.killpg",
+        lambda pgid, sig: passive_signals.append((pgid, sig)),
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
@@ -961,7 +969,7 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
     assert reconciled.error == "orphan_primary"
-    assert passive_signals == []
+    assert passive_signals == [(worker_pid, signal.SIGTERM)]
 
     explicit_signals: list[tuple[int, int]] = []
     monkeypatch.setattr(
