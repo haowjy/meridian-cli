@@ -14,6 +14,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
+from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.state.user_paths import get_project_uuid
 
 
@@ -136,6 +137,24 @@ def test_build_chat_entrypoint_keeps_runtime_write_context_carrier_only(
     assert entrypoint.services.lifecycle is None
 
 
+def test_build_chat_entrypoint_accepts_minimal_prepared_runtime_carrier(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+
+    class _PreparedRuntime:
+        def __init__(self) -> None:
+            self.project_root = project_root
+            self.runtime_root = runtime_root
+            self.config = None
+
+    entrypoint = build_chat_entrypoint(_PreparedRuntime())  # type: ignore[arg-type]
+
+    assert entrypoint.context.project_root == project_root
+    assert entrypoint.context.runtime_root == runtime_root
+    assert entrypoint.context.authority is None
+
+
 def test_build_extension_entrypoint_keeps_runtime_write_context_carrier_only(
     tmp_path: Path,
 ) -> None:
@@ -148,6 +167,34 @@ def test_build_extension_entrypoint_keeps_runtime_write_context_carrier_only(
     assert entrypoint.context.runtime_root == prepared.runtime_root
     assert entrypoint.context.config == prepared.config
     assert entrypoint.services.lifecycle is None
+
+
+def test_prepare_for_runtime_write_uses_authority_paths_for_config_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _repo(tmp_path)
+    frozen_config = tmp_path / "frozen-meridian.toml"
+    frozen_config.write_text("[defaults]\nmax_depth = 7\n", encoding="utf-8")
+    authority = prepare_for_project_read(project_root).authority.model_copy(
+        update={
+            "project_config_paths": resolve_project_config_paths(project_root).model_copy(
+                update={"meridian_toml": frozen_config}
+            )
+        }
+    )
+
+    monkeypatch.setattr(
+        "meridian.lib.bootstrap.services.resolve_runtime_authority_for_write",
+        lambda _project_root: authority.model_copy(
+            update={"runtime_root": tmp_path / "user-home" / "projects" / "uuid"}
+        ),
+    )
+
+    result = prepare_for_runtime_write(project_root)
+
+    assert result.config is not None
+    assert result.config.max_depth == 7
 
 
 def test_build_spawn_application_service_uses_shared_entrypoint_seam(

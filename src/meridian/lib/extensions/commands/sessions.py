@@ -112,8 +112,8 @@ async def get_spawn_stats_handler(
 
     _ = context
     project_root = services.application.context.project_root
-    if project_root is None and services.meridian_dir is not None:
-        project_root = services.meridian_dir.parent
+    if project_root is None and services.authority is not None:
+        project_root = services.authority.project_root
     if project_root is None:
         return ExtensionErrorResult(
             code="service_unavailable",

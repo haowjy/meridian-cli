@@ -49,19 +49,15 @@ def test_workspace_init_creates_template_and_local_gitignore_entry(tmp_path: Pat
 
 def test_workspace_init_resolves_worktree_gitdir_pointer(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
-    git_dir = tmp_path / "detached-git-dir"
+    git_dir = tmp_path / "main-git-dir" / "worktrees" / "feature"
     (git_dir / "info").mkdir(parents=True)
     (project_root / ".git").write_text(f"gitdir: {git_dir.as_posix()}\n", encoding="utf-8")
 
     result = workspace_init_sync(WorkspaceInitInput(project_root=project_root.as_posix()))
 
-    assert result.local_gitignore_path == (git_dir / "info" / "exclude").as_posix()
-    assert (git_dir / "info" / "exclude").read_text(encoding="utf-8").count(
-        "workspace.local.toml"
-    ) == 1
-    assert (git_dir / "info" / "exclude").read_text(encoding="utf-8").count(
-        "meridian.local.toml"
-    ) == 1
+    assert result.local_gitignore_path is None
+    assert result.local_gitignore_updated is False
+    assert not (git_dir / "info" / "exclude").exists()
 
 
 def test_workspace_init_handles_missing_git_metadata_without_failure(tmp_path: Path) -> None:

@@ -968,7 +968,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise
             except TimeoutError as exc:
                 _emit_error(_operation_error_message(exc), exit_code=124)
-            except (KeyError, ValueError, FileNotFoundError, OSError) as exc:
+            except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                 _emit_error(_operation_error_message(exc))
     finally:
         flush_sink(active_sink)

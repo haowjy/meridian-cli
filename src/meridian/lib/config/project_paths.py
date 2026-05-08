@@ -1,6 +1,5 @@
 """Project-root Meridian path helpers."""
 
-import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,7 +29,7 @@ class ProjectConfigPaths(BaseModel):
             object.__setattr__(
                 self,
                 "workspace_local_toml",
-                _resolve_workspace_local_toml(self.project_root),
+                self.project_root / "workspace.local.toml",
             )
         if self.meridian_local_toml == Path("."):
             object.__setattr__(
@@ -38,18 +37,6 @@ class ProjectConfigPaths(BaseModel):
                 "meridian_local_toml",
                 self.project_root / "meridian.local.toml",
             )
-
-
-def _resolve_workspace_local_toml(project_root: Path) -> Path:
-    override = os.getenv("MERIDIAN_RUNTIME_DIR", "").strip()
-    if not override:
-        return project_root / "workspace.local.toml"
-
-    candidate = Path(override).expanduser()
-    runtime_root = candidate if candidate.is_absolute() else project_root / candidate
-    return runtime_root.parent / "workspace.local.toml"
-
-
 def resolve_project_config_paths(
     project_root: Path, execution_cwd: Path | None = None
 ) -> ProjectConfigPaths:
@@ -61,6 +48,6 @@ def resolve_project_config_paths(
         project_root=resolved_project_root,
         execution_cwd=resolved_execution_cwd,
         meridian_toml=resolved_project_root / "meridian.toml",
-        workspace_local_toml=_resolve_workspace_local_toml(resolved_project_root),
+        workspace_local_toml=resolved_project_root / "workspace.local.toml",
         meridian_local_toml=resolved_project_root / "meridian.local.toml",
     )

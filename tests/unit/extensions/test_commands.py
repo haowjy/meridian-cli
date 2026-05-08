@@ -236,23 +236,14 @@ async def test_get_spawn_stats_returns_spawn_stats_output_compatible_data(
 
     monkeypatch.setattr(spawn_api_mod, "spawn_stats_sync", _fake_spawn_stats_sync)
 
-    meridian_dir = tmp_path / ".meridian"
     result = await get_spawn_stats_handler(
         {"spawn_id": "p42"},
         _build_context(),
-        ExtensionCommandServices(meridian_dir=meridian_dir),
+        ExtensionCommandServices(),
     )
-
-    if isinstance(result, ExtensionErrorResult):
-        pytest.fail(f"unexpected error result: {result}")
-    assert isinstance(result, ExtensionJSONResult)
-
-    payload = captured["payload"]
-    assert isinstance(payload, SpawnStatsInput)
-    assert payload.spawn_id == "p42"
-    assert payload.project_root == tmp_path.as_posix()
-    parsed = SpawnStatsOutput.model_validate(result.payload)
-    assert parsed == expected
+    assert isinstance(result, ExtensionErrorResult)
+    assert result.code == "service_unavailable"
+    assert "project_root not available" in result.message
 
 
 @pytest.mark.asyncio
@@ -292,6 +283,49 @@ async def test_get_spawn_stats_prefers_extension_application_project_root(
             application=application,
             meridian_dir=tmp_path / "wrong-parent" / ".meridian",
         ),
+    )
+
+    if isinstance(result, ExtensionErrorResult):
+        pytest.fail(f"unexpected error result: {result}")
+
+    payload = captured["payload"]
+    assert isinstance(payload, SpawnStatsInput)
+    assert payload.project_root == project_root.as_posix()
+
+
+@pytest.mark.asyncio
+async def test_get_spawn_stats_falls_back_to_extension_authority_project_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import meridian.lib.ops.spawn.api as spawn_api_mod
+
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    prepared = prepare_for_runtime_write(project_root)
+    captured: dict[str, Any] = {}
+
+    def _fake_spawn_stats_sync(payload: object) -> SpawnStatsOutput:
+        captured["payload"] = payload
+        return SpawnStatsOutput(
+            total_runs=0,
+            succeeded=0,
+            failed=0,
+            cancelled=0,
+            running=0,
+            finalizing=0,
+            total_duration_secs=0.0,
+            total_cost_usd=0.0,
+            models={},
+            children=(),
+        )
+
+    monkeypatch.setattr(spawn_api_mod, "spawn_stats_sync", _fake_spawn_stats_sync)
+
+    result = await get_spawn_stats_handler(
+        {"spawn_id": "p96"},
+        _build_context(),
+        build_extension_command_services(authority=prepared.authority),
     )
 
     if isinstance(result, ExtensionErrorResult):

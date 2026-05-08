@@ -163,16 +163,12 @@ def test_workspace_snapshot_surfaces_unknown_keys_and_missing_enabled_roots(tmp_
     assert missing.payload == {"roots": [(project_root / "missing-root").resolve().as_posix()]}
 
 
-def test_workspace_snapshot_uses_state_root_parent_override(
+def test_workspace_snapshot_reads_legacy_workspace_from_project_root(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = _repo(tmp_path)
-    override_root = tmp_path / "state-root" / ".meridian"
-    override_root.parent.mkdir(parents=True)
-    workspace_path = override_root.parent / "workspace.local.toml"
-    (override_root.parent / "shared-root").mkdir()
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override_root.as_posix())
+    workspace_path = project_root / "workspace.local.toml"
+    (project_root / "shared-root").mkdir()
     workspace_path.write_text(
         "[[context-roots]]\n"
         'path = "./shared-root"\n',
@@ -183,30 +179,31 @@ def test_workspace_snapshot_uses_state_root_parent_override(
 
     assert snapshot.status == "present"
     assert snapshot.source_paths == (workspace_path.resolve(),)
-    assert snapshot.roots[0].resolved_path == (override_root.parent / "shared-root").resolve()
+    assert snapshot.roots[0].resolved_path == (project_root / "shared-root").resolve()
 
 
 def test_workspace_snapshot_uses_frozen_authority_config_paths(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = _repo(tmp_path)
-    first_override = tmp_path / "state-a" / ".meridian"
-    second_override = tmp_path / "state-b" / ".meridian"
-    for override in (first_override, second_override):
-        override.parent.mkdir(parents=True)
-        (override.parent / "shared-root").mkdir()
-    first_workspace_path = first_override.parent / "workspace.local.toml"
-    second_workspace_path = second_override.parent / "workspace.local.toml"
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", first_override.as_posix())
+    first_workspace_root = tmp_path / "state-a"
+    second_workspace_root = tmp_path / "state-b"
+    for workspace_root in (first_workspace_root, second_workspace_root):
+        workspace_root.mkdir(parents=True)
+        (workspace_root / "shared-root").mkdir()
+    first_workspace_path = first_workspace_root / "workspace.local.toml"
+    second_workspace_path = second_workspace_root / "workspace.local.toml"
     first_workspace_path.write_text(
         "[[context-roots]]\n"
         'path = "./shared-root"\n',
         encoding="utf-8",
     )
     authority = resolve_project_authority(project_root)
+    frozen_paths = authority.project_config_paths.model_copy(
+        update={"workspace_local_toml": first_workspace_path}
+    )
+    frozen_authority = authority.model_copy(update={"project_config_paths": frozen_paths})
 
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", second_override.as_posix())
     second_workspace_path.write_text(
         "[[context-roots]]\n"
         'path = "./shared-root"\n',
@@ -215,12 +212,12 @@ def test_workspace_snapshot_uses_frozen_authority_config_paths(
 
     snapshot = resolve_workspace_snapshot(
         project_root,
-        config_paths=authority.project_config_paths,
+        config_paths=frozen_authority.project_config_paths,
     )
 
     assert snapshot.status == "present"
     assert snapshot.source_paths == (first_workspace_path.resolve(),)
-    assert snapshot.roots[0].resolved_path == (first_override.parent / "shared-root").resolve()
+    assert snapshot.roots[0].resolved_path == (first_workspace_root / "shared-root").resolve()
 
 
 def test_workspace_snapshot_loads_named_committed_and_local_workspace_entries(

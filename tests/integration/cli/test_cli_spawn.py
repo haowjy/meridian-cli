@@ -261,6 +261,36 @@ def test_spawn_explicit_text_format_works(
     assert "Spawn dry-run." in output
 
 
+def test_spawn_runtime_error_is_reported_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    def _fail_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (payload, sink, prepared)
+        raise RuntimeError(
+            "Mars model resolution failed: no mars.toml found for this project root. "
+            "Add mars.toml or choose a fully qualified model id."
+        )
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fail_spawn_create_sync)
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "-a", "reviewer", "-p", "build", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "mars.toml" in captured.err
+
+
 def test_spawn_dry_run_uses_threaded_project_root_for_runtime_write(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

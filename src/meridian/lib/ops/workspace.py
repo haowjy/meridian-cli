@@ -117,6 +117,10 @@ def _resolve_git_dir(project_root: Path) -> Path | None:
     return None
 
 
+def _is_linked_worktree_git_dir(git_dir: Path) -> bool:
+    return "worktrees" in git_dir.parts
+
+
 def _ensure_local_gitignore_entries(
     *,
     project_root: Path,
@@ -124,6 +128,8 @@ def _ensure_local_gitignore_entries(
 ) -> tuple[Path | None, bool]:
     git_dir = _resolve_git_dir(project_root)
     if git_dir is None:
+        return None, False
+    if _is_linked_worktree_git_dir(git_dir):
         return None, False
 
     exclude_path = git_dir / "info" / "exclude"

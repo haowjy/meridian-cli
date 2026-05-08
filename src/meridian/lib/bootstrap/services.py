@@ -60,11 +60,12 @@ def _application_context_from_runtime(
 ) -> ApplicationContext:
     """Project bootstrap state onto the shared application context carrier."""
 
+    authority = getattr(prepared, "authority", None)
     return ApplicationContext(
         project_root=prepared.project_root,
         runtime_root=prepared.runtime_root,
         config=prepared.config,
-        authority=prepared.authority,
+        authority=authority,
     )
 
 
@@ -76,7 +77,7 @@ def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
         authority=authority,
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root),
+        config=bootstrap_config.load_config(authority.project_root, authority=authority),
     )
 
 
@@ -110,7 +111,7 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
         authority=authority,
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root),
+        config=bootstrap_config.load_config(authority.project_root, authority=authority),
     )
 
 
@@ -130,7 +131,7 @@ def prepare_for_runtime_write(project_root: Path) -> RuntimeWriteContext:
         authority=authority.model_copy(update={"runtime_root": runtime_root}),
         project_root=authority.project_root,
         layout=project_state.resolve_layout(authority.project_root),
-        config=bootstrap_config.load_config(authority.project_root),
+        config=bootstrap_config.load_config(authority.project_root, authority=authority),
         runtime_root=runtime_root,
     )
 

@@ -4,12 +4,14 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
+from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import (
     resolve_project_root,
     resolve_project_root_resolution,
 )
 from meridian.lib.config.settings import load_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
+from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_read
 
 
@@ -253,18 +255,54 @@ def test_project_authority_freezes_workspace_local_path_at_resolution_time(
 ) -> None:
     project_root = tmp_path / "plain-project"
     project_root.mkdir()
-    first_override = tmp_path / "runtime-a" / ".meridian"
-    second_override = tmp_path / "runtime-b" / ".meridian"
-    first_override.parent.mkdir(parents=True)
-    second_override.parent.mkdir(parents=True)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", first_override.as_posix())
-
     authority = resolve_project_authority(project_root)
 
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", second_override.as_posix())
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-b" / ".meridian").as_posix())
 
     assert authority.project_config_paths.workspace_local_toml == (
-        first_override.parent / "workspace.local.toml"
+        project_root.resolve() / "workspace.local.toml"
+    )
+
+
+def test_build_config_surface_uses_authority_project_config_paths_after_env_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    authority = resolve_project_authority(project_root)
+    frozen_workspace_path = tmp_path / "frozen-workspace.local.toml"
+    frozen_workspace_root = tmp_path / "frozen-root"
+    frozen_workspace_root.mkdir()
+    frozen_workspace_path.write_text(
+        "[[context-roots]]\n"
+        'path = "./frozen-root"\n',
+        encoding="utf-8",
+    )
+    live_workspace_path = project_root / "workspace.local.toml"
+    live_workspace_root = project_root / "live-root"
+    live_workspace_root.mkdir()
+    live_workspace_path.write_text(
+        "[[context-roots]]\n"
+        'path = "./live-root"\n',
+        encoding="utf-8",
+    )
+    frozen_paths = ProjectConfigPaths(
+        project_root=authority.project_root,
+        execution_cwd=authority.execution_cwd,
+        meridian_toml=authority.project_config_paths.meridian_toml,
+        workspace_local_toml=frozen_workspace_path,
+        meridian_local_toml=authority.project_config_paths.meridian_local_toml,
+    )
+    frozen_authority = authority.model_copy(update={"project_config_paths": frozen_paths})
+
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", (tmp_path / "runtime-after").as_posix())
+
+    surface = build_config_surface(frozen_authority)
+
+    assert surface.workspace.sources == (frozen_workspace_path.resolve().as_posix(),)
+    assert surface.workspace.roots_detail[0].resolved_path == (
+        frozen_workspace_root.resolve().as_posix()
     )
 
 

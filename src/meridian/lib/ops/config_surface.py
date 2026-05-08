@@ -122,19 +122,27 @@ def build_config_surface(project_root: Path | RuntimeAuthoritySnapshot) -> Confi
         else resolve_runtime_authority_for_read(project_root)
     )
     resolved_root = authority.project_root
+    project_config_paths = authority.project_config_paths
     user_config_path = resolve_user_config_path(None)
     warning: str | None = None
     if not resolved_root.exists():
         warning = f"Resolved project root '{resolved_root.as_posix()}' does not exist on disk."
-    workspace_snapshot = resolve_workspace_snapshot(resolved_root)
+    workspace_snapshot = resolve_workspace_snapshot(
+        resolved_root,
+        config_paths=project_config_paths,
+    )
 
     return ConfigSurface(
         authority=authority,
         project_root=resolved_root,
-        project_config=resolve_project_config_state(resolved_root),
+        project_config=resolve_project_config_state(
+            resolved_root,
+            project_paths=project_config_paths,
+        ),
         user_config_path=user_config_path,
         resolved_config=load_config(
             resolved_root,
+            authority=authority,
             user_config=user_config_path,
             resolve_models=False,
         ),
