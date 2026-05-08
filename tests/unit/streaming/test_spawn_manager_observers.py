@@ -279,6 +279,57 @@ async def test_on_event_callback_remains_compatible(
 
 
 @pytest.mark.asyncio
+async def test_start_spawn_uses_injected_ports(tmp_path: Path) -> None:
+    spawn_id = SpawnId("s-injected-ports")
+    project_root = tmp_path
+    runtime_root = resolve_runtime_paths(project_root).root_dir
+    release_events = asyncio.Event()
+    captured: dict[str, object] = {}
+
+    connection = ScriptedConnection(
+        spawn_id,
+        [_event("turn/completed")],
+        release_events,
+    )
+
+    async def start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> ScriptedConnection:
+        captured["start_spawn_id"] = str(config.spawn_id)
+        await connection.start(config, spec)
+        return connection
+
+    class RecordingControlSocketServer(FakeControlSocketServer):
+        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
+            super().__init__(spawn_id, socket_path, manager)
+            captured["control_spawn_id"] = str(spawn_id)
+            captured["control_socket_path"] = str(socket_path)
+
+    manager = SpawnManager(
+        runtime_root=runtime_root,
+        project_root=project_root,
+        start_connection=start_connection,
+        control_server_factory=RecordingControlSocketServer,
+    )
+    await manager.start_spawn(_config(spawn_id, project_root), _spec())
+    subscriber = manager.subscribe(spawn_id)
+    assert subscriber is not None
+
+    release_events.set()
+    first = await asyncio.wait_for(subscriber.get(), timeout=1.0)
+    assert first is not None
+    assert first.event_type == "turn/completed"
+    await manager.stop_spawn(spawn_id)
+
+    assert captured["start_spawn_id"] == str(spawn_id)
+    assert captured["control_spawn_id"] == str(spawn_id)
+    assert str(runtime_root / "spawns" / str(spawn_id) / "control.sock") == captured[
+        "control_socket_path"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_observer_shutdown_times_out_and_cancels_hung_observer(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

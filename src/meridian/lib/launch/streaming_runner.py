@@ -356,6 +356,7 @@ async def run_streaming_spawn(
     stream_to_terminal: bool = False,
     heartbeat_touch: HeartbeatTouch | None = None,
     heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
+    lifecycle_service: SpawnLifecycleService | None = None,
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
@@ -391,10 +392,13 @@ async def run_streaming_spawn(
         spawn_id,
         runner_pid=os.getpid(),
     )
-    lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
+    resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
+        project_root,
+        runtime_root,
+    )
     try:
         await manager.start_spawn(config, run_spec)
-        await manager._start_heartbeat(spawn_id)  # pyright: ignore[reportPrivateUsage]
+        await manager.start_heartbeat(spawn_id)
         subscriber = manager.subscribe(spawn_id)
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
@@ -446,7 +450,7 @@ async def run_streaming_spawn(
         else:
             resolved_outcome = outcome
         with suppress(Exception):
-            lifecycle_service.record_exited(
+            resolved_lifecycle.record_exited(
                 str(spawn_id),
                 exit_code=resolved_outcome.exit_code,
             )
@@ -480,6 +484,7 @@ async def _run_streaming_attempt(
     timeout_seconds: float | None,
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
+    lifecycle_service: SpawnLifecycleService,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
@@ -500,14 +505,9 @@ async def _run_streaming_attempt(
     timed_out = False
     terminated_by_report_watchdog = False
     terminal_outcome: TerminalEventOutcome | None = None
-    lifecycle_service = build_spawn_lifecycle_service_from_roots(
-        manager.project_root,
-        runtime_root,
-    )
-
     try:
         connection = await manager.start_spawn(config, run_spec)
-        await manager._start_heartbeat(run.spawn_id)  # pyright: ignore[reportPrivateUsage]
+        await manager.start_heartbeat(run.spawn_id)
         lifecycle_service.mark_running(
             run.spawn_id,
             launch_mode=launch_mode,
@@ -833,6 +833,7 @@ async def execute_with_streaming(
                     timeout_seconds=timeout_seconds,
                     event_observer=event_observer,
                     stream_stdout_to_terminal=stream_stdout_to_terminal,
+                    lifecycle_service=lifecycle_service,
                 )
                 conclusion.absorb_attempt(attempt)
                 if attempt.start_error is not None:

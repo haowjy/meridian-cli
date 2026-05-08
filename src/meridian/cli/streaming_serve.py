@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service,
+    build_spawn_lifecycle_service_from_roots,
     prepare_for_runtime_write,
 )
 from meridian.lib.config.project_root import resolve_project_root
@@ -65,16 +67,6 @@ async def streaming_serve(
         project_paths_execution_cwd=project_root.as_posix(),
     )
 
-    tracer = None
-    if debug:
-        from meridian.lib.observability.debug_tracer import DebugTracer
-
-        # Tracer needs spawn_id, but we need tracer for prepare_spawn.
-        # Solution: defer tracer creation until after prepare_spawn, then
-        # update connection_config if needed. Or pass it into prepare_spawn.
-        # For now, pass debug_tracer=None and create it after.
-        tracer = None  # Will set after we have spawn_id
-
     # Resolve-before-persist: prepare_spawn builds launch context first,
     # then atomically creates the row with real metadata (SEAM-1, SEAM-2)
     # ConnectionConfig projected from LaunchContext (DS-002)
@@ -100,22 +92,7 @@ async def streaming_serve(
             debug_path=spawn_dir / "debug.jsonl",
             echo_stderr=True,
         )
-        # Update connection_config with tracer - need to create a new one
-        # since ConnectionConfig is frozen
-        from meridian.lib.harness.connections.base import ConnectionConfig
-
-        connection_config = ConnectionConfig(
-            spawn_id=connection_config.spawn_id,
-            harness_id=connection_config.harness_id,
-            prompt=connection_config.prompt,
-            project_root=connection_config.project_root,
-            env_overrides=connection_config.env_overrides,
-            system=connection_config.system,
-            timeout_seconds=connection_config.timeout_seconds,
-            ws_bind_host=connection_config.ws_bind_host,
-            ws_port=connection_config.ws_port,
-            debug_tracer=tracer,
-        )
+        connection_config = replace(connection_config, debug_tracer=tracer)
 
     output_path = spawn_output_path(runtime_root, spawn_id)
     socket_path = runtime_root / "spawns" / str(spawn_id) / "control.sock"
@@ -127,6 +104,7 @@ async def streaming_serve(
     outcome_status: SpawnStatus = "failed"
     outcome_exit_code = 1
     failure_message: str | None = None
+    lifecycle_service = build_spawn_lifecycle_service_from_roots(project_root, runtime_root)
     try:
         outcome = await run_streaming_spawn(
             config=connection_config,
@@ -134,6 +112,7 @@ async def streaming_serve(
             runtime_root=runtime_root,
             project_root=project_root,
             spawn_id=spawn_id,
+            lifecycle_service=lifecycle_service,
         )
         outcome_status = outcome.status
         outcome_exit_code = outcome.exit_code

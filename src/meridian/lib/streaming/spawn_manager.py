@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +49,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
+
+StartConnectionPort = Callable[
+    ["ConnectionConfig", ResolvedLaunchSpec],
+    Awaitable["HarnessConnection[Any]"],
+]
+ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketServer]
 
 
 @dataclass(frozen=True)
@@ -112,6 +118,18 @@ async def dispatch_start(
     return connection
 
 
+def _default_control_server_factory(
+    spawn_id: SpawnId,
+    socket_path: Path,
+    manager: SpawnManager,
+) -> ControlSocketServer:
+    return ControlSocketServer(
+        spawn_id=spawn_id,
+        socket_path=socket_path,
+        manager=manager,
+    )
+
+
 class SpawnManager:
     """Own active connections, durable drain loops, and control routing."""
 
@@ -123,12 +141,18 @@ class SpawnManager:
         debug: bool = False,
         heartbeat_interval_secs: float = 30.0,
         heartbeat_touch: Callable[[Path, SpawnId], None] | None = None,
+        start_connection: StartConnectionPort | None = None,
+        control_server_factory: ControlServerFactory | None = None,
     ):
         self._runtime_root = runtime_root
         self._project_root = project_root
         self._debug = debug
         self._heartbeat_interval_secs = heartbeat_interval_secs
         self._heartbeat_touch = heartbeat_touch
+        self._start_connection = start_connection or dispatch_start
+        self._control_server_factory = (
+            control_server_factory or _default_control_server_factory
+        )
         self._sessions: dict[SpawnId, SpawnSession] = {}
         self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
@@ -223,7 +247,7 @@ class SpawnManager:
             )
 
         try:
-            connection = await dispatch_start(config, spec)
+            connection = await self._start_connection(config, spec)
         except Exception:
             if tracer is not None:
                 tracer.close()
@@ -241,10 +265,10 @@ class SpawnManager:
                 drain_policy=resolved_policy,
             )
         )
-        control_server = ControlSocketServer(
-            spawn_id=spawn_id,
-            socket_path=self._spawn_dir(spawn_id) / "control.sock",
-            manager=self,
+        control_server = self._control_server_factory(
+            spawn_id,
+            self._spawn_dir(spawn_id) / "control.sock",
+            self,
         )
 
         try:
