@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import tomllib
-import warnings
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,18 +128,7 @@ def _hook_from_row(
 
     # Parse remote URL - primary field
     remote = cast("str | None", row.get("remote"))
-    
-    # Support deprecated 'repo' as alias for 'remote'
-    repo = cast("str | None", row.get("repo"))
-    if repo is not None:
-        warnings.warn(
-            f"Hook config '{row_source}': 'repo' is deprecated, use 'remote' instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        if remote is None:
-            remote = repo
-    
+
     # Also check options.remote for plugin-style config
     if remote is not None:
         options.setdefault("remote", remote)

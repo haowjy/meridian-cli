@@ -11,7 +11,6 @@ ProjectRootSource = Literal[
     "explicit",
     "env",
     "mars",
-    "legacy-agents",
     "meridian-toml",
     "meridian-local-toml",
     "workspace-local-toml",
@@ -47,8 +46,6 @@ def _has_project_state_marker(candidate: Path) -> bool:
 def _discover_project_root(candidate: Path) -> ProjectRootSource | None:
     if (candidate / ".mars").is_dir():
         return "mars"
-    if (candidate / ".agents" / "skills").is_dir():
-        return "legacy-agents"
     if (candidate / "meridian.toml").is_file():
         return "meridian-toml"
     if (candidate / "meridian.local.toml").is_file():
@@ -121,10 +118,9 @@ def resolve_project_root(
     1. Explicit function argument.
     2. `MERIDIAN_PROJECT_DIR` environment variable.
     3. Current directory / ancestors containing `.mars/`.
-    4. Current directory / ancestors containing legacy `.agents/skills/`.
-    5. Current directory / ancestors containing Meridian config or state markers.
-    6. Current git boundary.
-    7. Current working directory.
+    4. Current directory / ancestors containing Meridian config or state markers.
+    5. Current git boundary.
+    6. Current working directory.
     """
     return resolve_project_root_resolution(explicit, execution_cwd=execution_cwd).project_root
 

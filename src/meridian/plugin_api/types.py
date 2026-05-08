@@ -44,7 +44,6 @@ class Hook:
     options: Mapping[str, object] = field(default_factory=_default_options)
     failure_policy: FailurePolicy | None = None
     remote: str | None = None
-    repo: str | None = None
 
 
 @dataclass(frozen=True)

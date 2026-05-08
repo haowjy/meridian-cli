@@ -28,19 +28,6 @@ def test_resolve_project_root_prefers_mars_skills_ancestor(
     assert resolve_project_root() == project_root.resolve()
 
 
-def test_resolve_project_root_falls_back_to_legacy_agents_skills_when_mars_absent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    nested = project_root / "src" / "feature"
-    (project_root / ".agents" / "skills").mkdir(parents=True)
-    nested.mkdir(parents=True)
-    monkeypatch.chdir(nested)
-
-    assert resolve_project_root() == project_root.resolve()
-
-
 def test_resolve_project_root_stops_at_git_boundary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
