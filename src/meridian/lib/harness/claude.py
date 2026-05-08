@@ -380,9 +380,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
 
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND
-        if not spec.interactive:
-            base_command = (*self.BASE_COMMAND, "-")
+        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
         return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:

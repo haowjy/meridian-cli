@@ -151,6 +151,8 @@ def project_claude_spec_to_cli_args(
     """Project one ``ClaudeLaunchSpec`` into an ordered command list."""
 
     command: list[str] = list(base_command)
+    if not spec.interactive:
+        command.append("-")
 
     if spec.model:
         command.extend(("--model", spec.model))

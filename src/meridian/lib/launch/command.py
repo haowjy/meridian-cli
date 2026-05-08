@@ -6,7 +6,6 @@ from typing import cast
 
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import project_subprocess_spec
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
 
 from .run_inputs import ResolvedRunInputs, to_spawn_params
@@ -92,12 +91,7 @@ def _base_command(adapter: SubprocessHarness, *, interactive: bool) -> tuple[str
     primary_base_command = _tuple_attr(adapter, "PRIMARY_BASE_COMMAND")
     subprocess_base_command = _tuple_attr(adapter, "BASE_COMMAND")
 
-    if interactive:
-        return primary_base_command
-
-    if adapter.id is HarnessId.CLAUDE:
-        return (*subprocess_base_command, "-")
-    return subprocess_base_command
+    return primary_base_command if interactive else subprocess_base_command
 
 
 def build_launch_argv(

@@ -184,6 +184,26 @@ def test_claude_cli_projection_uses_system_prompt_file_and_positional_user_turn(
     assert command[-1] == user_turn
 
 
+def test_claude_subprocess_projection_adds_stdin_sentinel_inside_projector() -> None:
+    command = project_claude_spec_to_cli_args(
+        ClaudeLaunchSpec(
+            prompt="USER: task prompt",
+            interactive=False,
+            permission_resolver=_resolver(),
+        ),
+        base_command=("claude", "-p", "--output-format", "stream-json", "--verbose"),
+    )
+
+    assert command[:5] == [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
+    assert command[5] == "-"
+
+
 def test_codex_cli_projection_combines_instruction_fields_before_user_turn() -> None:
     command = project_codex_spec_to_cli_args(
         CodexLaunchSpec(
