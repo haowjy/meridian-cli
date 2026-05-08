@@ -3,7 +3,7 @@
 import json
 import multiprocessing
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.types import SpawnId
@@ -43,6 +43,16 @@ def _write_start_and_finalize(project_root: str, idx: int) -> None:
     )
 
 
+class _ExecutionUpdatePayload(TypedDict):
+    execution_cwd: str
+    worker_pid: int
+
+
+class _HarnessUpdatePayload(TypedDict):
+    harness_session_id: str
+    claude_config_dir: str
+
+
 def _reserve_id_in_subprocess(
     runtime_root_str: str,
     ready_queue: Any,
@@ -59,7 +69,7 @@ def _reserve_id_in_subprocess(
 def _concurrent_update_in_subprocess(
     runtime_root_str: str,
     spawn_id: str,
-    payload: dict[str, object],
+    payload: _ExecutionUpdatePayload | _HarnessUpdatePayload,
     ready_queue: Any,
     start_event: Any,
     result_queue: Any,
@@ -67,7 +77,20 @@ def _concurrent_update_in_subprocess(
     runtime_root = Path(runtime_root_str)
     ready_queue.put("ready")
     start_event.wait()
-    update_spawn(runtime_root, spawn_id, **payload)
+    if "worker_pid" in payload:
+        update_spawn(
+            runtime_root,
+            spawn_id,
+            execution_cwd=payload["execution_cwd"],
+            worker_pid=payload["worker_pid"],
+        )
+    else:
+        update_spawn(
+            runtime_root,
+            spawn_id,
+            harness_session_id=payload["harness_session_id"],
+            claude_config_dir=payload["claude_config_dir"],
+        )
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     result_queue.put(row.model_dump())
@@ -152,6 +175,17 @@ def test_cross_process_reserve_spawn_id_returns_unique_contiguous_ids(tmp_path: 
     )
 
 
+def test_reserve_spawn_id_keeps_stable_lock_path_after_v2_marker(tmp_path: Path) -> None:
+    runtime_root = tmp_path / ".meridian"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    assert str(reserve_spawn_id(runtime_root)) == "p1"
+    assert str(reserve_spawn_id(runtime_root)) == "p2"
+
+    assert (runtime_root / "spawns.jsonl.flock").is_file()
+    assert not (runtime_root / "spawns.legacy-v1.jsonl.flock").exists()
+
+
 def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path) -> None:
     runtime_root = tmp_path / ".meridian"
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -170,7 +204,7 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
     ready_queue = ctx.Queue()
     result_queue = ctx.Queue()
     start_event = ctx.Event()
-    payloads = [
+    payloads: list[_ExecutionUpdatePayload | _HarnessUpdatePayload] = [
         {"execution_cwd": "/tmp/job", "worker_pid": 101},
         {"harness_session_id": "sess-123", "claude_config_dir": "/tmp/claude"},
     ]

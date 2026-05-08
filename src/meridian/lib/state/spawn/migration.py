@@ -59,7 +59,11 @@ def _archive_legacy_files_if_present(paths: RuntimePaths) -> None:
     """Finish archival of legacy v1 files after v2 marker is durable."""
 
     _rename_if_present(paths.spawns_jsonl, paths.root_dir / "spawns.legacy-v1.jsonl")
-    _rename_if_present(paths.spawns_flock, paths.root_dir / "spawns.legacy-v1.jsonl.flock")
+    # Keep spawns.jsonl.flock in place as the stable v2 lock path.
+    #
+    # Renaming an actively-held lock file can split exclusion across inodes:
+    # one process may still hold a lock on the renamed inode while another
+    # process locks a newly created spawns.jsonl.flock path.
 
 
 def _cache_key(runtime_root: Path) -> str:
