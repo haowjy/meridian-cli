@@ -56,13 +56,8 @@ def _primary_spawn_for_chat(
     runtime_root: Path,
     chat_id: str,
 ) -> SpawnRecord | None:
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    spawns = reconcile_spawns(
-        project_root,
-        runtime_root,
-        spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
-    )
+    _ = project_root
+    spawns = spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id})
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None

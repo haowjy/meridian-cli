@@ -16,9 +16,11 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
-from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.spawn.query import read_spawn_row
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.ops.spawn.query import (
+    read_latest_primary_spawn_for_chat_read_only,
+    read_spawn_row_read_only,
+)
+from meridian.lib.state import session_store
 from meridian.lib.state.paths import spawn_output_path
 from meridian.lib.state.primary_meta import is_managed_primary, read_primary_harness_session_id
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -240,17 +242,29 @@ def _primary_spawn_for_chat(
     runtime_root: Path,
     chat_id: str,
 ) -> SpawnRecord | None:
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    spawns = reconcile_spawns(
+    return read_latest_primary_spawn_for_chat_read_only(
         project_root,
-        runtime_root,
-        spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
+        chat_id,
+        runtime_root=runtime_root,
     )
-    primary_spawns = [row for row in spawns if row.kind == "primary"]
-    if not primary_spawns:
+
+
+def _latest_harness_session_id(record: session_store.SessionRecord) -> str | None:
+    for candidate in reversed(record.harness_session_ids):
+        normalized = candidate.strip()
+        if normalized:
+            return normalized
+    normalized = record.harness_session_id.strip()
+    return normalized or None
+
+
+def _read_chat_session_record(
+    runtime_root: Path, chat_id: str
+) -> session_store.SessionRecord | None:
+    records = session_store.get_session_records(runtime_root, {chat_id})
+    if not records:
         return None
-    return primary_spawns[-1]
+    return records[0]
 
 
 def _resolve_from_chat_id(
@@ -259,19 +273,26 @@ def _resolve_from_chat_id(
     runtime_root: Path,
     chat_id: str,
 ) -> SessionLogTarget:
-    resolved = resolve_session_reference(project_root, chat_id)
-    if not resolved.tracked:
+    session_record = _read_chat_session_record(runtime_root, chat_id)
+    if session_record is None:
         raise ValueError(f"Chat '{chat_id}' not found")
     primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
-    normalized_harness = (resolved.harness or "").strip() or None
+    normalized_harness = session_record.harness.strip() or None
     if normalized_harness is None and primary_spawn is not None and primary_spawn.harness:
         normalized_harness = primary_spawn.harness.strip() or None
 
-    normalized_session_id = (
-        resolved.effective_harness_session_id.strip()
-        if resolved.effective_harness_session_id is not None
-        else None
-    )
+    normalized_session_id = _latest_harness_session_id(session_record)
+    if (
+        normalized_session_id is None
+        and primary_spawn is not None
+        and (
+            primary_meta_session_id := read_primary_harness_session_id(
+                runtime_root, primary_spawn.id
+            )
+        )
+        is not None
+    ):
+        normalized_session_id = primary_meta_session_id.strip() or None
 
     if normalized_session_id is None:
         if primary_spawn is None:
@@ -286,6 +307,10 @@ def _resolve_from_chat_id(
 
     if not normalized_session_id.strip():
         raise ValueError(f"Chat '{chat_id}' not found")
+
+    if normalized_harness is None:
+        inferred = infer_harness_from_untracked_session_ref(project_root, normalized_session_id)
+        normalized_harness = str(inferred) if inferred is not None else None
 
     try:
         return _resolve_harness_session_file(
@@ -319,7 +344,7 @@ def _resolve_from_spawn_id(
     runtime_root: Path,
     spawn_id: str,
 ) -> SessionLogTarget:
-    row = read_spawn_row(project_root, spawn_id)
+    row = read_spawn_row_read_only(project_root, spawn_id, runtime_root=runtime_root)
     if row is None:
         raise ValueError(f"Spawn '{spawn_id}' not found")
 

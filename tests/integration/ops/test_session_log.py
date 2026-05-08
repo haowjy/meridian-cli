@@ -1321,3 +1321,112 @@ def test_resolve_target_chat_not_found_preserves_missing_chat_error(tmp_path: Pa
             runtime_root=runtime_root,
         )
     assert str(exc.value) == "Chat 'c999' not found"
+
+
+def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    session_id = "78f02237-df5f-43fe-a6e5-929f98287877"
+    _write_codex_rollout(
+        sessions_root=codex_home / "sessions",
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="spawn transcript",
+    )
+
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        spawn_id="p1",
+        harness_session_id=session_id,
+    )
+    state_path = runtime_root / "spawns" / "p1" / "state.json"
+    before_state = state_path.read_text(encoding="utf-8")
+
+    def _unexpected(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("reconciliation helper should not run for read-only target resolution")
+
+    monkeypatch.setattr("meridian.lib.state.reaper.reconcile_spawns", _unexpected)
+    monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
+    monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
+
+    resolved = resolve_target(
+        SessionLogInput(ref="p1"),
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+
+    assert resolved.session_id == session_id
+    assert resolved.source == "codex transcript"
+    assert state_path.read_text(encoding="utf-8") == before_state
+
+
+def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", codex_home.as_posix())
+    session_id = "6f2c95c5-f617-4e4d-80ab-d98f3270bcaf"
+    _write_codex_rollout(
+        sessions_root=codex_home / "sessions",
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="chat transcript",
+    )
+
+    session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id=session_id,
+        model="gpt-5.4",
+        chat_id="c1",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p1",
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="dev-orchestrator",
+        harness="codex",
+        kind="primary",
+        prompt="do thing",
+        harness_session_id=session_id,
+        status="running",
+    )
+    state_path = runtime_root / "spawns" / "p1" / "state.json"
+    before_state = state_path.read_text(encoding="utf-8")
+
+    def _unexpected(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("reconciliation helper should not run for read-only target resolution")
+
+    monkeypatch.setattr("meridian.lib.state.reaper.reconcile_spawns", _unexpected)
+    monkeypatch.setattr("meridian.lib.state.reaper.reconcile_active_spawn", _unexpected)
+    monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
+
+    resolved = resolve_target(
+        SessionLogInput(ref="c1"),
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+
+    assert resolved.session_id == session_id
+    assert resolved.source == "codex transcript"
+    assert state_path.read_text(encoding="utf-8") == before_state

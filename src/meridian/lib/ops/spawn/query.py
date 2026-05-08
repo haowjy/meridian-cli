@@ -105,6 +105,34 @@ def read_spawn_row(
     return record
 
 
+def read_spawn_row_read_only(
+    project_root: Path,
+    spawn_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> SpawnRecord | None:
+    """Return one spawn row without lifecycle reconciliation side effects."""
+
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    return spawn_store.get_spawn(resolved_runtime_root, spawn_id)
+
+
+def read_latest_primary_spawn_for_chat_read_only(
+    project_root: Path,
+    chat_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> SpawnRecord | None:
+    """Return the latest primary spawn row for a chat without reconciliation."""
+
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    spawns = spawn_store.list_spawns(resolved_runtime_root, filters={"chat_id": chat_id})
+    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    if not primary_spawns:
+        return None
+    return primary_spawns[-1]
+
+
 def read_report(
     project_root: Path,
     spawn_id: str,
