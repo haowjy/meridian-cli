@@ -96,28 +96,6 @@ def _concurrent_update_in_subprocess(
     result_queue.put(row.model_dump())
 
 
-def _read_after_concurrent_migration(
-    runtime_root_str: str,
-    spawn_id: str,
-    ready_queue: Any,
-    start_event: Any,
-    result_queue: Any,
-) -> None:
-    runtime_root = Path(runtime_root_str)
-    ready_queue.put("ready")
-    start_event.wait()
-    row = get_spawn(runtime_root, spawn_id)
-    spawns = list_spawns(runtime_root)
-    result_queue.put(
-        {
-            "row_status": None if row is None else row.status,
-            "row_prompt": None if row is None else row.prompt,
-            "ids": [spawn.id for spawn in spawns],
-            "marker": (runtime_root / "spawns" / "v2-format.json").is_file(),
-        }
-    )
-
-
 def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
     runtime_root = tmp_path / ".meridian"
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -173,17 +151,6 @@ def test_cross_process_reserve_spawn_id_returns_unique_contiguous_ids(tmp_path: 
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == str(
         process_count
     )
-
-
-def test_reserve_spawn_id_keeps_stable_lock_path_after_v2_marker(tmp_path: Path) -> None:
-    runtime_root = tmp_path / ".meridian"
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    assert str(reserve_spawn_id(runtime_root)) == "p1"
-    assert str(reserve_spawn_id(runtime_root)) == "p2"
-
-    assert (runtime_root / "spawns.jsonl.flock").is_file()
-    assert not (runtime_root / "spawns.legacy-v1.jsonl.flock").exists()
 
 
 def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path) -> None:
@@ -249,61 +216,6 @@ def test_concurrent_update_spawn_preserves_non_overlapping_fields(tmp_path: Path
     assert revisions == [3]
     assert any(snapshot["execution_cwd"] == "/tmp/job" for snapshot in snapshots)
     assert any(snapshot["harness_session_id"] == "sess-123" for snapshot in snapshots)
-
-
-def test_concurrent_first_reader_migration_converges_for_both_processes(tmp_path: Path) -> None:
-    runtime_root = tmp_path / ".meridian"
-    runtime_root.mkdir(parents=True, exist_ok=True)
-    with (runtime_root / "spawns.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                {
-                    "v": 1,
-                    "event": "start",
-                    "id": "p1",
-                    "chat_id": "c1",
-                    "model": "gpt-5.4",
-                    "agent": "coder",
-                    "harness": "codex",
-                    "kind": "child",
-                    "prompt": "legacy",
-                    "status": "running",
-                    "started_at": "2026-01-01T00:00:00Z",
-                },
-                sort_keys=True,
-            )
-            + "\n"
-        )
-
-    ctx = multiprocessing.get_context("spawn")
-    ready_queue = ctx.Queue()
-    result_queue = ctx.Queue()
-    start_event = ctx.Event()
-    processes = [
-        ctx.Process(
-            target=_read_after_concurrent_migration,
-            args=(runtime_root.as_posix(), "p1", ready_queue, start_event, result_queue),
-        )
-        for _ in range(2)
-    ]
-
-    for process in processes:
-        process.start()
-    for _ in processes:
-        assert ready_queue.get(timeout=10) == "ready"
-    start_event.set()
-    for process in processes:
-        process.join(timeout=10)
-        assert process.exitcode == 0
-
-    results = [result_queue.get(timeout=10) for _ in processes]
-
-    assert all(result["row_status"] == "running" for result in results)
-    assert all(result["row_prompt"] == "legacy" for result in results)
-    assert all(result["ids"] == ["p1"] for result in results)
-    assert all(result["marker"] is True for result in results)
-    assert (runtime_root / "spawns" / "p1" / "state.json").is_file()
-    assert (runtime_root / "spawns.legacy-v1.jsonl").is_file()
 
 
 def test_owner_finalize_drops_stale_terminal_write_after_external_winner(tmp_path: Path) -> None:

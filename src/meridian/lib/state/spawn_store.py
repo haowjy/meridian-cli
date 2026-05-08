@@ -26,43 +26,6 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
-from meridian.lib.state.spawn import legacy_events as _legacy_events
-from meridian.lib.state.spawn.legacy_events import (
-    SpawnEvent as SpawnEvent,
-)
-from meridian.lib.state.spawn.legacy_events import (
-    SpawnExitedEvent as SpawnExitedEvent,
-)
-from meridian.lib.state.spawn.legacy_events import (
-    SpawnFinalizeEvent as SpawnFinalizeEvent,
-)
-from meridian.lib.state.spawn.legacy_events import (
-    SpawnStartEvent as SpawnStartEvent,
-)
-from meridian.lib.state.spawn.legacy_events import (
-    SpawnUpdateEvent as SpawnUpdateEvent,
-)
-from meridian.lib.state.spawn.legacy_events import (
-    parse_event as parse_event,
-)
-from meridian.lib.state.spawn.model import (
-    _AUTHORITATIVE_ORIGIN_VALUES as _AUTHORITATIVE_ORIGIN_VALUES,  # pyright: ignore[reportPrivateUsage]
-)
-from meridian.lib.state.spawn.model import (
-    _LAUNCH_MODE_VALUES as _LAUNCH_MODE_VALUES,  # pyright: ignore[reportPrivateUsage]
-)
-from meridian.lib.state.spawn.model import (
-    APP_LAUNCH_MODE as APP_LAUNCH_MODE,
-)
-from meridian.lib.state.spawn.model import (
-    AUTHORITATIVE_ORIGINS as AUTHORITATIVE_ORIGINS,
-)
-from meridian.lib.state.spawn.model import (
-    BACKGROUND_LAUNCH_MODE as BACKGROUND_LAUNCH_MODE,
-)
-from meridian.lib.state.spawn.model import (
-    FOREGROUND_LAUNCH_MODE as FOREGROUND_LAUNCH_MODE,
-)
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
 )
@@ -79,9 +42,6 @@ from meridian.lib.state.spawn.transitions import (
     apply_mark_running,
     apply_record_exited,
 )
-
-_coerce_launch_mode = _legacy_events._coerce_launch_mode  # pyright: ignore[reportPrivateUsage]
-_parse_event = _legacy_events._parse_event  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
 
@@ -128,7 +88,6 @@ def reserve_spawn_id(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
     with lock_file(paths.spawns_flock):
         current = _read_spawn_counter(paths)
         if current == 0 and not _spawn_counter_path(paths).is_file():
@@ -144,7 +103,6 @@ def next_spawn_id(
     """Return the next spawn ID (`p1`, `p2`, ...) for a state root."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
     with lock_file(paths.spawns_flock):
         seed = _seed_spawn_counter_from_dirs(paths)
         next_from_existing = SpawnId(f"p{seed + 1}")
@@ -207,12 +165,6 @@ def _scan_spawn_ids(spawns_dir: Path) -> list[str]:
     return scan_spawn_ids(spawns_dir)
 
 
-def _ensure_v2_format(runtime_root: Path) -> bool:
-    from meridian.lib.state.spawn.migration import ensure_v2_format
-
-    return ensure_v2_format(runtime_root)
-
-
 class FinalizeOutcome(BaseModel):
     """Result of a finalize write with the exact post-write projection.
 
@@ -260,7 +212,6 @@ def start_spawn(
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
     started = started_at or resolved_clock.utc_now_iso()
-    _ensure_v2_format(runtime_root)
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -349,7 +300,6 @@ def update_spawn(
     """Update v2 spawn metadata under the per-spawn state lock."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
@@ -419,7 +369,6 @@ def record_spawn_exited(
 
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
 
     def merge_exit(current: SpawnRecord) -> SpawnRecord:
         return apply_record_exited(
@@ -470,7 +419,6 @@ def finalize_spawn(
     """
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
 
     class _FinalizeRejected(Exception):
         def __init__(self, snapshot: SpawnRecord) -> None:
@@ -558,7 +506,6 @@ def mark_finalizing_with_snapshot(
     """CAS transition running -> finalizing and return the post-write projection."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
 
     class _NoTransition(Exception):
         def __init__(self, snapshot: SpawnRecord | None) -> None:
@@ -607,7 +554,6 @@ def mark_spawn_running_with_snapshot(
     """Mark a spawn running and return the post-write projection without rereading."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
 
     changed = False
 
@@ -641,7 +587,6 @@ def list_spawns(
     """List v2 spawn records with optional equality filters."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
     spawns = [
         record.model_copy(update={"prompt": None})
         for spawn_id in _scan_spawn_ids(paths.spawns_dir)
@@ -678,7 +623,6 @@ def get_spawn(
     """
 
     paths = RuntimePaths.from_root_dir(runtime_root)
-    _ensure_v2_format(runtime_root)
     return _read_state(paths.spawns_dir, str(spawn_id))
 
 
