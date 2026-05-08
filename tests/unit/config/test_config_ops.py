@@ -7,8 +7,12 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.util import to_jsonable
 from meridian.lib.ops.config import (
     ConfigGetInput,
+    ConfigResetInput,
+    ConfigSetInput,
     ConfigShowInput,
     config_get_sync,
+    config_reset_sync,
+    config_set_sync,
     config_show_sync,
 )
 
@@ -333,3 +337,48 @@ def test_config_show_and_get_report_primary_autocompact_alias_as_canonical_key(
     assert gotten.source == "file"
     assert load_config(project_root).primary.autocompact == 72
     assert load_config(project_root).primary.autocompact_pct == 72
+
+
+def test_config_set_normalizes_legacy_alias_to_canonical_spelling(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(
+        "[primary]\n"
+        "autocompact = 72 # keep legacy comment only until rewrite\n",
+        encoding="utf-8",
+    )
+
+    result = config_set_sync(
+        ConfigSetInput(
+            project_root=project_root.as_posix(),
+            key="primary.autocompact_pct",
+            value="81",
+        )
+    )
+
+    assert result.key == "primary.autocompact_pct"
+    assert result.value == 81
+    assert config_path.read_text(encoding="utf-8") == (
+        "[primary]\n"
+        "autocompact_pct = 81\n"
+    )
+    assert load_config(project_root).primary.autocompact == 81
+
+
+def test_config_reset_removes_all_declared_aliases(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(
+        "[primary]\n"
+        "autocompact_pct = 65\n"
+        "autocompact = 72\n",
+        encoding="utf-8",
+    )
+
+    result = config_reset_sync(
+        ConfigResetInput(project_root=project_root.as_posix(), key="primary.autocompact_pct")
+    )
+
+    assert result.removed is True
+    assert config_path.read_text(encoding="utf-8") == ""
+    assert load_config(project_root).primary.autocompact is None

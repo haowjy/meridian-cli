@@ -60,3 +60,27 @@ def test_config_reset_removes_override(cli_with_git):
     result = cli_with_git("config", "reset", "defaults.model")
     # Should succeed or fail cleanly
     assert "Traceback" not in result.stderr
+
+
+def test_config_set_preserves_dynamic_sections(cli_with_git, scratch_dir):
+    """config set does not erase unrelated dynamic sections."""
+    config_path = scratch_dir / "meridian.toml"
+    config_path.write_text(
+        "[defaults]\n"
+        'harness = "claude"\n'
+        "\n"
+        "[workspace.docs]\n"
+        'path = "./docs"\n'
+        "\n"
+        "[[hooks]]\n"
+        'event = "spawn"\n'
+        'run = "echo hi"\n',
+        encoding="utf-8",
+    )
+
+    result = cli_with_git("config", "set", "defaults.harness", "opencode")
+
+    assert "Traceback" not in result.stderr
+    updated = config_path.read_text(encoding="utf-8")
+    assert "[workspace.docs]" in updated
+    assert "[[hooks]]" in updated

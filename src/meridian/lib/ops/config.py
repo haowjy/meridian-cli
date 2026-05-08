@@ -11,6 +11,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, field_serializer
 
 from meridian.lib.config.context_config import ContextSourceType
+from meridian.lib.config.preserving_edit import reset_scalar_option, set_scalar_option
 from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
@@ -48,14 +49,6 @@ from meridian.lib.state.paths import (
     resolve_project_runtime_root_for_write,
 )
 
-_SECTION_ORDER: tuple[str, ...] = (
-    "defaults",
-    "timeouts",
-    "harness",
-    "primary",
-    "output",
-    "state",
-)
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 logger = structlog.get_logger(__name__)
@@ -324,34 +317,6 @@ def _toml_literal(value: object) -> str:
         items = cast("list[object] | tuple[object, ...]", value)
         return "[" + ", ".join(_toml_literal(item) for item in items) + "]"
     raise ValueError(f"Unsupported config value type: {type(value).__name__}")
-
-
-def _render_config_toml(overrides: dict[str, object]) -> str:
-    sections: dict[str, dict[str, object]] = {name: {} for name in _SECTION_ORDER}
-
-    for option in OPTION_CATALOG.visible_options:
-        if option.canonical_key not in overrides or not option.file_aliases:
-            continue
-        primary_alias = option.file_aliases[0]
-        if len(primary_alias.table_path) != 1:
-            continue
-        sections[primary_alias.table_path[0]][primary_alias.key] = overrides[option.canonical_key]
-
-    lines: list[str] = []
-    for section_name in _SECTION_ORDER:
-        values = sections[section_name]
-        if not values:
-            continue
-
-        if lines:
-            lines.append("")
-        lines.append(f"[{section_name}]")
-        for key, value in values.items():
-            lines.append(f"{key} = {_toml_literal(value)}")
-
-    if not lines:
-        return ""
-    return "\n".join(lines) + "\n"
 
 
 def _source_for_key(
@@ -714,10 +679,12 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
         raw_value=payload.value,
     )
 
-    file_overrides = _extract_file_overrides(_read_file_payload(path))
-    file_overrides[option.canonical_key] = value
-
-    atomic_write_text(path, _render_config_toml(file_overrides))
+    edit_result = set_scalar_option(
+        path.read_text(encoding="utf-8"),
+        option=option,
+        value=value,
+    )
+    atomic_write_text(path, edit_result.text)
 
     return ConfigSetOutput(
         path=path.as_posix(),
@@ -748,14 +715,14 @@ def config_reset_sync(payload: ConfigResetInput) -> ConfigResetOutput:
     project_root = _resolve_project_root(payload.project_root)
     path = _require_project_config_path(_resolve_project_config_state(project_root))
     option = _resolve_option(payload.key)
+    edit_result = reset_scalar_option(path.read_text(encoding="utf-8"), option=option)
+    atomic_write_text(path, edit_result.text)
 
-    file_overrides = _extract_file_overrides(_read_file_payload(path))
-    removed = option.canonical_key in file_overrides
-    file_overrides.pop(option.canonical_key, None)
-
-    atomic_write_text(path, _render_config_toml(file_overrides))
-
-    return ConfigResetOutput(path=path.as_posix(), key=option.canonical_key, removed=removed)
+    return ConfigResetOutput(
+        path=path.as_posix(),
+        key=option.canonical_key,
+        removed=edit_result.removed,
+    )
 
 
 config_init = async_from_sync(config_init_sync)

@@ -449,3 +449,126 @@ def test_config_state_retention_days_round_trip(tmp_path: Path) -> None:
 
     assert reset_result.removed is True
     assert load_config(project_root).state.retention_days == 30
+
+
+def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    original = (
+        "# top-level comment\n"
+        "[defaults]\n"
+        'harness = "claude" # inline comment\n'
+        "\n"
+        "[context.work]\n"
+        'source = "git"\n'
+        'remote = "https://example.com/work.git"\n'
+        "\n"
+        "[workspace.docs]\n"
+        'path = "./docs"\n'
+        "\n"
+        "[agents.reviewer]\n"
+        'model = "gpt55"\n'
+        "\n"
+        "[custom]\n"
+        'value = "keep-me"\n'
+        "\n"
+        "[[hooks]]\n"
+        'event = "spawn"\n'
+        'run = "echo hi"\n'
+    )
+    config_path.write_text(original, encoding="utf-8")
+
+    result = config_set_sync(
+        ConfigSetInput(
+            project_root=project_root.as_posix(),
+            key="defaults.harness",
+            value="opencode",
+        )
+    )
+
+    updated = config_path.read_text(encoding="utf-8")
+
+    assert result.key == "defaults.harness"
+    assert result.value == "opencode"
+    assert '# top-level comment' in updated
+    assert 'harness = "opencode" # inline comment' in updated
+    assert "[context.work]" in updated
+    assert 'remote = "https://example.com/work.git"' in updated
+    assert "[workspace.docs]" in updated
+    assert '[agents.reviewer]' in updated
+    assert 'model = "gpt55"' in updated
+    assert "[custom]" in updated
+    assert 'value = "keep-me"' in updated
+    assert "[[hooks]]" in updated
+    assert 'run = "echo hi"' in updated
+    assert load_config(project_root).default_harness == "opencode"
+
+
+def test_config_reset_preserves_dynamic_sections_comments_and_unknown_content(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(
+        "# top-level comment\n"
+        "[defaults]\n"
+        'harness = "claude" # inline comment\n'
+        "\n"
+        "[context.work]\n"
+        'source = "git"\n'
+        'remote = "https://example.com/work.git"\n'
+        "\n"
+        "[workspace.docs]\n"
+        'path = "./docs"\n'
+        "\n"
+        "[custom]\n"
+        'value = "keep-me"\n'
+        "\n"
+        "[[hooks]]\n"
+        'event = "spawn"\n'
+        'run = "echo hi"\n',
+        encoding="utf-8",
+    )
+
+    result = config_reset_sync(
+        ConfigResetInput(project_root=project_root.as_posix(), key="defaults.harness")
+    )
+
+    updated = config_path.read_text(encoding="utf-8")
+
+    assert result.removed is True
+    assert "# top-level comment" in updated
+    assert 'harness = "claude"' not in updated
+    assert "[context.work]" in updated
+    assert "[workspace.docs]" in updated
+    assert "[custom]" in updated
+    assert "[[hooks]]" in updated
+    assert 'run = "echo hi"' in updated
+    assert load_config(project_root).default_harness == "codex"
+
+
+def test_config_set_rewrites_nested_harness_alias_to_canonical_spelling(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(
+        "[harness.codex]\n"
+        'model = "gpt-5.4"\n'
+        "\n"
+        "[custom]\n"
+        'value = "keep-me"\n',
+        encoding="utf-8",
+    )
+
+    result = config_set_sync(
+        ConfigSetInput(project_root=project_root.as_posix(), key="harness.codex", value="gpt-5.5")
+    )
+
+    updated = config_path.read_text(encoding="utf-8")
+
+    assert result.key == "harness.codex"
+    assert result.value == "gpt-5.5"
+    assert "[harness]" in updated
+    assert 'codex = "gpt-5.5"' in updated
+    assert "[harness.codex]" not in updated
+    assert "[custom]" in updated
+    assert load_config(project_root).harness.codex.model == "gpt-5.5"
