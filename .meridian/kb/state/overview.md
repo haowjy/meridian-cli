@@ -12,7 +12,7 @@ Source: `src/meridian/lib/state/` (paths, user_paths, atomic, locks, reaper, spa
 
 ```
 .meridian/
-  id                       # project UUID (36-char v4, no trailing newline; gitignored)
+  id                       # project UUID (36-char v4, no trailing newline; committed)
   id.lock                  # exclusive lock used during UUID generation
   .migrations.json         # repo-side migration tracking (gitignored)
   .gitignore               # seeded/maintained non-destructively

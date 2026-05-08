@@ -15,7 +15,9 @@ from meridian.lib.state.paths import (
 )
 
 
-def test_ensure_gitignore_drops_legacy_config_exception(tmp_path: Path) -> None:
+def test_ensure_gitignore_preserves_existing_lines_and_adds_required_entries(
+    tmp_path: Path,
+) -> None:
     project_root = tmp_path / "repo"
     gitignore_path = project_root / ".meridian" / ".gitignore"
     gitignore_path.parent.mkdir(parents=True)
@@ -35,7 +37,7 @@ def test_ensure_gitignore_drops_legacy_config_exception(tmp_path: Path) -> None:
     ensure_gitignore(project_root)
 
     updated = gitignore_path.read_text(encoding="utf-8")
-    assert "!config.toml" not in updated
+    assert "!config.toml" in updated
     assert "!.gitignore" in updated
     assert "!kb/" in updated
     assert "!work/" in updated

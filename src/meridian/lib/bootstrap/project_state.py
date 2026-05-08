@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.config.context_config import ContextConfig, ContextSourceType
-from meridian.lib.context import auto_migrate_contexts
 from meridian.lib.state.paths import (
     ProjectPaths,
     ensure_gitignore,
@@ -65,12 +64,6 @@ def resolve_layout(project_root: Path) -> ProjectLayoutSnapshot:
         paths=resolve_project_paths(project_root),
         context_config=context_config,
     )
-
-
-def migrate_legacy_paths(project_root: Path) -> None:
-    """Run project-local legacy context migration for write bootstrap paths."""
-
-    auto_migrate_contexts(resolve_project_paths(project_root).root_dir)
 
 
 def _has_non_empty_remote(remote: str | None) -> bool:

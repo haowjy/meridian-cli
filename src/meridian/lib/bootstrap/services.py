@@ -45,13 +45,11 @@ class RuntimeReadContext(ProjectReadContext):
 
 @dataclass(frozen=True)
 class ProjectWriteContext(ProjectReadContext):
-    migration_ran: bool = True
     project_dirs_ensured: bool = True
 
 
 @dataclass(frozen=True)
 class RuntimeWriteContext(RuntimeReadContext):
-    migration_ran: bool = True
     project_dirs_ensured: bool = True
     runtime_dirs_ensured: bool = True
 
@@ -102,10 +100,9 @@ def prepare_for_runtime_read(project_root: Path) -> RuntimeReadContext:
 
 
 def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
-    """Prepare project write context, running migration and project dir setup."""
+    """Prepare project write context and ensure project directories exist."""
 
     authority = resolve_project_authority(project_root)
-    project_state.migrate_legacy_paths(authority.project_root)
     project_state.ensure_project_dirs(authority.project_root)
     project_state.ensure_project_gitignore(authority.project_root)
     return ProjectWriteContext(
@@ -120,7 +117,6 @@ def prepare_for_runtime_write(project_root: Path) -> RuntimeWriteContext:
     """Prepare runtime write context, including UUID and runtime dirs."""
 
     authority = resolve_runtime_authority_for_write(project_root)
-    project_state.migrate_legacy_paths(authority.project_root)
     project_state.ensure_project_dirs(authority.project_root)
     project_state.ensure_project_gitignore(authority.project_root)
     runtime_root = runtime_state.ensure_runtime_root(

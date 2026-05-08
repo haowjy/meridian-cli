@@ -42,17 +42,8 @@ _REQUIRED_GITIGNORE_LINES = (
     "!archive/",
     "!archive/**",
 )
-_DEPRECATED_GITIGNORE_LINES = (
-    "id",
-    "# Ignore the project UUID",
-    "!fs/",
-    "!fs/**",
-    "!work-archive/",
-    "!work-archive/**",
-    "!agents.toml",
-    "!agents.lock",
-    "!config.toml",
-)
+
+
 class RuntimePaths(BaseModel):
     """Resolved runtime paths for one Meridian state root.
 
@@ -530,16 +521,12 @@ def ensure_gitignore(project_root: Path) -> Path:
 
 
 def _merge_required_gitignore_lines(existing_text: str) -> str:
-    filtered_lines = [
-        line
-        for line in existing_text.splitlines()
-        if line.strip() not in _DEPRECATED_GITIGNORE_LINES
-    ]
-    normalized_existing = "\n".join(filtered_lines)
+    existing_lines = existing_text.splitlines()
+    normalized_existing = "\n".join(existing_lines)
     if existing_text.endswith("\n"):
         normalized_existing += "\n"
 
-    present_lines = {line.strip() for line in filtered_lines}
+    present_lines = {line.strip() for line in existing_lines}
     missing_lines = [line for line in _REQUIRED_GITIGNORE_LINES if line not in present_lines]
     if not missing_lines:
         return normalized_existing

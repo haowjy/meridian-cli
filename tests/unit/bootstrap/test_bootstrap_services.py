@@ -85,7 +85,6 @@ def test_prepare_for_project_write_runs_project_setup_without_runtime_root(
     result = prepare_for_project_write(project_root)
 
     assert result.authority.project_root == project_root
-    assert result.migration_ran is True
     assert (project_root / ".meridian" / ".gitignore").is_file()
     assert (project_root / ".meridian" / "kb").is_dir()
     assert (project_root / ".meridian" / "work").is_dir()

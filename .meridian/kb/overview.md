@@ -86,7 +86,7 @@ State splits across two roots keyed by a per-project UUID. See `state/overview.m
 **Repo `.meridian/`** — committed scaffolding:
 ```
 .meridian/
-  id                    project UUID (gitignored; generated on first write)
+  id                    project UUID (committed; generated on first write)
   .gitignore            seeded/maintained non-destructively
   kb/                   agent-facing knowledge base (this directory)
   work/                 active work scratch dirs

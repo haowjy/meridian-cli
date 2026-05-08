@@ -67,7 +67,7 @@ High-churn runtime state lives outside the repo, keyed by project UUID so the re
       .migrations.json
 ```
 
-The UUID is stored in `.meridian/id` (gitignored). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
+The UUID is stored in `.meridian/id` (committed project identity — tracked in version control). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
 
 By default, `work/` and `archive/work/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
 
