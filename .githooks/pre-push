@@ -2,8 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
-GIT_DIR="$(git rev-parse --absolute-git-dir)"
-RELEASE_DIR="$GIT_DIR/meridian-release"
+# Use _GIT_DIR to avoid shadowing the git-exported GIT_DIR env var.
+# Git exports GIT_DIR into hooks; if we reassign the same name, subprocesses
+# (like pytest via preflight) inherit it and git commands in test fixtures
+# operate on the real repo instead of their tmp_path repos.
+_GIT_DIR="$(git rev-parse --absolute-git-dir)"
+RELEASE_DIR="$_GIT_DIR/meridian-release"
 AUTH_FILE="$RELEASE_DIR/auth.json"
 ZERO_SHA="0000000000000000000000000000000000000000"
 
@@ -52,5 +56,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 
 if [[ "$has_branch_refs" == true ]]; then
+  # Unset git-exported GIT_DIR so preflight subprocesses (pytest) don't
+  # leak the real repo into test fixtures that create isolated git repos.
+  unset GIT_DIR
   exec "$ROOT_DIR/scripts/preflight.sh" full
 fi
