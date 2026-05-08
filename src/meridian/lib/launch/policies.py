@@ -28,7 +28,11 @@ from .compiler import (
     compile_launch_params,
     match_model_policy,
 )
-from .launch_types import CompositionWarning
+from .launch_types import (
+    CompositionWarning,
+    ResolvedExecutionPolicy,
+    ResolvedLaunchRouting,
+)
 from .materialize import materialize_harness
 from .request import LaunchCompositionSurface
 from .resolve import (
@@ -112,13 +116,32 @@ class ResolvedLaunchPolicy:
     harness: HarnessId
     adapter: SubprocessHarness
     resolved_skills: ResolvedSkills
-    resolved_routing: RuntimeOverrides
-    resolved_execution_policy: RuntimeOverrides
-    resolved_overrides: RuntimeOverrides
+    routing: ResolvedLaunchRouting
+    execution_policy: ResolvedExecutionPolicy
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
+
+    @property
+    def resolved_routing(self) -> RuntimeOverrides:
+        """Compatibility view for pre-Phase 3.1 routing consumers."""
+
+        return self.routing.as_overrides()
+
+    @property
+    def resolved_execution_policy(self) -> RuntimeOverrides:
+        """Compatibility view for pre-Phase 3.1 execution-policy consumers."""
+
+        return self.execution_policy.as_overrides()
+
+    @property
+    def resolved_overrides(self) -> RuntimeOverrides:
+        """Compatibility view for combined legacy RuntimeOverrides consumers."""
+
+        return self.routing.as_overrides().model_copy(
+            update=self.execution_policy.as_overrides().model_dump(exclude_none=True)
+        )
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
@@ -308,20 +331,24 @@ def _build_final_resolved_views(
     compiler_result: CompilerResult,
     harness_id: HarnessId,
     supported_execution_policy_fields: frozenset[ExecutionPolicyField],
-) -> tuple[RuntimeOverrides, RuntimeOverrides, RuntimeOverrides]:
-    resolved_routing = RuntimeOverrides(
+) -> tuple[ResolvedLaunchRouting, ResolvedExecutionPolicy]:
+    resolved_routing = ResolvedLaunchRouting(
         model=compiler_result.model_token or None,
-        harness=str(harness_id),
+        harness=harness_id,
         agent=base_resolved.agent,
     )
-    resolved_execution_policy = _supported_policy_scope(
+    scoped_execution_policy = _supported_policy_scope(
         _compiler_execution_policy_overrides(compiler_result),
-        supported_execution_policy_fields,
+        supported_fields=supported_execution_policy_fields,
     )
-    resolved_overrides = resolved_routing.model_copy(
-        update=resolved_execution_policy.model_dump(exclude_none=True)
+    resolved_execution_policy = ResolvedExecutionPolicy(
+        effort=scoped_execution_policy.effort,
+        sandbox=scoped_execution_policy.sandbox,
+        approval=scoped_execution_policy.approval,
+        autocompact=scoped_execution_policy.autocompact,
+        timeout=scoped_execution_policy.timeout,
     )
-    return resolved_routing, resolved_execution_policy, resolved_overrides
+    return resolved_routing, resolved_execution_policy
 
 
 def _demoted_base_candidate(
@@ -753,7 +780,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile_defaults=profile_policy_defaults,
     )
 
-    resolved_routing, resolved_execution_policy, resolved = _build_final_resolved_views(
+    resolved_routing, resolved_execution_policy = _build_final_resolved_views(
         base_resolved=base_resolved,
         compiler_result=compiler_result,
         harness_id=harness_id,
@@ -784,9 +811,8 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         harness=harness_id,
         adapter=materialized.adapter,
         resolved_skills=resolved_skills,
-        resolved_routing=resolved_routing,
-        resolved_execution_policy=resolved_execution_policy,
-        resolved_overrides=resolved,
+        routing=resolved_routing,
+        execution_policy=resolved_execution_policy,
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
         warnings=_policy_warnings(

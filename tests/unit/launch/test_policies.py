@@ -12,6 +12,10 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.launch_types import (
+    ResolvedExecutionPolicy,
+    ResolvedLaunchRouting,
+)
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
@@ -35,6 +39,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.launch.resolve import ResolvedSkills
 from meridian.lib.launch.types import LaunchRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.api import spawn_create_sync
@@ -397,6 +402,13 @@ def test_resolve_launch_policy_boundary_returns_split_routing_and_policy(
     resolved = resolve_launch_policy(surface)
 
     assert isinstance(resolved, ResolvedLaunchPolicy)
+    assert resolved.routing.model == "gptmini"
+    assert resolved.routing.harness is HarnessId.CODEX
+    assert resolved.routing.agent == "reviewer"
+    assert resolved.execution_policy.effort == "medium"
+    assert resolved.execution_policy.approval == "auto"
+    assert resolved.execution_policy.sandbox == "workspace-write"
+    assert resolved.execution_policy.autocompact == 30
     assert resolved.resolved_routing == RuntimeOverrides(
         model="gptmini",
         harness="codex",
@@ -418,6 +430,53 @@ def test_resolve_launch_policy_boundary_returns_split_routing_and_policy(
         sandbox="workspace-write",
         effort="medium",
         autocompact=30,
+    )
+
+
+def test_resolved_launch_policy_compatibility_views_round_trip_typed_output() -> None:
+    registry = get_default_harness_registry()
+    policy = ResolvedLaunchPolicy(
+        profile=None,
+        model="gpt-5.5",
+        harness=HarnessId.CODEX,
+        adapter=registry.get_subprocess_harness(HarnessId.CODEX),
+        resolved_skills=ResolvedSkills(
+            skill_names=(),
+            loaded_skills=(),
+            missing_skills=(),
+        ),
+        routing=ResolvedLaunchRouting(
+            model="gpt55",
+            harness=HarnessId.CODEX,
+            agent="reviewer",
+        ),
+        execution_policy=ResolvedExecutionPolicy(
+            effort="high",
+            approval="auto",
+            sandbox="workspace-write",
+            autocompact=40,
+        ),
+    )
+
+    assert policy.resolved_routing == RuntimeOverrides(
+        model="gpt55",
+        harness="codex",
+        agent="reviewer",
+    )
+    assert policy.resolved_execution_policy == RuntimeOverrides(
+        effort="high",
+        approval="auto",
+        sandbox="workspace-write",
+        autocompact=40,
+    )
+    assert policy.resolved_overrides == RuntimeOverrides(
+        model="gpt55",
+        harness="codex",
+        agent="reviewer",
+        effort="high",
+        approval="auto",
+        sandbox="workspace-write",
+        autocompact=40,
     )
 
 
@@ -1281,6 +1340,7 @@ def test_resolve_policies_cli_harness_beats_model_policy_harness(
         configured_default_harness="claude",
     )
 
+    assert policies.routing.harness is HarnessId.CODEX
     assert policies.harness == HarnessId.CODEX
     assert policies.model_selection is not None
     assert policies.model_selection.harness_provenance == "explicit-override"

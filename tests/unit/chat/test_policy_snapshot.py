@@ -18,7 +18,6 @@ from meridian.lib.chat.policy import (
     write_chat_policy_snapshot,
 )
 from meridian.lib.core.domain import SkillContent
-from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import HarnessCapabilities
 from meridian.lib.harness.claude import ClaudeAdapter
@@ -26,7 +25,11 @@ from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
-from meridian.lib.launch.launch_types import CompositionWarning
+from meridian.lib.launch.launch_types import (
+    CompositionWarning,
+    ResolvedExecutionPolicy,
+    ResolvedLaunchRouting,
+)
 from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
 from meridian.lib.launch.resolve import ResolvedSkills
 
@@ -82,14 +85,12 @@ def _policy(*, profile: AgentProfile | None, supports_native_agents: bool) -> Re
             ),
             missing_skills=("missing-skill",),
         ),
-        resolved_routing=RuntimeOverrides(model="codex", harness="codex", agent="reviewer"),
-        resolved_execution_policy=RuntimeOverrides(
-            effort="high",
-            sandbox="workspace-write",
-            approval="auto",
-            autocompact=33,
+        routing=ResolvedLaunchRouting(
+            model="codex",
+            harness=HarnessId.CODEX,
+            agent="reviewer",
         ),
-        resolved_overrides=RuntimeOverrides(
+        execution_policy=ResolvedExecutionPolicy(
             effort="high",
             sandbox="workspace-write",
             approval="auto",

@@ -1118,7 +1118,7 @@ def prepare_launch_surface(
     policies = prepared_policy.resolved_policy
     profile = policies.profile
     has_profile = profile is not None
-    resolved = policies.resolved_overrides
+    execution_policy = policies.execution_policy
     model_selection = policies.model_selection
     harness = policies.adapter
     resolved_skills = policies.resolved_skills
@@ -1240,14 +1240,14 @@ def prepare_launch_surface(
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
             "mcp_tools": profile.mcp_tools if profile is not None else request.mcp_tools,
-            "sandbox": resolved.sandbox,
-            "approval": resolved.approval,
+            "sandbox": execution_policy.sandbox,
+            "approval": execution_policy.approval,
             "allowed_tools": profile.tools if profile is not None else request.allowed_tools,
             "disallowed_tools": (
                 profile.disallowed_tools if profile is not None else request.disallowed_tools
             ),
-            "autocompact": resolved.autocompact,
-            "effort": resolved.effort,
+            "autocompact": execution_policy.autocompact,
+            "effort": execution_policy.effort,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,

@@ -166,10 +166,10 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         harness_provenance=(
             model_selection.harness_provenance if model_selection is not None else ""
         ),
-        effort=policy.resolved_overrides.effort,
-        sandbox=policy.resolved_overrides.sandbox,
-        approval=policy.resolved_overrides.approval,
-        autocompact=policy.resolved_overrides.autocompact,
+        effort=policy.execution_policy.effort,
+        sandbox=policy.execution_policy.sandbox,
+        approval=policy.execution_policy.approval,
+        autocompact=policy.execution_policy.autocompact,
         agent_name=profile.name if profile is not None else None,
         agent_profile_path=resolve_profile_path(profile),
         skills=policy.resolved_skills.skill_names,

@@ -9,6 +9,13 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkabl
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from meridian.lib.core.overrides import (
+    ExecutionPolicyField,
+    RuntimeOverrides,
+    normalize_execution_policy_fields,
+)
+from meridian.lib.harness.ids import HarnessId
+
 if TYPE_CHECKING:
     from meridian.lib.safety.permissions import PermissionConfig
 
@@ -83,6 +90,63 @@ class ResolvedLaunchSpec(BaseModel):
         if self.continue_fork and not self.continue_session_id:
             raise ValueError("continue_fork=True requires continue_session_id")
         return self
+
+
+@dataclass(frozen=True)
+class ResolvedLaunchRouting:
+    """Typed launch-routing output from policy resolution."""
+
+    model: str | None
+    harness: HarnessId
+    agent: str | None
+
+    def as_overrides(self) -> RuntimeOverrides:
+        """Compatibility view for legacy RuntimeOverrides consumers."""
+
+        return RuntimeOverrides(
+            model=self.model,
+            harness=self.harness.value,
+            agent=self.agent,
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedExecutionPolicy:
+    """Typed execution-policy output from policy resolution."""
+
+    effort: str | None = None
+    sandbox: str | None = None
+    approval: str | None = None
+    autocompact: int | None = None
+    timeout: float | None = None
+
+    def as_overrides(
+        self,
+        supported_fields: frozenset[ExecutionPolicyField] | None = None,
+    ) -> RuntimeOverrides:
+        """Compatibility view for legacy RuntimeOverrides consumers."""
+
+        allowed_fields = (
+            None
+            if supported_fields is None
+            else frozenset(normalize_execution_policy_fields(supported_fields))
+        )
+        values = {
+            "effort": self.effort,
+            "sandbox": self.sandbox,
+            "approval": self.approval,
+            "autocompact": self.autocompact,
+            "timeout": self.timeout,
+        }
+        if allowed_fields is not None:
+            values = {
+                field_name: value
+                for field_name, value in values.items()
+                if field_name in allowed_fields
+            }
+        return RuntimeOverrides.model_validate(
+            {field_name: value for field_name, value in values.items() if value is not None}
+        )
 
 
 SpecT = TypeVar("SpecT", bound=ResolvedLaunchSpec)
