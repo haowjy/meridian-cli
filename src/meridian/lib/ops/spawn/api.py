@@ -3,7 +3,6 @@
 import asyncio
 import os
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.bootstrap.services import (
@@ -17,7 +16,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
-from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
+from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SessionRequest
@@ -85,15 +84,6 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
-
-
-@dataclass(frozen=True)
-class SpawnOperationServices:
-    """Surface-neutral spawn operation service bundle."""
-
-    project_root: Path
-    runtime_root: Path
-    spawn_service: SpawnApplicationService
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -177,34 +167,6 @@ def _resolve_spawn_read_authority(
     resolved_project_root = _resolve_project_root_input(project_root)
     resolved_runtime_root = resolve_runtime_root_for_read(resolved_project_root)
     return resolved_project_root, resolved_runtime_root
-
-
-def resolve_spawn_operation_services(
-    *,
-    project_root: str | None,
-    prepared: RuntimeWriteContext | None = None,
-) -> SpawnOperationServices:
-    """Resolve roots and spawn service from shared authority seams."""
-
-    if prepared is not None:
-        resolved_project_root = _project_root_from_prepared(prepared)
-        resolved_runtime_root = _runtime_root_from_prepared_for_read(
-            prepared,
-            project_root=resolved_project_root,
-        )
-        spawn_service = build_spawn_application_service(prepared)
-    else:
-        resolved_project_root, _ = resolve_runtime_root_and_config(project_root)
-        resolved_runtime_root = resolve_runtime_root(resolved_project_root)
-        spawn_service = build_spawn_application_service_from_roots(
-            resolved_project_root,
-            resolved_runtime_root,
-        )
-    return SpawnOperationServices(
-        project_root=resolved_project_root,
-        runtime_root=resolved_runtime_root,
-        spawn_service=spawn_service,
-    )
 
 
 def _surface_primary_activity(status: str, activity: str | None) -> str | None:
@@ -877,12 +839,20 @@ async def _spawn_cancel_impl(
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
     _ = sink
-    services = resolve_spawn_operation_services(
-        project_root=payload.project_root,
-        prepared=prepared,
-    )
-    project_root = services.project_root
-    runtime_root = services.runtime_root
+    if prepared is not None:
+        project_root = _project_root_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
+            project_root=project_root,
+        )
+        spawn_service = build_spawn_application_service(prepared)
+    else:
+        project_root, _ = resolve_runtime_root_and_config(payload.project_root)
+        runtime_root = resolve_runtime_root(project_root)
+        spawn_service = build_spawn_application_service_from_roots(
+            project_root,
+            runtime_root,
+        )
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
             project_root,
@@ -891,7 +861,6 @@ async def _spawn_cancel_impl(
         )
     else:
         spawn_id = resolve_spawn_reference(project_root, payload.spawn_id)
-    spawn_service = services.spawn_service
     register_debug_trace_observer()
     cancel_owner = os.environ.get("MERIDIAN_SPAWN_ID") or "cli"
     if prepared is None:
@@ -919,12 +888,15 @@ def spawn_cancel_all_sync(
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnCancelAllOutput:
     _ = ctx
-    services = resolve_spawn_operation_services(
-        project_root=payload.project_root,
-        prepared=prepared,
-    )
-    project_root = services.project_root
-    runtime_root = services.runtime_root
+    if prepared is not None:
+        project_root = _project_root_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
+            project_root=project_root,
+        )
+    else:
+        project_root, _ = resolve_runtime_root_and_config(payload.project_root)
+        runtime_root = resolve_runtime_root(project_root)
     work_id = _normalize_work_filter(payload.work)
 
     from meridian.lib.state.reaper import reconcile_spawns

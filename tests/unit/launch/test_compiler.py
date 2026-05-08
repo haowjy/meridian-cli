@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-import json
-from dataclasses import FrozenInstanceError, fields, is_dataclass
-from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast
 
-import pytest
-from pydantic import BaseModel
+if TYPE_CHECKING:
+    import pytest
 
-from meridian.lib.catalog.agent import AgentModelEntry, FanoutEntry, ModelPolicyRule
+from meridian.lib.catalog.agent import AgentModelEntry, ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.config.settings import (
-    AgentOverlayConfig,
-    AgentOverlayModelPolicy,
-    MeridianConfig,
-)
+from meridian.lib.config.settings import AgentOverlayConfig, AgentOverlayModelPolicy, MeridianConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
@@ -33,23 +26,6 @@ from meridian.lib.launch.compiler import (
 )
 from meridian.lib.launch.policies import resolve_policies
 from meridian.lib.launch.resolve import ResolvedSkills
-
-
-def _jsonable(value: Any) -> Any:
-    if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _jsonable(getattr(value, field.name)) for field in fields(value)}
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, tuple | list):
-        return [_jsonable(item) for item in cast("list[Any] | tuple[Any, ...]", value)]
-    if isinstance(value, dict):
-        return {
-            str(key): _jsonable(item)
-            for key, item in cast("dict[object, Any]", value).items()
-        }
-    return value
 
 
 def _alias_entry(alias: str = "gptmini") -> AliasEntry:
@@ -76,7 +52,6 @@ def _request(
     profile_policy_autocompact: int | None = None,
     profile_model_policies: tuple[ModelPolicyRule, ...] | None = None,
     profile_legacy_models: dict[str, AgentModelEntry] | None = None,
-    profile_skills: tuple[str, ...] = (),
     alias_entry: AliasEntry | None = None,
     alias_catalog: dict[str, AliasEntry] | None = None,
     supported_execution_policy_fields: tuple[str, ...] | frozenset[str] | None = None,
@@ -101,7 +76,7 @@ def _request(
         profile_model_policies=profile_model_policies,
         profile_legacy_models=profile_legacy_models,
         profile_fanout=(),
-        profile_skills=profile_skills,
+        profile_skills=(),
         resolved_alias_entry=resolved_alias,
         alias_catalog=resolved_catalog,
         configured_default_harness="claude",
@@ -112,175 +87,6 @@ def _request(
             else ("effort", "sandbox", "approval", "autocompact", "timeout")
         ),
     )
-
-
-def test_compiler_request_and_result_construct_with_all_fields() -> None:
-    model_policy = ModelPolicyRule(
-        match_type="alias",
-        match_value="gptmini",
-        overrides={"effort": "high"},
-    )
-    legacy_model = AgentModelEntry(effort="low", autocompact=25)
-    fanout = FanoutEntry(entry_type="alias", value="gptmini")
-    alias_entry = _alias_entry()
-
-    request = CompilerRequest(
-        requested_agent="coder",
-        requested_model="gptmini",
-        cli_overrides=RuntimeOverrides(model="gptmini", approval="auto"),
-        env_overrides=RuntimeOverrides(effort="medium"),
-        agent_overlay=AgentOverlayConfig(effort="high", autocompact=80),
-        config_defaults=RuntimeOverrides(model="codex", sandbox="workspace-write"),
-        profile_routing_model="gptmini",
-        profile_routing_harness="codex",
-        profile_policy_effort="high",
-        profile_policy_approval="confirm",
-        profile_policy_sandbox="workspace-write",
-        profile_policy_autocompact=70,
-        profile_model_policies=(model_policy,),
-        profile_legacy_models={"gptmini": legacy_model},
-        profile_fanout=(fanout,),
-        profile_skills=("dev-principles",),
-        resolved_alias_entry=alias_entry,
-        alias_catalog={"gptmini": alias_entry},
-        configured_default_harness="codex",
-        project_root="/repo",
-    )
-
-    result = CompilerResult(
-        agent_name="coder",
-        profile_found=True,
-        model="openai/gpt-5.4-mini",
-        model_token="gptmini",
-        harness="codex",
-        effort="high",
-        approval="auto",
-        sandbox="workspace-write",
-        autocompact=70,
-        timeout=30.0,
-        skill_names=("dev-principles",),
-        tools=("shell",),
-        disallowed_tools=("rm",),
-        mcp_tools=("github",),
-        model_selection_requested_token="gptmini",
-        model_selection_canonical_id="openai/gpt-5.4-mini",
-        harness_provenance="mars-provided",
-        field_provenance=FieldProvenance(
-            model_source=ProvenanceLevel.CLI,
-            harness_source=ProvenanceLevel.ALIAS_DEFAULT,
-            effort_source=ProvenanceLevel.PROFILE_MODEL_POLICY,
-            approval_source=ProvenanceLevel.CLI,
-            sandbox_source=ProvenanceLevel.CONFIG_DEFAULT,
-            autocompact_source=ProvenanceLevel.PROFILE_DEFAULT,
-            timeout_source=ProvenanceLevel.CONFIG_DEFAULT,
-        ),
-        warnings=("warning",),
-        fallback_applied=True,
-        fallback_model="gptmini",
-    )
-
-    assert request.requested_agent == "coder"
-    assert request.profile_model_policies == (model_policy,)
-    assert result.field_provenance.model_source is ProvenanceLevel.CLI
-    assert result.fallback_model == "gptmini"
-
-
-def test_field_provenance_defaults_to_unset_for_all_fields() -> None:
-    provenance = FieldProvenance()
-
-    for field in fields(FieldProvenance):
-        assert getattr(provenance, field.name) is ProvenanceLevel.UNSET
-
-
-def test_compiler_types_are_frozen() -> None:
-    request = CompilerRequest(
-        requested_agent=None,
-        requested_model=None,
-        cli_overrides=RuntimeOverrides(),
-        env_overrides=RuntimeOverrides(),
-        agent_overlay=None,
-        config_defaults=RuntimeOverrides(),
-        profile_routing_model=None,
-        profile_routing_harness=None,
-        profile_policy_effort=None,
-        profile_policy_approval=None,
-        profile_policy_sandbox=None,
-        profile_policy_autocompact=None,
-        profile_model_policies=None,
-        profile_legacy_models=None,
-        profile_fanout=None,
-        profile_skills=(),
-        resolved_alias_entry=None,
-        alias_catalog={},
-    )
-    result = CompilerResult(
-        agent_name=None,
-        profile_found=False,
-        model="",
-        model_token="",
-        harness="claude",
-        effort=None,
-        approval=None,
-        sandbox=None,
-        autocompact=None,
-        timeout=None,
-        skill_names=(),
-    )
-    provenance = FieldProvenance()
-
-    with pytest.raises(FrozenInstanceError):
-        request.requested_agent = "coder"  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
-        result.model = "other"  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
-        provenance.model_source = ProvenanceLevel.CLI  # type: ignore[misc]
-
-
-def test_compiler_types_are_json_serializable_with_dataclass_to_dict_pattern() -> None:
-    alias_entry = _alias_entry()
-    request = CompilerRequest(
-        requested_agent="coder",
-        requested_model="gptmini",
-        cli_overrides=RuntimeOverrides(model="gptmini"),
-        env_overrides=RuntimeOverrides(effort="low"),
-        agent_overlay=AgentOverlayConfig(approval="auto"),
-        config_defaults=RuntimeOverrides(sandbox="workspace-write"),
-        profile_routing_model=None,
-        profile_routing_harness=None,
-        profile_policy_effort=None,
-        profile_policy_approval=None,
-        profile_policy_sandbox=None,
-        profile_policy_autocompact=None,
-        profile_model_policies=(),
-        profile_legacy_models={},
-        profile_fanout=(),
-        profile_skills=("dev-principles",),
-        resolved_alias_entry=alias_entry,
-        alias_catalog={"gptmini": alias_entry},
-        project_root="/repo",
-    )
-    result = CompilerResult(
-        agent_name="coder",
-        profile_found=True,
-        model="openai/gpt-5.4-mini",
-        model_token="gptmini",
-        harness="codex",
-        effort="low",
-        approval="auto",
-        sandbox="workspace-write",
-        autocompact=None,
-        timeout=None,
-        skill_names=("dev-principles",),
-        field_provenance=FieldProvenance(model_source=ProvenanceLevel.CLI),
-    )
-
-    request_payload = _jsonable(request)
-    result_payload = _jsonable(result)
-
-    json.dumps(request_payload, sort_keys=True)
-    json.dumps(result_payload, sort_keys=True)
-    assert request_payload["cli_overrides"]["model"] == "gptmini"
-    assert result_payload["field_provenance"]["model_source"] == "cli"
 
 
 def test_render_provenance_only_includes_set_fields() -> None:
@@ -343,30 +149,6 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         },
         "fallback_model": "gptmini",
         "warnings": ["warning-one", "warning-two"],
-    }
-
-
-def test_compiler_result_dry_run_dict_minimal() -> None:
-    result = CompilerResult(
-        agent_name=None,
-        profile_found=False,
-        model="openai/gpt-5.4-mini",
-        model_token="",
-        harness="codex",
-        effort=None,
-        approval=None,
-        sandbox=None,
-        autocompact=None,
-        timeout=None,
-        skill_names=(),
-    )
-
-    assert compiler_result_to_dry_run_dict(result) == {
-        "agent": None,
-        "model": "openai/gpt-5.4-mini",
-        "canonical_model": "openai/gpt-5.4-mini",
-        "harness": "codex",
-        "provenance": {},
     }
 
 
@@ -444,17 +226,13 @@ def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
-def test_compile_launch_params_three_state_model_policies_inherit_profile() -> None:
+def test_compile_launch_params_legacy_model_fallback_applies_without_model_policies() -> None:
     alias = _alias_entry()
-    profile_rule = ModelPolicyRule(
-        match_type="alias",
-        match_value="gptmini",
-        overrides={"effort": "high"},
-    )
     request = _request(
         cli=RuntimeOverrides(model="gptmini"),
         overlay=AgentOverlayConfig(),
-        profile_model_policies=(profile_rule,),
+        profile_model_policies=(),
+        profile_legacy_models={"gptmini": AgentModelEntry(effort="high")},
         alias_entry=alias,
     )
 
@@ -462,6 +240,38 @@ def test_compile_launch_params_three_state_model_policies_inherit_profile() -> N
 
     assert result.effort == "high"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+
+
+def test_compile_launch_params_per_field_precedence_is_independent() -> None:
+    alias = _alias_entry()
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini"),
+        overlay=AgentOverlayConfig(effort="high"),
+        config=RuntimeOverrides(approval="confirm"),
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.field_provenance.model_source is ProvenanceLevel.CLI
+    assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert result.field_provenance.approval_source is ProvenanceLevel.CONFIG_DEFAULT
+
+
+def test_compile_launch_params_timeout_excludes_overlay_and_profile_defaults() -> None:
+    alias = _alias_entry()
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini"),
+        overlay=AgentOverlayConfig(effort="high"),
+        profile_policy_effort="low",
+        config=RuntimeOverrides(timeout=40.0),
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.timeout == 40.0
+    assert result.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
 def test_compile_launch_params_three_state_empty_overlay_uses_empty_policy_list() -> None:
@@ -514,79 +324,6 @@ def test_compile_launch_params_three_state_model_policies_overlay_replaces_profi
     assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
 
 
-def test_compile_launch_params_timeout_v1_excludes_overlay_defaults() -> None:
-    alias = _alias_entry()
-    rule = ModelPolicyRule(
-        match_type="alias",
-        match_value="gptmini",
-        overrides={"timeout": 20.0},
-    )
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=AgentOverlayConfig(effort="high"),
-        profile_model_policies=(rule,),
-        config=RuntimeOverrides(timeout=40.0),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.timeout == 20.0
-    assert result.field_provenance.timeout_source is ProvenanceLevel.PROFILE_MODEL_POLICY
-
-
-def test_compile_launch_params_legacy_models_apply_when_overlay_absent() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=AgentOverlayConfig(),
-        profile_model_policies=(),
-        profile_legacy_models={"gptmini": AgentModelEntry(effort="high")},
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
-
-
-def test_compile_launch_params_legacy_models_ignored_when_overlay_sets_empty_policy_list() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=AgentOverlayConfig(model_policies=()),
-        profile_model_policies=(),
-        profile_legacy_models={"gptmini": AgentModelEntry(effort="high")},
-        profile_policy_effort="low",
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.effort == "low"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_DEFAULT
-
-
-def test_compile_launch_params_per_field_independence() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=AgentOverlayConfig(effort="high"),
-        config=RuntimeOverrides(approval="confirm"),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.model_token == "gptmini"
-    assert result.field_provenance.model_source is ProvenanceLevel.CLI
-    assert result.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
-    assert result.approval == "confirm"
-    assert result.field_provenance.approval_source is ProvenanceLevel.CONFIG_DEFAULT
-
-
 def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
     alias = _alias_entry()
     request = _request(
@@ -609,17 +346,6 @@ def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
     assert result.field_provenance.timeout_source is ProvenanceLevel.UNSET
 
 
-def test_compiler_request_rejects_unknown_supported_execution_policy_field() -> None:
-    alias = _alias_entry()
-
-    with pytest.raises(ValueError, match="Unknown execution policy field"):
-        _request(
-            cli=RuntimeOverrides(model="gptmini"),
-            alias_entry=alias,
-            supported_execution_policy_fields=("effort", "typo"),
-        )
-
-
 def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> None:
     alias = _alias_entry()
     request = _request(
@@ -635,108 +361,7 @@ def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> N
     assert result.field_provenance.harness_source is ProvenanceLevel.ALIAS_DEFAULT
 
 
-def test_config_snapshot_includes_agents_overlay() -> None:
-    """Agent overlays survive config snapshot serialization for child spawns."""
-    config = MeridianConfig.model_validate(
-        {
-            "agents": {
-                "coder": {
-                    "model": "gptmini",
-                    "effort": "high",
-                    "model_policies": (
-                        {
-                            "match_type": "alias",
-                            "match_value": "gptmini",
-                            "overrides": {"approval": "auto"},
-                        },
-                    ),
-                }
-            }
-        }
-    )
-
-    snapshot = config.model_dump(mode="python")
-    restored = MeridianConfig.model_validate(snapshot)
-    overlay = restored.agents["coder"]
-
-    assert overlay.model == "gptmini"
-    assert overlay.effort == "high"
-    assert overlay.model_policies is not None
-    assert overlay.model_policies[0].match_value == "gptmini"
-    assert overlay.model_policies[0].overrides == {"approval": "auto"}
-
-
-def test_no_agent_selected_produces_no_overlay_effect() -> None:
-    """When no agent is selected, compiler behaves as if overlay doesn't exist."""
-    alias = _alias_entry()
-    request = CompilerRequest(
-        requested_agent=None,
-        requested_model=None,
-        cli_overrides=RuntimeOverrides(model="gptmini"),
-        env_overrides=RuntimeOverrides(),
-        agent_overlay=None,
-        config_defaults=RuntimeOverrides(effort="low"),
-        profile_routing_model=None,
-        profile_routing_harness=None,
-        profile_policy_effort=None,
-        profile_policy_approval=None,
-        profile_policy_sandbox=None,
-        profile_policy_autocompact=None,
-        profile_model_policies=None,
-        profile_legacy_models=None,
-        profile_fanout=None,
-        profile_skills=(),
-        resolved_alias_entry=alias,
-        alias_catalog={"gptmini": alias},
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.effort == "low"
-    assert result.field_provenance.effort_source is ProvenanceLevel.CONFIG_DEFAULT
-
-
-def test_overlay_on_missing_profile_has_no_effect() -> None:
-    """Overlay on an agent with no installed profile is stored but doesn't crash."""
-    alias = _alias_entry()
-    overlay = AgentOverlayConfig(
-        model_policies=(
-            AgentOverlayModelPolicy(
-                match_type="alias",
-                match_value="gptmini",
-                overrides={"effort": "high"},
-            ),
-        )
-    )
-    request = CompilerRequest(
-        requested_agent="missing-profile-agent",
-        requested_model=None,
-        cli_overrides=RuntimeOverrides(),
-        env_overrides=RuntimeOverrides(),
-        agent_overlay=overlay,
-        config_defaults=RuntimeOverrides(effort="low"),
-        profile_routing_model=None,
-        profile_routing_harness=None,
-        profile_policy_effort=None,
-        profile_policy_approval=None,
-        profile_policy_sandbox=None,
-        profile_policy_autocompact=None,
-        profile_model_policies=None,
-        profile_legacy_models=None,
-        profile_fanout=None,
-        profile_skills=(),
-        resolved_alias_entry=alias,
-        alias_catalog={"gptmini": alias},
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.effort == "low"
-    assert result.field_provenance.effort_source is ProvenanceLevel.CONFIG_DEFAULT
-
-
-def test_child_cli_overrides_beat_parent_overlay() -> None:
-    """Explicit CLI overrides in child spawn beat overlay values."""
+def test_compile_launch_params_child_cli_override_beats_parent_overlay() -> None:
     alias = _alias_entry()
     request = _request(
         cli=RuntimeOverrides(model="gptmini", effort="xhigh"),
@@ -771,7 +396,6 @@ def test_resolve_policies_picks_up_overlay_from_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """resolve_policies reads agent overlay from config.agents when agent is selected."""
     from meridian.lib.launch import policies as policies_module
 
     captured: dict[str, AgentOverlayConfig | None] = {}

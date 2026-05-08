@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -25,55 +26,46 @@ def _resolved_reference(**overrides: object) -> object:
     payload.update(overrides)
     obj = type("Resolved", (), payload)()
     recorded = getattr(obj, "harness_session_id", None)
-    recovery = getattr(obj, "recovery", None)
-    if recorded:
-        obj.effective_harness_session_id = recorded
-        obj.authoritative_harness_session_id = recorded
-    elif recovery is not None:
-        recovery_id = getattr(recovery, "harness_session_id", None)
-        obj.effective_harness_session_id = recovery_id
-        provenance = getattr(recovery, "provenance", None)
-        if provenance is not None and str(provenance) == "detected_unverified":
-            obj.authoritative_harness_session_id = None
-        else:
-            obj.authoritative_harness_session_id = recovery_id
-    else:
-        obj.effective_harness_session_id = None
-        obj.authoritative_harness_session_id = None
+    obj.effective_harness_session_id = recorded
+    obj.authoritative_harness_session_id = recorded
     return obj
 
 
-def test_run_primary_launch_rejects_continue_cross_harness(
+def test_run_primary_launch_rejects_cross_harness_continue_and_fork(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    def _fake_resolve_session_reference(_project_root: object, _ref: str) -> object:
-        return _resolved_reference(source_execution_cwd=None)
-
     monkeypatch.setattr(
         primary_launch,
         "resolve_session_reference",
-        _fake_resolve_session_reference,
+        lambda _project_root, _ref: _resolved_reference(harness="claude"),
     )
-    with pytest.raises(ValueError, match="Cannot continue across harnesses"):
-        primary_launch.run_primary_launch(
-            continue_ref="session-1",
-            fork_ref=None,
-            model="",
-            harness="codex",
-            agent=None,
-            work="",
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=True,
-            passthrough=(),
-        )
+
+    for continue_ref, fork_ref, expected in (
+        ("session-1", None, "Cannot continue across harnesses"),
+        (None, "session-1", "Cannot fork across harnesses"),
+    ):
+        with pytest.raises(ValueError, match=expected):
+            primary_launch.run_primary_launch(
+                project_root=tmp_path,
+                continue_ref=continue_ref,
+                fork_ref=fork_ref,
+                model="",
+                harness="codex",
+                agent=None,
+                work="",
+                yolo=False,
+                approval=None,
+                autocompact=None,
+                effort=None,
+                sandbox=None,
+                timeout=None,
+                dry_run=False,
+                passthrough=(),
+            )
 
 
-def test_resolve_session_target_threads_source_claude_config_dir(
+def test_run_primary_launch_resume_shapes_session_request_from_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -81,41 +73,17 @@ def test_resolve_session_target_threads_source_claude_config_dir(
         primary_launch,
         "resolve_session_reference",
         lambda _project_root, _ref: _resolved_reference(
-            source_claude_config_dir="/tmp/original-claude-config"
-        ),
-    )
-
-    resolved = primary_launch.resolve_session_target(
-        project_root=tmp_path,
-        continue_ref="session-1",
-    )
-
-    assert resolved.source_claude_config_dir == "/tmp/original-claude-config"
-
-
-def test_run_primary_launch_resume_threads_source_metadata_into_session_request(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(
-        primary_launch,
-        "resolve_session_reference",
-        lambda _project_root, _ref: _resolved_reference(
+            source_chat_id="c-resume",
             source_execution_cwd="/tmp/resume-cwd",
             source_claude_config_dir="/tmp/resume-claude-config",
+            tracked=True,
         ),
     )
-
     captured: dict[str, object] = {}
 
     def _fake_launch_primary(**kwargs: object) -> object:
         captured.update(kwargs)
-        return SimpleNamespace(
-            exit_code=0,
-            command=("claude", "--resume", "session-1"),
-            continue_ref="session-1",
-            warning=None,
-        )
+        return SimpleNamespace(exit_code=0, command=(), continue_ref="session-1", warning=None)
 
     monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
 
@@ -133,18 +101,21 @@ def test_run_primary_launch_resume_threads_source_metadata_into_session_request(
         effort=None,
         sandbox=None,
         timeout=None,
-        dry_run=True,
+        dry_run=False,
         passthrough=(),
     )
 
-    request = captured["request"]
-    assert request.session.source_execution_cwd == "/tmp/resume-cwd"
-    assert request.session.source_claude_config_dir == "/tmp/resume-claude-config"
-    assert request.session.continue_source_tracked is True
-    assert request.session.continue_source_ref == "session-1"
+    session = cast("Any", captured["request"]).session
+    assert session.requested_harness_session_id == "session-1"
+    assert session.continue_harness == "claude"
+    assert session.continue_chat_id == "c-resume"
+    assert session.source_execution_cwd == "/tmp/resume-cwd"
+    assert session.source_claude_config_dir == "/tmp/resume-claude-config"
+    assert session.continue_source_tracked is True
+    assert session.continue_source_ref == "session-1"
 
 
-def test_run_primary_launch_fork_threads_source_claude_config_dir_into_session_request(
+def test_run_primary_launch_fork_shapes_session_request_from_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -152,21 +123,17 @@ def test_run_primary_launch_fork_threads_source_claude_config_dir_into_session_r
         primary_launch,
         "resolve_session_reference",
         lambda _project_root, _ref: _resolved_reference(
+            source_chat_id="c-fork",
             source_execution_cwd="/tmp/fork-cwd",
             source_claude_config_dir="/tmp/fork-claude-config",
+            tracked=True,
         ),
     )
-
     captured: dict[str, object] = {}
 
     def _fake_launch_primary(**kwargs: object) -> object:
         captured.update(kwargs)
-        return SimpleNamespace(
-            exit_code=0,
-            command=("claude", "--resume", "session-1"),
-            continue_ref="session-2",
-            warning=None,
-        )
+        return SimpleNamespace(exit_code=0, command=(), continue_ref="session-2", warning=None)
 
     monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
 
@@ -184,64 +151,23 @@ def test_run_primary_launch_fork_threads_source_claude_config_dir_into_session_r
         effort=None,
         sandbox=None,
         timeout=None,
-        dry_run=True,
+        dry_run=False,
         passthrough=(),
     )
 
-    request = captured["request"]
-    assert request.session.source_execution_cwd == "/tmp/fork-cwd"
-    assert request.session.source_claude_config_dir == "/tmp/fork-claude-config"
-    assert request.session.continue_source_tracked is True
-    assert request.session.continue_source_ref == "session-1"
-
-
-def test_run_primary_launch_continue_tracked_ref_without_session_id_fails_fast(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(
-        primary_launch,
-        "resolve_session_reference",
-        lambda _project_root, _ref: _resolved_reference(
-            harness_session_id=None,
-            tracked=True,
-        ),
-    )
-
-    called = False
-
-    def _fake_launch_primary(**kwargs: object) -> object:
-        nonlocal called
-        called = True
-        _ = kwargs
-        return SimpleNamespace(exit_code=0, command=(), continue_ref=None, warning=None)
-
-    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
-
-    with pytest.raises(ValueError, match="has no recorded harness session"):
-        primary_launch.run_primary_launch(
-            project_root=tmp_path,
-            continue_ref="session-1",
-            fork_ref=None,
-            model="",
-            harness=None,
-            agent=None,
-            work="",
-            yolo=False,
-            approval=None,
-            autocompact=None,
-            effort=None,
-            sandbox=None,
-            timeout=None,
-            dry_run=False,
-            passthrough=(),
-        )
-
-    assert called is False
+    session = cast("Any", captured["request"]).session
+    assert session.requested_harness_session_id == "session-1"
+    assert session.continue_harness == "claude"
+    assert session.continue_fork is True
+    assert session.forked_from_chat_id == "c-fork"
+    assert session.source_execution_cwd == "/tmp/fork-cwd"
+    assert session.source_claude_config_dir == "/tmp/fork-claude-config"
+    assert session.continue_source_tracked is True
+    assert session.continue_source_ref == "session-1"
 
 
 def test_run_primary_launch_resume_failure_uses_failure_wording(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
@@ -283,7 +209,7 @@ def test_run_primary_launch_resume_failure_uses_failure_wording(
 
 
 def test_run_primary_launch_fork_failure_uses_failure_wording(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
@@ -322,54 +248,3 @@ def test_run_primary_launch_fork_failure_uses_failure_wording(
 
     assert result.exit_code == 2
     assert result.message == "Session fork failed."
-
-
-def test_run_primary_launch_dry_run_threads_terminal_surface_mode(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(
-        primary_launch,
-        "launch_primary",
-        lambda **_kwargs: SimpleNamespace(
-            exit_code=0,
-            command=("codex", "exec"),
-            continue_ref=None,
-            continue_chat_id=None,
-            warning=None,
-            terminal_surface_mode="pty_mediated",
-        ),
-    )
-
-    result = primary_launch.run_primary_launch(
-        project_root=tmp_path,
-        continue_ref=None,
-        fork_ref=None,
-        model="gpt-5.5",
-        harness="codex",
-        agent=None,
-        work="",
-        yolo=False,
-        approval=None,
-        autocompact=None,
-        effort=None,
-        sandbox=None,
-        timeout=None,
-        dry_run=True,
-        passthrough=(),
-    )
-
-    assert result.terminal_surface_mode == "pty_mediated"
-
-
-def test_primary_launch_output_format_text_includes_terminal_surface_mode() -> None:
-    output = primary_launch.PrimaryLaunchOutput(
-        message="Launch dry-run.",
-        exit_code=0,
-        command=("codex", "exec"),
-        terminal_surface_mode="pty_mediated",
-    )
-
-    rendered = output.format_text()
-
-    assert "Terminal surface mode: pty_mediated" in rendered

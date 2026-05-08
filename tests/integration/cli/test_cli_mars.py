@@ -8,70 +8,90 @@ cli_main = importlib.import_module("meridian.cli.main")
 mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
 
 
-def test_run_mars_passthrough_non_sync_json_streams_stdout_stderr() -> None:
-    request = mars_passthrough.MarsPassthroughRequest(
-        command=("/usr/bin/mars", "--json", "list"),
-        mars_args=("--json", "list"),
-        is_sync=False,
-        wants_json=True,
-        root_override=None,
-    )
-    stdout = StringIO()
-    stderr = StringIO()
-
-    with pytest.raises(SystemExit) as exc_info:
-        mars_passthrough.run_mars_passthrough(
-            ["list"],
-            output_format="json",
-            resolve_executable=lambda: "/usr/bin/mars",
-            parse_request=lambda *_args, **_kwargs: request,
-            execute_request=lambda _request: mars_passthrough.MarsPassthroughResult(
-                request=request,
+@pytest.mark.parametrize(
+    ("is_sync", "output_format", "result", "expected_stdout", "expected_stderr", "expect_augment"),
+    [
+        (
+            False,
+            "json",
+            mars_passthrough.MarsPassthroughResult(
+                request=mars_passthrough.MarsPassthroughRequest(
+                    command=("/usr/bin/mars", "--json", "list"),
+                    mars_args=("--json", "list"),
+                    is_sync=False,
+                    wants_json=True,
+                    root_override=None,
+                ),
                 returncode=7,
                 stdout_text='{"packages": []}\n',
                 stderr_text="warning\n",
             ),
-            stdout=stdout,
-            stderr=stderr,
-        )
-
-    assert exc_info.value.code == 7
-    assert stdout.getvalue() == '{"packages": []}\n'
-    assert stderr.getvalue() == "warning\n"
-
-
-def test_run_mars_passthrough_sync_calls_augment_result() -> None:
-    request = mars_passthrough.MarsPassthroughRequest(
-        command=("/usr/bin/mars", "sync"),
-        mars_args=("sync",),
-        is_sync=True,
-        wants_json=False,
-        root_override=None,
-    )
+            '{"packages": []}\n',
+            "warning\n",
+            0,
+        ),
+        (
+            True,
+            None,
+            mars_passthrough.MarsPassthroughResult(
+                request=mars_passthrough.MarsPassthroughRequest(
+                    command=("/usr/bin/mars", "sync"),
+                    mars_args=("sync",),
+                    is_sync=True,
+                    wants_json=False,
+                    root_override=None,
+                ),
+                returncode=1,
+            ),
+            "",
+            "",
+            1,
+        ),
+    ],
+    ids=["non-sync-streaming", "sync-augment"],
+)
+def test_run_mars_passthrough_streaming_and_sync_augment(
+    is_sync: bool,
+    output_format: str | None,
+    result: mars_passthrough.MarsPassthroughResult,
+    expected_stdout: str,
+    expected_stderr: str,
+    expect_augment: int,
+) -> None:
+    request = result.request
+    stdout = StringIO()
+    stderr = StringIO()
     observed: list[mars_passthrough.MarsPassthroughResult] = []
 
     with pytest.raises(SystemExit) as exc_info:
         mars_passthrough.run_mars_passthrough(
-            ["sync"],
+            ["sync"] if is_sync else ["list"],
+            output_format=output_format,
             resolve_executable=lambda: "/usr/bin/mars",
             parse_request=lambda *_args, **_kwargs: request,
-            execute_request=lambda _request: mars_passthrough.MarsPassthroughResult(
-                request=request,
-                returncode=1,
-            ),
-            augment_result=lambda result: observed.append(result),
+            execute_request=lambda _request: result,
+            augment_result=lambda passthrough_result: observed.append(passthrough_result),
+            stdout=stdout,
+            stderr=stderr,
         )
 
-    assert exc_info.value.code == 1
-    assert len(observed) == 1
-    assert observed[0].request.is_sync is True
+    assert exc_info.value.code == result.returncode
+    assert stdout.getvalue() == expected_stdout
+    assert stderr.getvalue() == expected_stderr
+    assert len(observed) == expect_augment
 
 
-def test_execute_mars_passthrough_marks_sync_as_meridian_managed() -> None:
+@pytest.mark.parametrize(
+    "is_sync",
+    [False, True],
+    ids=["non-sync", "sync"],
+)
+def test_execute_mars_passthrough_sets_managed_env_only_for_sync(is_sync: bool) -> None:
+    mars_args = ("sync",) if is_sync else ("models", "list")
     request = mars_passthrough.MarsPassthroughRequest(
-        command=("/usr/bin/mars", "sync"),
-        mars_args=("sync",),
-        is_sync=True,
+        command=("/usr/bin/mars", *mars_args),
+        mars_args=mars_args,
+        is_sync=is_sync,
         wants_json=False,
         root_override=None,
     )
@@ -85,59 +105,25 @@ def test_execute_mars_passthrough_marks_sync_as_meridian_managed() -> None:
     result = mars_passthrough.execute_mars_passthrough(request, run=_fake_run)
 
     assert result.returncode == 0
-    assert observed["cmd"] == ["/usr/bin/mars", "sync"]
+    assert observed["cmd"] == ["/usr/bin/mars", *mars_args]
     env = observed["env"]
-    assert isinstance(env, dict)
-    assert env["MERIDIAN_MANAGED"] == "1"
+    if is_sync:
+        assert isinstance(env, dict)
+        assert env["MERIDIAN_MANAGED"] == "1"
+    else:
+        assert env is None
 
 
-def test_execute_mars_passthrough_does_not_mark_non_sync() -> None:
-    request = mars_passthrough.MarsPassthroughRequest(
-        command=("/usr/bin/mars", "models", "list"),
-        mars_args=("models", "list"),
-        is_sync=False,
-        wants_json=False,
-        root_override=None,
-    )
-    observed: dict[str, object] = {}
-
-    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        observed["cmd"] = cmd
-        observed["env"] = kwargs.get("env")
-        return subprocess.CompletedProcess(args=cmd, returncode=0)
-
-    result = mars_passthrough.execute_mars_passthrough(request, run=_fake_run)
-
-    assert result.returncode == 0
-    assert observed["cmd"] == ["/usr/bin/mars", "models", "list"]
-    assert observed["env"] is None
-
-
-def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    captured: dict[str, object] = {}
-
-    def _fake_run_mars_passthrough(
-        args: tuple[str, ...] | list[str],
-        *,
-        output_format: str | None = None,
-        **_kwargs: object,
-    ) -> None:
-        captured["args"] = tuple(args)
-        captured["output_format"] = output_format
-        raise SystemExit(0)
-
-    monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
-
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["mars", "list"])
-
-    assert exc_info.value.code == 0
-    assert captured["args"] == ("list",)
-    assert captured["output_format"] == "text"
-
-
-def test_main_mars_honors_explicit_text_in_agent_mode(
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["mars", "list"],
+        ["--format", "text", "mars", "list"],
+    ],
+    ids=["agent-mode-default-text", "agent-mode-explicit-text"],
+)
+def test_main_mars_list_agent_mode_uses_text_output(
+    argv: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
@@ -156,7 +142,7 @@ def test_main_mars_honors_explicit_text_in_agent_mode(
     monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--format", "text", "mars", "list"])
+        cli_main.main(argv)
 
     assert exc_info.value.code == 0
     assert captured["args"] == ("list",)

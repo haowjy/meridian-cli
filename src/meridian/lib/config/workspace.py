@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
-from meridian.lib.state.paths import (
-    _load_workspace_table,  # pyright: ignore[reportPrivateUsage]
-    _merge_nested_dicts,  # pyright: ignore[reportPrivateUsage]
-)
 
 WorkspaceStatus = Literal["none", "present", "invalid"]
 WorkspaceFindingCode = Literal[
@@ -24,6 +21,39 @@ WorkspaceFindingCode = Literal[
 
 _WORKSPACE_PATH_KEY = "path"
 _ENTRY_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
+def _load_workspace_table(path: Path) -> dict[str, object] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Invalid TOML in Meridian config '{path.as_posix()}': {exc}") from exc
+
+    payload = cast("dict[str, object]", payload_obj)
+    workspace = payload.get("workspace")
+    if workspace is None:
+        return None
+    if not isinstance(workspace, dict):
+        raise ValueError(
+            f"Invalid value for 'workspace' in '{path.as_posix()}': expected table."
+        )
+    return cast("dict[str, object]", workspace)
+
+
+def _merge_nested_dicts(base: dict[str, object], overrides: dict[str, object]) -> dict[str, object]:
+    merged = dict(base)
+    for key, value in overrides.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _merge_nested_dicts(
+                cast("dict[str, object]", current),
+                cast("dict[str, object]", value),
+            )
+            continue
+        merged[key] = value
+    return merged
 
 
 class WorkspaceFinding(BaseModel):
