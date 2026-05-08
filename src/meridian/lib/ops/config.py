@@ -15,7 +15,14 @@ from meridian.lib.config.project_config_state import (
     ProjectConfigState,
     resolve_project_config_state,
 )
+from meridian.lib.config.schema import (
+    ConfigOptionDescriptor,
+    normalize_runtime_scalar,
+    parse_cli_scalar,
+    parse_toml_scalar,
+)
 from meridian.lib.config.settings import (
+    OPTION_CATALOG,
     MeridianConfig,
     PrimaryConfig,
 )
@@ -49,191 +56,12 @@ _SECTION_ORDER: tuple[str, ...] = (
     "output",
     "state",
 )
-_OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 _MISSING_PROJECT_CONFIG_MESSAGE = "no project config; run `meridian config init`"
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 logger = structlog.get_logger(__name__)
 
 
-class _ConfigKeySpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
 
-    canonical_key: str
-    section: str
-    file_key: str
-    field_path: tuple[str, ...]
-    value_kind: Literal["int", "float", "str", "str_list", "verbosity"]
-    env_var: str | None = None
-    aliases: tuple[str, ...] = ()
-
-
-_CONFIG_KEY_SPECS: tuple[_ConfigKeySpec, ...] = (
-    _ConfigKeySpec(
-        canonical_key="defaults.max_depth",
-        section="defaults",
-        file_key="max_depth",
-        field_path=("max_depth",),
-        value_kind="int",
-        env_var="MERIDIAN_MAX_DEPTH",
-        aliases=("max_depth",),
-    ),
-    _ConfigKeySpec(
-        canonical_key="defaults.max_retries",
-        section="defaults",
-        file_key="max_retries",
-        field_path=("max_retries",),
-        value_kind="int",
-        env_var="MERIDIAN_MAX_RETRIES",
-        aliases=("max_retries",),
-    ),
-    _ConfigKeySpec(
-        canonical_key="defaults.retry_backoff_seconds",
-        section="defaults",
-        file_key="retry_backoff_seconds",
-        field_path=("retry_backoff_seconds",),
-        value_kind="float",
-        env_var="MERIDIAN_RETRY_BACKOFF_SECONDS",
-        aliases=("retry_backoff_seconds",),
-    ),
-    _ConfigKeySpec(
-        canonical_key="defaults.model",
-        section="defaults",
-        file_key="model",
-        field_path=("default_model",),
-        value_kind="str",
-        env_var="MERIDIAN_DEFAULT_MODEL",
-        aliases=("defaults.default_model", "default_model"),
-    ),
-    _ConfigKeySpec(
-        canonical_key="defaults.harness",
-        section="defaults",
-        file_key="harness",
-        field_path=("default_harness",),
-        value_kind="str",
-        env_var="MERIDIAN_DEFAULT_HARNESS",
-        aliases=("defaults.default_harness", "default_harness"),
-    ),
-    _ConfigKeySpec(
-        canonical_key="timeouts.kill_grace_minutes",
-        section="timeouts",
-        file_key="kill_grace_minutes",
-        field_path=("kill_grace_minutes",),
-        value_kind="float",
-        env_var="MERIDIAN_KILL_GRACE_MINUTES",
-        aliases=("kill_grace_minutes",),
-    ),
-    _ConfigKeySpec(
-        canonical_key="timeouts.guardrail_minutes",
-        section="timeouts",
-        file_key="guardrail_minutes",
-        field_path=("guardrail_timeout_minutes",),
-        value_kind="float",
-        env_var="MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES",
-        aliases=("timeouts.guardrail_timeout_minutes", "guardrail_timeout_minutes"),
-    ),
-    _ConfigKeySpec(
-        canonical_key="timeouts.wait_minutes",
-        section="timeouts",
-        file_key="wait_minutes",
-        field_path=("wait_timeout_minutes",),
-        value_kind="float",
-        env_var="MERIDIAN_WAIT_TIMEOUT_MINUTES",
-        aliases=("timeouts.wait_timeout_minutes", "wait_timeout_minutes"),
-    ),
-    _ConfigKeySpec(
-        canonical_key="harness.claude",
-        section="harness",
-        file_key="claude",
-        field_path=("harness", "claude", "model"),
-        value_kind="str",
-        env_var="MERIDIAN_HARNESS_MODEL_CLAUDE",
-    ),
-    _ConfigKeySpec(
-        canonical_key="harness.codex",
-        section="harness",
-        file_key="codex",
-        field_path=("harness", "codex", "model"),
-        value_kind="str",
-        env_var="MERIDIAN_HARNESS_MODEL_CODEX",
-    ),
-    _ConfigKeySpec(
-        canonical_key="harness.opencode",
-        section="harness",
-        file_key="opencode",
-        field_path=("harness", "opencode", "model"),
-        value_kind="str",
-        env_var="MERIDIAN_HARNESS_MODEL_OPENCODE",
-    ),
-    _ConfigKeySpec(
-        canonical_key="primary.autocompact_pct",
-        section="primary",
-        file_key="autocompact_pct",
-        field_path=("primary", "autocompact_pct"),
-        value_kind="int",
-        aliases=("autocompact_pct",),
-    ),
-    _ConfigKeySpec(
-        canonical_key="primary.model",
-        section="primary",
-        file_key="model",
-        field_path=("primary", "model"),
-        value_kind="str",
-        env_var="MERIDIAN_MODEL",
-        aliases=(),
-    ),
-    _ConfigKeySpec(
-        canonical_key="primary.harness",
-        section="primary",
-        file_key="harness",
-        field_path=("primary", "harness"),
-        value_kind="str",
-        env_var="MERIDIAN_HARNESS",
-        aliases=(),
-    ),
-    _ConfigKeySpec(
-        canonical_key="primary.agent",
-        section="primary",
-        file_key="agent",
-        field_path=("primary", "agent"),
-        value_kind="str",
-        env_var="MERIDIAN_AGENT",
-        aliases=(),
-    ),
-    _ConfigKeySpec(
-        canonical_key="output.show",
-        section="output",
-        file_key="show",
-        field_path=("output", "show"),
-        value_kind="str_list",
-        aliases=(),
-    ),
-    _ConfigKeySpec(
-        canonical_key="output.verbosity",
-        section="output",
-        file_key="verbosity",
-        field_path=("output", "verbosity"),
-        value_kind="verbosity",
-        aliases=(),
-    ),
-    _ConfigKeySpec(
-        canonical_key="state.retention_days",
-        section="state",
-        file_key="retention_days",
-        field_path=("state", "retention_days"),
-        value_kind="int",
-        env_var="MERIDIAN_STATE_RETENTION_DAYS",
-        aliases=("retention_days",),
-    ),
-)
-
-
-_CONFIG_KEY_ALIAS_MAP: dict[str, _ConfigKeySpec] = {}
-for spec in _CONFIG_KEY_SPECS:
-    for alias in (spec.canonical_key, *spec.aliases):
-        existing = _CONFIG_KEY_ALIAS_MAP.get(alias)
-        if existing is not None and existing is not spec:
-            raise ValueError(f"Conflicting config key alias '{alias}'.")
-        _CONFIG_KEY_ALIAS_MAP[alias] = spec
 
 
 class ConfigInitInput(BaseModel):
@@ -417,17 +245,8 @@ def _resolve_project_root(project_root: str | None) -> Path:
     return _resolve_project_authority(project_root).project_root
 
 
-def _resolve_key_spec(key: str) -> _ConfigKeySpec:
-    normalized = key.strip()
-    if not normalized:
-        raise ValueError("Config key must not be empty.")
-
-    resolved = _CONFIG_KEY_ALIAS_MAP.get(normalized)
-    if resolved is not None:
-        return resolved
-
-    valid = ", ".join(spec.canonical_key for spec in _CONFIG_KEY_SPECS)
-    raise ValueError(f"Unknown config key '{key}'. Supported keys: {valid}")
+def _resolve_option(key: str) -> ConfigOptionDescriptor:
+    return OPTION_CATALOG.resolve_key(key)
 
 
 def _get_field_value(config: MeridianConfig, field_path: tuple[str, ...]) -> object:
@@ -440,22 +259,20 @@ def _get_field_value(config: MeridianConfig, field_path: tuple[str, ...]) -> obj
 def _default_values() -> dict[str, object]:
     defaults = MeridianConfig()
     return {
-        spec.canonical_key: _normalize_runtime_value(_get_field_value(defaults, spec.field_path))
-        for spec in _CONFIG_KEY_SPECS
+        option.canonical_key: normalize_runtime_scalar(
+            _get_field_value(defaults, option.field_path)
+        )
+        for option in OPTION_CATALOG.visible_options
     }
 
 
 def _resolved_values(config: MeridianConfig) -> dict[str, object]:
     return {
-        spec.canonical_key: _normalize_runtime_value(_get_field_value(config, spec.field_path))
-        for spec in _CONFIG_KEY_SPECS
+        option.canonical_key: normalize_runtime_scalar(
+            _get_field_value(config, option.field_path)
+        )
+        for option in OPTION_CATALOG.visible_options
     }
-
-
-def _normalize_runtime_value(value: object) -> object:
-    if isinstance(value, tuple):
-        return tuple(str(item) for item in cast("tuple[object, ...]", value))
-    return value
 
 
 def _read_file_payload(path: Path) -> dict[str, object]:
@@ -465,123 +282,6 @@ def _read_file_payload(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", payload_obj)
 
 
-def _parse_toml_value(spec: _ConfigKeySpec, raw_value: object, source: str) -> object:
-    if spec.value_kind == "int":
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
-            raise ValueError(
-                f"Invalid value for '{source}': expected int, got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        return raw_value
-
-    if spec.value_kind == "float":
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
-            raise ValueError(
-                f"Invalid value for '{source}': expected float, got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        return float(raw_value)
-
-    if spec.value_kind == "str_list":
-        if not isinstance(raw_value, list):
-            raise ValueError(
-                f"Invalid value for '{source}': expected array[str], got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        parsed: list[str] = []
-        for item in cast("list[object]", raw_value):
-            if not isinstance(item, str):
-                raise ValueError(
-                    f"Invalid value for '{source}': expected array[str], got "
-                    f"{type(item).__name__} ({item!r})."
-                )
-            normalized = item.strip()
-            if not normalized:
-                raise ValueError(f"Invalid value for '{source}': expected non-empty items.")
-            parsed.append(normalized)
-        return tuple(parsed)
-
-    if not isinstance(raw_value, str):
-        raise ValueError(
-            f"Invalid value for '{source}': expected str, got "
-            f"{type(raw_value).__name__} ({raw_value!r})."
-        )
-
-    normalized = raw_value.strip()
-    if not normalized:
-        raise ValueError(f"Invalid value for '{source}': expected non-empty string.")
-
-    if spec.value_kind == "verbosity":
-        lowered = normalized.lower()
-        if lowered not in _OUTPUT_VERBOSITY_PRESETS:
-            raise ValueError(
-                f"Invalid value for '{source}': expected one of "
-                f"{sorted(_OUTPUT_VERBOSITY_PRESETS)}, got {raw_value!r}."
-            )
-        return lowered
-
-    return normalized
-
-
-def _parse_cli_value(spec: _ConfigKeySpec, raw_value: str) -> object:
-    normalized = raw_value.strip()
-
-    if spec.value_kind == "int":
-        try:
-            return int(normalized)
-        except ValueError as error:
-            raise ValueError(
-                f"Invalid value for '{spec.canonical_key}': expected int, got {raw_value!r}."
-            ) from error
-
-    if spec.value_kind == "float":
-        try:
-            return float(normalized)
-        except ValueError as error:
-            raise ValueError(
-                f"Invalid value for '{spec.canonical_key}': expected float, got {raw_value!r}."
-            ) from error
-
-    if spec.value_kind == "str_list":
-        if not normalized:
-            raise ValueError(
-                f"Invalid value for '{spec.canonical_key}': expected comma-separated values."
-            )
-
-        items: list[str]
-        if normalized.startswith("["):
-            try:
-                parsed_obj = tomllib.loads(f"value = {normalized}")["value"]
-            except tomllib.TOMLDecodeError as error:
-                raise ValueError(
-                    f"Invalid TOML array for '{spec.canonical_key}': {raw_value!r}."
-                ) from error
-            if not isinstance(parsed_obj, list):
-                raise ValueError(f"Invalid value for '{spec.canonical_key}': expected array[str].")
-            items = [str(item).strip() for item in cast("list[object]", parsed_obj)]
-        else:
-            items = [part.strip() for part in normalized.split(",")]
-
-        filtered = [item for item in items if item]
-        if not filtered:
-            raise ValueError(f"Invalid value for '{spec.canonical_key}': expected non-empty items.")
-        return tuple(filtered)
-
-    if not normalized:
-        raise ValueError(f"Invalid value for '{spec.canonical_key}': expected non-empty string.")
-
-    if spec.value_kind == "verbosity":
-        lowered = normalized.lower()
-        if lowered not in _OUTPUT_VERBOSITY_PRESETS:
-            raise ValueError(
-                f"Invalid value for '{spec.canonical_key}': expected one of "
-                f"{sorted(_OUTPUT_VERBOSITY_PRESETS)}, got {raw_value!r}."
-            )
-        return lowered
-
-    return normalized
-
-
 def _extract_file_overrides(payload: dict[str, object]) -> dict[str, object]:
     overrides: dict[str, object] = {}
 
@@ -589,20 +289,24 @@ def _extract_file_overrides(payload: dict[str, object]) -> dict[str, object]:
         if isinstance(raw_value, dict):
             section_values = cast("dict[str, object]", raw_value)
             for section_key, section_value in section_values.items():
-                spec = _CONFIG_KEY_ALIAS_MAP.get(f"{key}.{section_key}")
-                if spec is None:
+                option = OPTION_CATALOG.find_file_alias(section=key, key=section_key)
+                if option is None or not option.command_visible:
                     continue
-                overrides[spec.canonical_key] = _parse_toml_value(
-                    spec,
-                    section_value,
+                overrides[option.canonical_key] = parse_toml_scalar(
+                    value_kind=option.value_kind,
+                    raw_value=section_value,
                     source=f"{key}.{section_key}",
                 )
             continue
 
-        spec = _CONFIG_KEY_ALIAS_MAP.get(key)
-        if spec is None:
+        option = OPTION_CATALOG.find_file_alias(section=None, key=key)
+        if option is None or not option.command_visible:
             continue
-        overrides[spec.canonical_key] = _parse_toml_value(spec, raw_value, source=key)
+        overrides[option.canonical_key] = parse_toml_scalar(
+            value_kind=option.value_kind,
+            raw_value=raw_value,
+            source=key,
+        )
 
     return overrides
 
@@ -630,10 +334,13 @@ def _toml_literal(value: object) -> str:
 def _render_config_toml(overrides: dict[str, object]) -> str:
     sections: dict[str, dict[str, object]] = {name: {} for name in _SECTION_ORDER}
 
-    for spec in _CONFIG_KEY_SPECS:
-        if spec.canonical_key not in overrides:
+    for option in OPTION_CATALOG.visible_options:
+        if option.canonical_key not in overrides or not option.file_aliases:
             continue
-        sections[spec.section][spec.file_key] = overrides[spec.canonical_key]
+        primary_alias = option.file_aliases[0]
+        if primary_alias.section is None:
+            continue
+        sections[primary_alias.section][primary_alias.key] = overrides[option.canonical_key]
 
     lines: list[str] = []
     for section_name in _SECTION_ORDER:
@@ -653,17 +360,17 @@ def _render_config_toml(overrides: dict[str, object]) -> str:
 
 
 def _source_for_key(
-    spec: _ConfigKeySpec,
+    option: ConfigOptionDescriptor,
     *,
     project_overrides: dict[str, object],
     user_overrides: dict[str, object],
 ) -> tuple[Literal["builtin", "file", "user-config", "env var"], str | None]:
-    env_var = spec.env_var
-    if env_var is not None and os.getenv(env_var) is not None:
-        return "env var", env_var
-    if spec.canonical_key in project_overrides:
+    for env_var in option.env_vars:
+        if os.getenv(env_var) is not None:
+            return "env var", env_var
+    if option.canonical_key in project_overrides:
         return "file", None
-    if spec.canonical_key in user_overrides:
+    if option.canonical_key in user_overrides:
         return "user-config", None
     return "builtin", None
 
@@ -915,16 +622,16 @@ def config_show_sync(payload: ConfigShowInput) -> ConfigShowOutput:
     inspection = _build_config_inspection_state(authority)
 
     values: list[ConfigResolvedValue] = []
-    for spec in _CONFIG_KEY_SPECS:
+    for option in OPTION_CATALOG.visible_options:
         source, env_var = _source_for_key(
-            spec,
+            option,
             project_overrides=inspection.project_overrides,
             user_overrides=inspection.user_overrides,
         )
         values.append(
             ConfigResolvedValue(
-                key=spec.canonical_key,
-                value=inspection.resolved_values[spec.canonical_key],
+                key=option.canonical_key,
+                value=inspection.resolved_values[option.canonical_key],
                 source=source,
                 env_var=env_var,
             )
@@ -1005,34 +712,38 @@ def config_set_sync(payload: ConfigSetInput) -> ConfigSetOutput:
     project_root = _resolve_project_root(payload.project_root)
     path = _require_project_config_path(_resolve_project_config_state(project_root))
 
-    spec = _resolve_key_spec(payload.key)
-    value = _parse_cli_value(spec, payload.value)
+    option = _resolve_option(payload.key)
+    value = parse_cli_scalar(
+        canonical_key=option.canonical_key,
+        value_kind=option.value_kind,
+        raw_value=payload.value,
+    )
 
     file_overrides = _extract_file_overrides(_read_file_payload(path))
-    file_overrides[spec.canonical_key] = value
+    file_overrides[option.canonical_key] = value
 
     atomic_write_text(path, _render_config_toml(file_overrides))
 
     return ConfigSetOutput(
         path=path.as_posix(),
-        key=spec.canonical_key,
-        value=_normalize_runtime_value(value),
+        key=option.canonical_key,
+        value=normalize_runtime_scalar(value),
     )
 
 
 def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
     project_root = _resolve_project_root(payload.project_root)
-    spec = _resolve_key_spec(payload.key)
+    option = _resolve_option(payload.key)
     inspection = _build_config_inspection_state(project_root)
     source, env_var = _source_for_key(
-        spec,
+        option,
         project_overrides=inspection.project_overrides,
         user_overrides=inspection.user_overrides,
     )
 
     return ConfigGetOutput(
-        key=spec.canonical_key,
-        value=inspection.resolved_values[spec.canonical_key],
+        key=option.canonical_key,
+        value=inspection.resolved_values[option.canonical_key],
         source=source,
         env_var=env_var,
     )
@@ -1041,15 +752,15 @@ def config_get_sync(payload: ConfigGetInput) -> ConfigGetOutput:
 def config_reset_sync(payload: ConfigResetInput) -> ConfigResetOutput:
     project_root = _resolve_project_root(payload.project_root)
     path = _require_project_config_path(_resolve_project_config_state(project_root))
-    spec = _resolve_key_spec(payload.key)
+    option = _resolve_option(payload.key)
 
     file_overrides = _extract_file_overrides(_read_file_payload(path))
-    removed = spec.canonical_key in file_overrides
-    file_overrides.pop(spec.canonical_key, None)
+    removed = option.canonical_key in file_overrides
+    file_overrides.pop(option.canonical_key, None)
 
     atomic_write_text(path, _render_config_toml(file_overrides))
 
-    return ConfigResetOutput(path=path.as_posix(), key=spec.canonical_key, removed=removed)
+    return ConfigResetOutput(path=path.as_posix(), key=option.canonical_key, removed=removed)
 
 
 config_init = async_from_sync(config_init_sync)

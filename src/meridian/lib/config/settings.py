@@ -5,16 +5,18 @@ import os
 import tomllib
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from meridian.lib.config.catalog import build_option_catalog, file_alias
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import (
     ProjectConfigPaths,
     resolve_project_config_paths,
 )
+from meridian.lib.config.schema import config_field, parse_env_scalar, parse_toml_scalar
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
@@ -89,68 +91,6 @@ def _normalize_string_tuple(
             raise ValueError(f"Invalid value for '{source}': expected non-empty entries.")
         normalized.append(compact)
     return tuple(normalized)
-
-
-def _parse_env_int(raw_value: str, *, env_name: str) -> int:
-    try:
-        return int(raw_value.strip())
-    except ValueError as error:
-        raise ValueError(
-            f"Invalid environment override '{env_name}': expected int, got {raw_value!r}."
-        ) from error
-
-
-def _parse_env_float(raw_value: str, *, env_name: str) -> float:
-    try:
-        return float(raw_value.strip())
-    except ValueError as error:
-        raise ValueError(
-            f"Invalid environment override '{env_name}': expected float, got {raw_value!r}."
-        ) from error
-
-
-def _parse_env_string(raw_value: str, *, env_name: str) -> str:
-    normalized = raw_value.strip()
-    if not normalized:
-        raise ValueError(f"Invalid environment override '{env_name}': expected non-empty string.")
-    return normalized
-
-
-def _parse_file_scalar(*, field_name: str, raw_value: object, source: str) -> object:
-    int_fields = {"max_depth", "max_retries"}
-    float_fields = {
-        "retry_backoff_seconds",
-        "kill_grace_minutes",
-        "guardrail_timeout_minutes",
-        "wait_timeout_minutes",
-        "default_wait_yield_seconds",
-        "min_wait_yield_seconds",
-    }
-
-    if field_name in int_fields:
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
-            raise ValueError(
-                f"Invalid value for '{source}': expected int, got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        return raw_value
-
-    if field_name in float_fields:
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
-            raise ValueError(
-                f"Invalid value for '{source}': expected float, got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        return float(raw_value)
-
-    if not isinstance(raw_value, str):
-        raise ValueError(
-            f"Invalid value for '{source}': expected str, got "
-            f"{type(raw_value).__name__} ({raw_value!r})."
-        )
-    if field_name == "default_model":
-        return raw_value.strip()
-    return _normalize_required_string(raw_value, source=source)
 
 
 def _parse_toml_list(*, raw_value: object, source: str) -> tuple[str, ...]:
@@ -851,39 +791,6 @@ def _normalize_toml_payload(
     path: Path,
     project_root: Path,
 ) -> dict[str, object]:
-    section_aliases: dict[str, dict[str, str]] = {
-        "defaults": {
-            "max_depth": "max_depth",
-            "max_retries": "max_retries",
-            "retry_backoff_seconds": "retry_backoff_seconds",
-            "model": "default_model",
-            "harness": "default_harness",
-        },
-        "timeouts": {
-            "kill_grace_minutes": "kill_grace_minutes",
-            "guardrail_minutes": "guardrail_timeout_minutes",
-            "guardrail_timeout_minutes": "guardrail_timeout_minutes",
-            "wait_minutes": "wait_timeout_minutes",
-            "wait_timeout_minutes": "wait_timeout_minutes",
-            "wait_yield_after_seconds": "default_wait_yield_seconds",
-            "default_wait_yield_seconds": "default_wait_yield_seconds",
-            "min_wait_yield_seconds": "min_wait_yield_seconds",
-        },
-    }
-    top_level_aliases: dict[str, str] = {
-        "max_depth": "max_depth",
-        "max_retries": "max_retries",
-        "retry_backoff_seconds": "retry_backoff_seconds",
-        "kill_grace_minutes": "kill_grace_minutes",
-        "guardrail_timeout_minutes": "guardrail_timeout_minutes",
-        "wait_timeout_minutes": "wait_timeout_minutes",
-        "wait_yield_after_seconds": "default_wait_yield_seconds",
-        "default_wait_yield_seconds": "default_wait_yield_seconds",
-        "min_wait_yield_seconds": "min_wait_yield_seconds",
-        "model": "default_model",
-        "default_harness": "default_harness",
-    }
-
     normalized: dict[str, object] = {}
     for key, raw_value in payload.items():
         if key == "output":
@@ -940,70 +847,76 @@ def _normalize_toml_payload(
         if key == "workspace":
             continue
 
-        section_map = section_aliases.get(key)
-        if section_map is not None:
+        if key in {"defaults", "timeouts"}:
             if not isinstance(raw_value, dict):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
             for section_key, section_value in cast("dict[str, object]", raw_value).items():
-                field_name = section_map.get(section_key)
-                if field_name is None:
+                option = OPTION_CATALOG.find_file_alias(section=key, key=section_key)
+                if option is None:
                     logger.warning(
                         "Ignoring unknown Meridian config key '%s.%s'.",
                         key,
                         section_key,
                     )
                     continue
-                coerced = _parse_file_scalar(
-                    field_name=field_name,
+                coerced = parse_toml_scalar(
+                    value_kind=option.value_kind,
                     raw_value=section_value,
                     source=f"{key}.{section_key}",
                 )
-                if field_name == "default_model":
+                if option.field_path in {("default_model",)}:
                     coerced = _normalize_model_identifier(
                         cast("str", coerced),
                         project_root=project_root,
                     )
-                normalized[field_name] = coerced
+                _assign_nested_value(normalized, option.field_path, coerced)
             continue
 
-        field_name = top_level_aliases.get(key)
-        if field_name is None:
+        option = OPTION_CATALOG.find_file_alias(section=None, key=key)
+        if option is None:
             logger.warning("Ignoring unknown Meridian config key '%s'.", key)
             continue
 
-        coerced = _parse_file_scalar(
-            field_name=field_name,
+        coerced = parse_toml_scalar(
+            value_kind=option.value_kind,
             raw_value=raw_value,
             source=key,
         )
-        if field_name == "default_model":
+        if option.field_path in {("default_model",)}:
             coerced = _normalize_model_identifier(cast("str", coerced), project_root=project_root)
-        normalized[field_name] = coerced
+        _assign_nested_value(normalized, option.field_path, coerced)
 
     return normalized
 
 
 def _env_alias_overrides(project_root: Path) -> dict[str, object]:
     values: dict[str, object] = {}
-    env_specs: tuple[tuple[str, tuple[str, ...], Literal["int", "float", "str"]], ...] = (
-        ("MERIDIAN_MAX_DEPTH", ("max_depth",), "int"),
-        ("MERIDIAN_MAX_RETRIES", ("max_retries",), "int"),
-        ("MERIDIAN_RETRY_BACKOFF_SECONDS", ("retry_backoff_seconds",), "float"),
-        ("MERIDIAN_KILL_GRACE_MINUTES", ("kill_grace_minutes",), "float"),
-        (
-            "MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES",
-            ("guardrail_timeout_minutes",),
-            "float",
-        ),
-        ("MERIDIAN_WAIT_TIMEOUT_MINUTES", ("wait_timeout_minutes",), "float"),
+    for env_name, option in OPTION_CATALOG.env_options():
+        raw_value = os.getenv(env_name)
+        if raw_value is None:
+            continue
+
+        parsed = parse_env_scalar(
+            value_kind=option.value_kind,
+            raw_value=raw_value,
+            env_name=env_name,
+        )
+
+        if option.field_path in {
+            ("default_model",),
+            ("harness", "claude", "model"),
+            ("harness", "codex", "model"),
+            ("harness", "opencode", "model"),
+            ("primary", "model"),
+        }:
+            parsed = _normalize_model_identifier(cast("str", parsed), project_root=project_root)
+
+        _assign_nested_value(values, option.field_path, parsed)
+
+    hidden_env_specs: tuple[tuple[str, tuple[str, ...], Literal["float", "str"]], ...] = (
         ("MERIDIAN_WAIT_YIELD_AFTER_SECONDS", ("default_wait_yield_seconds",), "float"),
         ("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", ("default_wait_yield_seconds",), "float"),
         ("MERIDIAN_MIN_WAIT_YIELD_SECONDS", ("min_wait_yield_seconds",), "float"),
-        ("MERIDIAN_DEFAULT_MODEL", ("default_model",), "str"),
-        ("MERIDIAN_DEFAULT_HARNESS", ("default_harness",), "str"),
-        ("MERIDIAN_HARNESS_MODEL_CLAUDE", ("harness", "claude", "model"), "str"),
-        ("MERIDIAN_HARNESS_MODEL_CODEX", ("harness", "codex", "model"), "str"),
-        ("MERIDIAN_HARNESS_MODEL_OPENCODE", ("harness", "opencode", "model"), "str"),
         (
             "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE",
             ("harness", "claude", "wait_yield_seconds"),
@@ -1019,33 +932,16 @@ def _env_alias_overrides(project_root: Path) -> dict[str, object]:
             ("harness", "opencode", "wait_yield_seconds"),
             "float",
         ),
-        ("MERIDIAN_STATE_RETENTION_DAYS", ("state", "retention_days"), "int"),
-        ("MERIDIAN_AGENT", ("primary", "agent"), "str"),
-        ("MERIDIAN_FORMAT", ("output", "format"), "str"),
     )
-
-    for env_name, field_path, value_kind in env_specs:
+    for env_name, field_path, value_kind in hidden_env_specs:
         raw_value = os.getenv(env_name)
         if raw_value is None:
             continue
-
-        parsed: object
-        if value_kind == "int":
-            parsed = _parse_env_int(raw_value, env_name=env_name)
-        elif value_kind == "float":
-            parsed = _parse_env_float(raw_value, env_name=env_name)
-        else:
-            parsed = _parse_env_string(raw_value, env_name=env_name)
-
-        if field_path in {
-            ("default_model",),
-            ("harness", "claude", "model"),
-            ("harness", "codex", "model"),
-            ("harness", "opencode", "model"),
-            ("primary", "model"),
-        }:
-            parsed = _normalize_model_identifier(cast("str", parsed), project_root=project_root)
-
+        parsed = parse_env_scalar(
+            value_kind=value_kind,
+            raw_value=raw_value,
+            env_name=env_name,
+        )
         _assign_nested_value(values, field_path, parsed)
 
     return values
@@ -1056,9 +952,32 @@ class OutputConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    show: tuple[str, ...] = ("lifecycle", "sub-run", "error", "system")
-    verbosity: str | None = None
-    format: str = "text"
+    show: Annotated[
+        tuple[str, ...],
+        config_field(
+            "output.show",
+            value_kind="str_list",
+            file_aliases=(file_alias("output", "show"),),
+        ),
+    ] = ("lifecycle", "sub-run", "error", "system")
+    verbosity: Annotated[
+        str | None,
+        config_field(
+            "output.verbosity",
+            value_kind="verbosity",
+            file_aliases=(file_alias("output", "verbosity"),),
+        ),
+    ] = None
+    format: Annotated[
+        str,
+        config_field(
+            "output.format",
+            value_kind="str",
+            file_aliases=(file_alias("output", "format"),),
+            env_vars=("MERIDIAN_FORMAT",),
+            command_visible=False,
+        ),
+    ] = "text"
 
     @field_validator("show")
     @classmethod
@@ -1089,7 +1008,18 @@ class StateConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    retention_days: int = 30
+    retention_days: Annotated[
+        int,
+        config_field(
+            "state.retention_days",
+            value_kind="int",
+            file_aliases=(
+                file_alias("state", "retention_days"),
+                file_alias(None, "retention_days"),
+            ),
+            env_vars=("MERIDIAN_STATE_RETENTION_DAYS",),
+        ),
+    ] = 30
 
     @field_validator("retention_days")
     @classmethod
@@ -1107,13 +1037,71 @@ class PrimaryConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    autocompact_pct: int | None = None
-    model: str | None = None
-    harness: str | None = None
-    agent: str | None = None
-    effort: str | None = None
-    sandbox: str | None = None
-    approval: str | None = None
+    autocompact_pct: Annotated[
+        int | None,
+        config_field(
+            "primary.autocompact_pct",
+            value_kind="int",
+            file_aliases=(
+                file_alias("primary", "autocompact_pct"),
+                file_alias(None, "autocompact_pct"),
+            ),
+        ),
+    ] = None
+    model: Annotated[
+        str | None,
+        config_field(
+            "primary.model",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "model"),),
+            env_vars=("MERIDIAN_MODEL",),
+        ),
+    ] = None
+    harness: Annotated[
+        str | None,
+        config_field(
+            "primary.harness",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "harness"),),
+            env_vars=("MERIDIAN_HARNESS",),
+        ),
+    ] = None
+    agent: Annotated[
+        str | None,
+        config_field(
+            "primary.agent",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "agent"),),
+            env_vars=("MERIDIAN_AGENT",),
+        ),
+    ] = None
+    effort: Annotated[
+        str | None,
+        config_field(
+            "primary.effort",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "effort"),),
+            command_visible=False,
+        ),
+    ] = None
+    sandbox: Annotated[
+        str | None,
+        config_field(
+            "primary.sandbox",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "sandbox"),),
+            command_visible=False,
+        ),
+    ] = None
+    approval: Annotated[
+        str | None,
+        config_field(
+            "primary.approval",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "approval"),),
+            command_visible=False,
+        ),
+    ] = None
     timeout: float | None = None
     autocompact: int | None = None
 
@@ -1363,19 +1351,55 @@ class HarnessProfileConfig(BaseModel):
         return float(value)
 
 
+class ClaudeHarnessProfileConfig(HarnessProfileConfig):
+    model: Annotated[
+        str,
+        config_field(
+            "harness.claude",
+            value_kind="str",
+            file_aliases=(file_alias("harness", "claude"),),
+            env_vars=("MERIDIAN_HARNESS_MODEL_CLAUDE",),
+        ),
+    ] = ""
+
+
+class CodexHarnessProfileConfig(HarnessProfileConfig):
+    model: Annotated[
+        str,
+        config_field(
+            "harness.codex",
+            value_kind="str",
+            file_aliases=(file_alias("harness", "codex"),),
+            env_vars=("MERIDIAN_HARNESS_MODEL_CODEX",),
+        ),
+    ] = ""
+
+
+class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
+    model: Annotated[
+        str,
+        config_field(
+            "harness.opencode",
+            value_kind="str",
+            file_aliases=(file_alias("harness", "opencode"),),
+            env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
+        ),
+    ] = "opencode-go/kimi-k2.6"
+
+
 class HarnessConfig(BaseModel):
     """Default model and wait-yield configuration for each harness adapter."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    claude: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=3000.0)
+    claude: ClaudeHarnessProfileConfig = Field(
+        default_factory=lambda: ClaudeHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
-    codex: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=3000.0)
+    codex: CodexHarnessProfileConfig = Field(
+        default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
-    opencode: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(model="opencode-go/kimi-k2.6")
+    opencode: OpenCodeHarnessProfileConfig = Field(
+        default_factory=OpenCodeHarnessProfileConfig
     )
 
 
@@ -1389,16 +1413,102 @@ class MeridianConfig(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    max_depth: int = 3
-    max_retries: int = 3
-    retry_backoff_seconds: float = 0.25
-    kill_grace_minutes: float = 2.0 / 60.0
-    guardrail_timeout_minutes: float = 0.5
-    wait_timeout_minutes: float = 30.0
+    max_depth: Annotated[
+        int,
+        config_field(
+            "defaults.max_depth",
+            value_kind="int",
+            file_aliases=(file_alias("defaults", "max_depth"), file_alias(None, "max_depth")),
+            env_vars=("MERIDIAN_MAX_DEPTH",),
+        ),
+    ] = 3
+    max_retries: Annotated[
+        int,
+        config_field(
+            "defaults.max_retries",
+            value_kind="int",
+            file_aliases=(file_alias("defaults", "max_retries"), file_alias(None, "max_retries")),
+            env_vars=("MERIDIAN_MAX_RETRIES",),
+        ),
+    ] = 3
+    retry_backoff_seconds: Annotated[
+        float,
+        config_field(
+            "defaults.retry_backoff_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("defaults", "retry_backoff_seconds"),
+                file_alias(None, "retry_backoff_seconds"),
+            ),
+            env_vars=("MERIDIAN_RETRY_BACKOFF_SECONDS",),
+        ),
+    ] = 0.25
+    kill_grace_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.kill_grace_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "kill_grace_minutes"),
+                file_alias(None, "kill_grace_minutes"),
+            ),
+            env_vars=("MERIDIAN_KILL_GRACE_MINUTES",),
+        ),
+    ] = 2.0 / 60.0
+    guardrail_timeout_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.guardrail_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "guardrail_minutes"),
+                file_alias("timeouts", "guardrail_timeout_minutes"),
+                file_alias(None, "guardrail_timeout_minutes"),
+            ),
+            env_vars=("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES",),
+        ),
+    ] = 0.5
+    wait_timeout_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.wait_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "wait_minutes"),
+                file_alias("timeouts", "wait_timeout_minutes"),
+                file_alias(None, "wait_timeout_minutes"),
+            ),
+            env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
+        ),
+    ] = 30.0
     default_wait_yield_seconds: float = 3000.0
     min_wait_yield_seconds: float = 30.0
-    default_model: str = ""
-    default_harness: str = "codex"
+    default_model: Annotated[
+        str,
+        config_field(
+            "defaults.model",
+            value_kind="str",
+            file_aliases=(
+                file_alias("defaults", "model"),
+                file_alias("defaults", "default_model"),
+                file_alias(None, "model"),
+                file_alias(None, "default_model"),
+            ),
+            env_vars=("MERIDIAN_DEFAULT_MODEL",),
+        ),
+    ] = ""
+    default_harness: Annotated[
+        str,
+        config_field(
+            "defaults.harness",
+            value_kind="str",
+            file_aliases=(
+                file_alias("defaults", "harness"),
+                file_alias(None, "default_harness"),
+            ),
+            env_vars=("MERIDIAN_DEFAULT_HARNESS",),
+        ),
+    ] = "codex"
 
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
@@ -1533,6 +1643,9 @@ class MeridianConfig(BaseSettings):
             cast("PydanticBaseSettingsSource", project_toml_source),
             cast("PydanticBaseSettingsSource", user_toml_source),
         )
+
+
+OPTION_CATALOG = build_option_catalog(MeridianConfig)
 
 
 def load_config(

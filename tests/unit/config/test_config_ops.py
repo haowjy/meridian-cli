@@ -56,6 +56,27 @@ def test_config_show_reports_workspace_summary_when_workspace_is_absent(tmp_path
     assert "workspace.applicability.opencode = ignored:no_roots" in text
 
 
+def test_config_show_does_not_create_project_config_file(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+
+    result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+
+    assert result.path == (project_root / "meridian.toml").as_posix()
+    assert not (project_root / "meridian.toml").exists()
+
+
+def test_config_get_does_not_create_project_config_file(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+
+    result = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="defaults.harness")
+    )
+
+    assert result.key == "defaults.harness"
+    assert result.value == "codex"
+    assert not (project_root / "meridian.toml").exists()
+
+
 def test_config_show_json_workspace_includes_empty_findings(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
 
@@ -251,3 +272,19 @@ def test_load_config_prefers_meridian_local_toml_over_meridian_toml(tmp_path: Pa
     )
 
     assert load_config(project_root).default_harness == "opencode"
+
+
+def test_config_get_resolves_aliases_through_option_catalog(tmp_path: Path) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        '[defaults]\nmodel = "gpt-5.4"\n',
+        encoding="utf-8",
+    )
+
+    result = config_get_sync(
+        ConfigGetInput(project_root=project_root.as_posix(), key="default_model")
+    )
+
+    assert result.key == "defaults.model"
+    assert result.value == "gpt-5.4"
+    assert result.source == "file"
