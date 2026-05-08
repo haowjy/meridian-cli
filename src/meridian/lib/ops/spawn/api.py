@@ -1451,6 +1451,65 @@ def _with_command(result: SpawnActionOutput, command: str) -> SpawnActionOutput:
     return result.model_copy(update={"command": command})
 
 
+def _build_fork_create_input(
+    *,
+    payload: SpawnForkInput,
+    normalized_source_ref: str,
+    resolved_reference: ResolvedSessionReference,
+    requested_model: str,
+    requested_agent: str | None,
+    inherited_skills: tuple[str, ...],
+    requested_work: str,
+    harness: str | None,
+) -> SpawnCreateInput:
+    return SpawnCreateInput(
+        prompt=payload.prompt,
+        model=requested_model or (resolved_reference.source_model or ""),
+        files=payload.files,
+        template_vars=payload.template_vars,
+        agent=requested_agent or resolved_reference.source_agent,
+        skills=inherited_skills,
+        desc=payload.desc,
+        work=requested_work or (resolved_reference.source_work_id or ""),
+        dry_run=payload.dry_run,
+        verbose=payload.verbose,
+        quiet=payload.quiet,
+        stream=payload.stream,
+        background=payload.background,
+        timeout=payload.timeout,
+        project_root=payload.project_root,
+        approval=payload.approval,
+        autocompact=payload.autocompact,
+        effort=payload.effort,
+        sandbox=payload.sandbox,
+        harness=harness,
+        passthrough_args=payload.passthrough_args,
+        session=SessionRequest(
+            requested_harness_session_id=resolved_reference.harness_session_id,
+            continue_harness=resolved_reference.harness,
+            continue_source_tracked=resolved_reference.tracked,
+            continue_source_ref=normalized_source_ref,
+            continue_fork=True,
+            forked_from_chat_id=resolved_reference.source_chat_id,
+            source_execution_cwd=resolved_reference.source_execution_cwd,
+            source_claude_config_dir=resolved_reference.source_claude_config_dir,
+        ),
+        debug=payload.debug,
+    )
+
+
+def _resolve_effective_fork_target_harness(create_input: SpawnCreateInput) -> str:
+    validated_payload, preflight_warning = validate_create_input(create_input)
+    preview_request = build_create_payload(
+        validated_payload,
+        preflight_warning=preflight_warning,
+    )
+    resolved_harness = (preview_request.harness or "").strip()
+    if not resolved_harness:
+        raise ValueError("Fork target harness could not be resolved.")
+    return resolved_harness
+
+
 def spawn_fork_sync(
     payload: SpawnForkInput,
     ctx: RuntimeContext | None = None,
@@ -1478,6 +1537,7 @@ def spawn_fork_sync(
     requested_agent = (payload.agent or "").strip() or None
     requested_work = payload.work.strip()
     requested_harness = (payload.harness or "").strip() or None
+    source_harness = (resolved_reference.harness or "").strip() or None
 
     inherited_skills = (
         resolved_reference.source_skills
@@ -1485,43 +1545,25 @@ def spawn_fork_sync(
         else payload.skills
     )
 
-    create_input = SpawnCreateInput(
-        prompt=payload.prompt,
-        model=requested_model or (resolved_reference.source_model or ""),
-        files=payload.files,
-        template_vars=payload.template_vars,
-        agent=requested_agent or resolved_reference.source_agent,
-        skills=inherited_skills,
-        desc=payload.desc,
-        work=requested_work or (resolved_reference.source_work_id or ""),
-        dry_run=payload.dry_run,
-        verbose=payload.verbose,
-        quiet=payload.quiet,
-        stream=payload.stream,
-        background=payload.background,
-        timeout=payload.timeout,
-        project_root=payload.project_root,
-        approval=payload.approval,
-        autocompact=payload.autocompact,
-        effort=payload.effort,
-        sandbox=payload.sandbox,
-        harness=(
-            requested_harness
-            if requested_harness is not None
-            else (resolved_reference.harness if not requested_model else None)
-        ),
-        passthrough_args=payload.passthrough_args,
-        session=SessionRequest(
-            requested_harness_session_id=resolved_reference.harness_session_id,
-            continue_harness=resolved_reference.harness,
-            continue_source_tracked=resolved_reference.tracked,
-            continue_source_ref=normalized_source_ref,
-            continue_fork=True,
-            forked_from_chat_id=resolved_reference.source_chat_id,
-            source_execution_cwd=resolved_reference.source_execution_cwd,
-            source_claude_config_dir=resolved_reference.source_claude_config_dir,
-        ),
-        debug=payload.debug,
+    unresolved_create_input = _build_fork_create_input(
+        payload=payload,
+        normalized_source_ref=normalized_source_ref,
+        resolved_reference=resolved_reference,
+        requested_model=requested_model,
+        requested_agent=requested_agent,
+        inherited_skills=inherited_skills,
+        requested_work=requested_work,
+        harness=requested_harness,
+    )
+    target_harness = _resolve_effective_fork_target_harness(unresolved_create_input)
+    if source_harness is not None and source_harness != target_harness:
+        raise ValueError(
+            "Cannot fork across harnesses: "
+            f"source is '{source_harness}', target is '{target_harness}'."
+        )
+
+    create_input = unresolved_create_input.model_copy(
+        update={"harness": target_harness},
     )
     if prepared is not None:
         return spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)

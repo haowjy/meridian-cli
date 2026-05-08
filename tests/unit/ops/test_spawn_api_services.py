@@ -199,7 +199,7 @@ def test_spawn_fork_sync_resolves_roots_via_read_authority(
             missing_harness_session_id=False,
             source_skills=("skill-1",),
             source_model="gpt-5.4",
-            source_agent="coder",
+            source_agent=None,
             source_work_id="w-source",
             harness="codex",
             harness_session_id="session-10",
@@ -210,6 +210,7 @@ def test_spawn_fork_sync_resolves_roots_via_read_authority(
         )
 
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_resolve_session_reference)
+    monkeypatch.setattr(spawn_api, "_resolve_effective_fork_target_harness", lambda *_args: "codex")
     monkeypatch.setattr(
         spawn_api,
         "spawn_create_sync",

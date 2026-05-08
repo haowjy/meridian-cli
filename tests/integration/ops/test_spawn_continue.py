@@ -285,7 +285,9 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    (project_root / "README.md").write_text("seed", encoding="utf-8")
     _state_root(project_root)
+    monkeypatch.setattr(spawn_api, "_resolve_effective_fork_target_harness", lambda *_args: "codex")
 
     captured_input: SpawnCreateInput | None = None
 
@@ -294,8 +296,8 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
             missing_harness_session_id=False,
             harness_session_id="session-seed",
             harness="codex",
-            source_model="gpt-5.4",
-            source_agent="reviewer",
+            source_model="",
+            source_agent=None,
             source_skills=("skill-a", "skill-b"),
             source_work_id="w-source",
             source_chat_id="c-source",
@@ -331,8 +333,8 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
 
     assert result.status == "dry-run"
     assert captured_input is not None
-    assert captured_input.model == "gpt-5.4"
-    assert captured_input.agent == "reviewer"
+    assert captured_input.model == ""
+    assert captured_input.agent is None
     assert captured_input.skills == ("skill-a", "skill-b")
     assert captured_input.files == ("README.md",)
     assert captured_input.template_vars == ("ticket=123",)
@@ -346,13 +348,14 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     assert captured_input.session.source_claude_config_dir == "/tmp/source-claude"
 
 
-def test_spawn_fork_uses_requested_model_agent_and_skips_source_harness_when_model_override(
+def test_spawn_fork_uses_requested_model_agent_and_resolves_harness_from_policy(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
+    monkeypatch.setattr(spawn_api, "_resolve_effective_fork_target_harness", lambda *_args: "codex")
 
     captured_input: SpawnCreateInput | None = None
 
@@ -364,7 +367,7 @@ def test_spawn_fork_uses_requested_model_agent_and_skips_source_harness_when_mod
             harness_session_id="session-seed",
             harness="codex",
             source_model="gpt-5.4",
-            source_agent="reviewer",
+            source_agent=None,
             source_skills=("skill-a",),
             source_work_id="w-source",
             source_chat_id="c-source",
@@ -404,7 +407,94 @@ def test_spawn_fork_uses_requested_model_agent_and_skips_source_harness_when_mod
     assert captured_input.model == "gptmini"
     assert captured_input.agent == "architect"
     assert captured_input.skills == ("custom-skill",)
-    assert captured_input.harness is None
+    assert captured_input.harness == "codex"
+
+
+def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEFAULT_HARNESS", "claude")
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-seed",
+            harness="codex",
+            source_model="",
+            source_agent=None,
+            source_skills=(),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd=None,
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    def _fail_spawn_create_sync(*_args, **_kwargs):
+        raise AssertionError("cross-harness fork should fail before spawn_create_sync")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fail_spawn_create_sync)
+
+    with pytest.raises(ValueError, match="Cannot fork across harnesses"):
+        spawn_api.spawn_fork_sync(
+            SpawnForkInput(
+                source_ref="c-source",
+                prompt="fork prompt",
+                project_root=project_root.as_posix(),
+            )
+        )
+
+
+def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    (project_root / "meridian.toml").write_text(
+        '[defaults]\nharness = "claude"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-seed",
+            harness="codex",
+            source_model="",
+            source_agent=None,
+            source_skills=(),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd=None,
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    def _fail_spawn_create_sync(*_args, **_kwargs):
+        raise AssertionError("cross-harness fork should fail before spawn_create_sync")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fail_spawn_create_sync)
+
+    with pytest.raises(ValueError, match="Cannot fork across harnesses"):
+        spawn_api.spawn_fork_sync(
+            SpawnForkInput(
+                source_ref="c-source",
+                prompt="fork prompt",
+                project_root=project_root.as_posix(),
+            )
+        )
 
 
 def test_spawn_fork_errors_when_reference_has_no_recorded_session(
