@@ -315,7 +315,7 @@ override.effort = "low"
     assert values["agents.tech-lead.effort"].value == "high"
     assert values["agents.tech-lead.approval"].value == "auto"
     assert values["agents.tech-lead.sandbox"].value == "workspace-write"
-    assert values["agents.tech-lead.autocompact"].value == "70"
+    assert values["agents.tech-lead.autocompact"].value == 70
     assert values["agents.tech-lead.model-policies"].source == "file"
     assert values["agents.tech-lead.model-policies"].value == (
         '1 rules (match: alias "gptmini" → effort=low)'
