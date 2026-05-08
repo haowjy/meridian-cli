@@ -1350,8 +1350,8 @@ def spawn_continue_sync(
         project_root = _project_root_from_entrypoint(entrypoint)
         runtime_root = _runtime_root_from_entrypoint_for_read(entrypoint, project_root=project_root)
     else:
-        project_root, _ = resolve_runtime_root_and_config(payload.project_root)
-        runtime_root = None
+        project_root, _ = resolve_runtime_root_and_config_for_read(payload.project_root)
+        runtime_root = resolve_runtime_root_for_read(project_root)
     resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
         payload.spawn_id,
         project_root,
