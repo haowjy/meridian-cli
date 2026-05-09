@@ -45,13 +45,13 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # Agent profile name for the primary session (str; unset = no profile).
 agent = "product-lead"
 
-[agents.tech-lead]
-model = "gpt55"
-effort = "medium"
+# [agents.tech-lead]
+# model = "gpt55"
+# effort = "medium"
 
-[agents.design-lead]
-model = "gpt55"
-effort = "high"
+# [agents.design-lead]
+# model = "gpt55"
+# effort = "high"
 
 # -- Output streaming -------------------------------------------------------
 [output]
@@ -85,6 +85,12 @@ builtin = "git-autosync"
 remote = "git@github.com:meridian-flow/docs.git"
 
 # -- Workspace roots ---------------------------------------------------------
+[workspace.mars-agents]
+path = "../mars-agents"
+
+[workspace.meridian-cli-worktrees]
+path = "../meridian-cli.worktrees"
+
 # Prompt repos for agent profile editing
 [workspace.prompts-base]
 path = "../prompts/meridian-base"
@@ -106,5 +112,3 @@ path = "../prompts/microct-analysis"
 
 [workspace.prompts-mouse-ct]
 path = "../prompts/mouse-ct"
-
-
