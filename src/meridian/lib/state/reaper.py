@@ -520,8 +520,13 @@ def reconcile_active_spawn(
         managed_snapshot is not None or _is_potential_managed_primary(record)
     ):
         _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
-    if record.worker_pid is not None and record.worker_pid > 0:
-        _terminate_process_group(record.worker_pid, generic_snapshot.started_epoch)
+    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+    terminate_spawn_scopes(
+        runtime_root,
+        record,
+        reason="reaper",
+        grace_seconds=5.0,
+    )
     if managed_snapshot is not None:
         signaled = terminate_managed_primary_processes(
             managed_snapshot.metadata,

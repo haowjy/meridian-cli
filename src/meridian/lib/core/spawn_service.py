@@ -482,9 +482,12 @@ class SpawnApplicationService:
 
         if not _is_managed_primary_candidate(record):
             return
-        _terminate_worker_pid_fallback(
-            record.worker_pid,
-            started_epoch=_started_at_epoch(record.started_at),
+        from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+        terminate_spawn_scopes(
+            self._runtime_root,
+            record,
+            reason="cancel",
+            grace_seconds=5.0,
         )
 
     async def _wait_for_terminal(

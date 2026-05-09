@@ -510,6 +510,8 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     harness: str,
     corrupt_primary_meta: bool,
 ) -> None:
+    from meridian.lib.platform.process_scope.base import CleanupResult
+
     runner_pid = 9101
     worker_pid = 9102
     runtime_root, spawn_id = _create_spawn(
@@ -528,11 +530,32 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
         "meridian.lib.state.reaper.is_process_alive",
         lambda pid, created_after_epoch=None: pid == worker_pid,
     )
-    sent_signals: list[tuple[int, int]] = []
-    monkeypatch.setattr("meridian.lib.state.reaper.os.getpgid", lambda pid: pid)
+    terminated_pids: list[int] = []
+
+    def _fake_terminate_tree_sync(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "stop_called",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> CleanupResult:
+        terminated_pids.append(pid)
+        return CleanupResult(
+            scope_id=scope_id,
+            root_pid=pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_secs,
+            kill_escalated=False,
+            degraded_fallback=degraded_fallback,
+            skip_reason=None,
+        )
+
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.os.killpg",
-        lambda pgid, sig: sent_signals.append((pgid, sig)),
+        "meridian.lib.core.process_cleanup.terminate_tree_sync",
+        _fake_terminate_tree_sync,
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
@@ -543,7 +566,7 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
-    assert sent_signals == [(worker_pid, signal.SIGTERM)]
+    assert terminated_pids == [worker_pid]
 
 
 def test_reconcile_active_spawn_orphan_primary_diagnostics_include_launcher_alive(
@@ -814,6 +837,8 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from meridian.lib.platform.process_scope.base import CleanupResult
+
     runner_pid = 9301
     worker_pid = 9302
     runtime_root, spawn_id = _create_spawn(
@@ -829,11 +854,32 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
         "meridian.lib.state.reaper.is_process_alive",
         lambda pid, created_after_epoch=None: pid == worker_pid,
     )
-    sent_signals: list[tuple[int, int]] = []
-    monkeypatch.setattr("meridian.lib.state.reaper.os.getpgid", lambda pid: pid)
+    terminated_pids: list[int] = []
+
+    def _fake_terminate_tree_sync(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "stop_called",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> CleanupResult:
+        terminated_pids.append(pid)
+        return CleanupResult(
+            scope_id=scope_id,
+            root_pid=pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_secs,
+            kill_escalated=False,
+            degraded_fallback=degraded_fallback,
+            skip_reason=None,
+        )
+
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.os.killpg",
-        lambda pgid, sig: sent_signals.append((pgid, sig)),
+        "meridian.lib.core.process_cleanup.terminate_tree_sync",
+        _fake_terminate_tree_sync,
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
@@ -841,7 +887,7 @@ def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
     assert reconciled.error == "orphan_run"
-    assert sent_signals == [(worker_pid, signal.SIGTERM)]
+    assert terminated_pids == [worker_pid]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_run"
@@ -935,6 +981,8 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     harness: str,
     corrupt_primary_meta: bool,
 ) -> None:
+    from meridian.lib.platform.process_scope.base import CleanupResult
+
     runner_pid = 9351
     worker_pid = 9352
     runtime_root, spawn_id = _create_spawn(
@@ -957,11 +1005,32 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
         "meridian.lib.state.reaper.is_process_alive",
         lambda pid, created_after_epoch=None: pid == worker_pid,
     )
-    passive_signals: list[tuple[int, int]] = []
-    monkeypatch.setattr("meridian.lib.state.reaper.os.getpgid", lambda pid: pid)
+    passive_terminated_pids: list[int] = []
+
+    def _fake_terminate_tree_sync(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "stop_called",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> CleanupResult:
+        passive_terminated_pids.append(pid)
+        return CleanupResult(
+            scope_id=scope_id,
+            root_pid=pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_secs,
+            kill_escalated=False,
+            degraded_fallback=degraded_fallback,
+            skip_reason=None,
+        )
+
     monkeypatch.setattr(
-        "meridian.lib.state.reaper.os.killpg",
-        lambda pgid, sig: passive_signals.append((pgid, sig)),
+        "meridian.lib.core.process_cleanup.terminate_tree_sync",
+        _fake_terminate_tree_sync,
     )
 
     reconciled = _reconcile(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
@@ -969,16 +1038,34 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     assert reconciled.status == "failed"
     assert reconciled.exit_code == 1
     assert reconciled.error == "orphan_primary"
-    assert passive_signals == [(worker_pid, signal.SIGTERM)]
+    assert passive_terminated_pids == [worker_pid]
 
-    explicit_signals: list[tuple[int, int]] = []
+    explicit_terminated_pids: list[int] = []
+
+    def _fake_terminate_tree_sync_2(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "stop_called",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> CleanupResult:
+        explicit_terminated_pids.append(pid)
+        return CleanupResult(
+            scope_id=scope_id,
+            root_pid=pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_secs,
+            kill_escalated=False,
+            degraded_fallback=degraded_fallback,
+            skip_reason=None,
+        )
+
     monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == worker_pid,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.os.kill",
-        lambda pid, sig: explicit_signals.append((pid, sig)),
+        "meridian.lib.core.process_cleanup.terminate_tree_sync",
+        _fake_terminate_tree_sync_2,
     )
 
     output = spawn_api.spawn_cancel_sync(
@@ -991,7 +1078,7 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     assert output.status == "failed"
     assert output.exit_code == 1
     assert output.message == f"Spawn '{spawn_id}' is already failed."
-    assert explicit_signals == [(worker_pid, signal.SIGTERM)]
+    assert explicit_terminated_pids == [worker_pid]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"

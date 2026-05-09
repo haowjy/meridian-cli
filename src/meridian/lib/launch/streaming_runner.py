@@ -83,6 +83,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_bytes
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -520,12 +521,15 @@ async def _run_streaming_attempt(
     try:
         connection = await manager.start_spawn(config, run_spec)
         await manager.start_heartbeat(run.spawn_id)
+        scope_snap = getattr(connection, "scope_snapshot", None)
         lifecycle_service.mark_running(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
-            scope_snapshot=getattr(connection, "scope_snapshot", None),
+            scope_snapshot=scope_snap,
         )
+        if scope_snap is not None:
+            record_scope(runtime_root, SpawnId(run.spawn_id), scope_snap)
 
         subscriber = manager.subscribe(run.spawn_id)
         if subscriber is None:
