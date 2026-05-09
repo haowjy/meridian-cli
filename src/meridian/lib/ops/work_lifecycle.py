@@ -127,6 +127,7 @@ class WorkStartInput(BaseModel):
     goal: str | None = None
     chat_id: str = ""
     project_root: str | None = None
+    worktree: bool | None = None  # None = use config default
 
 
 class WorkStartOutput(BaseModel):
@@ -140,6 +141,7 @@ class WorkStartOutput(BaseModel):
     work_dir: str
     created: bool = True
     warning: str | None = None
+    worktree_path: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -284,6 +286,153 @@ class WorkClearOutput(BaseModel):
         return ""
 
 
+def _resolve_worktree_intent(
+    *,
+    explicit_worktree: bool | None,
+    project_root: Path,
+) -> bool:
+    """Resolve whether to provision a worktree.
+
+    - ``True``:  always create (caller must handle failure)
+    - ``False``: never create
+    - ``None``:  defer to ``[work] default_worktree`` in project config
+    """
+    if explicit_worktree is True:
+        return True
+    if explicit_worktree is False:
+        return False
+    from meridian.lib.config.settings import load_config  # local to avoid circular import
+
+    config = load_config(project_root)
+    return config.work.default_worktree
+
+
+def _provision_worktree(
+    project_state_dir: Path,
+    item: work_store.WorkItem,
+    project_root: Path,
+    *,
+    explicit: bool,
+    created: bool,
+    worktree_base: str | None,
+) -> str | None:
+    """Create or reuse a git worktree for *item*.
+
+    Returns:
+        None on success.
+        A non-empty warning string on soft failure (WT-06: config default +
+        no git repo).
+
+    Raises:
+        ValueError on hard failure:
+            - WT-02: explicit ``--worktree`` outside git repo.
+            - WT-03 / general: git worktree creation error.
+
+    For newly created work items (``created=True``) any hard failure triggers
+    rollback (delete the item) before the exception propagates so the caller
+    sees a clean failure.
+    """
+    from meridian.lib.ops.worktree_ops import (  # local to avoid import-time side effects
+        create_worktree,
+        detect_git_repo,
+        resolve_main_repo_root,
+        resolve_worktree_path,
+    )
+
+    # 1. Mark provisioning in progress.
+    work_store.update_work_item(project_state_dir, item.name, worktree_pending=True)
+
+    # 2. Detect git repo.
+    if not detect_git_repo(project_root):
+        # Clear pending — nothing changed on disk yet.
+        try:
+            work_store.update_work_item(project_state_dir, item.name, worktree_pending=False)
+        except Exception:
+            logger.warning(
+                "work_lifecycle.provision_worktree.clear_pending_failed",
+                work_id=item.name,
+            )
+        if explicit:
+            # WT-02: hard failure — explicit request, not a git repo.
+            if created:
+                try:
+                    work_store.delete_work_item(project_state_dir, item.name, force=True)
+                    logger.info(
+                        "work_lifecycle.provision_worktree.rollback_done", work_id=item.name
+                    )
+                except Exception:
+                    logger.exception(
+                        "work_lifecycle.provision_worktree.rollback_failed",
+                        work_id=item.name,
+                    )
+            raise ValueError(
+                f"Cannot create git worktree for '{item.name}': "
+                f"'{project_root}' is not inside a git repository. "
+                "Pass --no-worktree to skip worktree creation."
+            )
+        # WT-06: soft failure — config default, not a git repo.
+        return (
+            f"Skipped worktree creation for '{item.name}': "
+            "project is not inside a git repository."
+        )
+
+    # 3. Attempt worktree creation.
+    try:
+        repo_root = resolve_main_repo_root(project_root)
+        if repo_root is None:
+            raise ValueError(f"Could not determine git repository root from '{project_root}'.")
+
+        target_path = resolve_worktree_path(repo_root, item.name, worktree_base)
+        branch = f"feature/{item.name}"
+        result = create_worktree(repo_root, target_path, branch)
+
+        work_store.update_work_item(
+            project_state_dir,
+            item.name,
+            worktree_path=str(result.path),
+            worktree_pending=False,
+        )
+        logger.info(
+            "work_lifecycle.provision_worktree.done",
+            work_id=item.name,
+            worktree_path=str(result.path),
+            branch=branch,
+            created_new=result.created,
+        )
+        return None
+
+    except Exception as exc:
+        # Clear pending flag.
+        try:
+            work_store.update_work_item(project_state_dir, item.name, worktree_pending=False)
+        except Exception:
+            logger.warning(
+                "work_lifecycle.provision_worktree.clear_pending_failed",
+                work_id=item.name,
+            )
+
+        if created:
+            # WT-03: rollback the newly created work item.
+            try:
+                work_store.delete_work_item(project_state_dir, item.name, force=True)
+                logger.info("work_lifecycle.provision_worktree.rollback_done", work_id=item.name)
+            except Exception:
+                logger.exception(
+                    "work_lifecycle.provision_worktree.rollback_failed",
+                    work_id=item.name,
+                )
+        else:
+            logger.error(
+                "work_lifecycle.provision_worktree.failed",
+                work_id=item.name,
+                error=str(exc),
+            )
+
+        raise ValueError(
+            f"Failed to create git worktree for '{item.name}': {exc}"
+        ) from exc
+
+
 def work_start_sync(
     payload: WorkStartInput,
     ctx: RuntimeContext | None = None,
@@ -316,6 +465,29 @@ def work_start_sync(
             payload.goal,
         )
         created = True
+
+    # Worktree provisioning before session attachment so that WT-03 rollback
+    # (new item deleted on git failure) leaves the session unaffected.
+    worktree_warning: str | None = None
+    worktree_requested = _resolve_worktree_intent(
+        explicit_worktree=payload.worktree,
+        project_root=project_root,
+    )
+    if worktree_requested and (created or item.worktree_path is None):
+        from meridian.lib.config.settings import load_config  # local to avoid circular import
+
+        cfg = load_config(project_root)
+        worktree_warning = _provision_worktree(
+            project_state_dir,
+            item,
+            project_root,
+            explicit=payload.worktree is True,
+            created=created,
+            worktree_base=cfg.work.worktree_base,
+        )
+        # Re-read to pick up updated worktree_path / cleared worktree_pending.
+        item = work_store.get_work_item(project_state_dir, item.name) or item
+
     set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     _dispatch_work_hook_event(
         event_name="work.started",
@@ -337,7 +509,8 @@ def work_start_sync(
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         created=created,
-        warning=warning,
+        warning=_merge_warnings(warning, worktree_warning),
+        worktree_path=item.worktree_path,
     )
 
 
