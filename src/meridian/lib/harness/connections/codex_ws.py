@@ -17,6 +17,7 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
 
+import psutil
 from aiohttp import ClientSession, WSMsgType
 
 if TYPE_CHECKING:
@@ -358,6 +359,10 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                 # the snapshot carries the intent and terminate() degrades to
                 # psutil tree termination automatically.
                 _containment = "windows_job"
+            try:
+                _birth_time = psutil.Process(_pid).create_time()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                _birth_time = _time.time()
             self._scope_handle = ScopedProcessHandle(
                 process=_proc,
                 snapshot=ProcessScopeSnapshot(
@@ -367,7 +372,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                     role="harness_backend",
                     containment=_containment,
                     root_pid=_pid,
-                    root_created_at_epoch=_time.time(),
+                    root_created_at_epoch=_birth_time,
                     pgid=_pgid,
                     job_name=None,
                     degraded_reason=None,

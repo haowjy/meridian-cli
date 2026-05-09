@@ -811,35 +811,39 @@ class SpawnManager:
         if session.debug_tracer is not None:
             session.debug_tracer.close()
 
+        # Capture scope state BEFORE connection.stop() — both connections clear
+        # subprocess_pid and scope_snapshot inside stop(), so reading them after
+        # would always yield None and make the safety pass a no-op.
+        _pre_stop_pid = session.connection.subprocess_pid
+        _pre_stop_scope = getattr(session.connection, "scope_snapshot", None)
+
         with suppress(Exception):
             await session.connection.stop()
 
         # Safety pass: if the process survived connection.stop() (e.g. the connection
         # was already dead before stop was called), force-terminate via the scope handle.
         with suppress(Exception):
-            scope_snapshot = getattr(session.connection, "scope_snapshot", None)
-            pid = session.connection.subprocess_pid
-            if pid is not None and scope_snapshot is not None:
+            if _pre_stop_pid is not None and _pre_stop_scope is not None:
                 try:
-                    proc = psutil.Process(pid)
+                    proc = psutil.Process(_pre_stop_pid)
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     proc = None
                 if proc is not None and proc.is_running():
                     logger.warning(
                         "Process %d still alive after connection.stop(); "
                         "scope safety cleanup for spawn %s",
-                        pid,
+                        _pre_stop_pid,
                         spawn_id,
                     )
                     from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
                     await asyncio.to_thread(
                         terminate_tree_sync,
-                        pid=pid,
-                        created_at_epoch=scope_snapshot.root_created_at_epoch,
+                        pid=_pre_stop_pid,
+                        created_at_epoch=_pre_stop_scope.root_created_at_epoch,
                         grace_secs=5.0,
                         reason="stop_safety_pass",
-                        scope_id=scope_snapshot.scope_id,
+                        scope_id=_pre_stop_scope.scope_id,
                     )
 
         # Give drain loop time to persist remaining events after connection closes.

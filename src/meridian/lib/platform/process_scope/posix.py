@@ -33,12 +33,16 @@ def terminate_pgid(
     import os
     import signal
 
-    # --- PID reuse guard (PROC-006) ---
+    # --- PID reuse guard (PROC-006) — fail-closed ---
+    # If birth time cannot be verified, skip signal delivery rather than
+    # risking signal delivery to a reused PID.
     skip_reason: str | None = None
-    with suppress(psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+    try:
         actual_create_time = psutil.Process(root_pid).create_time()
         if abs(actual_create_time - created_at_epoch) > 1.0:
             skip_reason = "pid_reuse_detected"
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        skip_reason = "birth_time_unverifiable"
 
     if skip_reason is not None:
         return CleanupResult(

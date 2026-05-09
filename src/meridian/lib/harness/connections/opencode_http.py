@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from urllib.parse import urlparse
 
+import psutil
+
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
@@ -444,6 +446,10 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 containment = "posix_pgid"
             except OSError:
                 pass
+        try:
+            birth_time = psutil.Process(pid).create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            birth_time = time.time()
         spawn_id_str = str(config.spawn_id)
         snapshot = ProcessScopeSnapshot(
             scope_id="backend",
@@ -452,7 +458,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
             role="harness_backend",
             containment=containment,
             root_pid=pid,
-            root_created_at_epoch=time.time(),
+            root_created_at_epoch=birth_time,
             pgid=pgid,
             job_name=None,
             degraded_reason=None,

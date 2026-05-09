@@ -98,41 +98,62 @@ class ScopedProcessHandle:
 
         Delegates to the correct platform adapter based on ``snapshot.containment``.
         Emits a structlog event with PROC-011 fields after completion.
+        Never raises — termination failures are returned as degraded CleanupResult.
         """
         snap = self._snapshot
         result: CleanupResult
 
-        if snap.containment == "posix_pgid":
-            from meridian.lib.platform.process_scope.posix import terminate_pgid
+        try:
+            if snap.containment == "posix_pgid":
+                from meridian.lib.platform.process_scope.posix import terminate_pgid
 
-            if snap.pgid is None:
-                # Degenerate case: containment says posix_pgid but pgid is missing.
+                if snap.pgid is None:
+                    # Degenerate case: containment says posix_pgid but pgid is missing.
+                    result = await _fallback_terminate(
+                        self._process, snap, grace_seconds, reason
+                    )
+                else:
+                    result = terminate_pgid(
+                        pgid=snap.pgid,
+                        root_pid=snap.root_pid,
+                        created_at_epoch=snap.root_created_at_epoch,
+                        grace_seconds=grace_seconds,
+                        reason=reason,
+                        scope_id=snap.scope_id,
+                    )
+
+            elif snap.containment == "windows_job":
+                # job_name is stored; the handle must be kept alive by the caller.
+                # At this layer the handle is not yet threaded through, so we fall
+                # back to tree termination and mark degraded_fallback.  A later
+                # subphase will wire the handle through ScopedProcessHandle.
+                result = await _fallback_terminate(
+                    self._process, snap, grace_seconds, reason, degraded=True
+                )
+
+            else:
+                # 'pid_tree_fallback' or unknown
                 result = await _fallback_terminate(
                     self._process, snap, grace_seconds, reason
                 )
-            else:
-                result = terminate_pgid(
-                    pgid=snap.pgid,
-                    root_pid=snap.root_pid,
-                    created_at_epoch=snap.root_created_at_epoch,
-                    grace_seconds=grace_seconds,
-                    reason=reason,
-                    scope_id=snap.scope_id,
-                )
-
-        elif snap.containment == "windows_job":
-            # job_name is stored; the handle must be kept alive by the caller.
-            # At this layer the handle is not yet threaded through, so we fall
-            # back to tree termination and mark degraded_fallback.  A later
-            # subphase will wire the handle through ScopedProcessHandle.
-            result = await _fallback_terminate(
-                self._process, snap, grace_seconds, reason, degraded=True
+        except Exception:
+            logger.warning(
+                "process_scope.terminate_failed",
+                spawn_id=snap.owner_id,
+                scope_id=snap.scope_id,
+                root_pid=snap.root_pid,
+                reason=reason,
+                exc_info=True,
             )
-
-        else:
-            # 'pid_tree_fallback' or unknown
-            result = await _fallback_terminate(
-                self._process, snap, grace_seconds, reason
+            result = CleanupResult(
+                scope_id=snap.scope_id,
+                root_pid=snap.root_pid,
+                descendant_count=None,
+                reason=reason,
+                grace_seconds=grace_seconds,
+                kill_escalated=False,
+                degraded_fallback=True,
+                skip_reason="termination_exception",
             )
 
         _emit_termination_event(snap, result)
