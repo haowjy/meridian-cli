@@ -575,16 +575,13 @@ def test_doctor_prune_only_prunes_current_project_artifacts(
     result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
 
     assert result.pruned_orphan_dirs == 0
-    assert result.pruned_claude_overlays == 1
+    assert result.pruned_claude_overlays == 0
     assert result.pruned_spawn_artifacts == 1
     assert result.orphan_project_dirs == ()
     assert result.stale_claude_overlays and result.stale_claude_overlays[0].spawn_id == "p1"
     assert result.stale_spawn_artifacts and result.stale_spawn_artifacts[0].spawn_id == "p1"
     assert not current_spawn.exists()
-    assert not current_overlay.exists()
-    assert (
-        Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "slug" / "session.jsonl"
-    ).read_text(encoding="utf-8") == '{"event":"overlay-current"}\n'
+    assert current_overlay.exists()
     assert orphan_root.exists(), "orphan dir should NOT be pruned without --global"
     assert other_spawn.exists()
     assert other_overlay.exists()
@@ -657,20 +654,20 @@ def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
     )
 
     assert result.pruned_orphan_dirs == 1
-    assert result.pruned_claude_overlays == 1
+    assert result.pruned_claude_overlays == 0
     assert result.pruned_spawn_artifacts == 1
     assert result.orphan_project_dirs and result.orphan_project_dirs[0].uuid == "orphan-uuid"
     assert result.stale_claude_overlays and result.stale_claude_overlays[0].spawn_id == "p1"
     assert result.stale_spawn_artifacts and result.stale_spawn_artifacts[0].spawn_id == "p1"
     assert not orphan_root.exists()
     assert not current_spawn.exists()
-    assert not current_overlay.exists()
+    assert current_overlay.exists()
     assert other_spawn.exists()
     assert other_overlay.exists()
     assert result.ok is True
 
 
-def test_doctor_prune_recovers_custom_claude_root_from_overlay_sidecar(
+def test_doctor_prune_leaves_stale_claude_overlays_in_place(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -719,13 +716,11 @@ def test_doctor_prune_recovers_custom_claude_root_from_overlay_sidecar(
 
     result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
 
-    assert result.pruned_claude_overlays == 1
-    assert not stale_overlay.exists()
-    assert (durable_root / "projects" / "slug" / "session.jsonl").read_text(
-        encoding="utf-8"
-    ) == '{"event":"overlay-current"}\n'
+    assert result.pruned_claude_overlays == 0
+    assert stale_overlay.exists()
+    assert not (durable_root / "projects" / "slug" / "session.jsonl").exists()
     assert not (ambient_root / "projects" / "slug" / "session.jsonl").exists()
-    assert spawn_store.get_spawn(runtime_root, "p1").claude_config_dir == durable_root.as_posix()
+    assert spawn_store.get_spawn(runtime_root, "p1").claude_config_dir == stale_overlay.as_posix()
 
 
 def test_doctor_global_requires_root_side_effect_process(

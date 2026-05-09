@@ -40,12 +40,8 @@ from meridian.lib.harness.bundle import (
     register_harness_bundle,
 )
 from meridian.lib.harness.claude_preflight import (
-    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
     build_claude_preflight_result,
-    cleanup_claude_overlay,
     ensure_claude_session_accessible,
-    prepare_isolated_claude_config,
-    resolve_claude_overlay_roots,
 )
 from meridian.lib.harness.claude_utils import (
     extract_session_id_from_args,
@@ -84,9 +80,6 @@ from meridian.lib.launch.launch_types import (
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
-from meridian.lib.state import spawn_store
-from meridian.lib.state.claude_config_metadata import persist_durable_claude_config_metadata
-from meridian.lib.state.session_store import update_session_claude_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -425,7 +418,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session
         # sentinel so child Claude spawns can run under Meridian control.
-        return frozenset({"CLAUDECODE", "CLAUDE_CONFIG_DIR"})
+        return frozenset({"CLAUDECODE"})
 
     def derive_primary_seeded_session_id(
         self,
@@ -457,59 +450,32 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         resolved_harness_session_id: str,
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
-        isolated_config_root: Path | None = None
-        cleanup_materialization_root: Path | None = None
-        try:
-            isolated_config_root, original_claude_config_dir = prepare_isolated_claude_config(
-                runtime_root=runtime_root,
-                spawn_id=str(spawn_id),
-            )
-            overlay_roots = resolve_claude_overlay_roots(
-                isolated_config_root=isolated_config_root,
-                original_config_env=original_claude_config_dir,
-            )
-            cleanup_materialization_root = overlay_roots.materialization_root
-            effective_config_root = overlay_roots.effective_config_root
-            effective_config_dir = str(effective_config_root)
+        _ = runtime_root, spawn_id, child_env
 
-            env_overrides: dict[str, str] = {
-                MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV: original_claude_config_dir
-            }
-            if effective_config_dir:
-                env_overrides["CLAUDE_CONFIG_DIR"] = effective_config_dir
-                if record_effective_config_dir is not None:
-                    record_effective_config_dir(effective_config_dir)
+        configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+        effective_config_root = Path(configured_root).expanduser() if configured_root else None
+        env_overrides: dict[str, str] = {}
+        if configured_root:
+            env_overrides["CLAUDE_CONFIG_DIR"] = configured_root
+            if record_effective_config_dir is not None:
+                record_effective_config_dir(configured_root)
 
-            session_access = resolve_claude_session_access_source(
-                session,
+        session_access = resolve_claude_session_access_source(
+            session,
+            child_cwd=child_cwd,
+            materialization_root=effective_config_root,
+            target_config_root=effective_config_root,
+        )
+        if session_access.should_seed:
+            ensure_claude_session_accessible(
+                source_session_id=session_access.source_session_id or resolved_harness_session_id,
+                source_cwd=session_access.source_cwd,
                 child_cwd=child_cwd,
-                materialization_root=cleanup_materialization_root,
-                target_config_root=effective_config_root,
+                source_config_root=session_access.source_config_root,
+                target_config_root=session_access.target_config_root,
             )
-            if session_access.should_seed:
-                ensure_claude_session_accessible(
-                    source_session_id=session_access.source_session_id
-                    or resolved_harness_session_id,
-                    source_cwd=session_access.source_cwd,
-                    child_cwd=child_cwd,
-                    source_config_root=session_access.source_config_root,
-                    target_config_root=session_access.target_config_root,
-                )
 
-            return HarnessPrelaunchState(
-                env_overrides=env_overrides,
-                cleanup_overlay_root=(
-                    isolated_config_root.as_posix() if isolated_config_root is not None else None
-                ),
-                cleanup_canonical_root=cleanup_materialization_root.as_posix(),
-            )
-        except Exception:
-            if isolated_config_root is not None:
-                cleanup_claude_overlay(
-                    isolated_config_root,
-                    canonical_root=cleanup_materialization_root,
-                )
-            raise
+        return HarnessPrelaunchState(env_overrides=env_overrides)
 
     def cleanup_prelaunch(
         self,
@@ -519,27 +485,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         chat_id: str | None,
         state: HarnessPrelaunchState,
     ) -> None:
-        overlay_root = (
-            Path(state.cleanup_overlay_root) if state.cleanup_overlay_root else None
-        )
-        if overlay_root is None:
-            return
-        canonical_root = (
-            Path(state.cleanup_canonical_root) if state.cleanup_canonical_root else None
-        )
-        cleanup_result = cleanup_claude_overlay(
-            overlay_root,
-            canonical_root=canonical_root,
-        )
-        if cleanup_result.removed and cleanup_result.materialized:
-            persist_durable_claude_config_metadata(
-                runtime_root=runtime_root,
-                spawn_id=spawn_id,
-                chat_id=chat_id,
-                materialization_root=cleanup_result.materialization_root,
-                update_spawn=spawn_store.update_spawn,
-                update_session_claude_config_dir=update_session_claude_config_dir,
-            )
+        _ = runtime_root, spawn_id, chat_id, state
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)

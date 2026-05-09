@@ -35,19 +35,8 @@ from meridian.lib.harness.adapter import (
     HarnessPrelaunchState,
     StreamEvent,
 )
-from meridian.lib.harness.claude_preflight import (
-    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
-    cleanup_claude_overlay,
-    ensure_claude_session_accessible,
-    prepare_isolated_claude_config,
-    resolve_claude_overlay_roots,
-    resolve_overlay_materialization_canonical_root,
-)
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
-from meridian.lib.launch.claude_session_access import (
-    resolve_claude_session_access_source,
-)
 from meridian.lib.launch.context import LaunchContext, build_launch_context
 from meridian.lib.launch.cwd import resolve_child_execution_cwd
 from meridian.lib.launch.fork import materialize_fork
@@ -160,15 +149,6 @@ class PreparedExecutionHandoff:
     execution_cwd: str
     work_id: str | None
     harness_session_id_observer: Callable[[str], None]
-
-
-@dataclass(frozen=True)
-class PreparedClaudeOverlay:
-    """Claude overlay setup outputs used by seeding and cleanup."""
-
-    isolated_config_root: Path | None
-    effective_config_root: Path | None
-    materialization_root: Path | None
 
 
 def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
@@ -756,137 +736,6 @@ def _close_execution_handoff(handoff: PreparedExecutionHandoff) -> None:
     """Close session scope owned by a prepared execution handoff."""
 
     handoff.session_exit_stack.close()
-
-
-def _prepare_child_claude_overlay(
-    *,
-    handoff: PreparedExecutionHandoff,
-    spawn_id: SpawnId,
-    runtime_root: Path,
-) -> PreparedClaudeOverlay:
-    """Create per-spawn Claude overlay, inject env, and persist metadata."""
-    isolated_config_root: Path | None = None
-    cleanup_materialization_root: Path | None = None
-    try:
-        isolated_config_root, original_claude_config_dir = prepare_isolated_claude_config(
-            runtime_root=runtime_root,
-            spawn_id=str(spawn_id),
-        )
-        overlay_roots = resolve_claude_overlay_roots(
-            isolated_config_root=isolated_config_root,
-            original_config_env=original_claude_config_dir,
-        )
-        cleanup_materialization_root = overlay_roots.materialization_root
-        effective_config_root = overlay_roots.effective_config_root
-        effective_config_dir = str(effective_config_root)
-
-        child_env = dict(handoff.launch_context.env)
-        child_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] = original_claude_config_dir
-        if effective_config_dir:
-            child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
-            spawn_store.update_spawn(
-                runtime_root,
-                spawn_id,
-                claude_config_dir=effective_config_dir,
-            )
-            if handoff.session_context.chat_id:
-                update_session_claude_config_dir(
-                    runtime_root,
-                    handoff.session_context.chat_id,
-                    claude_config_dir=effective_config_dir,
-                )
-        updated_environment = replace(
-            handoff.launch_context.binding.environment,
-            runner_overlay_env=MappingProxyType(
-                {
-                    key: value
-                    for key, value in child_env.items()
-                    if key not in handoff.launch_context.binding.environment.final_env
-                    or handoff.launch_context.binding.environment.final_env[key] != value
-                }
-            ),
-            final_env=MappingProxyType(child_env),
-        )
-        handoff.launch_context = replace(
-            handoff.launch_context,
-            binding=replace(
-                handoff.launch_context.binding,
-                environment=updated_environment,
-            ),
-            env=MappingProxyType(child_env),
-        )
-
-        return PreparedClaudeOverlay(
-            isolated_config_root=isolated_config_root,
-            effective_config_root=effective_config_root,
-            materialization_root=cleanup_materialization_root,
-        )
-    except Exception:
-        if isolated_config_root is not None:
-            _cleanup_child_claude_overlay(
-                isolated_config_root=isolated_config_root,
-                spawn_id=spawn_id,
-                canonical_root=cleanup_materialization_root,
-            )
-        raise
-
-
-def _seed_child_claude_session_access(
-    *,
-    request: SpawnRequest,
-    child_cwd: Path,
-    materialization_root: Path | None,
-    target_config_root: Path | None,
-) -> None:
-    """Seed continue/fork transcript into child Claude config root."""
-
-    session_access = resolve_claude_session_access_source(
-        request.session,
-        child_cwd=child_cwd,
-        materialization_root=materialization_root,
-        target_config_root=target_config_root,
-    )
-    if not session_access.should_seed:
-        return
-    ensure_claude_session_accessible(
-        source_session_id=session_access.source_session_id or "",
-        source_cwd=session_access.source_cwd,
-        child_cwd=child_cwd,
-        source_config_root=session_access.source_config_root,
-        target_config_root=session_access.target_config_root,
-    )
-
-
-def _cleanup_child_claude_overlay(
-    *,
-    isolated_config_root: Path | None,
-    spawn_id: SpawnId,
-    canonical_root: Path | None = None,
-) -> Path | None:
-    """Materialize transcripts, then remove the child Claude overlay."""
-
-    resolved_canonical_root = (
-        canonical_root
-        if canonical_root is not None
-        else resolve_overlay_materialization_canonical_root()
-    )
-    cleanup_result = cleanup_claude_overlay(
-        isolated_config_root,
-        canonical_root=resolved_canonical_root,
-    )
-    if (
-        isolated_config_root is not None
-        and cleanup_result.materialized
-        and not cleanup_result.removed
-    ):
-        logger.warning(
-            "Child Claude overlay cleanup materialized transcripts but could not remove overlay",
-            spawn_id=str(spawn_id),
-            overlay_root=str(isolated_config_root),
-        )
-    if cleanup_result.removed and cleanup_result.materialized:
-        return cleanup_result.materialization_root
-    return None
 
 
 async def launch_prepared_spawn(

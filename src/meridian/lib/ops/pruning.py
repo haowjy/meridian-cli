@@ -11,21 +11,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeVar
 
-import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.harness.claude_preflight import (
-    cleanup_claude_overlay,
-)
 from meridian.lib.state import spawn_store
-from meridian.lib.state.claude_config_metadata import (
-    persist_durable_claude_config_metadata,
-)
-from meridian.lib.state.session_store import update_session_claude_config_dir
 
 _SECONDS_PER_DAY = 24 * 60 * 60
-logger = structlog.get_logger(__name__)
 
 
 class OrphanProjectDir(BaseModel):
@@ -322,39 +313,10 @@ def prune_stale_claude_overlays(
     *,
     runtime_root: Path | None = None,
 ) -> int:
-    """Delete stale Claude overlay directories after transcript materialization."""
+    """Claude overlay pruning is retired with passthrough-only CLAUDE_CONFIG_DIR."""
 
-    removed = 0
-    for overlay in stale:
-        overlay_path = Path(overlay.path)
-        cleanup_result = cleanup_claude_overlay(
-            overlay_path,
-            remove_overlay=_prune_dir,
-        )
-        if cleanup_result.removed:
-            removed += 1
-            if (
-                cleanup_result.materialized
-                and cleanup_result.materialization_root is not None
-                and runtime_root is not None
-            ):
-                try:
-                    persist_durable_claude_config_metadata(
-                        runtime_root=runtime_root,
-                        spawn_id=overlay.spawn_id,
-                        materialization_root=cleanup_result.materialization_root,
-                        update_spawn=spawn_store.update_spawn,
-                        update_session_claude_config_dir=update_session_claude_config_dir,
-                        get_spawn=spawn_store.get_spawn,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to repair Claude metadata during doctor prune",
-                        overlay_path=str(overlay_path),
-                        spawn_id=overlay.spawn_id,
-                        exc_info=True,
-                    )
-    return removed
+    _ = stale, runtime_root
+    return 0
 
 
 __all__ = [
