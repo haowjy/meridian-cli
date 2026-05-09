@@ -31,10 +31,6 @@ class ContextBackend(Protocol):
         """Resolve the scratch directory for a work item."""
         ...
 
-    def get_persisted_active_work_id(self, runtime_root: Path) -> str | None:
-        """Look up persisted active work ID outside session-scoped attachment."""
-        ...
-
 
 class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
@@ -44,11 +40,6 @@ class LocalFilesystemBackend:
 
     def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
         return state_paths.resolve_work_scratch_dir(runtime_root, work_id)
-
-    def get_persisted_active_work_id(self, runtime_root: Path) -> str | None:
-        from meridian.lib.state.current_work import get_current_work_id
-
-        return get_current_work_id(runtime_root)
 
 
 @dataclass(frozen=True)
@@ -73,7 +64,6 @@ class ResolvedContext:
         explicit_work_id: str | None = None,
         explicit_project_root: Path | None = None,
         explicit_runtime_root: Path | None = None,
-        include_persisted_work_fallback: bool = True,
         backend: ContextBackend | None = None,
         context_config: ContextConfig | None = None,
     ) -> Self:
@@ -113,8 +103,7 @@ class ResolvedContext:
         )
 
         # Authoritative work-ID precedence:
-        # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment
-        # > optional persisted active-work state.
+        # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
         work_id: str | None = None
         if explicit_work_id_raw:
             work_id = explicit_work_id_raw
@@ -122,8 +111,6 @@ class ResolvedContext:
             work_id = work_id_raw
         elif runtime_root is not None and chat_id_raw:
             work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
-        if include_persisted_work_fallback and work_id is None and runtime_root is not None:
-            work_id = backend_impl.get_persisted_active_work_id(runtime_root)
 
         project_paths = (
             state_paths.resolve_project_paths_from_context(

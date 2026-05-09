@@ -22,7 +22,6 @@ from meridian.lib.ops.runtime import (
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.state import session_store, spawn_store, work_store
-from meridian.lib.state.current_work import get_current_work_id, set_current_work_id
 from meridian.lib.telemetry import emit_telemetry
 
 _NESTED_WORK_WARNING = (
@@ -69,9 +68,6 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
 
 
-def _clear_persisted_current_work_if_matches(runtime_root: Path, work_id: str) -> None:
-    if get_current_work_id(runtime_root) == work_id:
-        set_current_work_id(runtime_root, None)
 
 
 def _dispatch_work_hook_event(
@@ -312,7 +308,6 @@ def work_start_sync(
     else:
         item = work_store.create_work_item(project_state_dir, payload.label, requested_description)
         created = True
-    set_current_work_id(runtime_state_root, item.name)
     set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     _dispatch_work_hook_event(
         event_name="work.started",
@@ -355,7 +350,6 @@ def work_update_sync(
             payload.work_id,
             description=payload.description,
         )
-        _clear_persisted_current_work_if_matches(runtime_state_root, item.name)
         _dispatch_work_hook_event(
             event_name="work.done",
             project_root=roots.project_root,
@@ -402,7 +396,6 @@ def work_done_sync(
     runtime_state_root = roots.runtime_root
     attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
     item = work_store.archive_work_item(project_state_dir, payload.work_id)
-    _clear_persisted_current_work_if_matches(runtime_state_root, item.name)
     _dispatch_work_hook_event(
         event_name="work.done",
         project_root=roots.project_root,
@@ -429,13 +422,11 @@ def work_delete_sync(
     nested_warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    runtime_state_root = roots.runtime_root
     item, had_artifacts = work_store.delete_work_item(
         project_state_dir,
         payload.work_id,
         force=payload.force,
     )
-    _clear_persisted_current_work_if_matches(runtime_state_root, item.name)
     _emit_work_transition(
         "work.deleted",
         work_id=item.name,
@@ -474,7 +465,6 @@ def work_switch_sync(
     runtime_state_root = roots.runtime_root
     item = _require_work_item(project_state_dir, payload.work_id)
     chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
-    set_current_work_id(runtime_state_root, item.name)
     updated = set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     message = (
         f"Active work item: {item.name}"
@@ -504,9 +494,6 @@ def work_rename_sync(
     current_work_id = session_store.get_session_active_work_id(runtime_state_root, chat_id)
     if current_work_id == old_name:
         set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
-    persisted_work_id = get_current_work_id(runtime_state_root)
-    if persisted_work_id == old_name:
-        set_current_work_id(runtime_state_root, item.name)
 
     _emit_work_transition(
         "work.renamed",
@@ -533,7 +520,6 @@ def work_clear_sync(
         chat_id=chat_id,
         work_id=None,
     )
-    set_current_work_id(runtime_root, None)
     message = "Cleared active work item." if updated else "No active session; nothing to clear."
     return WorkClearOutput(message=message, warning=warning)
 

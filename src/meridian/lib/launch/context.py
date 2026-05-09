@@ -129,7 +129,6 @@ class ChildEnvContext:
         project_paths: ProjectConfigPaths,
         runtime_root: Path,
         explicit_work_id: str | None = None,
-        include_persisted_work_fallback: bool = False,
     ) -> ChildEnvContext:
         resolved_project_root = project_paths.project_root.resolve()
         resolved_runtime_root = runtime_root.resolve()
@@ -139,7 +138,6 @@ class ChildEnvContext:
             explicit_work_id=normalized_explicit_work_id,
             explicit_project_root=resolved_project_root,
             explicit_runtime_root=resolved_runtime_root,
-            include_persisted_work_fallback=include_persisted_work_fallback,
             context_config=context_config,
         )
         parent_spawn_id = str(parent_ctx.spawn_id) if parent_ctx.spawn_id else None
@@ -669,14 +667,12 @@ def _resolve_active_work_dir(
     project_paths: ProjectConfigPaths,
     runtime_root: Path,
     explicit_work_id: str | None,
-    include_persisted_work_fallback: bool = True,
 ) -> Path | None:
     context_config = load_context_config(project_paths.project_root) or ContextConfig()
     return ResolvedContext.from_environment(
         explicit_work_id=explicit_work_id,
         explicit_project_root=project_paths.project_root,
         explicit_runtime_root=runtime_root,
-        include_persisted_work_fallback=include_persisted_work_fallback,
         context_config=context_config,
     ).work_dir
 
@@ -687,21 +683,15 @@ def build_child_runtime_env_overrides(
     runtime_root: Path,
     child_spawn_id: str,
     work_id: str | None = None,
-    include_persisted_work_fallback: bool = False,
     increment_depth: bool = True,
     additional_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build child runtime env overrides shared by launch/chat callers.
-
-    ``include_persisted_work_fallback`` should only be enabled for top-level
-    PRIMARY launches that intentionally inherit global current-work state.
-    """
+    """Build child runtime env overrides shared by launch/chat callers."""
 
     runtime_ctx = ChildEnvContext.from_environment(
         project_paths=project_paths,
         runtime_root=runtime_root,
         explicit_work_id=work_id,
-        include_persisted_work_fallback=include_persisted_work_fallback,
     )
     runtime_overrides = runtime_ctx.child_context(
         child_spawn_id=child_spawn_id,
@@ -802,14 +792,10 @@ def compile_prepared_policy_surface(
 
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     if active_work_dir is None:
-        include_persisted_work_fallback = (
-            runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-        )
         active_work_dir = _resolve_active_work_dir(
             project_paths=project_paths,
             runtime_root=runtime_root,
             explicit_work_id=explicit_work_id,
-            include_persisted_work_fallback=include_persisted_work_fallback,
         )
 
     return PreparedPolicySurface(
@@ -1435,7 +1421,6 @@ def bind_launch_context(
         runtime_root=runtime_root,
         child_spawn_id=bindings.spawn_id,
         work_id=requested_work_id,
-        include_persisted_work_fallback=is_primary_launch,
         increment_depth=not is_primary_launch,
     )
     effective_work_id = (

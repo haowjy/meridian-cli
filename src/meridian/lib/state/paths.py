@@ -61,8 +61,6 @@ class RuntimePaths(BaseModel):
     hook_state_json: Path
     session_id_counter: Path
     session_id_counter_flock: Path
-    current_work_json: Path
-    current_work_flock: Path
     sessions_dir: Path
     kb_dir: Path
     work_dir: Path
@@ -108,8 +106,6 @@ class RuntimePaths(BaseModel):
             hook_state_json=root_dir / "hook-state.json",
             session_id_counter=root_dir / "session-id-counter",
             session_id_counter_flock=root_dir / "session-id-counter.flock",
-            current_work_json=root_dir / "current-work.json",
-            current_work_flock=root_dir / "current-work.json.flock",
             sessions_dir=root_dir / "sessions",
             kb_dir=root_dir / "kb",
             work_dir=root_dir / "work",

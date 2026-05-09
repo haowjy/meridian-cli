@@ -52,7 +52,6 @@ from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.current_work import get_current_work_id
 from meridian.lib.state.launch_boundary import (
     EVENT_HARNESS_SESSION_OBSERVED,
     EVENT_PARENT_LAUNCH_ATTEMPT,
@@ -337,9 +336,7 @@ def _resolve_work_id(
     inherited_work_id = (runtime_context.work_id or "").strip()
     if inherited_work_id:
         return inherited_work_id
-    if runtime_context.is_nested:
-        return None
-    return get_current_work_id(runtime_root)
+    return None
 
 
 def _init_spawn(

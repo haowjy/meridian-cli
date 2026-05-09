@@ -25,23 +25,16 @@ class FakeBackend(ContextBackend):
         self,
         *,
         session_active_work_id: str | None = None,
-        persisted_active_work_id: str | None = None,
         work_dir_suffix: str = "resolved",
     ) -> None:
         self.session_active_work_id = session_active_work_id
-        self.persisted_active_work_id = persisted_active_work_id
         self.work_dir_suffix = work_dir_suffix
         self.session_lookup_calls: list[tuple[Path, str]] = []
-        self.persisted_lookup_calls: list[Path] = []
         self.work_dir_calls: list[tuple[Path, str]] = []
 
     def get_session_active_work_id(self, runtime_root: Path, chat_id: str) -> str | None:
         self.session_lookup_calls.append((runtime_root, chat_id))
         return self.session_active_work_id
-
-    def get_persisted_active_work_id(self, runtime_root: Path) -> str | None:
-        self.persisted_lookup_calls.append(runtime_root)
-        return self.persisted_active_work_id
 
     def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
         self.work_dir_calls.append((runtime_root, work_id))
@@ -128,55 +121,22 @@ def test_from_environment_falls_back_to_session_store(
     assert resolved.work_id == "active-work"
     assert resolved.work_dir == Path("/runtime/state/work/fallback/active-work")
     assert backend.session_lookup_calls == [(runtime_root, "c42")]
-    assert backend.persisted_lookup_calls == []
     assert backend.work_dir_calls == [(runtime_root, "active-work")]
 
 
-def test_from_environment_falls_back_to_persisted_active_work(
+def test_from_environment_no_work_when_session_has_no_attachment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_meridian_env(monkeypatch)
     runtime_root = Path("/runtime/state")
-    backend = FakeBackend(persisted_active_work_id="persisted-work")
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
-
-    resolved = ResolvedContext.from_environment(backend=backend)
-
-    assert resolved.work_id == "persisted-work"
-    assert resolved.work_dir == Path("/runtime/state/work/resolved/persisted-work")
-    assert backend.persisted_lookup_calls == [runtime_root]
-    assert backend.work_dir_calls == [(runtime_root, "persisted-work")]
-
-
-def test_from_environment_uses_persisted_fallback_when_session_has_no_work(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_meridian_env(monkeypatch)
-    runtime_root = Path("/runtime/state")
-    backend = FakeBackend(session_active_work_id=None, persisted_active_work_id="persisted-work")
+    backend = FakeBackend(session_active_work_id=None)
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
     monkeypatch.setenv("MERIDIAN_CHAT_ID", "c77")
 
     resolved = ResolvedContext.from_environment(backend=backend)
 
-    assert resolved.work_id == "persisted-work"
+    assert resolved.work_id is None
     assert backend.session_lookup_calls == [(runtime_root, "c77")]
-    assert backend.persisted_lookup_calls == [runtime_root]
-
-
-def test_from_environment_prefers_active_work_dir_env_over_derived_paths(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_meridian_env(monkeypatch)
-    runtime_root = Path("/runtime/state")
-    backend = FakeBackend(persisted_active_work_id="persisted-work")
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
-    monkeypatch.setenv("MERIDIAN_ACTIVE_WORK_DIR", "/override/work-dir")
-
-    resolved = ResolvedContext.from_environment(backend=backend)
-
-    assert resolved.work_dir == Path("/override/work-dir")
-    assert resolved.work_id == "persisted-work"
 
 
 def test_child_env_overrides_output_format() -> None:

@@ -14,7 +14,6 @@ from meridian.lib.context.resolver import (
     render_context_lines,
     resolve_context_paths,
 )
-from meridian.lib.core.depth import current_meridian_depth, is_nested_meridian_depth
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
@@ -164,19 +163,12 @@ class WorkRootOutput(BaseModel):
         return self.work_root
 
 
-def _include_persisted_work_fallback_for_runtime_env() -> bool:
-    """Return whether runtime context resolution may use persisted work fallback."""
-
-    return not is_nested_meridian_depth(current_meridian_depth())
-
-
 def _resolve_runtime_context(project_root: Path, runtime_root: Path) -> ResolvedContext:
     """Resolve context with explicit roots — no env mutation needed."""
 
     return ResolvedContext.from_environment(
         explicit_project_root=project_root,
         explicit_runtime_root=runtime_root,
-        include_persisted_work_fallback=_include_persisted_work_fallback_for_runtime_env(),
     )
 
 
