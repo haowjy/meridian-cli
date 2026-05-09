@@ -41,6 +41,7 @@ class FieldProvenance:
     approval_source: ProvenanceLevel = ProvenanceLevel.UNSET
     sandbox_source: ProvenanceLevel = ProvenanceLevel.UNSET
     autocompact_source: ProvenanceLevel = ProvenanceLevel.UNSET
+    autocompact_pct_source: ProvenanceLevel = ProvenanceLevel.UNSET
     timeout_source: ProvenanceLevel = ProvenanceLevel.UNSET
 
 
@@ -65,6 +66,7 @@ class CompilerRequest:
     profile_policy_approval: str | None
     profile_policy_sandbox: str | None
     profile_policy_autocompact: int | None
+    profile_policy_autocompact_pct: int | None
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
     profile_legacy_models: dict[str, AgentModelEntry] | None
     profile_fanout: tuple[FanoutEntry, ...] | None
@@ -105,6 +107,7 @@ class CompilerResult:
     approval: str | None
     sandbox: str | None
     autocompact: int | None
+    autocompact_pct: int | None
     timeout: float | None
 
     # Profile-derived content identifiers
@@ -139,6 +142,7 @@ def render_provenance(provenance: FieldProvenance) -> dict[str, str]:
         "approval",
         "sandbox",
         "autocompact",
+        "autocompact_pct",
         "timeout",
     ):
         source_attr = f"{field_name}_source"
@@ -157,7 +161,14 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
         "harness": result.harness,
     }
 
-    for field_name in ("effort", "approval", "sandbox", "autocompact", "timeout"):
+    for field_name in (
+        "effort",
+        "approval",
+        "sandbox",
+        "autocompact",
+        "autocompact_pct",
+        "timeout",
+    ):
         value = getattr(result, field_name)
         if value is not None:
             output[field_name] = value
@@ -222,6 +233,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         approval=request.profile_policy_approval,
         sandbox=request.profile_policy_sandbox,
         autocompact=request.profile_policy_autocompact,
+        autocompact_pct=request.profile_policy_autocompact_pct,
     )
 
     effort, effort_source = _resolve_execution_policy_field(
@@ -268,6 +280,17 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.config_defaults.autocompact, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.autocompact, ProvenanceLevel.ALIAS_DEFAULT),
     )
+    autocompact_pct, autocompact_pct_source = _resolve_execution_policy_field(
+        request,
+        "autocompact_pct",
+        (request.cli_overrides.autocompact_pct, ProvenanceLevel.CLI),
+        (request.env_overrides.autocompact_pct, ProvenanceLevel.ENV),
+        (policy_override_tier.autocompact_pct, policy_override_source),
+        (overlay_policy_defaults.autocompact_pct, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
+        (profile_policy_defaults.autocompact_pct, ProvenanceLevel.PROFILE_DEFAULT),
+        (request.config_defaults.autocompact_pct, ProvenanceLevel.CONFIG_DEFAULT),
+        (alias_defaults.autocompact_pct, ProvenanceLevel.ALIAS_DEFAULT),
+    )
     timeout, timeout_source = _resolve_execution_policy_field(
         request,
         "timeout",
@@ -299,6 +322,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         approval=approval,
         sandbox=sandbox,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         timeout=timeout,
         skill_names=request.profile_skills,
         model_selection_requested_token=requested_token,
@@ -311,6 +335,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             approval_source=approval_source,
             sandbox_source=sandbox_source,
             autocompact_source=autocompact_source,
+            autocompact_pct_source=autocompact_pct_source,
             timeout_source=timeout_source,
         ),
         warnings=tuple(warnings),
@@ -491,6 +516,7 @@ def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
     return RuntimeOverrides(
         effort=entry.effort,
         autocompact=entry.autocompact,
+        autocompact_pct=entry.autocompact_pct,
     )
 
 
