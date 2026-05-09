@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import psutil
 import structlog
 
 from meridian.lib.core.types import SpawnId
@@ -135,12 +136,47 @@ def should_skip_cleanup(
     scope: ProcessScopeSnapshot,
     spawn_record: SpawnRecord,
 ) -> bool:
-    """Return True for session_owned scopes.
+    """Return True when a session_owned scope should be preserved.
 
-    Phase 3 will make this richer with session lease lookup.
+    A ``session_owned`` scope is preserved while the managed primary runtime
+    is considered active.  However, if the root process died independently
+    (e.g. crashed while the lease was still valid), there is nothing to
+    preserve — the scope must be reclaimed rather than silently leaked
+    (PROC-007).
+
+    Validation order:
+    1. Only ``session_owned`` scopes are candidates for skip.
+    2. If the root PID is dead or its birth time has drifted (PID reuse),
+       return False so the caller reclaims the already-gone scope.
+    3. Otherwise return True (preserve — process is alive and verified).
     """
-    _ = spawn_record
-    return scope.owner_policy == "session_owned"
+    if scope.owner_policy != "session_owned":
+        return False
+
+    try:
+        actual = psutil.Process(scope.root_pid).create_time()
+        if abs(actual - scope.root_created_at_epoch) > 1.0:
+            # PID was recycled by another process after the scope's root died.
+            logger.info(
+                "session_owned scope root PID reused — reclaiming.",
+                spawn_id=spawn_record.id,
+                scope_id=scope.scope_id,
+                root_pid=scope.root_pid,
+                skip_reason="session_owned_process_dead",
+            )
+            return False
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+        # Root process is gone — reclaim despite the session_owned policy.
+        logger.info(
+            "session_owned scope root process dead — reclaiming.",
+            spawn_id=spawn_record.id,
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
+            skip_reason="session_owned_process_dead",
+        )
+        return False
+
+    return True
 
 
 def _terminate_legacy_worker_pid(
