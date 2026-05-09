@@ -110,9 +110,10 @@ def provision_for_start(
         config=config,
         existing=existing,
     )
+    target_path = target.path or str(resolve_worktree_path(repo_root, work_slug, config.worktree_base))
     result = create_worktree(
         repo_root,
-        Path(target.path),
+        Path(target_path),
         target.branch or default_worktree_branch(work_slug),
     )
     return WorktreeProvisionResult(

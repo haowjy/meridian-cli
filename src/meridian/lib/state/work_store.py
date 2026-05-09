@@ -640,9 +640,11 @@ def update_work_item_worktree(
         raise ValueError(f"Work item '{work_id}' not found")
 
     current = _work_item_from_dir(active_dir, archived=False)
+    next_path = current.worktree.path if path is _UNSET else cast("str | None", path)
+    next_branch = current.worktree.branch if branch is _UNSET else cast("str | None", branch)
     next_worktree = WorktreeMetadata(
-        path=current.worktree.path if path is _UNSET else path,
-        branch=current.worktree.branch if branch is _UNSET else branch,
+        path=next_path,
+        branch=next_branch,
         pending=current.worktree.pending if pending is _UNSET else bool(pending),
     )
     updated = WorkItem(

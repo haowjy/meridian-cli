@@ -242,6 +242,7 @@ def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
     return RuntimeOverrides(
         effort=entry.effort,
         autocompact=entry.autocompact,
+        autocompact_pct=entry.autocompact_pct,
     )
 
 
@@ -344,6 +345,7 @@ def _compiler_execution_policy_overrides(
         approval=compiler_result.approval,
         sandbox=compiler_result.sandbox,
         autocompact=compiler_result.autocompact,
+        autocompact_pct=compiler_result.autocompact_pct,
         timeout=compiler_result.timeout,
     )
 
@@ -619,6 +621,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile_policy_approval=profile.approval if profile is not None else None,
         profile_policy_sandbox=profile.sandbox if profile is not None else None,
         profile_policy_autocompact=profile.autocompact if profile is not None else None,
+        profile_policy_autocompact_pct=profile.autocompact_pct if profile is not None else None,
         profile_model_policies=profile.model_policies if profile is not None else None,
         profile_legacy_models=dict(profile.models) if profile is not None else None,
         profile_fanout=profile.fanout if profile is not None else None,
