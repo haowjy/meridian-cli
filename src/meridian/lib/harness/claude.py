@@ -112,7 +112,7 @@ def project_slug(project_root: Path) -> str:
 def _claude_config_root() -> Path:
     configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
     if configured_root:
-        return Path(configured_root).expanduser()
+        return Path(configured_root).expanduser().resolve()
     return get_home_path() / ".claude"
 
 

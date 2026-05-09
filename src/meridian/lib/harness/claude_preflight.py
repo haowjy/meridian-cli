@@ -33,7 +33,7 @@ def _claude_config_root() -> Path:
 
     configured = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
     if configured:
-        return Path(configured).expanduser()
+        return Path(configured).expanduser().resolve()
     return _default_canonical_claude_config_root()
 
 

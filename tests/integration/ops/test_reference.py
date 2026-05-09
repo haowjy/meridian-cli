@@ -126,18 +126,16 @@ def test_resolve_session_reference_for_spawn_id_reads_spawn_metadata(tmp_path: P
     assert resolved.warning is None
 
 
-def test_resolve_session_reference_for_spawn_prefers_durable_claude_metadata_over_ambient_env(
+def test_resolve_session_reference_for_spawn_uses_persisted_claude_config_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
-    durable_root = tmp_path / "durable-claude"
-    durable_root.mkdir()
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", (tmp_path / "ambient-overlay").as_posix())
-    overlay_root = tmp_path / "overlay-claude"
-    overlay_root.mkdir()
+    persisted_root = tmp_path / "persisted-claude"
+    persisted_root.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", (tmp_path / "ambient-claude").as_posix())
 
     _seed_spawn(
         runtime_root,
@@ -145,15 +143,13 @@ def test_resolve_session_reference_for_spawn_prefers_durable_claude_metadata_ove
         chat_id="c70",
         harness_session_id="spawn-session-70",
         harness="claude",
-        claude_config_dir=overlay_root.as_posix(),
+        claude_config_dir=persisted_root.as_posix(),
     )
-    # Simulate post-cleanup repair from overlay path to durable path.
-    spawn_store.update_spawn(runtime_root, "p70", claude_config_dir=durable_root.as_posix())
 
     resolved = resolve_session_reference(project_root, "p70")
 
     assert resolved.harness_session_id == "spawn-session-70"
-    assert resolved.source_claude_config_dir == durable_root.as_posix()
+    assert resolved.source_claude_config_dir == persisted_root.as_posix()
 
 
 def test_resolve_spawn_ref_prefers_direct_spawn_id_match(tmp_path: Path) -> None:
