@@ -1,7 +1,7 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
 
@@ -64,6 +64,7 @@ class SpawnLaunchOptionUpdates(TypedDict):
     timeout: float | None
     approval: str | None
     autocompact: int | None
+    autocompact_pct: NotRequired[int | None]
     effort: str | None
     sandbox: str | None
     harness: str | None
@@ -83,6 +84,7 @@ class SpawnLaunchOptions(BaseModel):
     timeout: float | None = None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     effort: str | None = None
     sandbox: str | None = None
     harness: str | None = None
@@ -100,6 +102,7 @@ class SpawnLaunchOptions(BaseModel):
             "timeout": self.timeout,
             "approval": self.approval,
             "autocompact": self.autocompact,
+            "autocompact_pct": self.autocompact_pct,
             "effort": self.effort,
             "sandbox": self.sandbox,
             "harness": self.harness,

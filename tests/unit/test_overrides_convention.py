@@ -33,7 +33,8 @@ _TEST_VALUES: dict[str, str] = {
     "effort": "high",
     "sandbox": "full-access",
     "approval": "auto",
-    "autocompact": "50",
+    "autocompact": "200000",
+    "autocompact_pct": "50",
     "timeout": "30.0",
 }
 
@@ -72,7 +73,8 @@ def test_runtime_overrides_fields_are_exposed_across_env_config_and_cli_layers()
         effort="high",
         sandbox="full-access",
         approval="auto",
-        autocompact=50,
+        autocompact=200000,
+        autocompact_pct=50,
         timeout=30.0,
     )
     from_config = RuntimeOverrides.from_config(MeridianConfig(primary=primary))
@@ -107,7 +109,8 @@ def test_runtime_overrides_split_routing_from_execution_policy_fields() -> None:
         effort="high",
         sandbox="workspace-write",
         approval="auto",
-        autocompact=40,
+        autocompact=200000,
+        autocompact_pct=40,
         timeout=15.0,
     )
 
@@ -120,7 +123,8 @@ def test_runtime_overrides_split_routing_from_execution_policy_fields() -> None:
         effort="high",
         sandbox="workspace-write",
         approval="auto",
-        autocompact=40,
+        autocompact=200000,
+        autocompact_pct=40,
         timeout=15.0,
     )
     assert overrides.execution_policy_scope(frozenset({"effort", "approval"})) == RuntimeOverrides(
@@ -179,11 +183,11 @@ def test_from_alias_entry_exposes_alias_defaults_as_runtime_overrides() -> None:
             alias="gpt",
             model_id=ModelId("gpt-5.5"),
             default_effort="low",
-            default_autocompact=20,
+            default_autocompact=20000,
         )
     )
 
-    assert overrides == RuntimeOverrides(effort="low", autocompact=20)
+    assert overrides == RuntimeOverrides(effort="low", autocompact=20000)
 
 
 def test_from_alias_entry_treats_auto_effort_as_unset() -> None:
@@ -196,8 +200,8 @@ def test_from_alias_entry_treats_auto_effort_as_unset() -> None:
             alias="gpt",
             model_id=ModelId("gpt-5.5"),
             default_effort="auto",
-            default_autocompact=30,
+            default_autocompact=30000,
         )
     )
 
-    assert overrides == RuntimeOverrides(autocompact=30)
+    assert overrides == RuntimeOverrides(autocompact=30000)

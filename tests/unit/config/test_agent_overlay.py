@@ -31,7 +31,8 @@ harness = "codex"
 effort = "high"
 approval = "auto"
 sandbox = "danger-full-access"
-autocompact = 80
+autocompact = 80000
+autocompact_pct = 80
 """,
     )
 
@@ -42,7 +43,8 @@ autocompact = 80
     assert overlay.effort == "high"
     assert overlay.approval == "auto"
     assert overlay.sandbox == "danger-full-access"
-    assert overlay.autocompact == 80
+    assert overlay.autocompact == 80000
+    assert overlay.autocompact_pct == 80
     assert overlay.model_policies is None
 
 
@@ -90,7 +92,8 @@ override.harness = "codex"
 override.effort = "low"
 override.approval = "confirm"
 override.sandbox = "workspace-write"
-override.autocompact = 50
+override.autocompact = 50000
+override.autocompact_pct = 50
 """,
     )
 
@@ -105,7 +108,8 @@ override.autocompact = 50
         "effort": "low",
         "approval": "confirm",
         "sandbox": "workspace-write",
-        "autocompact": 50,
+        "autocompact": 50000,
+        "autocompact_pct": 50,
     }
 
 
@@ -298,7 +302,7 @@ harness = "codex"
 effort = "high"
 approval = "auto"
 sandbox = "workspace-write"
-autocompact = 70
+autocompact = 70000
 
 [[agents.tech-lead.model-policies]]
 match.alias = "gptmini"
@@ -315,7 +319,7 @@ override.effort = "low"
     assert values["agents.tech-lead.effort"].value == "high"
     assert values["agents.tech-lead.approval"].value == "auto"
     assert values["agents.tech-lead.sandbox"].value == "workspace-write"
-    assert values["agents.tech-lead.autocompact"].value == 70
+    assert values["agents.tech-lead.autocompact"].value == 70000
     assert values["agents.tech-lead.model-policies"].source == "file"
     assert values["agents.tech-lead.model-policies"].value == (
         '1 rules (match: alias "gptmini" → effort=low)'
@@ -357,7 +361,8 @@ harness = "codex"
 effort = "high"
 approval = "auto"
 sandbox = "danger-full-access"
-autocompact = 80
+autocompact = 80000
+autocompact_pct = 80
 """,
     )
     overlay = load_config(project_root).agents["coder"]
@@ -371,6 +376,7 @@ autocompact = 80
     assert overrides.approval is None
     assert overrides.sandbox is None
     assert overrides.autocompact is None
+    assert overrides.autocompact_pct is None
     assert RuntimeOverrides.from_agent_overlay_routing(None) == RuntimeOverrides()
 
 
@@ -386,7 +392,8 @@ harness = "codex"
 effort = "high"
 approval = "auto"
 sandbox = "danger-full-access"
-autocompact = 80
+autocompact = 80000
+autocompact_pct = 80
 """,
     )
     overlay = load_config(project_root).agents["coder"]
@@ -399,7 +406,8 @@ autocompact = 80
     assert overrides.effort == "high"
     assert overrides.approval == "auto"
     assert overrides.sandbox == "danger-full-access"
-    assert overrides.autocompact == 80
+    assert overrides.autocompact == 80000
+    assert overrides.autocompact_pct == 80
     assert RuntimeOverrides.from_agent_overlay_policy(None) == RuntimeOverrides()
 
 
@@ -415,7 +423,8 @@ harness = "codex"
 effort = "high"
 approval = "auto"
 sandbox = "danger-full-access"
-autocompact = 80
+autocompact = 80000
+autocompact_pct = 80
 
 [[agents.coder.model-policies]]
 match.alias = "gptmini"
@@ -434,7 +443,8 @@ override.approval = "confirm"
     assert overlay.effort == "high"
     assert overlay.approval == "auto"
     assert overlay.sandbox == "danger-full-access"
-    assert overlay.autocompact == 80
+    assert overlay.autocompact == 80000
+    assert overlay.autocompact_pct == 80
     assert overlay.model_policies is not None
     assert len(overlay.model_policies) == 1
     assert overlay.model_policies[0].match_type == "alias"

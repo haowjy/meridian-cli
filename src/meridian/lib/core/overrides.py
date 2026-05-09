@@ -15,17 +15,19 @@ if TYPE_CHECKING:
     from meridian.lib.launch.types import LaunchRequest
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
-_AUTOCOMPACT_MIN = 1
-_AUTOCOMPACT_MAX = 100
+_AUTOCOMPACT_TOKEN_MIN = 1000
+_AUTOCOMPACT_PCT_MIN = 1
+_AUTOCOMPACT_PCT_MAX = 100
 _ROUTING_OVERRIDE_FIELDS = frozenset({"model", "harness", "agent"})
 type ExecutionPolicyField = Literal[
-    "effort", "sandbox", "approval", "autocompact", "timeout"
+    "effort", "sandbox", "approval", "autocompact", "autocompact_pct", "timeout"
 ]
 EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
     "effort",
     "sandbox",
     "approval",
     "autocompact",
+    "autocompact_pct",
     "timeout",
 )
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
@@ -39,6 +41,7 @@ RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
     "sandbox": "MERIDIAN_SANDBOX",
     "approval": "MERIDIAN_APPROVAL",
     "autocompact": "MERIDIAN_AUTOCOMPACT",
+    "autocompact_pct": "MERIDIAN_AUTOCOMPACT_PCT",
     "timeout": "MERIDIAN_TIMEOUT",
 }
 RUNTIME_OVERRIDE_ENV_VARS = frozenset(RUNTIME_OVERRIDE_ENV_BY_FIELD.values())
@@ -122,6 +125,7 @@ class RuntimeOverrides(BaseModel):
     sandbox: str | None = None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     timeout: float | None = None
 
     def routing_scope(self) -> RuntimeOverrides:
@@ -201,10 +205,22 @@ class RuntimeOverrides(BaseModel):
     def _validate_autocompact(cls, value: int | None) -> int | None:
         if value is None:
             return None
-        if isinstance(value, bool) or not (_AUTOCOMPACT_MIN <= value <= _AUTOCOMPACT_MAX):
+        if isinstance(value, bool) or value < _AUTOCOMPACT_TOKEN_MIN:
             raise ValueError(
-                "Invalid runtime override 'autocompact': expected int between "
-                f"{_AUTOCOMPACT_MIN} and {_AUTOCOMPACT_MAX}, got {value!r}."
+                "Invalid runtime override 'autocompact': expected int >= "
+                f"{_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
+            )
+        return value
+
+    @field_validator("autocompact_pct")
+    @classmethod
+    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not (_AUTOCOMPACT_PCT_MIN <= value <= _AUTOCOMPACT_PCT_MAX):
+            raise ValueError(
+                "Invalid runtime override 'autocompact_pct': expected int between "
+                f"{_AUTOCOMPACT_PCT_MIN} and {_AUTOCOMPACT_PCT_MAX}, got {value!r}."
             )
         return value
 
@@ -223,6 +239,7 @@ class RuntimeOverrides(BaseModel):
     @classmethod
     def from_env(cls) -> RuntimeOverrides:
         autocompact_raw = _read_env_string("MERIDIAN_AUTOCOMPACT")
+        autocompact_pct_raw = _read_env_string("MERIDIAN_AUTOCOMPACT_PCT")
         timeout_raw = _read_env_string("MERIDIAN_TIMEOUT")
         return cls(
             model=_read_env_string("MERIDIAN_MODEL"),
@@ -234,6 +251,11 @@ class RuntimeOverrides(BaseModel):
             autocompact=(
                 _parse_env_int(autocompact_raw, env_name="MERIDIAN_AUTOCOMPACT")
                 if autocompact_raw is not None
+                else None
+            ),
+            autocompact_pct=(
+                _parse_env_int(autocompact_pct_raw, env_name="MERIDIAN_AUTOCOMPACT_PCT")
+                if autocompact_pct_raw is not None
                 else None
             ),
             timeout=(
@@ -255,6 +277,7 @@ class RuntimeOverrides(BaseModel):
             sandbox=_normalize_optional_string(profile.sandbox),
             approval=_normalize_optional_string(profile.approval),
             autocompact=profile.autocompact,
+            autocompact_pct=getattr(profile, "autocompact_pct", None),
         )
 
     @classmethod
@@ -267,6 +290,7 @@ class RuntimeOverrides(BaseModel):
         return cls(
             effort=normalized_effort,
             autocompact=alias_entry.default_autocompact,
+            autocompact_pct=getattr(alias_entry, "default_autocompact_pct", None),
         )
 
     @classmethod
@@ -282,6 +306,7 @@ class RuntimeOverrides(BaseModel):
             sandbox=primary.sandbox,
             approval=primary.approval,
             autocompact=primary.autocompact,
+            autocompact_pct=primary.autocompact_pct,
             timeout=primary.timeout,
         )
 
@@ -324,6 +349,7 @@ class RuntimeOverrides(BaseModel):
             approval=overlay.approval,
             sandbox=overlay.sandbox,
             autocompact=overlay.autocompact,
+            autocompact_pct=overlay.autocompact_pct,
         )
 
     @classmethod
@@ -336,6 +362,7 @@ class RuntimeOverrides(BaseModel):
             sandbox=_normalize_optional_string(payload.sandbox),
             approval=_normalize_optional_string(payload.approval),
             autocompact=payload.autocompact,
+            autocompact_pct=payload.autocompact_pct,
             timeout=payload.timeout,
         )
 
@@ -349,6 +376,7 @@ class RuntimeOverrides(BaseModel):
             sandbox=_normalize_optional_string(request.sandbox),
             approval=request.approval if request.approval != "default" else None,
             autocompact=request.autocompact,
+            autocompact_pct=request.autocompact_pct,
             timeout=request.timeout,
         )
 

@@ -320,7 +320,7 @@ def test_config_show_and_get_report_primary_autocompact_key(
 ) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.toml").write_text(
-        "[primary]\nautocompact = 72\n",
+        "[primary]\nautocompact = 72000\n",
         encoding="utf-8",
     )
 
@@ -330,12 +330,12 @@ def test_config_show_and_get_report_primary_autocompact_key(
         ConfigGetInput(project_root=project_root.as_posix(), key="primary.autocompact")
     )
 
-    assert shown_value.value == 72
+    assert shown_value.value == 72000
     assert shown_value.source == "file"
     assert gotten.key == "primary.autocompact"
-    assert gotten.value == 72
+    assert gotten.value == 72000
     assert gotten.source == "file"
-    assert load_config(project_root).primary.autocompact == 72
+    assert load_config(project_root).primary.autocompact == 72000
 
 
 def test_config_show_and_get_report_spawn_wait_yield_keys(tmp_path: Path) -> None:
@@ -380,7 +380,7 @@ def test_config_set_updates_primary_autocompact(tmp_path: Path) -> None:
     config_path = project_root / "meridian.toml"
     config_path.write_text(
         "[primary]\n"
-        "autocompact = 72 # keep legacy comment only until rewrite\n",
+        "autocompact = 72000 # keep legacy comment only until rewrite\n",
         encoding="utf-8",
     )
 
@@ -388,17 +388,17 @@ def test_config_set_updates_primary_autocompact(tmp_path: Path) -> None:
         ConfigSetInput(
             project_root=project_root.as_posix(),
             key="primary.autocompact",
-            value="81",
+            value="81000",
         )
     )
 
     assert result.key == "primary.autocompact"
-    assert result.value == 81
+    assert result.value == 81000
     assert config_path.read_text(encoding="utf-8") == (
         "[primary]\n"
-        "autocompact = 81 # keep legacy comment only until rewrite\n"
+        "autocompact = 81000 # keep legacy comment only until rewrite\n"
     )
-    assert load_config(project_root).primary.autocompact == 81
+    assert load_config(project_root).primary.autocompact == 81000
 
 
 def test_config_reset_removes_primary_autocompact(tmp_path: Path) -> None:
@@ -406,7 +406,7 @@ def test_config_reset_removes_primary_autocompact(tmp_path: Path) -> None:
     config_path = project_root / "meridian.toml"
     config_path.write_text(
         "[primary]\n"
-        "autocompact = 72\n",
+        "autocompact = 72000\n",
         encoding="utf-8",
     )
 

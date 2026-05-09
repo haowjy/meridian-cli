@@ -52,6 +52,7 @@ class LaunchRequest(BaseModel):
     fresh: bool = True
     session_mode: SessionMode = SessionMode.FRESH
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     passthrough_args: tuple[str, ...] = ()
     pinned_context: str = ""
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()

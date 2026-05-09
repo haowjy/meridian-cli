@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 _PRIMARY_AUTOCOMPACT_PCT_MIN = 1
 _PRIMARY_AUTOCOMPACT_PCT_MAX = 100
+_PRIMARY_AUTOCOMPACT_TOKEN_MIN = 1000
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 
 
@@ -255,9 +256,23 @@ def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, obj
                     f"Invalid value for '{source}.autocompact': expected int, got "
                     f"{type(value).__name__} ({value!r})."
                 )
+            if value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
+                raise ValueError(
+                    f"Invalid value for '{source}.autocompact': expected int >= "
+                    f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
+                )
+            values[key] = value
+            continue
+
+        if key == "autocompact_pct":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"Invalid value for '{source}.autocompact_pct': expected int, got "
+                    f"{type(value).__name__} ({value!r})."
+                )
             if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
                 raise ValueError(
-                    f"Invalid value for '{source}.autocompact': expected int between "
+                    f"Invalid value for '{source}.autocompact_pct': expected int between "
                     f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
                     f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
                 )
@@ -374,6 +389,20 @@ def _normalize_agent_autocompact(raw_value: object, *, source: str) -> int:
             f"Invalid value for '{source}': expected int, got "
             f"{type(raw_value).__name__} ({raw_value!r})."
         )
+    if raw_value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
+        raise ValueError(
+            f"Invalid value for '{source}': expected int >= "
+            f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {raw_value!r}."
+        )
+    return raw_value
+
+
+def _normalize_agent_autocompact_pct(raw_value: object, *, source: str) -> int:
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        raise ValueError(
+            f"Invalid value for '{source}': expected int, got "
+            f"{type(raw_value).__name__} ({raw_value!r})."
+        )
     if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= raw_value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
         raise ValueError(
             f"Invalid value for '{source}': expected int between "
@@ -392,7 +421,9 @@ def _normalize_agent_policy_overrides(
         raise ValueError(f"Invalid value for '{source}': expected table.")
 
     rejected_list_keys = frozenset({"skills", "tools", "disallowed-tools", "mcp-tools"})
-    allowed_scalar_keys = frozenset({"harness", "effort", "approval", "sandbox", "autocompact"})
+    allowed_scalar_keys = frozenset(
+        {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
+    )
     overrides: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
         field_source = f"{source}.{key}"
@@ -408,6 +439,9 @@ def _normalize_agent_policy_overrides(
             continue
         if key == "autocompact":
             overrides[key] = _normalize_agent_autocompact(value, source=field_source)
+            continue
+        if key == "autocompact_pct":
+            overrides[key] = _normalize_agent_autocompact_pct(value, source=field_source)
             continue
         if not isinstance(value, str):
             raise ValueError(
@@ -535,6 +569,9 @@ def _normalize_agents_table(raw_value: object, *, source: str) -> dict[str, obje
                 continue
             if key == "autocompact":
                 overlay[key] = _normalize_agent_autocompact(value, source=field_source)
+                continue
+            if key == "autocompact_pct":
+                overlay[key] = _normalize_agent_autocompact_pct(value, source=field_source)
                 continue
             if key == "model-policies":
                 overlay["model_policies"] = _normalize_agent_model_policies(
@@ -823,7 +860,9 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
             "",
             "# [[agents.tech-lead.model-policies]]",
             '# match = { model-glob = "gpt*" }',
-            '# override = { effort = "medium", autocompact = 40 }',
+            '# override = { effort = "medium", autocompact = 200000 }',
+            "# # Or use percentage-based threshold (1-100):",
+            '# # override = { effort = "medium", autocompact_pct = 80 }',
             "",
         ),
     ),
@@ -1200,6 +1239,14 @@ class PrimaryConfig(BaseModel):
             file_aliases=(file_alias("primary", "autocompact"),),
         ),
     ] = None
+    autocompact_pct: Annotated[
+        int | None,
+        config_field(
+            "primary.autocompact_pct",
+            value_kind="int",
+            file_aliases=(file_alias("primary", "autocompact_pct"),),
+        ),
+    ] = None
     model: Annotated[
         str | None,
         config_field(
@@ -1261,9 +1308,22 @@ class PrimaryConfig(BaseModel):
     def _validate_autocompact(cls, value: int | None) -> int | None:
         if value is None:
             return None
-        if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
+        if isinstance(value, bool) or value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
             raise ValueError(
-                "Invalid value for 'primary.autocompact': expected int between "
+                "Invalid value for 'primary.autocompact': expected int >= "
+                f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
+            )
+        return value
+
+    @field_validator("autocompact_pct")
+    @classmethod
+    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        in_range = _PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX
+        if isinstance(value, bool) or not in_range:
+            raise ValueError(
+                "Invalid value for 'primary.autocompact_pct': expected int between "
                 f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
                 f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
             )
@@ -1349,7 +1409,9 @@ class AgentOverlayModelPolicy(BaseModel):
     @field_validator("overrides")
     @classmethod
     def _validate_overrides(cls, value: dict[str, object]) -> dict[str, object]:
-        allowed = frozenset({"harness", "effort", "approval", "sandbox", "autocompact"})
+        allowed = frozenset(
+            {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
+        )
         normalized: dict[str, object] = {}
         for key, raw_value in value.items():
             if key not in allowed:
@@ -1360,6 +1422,9 @@ class AgentOverlayModelPolicy(BaseModel):
             source = f"agents.model-policies.override.{key}"
             if key == "autocompact":
                 normalized[key] = _normalize_agent_autocompact(raw_value, source=source)
+                continue
+            if key == "autocompact_pct":
+                normalized[key] = _normalize_agent_autocompact_pct(raw_value, source=source)
                 continue
             if not isinstance(raw_value, str):
                 raise ValueError(
@@ -1392,6 +1457,7 @@ class AgentOverlayConfig(BaseModel):
     approval: str | None = None
     sandbox: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     # Three-state: None = inherit, () = suppress, non-empty = replace
     model_policies: tuple[AgentOverlayModelPolicy, ...] | None = None
 
@@ -1440,6 +1506,13 @@ class AgentOverlayConfig(BaseModel):
         if value is None:
             return None
         return _normalize_agent_autocompact(value, source="agents.autocompact")
+
+    @field_validator("autocompact_pct")
+    @classmethod
+    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        return _normalize_agent_autocompact_pct(value, source="agents.autocompact_pct")
 
 
 class HarnessProfileConfig(BaseModel):
