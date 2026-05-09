@@ -253,6 +253,22 @@ Each existing root is projected at launch time in deterministic order: committed
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env with `permission.external_directory` entries; merged into any pre-existing parent config |
 | Other harnesses | `unsupported:requires_config_generation` |
 
+### Claude Code Skill Leakage
+
+Claude Code scans every `--add-dir` path for `.claude/skills/` and loads all skills it finds. There is no way to suppress this. Workspace roots that point to repos with their own skills will pollute the session's skill namespace with irrelevant skills from those repos.
+
+**Affected harness:** Claude Code only. Codex and OpenCode do not scan for skills.
+
+**Mitigations:**
+
+- **Point to parent directories** instead of individual repos. Claude Code scans `.claude/skills/` at the root of each `--add-dir` path only, not recursively. For example, `path = "../prompts"` avoids loading skills from `../prompts/some-repo/.claude/skills/`.
+- **Avoid adding worktree directories.** Each worktree is a full checkout with its own `.claude/skills/`, causing duplicate skill loading.
+
+**Known Claude Code issues:**
+
+- [`--add-dir` loads skills but `additionalDirectories` in settings does not](https://github.com/anthropics/claude-code/issues/30064) — the two mechanisms are documented as equivalent but behave differently for skill discovery.
+- [No way to disable individual skills](https://github.com/anthropics/claude-code/issues/43928) — a `disabledSkills` setting has been requested but is not implemented.
+
 ### `config show` Workspace Output
 
 ```text

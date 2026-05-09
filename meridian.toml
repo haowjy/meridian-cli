@@ -85,31 +85,8 @@ builtin = "git-autosync"
 remote = "git@github.com:meridian-flow/docs.git"
 
 # -- Workspace roots ---------------------------------------------------------
-[workspace.mars-agents]
-path = "../mars-agents"
-
-[workspace.meridian-cli-worktrees]
-path = "../meridian-cli.worktrees"
-
-# Prompt repos for agent profile editing
-[workspace.prompts-base]
-path = "../prompts/meridian-base"
-
-[workspace.prompts-dev-workflow]
-path = "../prompts/meridian-dev-workflow"
-
-[workspace.prompts-prompter]
-path = "../prompts/meridian-prompter"
-
-[workspace.prompts-creative-writing]
-path = "../prompts/creative-writing-skills"
-
-[workspace.prompts-jupyter]
-path = "../prompts/jupyter-workbench"
-
-[workspace.prompts-microct]
-path = "../prompts/microct-analysis"
-
-[workspace.prompts-mouse-ct]
-path = "../prompts/mouse-ct"
+# Use parent directory to avoid Claude Code skill leakage from individual repos.
+# See docs/configuration.md "Claude Code Skill Leakage" for details.
+[workspace.sibling-repos]
+path = ".."
 
