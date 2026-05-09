@@ -4,15 +4,8 @@ url = "https://github.com/meridian-flow/meridian-base"
 [dependencies.meridian-dev-workflow]
 url = "https://github.com/meridian-flow/meridian-dev-workflow"
 
-[dependencies.anthropic-skills]
-url = "https://github.com/anthropics/skills"
-skills = ["frontend-design"]
-
 [dependencies.meridian-prompter]
 url = "https://github.com/meridian-flow/meridian-prompter"
-
-[dependencies.microct-analysis]
-path = "/home/jimyao/gitrepos/prompts/microct-analysis"
 
 [settings]
 targets = [
