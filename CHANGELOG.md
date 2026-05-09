@@ -36,6 +36,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Project `meridian.toml` sets `[defaults] max_depth = 4`, raising the nesting ceiling for workflows that fan-out through multiple spawn tiers.
 
 ### Fixed
+- Claude primary (interactive) sessions now get `--session-id` seeded, so `meridian session log` can resolve their transcripts. Previously only non-interactive spawns were seeded.
 - Work-store write flows now initialize project UUIDs before resolving `{project}` context paths, so create/list/archive/reopen use configured work/archive directories instead of falling back to `.meridian/work` on first use.
 - Nested spawns no longer reacquire stale persisted current-work state. `include_persisted_work_fallback` flag gates persisted fallback; `BLOCKED_CHILD_ENV_VARS` blocks stale `MERIDIAN_ACTIVE_WORK_*` from parent env. Chat backend launch explicitly opts in.
 - Spawn ID locking race: `ensure_v2_format()` renamed lock file mid-contention, splitting locks across inodes → duplicate spawn IDs. Fixed by keeping stable lock path, then removed migration entirely.
