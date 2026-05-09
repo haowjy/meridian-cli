@@ -27,10 +27,11 @@ def _spawn_id_sort_key(spawn_id: str) -> tuple[int, str]:
     return (10**9, spawn_id)
 
 
-def _spawn_desc(spawn: SpawnRecord) -> str:
-    desc = (spawn.desc or "").strip()
-    if desc:
-        return " ".join(desc.split())
+def _spawn_label(spawn: SpawnRecord) -> str:
+    """Prefer goal over desc for display — goal is the completion contract."""
+    label = (spawn.goal or spawn.desc or "").strip()
+    if label:
+        return " ".join(label.split())
     if spawn.kind == "primary":
         return "(primary)"
     return ""
@@ -50,7 +51,7 @@ def _dashboard_spawn(spawn: SpawnRecord) -> WorkDashboardSpawn:
         id=spawn.id,
         model=(spawn.model or "").strip() or "-",
         status=spawn.status,
-        desc=_spawn_desc(spawn),
+        desc=_spawn_label(spawn),
     )
 
 

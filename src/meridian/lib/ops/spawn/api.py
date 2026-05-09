@@ -183,10 +183,13 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     return normalized
 
 
-def _desc_or_prompt_summary(desc: str | None, prompt: str | None) -> str | None:
-    normalized_desc = (desc or "").strip()
-    if normalized_desc:
-        return normalized_desc
+def _spawn_label_or_prompt_summary(
+    goal: str | None, desc: str | None, prompt: str | None
+) -> str | None:
+    """Prefer goal over desc for display — goal is the completion contract."""
+    label = (goal or desc or "").strip()
+    if label:
+        return label
     normalized_prompt = (prompt or "").strip()
     if not normalized_prompt:
         return None
@@ -506,7 +509,7 @@ def spawn_children_sync(
             status=row.status,
             model=row.model or "",
             agent=row.agent or None,
-            desc=_desc_or_prompt_summary(row.desc, row.prompt),
+            desc=_spawn_label_or_prompt_summary(row.goal, row.desc, row.prompt),
             duration_secs=row.duration_secs,
             cost_usd=row.total_cost_usd,
         )
