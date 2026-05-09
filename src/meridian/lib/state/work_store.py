@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.platform.locking import lock_file
@@ -32,6 +33,7 @@ _NON_ALNUM_HYPHEN = re.compile(r"[^a-z0-9-]+")
 _WHITESPACE_OR_UNDERSCORE = re.compile(r"[\s_]+")
 _REPEATED_HYPHENS = re.compile(r"-+")
 _STATUS_FILENAME = "__status.json"
+logger = structlog.get_logger(__name__)
 
 
 class WorkItem(BaseModel):
@@ -216,14 +218,17 @@ def _locate_dirs(paths: ProjectPaths, work_id: str) -> tuple[Path | None, Path |
     return active_dir, archived_dir
 
 
-def _ensure_not_both_locations(
+def _warn_both_locations(
     work_id: str,
     active_dir: Path | None,
     archived_dir: Path | None,
 ) -> None:
     if active_dir is not None and archived_dir is not None:
-        raise ValueError(
-            f"Work item '{work_id}' exists in both active and archive directories."
+        logger.warning(
+            "Work item exists in both active and archive directories; preferring active copy.",
+            work_id=work_id,
+            active_dir=active_dir.as_posix(),
+            archived_dir=archived_dir.as_posix(),
         )
 
 
@@ -311,7 +316,7 @@ def ensure_work_item_metadata(
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     with lock_file(paths.root_dir / "work-store.flock"):
         active_dir, archived_dir = _locate_dirs(paths, normalized)
-        _ensure_not_both_locations(normalized, active_dir, archived_dir)
+        _warn_both_locations(normalized, active_dir, archived_dir)
 
         if active_dir is not None:
             return _work_item_from_dir(
@@ -342,7 +347,7 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _ensure_not_both_locations(work_id, active_dir, archived_dir)
+    _warn_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
         return _work_item_from_dir(active_dir, archived=False)
     if archived_dir is not None:
@@ -355,7 +360,7 @@ def work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
 
     paths = _project_paths_for_work_store(runtime_root)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _ensure_not_both_locations(work_id, active_dir, archived_dir)
+    _warn_both_locations(work_id, active_dir, archived_dir)
     if active_dir is not None:
         return active_dir
     if archived_dir is not None:
@@ -444,7 +449,7 @@ def update_work_item(
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _ensure_not_both_locations(work_id, active_dir, archived_dir)
+    _warn_both_locations(work_id, active_dir, archived_dir)
     if active_dir is None:
         if archived_dir is not None:
             raise ValueError(
@@ -488,7 +493,10 @@ def archive_work_item(
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _ensure_not_both_locations(work_id, active_dir, archived_dir)
+    if active_dir is not None and archived_dir is not None:
+        _warn_both_locations(work_id, active_dir, archived_dir)
+        shutil.rmtree(archived_dir)
+        archived_dir = None
 
     if active_dir is None:
         if archived_dir is not None:
@@ -531,7 +539,10 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     active_dir, archived_dir = _locate_dirs(paths, work_id)
-    _ensure_not_both_locations(work_id, active_dir, archived_dir)
+    if active_dir is not None and archived_dir is not None:
+        _warn_both_locations(work_id, active_dir, archived_dir)
+        shutil.rmtree(archived_dir)
+        return _work_item_from_dir(active_dir, archived=False)
     if archived_dir is None:
         if active_dir is not None:
             raise ValueError(f"Work item '{work_id}' is already active.")
@@ -561,7 +572,10 @@ def rename_work_item(runtime_root: Path, old_work_id: str, new_name: str) -> Wor
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     active_dir, archived_dir = _locate_dirs(paths, old_work_id)
-    _ensure_not_both_locations(old_work_id, active_dir, archived_dir)
+    if active_dir is not None and archived_dir is not None:
+        _warn_both_locations(old_work_id, active_dir, archived_dir)
+        shutil.rmtree(archived_dir)
+        archived_dir = None
     if active_dir is None and archived_dir is None:
         raise ValueError(f"Work item '{old_work_id}' not found")
 
