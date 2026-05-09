@@ -568,7 +568,6 @@ async def _prepare_execution_handoff(
     spawn_record: SpawnRecord | None,
     execution_cwd: str,
     work_id: str | None,
-    autocompact: int | None,
     ctx: RuntimeContext | None,
 ) -> PreparedExecutionHandoff:
     """Prepare execution context; close session scope before re-raising on failure."""
@@ -657,7 +656,7 @@ async def _prepare_execution_handoff(
             str(spawn.spawn_id),
             work_id=session_context.work_id or work_id,
             runtime_root=runtime_root,
-            autocompact=autocompact,
+            autocompact=request.execution_policy.autocompact,
             ctx=resolved_context,
         )
         runtime_work_id = session_context.work_id or work_id
@@ -746,7 +745,6 @@ async def launch_prepared_spawn(
     spawn_record: SpawnRecord | None = None,
     execution_cwd: str,
     work_id: str | None = None,
-    autocompact: int | None = None,
     stream_stdout_to_terminal: bool = False,
     stream_stderr_to_terminal: bool = False,
     event_observer: Callable[[StreamEvent], None] | None = None,
@@ -769,7 +767,6 @@ async def launch_prepared_spawn(
             spawn_record=spawn_record,
             execution_cwd=execution_cwd,
             work_id=work_id,
-            autocompact=autocompact,
             ctx=ctx,
         )
     except Exception as exc:
@@ -1035,7 +1032,6 @@ async def _execute_existing_spawn(
         spawn_record=spawn_record,
         execution_cwd=resolved_execution_cwd,
         work_id=spawn_record.work_id,
-        autocompact=request.autocompact,
         harness_session_id_observer=lambda session_id: _record_launch_boundary_observation(
             runtime_root,
             str(spawn_id),
@@ -1075,7 +1071,6 @@ def execute_spawn_background(
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
     if payload.stream:
         logger.warning("--stream requires --foreground; output goes to spawn log files.")
-    autocompact = request.autocompact
     context = _init_spawn(
         payload=payload,
         request=request,
@@ -1198,7 +1193,7 @@ def execute_spawn_background(
         _spawn_background_worker_env(
             project_root=project_paths.project_root,
             work_id=context.work_id,
-            autocompact=autocompact,
+            autocompact=request.execution_policy.autocompact,
         )
     )
     try:
@@ -1301,7 +1296,6 @@ def execute_spawn_blocking(
 ) -> SpawnActionOutput:
     resolved_context = runtime_context(ctx)
     project_paths = resolve_project_config_paths(project_root=runtime.project_root)
-    autocompact = request.autocompact
     context = _init_spawn(
         payload=payload,
         request=request,
@@ -1376,7 +1370,6 @@ def execute_spawn_blocking(
                 project_paths=project_paths,
                 execution_cwd=execution_cwd_str,
                 work_id=context.work_id,
-                autocompact=autocompact,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
                 stream_stderr_to_terminal=payload.stream,
                 event_observer=event_observer,

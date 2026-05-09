@@ -6,6 +6,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import SessionRequest
 
@@ -51,18 +52,36 @@ class LaunchRequest(BaseModel):
     # Deprecated: use `session_mode` for new code.
     fresh: bool = True
     session_mode: SessionMode = SessionMode.FRESH
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
     passthrough_args: tuple[str, ...] = ()
     pinned_context: str = ""
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()
     include_bootstrap_documents: bool = False
     dry_run: bool = False
-    approval: str = "default"
-    effort: str | None = None
-    sandbox: str | None = None
-    timeout: float | None = None
+    # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/etc.)
+    execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     session: SessionRequest = Field(default_factory=SessionRequest)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_flat_policy_fields(cls, value: object) -> object:
+        """Migrate legacy flat policy fields to the execution_policy carrier."""
+        if not isinstance(value, dict):
+            return value
+        payload = cast("dict[str, Any]", value).copy()
+        if "execution_policy" in payload:
+            return payload
+        policy_fields: dict[str, Any] = {}
+        for field_name in ("effort", "sandbox", "autocompact", "autocompact_pct", "timeout"):
+            if field_name in payload:
+                policy_fields[field_name] = payload.pop(field_name)
+        # approval="default" means "no explicit override" — treat as None in carrier
+        if "approval" in payload:
+            approval_val = payload.pop("approval")
+            if approval_val != "default":
+                policy_fields["approval"] = approval_val
+        if policy_fields:
+            payload["execution_policy"] = policy_fields
+        return payload
 
     @model_validator(mode="before")
     @classmethod

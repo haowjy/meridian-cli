@@ -501,19 +501,6 @@ def _missing_continue_session_error(source_ref: str | None) -> str:
     return "Source reference has no recorded harness session - cannot continue/fork."
 
 
-def _spawn_request_overrides(request: SpawnRequest) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        model=(request.model or "").strip() or None,
-        harness=(request.harness or "").strip() or None,
-        agent=(request.agent or "").strip() or None,
-        effort=(request.effort or "").strip() or None,
-        sandbox=(request.sandbox or "").strip() or None,
-        approval=(request.approval or "").strip() or None,
-        autocompact=request.autocompact,
-        autocompact_pct=request.autocompact_pct,
-    )
-
-
 def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path, ...]:
     """Return configured clone roots for git-backed context entries."""
 
@@ -766,7 +753,17 @@ def compile_prepared_policy_surface(
         if runtime.config_snapshot
         else load_config(project_paths.project_root)
     )
-    cli_overrides = _spawn_request_overrides(request)
+    cli_overrides = RuntimeOverrides(
+        model=(request.model or "").strip() or None,
+        harness=(request.harness or "").strip() or None,
+        agent=(request.agent or "").strip() or None,
+        effort=request.execution_policy.effort,
+        sandbox=request.execution_policy.sandbox,
+        approval=request.execution_policy.approval,
+        autocompact=request.execution_policy.autocompact,
+        autocompact_pct=request.execution_policy.autocompact_pct,
+        timeout=request.execution_policy.timeout,
+    )
     env_overrides = (
         runtime.resolved_runtime_overrides
         if runtime.has_runtime_override_snapshot
@@ -1184,15 +1181,11 @@ def prepare_launch_surface(
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
             "mcp_tools": profile.mcp_tools if profile is not None else request.mcp_tools,
-            "sandbox": execution_policy.sandbox,
-            "approval": execution_policy.approval,
+            "execution_policy": execution_policy,
             "allowed_tools": profile.tools if profile is not None else request.allowed_tools,
             "disallowed_tools": (
                 profile.disallowed_tools if profile is not None else request.disallowed_tools
             ),
-            "autocompact": execution_policy.autocompact,
-            "autocompact_pct": execution_policy.autocompact_pct,
-            "effort": execution_policy.effort,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1398,7 +1391,7 @@ def bind_launch_context(
         harness=harness,
         prompt=resolved_request.prompt,
         model=model,
-        effort=resolved_request.effort,
+        effort=resolved_request.execution_policy.effort,
         skills=resolved_request.skills,
         agent=resolved_request.agent,
         prompt_payload=prompt_payload,
@@ -1416,10 +1409,10 @@ def bind_launch_context(
         report_output_path=report_output_path.as_posix(),
         context_from_payload=resolved_request.context_from,
         reference_items=loaded_references,
-        sandbox=resolved_request.sandbox,
+        sandbox=resolved_request.execution_policy.sandbox,
         allowed_tools=resolved_request.allowed_tools,
         disallowed_tools=resolved_request.disallowed_tools,
-        approval=resolved_request.approval,
+        approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
     )
     run_params = materialized.run_params

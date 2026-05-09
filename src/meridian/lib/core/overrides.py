@@ -368,16 +368,17 @@ class RuntimeOverrides(BaseModel):
 
     @classmethod
     def from_launch_request(cls, request: LaunchRequest) -> RuntimeOverrides:
+        policy = request.execution_policy
         return cls(
             model=_normalize_optional_string(request.model),
             harness=_normalize_optional_string(request.harness),
             agent=_normalize_optional_string(request.agent),
-            effort=_normalize_optional_string(request.effort),
-            sandbox=_normalize_optional_string(request.sandbox),
-            approval=request.approval if request.approval != "default" else None,
-            autocompact=request.autocompact,
-            autocompact_pct=request.autocompact_pct,
-            timeout=request.timeout,
+            effort=policy.effort,
+            sandbox=policy.sandbox,
+            approval=policy.approval,
+            autocompact=policy.autocompact,
+            autocompact_pct=policy.autocompact_pct,
+            timeout=policy.timeout,
         )
 
 

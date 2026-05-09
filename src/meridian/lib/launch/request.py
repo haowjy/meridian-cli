@@ -1,9 +1,11 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
+from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
@@ -83,13 +85,11 @@ class SpawnRequest(BaseModel):
     # Harness shape
     extra_args: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
-    sandbox: str | None = None
-    approval: str | None = None
     allowed_tools: tuple[str, ...] = ()
     disallowed_tools: tuple[str, ...] = ()
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
-    effort: str | None = None
+
+    # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
+    execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
 
     # Execution policy (nested)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
@@ -119,19 +119,26 @@ class SpawnRequest(BaseModel):
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
 
-    @field_validator("autocompact", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _reject_bool_autocompact(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("autocompact must be an integer token count, not bool")
-        return value
+    def _migrate_flat_policy_fields(cls, data: object) -> object:
+        """Migrate legacy flat policy fields to the execution_policy carrier.
 
-    @field_validator("autocompact_pct", mode="before")
-    @classmethod
-    def _reject_bool_autocompact_pct(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("autocompact_pct must be an integer percentage, not bool")
-        return value
+        Handles persisted JSON from before the carrier refactor (B-10).
+        """
+        if not isinstance(data, dict):
+            return data
+        data = cast("dict[str, Any]", data).copy()
+        if "execution_policy" in data:
+            return data
+        policy_fields: dict[str, Any] = {}
+        for field_name in ("effort", "sandbox", "approval", "autocompact", "autocompact_pct",
+                           "timeout"):
+            if field_name in data:
+                policy_fields[field_name] = data.pop(field_name)
+        if policy_fields:
+            data["execution_policy"] = policy_fields
+        return data
 
 
 class LaunchArgvIntent(StrEnum):

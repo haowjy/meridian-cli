@@ -232,7 +232,7 @@ def test_build_launch_context_uses_runtime_override_snapshot_not_live_env(
         dry_run=True,
     )
 
-    assert runtime_ctx.resolved_request.approval == "confirm"
+    assert runtime_ctx.resolved_request.execution_policy.approval == "confirm"
     assert runtime_ctx.binding.environment.runtime_override_env == {
         "MERIDIAN_APPROVAL": "confirm"
     }
@@ -259,7 +259,7 @@ def test_build_launch_context_explicit_empty_snapshot_blocks_live_policy_env_lea
         dry_run=True,
     )
 
-    assert runtime_ctx.resolved_request.approval is None
+    assert runtime_ctx.resolved_request.execution_policy.approval is None
     assert runtime_ctx.binding.environment.runtime_override_env == {}
     assert "MERIDIAN_APPROVAL" not in runtime_ctx.binding.environment.bind_env_overrides
     assert "MERIDIAN_APPROVAL" not in runtime_ctx.env

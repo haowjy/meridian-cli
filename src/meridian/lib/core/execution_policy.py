@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from meridian.lib.core.overrides import (
     ExecutionPolicyField,
@@ -27,6 +27,20 @@ class ResolvedExecutionPolicy(BaseModel):
     autocompact: int | None = None
     autocompact_pct: int | None = None
     timeout: float | None = None
+
+    @field_validator("autocompact", mode="before")
+    @classmethod
+    def _reject_bool_autocompact(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("autocompact must be an integer token count, not bool")
+        return value
+
+    @field_validator("autocompact_pct", mode="before")
+    @classmethod
+    def _reject_bool_autocompact_pct(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("autocompact_pct must be an integer percentage, not bool")
+        return value
 
     def as_overrides(
         self,

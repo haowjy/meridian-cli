@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
@@ -232,11 +233,13 @@ def _build_create_payload_impl(
         agent=payload.agent,
         skills=payload.skills,
         extra_args=payload.passthrough_args,
-        sandbox=payload.sandbox,
-        approval=payload.approval,
-        autocompact=payload.autocompact,
-        autocompact_pct=payload.autocompact_pct,
-        effort=payload.effort,
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox=payload.sandbox,
+            approval=payload.approval,
+            autocompact=payload.autocompact,
+            autocompact_pct=payload.autocompact_pct,
+            effort=payload.effort,
+        ),
         retry=RetryPolicy(
             max_attempts=max(1, runtime_view.config.max_retries + 1),
             backoff_secs=runtime_view.config.retry_backoff_seconds,

@@ -214,11 +214,11 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
 
     assert overlay_routed.model == "claude-sonnet-4.5"
     assert overlay_routed.harness == "claude"
-    assert overlay_routed.effort == "high"
+    assert overlay_routed.execution_policy.effort == "high"
 
     assert cli_model_overridden.model == "gpt-5.5"
     assert cli_model_overridden.harness == "codex"
-    assert cli_model_overridden.effort == "high"
+    assert cli_model_overridden.execution_policy.effort == "high"
     assert cli_model_overridden.model_selection_requested_token == "gpt-5.5"
     assert cli_model_overridden.model_selection_canonical_id == "gpt-5.5"
     assert cli_model_overridden.model_selection_harness_provenance == "mars-provided"
@@ -256,7 +256,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
     assert prepared.agent is None
     assert prepared.model == "gpt-5.5"
     assert prepared.harness == "codex"
-    assert prepared.effort is None
+    assert prepared.execution_policy.effort is None
 
 
 def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Path) -> None:

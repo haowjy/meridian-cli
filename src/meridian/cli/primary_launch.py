@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.utils import missing_fork_session_error
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
@@ -275,18 +276,20 @@ def run_primary_launch(
             ),
             agent=requested_agent,
             work_id=requested_work_id,
-            autocompact=autocompact,
-            autocompact_pct=autocompact_pct,
             passthrough_args=passthrough,
             session_mode=session_mode,
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
             dry_run=dry_run,
-            approval=resolved_approval,
-            effort=effort,
-            sandbox=sandbox,
-            timeout=timeout,
+            execution_policy=ResolvedExecutionPolicy(
+                approval=resolved_approval if resolved_approval != "default" else None,
+                effort=effort,
+                sandbox=sandbox,
+                timeout=timeout,
+                autocompact=autocompact,
+                autocompact_pct=autocompact_pct,
+            ),
             session=SessionRequest(
                 requested_harness_session_id=continue_harness_session_id,
                 continue_harness=continue_harness,

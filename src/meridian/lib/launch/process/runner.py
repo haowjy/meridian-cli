@@ -811,9 +811,9 @@ def run_harness_process(
                     }
                 )
                 plan_overrides: dict[str, str] = {}
-                if runtime_request.autocompact is not None:
+                if runtime_request.execution_policy.autocompact is not None:
                     plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
-                        runtime_request.autocompact
+                        runtime_request.execution_policy.autocompact
                     )
                 if prepared is not None:
                     runtime_context = bind_launch_context(
