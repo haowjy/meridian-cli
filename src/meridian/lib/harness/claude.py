@@ -351,8 +351,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         effective_extra_args = run.extra_args
         if (
-            not run.interactive
-            and continue_session_id is None
+            continue_session_id is None
             and not has_session_identity_in_args(run.extra_args)
         ):
             effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
@@ -561,8 +560,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         if passthrough_session_id:
             return SessionSeed(session_id=passthrough_session_id)
 
-        # Claude rejects --session-id for fresh interactive primary launches.
-        # Child/non-interactive runs still get explicit IDs via resolve_launch_spec().
+        # resolve_launch_spec() seeds --session-id for all launches (interactive
+        # and non-interactive).  No seed needed from the session-access layer.
         return SessionSeed()
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:

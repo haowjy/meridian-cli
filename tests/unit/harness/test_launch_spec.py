@@ -376,13 +376,14 @@ def test_claude_passthrough_session_identity_flags_are_not_seeded(
 
     assert spec.extra_args == extra_args
 
-def test_interactive_spawn_no_seed() -> None:
+def test_interactive_spawn_gets_seeded_session_id() -> None:
     spec = ClaudeAdapter().resolve_launch_spec(
         SpawnParams(prompt="test prompt", interactive=True),
         _resolver(),
     )
 
-    assert extract_session_id_from_args(spec.extra_args) is None
+    seeded = extract_session_id_from_args(spec.extra_args)
+    assert seeded is not None, "Interactive sessions should get a seeded --session-id"
 
 def test_opencode_explicit_harness_allows_raw_provider_model() -> None:
     """When harness is explicit, raw provider/model IDs pass through unchanged."""
