@@ -429,7 +429,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_codex_hitl_requests_stay_pending_until_explicit_reply(
+async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -559,23 +559,9 @@ async def test_spawn_manager_codex_hitl_requests_stay_pending_until_explicit_rep
         connection = cast("Any", manager.get_connection(spawn_id))
         assert connection is not None
         assert connection.capabilities.supports_runtime_hitl is True
-        assert connection.respond_calls == []
 
-        deadline = time.monotonic() + 1.0
-        statuses = _read_permission_statuses(runtime_root, spawn_id)
-        while statuses != ["pending"] and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
-            statuses = _read_permission_statuses(runtime_root, spawn_id)
-        assert statuses == ["pending"]
-        assert connection.respond_calls == []
-
-        await manager.respond_request(
-            spawn_id,
-            request_id="approval-1",
-            decision="accept",
-            source="test",
-        )
-        assert connection.respond_calls == [("approval-1", "accept", None)]
+        # auto_reject_runtime_requests=True causes immediate rejection during start
+        assert connection.respond_calls == [("approval-1", "reject", None)]
         assert _read_permission_statuses(runtime_root, spawn_id) == ["pending", "resolved"]
     finally:
         await manager.stop_spawn(spawn_id)
@@ -675,7 +661,10 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         ) -> None:
             _ = payload
             self.respond_attempts += 1
-            if self.respond_attempts == 1:
+            # Attempt 1 is the auto-reject from PermissionBroker (succeeds).
+            # Attempt 2 is the manager's first explicit call (fails, triggering retry).
+            # Attempt 3 is the coordinator's retry (succeeds).
+            if self.respond_attempts == 2:
                 raise ConnectionError("retryable send failure")
             callback = getattr(self._request_handler, "on_request_resolved", None)
             if callback is not None:
@@ -720,7 +709,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
         )
         connection = cast("Any", manager.get_connection(spawn_id))
         assert connection is not None
-        assert connection.respond_attempts == 2
+        assert connection.respond_attempts == 3
         assert _read_permission_statuses(runtime_root, spawn_id) == ["pending", "resolved"]
     finally:
         await manager.stop_spawn(spawn_id)
