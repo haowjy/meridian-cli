@@ -124,6 +124,7 @@ class WorkStartInput(BaseModel):
 
     label: str
     description: str = ""
+    goal: str | None = None
     chat_id: str = ""
     project_root: str | None = None
 
@@ -134,6 +135,7 @@ class WorkStartOutput(BaseModel):
     name: str
     status: str
     description: str
+    goal: str | None = None
     created_at: str
     work_dir: str
     created: bool = True
@@ -150,6 +152,7 @@ class WorkUpdateInput(BaseModel):
     work_id: str
     status: str | None = None
     description: str | None = None
+    goal: str | None = None
     project_root: str | None = None
 
 
@@ -306,7 +309,12 @@ def work_start_sync(
             )
         item = existing
     else:
-        item = work_store.create_work_item(project_state_dir, payload.label, requested_description)
+        item = work_store.create_work_item(
+            project_state_dir,
+            payload.label,
+            requested_description,
+            payload.goal,
+        )
         created = True
     set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     _dispatch_work_hook_event(
@@ -325,6 +333,7 @@ def work_start_sync(
         name=item.name,
         status=item.status,
         description=item.description,
+        goal=item.goal,
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         created=created,
@@ -337,8 +346,8 @@ def work_update_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkUpdateOutput:
     warning = _work_warning(ctx)
-    if payload.status is None and payload.description is None:
-        raise ValueError("Nothing to update. Pass --status and/or --description.")
+    if payload.status is None and payload.description is None and payload.goal is None:
+        raise ValueError("Nothing to update. Pass --status, --description, and/or --goal.")
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
@@ -377,6 +386,7 @@ def work_update_sync(
         payload.work_id,
         status=payload.status,
         description=payload.description,
+        goal=payload.goal,
     )
     _emit_work_transition(
         "work.updated",

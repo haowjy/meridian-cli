@@ -138,6 +138,20 @@ def build_goal_instruction(goal: str | None) -> str:
     )
 
 
+def build_work_goal_instruction(work_goal: str | None) -> str:
+    if work_goal is None:
+        return ""
+    if work_goal == "" or work_goal != work_goal.strip():
+        raise ValueError("work goal must be normalized before prompt rendering")
+    escaped = html.escape(work_goal, quote=False)
+    return (
+        "# Goal of Your Work\n\n"
+        f"<work-goal>\n{escaped}\n</work-goal>\n\n"
+        "This is the overarching goal of the work item you are contributing to. "
+        "Your specific task may be narrower, but keep this broader goal in mind."
+    )
+
+
 def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
     blocks: list[str] = []
     for skill in skills:
@@ -532,6 +546,7 @@ __all__ = [
     "build_goal_instruction",
     "build_launch_context_documents",
     "build_report_instruction",
+    "build_work_goal_instruction",
     "compose_run_prompt",
     "compose_run_prompt_text",
     "compose_skill_injections",

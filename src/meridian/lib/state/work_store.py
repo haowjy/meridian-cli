@@ -41,6 +41,7 @@ class WorkItem(BaseModel):
 
     name: str
     description: str = ""
+    goal: str | None = None
     status: str
     created_at: str
     archived_at: str | None = None
@@ -114,6 +115,7 @@ def _read_or_initialize_status(
     archived: bool,
     default_status: str = "open",
     default_description: str = "",
+    default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
 ) -> dict[str, Any]:
@@ -127,6 +129,7 @@ def _read_or_initialize_status(
     default_payload: dict[str, Any] = {
         "status": "done" if archived else default_status,
         "description": default_description,
+        "goal": default_goal,
         "created_at": created_fallback,
         "archived_at": archived_fallback if archived else None,
     }
@@ -150,6 +153,18 @@ def _read_or_initialize_status(
         payload["description"] = description_value
     else:
         payload["description"] = ""
+        changed = True
+
+    goal_value = raw.get("goal")
+    if isinstance(goal_value, str):
+        normalized_goal = _normalize_goal(goal_value)
+        payload["goal"] = normalized_goal
+        if normalized_goal != goal_value:
+            changed = True
+    elif goal_value is None:
+        payload["goal"] = None
+    else:
+        payload["goal"] = None
         changed = True
 
     created_value = raw.get("created_at")
@@ -190,6 +205,7 @@ def _work_item_from_dir(
     archived: bool,
     default_status: str = "open",
     default_description: str = "",
+    default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
 ) -> WorkItem:
@@ -198,12 +214,14 @@ def _work_item_from_dir(
         archived=archived,
         default_status=default_status,
         default_description=default_description,
+        default_goal=default_goal,
         default_created_at=default_created_at,
         default_archived_at=default_archived_at,
     )
     return WorkItem(
         name=work_dir.name,
         description=str(payload["description"]),
+        goal=payload["goal"] if isinstance(payload["goal"], str) else None,
         status=str(payload["status"]),
         created_at=str(payload["created_at"]),
         archived_at=payload["archived_at"] if isinstance(payload["archived_at"], str) else None,
@@ -242,12 +260,14 @@ def _status_payload(
     *,
     status: str,
     description: str,
+    goal: str | None = None,
     created_at: str,
     archived_at: str | None,
 ) -> dict[str, Any]:
     return {
         "status": status,
         "description": description,
+        "goal": goal,
         "created_at": created_at,
         "archived_at": archived_at,
     }
@@ -269,11 +289,24 @@ def _validate_exact_slug(raw_name: str) -> str:
     return normalized
 
 
-def create_work_item(runtime_root: Path, label: str, description: str = "") -> WorkItem:
+def _normalize_goal(goal: str | None) -> str | None:
+    if goal is None:
+        return None
+    normalized = goal.strip()
+    return normalized or None
+
+
+def create_work_item(
+    runtime_root: Path,
+    label: str,
+    description: str = "",
+    goal: str | None = None,
+) -> WorkItem:
     """Create a new active work item directory with ``__status.json`` metadata."""
 
     paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
     slug = slugify(label)
+    normalized_goal = _normalize_goal(goal)
     if not slug:
         raise ValueError("Work item label must contain at least one letter or number.")
 
@@ -287,6 +320,7 @@ def create_work_item(runtime_root: Path, label: str, description: str = "") -> W
     payload = _status_payload(
         status="open",
         description=description,
+        goal=normalized_goal,
         created_at=created_at,
         archived_at=None,
     )
@@ -294,6 +328,7 @@ def create_work_item(runtime_root: Path, label: str, description: str = "") -> W
     return WorkItem(
         name=slug,
         description=description,
+        goal=normalized_goal,
         status="open",
         created_at=created_at,
         archived_at=None,
@@ -305,11 +340,13 @@ def ensure_work_item_metadata(
     work_id: str,
     *,
     description: str = "",
+    goal: str | None = None,
     status: str = "open",
 ) -> WorkItem:
     """Ensure an exact work item slug exists on disk and return its metadata."""
 
     normalized = _validate_exact_slug(work_id)
+    normalized_goal = _normalize_goal(goal)
     if status == "done":
         raise ValueError("'done' is reserved for archived work items.")
 
@@ -324,12 +361,14 @@ def ensure_work_item_metadata(
                 archived=False,
                 default_status=status,
                 default_description=description,
+                default_goal=normalized_goal,
             )
         if archived_dir is not None:
             return _work_item_from_dir(
                 archived_dir,
                 archived=True,
                 default_description=description,
+                default_goal=normalized_goal,
             )
 
         created_dir = _active_dir(paths, normalized)
@@ -339,6 +378,7 @@ def ensure_work_item_metadata(
             archived=False,
             default_status=status,
             default_description=description,
+            default_goal=normalized_goal,
         )
 
 
@@ -444,6 +484,7 @@ def update_work_item(
     *,
     status: str | None = None,
     description: str | None = None,
+    goal: str | None = None,
 ) -> WorkItem:
     """Update active work item metadata and rewrite ``__status.json`` atomically."""
 
@@ -458,13 +499,16 @@ def update_work_item(
         raise ValueError(f"Work item '{work_id}' not found")
 
     current = _work_item_from_dir(active_dir, archived=False)
+    normalized_goal = _normalize_goal(goal)
     next_status = current.status if status is None else status
     if next_status == "done":
         raise ValueError("'done' is reserved for archived work items.")
     next_description = current.description if description is None else description
+    next_goal = current.goal if goal is None else normalized_goal
     updated = WorkItem(
         name=current.name,
         description=next_description,
+        goal=next_goal,
         status=next_status,
         created_at=current.created_at,
         archived_at=None,
@@ -475,6 +519,7 @@ def update_work_item(
             _status_payload(
                 status=updated.status,
                 description=updated.description,
+                goal=updated.goal,
                 created_at=updated.created_at,
                 archived_at=None,
             )
@@ -513,6 +558,7 @@ def archive_work_item(
     archived_item = WorkItem(
         name=current.name,
         description=archived_description,
+        goal=current.goal,
         status="done",
         created_at=current.created_at,
         archived_at=archived_at,
@@ -523,6 +569,7 @@ def archive_work_item(
             _status_payload(
                 status="done",
                 description=archived_item.description,
+                goal=archived_item.goal,
                 created_at=archived_item.created_at,
                 archived_at=archived_item.archived_at,
             )
@@ -555,6 +602,7 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
             _status_payload(
                 status=status,
                 description=current.description,
+                goal=current.goal,
                 created_at=current.created_at,
                 archived_at=None,
             )

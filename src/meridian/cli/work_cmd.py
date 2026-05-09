@@ -66,12 +66,17 @@ def _work_start(
         str,
         Parameter(name=["--description", "--desc"], help="Optional work item description."),
     ] = "",
+    goal: Annotated[
+        str | None,
+        Parameter(name="--goal", help="Optional overarching work goal."),
+    ] = None,
 ) -> None:
     emit(
         work_start_sync(
             WorkStartInput(
                 label=label,
                 description=description,
+                goal=goal,
                 chat_id=_runtime_chat_id(),
             )
         )
@@ -150,6 +155,10 @@ def _work_update(
         str | None,
         Parameter(name=["--description", "--desc"], help="Updated work item description."),
     ] = None,
+    goal: Annotated[
+        str | None,
+        Parameter(name="--goal", help="Updated work item goal."),
+    ] = None,
 ) -> None:
     emit(
         work_update_sync(
@@ -157,6 +166,7 @@ def _work_update(
                 work_id=work_id,
                 status=status,
                 description=description,
+                goal=goal,
             )
         )
     )

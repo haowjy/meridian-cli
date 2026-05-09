@@ -45,6 +45,7 @@ from meridian.lib.launch.launch_types import (
     summarize_composition_warnings,
 )
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
     resolve_project_paths,
@@ -79,6 +80,7 @@ from .prompt import (
     build_goal_instruction,
     build_launch_context_documents,
     build_report_instruction,
+    build_work_goal_instruction,
     compose_skill_injections,
     compose_skill_prompt_documents,
     sanitize_prior_output,
@@ -864,6 +866,23 @@ def _resolve_spawn_prepare_projection(
         active_work_dir=active_work_dir,
     )
 
+    resolved_work_id = (
+        (request.work_id_hint or "").strip()
+        or (active_work_dir.name if active_work_dir is not None else "")
+    )
+    work_goal: str | None = None
+    if resolved_work_id:
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
+        if work_item is not None:
+            work_goal = work_item.goal
+    completion_contract = build_goal_instruction(request.goal)
+    work_goal_instruction = build_work_goal_instruction(work_goal)
+    if completion_contract and work_goal_instruction:
+        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
+    elif work_goal_instruction:
+        completion_contract = work_goal_instruction
+
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
@@ -871,7 +890,7 @@ def _resolve_spawn_prepare_projection(
             report_instruction=build_report_instruction(),
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
-            completion_contract=build_goal_instruction(request.goal),
+            completion_contract=completion_contract,
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
             reference_items=loaded_references,

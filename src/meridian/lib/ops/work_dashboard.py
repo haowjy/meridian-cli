@@ -37,6 +37,17 @@ def _spawn_label(spawn: SpawnRecord) -> str:
     return ""
 
 
+def _truncated_goal(goal: str | None, *, max_len: int = 80) -> str:
+    if goal is None:
+        return ""
+    normalized = " ".join(goal.split())
+    if len(normalized) <= max_len:
+        return normalized
+    if max_len <= 1:
+        return "…"
+    return normalized[: max_len - 1].rstrip() + "…"
+
+
 class WorkDashboardSpawn(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -146,6 +157,7 @@ class WorkDashboardItem(BaseModel):
 
     name: str
     status: str
+    goal: str | None = None
     spawns: tuple[WorkDashboardSpawn, ...] = ()
 
 
@@ -176,7 +188,11 @@ class WorkDashboardOutput(BaseModel):
         has_spawns = False
 
         for item in self.items:
-            lines.append(f"  {item.name}  {item.status}")
+            row = f"  {item.name}  {item.status}"
+            goal = _truncated_goal(item.goal)
+            if goal:
+                row = f"{row}  {goal}"
+            lines.append(row)
             lines.extend(_format_spawn_rows(item.spawns, indent="    "))
             if item.spawns:
                 has_spawns = True
@@ -205,6 +221,7 @@ class WorkListItem(BaseModel):
 
     name: str
     status: str
+    goal: str | None = None
     description: str
     created_at: str
 
@@ -254,6 +271,7 @@ class WorkShowOutput(BaseModel):
 
     name: str
     status: str
+    goal: str | None = None
     description: str
     created_at: str
     work_dir: str
@@ -270,6 +288,7 @@ class WorkShowOutput(BaseModel):
                 [
                     ("Work", self.name),
                     ("Status", self.status),
+                    ("Goal", self.goal or "(none)"),
                     ("Description", self.description or "(none)"),
                     ("Created", self.created_at),
                     ("Dir", self.work_dir),
@@ -459,6 +478,7 @@ def work_dashboard_sync(
             WorkDashboardItem(
                 name=work_id,
                 status=item.status if item is not None else "missing",
+                goal=item.goal if item is not None else None,
                 spawns=tuple(
                     sorted(grouped[work_id], key=lambda spawn: _spawn_id_sort_key(spawn.id))
                 ),
@@ -491,6 +511,7 @@ def work_list_sync(
             WorkListItem(
                 name=item.name,
                 status=item.status,
+                goal=item.goal,
                 description=item.description,
                 created_at=item.created_at,
             )
@@ -535,6 +556,7 @@ def work_show_sync(
     return WorkShowOutput(
         name=item.name,
         status=item.status,
+        goal=item.goal,
         description=item.description,
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
