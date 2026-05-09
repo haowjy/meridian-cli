@@ -84,6 +84,7 @@ def resolve_model(
 
         raw_default_effort = mars_result.get("default_effort")
         raw_default_autocompact = mars_result.get("autocompact")
+        raw_default_autocompact_pct = mars_result.get("autocompact_pct")
         default_effort = (
             raw_default_effort.strip()
             if isinstance(raw_default_effort, str) and raw_default_effort.strip()
@@ -95,6 +96,12 @@ def resolve_model(
             and not isinstance(raw_default_autocompact, bool)
             else None
         )
+        default_autocompact_pct = (
+            raw_default_autocompact_pct
+            if isinstance(raw_default_autocompact_pct, int)
+            and not isinstance(raw_default_autocompact_pct, bool)
+            else None
+        )
 
         return AliasEntry(
             alias=str(mars_result.get("name", "") or ""),
@@ -103,6 +110,7 @@ def resolve_model(
             description=str(mars_result.get("description", "") or "") or None,
             default_effort=default_effort,
             default_autocompact=default_autocompact,
+            default_autocompact_pct=default_autocompact_pct,
         )
 
     # Step 1: Try mars resolve (alias + harness in one call) before the

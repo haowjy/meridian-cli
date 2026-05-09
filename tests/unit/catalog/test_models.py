@@ -399,20 +399,20 @@ class TestAgentModelEntry:
         entry = AgentModelEntry.model_validate(
             {
                 "effort": "  high  ",
-                "autocompact": 50,
+                "autocompact": 200000,
                 "lane": "correctness",
             }
         )
 
         assert entry.effort == "high"
-        assert entry.autocompact == 50
+        assert entry.autocompact == 200000
 
     @pytest.mark.parametrize("effort", ["auto", "ultra"])
     def test_invalid_effort_raises(self, effort: str) -> None:
         with pytest.raises(ValidationError, match="expected one of"):
             AgentModelEntry(effort=effort)
 
-    @pytest.mark.parametrize("value", [1, 100])
+    @pytest.mark.parametrize("value", [1000, 200000])
     def test_autocompact_accepts_supported_bounds(self, value: int) -> None:
         assert AgentModelEntry(autocompact=value).autocompact == value
 
@@ -420,7 +420,25 @@ class TestAgentModelEntry:
         with pytest.raises(ValidationError, match="boolean"):
             AgentModelEntry(autocompact=True)  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("value", [0, 101])
+    @pytest.mark.parametrize("value", [0, 999])
     def test_autocompact_out_of_range_raises(self, value: int) -> None:
         with pytest.raises(ValidationError, match="autocompact"):
             AgentModelEntry(autocompact=value)
+
+    @pytest.mark.parametrize("value", [1, 100])
+    def test_autocompact_pct_accepts_supported_bounds(self, value: int) -> None:
+        assert AgentModelEntry(autocompact_pct=value).autocompact_pct == value
+
+    def test_autocompact_pct_bool_raises(self) -> None:
+        with pytest.raises(ValidationError, match="boolean"):
+            AgentModelEntry(autocompact_pct=True)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("value", [0, 101])
+    def test_autocompact_pct_out_of_range_raises(self, value: int) -> None:
+        with pytest.raises(ValidationError, match="autocompact"):
+            AgentModelEntry(autocompact_pct=value)
+
+    def test_autocompact_pct_stored_independently_from_autocompact(self) -> None:
+        entry = AgentModelEntry(autocompact=50000, autocompact_pct=75)
+        assert entry.autocompact == 50000
+        assert entry.autocompact_pct == 75

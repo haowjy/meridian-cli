@@ -22,7 +22,7 @@ logger.addHandler(logging.NullHandler())
 _KNOWN_EFFORT_VALUES = KNOWN_EFFORT_VALUES
 _KNOWN_APPROVAL_VALUES = KNOWN_APPROVAL_VALUES
 _MODEL_POLICY_SCALAR_OVERRIDE_KEYS = frozenset(
-    {"harness", "sandbox", "approval", "effort", "autocompact", "timeout"}
+    {"harness", "sandbox", "approval", "effort", "autocompact", "autocompact_pct", "timeout"}
 )
 _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS = frozenset(
     {"skills", "tools", "disallowed-tools", "mcp-tools"}
@@ -37,6 +37,7 @@ class AgentModelEntry(BaseModel):
 
     effort: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
 
     @field_validator("effort")
     @classmethod
@@ -63,6 +64,20 @@ class AgentModelEntry(BaseModel):
         if value is None:
             return None
         return RuntimeOverrides(autocompact=value).autocompact
+
+    @field_validator("autocompact_pct", mode="before")
+    @classmethod
+    def _reject_bool_autocompact_pct(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("autocompact_pct must be an integer, not a boolean")
+        return value
+
+    @field_validator("autocompact_pct")
+    @classmethod
+    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        return RuntimeOverrides(autocompact_pct=value).autocompact_pct
 
 
 class ModelPolicyRule(BaseModel):
@@ -101,6 +116,7 @@ class AgentProfile(BaseModel):
     effort: str | None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     mode: Literal["primary", "subagent"] = "subagent"
     model_policies: tuple[ModelPolicyRule, ...] = ()
     models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
@@ -328,6 +344,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     effort_value = frontmatter.get("effort")
     approval_value = frontmatter.get("approval")
     autocompact_value = frontmatter.get("autocompact")
+    autocompact_pct_value = frontmatter.get("autocompact_pct")
     mode_value = frontmatter.get("mode")
     model_policies_value = frontmatter.get("model-policies")
     models_value = frontmatter.get("models")
@@ -374,6 +391,28 @@ def parse_agent_profile(path: Path) -> AgentProfile:
                 )
                 autocompact = None
 
+    autocompact_pct: int | None = None
+    if autocompact_pct_value is not None:
+        try:
+            autocompact_pct = int(str(autocompact_pct_value))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Agent profile '%s' has invalid autocompact_pct '%s': expected int.",
+                profile_name,
+                autocompact_pct_value,
+            )
+            autocompact_pct = None
+        if autocompact_pct is not None:
+            try:
+                autocompact_pct = RuntimeOverrides(autocompact_pct=autocompact_pct).autocompact_pct
+            except ValueError:
+                logger.warning(
+                    "Agent profile '%s' has autocompact_pct %d outside valid range (1-100).",
+                    profile_name,
+                    autocompact_pct,
+                )
+                autocompact_pct = None
+
     models = _parse_model_overrides(models_value, profile_name=profile_name)
     model_policies = _parse_model_policies(
         model_policies_value,
@@ -412,6 +451,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         effort=effort,
         approval=approval,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         mode=cast("Literal['primary', 'subagent']", mode),
         model_policies=model_policies,
         models=models,
