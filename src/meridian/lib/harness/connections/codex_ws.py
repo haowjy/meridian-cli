@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import socket
+import time as _time
 from asyncio.subprocess import Process
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BufferedWriter
@@ -58,6 +59,11 @@ from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
     trace_wire_send,
+)
+from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import (
+    ProcessScopeSnapshot,
+    ScopedProcessHandle,
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
@@ -180,6 +186,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         self._stderr_log_path: Path | None = None
         self._stderr_read_offset = 0
         self._codex_home: Path | None = None
+        self._scope_handle: ScopedProcessHandle | None = None
 
         self._next_request_id = 1
         self._pending_requests: dict[int, asyncio.Future[dict[str, object]]] = {}
@@ -260,6 +267,13 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             port=config.ws_port,
         )
 
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        handle = self._scope_handle
+        if handle is None:
+            return None
+        return handle.snapshot
+
     async def start(
         self,
         config: ConnectionConfig,
@@ -317,6 +331,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                     env=env,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=self._stderr_handle,
+                    start_new_session=not IS_WINDOWS,
                 )
             except (FileNotFoundError, NotADirectoryError) as exc:
                 raise HarnessBinaryNotFound.from_os_error(
@@ -324,6 +339,40 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                     error=exc,
                     binary_name=appserver_command[0],
                 ) from exc
+
+            # Build scope handle immediately after successful subprocess creation so
+            # that _cleanup_resources can perform group/tree termination rather than
+            # killing only the root process.
+            _proc = self._process
+            _pid = _proc.pid
+            _containment: str
+            _pgid: int | None = None
+            if not IS_WINDOWS:
+                try:
+                    _pgid = os.getpgid(_pid)
+                    _containment = "posix_pgid"
+                except OSError:
+                    _containment = "pid_tree_fallback"
+            else:
+                # Windows Job Object wiring comes in a later subphase; for now
+                # the snapshot carries the intent and terminate() degrades to
+                # psutil tree termination automatically.
+                _containment = "windows_job"
+            self._scope_handle = ScopedProcessHandle(
+                process=_proc,
+                snapshot=ProcessScopeSnapshot(
+                    scope_id="backend",
+                    owner_policy="spawn_owned",
+                    owner_id=str(config.spawn_id),
+                    role="harness_backend",
+                    containment=_containment,
+                    root_pid=_pid,
+                    root_created_at_epoch=_time.time(),
+                    pgid=_pgid,
+                    job_name=None,
+                    degraded_reason=None,
+                ),
+            )
 
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._ws = await self._connect_with_retry(
@@ -688,16 +737,25 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
                 await self._reader_task
             self._reader_task = None
 
+        scope_handle = self._scope_handle
+        self._scope_handle = None
         process = self._process
-        if process is not None:
-            if process.returncode is None:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=_STOP_WAIT_TIMEOUT_SECONDS)
-                except TimeoutError:
-                    process.kill()
-                    await process.wait()
-            self._process = None
+        self._process = None
+
+        if scope_handle is not None and process is not None and process.returncode is None:
+            await scope_handle.terminate(
+                grace_seconds=_STOP_WAIT_TIMEOUT_SECONDS,
+                reason="stop_called",
+            )
+        elif process is not None and process.returncode is None:
+            # Legacy fallback when scope handle was never created (e.g. start()
+            # failed before subprocess was launched).
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=_STOP_WAIT_TIMEOUT_SECONDS)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
 
         self._fail_pending_requests(RuntimeError("Codex connection stopped"))
         await self._clear_stale_hitl_requests(reason="connection_stopped")
