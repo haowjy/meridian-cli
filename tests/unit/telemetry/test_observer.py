@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Mapping
 
 from meridian.lib.core.telemetry import LifecycleEvent
 from meridian.lib.telemetry.observer import _extract_terminal_data
