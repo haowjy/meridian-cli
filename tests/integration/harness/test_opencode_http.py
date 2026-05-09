@@ -284,6 +284,7 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
         env: Mapping[str, str],
         stdout: object,
         stderr: object,
+        **_kwargs: object,
     ) -> _FakeProcess:
         _ = stdout, stderr
         captured["command"] = list(command)

@@ -52,6 +52,11 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
+from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import (
+    ProcessScopeSnapshot,
+    ScopedProcessHandle,
+)
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
@@ -167,6 +172,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         self._signal_in_flight = False
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
+        self._scope_handle: ScopedProcessHandle | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -196,6 +202,13 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         if process is None:
             return None
         return process.pid
+
+    @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        handle = self._scope_handle
+        if handle is None:
+            return None
+        return handle.snapshot
 
     @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
@@ -402,6 +415,9 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
+        subprocess_kwargs: dict[str, Any] = {}
+        if not IS_WINDOWS:
+            subprocess_kwargs["start_new_session"] = True
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *command,
@@ -409,6 +425,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 env=env,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=self._stderr_handle,
+                **subprocess_kwargs,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
@@ -416,6 +433,31 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 error=exc,
                 binary_name=command[0],
             ) from exc
+
+        process = self._process
+        pid = process.pid
+        containment = "pid_tree_fallback"
+        pgid: int | None = None
+        if not IS_WINDOWS:
+            try:
+                pgid = os.getpgid(pid)
+                containment = "posix_pgid"
+            except OSError:
+                pass
+        spawn_id_str = str(config.spawn_id)
+        snapshot = ProcessScopeSnapshot(
+            scope_id="backend",
+            owner_policy="spawn_owned",
+            owner_id=spawn_id_str,
+            role="harness_backend",
+            containment=containment,
+            root_pid=pid,
+            root_created_at_epoch=time.time(),
+            pgid=pgid,
+            job_name=None,
+            degraded_reason=None,
+        )
+        self._scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
 
     async def _create_session_with_retry(
         self,
@@ -808,9 +850,16 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
             except Exception:
                 logger.warning("Failed to close OpenCode HTTP client", exc_info=True)
 
+        scope_handle = self._scope_handle
+        self._scope_handle = None
         process = self._process
         self._process = None
-        if process is not None and process.returncode is None:
+        if scope_handle is not None and process is not None and process.returncode is None:
+            await scope_handle.terminate(
+                grace_seconds=self._STOP_GRACE_SECONDS,
+                reason="stop_called",
+            )
+        elif process is not None and process.returncode is None:
             process.terminate()
             try:
                 await asyncio.wait_for(process.wait(), timeout=self._STOP_GRACE_SECONDS)
