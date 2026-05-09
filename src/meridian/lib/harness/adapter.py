@@ -274,8 +274,6 @@ class HarnessPrelaunchState(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
-    cleanup_overlay_root: str | None = None
-    cleanup_canonical_root: str | None = None
     metadata: dict[str, str] = Field(default_factory=_empty_prelaunch_metadata)
 
 

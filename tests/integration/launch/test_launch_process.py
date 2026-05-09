@@ -14,7 +14,6 @@ import pytest
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode, ForkMaterializationMode
-from meridian.lib.harness.claude_preflight import MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
@@ -281,7 +280,6 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    monkeypatch.delenv(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, raising=False)
     project_root = tmp_path
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -387,7 +385,6 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    monkeypatch.delenv(MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV, raising=False)
     project_root = tmp_path
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
@@ -521,11 +518,6 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
         command = tuple(kwargs["command"])
         captured["command"] = command
-        env = kwargs["env"]
-        assert isinstance(env, dict)
-        captured["original_claude_config_dir"] = env.get(
-            MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV
-        )
         output_log_path = kwargs["output_log_path"]
         captured["output_log_path"] = output_log_path
         prompt_flag_index = command.index("--append-system-prompt-file")
@@ -571,7 +563,6 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert "primary prompt" in starting_prompt
     assert "passthrough system prompt" not in starting_prompt
     assert not (log_dir / "prompt.md").exists()
-    assert captured["original_claude_config_dir"] is None
     assert json.loads((log_dir / "projection-manifest.json").read_text(encoding="utf-8")) == {
         "harness": "claude",
         "surface": "primary",

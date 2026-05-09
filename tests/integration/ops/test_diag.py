@@ -508,10 +508,10 @@ def test_doctor_skips_model_resolution_for_config_surface(
 def _seed_pruning_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[Path, Path, Path, Path, Path, Path]:
-    """Create a project root with stale artifacts, stale overlays, and orphan dirs.
+) -> tuple[Path, Path, Path, Path]:
+    """Create a project root with stale artifacts and orphan dirs.
 
-    Returns (project_root, current_spawn, current_overlay, orphan_root, other_spawn, other_overlay).
+    Returns (project_root, current_spawn, orphan_root, other_spawn).
     """
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
@@ -532,12 +532,6 @@ def _seed_pruning_layout(
     current_spawn = current_root / "spawns" / "p1"
     _write_text(current_spawn / "history.jsonl", '{"event":"start"}\n')
     _set_tree_mtime(current_spawn, 1_600_000_000.0)
-    current_overlay = current_root / "claude-config" / "p1"
-    _write_text(
-        current_overlay / "projects" / "slug" / "session.jsonl",
-        '{"event":"overlay-current"}\n',
-    )
-    _set_tree_mtime(current_overlay, 1_600_000_000.0)
     _set_path_mtime(current_root, 1_900_000_000.0)
 
     orphan_root = user_home / "projects" / "orphan-uuid"
@@ -548,15 +542,9 @@ def _seed_pruning_layout(
     other_spawn = other_root / "spawns" / "p9"
     _write_text(other_spawn / "history.jsonl", '{"event":"start"}\n')
     _set_tree_mtime(other_spawn, 1_600_000_000.0)
-    other_overlay = other_root / "claude-config" / "p9"
-    _write_text(
-        other_overlay / "projects" / "slug" / "session.jsonl",
-        '{"event":"overlay-other"}\n',
-    )
-    _set_tree_mtime(other_overlay, 1_600_000_000.0)
     _set_path_mtime(other_root, 1_900_000_000.0)
 
-    return project_root, current_spawn, current_overlay, orphan_root, other_spawn, other_overlay
+    return project_root, current_spawn, orphan_root, other_spawn
 
 
 def test_doctor_prune_only_prunes_current_project_artifacts(
@@ -566,49 +554,19 @@ def test_doctor_prune_only_prunes_current_project_artifacts(
     (
         project_root,
         current_spawn,
-        current_overlay,
         orphan_root,
         other_spawn,
-        other_overlay,
     ) = _seed_pruning_layout(tmp_path, monkeypatch)
 
     result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
 
     assert result.pruned_orphan_dirs == 0
-    assert result.pruned_claude_overlays == 0
     assert result.pruned_spawn_artifacts == 1
     assert result.orphan_project_dirs == ()
-    assert result.stale_claude_overlays and result.stale_claude_overlays[0].spawn_id == "p1"
     assert result.stale_spawn_artifacts and result.stale_spawn_artifacts[0].spawn_id == "p1"
     assert not current_spawn.exists()
-    assert current_overlay.exists()
     assert orphan_root.exists(), "orphan dir should NOT be pruned without --global"
     assert other_spawn.exists()
-    assert other_overlay.exists()
-
-
-def test_doctor_reports_stale_claude_overlays_separately(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (
-        project_root,
-        _current_spawn,
-        current_overlay,
-        _orphan_root,
-        _other_spawn,
-        other_overlay,
-    ) = _seed_pruning_layout(tmp_path, monkeypatch)
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
-
-    warning = _warning_by_code(result, "stale_claude_overlays")
-    assert warning.payload == {
-        "spawn_ids": ["p1"],
-        "paths": [current_overlay.as_posix()],
-    }
-    assert result.stale_claude_overlays and result.stale_claude_overlays[0].spawn_id == "p1"
-    assert other_overlay.exists()
 
 
 def test_doctor_local_mode_skips_cross_project_enumeration(
@@ -642,10 +600,8 @@ def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
     (
         project_root,
         current_spawn,
-        current_overlay,
         orphan_root,
         other_spawn,
-        other_overlay,
     ) = _seed_pruning_layout(tmp_path, monkeypatch)
     monkeypatch.setenv("MERIDIAN_DEPTH", "0")
 
@@ -654,73 +610,13 @@ def test_doctor_prune_with_global_also_prunes_global_orphan_dirs(
     )
 
     assert result.pruned_orphan_dirs == 1
-    assert result.pruned_claude_overlays == 0
     assert result.pruned_spawn_artifacts == 1
     assert result.orphan_project_dirs and result.orphan_project_dirs[0].uuid == "orphan-uuid"
-    assert result.stale_claude_overlays and result.stale_claude_overlays[0].spawn_id == "p1"
     assert result.stale_spawn_artifacts and result.stale_spawn_artifacts[0].spawn_id == "p1"
     assert not orphan_root.exists()
     assert not current_spawn.exists()
-    assert current_overlay.exists()
     assert other_spawn.exists()
-    assert other_overlay.exists()
     assert result.ok is True
-
-
-def test_doctor_prune_leaves_stale_claude_overlays_in_place(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _create_project_root(tmp_path)
-    _create_agent_skill_dirs(project_root)
-    user_home = tmp_path / "user-home"
-    monkeypatch.setenv("MERIDIAN_HOME", user_home.as_posix())
-    ambient_root = user_home / ".claude-ambient"
-    durable_root = user_home / ".claude-durable"
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", ambient_root.as_posix())
-    monkeypatch.setattr(
-        diag,
-        "check_upgrade_availability",
-        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
-    )
-
-    current_uuid = "current-project-uuid"
-    (project_root / ".meridian").mkdir(parents=True, exist_ok=True)
-    (project_root / ".meridian" / "id").write_text(current_uuid, encoding="utf-8")
-    runtime_root = user_home / "projects" / current_uuid
-    stale_overlay = runtime_root / "claude-config" / "p1"
-    _write_text(
-        stale_overlay / "projects" / "slug" / "session.jsonl",
-        '{"event":"overlay-current"}\n',
-    )
-    _write_text(
-        stale_overlay / ".meridian-overlay.json",
-        '{\n  "v": 1,\n  "materialization_root": "'
-        + durable_root.as_posix()
-        + '"\n}\n',
-    )
-    _set_tree_mtime(stale_overlay, 1_600_000_000.0)
-    _set_path_mtime(runtime_root, 1_900_000_000.0)
-
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p1",
-        chat_id="c1",
-        model="claude-sonnet-4-5",
-        agent="coder",
-        harness="claude",
-        prompt="stale overlay",
-        status="failed",
-    )
-    spawn_store.update_spawn(runtime_root, "p1", claude_config_dir=stale_overlay.as_posix())
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix(), prune=True))
-
-    assert result.pruned_claude_overlays == 0
-    assert stale_overlay.exists()
-    assert not (durable_root / "projects" / "slug" / "session.jsonl").exists()
-    assert not (ambient_root / "projects" / "slug" / "session.jsonl").exists()
-    assert spawn_store.get_spawn(runtime_root, "p1").claude_config_dir == stale_overlay.as_posix()
 
 
 def test_doctor_global_requires_root_side_effect_process(
@@ -730,10 +626,8 @@ def test_doctor_global_requires_root_side_effect_process(
     (
         project_root,
         current_spawn,
-        current_overlay,
         orphan_root,
         other_spawn,
-        other_overlay,
     ) = _seed_pruning_layout(tmp_path, monkeypatch)
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(
@@ -748,7 +642,5 @@ def test_doctor_global_requires_root_side_effect_process(
         doctor_sync(DoctorInput(project_root=project_root.as_posix(), global_=True))
 
     assert current_spawn.exists()
-    assert current_overlay.exists()
     assert orphan_root.exists()
     assert other_spawn.exists()
-    assert other_overlay.exists()

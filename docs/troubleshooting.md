@@ -221,31 +221,9 @@ After upgrading to a version that uses the v2 spawn state format, the first `mer
 
 Once migration completes, `spawns.legacy-v1.jsonl` is safe to delete if you want to reclaim space. It is not read after migration.
 
-## Claude session isolation
-
-Claude stores per-session transcript files under the configured Claude config root (default `~/.claude`) in `projects/<project-slug>/`. Meridian gives each Claude session (primary session or child spawn) its own isolated config directory — an **overlay** — so its `projects/` directory starts empty and concurrent sessions can't bleed conversation context into each other.
-
-**What the overlay contains**
-
-The overlay lives inside Meridian's runtime state at `~/.meridian/projects/<uuid>/claude-config/<spawn_id>/` (POSIX) or `%LOCALAPPDATA%\meridian\projects\<uuid>\claude-config\<spawn_id>\` (Windows). It mirrors most of the configured Claude config root (default `~/.claude`) — credentials, settings, extensions — but gives Claude a fresh empty `projects/` directory for each Claude session. Mutable user-state files (`.claude.json`, `.credentials.json`, `statsig`, `memory`, `cached_preferences`, `todos`) are copied in; read-only entries are linked or copied depending on platform (for example, symlinks on POSIX). Overlay directories are internal implementation state; don't read or modify them directly.
-
-**Primary and child spawns**
-
-Both primary sessions (`meridian`) and child spawns (`meridian spawn`) use isolated overlays. Child spawns also have Claude's parent-session sentinel (`CLAUDECODE`) cleared, allowing Claude to run without nesting restrictions under Meridian's control.
-
-When a primary session or child spawn uses `--continue`, `--fork`, or equivalent session-resume flows, Meridian seeds the target overlay's `projects/` directory from the source session transcript so Claude can resume prior context. Plain `--from` context attachment does not trigger transcript seeding. Seeding only runs when Meridian can resolve both the source session ID and source execution CWD.
-
-**Session transcripts after normal exit**
-
-When a primary session or child spawn exits normally, Meridian attempts to materialize its session transcript files from the overlay's `projects/` directory into the canonical Claude `projects/` tree under the configured Claude config root (default `~/.claude/projects/`). This means conversations from Meridian-managed Claude sessions usually appear in your regular Claude history after they complete. Meridian also preserves selected auth/config files (`.claude.json` and `.credentials.json`) back to the durable Claude config root so overlay-side login or token refresh changes are not discarded. This does not repair already-invalid durable Claude credentials; if raw `claude` reports `401 Invalid authentication credentials`, re-authenticate with Claude directly first. After these best-effort materialization steps, Meridian removes the overlay immediately on normal completion. `doctor --prune` only cleans up stale/crash-orphaned overlays left behind when normal cleanup did not finish.
-
-**Reading spawn conversations**
-
-`meridian session log <spawn_id>` may read Meridian spawn artifacts (`history.jsonl` / legacy `output.jsonl`) for active or fallback paths, and otherwise reads native harness transcripts. For Claude, those native transcripts resolve under Claude's session-store `projects/` tree.
-
 ## Stale state accumulating in `~/.meridian/`
 
-Over time, orphan project directories, old spawn artifacts, stale crash-orphaned Claude overlay directories, and expired telemetry segments accumulate under `~/.meridian/`. Per-project orphan repairs (stale locks, orphaned runs) happen silently in the background on each launch. Use `meridian doctor` to inspect and clean up manually.
+Over time, orphan project directories, old spawn artifacts, and expired telemetry segments accumulate under `~/.meridian/`. Per-project orphan repairs (stale locks, orphaned runs) happen silently in the background on each launch. Use `meridian doctor` to inspect and clean up manually.
 
 To inspect what's stale:
 
@@ -254,16 +232,16 @@ meridian doctor           # per-project scan (cheap, run from anywhere)
 meridian doctor --global  # same checks + machine-wide orphan-project-dir scan; must run from the root process
 ```
 
-`meridian doctor` reports stale Claude overlay directories as `stale_claude_overlays` and telemetry cleanup candidates as `stale_telemetry_segments`. That telemetry warning can mean expired segments, total telemetry size above the cap, or both. Stale overlay directories are safe to keep until pruned — they may contain transcripts, any transcripts inside remain until deletion, and successful materialization may also create a canonical copy.
+`meridian doctor` reports telemetry cleanup candidates as `stale_telemetry_segments`. That warning can mean expired segments, total telemetry size above the cap, or both.
 
 To clean up:
 
 ```bash
-meridian doctor --prune           # prune stale spawn artifacts, stale Claude overlays, and telemetry retention targets (current project only)
+meridian doctor --prune           # prune stale spawn artifacts and telemetry retention targets (current project only)
 meridian doctor --prune --global  # also prune orphan project dirs machine-wide
 ```
 
-When `--prune` removes a stale Claude overlay, it first makes a best-effort attempt to materialize any session transcript files into the canonical Claude `projects/` tree (usually `~/.claude/projects/`). Meridian then deletes the overlay directory and reclaims disk space. If transcript materialization succeeds and overlay deletion succeeds, Meridian also repairs spawn/session metadata to point to the canonical config root. If materialization fails for a particular overlay, Meridian logs a warning and continues prune handling. Telemetry pruning is current-project only: it removes expired non-live segments first, then may remove older closed segments if needed to get back under the telemetry size cap.
+Telemetry pruning is current-project only: it removes expired non-live segments first, then may remove older closed segments if needed to get back under the telemetry size cap.
 
 Pruning respects `state.retention_days` (default 30 days). Configure in `meridian.toml`:
 

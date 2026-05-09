@@ -453,12 +453,15 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         _ = runtime_root, spawn_id, child_env
 
         configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-        effective_config_root = Path(configured_root).expanduser() if configured_root else None
+        effective_config_root = (
+            Path(configured_root).expanduser().resolve() if configured_root else None
+        )
         env_overrides: dict[str, str] = {}
-        if configured_root:
-            env_overrides["CLAUDE_CONFIG_DIR"] = configured_root
+        if effective_config_root is not None:
+            effective_config_dir = str(effective_config_root)
+            env_overrides["CLAUDE_CONFIG_DIR"] = effective_config_dir
             if record_effective_config_dir is not None:
-                record_effective_config_dir(configured_root)
+                record_effective_config_dir(effective_config_dir)
 
         session_access = resolve_claude_session_access_source(
             session,

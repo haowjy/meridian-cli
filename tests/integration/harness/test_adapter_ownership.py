@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.claude import (
     ClaudeAdapter,
     _candidate_claude_project_dirs,
@@ -16,12 +17,12 @@ from meridian.lib.harness.claude import (
 from meridian.lib.harness.codex import CodexAdapter
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
+from meridian.lib.launch.request import SessionRequest
 
 
 @pytest.fixture(autouse=True)
 def _clear_inherited_claude_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    monkeypatch.delenv("MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR", raising=False)
 
 
 def _write_codex_rollout(codex_home: Path, project_root: Path, session_id: str) -> Path:
@@ -250,6 +251,46 @@ def test_claude_adapter_uses_claude_config_dir_override(
         is False
     )
     assert infer_harness_from_untracked_session_ref(project_root, override_session_id) == "claude"
+
+
+@pytest.mark.parametrize(
+    ("configured_root", "cwd_relative", "expected_suffix"),
+    [
+        ("~/claude-root", False, ("home", "claude-root")),
+        ("relative-claude-root", True, ("repo", "relative-claude-root")),
+    ],
+)
+def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    configured_root: str,
+    cwd_relative: bool,
+    expected_suffix: tuple[str, ...],
+) -> None:
+    fake_home = tmp_path / "home"
+    repo_root = tmp_path / "repo"
+    child_root = repo_root / "child"
+    fake_home.mkdir(parents=True)
+    child_root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", fake_home.as_posix())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", configured_root)
+    if cwd_relative:
+        monkeypatch.chdir(repo_root)
+
+    recorded_dirs: list[str] = []
+    state = ClaudeAdapter().prepare_prelaunch(
+        runtime_root=tmp_path,
+        spawn_id=SpawnId("p-test"),
+        session=SessionRequest(),
+        child_cwd=child_root,
+        child_env={},
+        resolved_harness_session_id="session-1",
+        record_effective_config_dir=recorded_dirs.append,
+    )
+
+    expected = str((tmp_path / Path(*expected_suffix)).resolve())
+    assert state.env_overrides["CLAUDE_CONFIG_DIR"] == expected
+    assert recorded_dirs == [expected]
 
 
 def test_codex_adapter_owns_session_detection(

@@ -20,7 +20,6 @@ logger = structlog.get_logger(__name__)
 
 # Internal sentinel consumed by Claude projection; never forwarded to the CLI.
 CLAUDE_PARENT_ALLOWED_TOOLS_FLAG = "--meridian-parent-allowed-tools"
-MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV = "MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR"
 
 
 def _default_canonical_claude_config_root() -> Path:
@@ -249,7 +248,6 @@ def build_claude_preflight_result(
 
 __all__ = [
     "CLAUDE_PARENT_ALLOWED_TOOLS_FLAG",
-    "MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV",
     "build_claude_preflight_result",
     "ensure_claude_session_accessible",
     "expand_claude_passthrough_args",
