@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -357,7 +357,7 @@ def maybe_bootstrap_runtime_state(
 
 
 @contextmanager
-def temporary_config_env(config_file: str | None) -> Iterator[None]:
+def temporary_config_env(config_file: str | None) -> Generator[None, None, None]:
     if config_file is None:
         yield
         return

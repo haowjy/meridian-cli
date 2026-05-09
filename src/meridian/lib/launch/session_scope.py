@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +40,7 @@ def session_scope(
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
     _update_session_harness_id: Callable[[Path, str, str], None] = update_session_harness_id,
-) -> Iterator[ManagedSession]:
+) -> Generator[ManagedSession, None, None]:
     resolved_chat_id = _start_session(
         runtime_root,
         harness=harness,

@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -531,7 +531,7 @@ def _session_execution_context(
     inherited_work_id: str | None = None,
     forked_from_chat_id: str | None = None,
     execution_cwd: str | None = None,
-) -> Iterator[_SessionExecutionContext]:
+) -> Generator[_SessionExecutionContext, None, None]:
     with session_scope(
         runtime_root=runtime_root,
         harness=harness_id,

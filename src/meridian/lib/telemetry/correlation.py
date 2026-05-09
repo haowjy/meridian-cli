@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -53,7 +53,9 @@ class LifecycleCorrelation:
 
 
 @contextmanager
-def bind_lifecycle_correlation(correlation: LifecycleCorrelation) -> Iterator[LifecycleCorrelation]:
+def bind_lifecycle_correlation(
+    correlation: LifecycleCorrelation,
+) -> Generator[LifecycleCorrelation, None, None]:
     """Bind lifecycle correlation fields for the current synchronous scope."""
 
     tokens = structlog.contextvars.bind_contextvars(**correlation.to_context())

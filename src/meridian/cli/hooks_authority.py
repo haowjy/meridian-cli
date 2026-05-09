@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 
 from meridian.lib.core.depth import is_nested_meridian_process
@@ -44,7 +44,7 @@ def should_suppress_manual_hook_authority(
 
 
 @contextmanager
-def manual_hook_authority_scope(*, suppress: bool) -> Iterator[None]:
+def manual_hook_authority_scope(*, suppress: bool) -> Generator[None, None, None]:
     """Temporarily clear inherited hook authority env when required."""
 
     if not suppress:
