@@ -1,5 +1,6 @@
 """Unit coverage for harness extraction behavior across adapters."""
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -412,6 +413,43 @@ def test_enrich_finalize_falls_back_to_legacy_output_for_empty_check(tmp_path: P
     )
 
     assert finalized.output_is_empty is False
+
+
+def test_enrich_finalize_estimates_cost_from_model_catalog(tmp_path: Path) -> None:
+    class _UsageExtractor(_StubHarnessExtractor):
+        def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
+            _ = artifacts, spawn_id
+            return TokenUsage(input_tokens=1_000_000, output_tokens=500_000)
+
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-finalize-cost-estimate")
+    (tmp_path / ".mars").mkdir()
+    (tmp_path / ".mars" / "models-cache.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "gpt-test-model",
+                        "cost_input": 2.0,
+                        "cost_output": 4.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    finalized = enrich_finalize(
+        artifacts=artifacts,
+        extractor=_UsageExtractor(),
+        spawn_id=spawn_id,
+        log_dir=tmp_path,
+        model_id="gpt-test-model",
+        project_root=tmp_path,
+    )
+
+    assert finalized.usage.total_cost_usd == 4.0
+    assert finalized.usage.cost_is_estimate is True
 
 
 def test_streaming_extractor_prefers_live_connection_session_id() -> None:

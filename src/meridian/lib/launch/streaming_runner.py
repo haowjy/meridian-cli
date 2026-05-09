@@ -908,6 +908,8 @@ async def execute_with_streaming(
                     extractor=streaming_extractor,
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
+                    model_id=run.model,
+                    project_root=project_root,
                     secrets=secrets,
                 )
                 conclusion.extracted = extraction
