@@ -524,6 +524,7 @@ async def _run_streaming_attempt(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
+            scope_snapshot=getattr(connection, "scope_snapshot", None),
         )
 
         subscriber = manager.subscribe(run.spawn_id)

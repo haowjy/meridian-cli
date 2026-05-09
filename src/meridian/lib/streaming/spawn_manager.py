@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import psutil
+
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
@@ -811,6 +813,34 @@ class SpawnManager:
 
         with suppress(Exception):
             await session.connection.stop()
+
+        # Safety pass: if the process survived connection.stop() (e.g. the connection
+        # was already dead before stop was called), force-terminate via the scope handle.
+        with suppress(Exception):
+            scope_snapshot = getattr(session.connection, "scope_snapshot", None)
+            pid = session.connection.subprocess_pid
+            if pid is not None and scope_snapshot is not None:
+                try:
+                    proc = psutil.Process(pid)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    proc = None
+                if proc is not None and proc.is_running():
+                    logger.warning(
+                        "Process %d still alive after connection.stop(); "
+                        "scope safety cleanup for spawn %s",
+                        pid,
+                        spawn_id,
+                    )
+                    from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
+
+                    await asyncio.to_thread(
+                        terminate_tree_sync,
+                        pid=pid,
+                        created_at_epoch=scope_snapshot.root_created_at_epoch,
+                        grace_secs=5.0,
+                        reason="stop_safety_pass",
+                        scope_id=scope_snapshot.scope_id,
+                    )
 
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
