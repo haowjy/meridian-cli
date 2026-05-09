@@ -312,6 +312,61 @@ class WorkClearOutput(BaseModel):
         return ""
 
 
+def _recover_pending_worktree(
+    project_state_dir: Path,
+    item: work_store.WorkItem,
+    project_root: Path,
+) -> None:
+    """WT-65: Heal interrupted worktree-create by checking actual disk state.
+
+    Called when an existing work item has ``worktree_pending=True``, indicating
+    a previous ``work start`` was killed between ``git worktree add`` and the
+    metadata write.  Two outcomes:
+
+    - Worktree exists on disk: record the path and clear pending (healed).
+    - Worktree absent: clear pending so normal provisioning can retry.
+    """
+    from meridian.lib.config.settings import load_config  # local to avoid circular import
+    from meridian.lib.ops.worktree_ops import (
+        resolve_main_repo_root,
+        resolve_worktree_path,
+        worktree_exists,
+    )
+
+    cfg = load_config(project_root)
+    main_root = resolve_main_repo_root(project_root)
+    if main_root is None:
+        # Not a git repo or git unavailable — just clear pending so retries work cleanly.
+        work_store.update_work_item(project_state_dir, item.name, worktree_pending=False)
+        logger.info(
+            "work_lifecycle.recover_pending.no_git_repo",
+            work_id=item.name,
+        )
+        return
+
+    expected_path = resolve_worktree_path(main_root, item.name, cfg.work.worktree_base)
+    if worktree_exists(expected_path):
+        # Worktree was created before the crash — fix up the metadata.
+        work_store.update_work_item(
+            project_state_dir,
+            item.name,
+            worktree_path=str(expected_path.resolve()),
+            worktree_pending=False,
+        )
+        logger.info(
+            "work_lifecycle.recover_pending.healed",
+            work_id=item.name,
+            worktree_path=str(expected_path),
+        )
+    else:
+        # Worktree was never created — clear pending so provisioning can retry.
+        work_store.update_work_item(project_state_dir, item.name, worktree_pending=False)
+        logger.info(
+            "work_lifecycle.recover_pending.cleared",
+            work_id=item.name,
+        )
+
+
 def _resolve_worktree_intent(
     *,
     explicit_worktree: bool | None,
@@ -483,6 +538,11 @@ def work_start_sync(
                 f"Use `meridian work reopen {existing.name}` first."
             )
         item = existing
+        # WT-65: interrupted-create recovery — a previous `work start` was killed
+        # between `git worktree add` and the metadata write.  Heal before continuing.
+        if item.worktree_pending:
+            _recover_pending_worktree(project_state_dir, item, project_root)
+            item = work_store.get_work_item(project_state_dir, item.name) or item
     else:
         item = work_store.create_work_item(
             project_state_dir,

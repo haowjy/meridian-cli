@@ -131,6 +131,72 @@ def _telemetry_cleanup_stats(stats: RetentionStats) -> TelemetryCleanupStats:
     )
 
 
+def _check_worktree_health(
+    project_state_dir: Path,
+    project_root: Path,
+) -> list[DoctorWarning]:
+    """WT-66: Detect orphaned or inconsistent worktree state in active work items.
+
+    Checks:
+    - ``worktree_pending=True`` without a path → interrupted create.
+    - ``worktree_path`` set but directory absent → worktree removed externally.
+    - Worktree directories on disk with no matching work item → orphaned.
+    """
+    from meridian.lib.ops.worktree_ops import resolve_main_repo_root, worktree_exists
+    from meridian.lib.state import work_store
+
+    warnings: list[DoctorWarning] = []
+    items, _ = work_store.list_work_items(project_state_dir)
+
+    for item in items:
+        if item.worktree_pending:
+            warnings.append(
+                DoctorWarning(
+                    code="worktree.pending",
+                    message=(
+                        f"Work item '{item.name}' has worktree_pending=True. "
+                        f"Run `meridian work start {item.name} --worktree` to retry."
+                    ),
+                    payload={"work_id": item.name},
+                )
+            )
+        if item.worktree_path and not Path(item.worktree_path).is_dir():
+            warnings.append(
+                DoctorWarning(
+                    code="worktree.missing",
+                    message=(
+                        f"Work item '{item.name}' references worktree at "
+                        f"'{item.worktree_path}' but the directory does not exist."
+                    ),
+                    payload={"work_id": item.name, "worktree_path": item.worktree_path},
+                )
+            )
+
+    # Check for orphaned worktrees on disk with no matching work item.
+    main_root = resolve_main_repo_root(project_root)
+    if main_root is not None:
+        worktrees_base = main_root.parent / f"{main_root.name}.worktrees"
+        if worktrees_base.is_dir():
+            known_paths = {item.worktree_path for item in items if item.worktree_path}
+            for child in worktrees_base.iterdir():
+                if child.is_dir():
+                    resolved_child = str(child.resolve())
+                    if resolved_child not in known_paths and worktree_exists(child):
+                        warnings.append(
+                            DoctorWarning(
+                                code="worktree.orphaned",
+                                message=(
+                                    f"Orphaned worktree at '{resolved_child}' has no matching "
+                                    f"work item. "
+                                    f"Clean up with: git worktree remove {resolved_child}"
+                                ),
+                                payload={"worktree_path": resolved_child},
+                            )
+                        )
+
+    return warnings
+
+
 def _repair_stale_session_locks(project_root: Path) -> int:
     runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
     if runtime_root is None:
@@ -229,6 +295,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     skills_dirs = [skills_dir] if skills_dir.is_dir() else []
 
     warnings: list[DoctorWarning] = []
+    warnings.extend(_check_worktree_health(authority.project_state_dir, project_root))
     if surface.warning is not None:
         warnings.append(
             DoctorWarning(
