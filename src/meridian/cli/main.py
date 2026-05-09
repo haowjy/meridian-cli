@@ -67,7 +67,6 @@ from meridian.cli.startup.policy import StartupClass
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_effect_process
 from meridian.lib.core.sink import OutputSink
-from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -377,23 +376,6 @@ def _execute_mars_passthrough(
     return mars_passthrough.execute_mars_passthrough(request, run=subprocess.run, stderr=sys.stderr)
 
 
-def _augment_sync_result(
-    result: "MarsPassthroughResult",
-    *,
-    output_format: str | None = None,
-) -> None:
-    from meridian.cli import mars_passthrough
-
-    return mars_passthrough.augment_sync_result(
-        result,
-        output_format=output_format,
-        check_upgrades=check_upgrade_availability,
-        format_upgrades=lambda upgrades: format_upgrade_availability(upgrades, style="hint"),
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-
-
 def _run_mars_passthrough(
     args: Sequence[str],
     *,
@@ -407,7 +389,6 @@ def _run_mars_passthrough(
         resolve_executable=mars_passthrough.resolve_mars_executable,
         parse_request=mars_passthrough.parse_mars_passthrough,
         execute_request=_execute_mars_passthrough,
-        augment_result=lambda result: _augment_sync_result(result, output_format=output_format),
         stdout=sys.stdout,
         stderr=sys.stderr,
     )

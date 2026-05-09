@@ -9,7 +9,7 @@ mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
 
 
 @pytest.mark.parametrize(
-    ("is_sync", "output_format", "result", "expected_stdout", "expected_stderr", "expect_augment"),
+    ("is_sync", "output_format", "result", "expected_stdout", "expected_stderr"),
     [
         (
             False,
@@ -28,7 +28,6 @@ mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
             ),
             '{"packages": []}\n',
             "warning\n",
-            0,
         ),
         (
             True,
@@ -45,23 +44,20 @@ mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
             ),
             "",
             "",
-            1,
         ),
     ],
-    ids=["non-sync-streaming", "sync-augment"],
+    ids=["non-sync-streaming", "sync-streaming"],
 )
-def test_run_mars_passthrough_streaming_and_sync_augment(
+def test_run_mars_passthrough_streaming(
     is_sync: bool,
     output_format: str | None,
     result: mars_passthrough.MarsPassthroughResult,
     expected_stdout: str,
     expected_stderr: str,
-    expect_augment: int,
 ) -> None:
     request = result.request
     stdout = StringIO()
     stderr = StringIO()
-    observed: list[mars_passthrough.MarsPassthroughResult] = []
 
     with pytest.raises(SystemExit) as exc_info:
         mars_passthrough.run_mars_passthrough(
@@ -70,7 +66,6 @@ def test_run_mars_passthrough_streaming_and_sync_augment(
             resolve_executable=lambda: "/usr/bin/mars",
             parse_request=lambda *_args, **_kwargs: request,
             execute_request=lambda _request: result,
-            augment_result=lambda passthrough_result: observed.append(passthrough_result),
             stdout=stdout,
             stderr=stderr,
         )
@@ -78,7 +73,6 @@ def test_run_mars_passthrough_streaming_and_sync_augment(
     assert exc_info.value.code == result.returncode
     assert stdout.getvalue() == expected_stdout
     assert stderr.getvalue() == expected_stderr
-    assert len(observed) == expect_augment
 
 
 @pytest.mark.parametrize(
@@ -114,16 +108,31 @@ def test_execute_mars_passthrough_sets_managed_env_only_for_sync(is_sync: bool) 
         assert env is None
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["mars", "list"],
-        ["--format", "text", "mars", "list"],
-    ],
-    ids=["agent-mode-default-text", "agent-mode-explicit-text"],
-)
-def test_main_mars_list_agent_mode_uses_text_output(
-    argv: list[str],
+def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
+
+    def _fake_run_mars_passthrough(
+        args: tuple[str, ...] | list[str],
+        *,
+        output_format: str | None = None,
+        **_kwargs: object,
+    ) -> None:
+        captured["args"] = tuple(args)
+        captured["output_format"] = output_format
+        raise SystemExit(0)
+
+    monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["mars", "list"])
+
+    assert exc_info.value.code == 0
+    assert captured["args"] == ("list",)
+    assert captured["output_format"] == "text"
+
+
+def test_main_mars_honors_explicit_text_in_agent_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
@@ -142,7 +151,7 @@ def test_main_mars_list_agent_mode_uses_text_output(
     monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(argv)
+        cli_main.main(["--format", "text", "mars", "list"])
 
     assert exc_info.value.code == 0
     assert captured["args"] == ("list",)
