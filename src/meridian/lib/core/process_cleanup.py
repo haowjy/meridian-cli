@@ -70,6 +70,12 @@ def terminate_spawn_scopes(
                 spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
+                descendant_count=None,
+                reason=reason,
+                grace_seconds=0.0,
+                kill_escalated=False,
+                degraded_fallback=False,
+                skip_reason="already_released",
             )
             results.append(result)
             continue
@@ -83,14 +89,19 @@ def terminate_spawn_scopes(
                 grace_seconds=0.0,
                 kill_escalated=False,
                 degraded_fallback=False,
-                skip_reason="session_owned",
+                skip_reason="active_session_lease",
             )
             logger.info(
-                "Skipped process scope cleanup.",
+                "Skipped process scope cleanup — session lease active.",
                 spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
-                skip_reason="session_owned",
+                descendant_count=None,
+                reason=reason,
+                grace_seconds=0.0,
+                kill_escalated=False,
+                degraded_fallback=False,
+                skip_reason="active_session_lease",
             )
             results.append(result)
             continue
@@ -113,6 +124,7 @@ def terminate_spawn_scopes(
             grace_seconds=grace_seconds,
             kill_escalated=result.kill_escalated,
             degraded_fallback=result.degraded_fallback,
+            skip_reason=result.skip_reason,
         )
         results.append(result)
 
@@ -161,9 +173,14 @@ def _terminate_legacy_worker_pid(
     logger.warning(
         "Terminated legacy worker via degraded fallback.",
         spawn_id=spawn_record.id,
-        worker_pid=worker_pid,
-        degraded_fallback=True,
+        scope_id=result.scope_id,
+        root_pid=worker_pid,
+        descendant_count=result.descendant_count,
         reason=reason,
+        grace_seconds=grace_seconds,
+        kill_escalated=result.kill_escalated,
+        degraded_fallback=True,
+        skip_reason=result.skip_reason,
     )
     return result
 
@@ -207,7 +224,12 @@ def cancel_managed_primary(
                 spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
+                descendant_count=result.descendant_count,
                 reason="cancel",
+                grace_seconds=grace_seconds,
+                kill_escalated=result.kill_escalated,
+                degraded_fallback=result.degraded_fallback,
+                skip_reason=result.skip_reason,
             )
             results.append(result)
 
@@ -221,6 +243,18 @@ def cancel_managed_primary(
             continue
         if is_scope_released(runtime_root, spawn_id, scope.scope_id):
             result = CleanupResult(
+                scope_id=scope.scope_id,
+                root_pid=scope.root_pid,
+                descendant_count=None,
+                reason="cancel",
+                grace_seconds=0.0,
+                kill_escalated=False,
+                degraded_fallback=False,
+                skip_reason="already_released",
+            )
+            logger.debug(
+                "Skipped already-released managed primary runtime scope.",
+                spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
                 descendant_count=None,
@@ -245,7 +279,12 @@ def cancel_managed_primary(
             spawn_id=spawn_record.id,
             scope_id=scope.scope_id,
             root_pid=scope.root_pid,
+            descendant_count=result.descendant_count,
             reason="cancel",
+            grace_seconds=grace_seconds,
+            kill_escalated=result.kill_escalated,
+            degraded_fallback=result.degraded_fallback,
+            skip_reason=result.skip_reason,
         )
         results.append(result)
 
@@ -287,10 +326,15 @@ def reclaim_stale_session_scopes(
             logger.info(
                 "Reclaimed stale-session scope.",
                 spawn_id=record.id,
-                session_id=session_id,
                 scope_id=scope.scope_id,
                 root_pid=scope.root_pid,
+                descendant_count=result.descendant_count,
                 reason="stale_session_cleanup",
+                grace_seconds=grace_seconds,
+                kill_escalated=result.kill_escalated,
+                degraded_fallback=result.degraded_fallback,
+                skip_reason=result.skip_reason,
+                session_id=session_id,
             )
             results.append(result)
     return results

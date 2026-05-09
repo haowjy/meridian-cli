@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import signal
-import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -154,61 +151,6 @@ def _collect_artifact_snapshot(
         runner_pid_alive=runner_pid_alive,
         launch_boundary=launch_boundary,
     )
-
-
-def _terminate_process_group(worker_pid: int, started_epoch: float | None) -> None:
-    """Terminate an orphaned spawn worker process group when possible.
-
-    Uses PID-reuse guard to avoid killing unrelated processes.
-    Suppresses all errors -- best-effort cleanup in a crash-recovery path.
-    """
-    created_after = started_epoch if started_epoch is not None else 0.0
-    if not is_process_alive(worker_pid, created_after_epoch=created_after):
-        return
-
-    if sys.platform == "win32":
-        try:
-            os.kill(worker_pid, signal.SIGTERM)
-            logger.warning(
-                "Terminated orphan worker process.",
-                worker_pid=worker_pid,
-                signal="SIGTERM",
-                scope="pid",
-            )
-        except OSError:
-            pass
-        return
-
-    process_group_id: int | None = None
-    try:
-        process_group_id = os.getpgid(worker_pid)
-    except OSError:
-        process_group_id = None
-
-    if process_group_id is not None:
-        try:
-            os.killpg(process_group_id, signal.SIGTERM)
-            logger.warning(
-                "Terminated orphan worker process group.",
-                worker_pid=worker_pid,
-                process_group_id=process_group_id,
-                signal="SIGTERM",
-                scope="process_group",
-            )
-            return
-        except OSError:
-            pass
-
-    try:
-        os.kill(worker_pid, signal.SIGTERM)
-        logger.warning(
-            "Terminated orphan worker process via PID fallback.",
-            worker_pid=worker_pid,
-            signal="SIGTERM",
-            scope="pid_fallback",
-        )
-    except OSError:
-        pass
 
 
 def _has_recent_activity(snapshot: ArtifactSnapshot) -> bool:

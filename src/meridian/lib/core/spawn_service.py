@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import signal
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -845,21 +843,6 @@ def _coerce_cancel_status(status: str) -> SpawnStatus:
 def _is_managed_primary_candidate(record: SpawnRecord) -> bool:
     harness = (record.harness or "").strip().lower()
     return record.kind == "primary" and harness in {"codex", "opencode"}
-
-
-def _terminate_worker_pid_fallback(
-    worker_pid: int | None,
-    *,
-    started_epoch: float | None,
-) -> None:
-    if worker_pid is None or worker_pid <= 0 or worker_pid == os.getpid():
-        return
-    if not is_process_alive(worker_pid, created_after_epoch=started_epoch):
-        return
-    try:
-        os.kill(worker_pid, signal.SIGTERM)
-    except OSError:
-        return
 
 
 def _started_at_epoch(started_at: str | None) -> float | None:
