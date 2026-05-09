@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
     from meridian.lib.config.settings import AgentOverlayConfig, MeridianConfig
-    from meridian.lib.launch.types import LaunchRequest
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
 _AUTOCOMPACT_TOKEN_MIN = 1000
@@ -364,21 +363,6 @@ class RuntimeOverrides(BaseModel):
             autocompact=payload.autocompact,
             autocompact_pct=payload.autocompact_pct,
             timeout=payload.timeout,
-        )
-
-    @classmethod
-    def from_launch_request(cls, request: LaunchRequest) -> RuntimeOverrides:
-        policy = request.execution_policy
-        return cls(
-            model=_normalize_optional_string(request.model),
-            harness=_normalize_optional_string(request.harness),
-            agent=_normalize_optional_string(request.agent),
-            effort=policy.effort,
-            sandbox=policy.sandbox,
-            approval=policy.approval,
-            autocompact=policy.autocompact,
-            autocompact_pct=policy.autocompact_pct,
-            timeout=policy.timeout,
         )
 
 

@@ -240,7 +240,7 @@ def test_overlay_policy_matching_fanout_token_does_not_transform_selected_fanout
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
-    assert policies.resolved_overrides.effort is None
+    assert policies.execution_policy.effort is None
     assert policies.model_selection is not None
     assert policies.model_selection.selected_model_token == "codex-fanout"
     assert policies.model_selection.harness_provenance == "availability-fallback"
@@ -297,7 +297,7 @@ def test_overlay_empty_model_policies_avoid_profile_policy_ambiguity_in_base_can
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
-    assert policies.resolved_overrides.effort is None
+    assert policies.execution_policy.effort is None
 
 
 def test_overlay_non_empty_model_policies_replace_ambiguous_profile_model_policies(
@@ -357,4 +357,4 @@ def test_overlay_non_empty_model_policies_replace_ambiguous_profile_model_polici
 
     assert policies.model == "gpt-5.5"
     assert policies.harness == HarnessId.CODEX
-    assert policies.resolved_overrides.effort == "high"
+    assert policies.execution_policy.effort == "high"

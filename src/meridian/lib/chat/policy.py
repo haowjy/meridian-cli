@@ -6,11 +6,12 @@ import json
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.connections.base import ConnectionConfig
@@ -31,7 +32,7 @@ from meridian.lib.launch.prompt import compose_skill_prompt_documents
 from meridian.lib.launch.resolve import format_missing_skills_warning, resolve_profile_path
 from meridian.lib.state.atomic import atomic_write_text
 
-CHAT_POLICY_SNAPSHOT_VERSION = 1
+CHAT_POLICY_SNAPSHOT_VERSION = 2
 
 
 class ChatPromptDocumentSnapshot(BaseModel):
@@ -78,11 +79,7 @@ class ChatPolicySnapshot(BaseModel):
     harness_provenance: str = ""
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
-    effort: str | None = None
-    sandbox: str | None = None
-    approval: str | None = None
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
+    execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
 
     agent_name: str | None = None
     agent_profile_path: str | None = None
@@ -95,6 +92,24 @@ class ChatPolicySnapshot(BaseModel):
 
     warnings: tuple[CompositionWarning, ...] = ()
     field_provenance: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_flat_policy_fields(cls, value: object) -> object:
+        """Migrate v1 flat policy fields to the execution_policy carrier."""
+
+        if not isinstance(value, dict):
+            return value
+        payload = cast("dict[str, Any]", value).copy()
+        if "execution_policy" in payload:
+            return payload
+        policy_fields: dict[str, Any] = {}
+        for field_name in ("effort", "sandbox", "approval", "autocompact", "autocompact_pct"):
+            if field_name in payload:
+                policy_fields[field_name] = payload.pop(field_name)
+        if policy_fields:
+            payload["execution_policy"] = policy_fields
+        return payload
 
 
 @dataclass(frozen=True)
@@ -173,11 +188,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
             model_selection.harness_provenance if model_selection is not None else ""
         ),
         terminal_surface_mode=policy.terminal_surface_mode,
-        effort=policy.execution_policy.effort,
-        sandbox=policy.execution_policy.sandbox,
-        approval=policy.execution_policy.approval,
-        autocompact=policy.execution_policy.autocompact,
-        autocompact_pct=policy.execution_policy.autocompact_pct,
+        execution_policy=policy.execution_policy,
         agent_name=profile.name if profile is not None else None,
         agent_profile_path=resolve_profile_path(profile),
         skills=policy.resolved_skills.skill_names,
@@ -223,10 +234,10 @@ def read_chat_policy_snapshot(path: Path) -> ChatPolicySnapshot:
     if not isinstance(payload, dict):
         raise ValueError(f"invalid chat policy snapshot: {path}")
     snapshot = ChatPolicySnapshot.model_validate(payload)
-    if snapshot.schema_version != CHAT_POLICY_SNAPSHOT_VERSION:
+    if snapshot.schema_version > CHAT_POLICY_SNAPSHOT_VERSION:
         raise ValueError(
             f"unsupported chat policy snapshot schema version {snapshot.schema_version}; "
-            f"expected {CHAT_POLICY_SNAPSHOT_VERSION}"
+            f"expected <= {CHAT_POLICY_SNAPSHOT_VERSION}"
         )
     return snapshot
 
@@ -261,20 +272,21 @@ def build_chat_backend_launch_plan(
         adhoc_agent_payload=snapshot.prompt_inputs.adhoc_agent_payload,
         projected_content=projected,
     )
+    ep = snapshot.execution_policy
     materialized = materialize_launch_artifacts(
         harness=adapter,
         prompt=projected.user_turn_content.strip() or initial_prompt,
         model=snapshot.canonical_model_id,
-        effort=snapshot.effort,
+        effort=ep.effort,
         skills=snapshot.skills,
         agent=snapshot.agent_name,
         prompt_payload=prompt_payload,
         project_root=project_root.as_posix(),
         mcp_tools=snapshot.mcp_tools,
-        sandbox=snapshot.sandbox,
+        sandbox=ep.sandbox,
         allowed_tools=snapshot.allowed_tools,
         disallowed_tools=snapshot.disallowed_tools,
-        approval=snapshot.approval,
+        approval=ep.approval,
     )
     runtime_env = build_child_runtime_env_overrides(
         project_paths=ProjectConfigPaths(
@@ -286,8 +298,8 @@ def build_chat_backend_launch_plan(
     )
     runtime_env["MERIDIAN_HARNESS"] = snapshot.harness
     autocompact_supported = _supports_launch_autocompact(harness_id)
-    if snapshot.autocompact is not None and autocompact_supported:
-        runtime_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(snapshot.autocompact)
+    if ep.autocompact is not None and autocompact_supported:
+        runtime_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(ep.autocompact)
 
     config = ConnectionConfig(
         spawn_id=spawn_id,
@@ -305,10 +317,10 @@ def build_chat_backend_launch_plan(
         "harness_provenance": snapshot.harness_provenance,
         "policy_snapshot_id": snapshot.snapshot_id,
     }
-    if snapshot.autocompact is not None and autocompact_supported:
-        configured_payload["autocompact"] = snapshot.autocompact
-    if snapshot.autocompact_pct is not None:
-        configured_payload["autocompact_pct"] = snapshot.autocompact_pct
+    if ep.autocompact is not None and autocompact_supported:
+        configured_payload["autocompact"] = ep.autocompact
+    if ep.autocompact_pct is not None:
+        configured_payload["autocompact_pct"] = ep.autocompact_pct
     return ChatBackendLaunchPlan(
         harness_id=config.harness_id,
         connection_config=config,

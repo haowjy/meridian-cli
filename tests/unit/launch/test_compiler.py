@@ -439,4 +439,4 @@ def test_resolve_policies_picks_up_overlay_from_config(
     )
 
     assert captured["overlay"] == overlay
-    assert result.resolved_overrides.effort == "high"
+    assert result.execution_policy.effort == "high"

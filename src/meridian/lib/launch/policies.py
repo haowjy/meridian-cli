@@ -125,25 +125,6 @@ class ResolvedLaunchPolicy:
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
 
-    @property
-    def resolved_routing(self) -> RuntimeOverrides:
-        """Compatibility view for pre-Phase 3.1 routing consumers."""
-
-        return self.routing.as_overrides()
-
-    @property
-    def resolved_execution_policy(self) -> RuntimeOverrides:
-        """Compatibility view for pre-Phase 3.1 execution-policy consumers."""
-
-        return self.execution_policy.as_overrides()
-
-    @property
-    def resolved_overrides(self) -> RuntimeOverrides:
-        """Compatibility view for combined legacy RuntimeOverrides consumers."""
-
-        return self.routing.as_overrides().model_copy(
-            update=self.execution_policy.as_overrides().model_dump(exclude_none=True)
-        )
 
 
 ResolvedPolicies = ResolvedLaunchPolicy

@@ -917,7 +917,7 @@ def test_chat_policy_snapshot_approval_env_beats_profile_and_config(
         autocompact=None,
     )
 
-    assert snapshot.approval == "confirm"
+    assert snapshot.execution_policy.approval == "confirm"
     assert snapshot.field_provenance["approval"] == "env"
 
 
@@ -980,10 +980,10 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert snapshot.canonical_model_id == "gpt-5.4-mini"
     assert snapshot.harness == "codex"
     assert snapshot.agent_name == "reviewer"
-    assert snapshot.approval == "auto"
-    assert snapshot.sandbox == "workspace-write"
-    assert snapshot.effort == "low"
-    assert snapshot.autocompact == 200000
+    assert snapshot.execution_policy.approval == "auto"
+    assert snapshot.execution_policy.sandbox == "workspace-write"
+    assert snapshot.execution_policy.effort == "low"
+    assert snapshot.execution_policy.autocompact == 200000
     assert snapshot.skills == ("profile-skill", "cli-skill")
     assert snapshot.allowed_tools == ("Read",)
     assert snapshot.disallowed_tools == ("Bash",)

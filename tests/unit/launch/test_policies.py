@@ -173,9 +173,9 @@ def test_chat_and_spawn_prepare_surfaces_resolve_equivalent_shared_policy_fields
 
     assert chat_policy.model == spawn_policy.model == "gpt-5.3-codex"
     assert chat_policy.harness == spawn_policy.harness == HarnessId.CODEX
-    assert chat_policy.resolved_overrides.effort == spawn_policy.resolved_overrides.effort == "high"
-    assert chat_policy.resolved_overrides.sandbox == spawn_policy.resolved_overrides.sandbox
-    assert chat_policy.resolved_overrides.approval == spawn_policy.resolved_overrides.approval
+    assert chat_policy.execution_policy.effort == spawn_policy.execution_policy.effort == "high"
+    assert chat_policy.execution_policy.sandbox == spawn_policy.execution_policy.sandbox
+    assert chat_policy.execution_policy.approval == spawn_policy.execution_policy.approval
 
 
 def test_resolve_policy_fields_rejects_mixed_tuple_usage() -> None:
