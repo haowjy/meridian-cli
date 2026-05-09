@@ -107,6 +107,26 @@ OpenCode behavior is different:
 - primary resume uses managed attach
 - other primary modes may still use black-box paths
 
+## Cancellation and Process Cleanup
+
+`meridian spawn cancel ID` on a managed primary uses sequenced teardown:
+
+1. **Terminate launcher** — the Meridian launcher/wrapper process tree is terminated first.
+2. **Pause** — a brief pause gives any harness-driven session shutdown time to propagate.
+3. **Terminate backend and TUI** — if the `app-server` or TUI processes are still running after the pause, they are terminated too.
+
+This sequence gives Codex a chance to exit cleanly from the launcher side before Meridian reaches in to terminate the backend directly.
+
+### Session lease preservation
+
+The `app-server` backend for a managed primary is associated with a **session lease**. While the lease is active — meaning a session is still live — the backend scope is skipped during passive spawn cleanup (e.g., the orphan reaper). This prevents Meridian from killing a backend that is still in use.
+
+When the session lease expires, or when `meridian spawn cancel` is called explicitly, the backend scope is reclaimed and the process is terminated.
+
+### Process tree termination
+
+Cleanup terminates full process trees, not just the root PID. If the launcher or backend spawned child processes (tool subprocesses, workers), those are also terminated as part of the same cleanup operation.
+
 ## Related Files
 
 - [codex_ws.py](../src/meridian/lib/harness/connections/codex_ws.py)

@@ -144,6 +144,8 @@ def test_reaper_preserves_session_owned_runtime_scopes_for_orphan_primary_withou
     assert reconciled.status == "failed"
     assert reconciled.error == "orphan_primary"
     assert is_scope_released(runtime_root, SpawnId(spawn_id), "launcher") is True
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), "backend") is False
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is False
 
 
 def test_reclaim_stale_session_scopes_terminates_preserved_runtime_scopes(
@@ -198,6 +200,95 @@ def test_reclaim_stale_session_scopes_terminates_preserved_runtime_scopes(
         _fake_terminate_tree_sync,
     )
 
+    results = reclaim_stale_session_scopes(
+        runtime_root,
+        session_id,
+        [_get_spawn(runtime_root, spawn_id)],
+        grace_seconds=2.0,
+    )
+
+    assert terminated_scope_ids == ["backend", "tui"]
+    assert [result.scope_id for result in results] == ["backend", "tui"]
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), "backend") is True
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is True
+
+
+def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_primary_spawn(tmp_path)
+    session_id = "session-1"
+    for scope in (
+        _scope(
+            spawn_id,
+            scope_id="launcher",
+            owner_policy="spawn_owned",
+            owner_id=spawn_id,
+            root_pid=300,
+        ),
+        _scope(
+            spawn_id,
+            scope_id="backend",
+            owner_policy="session_owned",
+            owner_id=session_id,
+            root_pid=301,
+        ),
+        _scope(
+            spawn_id,
+            scope_id="tui",
+            owner_policy="session_owned",
+            owner_id=session_id,
+            root_pid=302,
+        ),
+    ):
+        record_scope(runtime_root, SpawnId(spawn_id), scope)
+
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    alive_proc = type("AliveProc", (), {"create_time": lambda self: 100.0})()
+    monkeypatch.setattr(
+        "meridian.lib.core.process_cleanup.psutil.Process",
+        lambda _pid: alive_proc,
+    )
+
+    terminated_scope_ids: list[str] = []
+
+    def _fake_terminate_tree_sync(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "stop_called",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> CleanupResult:
+        terminated_scope_ids.append(scope_id)
+        return CleanupResult(
+            scope_id=scope_id,
+            root_pid=pid,
+            descendant_count=0,
+            reason=reason,
+            grace_seconds=grace_secs,
+            kill_escalated=False,
+            degraded_fallback=degraded_fallback,
+            skip_reason=None,
+        )
+
+    monkeypatch.setattr(
+        "meridian.lib.core.process_cleanup.terminate_tree_sync",
+        _fake_terminate_tree_sync,
+    )
+
+    reconcile_active_spawn(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
+
+    assert terminated_scope_ids == ["launcher"]
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), "backend") is False
+    assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is False
+
+    terminated_scope_ids.clear()
     results = reclaim_stale_session_scopes(
         runtime_root,
         session_id,

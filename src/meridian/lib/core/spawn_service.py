@@ -65,8 +65,6 @@ class CancelOutcome:
     harness: str | None = None
 
 
-
-
 @dataclass(frozen=True)
 class CompleteSpawnOutcome:
     """Surface-neutral result of a spawn finalization attempt."""
@@ -494,6 +492,7 @@ class SpawnApplicationService:
         else:
             # Legacy fallback: no scope records, use worker_pid termination.
             from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+
             terminate_spawn_scopes(
                 self._runtime_root,
                 record,
@@ -530,9 +529,8 @@ class SpawnApplicationService:
 
         started_epoch = _started_at_epoch(record.started_at)
         launcher_pid = primary_metadata.launcher_pid
-        launcher_alive = (
-            launcher_pid is not None
-            and is_process_alive(launcher_pid, created_after_epoch=started_epoch)
+        launcher_alive = launcher_pid is not None and is_process_alive(
+            launcher_pid, created_after_epoch=started_epoch
         )
         if launcher_alive:
             terminate_managed_primary_processes(
@@ -599,6 +597,7 @@ class SpawnApplicationService:
         # re-terminate processes that the metadata path already signalled.
         latest_for_cleanup = self.get_spawn(spawn_id) or latest
         from meridian.lib.core.process_cleanup import cancel_managed_primary
+
         await asyncio.to_thread(
             cancel_managed_primary,
             self._runtime_root,
@@ -703,9 +702,11 @@ class SpawnApplicationService:
                 mark_scope_released,
                 read_scopes_from_disk,
             )
+
             scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
             for scope in scopes:
-                mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
+                if scope.owner_policy == "spawn_owned":
+                    mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
         return CompleteSpawnOutcome(
             wrote=outcome.wrote,
             transitioned=outcome.transitioned,
@@ -781,10 +782,7 @@ class SpawnApplicationService:
         so observers (SSE, WS, debug trace) see metadata changes.
         """
         # Only call store if at least one field is provided
-        if all(
-            v is None
-            for v in (execution_cwd, desc, work_id, harness_session_id, error)
-        ):
+        if all(v is None for v in (execution_cwd, desc, work_id, harness_session_id, error)):
             return
 
         spawn_store.update_spawn(

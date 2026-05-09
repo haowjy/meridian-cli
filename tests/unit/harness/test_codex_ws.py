@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -170,3 +171,49 @@ def test_codex_ws_thread_request_projection(
 def test_codex_permission_mapping_fails_closed_on_unsupported_mode() -> None:
     with pytest.raises(HarnessCapabilityMismatch, match="approval mode 'unsupported'"):
         map_codex_approval_policy("unsupported")
+
+
+@pytest.mark.asyncio
+async def test_codex_cleanup_resources_uses_scope_handle_for_live_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = codex_ws.CodexConnection()
+    terminate_calls: list[tuple[float, str]] = []
+
+    class _FakeScopeHandle:
+        async def terminate(self, *, grace_seconds: float, reason: str) -> None:
+            terminate_calls.append((grace_seconds, reason))
+
+    class _FakeProcess:
+        returncode = None
+
+        def terminate(self) -> None:
+            raise AssertionError("scope-handle cleanup should replace direct terminate()")
+
+        def kill(self) -> None:
+            raise AssertionError("scope-handle cleanup should replace direct kill()")
+
+        async def wait(self) -> None:
+            return None
+
+    async def _close_ws() -> None:
+        return None
+
+    async def _clear_stale_hitl_requests(*, reason: str) -> None:
+        _ = reason
+
+    monkeypatch.setattr(connection, "_close_ws", _close_ws)
+    monkeypatch.setattr(connection, "_clear_stale_hitl_requests", _clear_stale_hitl_requests)
+    monkeypatch.setattr(connection, "_close_log_handles", lambda: None)
+
+    connection._reader_task = asyncio.create_task(asyncio.sleep(0))
+    connection._scope_handle = _FakeScopeHandle()
+    connection._process = _FakeProcess()
+
+    await connection._cleanup_resources(mark_stopped=False)
+
+    assert terminate_calls == [
+        (codex_ws._STOP_WAIT_TIMEOUT_SECONDS, "stop_called"),
+    ]
+    assert connection._scope_handle is None
+    assert connection._process is None
