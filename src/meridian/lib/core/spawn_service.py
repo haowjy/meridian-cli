@@ -676,6 +676,14 @@ class SpawnApplicationService:
             duration_secs=duration_secs,
             **cast("dict[str, Any]", metrics),
         )
+        if outcome.wrote:
+            from meridian.lib.state.process_scope_projection import (
+                mark_scope_released,
+                read_scopes_from_disk,
+            )
+            scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
+            for scope in scopes:
+                mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
         return CompleteSpawnOutcome(
             wrote=outcome.wrote,
             transitioned=outcome.transitioned,

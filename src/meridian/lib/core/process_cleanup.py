@@ -13,7 +13,11 @@ import structlog
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
-from meridian.lib.state.process_scope_projection import read_scopes_from_disk
+from meridian.lib.state.process_scope_projection import (
+    is_scope_released,
+    mark_scope_released,
+    read_scopes_from_disk,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 logger = structlog.get_logger(__name__)
@@ -48,7 +52,28 @@ def terminate_spawn_scopes(
             results.append(result)
         return results
 
+    spawn_id = SpawnId(spawn_record.id)
     for scope in scopes:
+        if is_scope_released(runtime_root, spawn_id, scope.scope_id):
+            result = CleanupResult(
+                scope_id=scope.scope_id,
+                root_pid=scope.root_pid,
+                descendant_count=None,
+                reason=reason,
+                grace_seconds=0.0,
+                kill_escalated=False,
+                degraded_fallback=False,
+                skip_reason="already_released",
+            )
+            logger.debug(
+                "Skipped already-released process scope.",
+                spawn_id=spawn_record.id,
+                scope_id=scope.scope_id,
+                root_pid=scope.root_pid,
+            )
+            results.append(result)
+            continue
+
         if should_skip_cleanup(scope, spawn_record):
             result = CleanupResult(
                 scope_id=scope.scope_id,
@@ -77,6 +102,7 @@ def terminate_spawn_scopes(
             reason=reason,
             scope_id=scope.scope_id,
         )
+        mark_scope_released(runtime_root, spawn_id, scope.scope_id)
         logger.info(
             "Terminated process scope.",
             spawn_id=spawn_record.id,

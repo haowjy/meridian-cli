@@ -113,6 +113,25 @@ def mark_scope_released(
     atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
 
 
+def is_scope_released(
+    runtime_root: Path,
+    spawn_id: SpawnId,
+    scope_id: str,
+) -> bool:
+    """Check if a scope has been marked as released.
+
+    Returns False on any read error so callers fail open (attempt cleanup).
+    """
+    path = _sidecar_path(runtime_root, spawn_id)
+    if not path.exists():
+        return False
+    payload = _read_raw(path)
+    released = payload.get("released", [])
+    if not isinstance(released, list):
+        return False
+    return scope_id in released
+
+
 def read_scopes(spawn_record: SpawnRecord) -> list[ProcessScopeSnapshot]:
     """Read scope snapshots from a spawn record's embedded field.
 
@@ -155,6 +174,7 @@ def read_scopes_from_disk(
 
 
 __all__ = [
+    "is_scope_released",
     "mark_scope_released",
     "read_scopes",
     "read_scopes_from_disk",
