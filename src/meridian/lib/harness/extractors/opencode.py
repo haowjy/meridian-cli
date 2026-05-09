@@ -317,6 +317,87 @@ OPENCODE_EXTRACTOR = OpenCodeHarnessExtractor()
 __all__ = ["OPENCODE_EXTRACTOR", "OpenCodeHarnessExtractor"]
 
 
+def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
+    properties_obj = payload.get("properties")
+    properties = (
+        cast("dict[str, object]", properties_obj) if isinstance(properties_obj, dict) else None
+    )
+    nested_info_obj = properties.get("info") if properties is not None else None
+    nested_info = (
+        cast("dict[str, object]", nested_info_obj)
+        if isinstance(nested_info_obj, dict)
+        else None
+    )
+    nested_tokens_obj = nested_info.get("tokens") if nested_info is not None else None
+    nested_tokens = (
+        cast("dict[str, object]", nested_tokens_obj)
+        if isinstance(nested_tokens_obj, dict)
+        else None
+    )
+    if nested_tokens is not None:
+        nested_cache_obj = nested_tokens.get("cache")
+        nested_cache = (
+            cast("dict[str, object]", nested_cache_obj)
+            if isinstance(nested_cache_obj, dict)
+            else {}
+        )
+        nested_usage = TokenUsage(
+            input_tokens=_coerce_optional_int(nested_tokens.get("input")),
+            output_tokens=_coerce_optional_int(nested_tokens.get("output")),
+            cache_read_input_tokens=_coerce_optional_int(nested_cache.get("read")),
+            cache_creation_input_tokens=_coerce_optional_int(nested_cache.get("write")),
+            reasoning_tokens=_coerce_optional_int(nested_tokens.get("reasoning")),
+            total_cost_usd=coerce_optional_float(
+                nested_info.get("cost") if nested_info is not None else None
+            ),
+        )
+        if any(
+            value is not None
+            for value in (
+                nested_usage.input_tokens,
+                nested_usage.output_tokens,
+                nested_usage.cache_read_input_tokens,
+                nested_usage.cache_creation_input_tokens,
+                nested_usage.reasoning_tokens,
+            )
+        ):
+            return nested_usage
+
+    info_obj = payload.get("info")
+    info = cast("dict[str, object]", info_obj) if isinstance(info_obj, dict) else payload
+    usage_obj = payload.get("usage")
+    usage_source = cast("dict[str, object]", usage_obj) if isinstance(usage_obj, dict) else info
+    usage = usage_source
+    cost_obj = payload.get("cost")
+    cost_source = cast("dict[str, object]", cost_obj) if isinstance(cost_obj, dict) else payload
+    legacy_usage = TokenUsage(
+        input_tokens=_coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
+        output_tokens=_coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
+        cache_read_input_tokens=_coerce_optional_int(
+            usage.get("cache_read_input_tokens") or usage.get("cache_read")
+        ),
+        cache_creation_input_tokens=_coerce_optional_int(
+            usage.get("cache_creation_input_tokens") or usage.get("cache_write")
+        ),
+        reasoning_tokens=_coerce_optional_int(
+            usage.get("reasoning_tokens") or usage.get("reasoning")
+        ),
+        total_cost_usd=coerce_optional_float(cost_source.get("total_cost_usd")),
+    )
+    if any(
+        value is not None
+        for value in (
+            legacy_usage.input_tokens,
+            legacy_usage.output_tokens,
+            legacy_usage.cache_read_input_tokens,
+            legacy_usage.cache_creation_input_tokens,
+            legacy_usage.reasoning_tokens,
+        )
+    ):
+        return legacy_usage
+    return None
+
+
 def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
     last: TokenUsage | None = None
     for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
@@ -327,26 +408,7 @@ def _extract_opencode_usage(artifacts: ArtifactStore, spawn_id: SpawnId) -> Toke
         )
         if event_type not in {"session.idle", "message.updated", "response.completed"}:
             continue
-        info_obj = payload.get("info")
-        info = cast("dict[str, object]", info_obj) if isinstance(info_obj, dict) else payload
-        usage_obj = payload.get("usage")
-        usage_source = cast("dict[str, object]", usage_obj) if isinstance(usage_obj, dict) else info
-        usage = usage_source
-        cost_obj = payload.get("cost")
-        cost_source = cast("dict[str, object]", cost_obj) if isinstance(cost_obj, dict) else payload
-        cost = coerce_optional_float(cost_source.get("total_cost_usd"))
-        last = TokenUsage(
-            input_tokens=_coerce_optional_int(usage.get("input_tokens") or usage.get("input")),
-            output_tokens=_coerce_optional_int(usage.get("output_tokens") or usage.get("output")),
-            cache_read_input_tokens=_coerce_optional_int(
-                usage.get("cache_read_input_tokens") or usage.get("cache_read")
-            ),
-            cache_creation_input_tokens=_coerce_optional_int(
-                usage.get("cache_creation_input_tokens") or usage.get("cache_write")
-            ),
-            reasoning_tokens=_coerce_optional_int(
-                usage.get("reasoning_tokens") or usage.get("reasoning")
-            ),
-            total_cost_usd=cost,
-        )
+        usage = _try_parse_opencode_usage(payload)
+        if usage is not None:
+            last = usage
     return last or TokenUsage()

@@ -152,7 +152,7 @@ def test_opencode_live_shapes_emit_text_reasoning_and_tool_lifecycle_once():
     assert tool_completed.type == "item.completed"
     assert tool_completed.item_id == "bash:0"
     assert turn_completed.type == "turn.completed"
-    assert turn_completed.payload == {"status": "succeeded", "usage": {"input_tokens": 1}}
+    assert turn_completed.payload == {"status": "succeeded"}
     assert synthetic == []
 
 
@@ -395,3 +395,110 @@ def test_opencode_legacy_shapes_still_work():
     assert runtime_error.type == "runtime.error"
     assert completed.type == "turn.completed"
     assert completed.payload == {"status": "error", "error": "boom"}
+
+
+def test_opencode_current_schema_turn_completed_uses_message_updated_usage_cache():
+    n = OpenCodeNormalizer("c1", "s1")
+
+    n.normalize(event("session.status", {"properties": {"status": {"type": "busy"}}}))
+    n.normalize(
+        event(
+            "message.updated",
+            {
+                "properties": {
+                    "info": {
+                        "id": "msg-a4",
+                        "role": "assistant",
+                        "tokens": {
+                            "input": 12,
+                            "output": 4,
+                            "reasoning": 2,
+                            "cache": {"read": 6, "write": 3},
+                        },
+                        "cost": 0.05,
+                    }
+                }
+            },
+        )
+    )
+
+    completed = n.normalize(event("session.idle", {"properties": {"status": "idle"}}))[0]
+
+    assert completed.type == "turn.completed"
+    assert completed.payload == {
+        "status": "succeeded",
+        "usage": {
+            "input_tokens": 12,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 6,
+            "cache_creation_input_tokens": 3,
+            "reasoning_tokens": 2,
+            "total_cost_usd": 0.05,
+        },
+    }
+
+
+def test_opencode_session_idle_info_does_not_override_message_updated_usage_cache():
+    n = OpenCodeNormalizer("c1", "s1")
+
+    n.normalize(event("session.status", {"properties": {"status": {"type": "busy"}}}))
+    n.normalize(
+        event(
+            "message.updated",
+            {
+                "properties": {
+                    "info": {
+                        "id": "msg-a6",
+                        "role": "assistant",
+                        "tokens": {"input": 7, "output": 2},
+                    }
+                }
+            },
+        )
+    )
+
+    completed = n.normalize(
+        event(
+            "session.idle",
+            {
+                "properties": {
+                    "status": "idle",
+                    "info": {"tokens": {"input": 999, "output": 999}},
+                }
+            },
+        )
+    )[0]
+
+    assert completed.payload == {
+        "status": "succeeded",
+        "usage": {"input_tokens": 7, "output_tokens": 2},
+    }
+
+
+def test_opencode_turn_usage_cache_resets_between_turns():
+    n = OpenCodeNormalizer("c1", "s1")
+
+    n.normalize(event("session.status", {"properties": {"status": {"type": "busy"}}}))
+    n.normalize(
+        event(
+            "message.updated",
+            {
+                "properties": {
+                    "info": {
+                        "id": "msg-a5",
+                        "role": "assistant",
+                        "tokens": {"input": 5, "output": 1},
+                    }
+                }
+            },
+        )
+    )
+    first = n.normalize(event("session.idle", {"properties": {"status": "idle"}}))[0]
+    n.normalize(event("session.status", {"properties": {"status": {"type": "busy"}}}))
+    second = n.normalize(event("session.idle", {"properties": {"status": "idle"}}))[0]
+
+    assert first.payload == {
+        "status": "succeeded",
+        "usage": {"input_tokens": 5, "output_tokens": 1},
+    }
+    assert second.payload == {"status": "succeeded"}

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
@@ -35,18 +36,20 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
+from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
+    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
+from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
@@ -381,6 +384,7 @@ def _finalize_lifecycle_and_observe_session(
     harness_adapter: Any,
     artifacts: LocalStore,
     project_root: Path,
+    model_id: str | None,
     runtime_root: Path,
     primary_started: float,
     primary_started_epoch: float,
@@ -392,13 +396,21 @@ def _finalize_lifecycle_and_observe_session(
 
     resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        report_path = resolve_spawn_log_dir(project_root, primary_spawn_id) / "report.md"
+        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id)
+        report_path = log_dir / "report.md"
         try:
             report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
         except OSError:
             report_text = None
         duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
         durable_report_completion = has_durable_report_completion(report_text)
+        usage = _extract_primary_usage(
+            harness_adapter=harness_adapter,
+            primary_spawn_id=primary_spawn_id,
+            project_root=project_root,
+            model_id=model_id,
+            log_dir=log_dir,
+        )
         execution_outcome = asyncio.run(
             spawn_service.complete_execution(
                 primary_spawn_id,
@@ -411,6 +423,17 @@ def _finalize_lifecycle_and_observe_session(
                 ),
                 origin="launcher",
                 duration_secs=duration,
+                total_cost_usd=usage.total_cost_usd if usage is not None else None,
+                input_tokens=usage.input_tokens if usage is not None else None,
+                output_tokens=usage.output_tokens if usage is not None else None,
+                cache_read_input_tokens=(
+                    usage.cache_read_input_tokens if usage is not None else None
+                ),
+                cache_creation_input_tokens=(
+                    usage.cache_creation_input_tokens if usage is not None else None
+                ),
+                reasoning_tokens=usage.reasoning_tokens if usage is not None else None,
+                cost_is_estimate=usage.cost_is_estimate if usage is not None else False,
             )
         )
         resolved_exit_code = execution_outcome.resolved.exit_code
@@ -462,6 +485,56 @@ def _finalize_lifecycle_and_observe_session(
             exc_info=True,
         )
     return resolved_exit_code, resolved_harness_session_id
+
+
+def _extract_primary_usage(
+    *,
+    harness_adapter: Any,
+    primary_spawn_id: SpawnId,
+    project_root: Path,
+    model_id: str | None,
+    log_dir: Path,
+) -> TokenUsage | None:
+    """Best-effort usage extraction for primary-session finalization."""
+
+    try:
+        usage_artifacts = InMemoryStore()
+        for filename in (HISTORY_FILENAME, OUTPUT_FILENAME):
+            source = log_dir / filename
+            if not source.is_file():
+                continue
+            try:
+                usage_artifacts.put(
+                    make_artifact_key(primary_spawn_id, filename),
+                    source.read_bytes(),
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to mirror primary artifact for usage extraction",
+                    exc_info=True,
+                )
+        raw_usage = harness_adapter.extract_usage(usage_artifacts, primary_spawn_id)
+        usage = estimate_usage_cost(
+            model_id=(model_id or "").strip() or None,
+            usage=raw_usage,
+            project_root=project_root,
+        )
+        if all(
+            value is None
+            for value in (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.reasoning_tokens,
+                usage.total_cost_usd,
+            )
+        ):
+            return None
+        return usage
+    except Exception:
+        logger.debug("Best-effort primary usage extraction failed", exc_info=True)
+        return None
 
 
 def _create_managed_primary_connection(
@@ -871,6 +944,7 @@ def run_harness_process(
                     harness_adapter=harness_adapter,
                     artifacts=artifacts,
                     project_root=project_root,
+                    model_id=session_metadata.model,
                     runtime_root=runtime_root,
                     primary_started=primary_started,
                     primary_started_epoch=primary_started_epoch,

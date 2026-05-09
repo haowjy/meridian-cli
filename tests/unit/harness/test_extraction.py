@@ -702,8 +702,8 @@ def test_opencode_usage_reads_session_idle_info_and_cost() -> None:
         make_artifact_key(spawn_id, "history.jsonl"),
         (
             b'{"event":"message.updated","info":{"input_tokens":5,"output_tokens":1}}\n'
-            b'{"event":"session.idle","info":{"input_tokens":9,"output_tokens":3,'
-            b'"cache_read_input_tokens":11},"cost":{"total_cost_usd":0.015}}\n'
+            b'{"event":"session.idle","properties":{"info":{"tokens":{"input":9,'
+            b'"output":3,"cache":{"read":11}},"cost":0.015}}}\n'
         ),
     )
 
@@ -713,3 +713,66 @@ def test_opencode_usage_reads_session_idle_info_and_cost() -> None:
     assert usage.output_tokens == 3
     assert usage.cache_read_input_tokens == 11
     assert usage.total_cost_usd == 0.015
+
+
+def test_opencode_usage_reads_nested_message_updated_tokens_and_cost() -> None:
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-opencode-nested-message-updated")
+    artifacts.put(
+        make_artifact_key(spawn_id, "history.jsonl"),
+        (
+            b'{"event":"message.updated","properties":{"info":{"tokens":{"input":7,'
+            b'"output":4,"reasoning":2,"cache":{"read":5,"write":1}},"cost":"0.02"}}}\n'
+            b'{"event":"session.idle","properties":{"status":{"type":"idle"}}}\n'
+        ),
+    )
+
+    usage = OpenCodeAdapter().extract_usage(artifacts, spawn_id)
+
+    assert usage.input_tokens == 7
+    assert usage.output_tokens == 4
+    assert usage.reasoning_tokens == 2
+    assert usage.cache_read_input_tokens == 5
+    assert usage.cache_creation_input_tokens == 1
+    assert usage.total_cost_usd == 0.02
+
+
+def test_opencode_usage_mixed_nested_and_legacy_fallback_still_works() -> None:
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-opencode-mixed-usage")
+    artifacts.put(
+        make_artifact_key(spawn_id, "history.jsonl"),
+        (
+            b'{"event":"message.updated","properties":{"info":{"tokens":{"input":8,"output":2}}}}\n'
+            b'{"event":"response.completed","usage":{"input":13,"output":5,"cache_read":7,'
+            b'"cache_write":4,"reasoning":1},"cost":{"total_cost_usd":"0.03"}}\n'
+        ),
+    )
+
+    usage = OpenCodeAdapter().extract_usage(artifacts, spawn_id)
+
+    assert usage.input_tokens == 13
+    assert usage.output_tokens == 5
+    assert usage.cache_read_input_tokens == 7
+    assert usage.cache_creation_input_tokens == 4
+    assert usage.reasoning_tokens == 1
+    assert usage.total_cost_usd == 0.03
+
+
+def test_opencode_usage_control_events_without_tokens_do_not_erase_previous_usage() -> None:
+    artifacts = InMemoryStore()
+    spawn_id = SpawnId("r-opencode-usage-preserved")
+    artifacts.put(
+        make_artifact_key(spawn_id, "history.jsonl"),
+        (
+            b'{"event":"message.updated","properties":{"info":{"tokens":{"input":6,"output":2},'
+            b'"cost":0.01}}}\n'
+            b'{"event":"session.idle","properties":{"info":{"id":"msg-final"}}}\n'
+        ),
+    )
+
+    usage = OpenCodeAdapter().extract_usage(artifacts, spawn_id)
+
+    assert usage.input_tokens == 6
+    assert usage.output_tokens == 2
+    assert usage.total_cost_usd == 0.01
