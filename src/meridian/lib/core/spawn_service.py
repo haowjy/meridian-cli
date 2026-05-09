@@ -482,13 +482,26 @@ class SpawnApplicationService:
 
         if not _is_managed_primary_candidate(record):
             return
-        from meridian.lib.core.process_cleanup import terminate_spawn_scopes
-        terminate_spawn_scopes(
-            self._runtime_root,
-            record,
-            reason="cancel",
-            grace_seconds=5.0,
-        )
+        from meridian.lib.core.process_cleanup import cancel_managed_primary
+        from meridian.lib.state.process_scope_projection import read_scopes_from_disk
+
+        scopes = read_scopes_from_disk(self._runtime_root, SpawnId(str(spawn_id)))
+        if scopes:
+            # Phase-3 scope records: use sequenced managed-primary teardown.
+            cancel_managed_primary(
+                self._runtime_root,
+                record,
+                grace_seconds=5.0,
+            )
+        else:
+            # Legacy fallback: no scope records, use worker_pid termination.
+            from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+            terminate_spawn_scopes(
+                self._runtime_root,
+                record,
+                reason="cancel",
+                grace_seconds=5.0,
+            )
 
     async def _wait_for_terminal(
         self,
@@ -583,6 +596,17 @@ class SpawnApplicationService:
                     error="cancel_timeout",
                 )
                 latest = self.get_spawn(spawn_id) or latest
+
+        # Best-effort: release any Phase-3 scope records so the reaper does not
+        # re-terminate processes that the metadata path already signalled.
+        latest_for_cleanup = self.get_spawn(spawn_id) or latest
+        from meridian.lib.core.process_cleanup import cancel_managed_primary
+        await asyncio.to_thread(
+            cancel_managed_primary,
+            self._runtime_root,
+            latest_for_cleanup,
+            grace_seconds=0.0,
+        )
 
         return _cancel_outcome_from_record(
             str(spawn_id),

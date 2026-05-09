@@ -9,6 +9,7 @@ import asyncio
 import os
 import socket
 import sys
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -16,19 +17,65 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import psutil
+
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection, HarnessEvent
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
+from meridian.lib.state.process_scope_projection import record_scope
 
 from .ports import ProcessLauncher
 
 TuiCommandBuilder = Callable[[str], tuple[str, ...]]
 MAX_PORT_RETRY_ATTEMPTS = 3
+
+
+def _make_scope_snapshot(
+    pid: int,
+    scope_id: str,
+    owner_policy: str,
+    owner_id: str,
+    role: str,
+) -> ProcessScopeSnapshot:
+    """Build a ProcessScopeSnapshot for a managed-primary process.
+
+    Determines containment type (posix_pgid / windows_job / pid_tree_fallback)
+    and reads the process birth time via psutil for the PID-reuse guard.
+    """
+    try:
+        birth_time = psutil.Process(pid).create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        birth_time = time.time()
+
+    pgid: int | None = None
+    containment: str
+    if sys.platform != "win32":
+        try:
+            pgid = os.getpgid(pid)
+            containment = "posix_pgid"
+        except OSError:
+            containment = "pid_tree_fallback"
+    else:
+        containment = "windows_job"
+
+    return ProcessScopeSnapshot(
+        scope_id=scope_id,
+        owner_policy=owner_policy,
+        owner_id=owner_id,
+        role=role,
+        containment=containment,
+        root_pid=pid,
+        root_created_at_epoch=birth_time,
+        pgid=pgid,
+        job_name=None,
+        degraded_reason=None,
+    )
 
 
 class PrimaryAttachError(Exception):
@@ -160,6 +207,28 @@ class PrimaryAttachLauncher:
                 self._metadata.backend_port = self._resolve_backend_port()
             self._write_metadata()
 
+            # Record backend scope. session_owned when session_id is available
+            # (normal path) so the backend is preserved across launcher restarts.
+            # Falls back to spawn_owned when session_id is absent (error path)
+            # so normal spawn teardown terminates the orphaned backend process.
+            _backend_pid = self._connection.subprocess_pid
+            if _backend_pid is not None and _backend_pid > 0:
+                _runtime_root = self._spawn_dir.parent.parent
+                _sid = (session_id or "").strip()
+                _policy = "session_owned" if _sid else "spawn_owned"
+                _owner_id = _sid or str(self._spawn_id)
+                record_scope(
+                    _runtime_root,
+                    self._spawn_id,
+                    _make_scope_snapshot(
+                        pid=_backend_pid,
+                        scope_id="backend",
+                        owner_policy=_policy,
+                        owner_id=_owner_id,
+                        role="harness_backend",
+                    ),
+                )
+
             self._event_writer_task = asyncio.create_task(self._run_event_writer())
             self._set_harness_session_id(session_id)
             self._set_activity("idle")
@@ -192,6 +261,23 @@ class PrimaryAttachLauncher:
                 on_child_started=_on_child_started,
             )
             telemetry.clear()
+
+            # Record TUI as session_owned — preserved across launcher death.
+            _tui_pid = launched.pid
+            if _tui_pid is not None and _tui_pid > 0:
+                _runtime_root = self._spawn_dir.parent.parent
+                _owner_id = (session_id or "").strip() or str(self._spawn_id)
+                record_scope(
+                    _runtime_root,
+                    self._spawn_id,
+                    _make_scope_snapshot(
+                        pid=_tui_pid,
+                        scope_id="tui",
+                        owner_policy="session_owned",
+                        owner_id=_owner_id,
+                        role="harness_tui",
+                    ),
+                )
 
             return PrimaryAttachOutcome(
                 exit_code=launched.exit_code,
