@@ -6,12 +6,10 @@ import os
 import subprocess
 import time
 from collections.abc import Mapping
-from contextlib import suppress
 from pathlib import Path
 
-import psutil
-
 from meridian.lib.hooks.types import Hook, HookContext, HookResult
+from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 
 _TAIL_BYTES = 1024
 _TERM_GRACE_SECONDS = 2.0
@@ -54,29 +52,13 @@ def _terminate_process_tree(process: subprocess.Popen[bytes], *, grace_secs: flo
         process.terminate()
         return
 
-    try:
-        root = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return
-
-    children: list[psutil.Process] = []
-    with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-        children = root.children(recursive=True)
-    tree = [*children, root]
-
-    for proc in tree:
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-            proc.terminate()
-
-    _, alive = psutil.wait_procs(tree, timeout=grace_secs)
-    if not alive:
-        return
-
-    for proc in alive:
-        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-            proc.kill()
-
-    psutil.wait_procs(alive, timeout=1.0)
+    terminate_tree_sync(
+        pid=pid,
+        created_at_epoch=0.0,
+        grace_secs=grace_secs,
+        reason="hook_timeout",
+        scope_id="hook_process",
+    )
 
 
 class ExternalHookRunner:
