@@ -50,6 +50,7 @@ def _request(
     profile_policy_approval: str | None = None,
     profile_policy_sandbox: str | None = None,
     profile_policy_autocompact: int | None = None,
+    profile_policy_autocompact_pct: int | None = None,
     profile_model_policies: tuple[ModelPolicyRule, ...] | None = None,
     profile_legacy_models: dict[str, AgentModelEntry] | None = None,
     alias_entry: AliasEntry | None = None,
@@ -73,6 +74,7 @@ def _request(
         profile_policy_approval=profile_policy_approval,
         profile_policy_sandbox=profile_policy_sandbox,
         profile_policy_autocompact=profile_policy_autocompact,
+        profile_policy_autocompact_pct=profile_policy_autocompact_pct,
         profile_model_policies=profile_model_policies,
         profile_legacy_models=profile_legacy_models,
         profile_fanout=(),
@@ -112,6 +114,7 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         approval="auto",
         sandbox="workspace-write",
         autocompact=70,
+        autocompact_pct=None,
         timeout=30.0,
         skill_names=(),
         field_provenance=FieldProvenance(

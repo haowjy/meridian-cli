@@ -56,6 +56,7 @@ def build_primary_spawn_request(
         sandbox=request.sandbox,
         approval=request.approval,
         autocompact=request.autocompact,
+        autocompact_pct=request.autocompact_pct,
         effort=request.effort,
         session=normalized_session,
         work_id_hint=(request.work_id or "").strip() or None,

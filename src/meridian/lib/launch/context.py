@@ -510,6 +510,7 @@ def _spawn_request_overrides(request: SpawnRequest) -> RuntimeOverrides:
         sandbox=(request.sandbox or "").strip() or None,
         approval=(request.approval or "").strip() or None,
         autocompact=request.autocompact,
+        autocompact_pct=request.autocompact_pct,
     )
 
 
@@ -1190,6 +1191,7 @@ def prepare_launch_surface(
                 profile.disallowed_tools if profile is not None else request.disallowed_tools
             ),
             "autocompact": execution_policy.autocompact,
+            "autocompact_pct": execution_policy.autocompact_pct,
             "effort": execution_policy.effort,
             "session": request.session.model_copy(
                 update={

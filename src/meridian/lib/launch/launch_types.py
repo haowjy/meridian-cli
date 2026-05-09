@@ -129,6 +129,7 @@ class ResolvedExecutionPolicy:
     sandbox: str | None = None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     timeout: float | None = None
 
     def as_overrides(
@@ -147,6 +148,7 @@ class ResolvedExecutionPolicy:
             "sandbox": self.sandbox,
             "approval": self.approval,
             "autocompact": self.autocompact,
+            "autocompact_pct": self.autocompact_pct,
             "timeout": self.timeout,
         }
         if allowed_fields is not None:

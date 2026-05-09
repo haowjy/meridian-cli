@@ -286,7 +286,14 @@ def root(
         int | None,
         Parameter(
             name="--autocompact",
-            help="Autocompact threshold percentage (1-100). Overrides agent profile.",
+            help="Autocompact token threshold (minimum 1000). Overrides agent profile.",
+        ),
+    ] = None,
+    autocompact_pct: Annotated[
+        int | None,
+        Parameter(
+            name="--autocompact-pct",
+            help="Percentage of context window for autocompact (1-100). Overrides agent profile.",
         ),
     ] = None,
     effort: Annotated[
@@ -351,6 +358,7 @@ def root(
         yolo=yolo,
         approval=approval,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         effort=effort,
         sandbox=sandbox,
         timeout=timeout,
@@ -420,6 +428,7 @@ def _run_primary_launch(
     yolo: bool,
     approval: str | None,
     autocompact: int | None,
+    autocompact_pct: int | None,
     effort: str | None,
     sandbox: str | None,
     timeout: float | None,
@@ -439,6 +448,7 @@ def _run_primary_launch(
             yolo=yolo,
             approval=approval,
             autocompact=autocompact,
+            autocompact_pct=autocompact_pct,
             effort=effort,
             sandbox=sandbox,
             timeout=timeout,

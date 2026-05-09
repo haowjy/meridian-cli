@@ -159,6 +159,7 @@ def _shared_launch_input_kwargs(
     timeout: float | None,
     approval: str | None,
     autocompact: int | None,
+    autocompact_pct: int | None,
     effort: str | None,
     sandbox: str | None,
     harness: str | None,
@@ -175,6 +176,7 @@ def _shared_launch_input_kwargs(
         "timeout": timeout,
         "approval": approval,
         "autocompact": autocompact,
+        "autocompact_pct": autocompact_pct,
         "effort": effort,
         "sandbox": sandbox,
         "harness": harness,
@@ -316,7 +318,14 @@ def _spawn_create(
         int | None,
         Parameter(
             name="--autocompact",
-            help="Autocompact threshold percentage (1-100). Overrides agent profile.",
+            help="Autocompact token threshold (minimum 1000). Overrides agent profile.",
+        ),
+    ] = None,
+    autocompact_pct: Annotated[
+        int | None,
+        Parameter(
+            name="--autocompact-pct",
+            help="Percentage of context window for autocompact (1-100). Overrides agent profile.",
         ),
     ] = None,
     effort: Annotated[
@@ -391,6 +400,7 @@ def _spawn_create(
         timeout=timeout,
         approval=resolved_approval,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         effort=effort,
         sandbox=sandbox,
         harness=global_harness,

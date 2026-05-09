@@ -42,7 +42,14 @@ def register_bootstrap_command(
         ] = None,
         autocompact: Annotated[
             int | None,
-            Parameter(name="--autocompact", help="Autocompact threshold percentage."),
+            Parameter(name="--autocompact", help="Autocompact token threshold (minimum 1000)."),
+        ] = None,
+        autocompact_pct: Annotated[
+            int | None,
+            Parameter(
+                name="--autocompact-pct",
+                help="Percentage of context window for autocompact (1-100).",
+            ),
         ] = None,
         effort: Annotated[
             str | None,
@@ -86,6 +93,7 @@ def register_bootstrap_command(
                 yolo=yolo,
                 approval=approval,
                 autocompact=autocompact,
+                autocompact_pct=autocompact_pct,
                 effort=effort,
                 sandbox=sandbox,
                 timeout=timeout,

@@ -235,6 +235,7 @@ def _build_create_payload_impl(
         sandbox=payload.sandbox,
         approval=payload.approval,
         autocompact=payload.autocompact,
+        autocompact_pct=payload.autocompact_pct,
         effort=payload.effort,
         retry=RetryPolicy(
             max_attempts=max(1, runtime_view.config.max_retries + 1),

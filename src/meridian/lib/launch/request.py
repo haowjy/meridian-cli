@@ -88,6 +88,7 @@ class SpawnRequest(BaseModel):
     allowed_tools: tuple[str, ...] = ()
     disallowed_tools: tuple[str, ...] = ()
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     effort: str | None = None
 
     # Execution policy (nested)
@@ -122,7 +123,14 @@ class SpawnRequest(BaseModel):
     @classmethod
     def _reject_bool_autocompact(cls, value: object) -> object:
         if isinstance(value, bool):
-            raise ValueError("autocompact must be an integer percentage, not bool")
+            raise ValueError("autocompact must be an integer token count, not bool")
+        return value
+
+    @field_validator("autocompact_pct", mode="before")
+    @classmethod
+    def _reject_bool_autocompact_pct(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("autocompact_pct must be an integer percentage, not bool")
         return value
 
 

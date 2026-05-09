@@ -82,6 +82,7 @@ class ChatPolicySnapshot(BaseModel):
     sandbox: str | None = None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
 
     agent_name: str | None = None
     agent_profile_path: str | None = None
@@ -176,6 +177,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         sandbox=policy.execution_policy.sandbox,
         approval=policy.execution_policy.approval,
         autocompact=policy.execution_policy.autocompact,
+        autocompact_pct=policy.execution_policy.autocompact_pct,
         agent_name=profile.name if profile is not None else None,
         agent_profile_path=resolve_profile_path(profile),
         skills=policy.resolved_skills.skill_names,
@@ -193,6 +195,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
                 "approval": policy.field_provenance.approval_source.value,
                 "sandbox": policy.field_provenance.sandbox_source.value,
                 "autocompact": policy.field_provenance.autocompact_source.value,
+                "autocompact_pct": policy.field_provenance.autocompact_pct_source.value,
                 "timeout": policy.field_provenance.timeout_source.value,
             }.items()
             if value and value != "unset"
@@ -304,6 +307,8 @@ def build_chat_backend_launch_plan(
     }
     if snapshot.autocompact is not None and autocompact_supported:
         configured_payload["autocompact"] = snapshot.autocompact
+    if snapshot.autocompact_pct is not None:
+        configured_payload["autocompact_pct"] = snapshot.autocompact_pct
     return ChatBackendLaunchPlan(
         harness_id=config.harness_id,
         connection_config=config,

@@ -102,7 +102,14 @@ def _chat(
     ] = None,
     autocompact: Annotated[
         int | None,
-        Parameter(name="--autocompact", help="Autocompact threshold percentage (1-100)."),
+        Parameter(name="--autocompact", help="Autocompact token threshold (minimum 1000)."),
+    ] = None,
+    autocompact_pct: Annotated[
+        int | None,
+        Parameter(
+            name="--autocompact-pct",
+            help="Percentage of context window for autocompact (1-100).",
+        ),
     ] = None,
     yolo: Annotated[
         bool,
@@ -178,6 +185,7 @@ def _chat(
         sandbox=sandbox,
         effort=effort,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         port=port,
         host=host,
         headless=headless,
@@ -282,6 +290,7 @@ def run_chat_server(
     sandbox: str | None = None,
     effort: str | None = None,
     autocompact: int | None = None,
+    autocompact_pct: int | None = None,
     port: int = 0,
     host: str = "127.0.0.1",
     headless: bool = False,
@@ -350,6 +359,7 @@ def run_chat_server(
         sandbox=sandbox,
         effort=effort,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
     )
     _emit_chat_policy_warnings(policy_snapshot.warnings, output)
     if entrypoint is None:
@@ -555,6 +565,7 @@ def _resolve_chat_policy_snapshot(
     sandbox: str | None,
     effort: str | None,
     autocompact: int | None,
+    autocompact_pct: int | None = None,
 ) -> ChatPolicySnapshot:
     normalized_harness: str | None = None
     if (harness or "").strip():
@@ -570,6 +581,7 @@ def _resolve_chat_policy_snapshot(
         sandbox=(sandbox or "").strip() or None,
         effort=(effort or "").strip() or None,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
     )
     policy = resolve_launch_policy(
         SurfacePolicyInput(
