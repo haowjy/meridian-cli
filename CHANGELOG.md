@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- `WorkItem` gains `worktree_path` (absolute path string or None) and `worktree_pending` (bool) fields. Persisted in `__status.json`. Legacy files without these fields read as `None`/`False` — no migration needed.
+- `update_work_item()` accepts `worktree_path` and `worktree_pending` so the ops layer can record worktree state without re-reading the item.
+- `WorkConfig` model (`default_worktree: bool`, `worktree_base: str | None`) surfaced as `MeridianConfig.work`. Populated from `[work]` TOML section.
+- `[work]` config section now accepts `default_worktree` (bool) and `worktree_base` (str). Existing `[work.artifacts]` unaffected.
 - Durable launch-boundary observability for background spawns. `launch-boundary.jsonl` per spawn records parent-side launch attempt/spawned/failed events and worker-side boot/takeover/failure events across the startup boundary. Reaper reads this artifact to distinguish pre-takeover startup failures from mid-run orphans.
 - `launch_boundary_no_takeover` reconciliation error. Background spawns whose `launch-boundary.jsonl` shows launch events but no worker takeover reconcile under this code instead of `orphan_run` or `missing_runner_pid`. Pinpoints the startup-phase failure window.
 - Centralized session reference resolution. `resolve_session_reference()` now recovers missing harness session IDs from durable state (session store, spawn row, primary meta) and harness adapter detection. Recovery provenance is explicit: SESSION_STORE, SPAWN_ROW, PRIMARY_META, DETECTED_UNVERIFIED. `session log`, `--continue`, `--fork`, and `--from` now share the same resolution path instead of divergent fallbacks.

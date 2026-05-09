@@ -694,38 +694,61 @@ def _normalize_work_table(raw_value: object, *, source: str) -> dict[str, object
 
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
-        if key != "artifacts":
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
+        if key == "artifacts":
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"Invalid value for '{source}.artifacts': expected table, "
+                    f"got {type(value).__name__} ({value!r})."
+                )
+
+            artifacts: dict[str, object] = {}
+            for artifacts_key, artifacts_value in cast("dict[str, object]", value).items():
+                artifacts_source = f"{source}.artifacts.{artifacts_key}"
+                if artifacts_key == "sync":
+                    if not isinstance(artifacts_value, str):
+                        raise ValueError(
+                            f"Invalid value for '{artifacts_source}': expected str, got "
+                            f"{type(artifacts_value).__name__} ({artifacts_value!r})."
+                        )
+                    artifacts["sync"] = _normalize_required_string(
+                        artifacts_value,
+                        source=artifacts_source,
+                    )
+                    continue
+                logger.warning(
+                    "Ignoring unknown Meridian config key '%s.%s'.",
+                    f"{source}.artifacts",
+                    artifacts_key,
+                )
+
+            if artifacts:
+                values["artifacts"] = artifacts
             continue
 
-        if not isinstance(value, dict):
-            raise ValueError(
-                f"Invalid value for '{source}.artifacts': expected table, "
-                f"got {type(value).__name__} ({value!r})."
-            )
-
-        artifacts: dict[str, object] = {}
-        for artifacts_key, artifacts_value in cast("dict[str, object]", value).items():
-            artifacts_source = f"{source}.artifacts.{artifacts_key}"
-            if artifacts_key == "sync":
-                if not isinstance(artifacts_value, str):
-                    raise ValueError(
-                        f"Invalid value for '{artifacts_source}': expected str, got "
-                        f"{type(artifacts_value).__name__} ({artifacts_value!r})."
-                    )
-                artifacts["sync"] = _normalize_required_string(
-                    artifacts_value,
-                    source=artifacts_source,
+        if key == "default_worktree":
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Invalid value for '{source}.default_worktree': expected bool, "
+                    f"got {type(value).__name__} ({value!r})."
                 )
-                continue
-            logger.warning(
-                "Ignoring unknown Meridian config key '%s.%s'.",
-                f"{source}.artifacts",
-                artifacts_key,
-            )
+            values["default_worktree"] = value
+            continue
 
-        if artifacts:
-            values["artifacts"] = artifacts
+        if key == "worktree_base":
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"Invalid value for '{source}.worktree_base': expected str, "
+                    f"got {type(value).__name__} ({value!r})."
+                )
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError(
+                    f"Invalid value for '{source}.worktree_base': expected non-empty string."
+                )
+            values["worktree_base"] = normalized
+            continue
+
+        logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
 
     return values
 
@@ -823,7 +846,11 @@ DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
         section_key="work",
         merge_kind="nested_dict",
         scaffold_lines=(
-            "# -- Work artifact behavior --------------------------------------------------",
+            "# -- Work behavior -----------------------------------------------------------",
+            "# [work]",
+            "# default_worktree = false",
+            '# worktree_base = "../my-worktrees"',
+            "",
             "# [work.artifacts]",
             '# sync = "project"',
             "",
@@ -1149,6 +1176,15 @@ class StateConfig(BaseModel):
                 f"got {value!r}."
             )
         return value
+
+
+class WorkConfig(BaseModel):
+    """Work-item behavior settings."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    default_worktree: bool = False
+    worktree_base: str | None = None
 
 
 class PrimaryConfig(BaseModel):
@@ -1631,6 +1667,7 @@ class MeridianConfig(BaseSettings):
     agents: dict[str, AgentOverlayConfig] = Field(default_factory=dict)
     output: OutputConfig = Field(default_factory=OutputConfig)
     state: StateConfig = Field(default_factory=StateConfig)
+    work: WorkConfig = Field(default_factory=WorkConfig)
 
     @field_validator("default_model")
     @classmethod

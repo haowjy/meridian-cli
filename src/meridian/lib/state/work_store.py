@@ -45,6 +45,8 @@ class WorkItem(BaseModel):
     status: str
     created_at: str
     archived_at: str | None = None
+    worktree_path: str | None = None      # absolute path string, or None
+    worktree_pending: bool = False         # transient creation-in-progress marker
 
 
 def slugify(label: str) -> str:
@@ -118,6 +120,8 @@ def _read_or_initialize_status(
     default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
+    default_worktree_path: str | None = None,
+    default_worktree_pending: bool = False,
 ) -> dict[str, Any]:
     status_file = _status_path(work_dir)
     created_fallback = default_created_at or _dir_mtime_iso(work_dir)
@@ -132,6 +136,8 @@ def _read_or_initialize_status(
         "goal": default_goal,
         "created_at": created_fallback,
         "archived_at": archived_fallback if archived else None,
+        "worktree_path": default_worktree_path,
+        "worktree_pending": default_worktree_pending,
     }
 
     raw = _read_json_object(status_file)
@@ -194,6 +200,20 @@ def _read_or_initialize_status(
             payload["status"] = default_status
             changed = True
 
+    # worktree_path: read from file if present, else keep default (None for legacy files)
+    worktree_path_value = raw.get("worktree_path")
+    if isinstance(worktree_path_value, str):
+        payload["worktree_path"] = worktree_path_value if worktree_path_value else None
+    else:
+        payload["worktree_path"] = default_worktree_path
+
+    # worktree_pending: read from file if bool, else default to False for legacy files
+    worktree_pending_value = raw.get("worktree_pending")
+    if isinstance(worktree_pending_value, bool):
+        payload["worktree_pending"] = worktree_pending_value
+    else:
+        payload["worktree_pending"] = default_worktree_pending
+
     if changed:
         atomic_write_text(status_file, _serialize_status(payload))
     return payload
@@ -208,6 +228,8 @@ def _work_item_from_dir(
     default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
+    default_worktree_path: str | None = None,
+    default_worktree_pending: bool = False,
 ) -> WorkItem:
     payload = _read_or_initialize_status(
         work_dir,
@@ -217,6 +239,8 @@ def _work_item_from_dir(
         default_goal=default_goal,
         default_created_at=default_created_at,
         default_archived_at=default_archived_at,
+        default_worktree_path=default_worktree_path,
+        default_worktree_pending=default_worktree_pending,
     )
     return WorkItem(
         name=work_dir.name,
@@ -225,6 +249,10 @@ def _work_item_from_dir(
         status=str(payload["status"]),
         created_at=str(payload["created_at"]),
         archived_at=payload["archived_at"] if isinstance(payload["archived_at"], str) else None,
+        worktree_path=(
+            payload["worktree_path"] if isinstance(payload["worktree_path"], str) else None
+        ),
+        worktree_pending=bool(payload["worktree_pending"]),
     )
 
 
@@ -263,6 +291,8 @@ def _status_payload(
     goal: str | None = None,
     created_at: str,
     archived_at: str | None,
+    worktree_path: str | None = None,
+    worktree_pending: bool = False,
 ) -> dict[str, Any]:
     return {
         "status": status,
@@ -270,6 +300,8 @@ def _status_payload(
         "goal": goal,
         "created_at": created_at,
         "archived_at": archived_at,
+        "worktree_path": worktree_path,
+        "worktree_pending": worktree_pending,
     }
 
 
@@ -323,6 +355,8 @@ def create_work_item(
         goal=normalized_goal,
         created_at=created_at,
         archived_at=None,
+        worktree_path=None,
+        worktree_pending=False,
     )
     atomic_write_text(_status_path(active), _serialize_status(payload))
     return WorkItem(
@@ -332,6 +366,8 @@ def create_work_item(
         status="open",
         created_at=created_at,
         archived_at=None,
+        worktree_path=None,
+        worktree_pending=False,
     )
 
 
@@ -485,6 +521,8 @@ def update_work_item(
     status: str | None = None,
     description: str | None = None,
     goal: str | None = None,
+    worktree_path: str | None = None,
+    worktree_pending: bool | None = None,
 ) -> WorkItem:
     """Update active work item metadata and rewrite ``__status.json`` atomically."""
 
@@ -505,6 +543,10 @@ def update_work_item(
         raise ValueError("'done' is reserved for archived work items.")
     next_description = current.description if description is None else description
     next_goal = current.goal if goal is None else normalized_goal
+    next_worktree_path = current.worktree_path if worktree_path is None else worktree_path
+    next_worktree_pending = (
+        current.worktree_pending if worktree_pending is None else worktree_pending
+    )
     updated = WorkItem(
         name=current.name,
         description=next_description,
@@ -512,6 +554,8 @@ def update_work_item(
         status=next_status,
         created_at=current.created_at,
         archived_at=None,
+        worktree_path=next_worktree_path,
+        worktree_pending=next_worktree_pending,
     )
     atomic_write_text(
         _status_path(active_dir),
@@ -522,6 +566,8 @@ def update_work_item(
                 goal=updated.goal,
                 created_at=updated.created_at,
                 archived_at=None,
+                worktree_path=updated.worktree_path,
+                worktree_pending=updated.worktree_pending,
             )
         ),
     )
@@ -562,6 +608,8 @@ def archive_work_item(
         status="done",
         created_at=current.created_at,
         archived_at=archived_at,
+        worktree_path=current.worktree_path,
+        worktree_pending=False,
     )
     atomic_write_text(
         _status_path(destination),
@@ -572,6 +620,8 @@ def archive_work_item(
                 goal=archived_item.goal,
                 created_at=archived_item.created_at,
                 archived_at=archived_item.archived_at,
+                worktree_path=archived_item.worktree_path,
+                worktree_pending=archived_item.worktree_pending,
             )
         ),
     )
@@ -605,6 +655,8 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
                 goal=current.goal,
                 created_at=current.created_at,
                 archived_at=None,
+                worktree_path=current.worktree_path,
+                worktree_pending=False,
             )
         ),
     )
