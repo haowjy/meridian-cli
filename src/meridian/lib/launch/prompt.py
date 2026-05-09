@@ -1,5 +1,6 @@
 """Prompt composition helpers for launch flows."""
 
+import html
 import importlib
 import re
 from collections.abc import Mapping, Sequence
@@ -114,6 +115,26 @@ def build_report_instruction() -> str:
         "Provide a plain markdown report in your final assistant message.\n\n"
         "Include: what was done, key decisions made, files created/modified, "
         "verification results, and any issues or blockers."
+    )
+
+
+def build_goal_instruction(goal: str | None) -> str:
+    """Render the deterministic spawn-goal completion contract block."""
+
+    if goal is None:
+        return ""
+    if goal == "" or goal != goal.strip():
+        raise ValueError("goal must be normalized before prompt rendering")
+    escaped_goal = html.escape(goal, quote=False)
+    return (
+        "# Spawn Goal\n\n"
+        "You have a completion contract for this spawn:\n\n"
+        f"<goal>\n{escaped_goal}\n</goal>\n\n"
+        "Work until the goal is complete. If the goal is impossible, unsafe, "
+        "blocked by missing information or permissions, or disproportionate "
+        "to continue, stop and report the blocker instead.\n\n"
+        "When blocked, report what is blocked, the evidence observed, and the "
+        "smallest next action or decision needed. Do not run forever or retry indefinitely."
     )
 
 
@@ -508,6 +529,7 @@ def render_file_template(
 __all__ = [
     "ReferenceItem",
     "build_context_prompt",
+    "build_goal_instruction",
     "build_launch_context_documents",
     "build_report_instruction",
     "compose_run_prompt",

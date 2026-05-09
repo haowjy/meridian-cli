@@ -25,12 +25,14 @@ if TYPE_CHECKING:
 def _build_spawn_request(
     prompt: str = "hello",
     extra_args: tuple[str, ...] = (),
+    goal: str | None = None,
 ) -> SpawnRequest:
     return SpawnRequest(
         model="gpt-5.4",
         harness=HarnessId.CODEX.value,
         prompt=prompt,
         extra_args=extra_args,
+        goal=goal,
     )
 
 
@@ -329,6 +331,39 @@ def test_build_launch_context_primary_projects_supplemental_documents(
     )
 
     assert "# Bootstrap: setup\n\nsetup docs" in runtime_ctx.run_params.appended_system_prompt
+
+
+def test_build_launch_context_spawn_prepare_injects_goal_completion_contract(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    request = _build_spawn_request(goal="finish launch composition wiring").model_copy(
+        update={"prompt_is_composed": False}
+    )
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-goal",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.resolved_request.goal == "finish launch composition wiring"
+    projected_goal_contract = "\n".join(
+        channel
+        for channel in (
+            runtime_ctx.run_params.appended_system_prompt or "",
+            runtime_ctx.run_params.user_turn_content or "",
+        )
+        if channel
+    )
+    assert "# Spawn Goal" in projected_goal_contract
+    assert "<goal>\nfinish launch composition wiring\n</goal>" in projected_goal_contract
 
 
 def test_build_launch_context_primary_exports_configured_context_dirs(

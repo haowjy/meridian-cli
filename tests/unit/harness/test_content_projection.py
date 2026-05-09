@@ -29,6 +29,7 @@ def _content() -> ComposedLaunchContent:
         report_instruction="SYSTEM: report instruction",
         inventory_prompt="SYSTEM: agent inventory",
         context_prompt="",
+        completion_contract="SYSTEM: completion contract",
         passthrough_system_fragments=("SYSTEM: passthrough fragment",),
         user_task_prompt="USER: task prompt",
         reference_items=(
@@ -58,6 +59,7 @@ def test_claude_project_content_routes_system_separately_from_user_turn() -> Non
         "SYSTEM: profile body",
         "SYSTEM: report instruction",
         "SYSTEM: agent inventory",
+        "SYSTEM: completion contract",
         "SYSTEM: passthrough fragment",
     )
     user_turn_sentinels = (
@@ -91,6 +93,7 @@ def test_opencode_project_content_routes_system_via_message_system_field() -> No
         "SYSTEM: profile body",
         "SYSTEM: report instruction",
         "SYSTEM: agent inventory",
+        "SYSTEM: completion contract",
         "SYSTEM: passthrough fragment",
     )
     user_turn_sentinels = (
@@ -132,6 +135,7 @@ def test_codex_project_content_routes_system_via_developer_instructions() -> Non
         "SYSTEM: profile body",
         "SYSTEM: report instruction",
         "SYSTEM: agent inventory",
+        "SYSTEM: completion contract",
         "SYSTEM: passthrough fragment",
     )
     user_turn_sentinels = (

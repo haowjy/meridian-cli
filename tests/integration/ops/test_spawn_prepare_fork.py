@@ -257,3 +257,25 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
     assert prepared.model == "gpt-5.5"
     assert prepared.harness == "codex"
     assert prepared.effort is None
+
+
+def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Path) -> None:
+    _write_minimal_subagent(tmp_path)
+    (tmp_path / "mars.toml").write_text(
+        "[settings]\n"
+        'targets = [".claude"]\n',
+        encoding="utf-8",
+    )
+    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="compose with completion contract",
+            goal="ship phase-2 gate fixes",
+            project_root=tmp_path.as_posix(),
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert prepared.goal == "ship phase-2 gate fixes"

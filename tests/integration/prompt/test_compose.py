@@ -127,6 +127,7 @@ def test_system_instruction_renders_skill_docs_then_bootstrap_docs() -> None:
         report_instruction="REPORT",
         inventory_prompt="INVENTORY",
         context_prompt="CONTEXT",
+        completion_contract="GOAL",
         passthrough_system_fragments=("PASSTHROUGH",),
         user_task_prompt="USER",
         reference_items=(),
@@ -135,7 +136,7 @@ def test_system_instruction_renders_skill_docs_then_bootstrap_docs() -> None:
 
     rendered = render_system_instruction_blocks(content)
     assert [rendered.index(part) for part in (
-        "SKILL", "BOOTSTRAP", "PROFILE", "REPORT", "INVENTORY", "CONTEXT", "PASSTHROUGH"
+        "SKILL", "BOOTSTRAP", "PROFILE", "REPORT", "INVENTORY", "CONTEXT", "GOAL", "PASSTHROUGH"
     )] == sorted(rendered.index(part) for part in (
-        "SKILL", "BOOTSTRAP", "PROFILE", "REPORT", "INVENTORY", "CONTEXT", "PASSTHROUGH"
+        "SKILL", "BOOTSTRAP", "PROFILE", "REPORT", "INVENTORY", "CONTEXT", "GOAL", "PASSTHROUGH"
     ))

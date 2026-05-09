@@ -39,6 +39,7 @@ class SpawnCreateInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     prompt: str = ""
+    goal: str | None = None
     model: str = ""
     files: tuple[str, ...] = ()
     context_from: tuple[str, ...] = ()

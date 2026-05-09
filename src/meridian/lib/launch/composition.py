@@ -25,6 +25,7 @@ SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
     "report_instruction",
     "inventory_prompt",
     "context_prompt",
+    "completion_contract",
     # passthrough_system_fragments appended last
 )
 
@@ -132,6 +133,9 @@ class ComposedLaunchContent:
     prior_output: str
     """Sanitized prior-run output."""
 
+    completion_contract: str = ""
+    """Deterministic bounded completion contract text (spawn goal)."""
+
 
 @dataclass(frozen=True)
 class ProjectedContent:
@@ -191,7 +195,7 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
 
     Order: skill supplemental documents, bootstrap supplemental documents,
     agent_profile_body, report_instruction, inventory_prompt, context_prompt,
-    then passthrough_system_fragments last.
+    completion_contract, then passthrough_system_fragments last.
     """
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:

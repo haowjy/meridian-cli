@@ -260,6 +260,7 @@ def _build_create_payload_impl(
         context_from=payload.context_from,
         reference_files=tuple(str(p) for p in validated_paths),
         template_vars=parsed_template_vars,
+        goal=payload.goal,
         work_id_hint=payload.work.strip() or None,
         warning=preflight_warning,
     )

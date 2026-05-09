@@ -76,6 +76,7 @@ from .policies import (
     resolve_launch_policy,
 )
 from .prompt import (
+    build_goal_instruction,
     build_launch_context_documents,
     build_report_instruction,
     compose_skill_injections,
@@ -884,6 +885,7 @@ def _resolve_spawn_prepare_projection(
             report_instruction=build_report_instruction(),
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
+            completion_contract=build_goal_instruction(request.goal),
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
             reference_items=loaded_references,
@@ -960,6 +962,7 @@ def _resolve_primary_projection(
             report_instruction="",
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
+            completion_contract="",
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
             reference_items=(),
