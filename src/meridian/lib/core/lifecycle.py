@@ -872,6 +872,20 @@ def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
         payload["exit_code"] = spawn.exit_code
     if spawn.duration_secs is not None:
         payload["duration_secs"] = spawn.duration_secs
+    if spawn.total_cost_usd is not None:
+        payload["total_cost_usd"] = spawn.total_cost_usd
+    if spawn.input_tokens is not None:
+        payload["input_tokens"] = spawn.input_tokens
+    if spawn.output_tokens is not None:
+        payload["output_tokens"] = spawn.output_tokens
+    if spawn.cache_read_input_tokens is not None:
+        payload["cache_read_input_tokens"] = spawn.cache_read_input_tokens
+    if spawn.cache_creation_input_tokens is not None:
+        payload["cache_creation_input_tokens"] = spawn.cache_creation_input_tokens
+    if spawn.reasoning_tokens is not None:
+        payload["reasoning_tokens"] = spawn.reasoning_tokens
+    if spawn.cost_is_estimate:
+        payload["cost_is_estimate"] = True
     if spawn.error:
         payload["reason"] = spawn.error
     return payload
