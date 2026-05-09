@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
@@ -32,6 +32,36 @@ EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
 KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh"})
+
+
+def _validate_autocompact_value(v: object) -> object:
+    """Shared validator: reject bool, enforce minimum token count."""
+    if isinstance(v, bool):
+        raise ValueError("autocompact must be an integer, not a boolean")
+    if v is None:
+        return None
+    if not isinstance(v, int) or v < _AUTOCOMPACT_TOKEN_MIN:
+        raise ValueError(
+            f"expected int >= {_AUTOCOMPACT_TOKEN_MIN} (token count), got {v!r}."
+        )
+    return v
+
+
+def _validate_autocompact_pct_value(v: object) -> object:
+    """Shared validator: reject bool, enforce 1-100 range."""
+    if isinstance(v, bool):
+        raise ValueError("autocompact_pct must be an integer, not a boolean")
+    if v is None:
+        return None
+    if not isinstance(v, int) or not (_AUTOCOMPACT_PCT_MIN <= v <= _AUTOCOMPACT_PCT_MAX):
+        raise ValueError(
+            f"expected int between {_AUTOCOMPACT_PCT_MIN} and {_AUTOCOMPACT_PCT_MAX}, got {v!r}."
+        )
+    return v
+
+
+AutocompactValue = Annotated[int | None, BeforeValidator(_validate_autocompact_value)]
+AutocompactPctValue = Annotated[int | None, BeforeValidator(_validate_autocompact_pct_value)]
 KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "yolo"})
 RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
     "model": "MERIDIAN_MODEL",
@@ -123,8 +153,8 @@ class RuntimeOverrides(BaseModel):
     effort: str | None = None
     sandbox: str | None = None
     approval: str | None = None
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
 
     def routing_scope(self) -> RuntimeOverrides:
@@ -198,30 +228,6 @@ class RuntimeOverrides(BaseModel):
                 f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
             )
         return normalized
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if isinstance(value, bool) or value < _AUTOCOMPACT_TOKEN_MIN:
-            raise ValueError(
-                "Invalid runtime override 'autocompact': expected int >= "
-                f"{_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
-            )
-        return value
-
-    @field_validator("autocompact_pct")
-    @classmethod
-    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if isinstance(value, bool) or not (_AUTOCOMPACT_PCT_MIN <= value <= _AUTOCOMPACT_PCT_MAX):
-            raise ValueError(
-                "Invalid runtime override 'autocompact_pct': expected int between "
-                f"{_AUTOCOMPACT_PCT_MIN} and {_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-            )
-        return value
 
     @field_validator("timeout")
     @classmethod
@@ -383,6 +389,8 @@ __all__ = [
     "EXECUTION_POLICY_FIELDS",
     "KNOWN_APPROVAL_VALUES",
     "KNOWN_EFFORT_VALUES",
+    "AutocompactPctValue",
+    "AutocompactValue",
     "ExecutionPolicyField",
     "RuntimeOverrides",
     "normalize_execution_policy_fields",

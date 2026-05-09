@@ -4,7 +4,7 @@ import pytest
 
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.launch.streaming.decision import terminal_event_outcome
+from meridian.lib.harness.semantics import terminal_outcome
 
 
 def _event(
@@ -21,8 +21,8 @@ def _event(
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_codex_turn_completed_succeeds() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_codex_turn_completed_succeeds() -> None:
+    outcome = terminal_outcome(
         _event(harness_id=HarnessId.CODEX.value, event_type="turn/completed")
     )
 
@@ -33,8 +33,8 @@ def test_terminal_event_outcome_codex_turn_completed_succeeds() -> None:
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_claude_result_success_succeeds() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_claude_result_success_succeeds() -> None:
+    outcome = terminal_outcome(
         _event(
             harness_id=HarnessId.CLAUDE.value,
             event_type="result",
@@ -49,8 +49,8 @@ def test_terminal_event_outcome_claude_result_success_succeeds() -> None:
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_claude_result_error_fails() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_claude_result_error_fails() -> None:
+    outcome = terminal_outcome(
         _event(
             harness_id=HarnessId.CLAUDE.value,
             event_type="result",
@@ -65,8 +65,8 @@ def test_terminal_event_outcome_claude_result_error_fails() -> None:
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_opencode_session_idle_succeeds() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_opencode_session_idle_succeeds() -> None:
+    outcome = terminal_outcome(
         _event(harness_id=HarnessId.OPENCODE.value, event_type="session.idle")
     )
 
@@ -76,8 +76,8 @@ def test_terminal_event_outcome_opencode_session_idle_succeeds() -> None:
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_opencode_session_error_fails() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_opencode_session_error_fails() -> None:
+    outcome = terminal_outcome(
         _event(
             harness_id=HarnessId.OPENCODE.value,
             event_type="session.error",
@@ -92,8 +92,8 @@ def test_terminal_event_outcome_opencode_session_error_fails() -> None:
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_connection_closed_fails() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_connection_closed_fails() -> None:
+    outcome = terminal_outcome(
         _event(
             harness_id=HarnessId.CODEX.value,
             event_type="error/connectionClosed",
@@ -107,8 +107,8 @@ def test_terminal_event_outcome_connection_closed_fails() -> None:
 
 
 @pytest.mark.unit
-def test_terminal_event_outcome_unknown_event_returns_none() -> None:
-    outcome = terminal_event_outcome(
+def test_terminal_outcome_unknown_event_returns_none() -> None:
+    outcome = terminal_outcome(
         _event(harness_id=HarnessId.CODEX.value, event_type="message/delta")
     )
 

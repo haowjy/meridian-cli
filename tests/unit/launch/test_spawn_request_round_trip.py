@@ -26,7 +26,7 @@ def test_spawn_request_round_trip_json_with_all_fields() -> None:
         approval="auto",
         allowed_tools=("Read", "Write"),
         disallowed_tools=("Bash(rm)",),
-        autocompact=65,
+        autocompact=65000,
         effort="high",
         retry=RetryPolicy(max_attempts=3, backoff_secs=1.5),
         budget=ExecutionBudget(timeout_secs=600, kill_grace_secs=45),

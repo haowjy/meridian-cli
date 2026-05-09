@@ -32,6 +32,7 @@ from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
+from meridian.lib.harness.semantics import TerminalEventOutcome, terminal_outcome
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
@@ -69,10 +70,6 @@ from meridian.lib.launch.runner_helpers import (
     write_structured_failure_artifact as _write_structured_failure_artifact,
 )
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
-from meridian.lib.launch.streaming.decision import (
-    TerminalEventOutcome,
-    terminal_event_outcome,
-)
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
@@ -303,9 +300,9 @@ async def _consume_subscriber_events(
                 budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
-            terminal_outcome = terminal_event_outcome(event)
-            if terminal_outcome is not None:
-                terminal_event_future.set_result(terminal_outcome)
+            event_outcome = terminal_outcome(event)
+            if event_outcome is not None:
+                terminal_event_future.set_result(event_outcome)
 
         if event_observer is not None or stream_stdout_to_terminal:
             line = _line_from_harness_event(event)
@@ -1199,5 +1196,4 @@ __all__ = [
     "TerminalEventOutcome",
     "execute_with_streaming",
     "run_streaming_spawn",
-    "terminal_event_outcome",
 ]

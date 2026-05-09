@@ -107,7 +107,7 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
             effort="high",
             approval="auto",
             sandbox="workspace-write",
-            autocompact=70,
+            autocompact=1000,
             timeout=30.0,
         ),
         skill_names=(),
@@ -133,7 +133,7 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         "effort": "high",
         "approval": "auto",
         "sandbox": "workspace-write",
-        "autocompact": 70,
+        "autocompact": 1000,
         "timeout": 30.0,
         "provenance": {
             "model": "cli",

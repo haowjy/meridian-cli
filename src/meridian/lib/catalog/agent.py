@@ -12,6 +12,8 @@ from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
+    AutocompactPctValue,
+    AutocompactValue,
     RuntimeOverrides,
 )
 
@@ -36,8 +38,8 @@ class AgentModelEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
     effort: str | None = None
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
 
     @field_validator("effort")
     @classmethod
@@ -50,34 +52,6 @@ class AgentModelEntry(BaseModel):
                 f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}"
             )
         return normalized
-
-    @field_validator("autocompact", mode="before")
-    @classmethod
-    def _reject_bool_autocompact(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("autocompact must be an integer, not a boolean")
-        return value
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        return RuntimeOverrides(autocompact=value).autocompact
-
-    @field_validator("autocompact_pct", mode="before")
-    @classmethod
-    def _reject_bool_autocompact_pct(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("autocompact_pct must be an integer, not a boolean")
-        return value
-
-    @field_validator("autocompact_pct")
-    @classmethod
-    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        return RuntimeOverrides(autocompact_pct=value).autocompact_pct
 
 
 class ModelPolicyRule(BaseModel):

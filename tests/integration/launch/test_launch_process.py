@@ -241,7 +241,16 @@ def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
     seeded_session_id = "seeded-via-adapter-port"
 
-    def fake_run_primary_attach(**_kwargs: object) -> process.PrimaryAttachOutcome:
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
         return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=5150)
 
     monkeypatch.setattr(
@@ -254,18 +263,17 @@ def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
         "observe_session_id",
         lambda **kwargs: kwargs.get("current_session_id"),
     )
-    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        lambda **_kwargs: (_ for _ in ()).throw(
+
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
         ),
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-
-    outcome = process.run_harness_process(launch_context, harness_registry)
 
     assert outcome.exit_code == 0
     assert outcome.resolved_harness_session_id == seeded_session_id
@@ -328,8 +336,17 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         captured["fork_source_session"] = source_session_id
         return "forked-session"
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-        captured["env_chat_id"] = dict(kwargs["env"]).get("MERIDIAN_CHAT_ID")
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
+        captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return process.PrimaryAttachOutcome(
             exit_code=0, session_id="forked-session", tui_pid=111,
         )
@@ -355,16 +372,15 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "forked-session")
-    monkeypatch.setattr(
-        process,
-        "_run_primary_attach",
-        fake_run_primary_attach,
-    )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "start_session", fake_start_session)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+        start_session_fn=fake_start_session,
+    )
 
     assert captured["fork_source_session"] == "source-session"
     assert captured["build_continue_session"] == "forked-session"
@@ -446,8 +462,17 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     def fail_if_forked(source_session_id: str) -> str:
         raise AssertionError(f"Unexpected fork materialization for session {source_session_id}")
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-        captured["env_chat_id"] = dict(kwargs["env"]).get("MERIDIAN_CHAT_ID")
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
+        captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return process.PrimaryAttachOutcome(
             exit_code=0,
             session_id="source-session",
@@ -461,20 +486,15 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     )
     monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "source-session")
-    monkeypatch.setattr(
-        process,
-        "_run_primary_attach",
-        fake_run_primary_attach,
-    )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        process,
-        "start_session",
-        lambda *args, **kwargs: "c999",
-    )
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+        start_session_fn=lambda *args, **kwargs: "c999",
+    )
 
     assert captured["build_continue_session"] == "source-session"
     assert captured["env_chat_id"] == "c999"
@@ -515,10 +535,15 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     captured: dict[str, object] = {}
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
-        command = tuple(kwargs["command"])
+    def fake_run_primary_process_with_capture(
+        command: tuple[str, ...],
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        command = tuple(command)
         captured["command"] = command
-        output_log_path = kwargs["output_log_path"]
         captured["output_log_path"] = output_log_path
         prompt_flag_index = command.index("--append-system-prompt-file")
         prompt_file_path = Path(command[prompt_flag_index + 1])
@@ -529,20 +554,18 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
             else None
         )
         captured["log_dir"] = prompt_file_path.parent
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(222)
+        assert callable(on_child_started)
+        on_child_started(222)
         return (0, 222)
 
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+    )
 
     assert captured["prompt_file_exists"] is True
     assert captured["output_log_path"] is None
@@ -583,9 +606,17 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
 
     def fake_launcher_for(captured: dict[str, object]):
-        def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-            spawn_dir = Path(kwargs["spawn_dir"])
-            captured["log_dir"] = spawn_dir
+        def fake_run_primary_attach(
+            harness_id: Any,
+            spawn_id: Any,
+            spawn_dir: Any,
+            execution_cwd: Any,
+            env: Any,
+            spec: Any,
+            process_launcher: Any,
+            on_running: Any = None,
+        ) -> process.PrimaryAttachOutcome:
+            captured["log_dir"] = Path(spawn_dir)
             return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
 
         return fake_run_primary_attach
@@ -627,21 +658,16 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     monkeypatch.setattr(adapter, "observe_session_id", lambda **kwargs: None)
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(
-        process,
-        "_run_primary_attach",
-        fake_launcher_for(captured),
-    )
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        lambda **kwargs: (_ for _ in ()).throw(
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_launcher_for(captured),
+        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
         ),
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-    outcome = process.run_harness_process(launch_context, harness_registry)
 
     log_dir = captured["log_dir"]
     assert isinstance(log_dir, Path)
@@ -671,14 +697,17 @@ def test_run_harness_process_writes_opencode_system_field_primary_projection_man
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
 
     def fake_launcher_for(captured: dict[str, object]):
-        def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-            spawn_dir = (
-                kwargs.get("spawn_dir")
-                or kwargs.get("spawn_log_dir")
-                or kwargs.get("log_dir")
-            )
-            assert isinstance(spawn_dir, Path)
-            captured["log_dir"] = spawn_dir
+        def fake_run_primary_attach(
+            harness_id: Any,
+            spawn_id: Any,
+            spawn_dir: Any,
+            execution_cwd: Any,
+            env: Any,
+            spec: Any,
+            process_launcher: Any,
+            on_running: Any = None,
+        ) -> process.PrimaryAttachOutcome:
+            captured["log_dir"] = Path(spawn_dir)
             return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
 
         return fake_run_primary_attach
@@ -720,18 +749,16 @@ def test_run_harness_process_writes_opencode_system_field_primary_projection_man
     monkeypatch.setattr(adapter, "observe_session_id", lambda **kwargs: None)
 
     captured: dict[str, object] = {}
-    monkeypatch.setattr(process, "_run_primary_attach", fake_launcher_for(captured))
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        lambda **kwargs: (_ for _ in ()).throw(
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_launcher_for(captured),
+        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("managed primary path should avoid black-box launcher")
         ),
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-
-    outcome = process.run_harness_process(launch_context, harness_registry)
 
     log_dir = captured["log_dir"]
     assert isinstance(log_dir, Path)
@@ -769,22 +796,26 @@ def test_run_harness_process_black_box_primary_uses_no_tui_log_artifact(
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     captured: dict[str, object] = {}
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
-        captured["output_log_path"] = kwargs["output_log_path"]
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(444)
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        captured["output_log_path"] = output_log_path
+        assert callable(on_child_started)
+        on_child_started(444)
         return (0, 444)
 
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+    )
 
     assert captured["output_log_path"] is None
     assert outcome.primary_spawn_id is not None
@@ -808,28 +839,30 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
     )
     captured: dict[str, object] = {}
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
-        output_log_path = kwargs["output_log_path"]
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
         assert isinstance(output_log_path, Path)
         captured["output_log_path"] = output_log_path
         output_log_path.write_text(
             json.dumps({"session_id": emitted_session_id, "result": "ok"}) + "\n",
             encoding="utf-8",
         )
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(445)
+        assert callable(on_child_started)
+        on_child_started(445)
         return (0, 445)
 
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-
-    outcome = process.run_harness_process(launch_context, harness_registry)
 
     assert isinstance(captured["output_log_path"], Path)
     assert captured["output_log_path"].name == OUTPUT_FILENAME
@@ -865,25 +898,42 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         selector_args.append(output_log_path)
         return SubprocessProcessLauncher()
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-        captured["harness_id"] = kwargs["harness_id"]
-        spawn_dir = Path(kwargs["spawn_dir"])
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
+        captured["harness_id"] = harness_id
+        spawn_dir = Path(spawn_dir)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         captured["spawn_dir"] = spawn_dir
         return process.PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5150)
 
-    def fail_black_box(**kwargs: object) -> tuple[int, int]:
-        _ = kwargs
+    def fail_black_box(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
         raise AssertionError("codex primary should use managed launcher path")
 
-    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
-    monkeypatch.setattr(process, "_run_primary_process_with_capture", fail_black_box)
     monkeypatch.setattr(process_runner, "select_process_launcher", fake_select_process_launcher)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        run_primary_process_with_capture_fn=fail_black_box,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     assert captured["harness_id"] == HarnessId.CODEX
     assert isinstance(captured["spawn_dir"], Path)
@@ -915,8 +965,16 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
     captured: dict[str, object] = {}
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-        on_running = kwargs.get("on_running")
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
         assert callable(on_running)
         assert list_spawns(launch_context.runtime_root)[0].status == "queued"
         on_running(5151)
@@ -925,17 +983,25 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         captured["worker_pid_seen_before_return"] = running_record.worker_pid
         return process.PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5151)
 
-    def fail_black_box(**kwargs: object) -> tuple[int, int]:
-        _ = kwargs
+    def fail_black_box(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
         raise AssertionError("codex primary should use managed launcher path")
 
-    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
-    monkeypatch.setattr(process, "_run_primary_process_with_capture", fail_black_box)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        run_primary_process_with_capture_fn=fail_black_box,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     assert captured["status_seen_before_return"] == "running"
     assert captured["worker_pid_seen_before_return"] == 5151
@@ -964,21 +1030,38 @@ def test_run_harness_process_opencode_primary_routes_to_managed_path(
     opencode_adapter = harness_registry.get_subprocess_harness(HarnessId.OPENCODE)
     captured: dict[str, object] = {}
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
-        captured["harness_id"] = kwargs["harness_id"]
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
+        captured["harness_id"] = harness_id
         return process.PrimaryAttachOutcome(exit_code=0, session_id="session-managed", tui_pid=6262)
 
-    def fail_black_box(**kwargs: object) -> tuple[int, int]:
-        _ = kwargs
+    def fail_black_box(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
         raise AssertionError("opencode primary should use managed launcher path")
 
-    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
-    monkeypatch.setattr(process, "_run_primary_process_with_capture", fail_black_box)
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        run_primary_process_with_capture_fn=fail_black_box,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     assert captured["harness_id"] == HarnessId.OPENCODE
     assert outcome.exit_code == 0
@@ -1001,28 +1084,40 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     black_box_calls = 0
 
-    def fail_managed(**kwargs: object) -> process.PrimaryAttachOutcome:
-        _ = kwargs
+    def fail_managed(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
         raise AssertionError("claude primary must not use managed launcher path")
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
         nonlocal black_box_calls
         black_box_calls += 1
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(7272)
+        assert callable(on_child_started)
+        on_child_started(7272)
         return (0, 7272)
 
-    monkeypatch.setattr(process, "_run_primary_attach", fail_managed)
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fail_managed,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+    )
 
     assert black_box_calls == 1
     assert outcome.exit_code == 0
@@ -1051,20 +1146,31 @@ def test_run_harness_process_opencode_fork_uses_managed_path(
     opencode_adapter = harness_registry.get_subprocess_harness(HarnessId.OPENCODE)
     managed_calls = 0
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
         nonlocal managed_calls
         managed_calls += 1
-        on_running = kwargs.get("on_running")
         if callable(on_running):
             on_running(8383)
         return process.PrimaryAttachOutcome(exit_code=0, session_id="oc-session", tui_pid=8383)
 
-    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     assert managed_calls == 1
     assert outcome.exit_code == 0
@@ -1092,25 +1198,32 @@ def test_run_harness_process_codex_managed_failure_raises_error(
     )
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
 
-    def failing_managed(**kwargs: object) -> process.PrimaryAttachOutcome:
-        spawn_dir = Path(kwargs["spawn_dir"])
-        spawn_dir.mkdir(parents=True, exist_ok=True)
+    def failing_managed(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
+        Path(spawn_dir).mkdir(parents=True, exist_ok=True)
         raise process.PrimaryAttachError("managed startup error")
 
-    monkeypatch.setattr(process, "_run_primary_attach", failing_managed)
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        lambda **kwargs: (_ for _ in ()).throw(
-            AssertionError("codex should not fall back to black-box")
-        ),
-    )
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
     with _pytest.raises(process.PrimaryAttachError, match="managed startup error"):
-        process.run_harness_process(launch_context, harness_registry)
+        process.run_harness_process(
+            launch_context,
+            harness_registry,
+            run_primary_attach_fn=failing_managed,
+            run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("codex should not fall back to black-box")
+            ),
+            stop_session_fn=lambda *args, **kwargs: None,
+            update_session_harness_id_fn=lambda *args, **kwargs: None,
+        )
 
 
 @pytest.mark.slow
@@ -1137,11 +1250,20 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     black_box_calls = 0
     captured_spawn_dir: Path | None = None
 
-    def failing_managed(**kwargs: object) -> process.PrimaryAttachOutcome:
+    def failing_managed(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
         nonlocal managed_calls
         nonlocal captured_spawn_dir
         managed_calls += 1
-        spawn_dir = Path(kwargs["spawn_dir"])
+        spawn_dir = Path(spawn_dir)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         (spawn_dir / PRIMARY_META_FILENAME).write_text(
             '{"managed_backend":true}\n',
@@ -1154,26 +1276,30 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         captured_spawn_dir = spawn_dir
         raise process.PrimaryAttachError("managed startup error")
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
         nonlocal black_box_calls
         black_box_calls += 1
-        assert kwargs["output_log_path"] is None
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(9494)
+        assert output_log_path is None
+        assert callable(on_child_started)
+        on_child_started(9494)
         return (0, 9494)
 
-    monkeypatch.setattr(process, "_run_primary_attach", failing_managed)
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=failing_managed,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     assert managed_calls == 1
     assert black_box_calls == 1
@@ -1208,27 +1334,31 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     captured: dict[str, object] = {}
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
-        command = tuple(kwargs["command"])
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        command = tuple(command)
         captured["command"] = command
         if "--session-id" in command:
             idx = command.index("--session-id")
             captured["command_session_id"] = command[idx + 1]
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(555)
+        assert callable(on_child_started)
+        on_child_started(555)
         return (0, 555)
 
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     # No pre-seeded session from the launch context; Claude generates one in the command.
     assert launch_context.seed_harness_session_id in (None, "")
@@ -1287,22 +1417,26 @@ def test_run_harness_process_records_generated_claude_command_session_id(
             seed_harness_session_id="",
         )
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(556)
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        assert callable(on_child_started)
+        on_child_started(556)
         return (0, 556)
 
     monkeypatch.setattr(process_runner, "build_launch_context", fake_build_launch_context)
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+    )
 
     assert outcome.resolved_harness_session_id == generated_session_id
     assert outcome.chat_id is not None
@@ -1334,24 +1468,28 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
     claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
     observed_id = "observed-different-session"
 
-    def fake_run_primary_process_with_capture(**kwargs: object) -> tuple[int, int]:
-        started = kwargs.get("on_child_started")
-        assert callable(started)
-        started(666)
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        assert callable(on_child_started)
+        on_child_started(666)
         return (0, 666)
 
     monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        fake_run_primary_process_with_capture,
-    )
-    monkeypatch.setattr(
         claude_adapter, "observe_session_id", lambda **kwargs: observed_id
     )
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
 
-    outcome = process.run_harness_process(launch_context, harness_registry)
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
 
     # State should be repaired to the observed session ID
     assert outcome.resolved_harness_session_id == observed_id
@@ -1403,32 +1541,39 @@ def test_run_harness_process_fresh_codex_primary_routes_to_managed_path(
     codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
     managed_calls = 0
 
-    def fake_run_primary_attach(**kwargs: object) -> process.PrimaryAttachOutcome:
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        execution_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> process.PrimaryAttachOutcome:
         nonlocal managed_calls
         managed_calls += 1
         # Verify this is for Codex
-        assert kwargs["harness_id"] == HarnessId.CODEX
+        assert harness_id == HarnessId.CODEX
         # Call on_running to mark spawn as running
-        on_running = kwargs.get("on_running")
         if callable(on_running):
             on_running(12345)
         return process.PrimaryAttachOutcome(
             exit_code=0, session_id="fresh-thread-id", tui_pid=12345
         )
 
-    monkeypatch.setattr(process, "_run_primary_attach", fake_run_primary_attach)
-    monkeypatch.setattr(
-        process,
-        "_run_primary_process_with_capture",
-        lambda **kwargs: (_ for _ in ()).throw(
+    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
+
+    outcome = process.run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
             AssertionError("fresh codex primary should use managed path, not black-box")
         ),
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
-    monkeypatch.setattr(process, "stop_session", lambda *args, **kwargs: None)
-    monkeypatch.setattr(process, "update_session_harness_id", lambda *args, **kwargs: None)
-
-    outcome = process.run_harness_process(launch_context, harness_registry)
 
     assert managed_calls == 1
     assert outcome.exit_code == 0

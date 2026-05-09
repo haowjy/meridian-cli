@@ -25,6 +25,8 @@ from meridian.lib.config.schema import (
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
+    AutocompactPctValue,
+    AutocompactValue,
 )
 
 logger = logging.getLogger(__name__)
@@ -1232,7 +1234,7 @@ class PrimaryConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     autocompact: Annotated[
-        int | None,
+        AutocompactValue,
         config_field(
             "primary.autocompact",
             value_kind="int",
@@ -1240,7 +1242,7 @@ class PrimaryConfig(BaseModel):
         ),
     ] = None
     autocompact_pct: Annotated[
-        int | None,
+        AutocompactPctValue,
         config_field(
             "primary.autocompact_pct",
             value_kind="int",
@@ -1302,32 +1304,6 @@ class PrimaryConfig(BaseModel):
         ),
     ] = None
     timeout: float | None = None
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if isinstance(value, bool) or value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
-            raise ValueError(
-                "Invalid value for 'primary.autocompact': expected int >= "
-                f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
-            )
-        return value
-
-    @field_validator("autocompact_pct")
-    @classmethod
-    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        in_range = _PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX
-        if isinstance(value, bool) or not in_range:
-            raise ValueError(
-                "Invalid value for 'primary.autocompact_pct': expected int between "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-            )
-        return value
 
     @field_validator("model")
     @classmethod
@@ -1456,8 +1432,8 @@ class AgentOverlayConfig(BaseModel):
     effort: str | None = None
     approval: str | None = None
     sandbox: str | None = None
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     # Three-state: None = inherit, () = suppress, non-empty = replace
     model_policies: tuple[AgentOverlayModelPolicy, ...] | None = None
 
@@ -1500,19 +1476,6 @@ class AgentOverlayConfig(BaseModel):
             )
         return normalized
 
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        return _normalize_agent_autocompact(value, source="agents.autocompact")
-
-    @field_validator("autocompact_pct")
-    @classmethod
-    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        return _normalize_agent_autocompact_pct(value, source="agents.autocompact_pct")
 
 
 class HarnessProfileConfig(BaseModel):

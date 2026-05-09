@@ -52,7 +52,7 @@ if TYPE_CHECKING:
         ConnectionConfig,
         HarnessConnection,
     )
-    from meridian.lib.launch.streaming_runner import TerminalEventOutcome
+    from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
@@ -367,7 +367,7 @@ class SpawnManager:
         """
 
         # Import at runtime to avoid circular import during module initialization.
-        from meridian.lib.launch.streaming_runner import terminal_event_outcome
+        from meridian.lib.harness.semantics import terminal_outcome
 
         consecutive_write_failures = 0
         max_consecutive_failures = 10
@@ -426,15 +426,15 @@ class SpawnManager:
                         )
                         self._fan_out_event(spawn_id, event)
                         break
-                terminal_outcome = terminal_event_outcome(event)
+                event_outcome = terminal_outcome(event)
                 self._fan_out_event(spawn_id, event)
-                if terminal_outcome is not None:
-                    action: DrainAction = policy.classify(terminal_outcome)
+                if event_outcome is not None:
+                    action: DrainAction = policy.classify(event_outcome)
                     if action.terminate:
-                        recorded_terminal_outcome = terminal_outcome
+                        recorded_terminal_outcome = event_outcome
                         break
                     if action.emit_turn_boundary:
-                        await self._fan_out_turn_boundary(spawn_id, terminal_outcome)
+                        await self._fan_out_turn_boundary(spawn_id, event_outcome)
         except asyncio.CancelledError:
             drain_cancelled = True
             raise

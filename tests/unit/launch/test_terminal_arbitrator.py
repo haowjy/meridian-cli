@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from meridian.lib.launch.streaming.decision import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.streaming.terminal_arbitrator import (
     TriggerKind,
     arbitrate_terminal,
