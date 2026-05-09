@@ -48,6 +48,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.session_scope import session_scope
 from meridian.lib.launch.streaming_runner import execute_with_streaming
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
@@ -367,15 +368,18 @@ def _init_spawn(
         resolved_work_id = ensure_explicit_work_item(project_local_root, resolved_work_id)
     resolved_desc = (desc if desc is not None else payload.desc).strip() or None
     service = build_spawn_lifecycle_service_from_roots(project_paths.project_root, runtime_root)
+    spawn_session_metadata = PrimarySessionMetadata(
+        harness=request.harness or "",
+        model=request.model or "",
+        agent=request.agent or "",
+        agent_path=request.agent_metadata.get("session_agent_path") or "",
+        skills=request.skills,
+        skill_paths=request.skill_paths,
+    )
     spawn_id = service.start(
         chat_id=resolve_chat_id(ctx=resolved_context, fallback="c0"),
         parent_id=str(resolved_context.spawn_id) if resolved_context.spawn_id else None,
-        model=request.model or "",
-        agent=request.agent or "",
-        agent_path=request.agent_metadata.get("session_agent_path") or None,
-        skills=request.skills,
-        skill_paths=request.skill_paths,
-        harness=request.harness or "",
+        session_metadata=spawn_session_metadata,
         kind="child",
         prompt=request.prompt,
         desc=resolved_desc,
@@ -520,28 +524,18 @@ def _resolve_session_continuation(
 def _session_execution_context(
     *,
     runtime_root: Path,
-    harness_id: str,
+    metadata: PrimarySessionMetadata,
+    request: SessionRequest,
     harness_session_id: str,
-    model: str,
-    session_agent: str,
-    session_agent_path: str,
-    skills: tuple[str, ...],
-    session_skill_paths: tuple[str, ...],
     run_agent_name: str | None,
     inherited_work_id: str | None = None,
-    forked_from_chat_id: str | None = None,
     execution_cwd: str | None = None,
 ) -> Generator[_SessionExecutionContext, None, None]:
     with session_scope(
         runtime_root=runtime_root,
-        harness=harness_id,
+        metadata=metadata,
+        request=request,
         harness_session_id=harness_session_id,
-        model=model,
-        agent=session_agent,
-        agent_path=session_agent_path,
-        skills=skills,
-        skill_paths=session_skill_paths,
-        forked_from_chat_id=forked_from_chat_id,
         execution_cwd=execution_cwd,
     ) as managed:
         attached_work_id = get_session_active_work_id(runtime_root, managed.chat_id)
@@ -590,31 +584,32 @@ async def _prepare_execution_handoff(
                 request.agent if request.agent is not None else spawn_record.agent
             )
 
+        session_metadata = PrimarySessionMetadata(
+            harness=request.harness or "",
+            model=request.model or "",
+            agent=(
+                (spawn_record.agent if spawn_record else "")
+                or request.agent_metadata.get("session_agent", "")
+            ),
+            agent_path=(
+                (spawn_record.agent_path if spawn_record else "")
+                or request.agent_metadata.get("session_agent_path", "")
+            ),
+            skills=request.skills or (spawn_record.skills if spawn_record else ()),
+            skill_paths=(spawn_record.skill_paths if spawn_record else request.skill_paths),
+        )
         session_context = local_stack.enter_context(
             _session_execution_context(
                 runtime_root=runtime_root,
-                harness_id=request.harness or "",
+                metadata=session_metadata,
+                request=resolved_session,
                 harness_session_id=(
                     resolved_session.requested_harness_session_id
                     or (spawn_record.harness_session_id if spawn_record else "")
                     or ""
                 ),
-                model=request.model or "",
-                session_agent=(
-                    (spawn_record.agent if spawn_record else "")
-                    or request.agent_metadata.get("session_agent", "")
-                ),
-                session_agent_path=(
-                    (spawn_record.agent_path if spawn_record else "")
-                    or request.agent_metadata.get("session_agent_path", "")
-                ),
-                skills=request.skills or (spawn_record.skills if spawn_record else ()),
-                session_skill_paths=(
-                    spawn_record.skill_paths if spawn_record else request.skill_paths
-                ),
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
-                forked_from_chat_id=resolved_session.forked_from_chat_id,
                 execution_cwd=execution_cwd,
             )
         )

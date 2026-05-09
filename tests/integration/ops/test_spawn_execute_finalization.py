@@ -12,6 +12,7 @@ from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import ForkMaterializationMode
 from meridian.lib.launch.request import LaunchRuntime, SessionRequest, SpawnRequest
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.spawn.execute import (
     LaunchUserInputError,
     PreparedExecutionHandoff,
@@ -32,11 +33,14 @@ def _start_spawn(
     return SpawnId(
         service.start(
             chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            skills=(),
-            skill_paths=(),
-            harness="codex",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
             kind="child",
             prompt="run it",
             spawn_id=spawn_id,

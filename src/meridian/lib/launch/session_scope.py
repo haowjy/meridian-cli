@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.session_store import (
     start_session,
     stop_session,
@@ -25,16 +27,11 @@ class ManagedSession:
 def session_scope(
     *,
     runtime_root: Path,
-    harness: str,
+    metadata: PrimarySessionMetadata,
+    request: SessionRequest,
     harness_session_id: str,
-    model: str,
     chat_id: str | None = None,
     params: tuple[str, ...] = (),
-    agent: str = "",
-    agent_path: str = "",
-    skills: tuple[str, ...] = (),
-    skill_paths: tuple[str, ...] = (),
-    forked_from_chat_id: str | None = None,
     execution_cwd: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
     _start_session: Callable[..., str] = start_session,
@@ -43,16 +40,16 @@ def session_scope(
 ) -> Generator[ManagedSession, None, None]:
     resolved_chat_id = _start_session(
         runtime_root,
-        harness=harness,
+        harness=metadata.harness,
         harness_session_id=harness_session_id,
-        model=model,
+        model=metadata.model,
         chat_id=chat_id,
         params=params,
-        agent=agent,
-        agent_path=agent_path,
-        skills=skills,
-        skill_paths=skill_paths,
-        forked_from_chat_id=forked_from_chat_id,
+        agent=metadata.agent,
+        agent_path=metadata.agent_path,
+        skills=metadata.skills,
+        skill_paths=metadata.skill_paths,
+        forked_from_chat_id=request.forked_from_chat_id,
         execution_cwd=execution_cwd,
         kind=kind,
     )

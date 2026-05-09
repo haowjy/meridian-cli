@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.core.lifecycle import create_lifecycle_service
+from meridian.lib.launch.types import PrimarySessionMetadata
 
 if TYPE_CHECKING:
     import pytest
@@ -63,9 +64,14 @@ def test_spawn_lifecycle_dispatches_spawn_hooks_with_expected_context(
     lifecycle = create_lifecycle_service(project_root, runtime_root)
     spawn_id = lifecycle.start(
         chat_id="chat-1",
-        model="gpt-5.4",
-        agent="reviewer",
-        harness="codex",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.4",
+            agent="reviewer",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
         kind="child",
         prompt="hook-test",
         status="running",

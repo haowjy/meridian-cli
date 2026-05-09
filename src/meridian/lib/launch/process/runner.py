@@ -716,15 +716,10 @@ def run_harness_process(
     try:
         with session_scope(
             runtime_root=runtime_root,
-            harness=session_metadata.harness,
+            metadata=session_metadata,
+            request=preview_request.session,
             harness_session_id=session_scope_harness_session_id,
-            model=session_metadata.model,
             chat_id=resume_chat_id,
-            forked_from_chat_id=preview_request.session.forked_from_chat_id,
-            agent=session_metadata.agent,
-            agent_path=session_metadata.agent_path,
-            skills=session_metadata.skills,
-            skill_paths=session_metadata.skill_paths,
             execution_cwd=str(execution_cwd),
             kind="primary",
             _start_session=start_session_fn,
@@ -750,12 +745,7 @@ def run_harness_process(
                 primary_spawn_id = SpawnId(
                     lifecycle_service.start(
                         chat_id=chat_id,
-                        model=session_metadata.model,
-                        agent=session_metadata.agent,
-                        agent_path=session_metadata.agent_path or None,
-                        skills=session_metadata.skills,
-                        skill_paths=session_metadata.skill_paths,
-                        harness=session_metadata.harness,
+                        session_metadata=session_metadata,
                         kind="primary",
                         prompt=preview_request.prompt,
                         harness_session_id=None if should_fork else resolved_harness_session_id,

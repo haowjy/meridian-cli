@@ -32,6 +32,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.context import LaunchContext, build_launch_context
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
@@ -326,17 +327,20 @@ class SpawnApplicationService:
         # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
         # after launch context composition succeeds. Failed composition leaves no
         # spawn row and emits no spawn.created hook/telemetry.
+        prepare_session_metadata = PrimarySessionMetadata(
+            harness=resolved_harness,
+            model=resolved_model,
+            agent=resolved_agent or "",
+            agent_path=resolved_request.agent_metadata.get("session_agent_path") or "",
+            skills=resolved_request.skills,
+            skill_paths=resolved_request.skill_paths,
+        )
         persisted_spawn_id = SpawnId(
             await asyncio.to_thread(
                 self._lifecycle.start,
                 chat_id=payload.chat_id or "",
                 parent_id=payload.parent_id,
-                model=resolved_model,
-                agent=resolved_agent or "",
-                agent_path=resolved_request.agent_metadata.get("session_agent_path"),
-                skills=resolved_request.skills,
-                skill_paths=resolved_request.skill_paths,
-                harness=resolved_harness,
+                session_metadata=prepare_session_metadata,
                 kind=payload.kind,
                 prompt=resolved_request.prompt,
                 metadata=start_metadata,

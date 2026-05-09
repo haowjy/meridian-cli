@@ -16,6 +16,7 @@ from meridian.lib.core.lifecycle import (
     generate_lifecycle_event_id,
 )
 from meridian.lib.core.spawn_start import SpawnStartMetadata
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import RuntimePaths
 
@@ -48,9 +49,14 @@ def _make_service(
 def _start_spawn(service: SpawnLifecycleService, **overrides: Any) -> str:
     defaults: dict[str, Any] = {
         "chat_id": "c1",
-        "model": "gpt-5.4",
-        "agent": "coder",
-        "harness": "codex",
+        "session_metadata": PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.4",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
         "prompt": "run it",
         "status": "running",
     }
@@ -174,9 +180,14 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
 
     spawn_id = service.start(
         chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.4",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
         prompt="run it",
         metadata=SpawnStartMetadata(
             desc="goal metadata",

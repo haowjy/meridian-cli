@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.domain import SpawnStatus
     from meridian.lib.hooks.dispatch import HookDispatcher
+    from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, SpawnRecord
     from meridian.lib.state.spawn_store import FinalizeOutcome
@@ -219,12 +220,7 @@ class SpawnLifecycleService:
         *,
         chat_id: str,
         parent_id: str | None = None,
-        model: str,
-        agent: str,
-        agent_path: str | None = None,
-        skills: tuple[str, ...] = (),
-        skill_paths: tuple[str, ...] = (),
-        harness: str,
+        session_metadata: PrimarySessionMetadata,
         kind: str = "child",
         prompt: str,
         metadata: SpawnStartMetadata | None = None,
@@ -250,12 +246,12 @@ class SpawnLifecycleService:
                 self._runtime_root,
                 chat_id=chat_id,
                 parent_id=parent_id,
-                model=model,
-                agent=agent,
-                agent_path=agent_path,
-                skills=skills,
-                skill_paths=skill_paths,
-                harness=harness,
+                model=session_metadata.model,
+                agent=session_metadata.agent,
+                agent_path=session_metadata.agent_path or None,
+                skills=session_metadata.skills,
+                skill_paths=session_metadata.skill_paths,
+                harness=session_metadata.harness,
                 kind=kind,
                 prompt=prompt,
                 metadata=metadata,

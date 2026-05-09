@@ -8,6 +8,7 @@ import meridian.lib.ops.spawn.execute as spawn_execute
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.ops.spawn.execute import (
     BackgroundWorkerLaunchRequest,
@@ -88,9 +89,14 @@ def test_finalize_launch_failure_sync_keeps_fixed_terminal_tuple(tmp_path: Path)
     spawn_id = SpawnId(
         service.start(
             chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
+            session_metadata=PrimarySessionMetadata(
+                harness="codex",
+                model="gpt-5.4",
+                agent="coder",
+                agent_path="",
+                skills=(),
+                skill_paths=(),
+            ),
             prompt="run it",
             spawn_id="p1",
             status="queued",

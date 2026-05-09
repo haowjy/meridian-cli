@@ -7,6 +7,7 @@ from typing import Any, TypedDict
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.paths import resolve_runtime_paths
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
@@ -224,9 +225,14 @@ def test_owner_finalize_drops_stale_terminal_write_after_external_winner(tmp_pat
     service = SpawnLifecycleService(runtime_root)
     spawn_id = service.start(
         chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
+        session_metadata=PrimarySessionMetadata(
+            harness="codex",
+            model="gpt-5.4",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
         prompt="hello",
     )
 
