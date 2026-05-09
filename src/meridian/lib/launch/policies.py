@@ -330,26 +330,6 @@ def _compiler_request_for_base_candidate(
     )
 
 
-def _supported_policy_scope(
-    overrides: RuntimeOverrides,
-    supported_fields: frozenset[ExecutionPolicyField],
-) -> RuntimeOverrides:
-    return overrides.execution_policy_scope(supported_fields)
-
-
-def _compiler_execution_policy_overrides(
-    compiler_result: CompilerResult,
-) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        effort=compiler_result.effort,
-        approval=compiler_result.approval,
-        sandbox=compiler_result.sandbox,
-        autocompact=compiler_result.autocompact,
-        autocompact_pct=compiler_result.autocompact_pct,
-        timeout=compiler_result.timeout,
-    )
-
-
 def _build_final_resolved_views(
     *,
     base_resolved: RuntimeOverrides,
@@ -362,17 +342,16 @@ def _build_final_resolved_views(
         harness=harness_id,
         agent=base_resolved.agent,
     )
-    scoped_execution_policy = _supported_policy_scope(
-        _compiler_execution_policy_overrides(compiler_result),
+    scoped_overrides = compiler_result.execution_policy.as_overrides(
         supported_fields=supported_execution_policy_fields,
     )
     resolved_execution_policy = ResolvedExecutionPolicy(
-        effort=scoped_execution_policy.effort,
-        sandbox=scoped_execution_policy.sandbox,
-        approval=scoped_execution_policy.approval,
-        autocompact=scoped_execution_policy.autocompact,
-        autocompact_pct=scoped_execution_policy.autocompact_pct,
-        timeout=scoped_execution_policy.timeout,
+        effort=scoped_overrides.effort,
+        sandbox=scoped_overrides.sandbox,
+        approval=scoped_overrides.approval,
+        autocompact=scoped_overrides.autocompact,
+        autocompact_pct=scoped_overrides.autocompact_pct,
+        timeout=scoped_overrides.timeout,
     )
     return resolved_routing, resolved_execution_policy
 
@@ -618,11 +597,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         ),
         profile_routing_model=profile.model if profile is not None else None,
         profile_routing_harness=profile.harness if profile is not None else None,
-        profile_policy_effort=profile.effort if profile is not None else None,
-        profile_policy_approval=profile.approval if profile is not None else None,
-        profile_policy_sandbox=profile.sandbox if profile is not None else None,
-        profile_policy_autocompact=profile.autocompact if profile is not None else None,
-        profile_policy_autocompact_pct=profile.autocompact_pct if profile is not None else None,
+        profile_policy_defaults=ResolvedExecutionPolicy(
+            effort=profile.effort if profile is not None else None,
+            approval=profile.approval if profile is not None else None,
+            sandbox=profile.sandbox if profile is not None else None,
+            autocompact=profile.autocompact if profile is not None else None,
+            autocompact_pct=profile.autocompact_pct if profile is not None else None,
+        ),
         profile_model_policies=profile.model_policies if profile is not None else None,
         profile_legacy_models=dict(profile.models) if profile is not None else None,
         profile_fanout=profile.fanout if profile is not None else None,

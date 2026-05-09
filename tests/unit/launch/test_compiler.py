@@ -11,6 +11,7 @@ from meridian.lib.catalog.agent import AgentModelEntry, ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig, AgentOverlayModelPolicy, MeridianConfig
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
@@ -46,11 +47,7 @@ def _request(
     config: RuntimeOverrides | None = None,
     profile_routing_model: str | None = None,
     profile_routing_harness: str | None = None,
-    profile_policy_effort: str | None = None,
-    profile_policy_approval: str | None = None,
-    profile_policy_sandbox: str | None = None,
-    profile_policy_autocompact: int | None = None,
-    profile_policy_autocompact_pct: int | None = None,
+    profile_policy_defaults: ResolvedExecutionPolicy | None = None,
     profile_model_policies: tuple[ModelPolicyRule, ...] | None = None,
     profile_legacy_models: dict[str, AgentModelEntry] | None = None,
     alias_entry: AliasEntry | None = None,
@@ -70,11 +67,7 @@ def _request(
         config_defaults=config or RuntimeOverrides(),
         profile_routing_model=profile_routing_model,
         profile_routing_harness=profile_routing_harness,
-        profile_policy_effort=profile_policy_effort,
-        profile_policy_approval=profile_policy_approval,
-        profile_policy_sandbox=profile_policy_sandbox,
-        profile_policy_autocompact=profile_policy_autocompact,
-        profile_policy_autocompact_pct=profile_policy_autocompact_pct,
+        profile_policy_defaults=profile_policy_defaults or ResolvedExecutionPolicy(),
         profile_model_policies=profile_model_policies,
         profile_legacy_models=profile_legacy_models,
         profile_fanout=(),
@@ -110,12 +103,13 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         model="openai/gpt-5.4-mini",
         model_token="gptmini",
         harness="codex",
-        effort="high",
-        approval="auto",
-        sandbox="workspace-write",
-        autocompact=70,
-        autocompact_pct=None,
-        timeout=30.0,
+        execution_policy=ResolvedExecutionPolicy(
+            effort="high",
+            approval="auto",
+            sandbox="workspace-write",
+            autocompact=70,
+            timeout=30.0,
+        ),
         skill_names=(),
         field_provenance=FieldProvenance(
             model_source=ProvenanceLevel.CLI,
@@ -195,7 +189,7 @@ def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
     request = _request(
         cli=RuntimeOverrides(model="gptmini", effort="xhigh"),
         overlay=AgentOverlayConfig(effort="medium"),
-        profile_policy_effort="low",
+        profile_policy_defaults=ResolvedExecutionPolicy(effort="low"),
         profile_model_policies=(profile_rule,),
         config=RuntimeOverrides(effort="low"),
         alias_entry=alias,
@@ -203,7 +197,7 @@ def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
 
     result = compile_launch_params(request)
 
-    assert result.effort == "xhigh"
+    assert result.execution_policy.effort == "xhigh"
     assert result.field_provenance.effort_source is ProvenanceLevel.CLI
 
 
@@ -217,7 +211,7 @@ def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
     request = _request(
         cli=RuntimeOverrides(model="gptmini"),
         overlay=AgentOverlayConfig(effort="medium"),
-        profile_policy_effort="low",
+        profile_policy_defaults=ResolvedExecutionPolicy(effort="low"),
         profile_model_policies=(profile_rule,),
         config=RuntimeOverrides(effort="low"),
         alias_entry=alias,
@@ -225,7 +219,7 @@ def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
 
     result = compile_launch_params(request)
 
-    assert result.effort == "high"
+    assert result.execution_policy.effort == "high"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
@@ -241,7 +235,7 @@ def test_compile_launch_params_legacy_model_fallback_applies_without_model_polic
 
     result = compile_launch_params(request)
 
-    assert result.effort == "high"
+    assert result.execution_policy.effort == "high"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
@@ -266,14 +260,14 @@ def test_compile_launch_params_timeout_excludes_overlay_and_profile_defaults() -
     request = _request(
         cli=RuntimeOverrides(model="gptmini"),
         overlay=AgentOverlayConfig(effort="high"),
-        profile_policy_effort="low",
+        profile_policy_defaults=ResolvedExecutionPolicy(effort="low"),
         config=RuntimeOverrides(timeout=40.0),
         alias_entry=alias,
     )
 
     result = compile_launch_params(request)
 
-    assert result.timeout == 40.0
+    assert result.execution_policy.timeout == 40.0
     assert result.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
@@ -288,13 +282,13 @@ def test_compile_launch_params_three_state_empty_overlay_uses_empty_policy_list(
         cli=RuntimeOverrides(model="gptmini"),
         overlay=AgentOverlayConfig(model_policies=()),
         profile_model_policies=(profile_rule,),
-        profile_policy_effort="low",
+        profile_policy_defaults=ResolvedExecutionPolicy(effort="low"),
         alias_entry=alias,
     )
 
     result = compile_launch_params(request)
 
-    assert result.effort == "low"
+    assert result.execution_policy.effort == "low"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_DEFAULT
 
 
@@ -323,7 +317,7 @@ def test_compile_launch_params_three_state_model_policies_overlay_replaces_profi
 
     result = compile_launch_params(request)
 
-    assert result.effort == "xhigh"
+    assert result.execution_policy.effort == "xhigh"
     assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
 
 
@@ -344,8 +338,8 @@ def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
 
     result = compile_launch_params(request)
 
-    assert result.timeout is None
-    assert result.approval == "confirm"
+    assert result.execution_policy.timeout is None
+    assert result.execution_policy.approval == "confirm"
     assert result.field_provenance.timeout_source is ProvenanceLevel.UNSET
 
 
@@ -374,7 +368,7 @@ def test_compile_launch_params_child_cli_override_beats_parent_overlay() -> None
 
     result = compile_launch_params(request)
 
-    assert result.effort == "xhigh"
+    assert result.execution_policy.effort == "xhigh"
     assert result.field_provenance.effort_source is ProvenanceLevel.CLI
 
 

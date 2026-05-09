@@ -10,6 +10,7 @@ from typing import Literal, cast
 from meridian.lib.catalog.agent import AgentModelEntry, FanoutEntry, ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import (
     EXECUTION_POLICY_FIELDS,
     ExecutionPolicyField,
@@ -62,11 +63,7 @@ class CompilerRequest:
     # Agent profile data (loaded by caller, passed as data)
     profile_routing_model: str | None
     profile_routing_harness: str | None
-    profile_policy_effort: str | None
-    profile_policy_approval: str | None
-    profile_policy_sandbox: str | None
-    profile_policy_autocompact: int | None
-    profile_policy_autocompact_pct: int | None
+    profile_policy_defaults: ResolvedExecutionPolicy
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
     profile_legacy_models: dict[str, AgentModelEntry] | None
     profile_fanout: tuple[FanoutEntry, ...] | None
@@ -103,12 +100,7 @@ class CompilerResult:
     harness: str
 
     # Runtime policy
-    effort: str | None
-    approval: str | None
-    sandbox: str | None
-    autocompact: int | None
-    autocompact_pct: int | None
-    timeout: float | None
+    execution_policy: ResolvedExecutionPolicy
 
     # Profile-derived content identifiers
     skill_names: tuple[str, ...]
@@ -169,7 +161,7 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
         "autocompact_pct",
         "timeout",
     ):
-        value = getattr(result, field_name)
+        value = getattr(result.execution_policy, field_name)
         if value is not None:
             output[field_name] = value
 
@@ -228,13 +220,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
 
     alias_defaults = RuntimeOverrides.from_alias_entry(request.resolved_alias_entry)
     overlay_policy_defaults = RuntimeOverrides.from_agent_overlay_policy(request.agent_overlay)
-    profile_policy_defaults = RuntimeOverrides(
-        effort=request.profile_policy_effort,
-        approval=request.profile_policy_approval,
-        sandbox=request.profile_policy_sandbox,
-        autocompact=request.profile_policy_autocompact,
-        autocompact_pct=request.profile_policy_autocompact_pct,
-    )
 
     effort, effort_source = _resolve_execution_policy_field(
         request,
@@ -243,7 +228,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.env_overrides.effort, ProvenanceLevel.ENV),
         (policy_override_tier.effort, policy_override_source),
         (overlay_policy_defaults.effort, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
-        (profile_policy_defaults.effort, ProvenanceLevel.PROFILE_DEFAULT),
+        (request.profile_policy_defaults.effort, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.effort, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.effort, ProvenanceLevel.ALIAS_DEFAULT),
     )
@@ -254,7 +239,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.env_overrides.approval, ProvenanceLevel.ENV),
         (policy_override_tier.approval, policy_override_source),
         (overlay_policy_defaults.approval, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
-        (profile_policy_defaults.approval, ProvenanceLevel.PROFILE_DEFAULT),
+        (request.profile_policy_defaults.approval, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.approval, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.approval, ProvenanceLevel.ALIAS_DEFAULT),
     )
@@ -265,7 +250,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.env_overrides.sandbox, ProvenanceLevel.ENV),
         (policy_override_tier.sandbox, policy_override_source),
         (overlay_policy_defaults.sandbox, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
-        (profile_policy_defaults.sandbox, ProvenanceLevel.PROFILE_DEFAULT),
+        (request.profile_policy_defaults.sandbox, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.sandbox, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.sandbox, ProvenanceLevel.ALIAS_DEFAULT),
     )
@@ -276,7 +261,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.env_overrides.autocompact, ProvenanceLevel.ENV),
         (policy_override_tier.autocompact, policy_override_source),
         (overlay_policy_defaults.autocompact, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
-        (profile_policy_defaults.autocompact, ProvenanceLevel.PROFILE_DEFAULT),
+        (request.profile_policy_defaults.autocompact, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.autocompact, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.autocompact, ProvenanceLevel.ALIAS_DEFAULT),
     )
@@ -287,7 +272,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.env_overrides.autocompact_pct, ProvenanceLevel.ENV),
         (policy_override_tier.autocompact_pct, policy_override_source),
         (overlay_policy_defaults.autocompact_pct, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
-        (profile_policy_defaults.autocompact_pct, ProvenanceLevel.PROFILE_DEFAULT),
+        (request.profile_policy_defaults.autocompact_pct, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.autocompact_pct, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.autocompact_pct, ProvenanceLevel.ALIAS_DEFAULT),
     )
@@ -318,12 +303,14 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         model=model,
         model_token=model_token,
         harness=harness,
-        effort=effort,
-        approval=approval,
-        sandbox=sandbox,
-        autocompact=autocompact,
-        autocompact_pct=autocompact_pct,
-        timeout=timeout,
+        execution_policy=ResolvedExecutionPolicy(
+            effort=effort,
+            approval=approval,
+            sandbox=sandbox,
+            autocompact=autocompact,
+            autocompact_pct=autocompact_pct,
+            timeout=timeout,
+        ),
         skill_names=request.profile_skills,
         model_selection_requested_token=requested_token,
         model_selection_canonical_id=canonical_model_id,
@@ -619,6 +606,7 @@ __all__ = [
     "CompilerResult",
     "FieldProvenance",
     "ProvenanceLevel",
+    "ResolvedExecutionPolicy",
     "compile_launch_params",
     "compiler_result_to_dry_run_dict",
     "match_model_policy",
