@@ -52,27 +52,26 @@ def terminate_pgid(
             skip_reason=skip_reason,
         )
 
-    # --- Count descendants for the result ---
-    descendant_count: int | None = None
+    # --- Snapshot tree before signalling for wait + descendant count ---
+    root_proc: psutil.Process | None = None
+    children: list[psutil.Process] = []
     with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-        descendant_count = len(psutil.Process(root_pid).children(recursive=True))
+        root_proc = psutil.Process(root_pid)
+    if root_proc is not None:
+        with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
+            children = root_proc.children(recursive=True)
+
+    descendant_count = len(children)
+    tree = ([root_proc] if root_proc is not None else []) + children
 
     # --- SIGTERM to the process group ---
     with suppress(ProcessLookupError, PermissionError, OSError):
         os.killpg(pgid, signal.SIGTERM)
 
-    # --- Collect group members to wait on ---
-    group_procs: list[psutil.Process] = []
-    with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-        for proc in psutil.process_iter(["pid", "pgid"]):
-            with suppress(psutil.NoSuchProcess, psutil.AccessDenied):
-                if proc.info.get("pgid") == pgid:  # type: ignore[union-attr]
-                    group_procs.append(proc)
-
     kill_escalated = False
 
-    if group_procs:
-        _, alive = psutil.wait_procs(group_procs, timeout=grace_seconds)
+    if tree:
+        _, alive = psutil.wait_procs(tree, timeout=grace_seconds)
         if alive:
             kill_escalated = True
             with suppress(ProcessLookupError, PermissionError, OSError):
