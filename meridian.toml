@@ -85,6 +85,12 @@ builtin = "git-autosync"
 remote = "git@github.com:meridian-flow/docs.git"
 
 # -- Workspace roots ---------------------------------------------------------
+[workspace.mars-agents]
+path = "../mars-agents"
+
+[workspace.meridian-cli-worktrees]
+path = "../meridian-cli.worktrees"
+
 # Prompt repos for agent profile editing
 [workspace.prompts-base]
 path = "../prompts/meridian-base"
