@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -34,6 +34,15 @@ _WHITESPACE_OR_UNDERSCORE = re.compile(r"[\s_]+")
 _REPEATED_HYPHENS = re.compile(r"-+")
 _STATUS_FILENAME = "__status.json"
 logger = structlog.get_logger(__name__)
+_UNSET = object()
+
+
+class WorktreeMetadata(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    path: str | None = None
+    branch: str | None = None
+    pending: bool = False
 
 
 class WorkItem(BaseModel):
@@ -45,8 +54,19 @@ class WorkItem(BaseModel):
     status: str
     created_at: str
     archived_at: str | None = None
-    worktree_path: str | None = None      # absolute path string, or None
-    worktree_pending: bool = False         # transient creation-in-progress marker
+    worktree: WorktreeMetadata = Field(default_factory=WorktreeMetadata)
+
+    @property
+    def worktree_path(self) -> str | None:
+        return self.worktree.path
+
+    @property
+    def worktree_branch(self) -> str | None:
+        return self.worktree.branch
+
+    @property
+    def worktree_pending(self) -> bool:
+        return self.worktree.pending
 
 
 def slugify(label: str) -> str:
@@ -111,6 +131,54 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
     return cast("dict[str, Any]", loaded) if isinstance(loaded, dict) else None
 
 
+def _worktree_payload(metadata: WorktreeMetadata | None = None) -> dict[str, Any]:
+    worktree = metadata or WorktreeMetadata()
+    return {
+        "path": worktree.path,
+        "branch": worktree.branch,
+        "pending": worktree.pending,
+    }
+
+
+def _coerce_worktree_metadata(
+    raw: dict[str, Any],
+    *,
+    default: WorktreeMetadata | None = None,
+) -> tuple[WorktreeMetadata, bool]:
+    changed = False
+    fallback = default or WorktreeMetadata()
+
+    nested = raw.get("worktree")
+    if isinstance(nested, dict):
+        path_value = nested.get("path")
+        branch_value = nested.get("branch")
+        pending_value = nested.get("pending")
+    else:
+        path_value = raw.get("worktree_path")
+        branch_value = raw.get("worktree_branch")
+        pending_value = raw.get("worktree_pending")
+        legacy_keys = ("worktree_path", "worktree_branch", "worktree_pending")
+        if nested is not None or any(key in raw for key in legacy_keys):
+            changed = True
+
+    path = path_value if isinstance(path_value, str) and path_value else fallback.path
+    if path_value not in (None, "") and not isinstance(path_value, str):
+        changed = True
+
+    branch = branch_value if isinstance(branch_value, str) and branch_value else fallback.branch
+    if branch_value not in (None, "") and not isinstance(branch_value, str):
+        changed = True
+
+    if isinstance(pending_value, bool):
+        pending = pending_value
+    else:
+        pending = fallback.pending
+        if pending_value is not None:
+            changed = True
+
+    return WorktreeMetadata(path=path, branch=branch, pending=pending), changed
+
+
 def _read_or_initialize_status(
     work_dir: Path,
     *,
@@ -120,8 +188,7 @@ def _read_or_initialize_status(
     default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
-    default_worktree_path: str | None = None,
-    default_worktree_pending: bool = False,
+    default_worktree: WorktreeMetadata | None = None,
 ) -> dict[str, Any]:
     status_file = _status_path(work_dir)
     created_fallback = default_created_at or _dir_mtime_iso(work_dir)
@@ -136,8 +203,7 @@ def _read_or_initialize_status(
         "goal": default_goal,
         "created_at": created_fallback,
         "archived_at": archived_fallback if archived else None,
-        "worktree_path": default_worktree_path,
-        "worktree_pending": default_worktree_pending,
+        "worktree": _worktree_payload(default_worktree),
     }
 
     raw = _read_json_object(status_file)
@@ -200,19 +266,9 @@ def _read_or_initialize_status(
             payload["status"] = default_status
             changed = True
 
-    # worktree_path: read from file if present, else keep default (None for legacy files)
-    worktree_path_value = raw.get("worktree_path")
-    if isinstance(worktree_path_value, str):
-        payload["worktree_path"] = worktree_path_value if worktree_path_value else None
-    else:
-        payload["worktree_path"] = default_worktree_path
-
-    # worktree_pending: read from file if bool, else default to False for legacy files
-    worktree_pending_value = raw.get("worktree_pending")
-    if isinstance(worktree_pending_value, bool):
-        payload["worktree_pending"] = worktree_pending_value
-    else:
-        payload["worktree_pending"] = default_worktree_pending
+    worktree, worktree_changed = _coerce_worktree_metadata(raw, default=default_worktree)
+    payload["worktree"] = _worktree_payload(worktree)
+    changed = changed or worktree_changed
 
     if changed:
         atomic_write_text(status_file, _serialize_status(payload))
@@ -228,8 +284,7 @@ def _work_item_from_dir(
     default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
-    default_worktree_path: str | None = None,
-    default_worktree_pending: bool = False,
+    default_worktree: WorktreeMetadata | None = None,
 ) -> WorkItem:
     payload = _read_or_initialize_status(
         work_dir,
@@ -239,8 +294,13 @@ def _work_item_from_dir(
         default_goal=default_goal,
         default_created_at=default_created_at,
         default_archived_at=default_archived_at,
-        default_worktree_path=default_worktree_path,
-        default_worktree_pending=default_worktree_pending,
+        default_worktree=default_worktree,
+    )
+    worktree_payload = payload.get("worktree")
+    worktree = (
+        WorktreeMetadata.model_validate(worktree_payload)
+        if isinstance(worktree_payload, dict)
+        else WorktreeMetadata()
     )
     return WorkItem(
         name=work_dir.name,
@@ -249,10 +309,7 @@ def _work_item_from_dir(
         status=str(payload["status"]),
         created_at=str(payload["created_at"]),
         archived_at=payload["archived_at"] if isinstance(payload["archived_at"], str) else None,
-        worktree_path=(
-            payload["worktree_path"] if isinstance(payload["worktree_path"], str) else None
-        ),
-        worktree_pending=bool(payload["worktree_pending"]),
+        worktree=worktree,
     )
 
 
@@ -291,8 +348,7 @@ def _status_payload(
     goal: str | None = None,
     created_at: str,
     archived_at: str | None,
-    worktree_path: str | None = None,
-    worktree_pending: bool = False,
+    worktree: WorktreeMetadata | None = None,
 ) -> dict[str, Any]:
     return {
         "status": status,
@@ -300,8 +356,7 @@ def _status_payload(
         "goal": goal,
         "created_at": created_at,
         "archived_at": archived_at,
-        "worktree_path": worktree_path,
-        "worktree_pending": worktree_pending,
+        "worktree": _worktree_payload(worktree),
     }
 
 
@@ -355,8 +410,7 @@ def create_work_item(
         goal=normalized_goal,
         created_at=created_at,
         archived_at=None,
-        worktree_path=None,
-        worktree_pending=False,
+        worktree=WorktreeMetadata(),
     )
     atomic_write_text(_status_path(active), _serialize_status(payload))
     return WorkItem(
@@ -366,8 +420,7 @@ def create_work_item(
         status="open",
         created_at=created_at,
         archived_at=None,
-        worktree_path=None,
-        worktree_pending=False,
+        worktree=WorktreeMetadata(),
     )
 
 
@@ -521,8 +574,6 @@ def update_work_item(
     status: str | None = None,
     description: str | None = None,
     goal: str | None = None,
-    worktree_path: str | None = None,
-    worktree_pending: bool | None = None,
 ) -> WorkItem:
     """Update active work item metadata and rewrite ``__status.json`` atomically."""
 
@@ -543,10 +594,6 @@ def update_work_item(
         raise ValueError("'done' is reserved for archived work items.")
     next_description = current.description if description is None else description
     next_goal = current.goal if goal is None else normalized_goal
-    next_worktree_path = current.worktree_path if worktree_path is None else worktree_path
-    next_worktree_pending = (
-        current.worktree_pending if worktree_pending is None else worktree_pending
-    )
     updated = WorkItem(
         name=current.name,
         description=next_description,
@@ -554,8 +601,7 @@ def update_work_item(
         status=next_status,
         created_at=current.created_at,
         archived_at=None,
-        worktree_path=next_worktree_path,
-        worktree_pending=next_worktree_pending,
+        worktree=current.worktree,
     )
     atomic_write_text(
         _status_path(active_dir),
@@ -566,8 +612,58 @@ def update_work_item(
                 goal=updated.goal,
                 created_at=updated.created_at,
                 archived_at=None,
-                worktree_path=updated.worktree_path,
-                worktree_pending=updated.worktree_pending,
+                worktree=updated.worktree,
+            )
+        ),
+    )
+    return updated
+
+
+def update_work_item_worktree(
+    runtime_root: Path,
+    work_id: str,
+    *,
+    path: str | None | object = _UNSET,
+    branch: str | None | object = _UNSET,
+    pending: bool | object = _UNSET,
+) -> WorkItem:
+    """Update only the nested worktree metadata for an active work item."""
+
+    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    active_dir, archived_dir = _locate_dirs(paths, work_id)
+    _warn_both_locations(work_id, active_dir, archived_dir)
+    if active_dir is None:
+        if archived_dir is not None:
+            raise ValueError(
+                f"Work item '{work_id}' is archived and cannot be updated. Reopen it first."
+            )
+        raise ValueError(f"Work item '{work_id}' not found")
+
+    current = _work_item_from_dir(active_dir, archived=False)
+    next_worktree = WorktreeMetadata(
+        path=current.worktree.path if path is _UNSET else path,
+        branch=current.worktree.branch if branch is _UNSET else branch,
+        pending=current.worktree.pending if pending is _UNSET else bool(pending),
+    )
+    updated = WorkItem(
+        name=current.name,
+        description=current.description,
+        goal=current.goal,
+        status=current.status,
+        created_at=current.created_at,
+        archived_at=current.archived_at,
+        worktree=next_worktree,
+    )
+    atomic_write_text(
+        _status_path(active_dir),
+        _serialize_status(
+            _status_payload(
+                status=updated.status,
+                description=updated.description,
+                goal=updated.goal,
+                created_at=updated.created_at,
+                archived_at=None,
+                worktree=updated.worktree,
             )
         ),
     )
@@ -608,8 +704,7 @@ def archive_work_item(
         status="done",
         created_at=current.created_at,
         archived_at=archived_at,
-        worktree_path=current.worktree_path,
-        worktree_pending=False,
+        worktree=current.worktree.model_copy(update={"pending": False}),
     )
     atomic_write_text(
         _status_path(destination),
@@ -620,8 +715,7 @@ def archive_work_item(
                 goal=archived_item.goal,
                 created_at=archived_item.created_at,
                 archived_at=archived_item.archived_at,
-                worktree_path=archived_item.worktree_path,
-                worktree_pending=archived_item.worktree_pending,
+                worktree=archived_item.worktree,
             )
         ),
     )
@@ -655,8 +749,7 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
                 goal=current.goal,
                 created_at=current.created_at,
                 archived_at=None,
-                worktree_path=current.worktree_path,
-                worktree_pending=False,
+                worktree=current.worktree.model_copy(update={"pending": False}),
             )
         ),
     )
