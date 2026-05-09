@@ -73,7 +73,6 @@ from .models import (
     SpawnWaitMultiOutput,
     SpawnWrittenFilesInput,
     SpawnWrittenFilesOutput,
-    build_goal_contract_preview,
 )
 from .prepare import build_create_payload, validate_create_input
 from .query import (
@@ -286,6 +285,7 @@ def spawn_create_sync(
     )
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
+        prepared_goal = getattr(prepared_request, "goal", payload.goal)
         _emit_usage_spawn_launched(harness=prepared_request.harness)
         return SpawnActionOutput(
             command="spawn.create",
@@ -301,8 +301,7 @@ def spawn_create_sync(
             template_vars=prepared_request.template_vars,
             context_from_resolved=tuple(prepared_request.context_from or ()),
             composed_prompt=prepared_request.prompt,
-            goal=prepared_request.goal,
-            goal_contract_preview=build_goal_contract_preview(prepared_request.goal),
+            goal=prepared_goal,
             model_selection_requested_token=prepared_request.model_selection_requested_token,
             model_selection_canonical_id=prepared_request.model_selection_canonical_id,
             model_selection_harness_provenance=(
@@ -1420,6 +1419,8 @@ def _build_fork_create_input(
     requested_goal: str | None,
     harness: str | None,
 ) -> SpawnCreateInput:
+    launch_options = payload.launch_option_updates()
+    launch_options["harness"] = harness
     return SpawnCreateInput(
         prompt=payload.prompt,
         model=requested_model or (resolved_reference.source_model or ""),
@@ -1430,19 +1431,6 @@ def _build_fork_create_input(
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
         goal=requested_goal,
-        dry_run=payload.dry_run,
-        verbose=payload.verbose,
-        quiet=payload.quiet,
-        stream=payload.stream,
-        background=payload.background,
-        timeout=payload.timeout,
-        project_root=payload.project_root,
-        approval=payload.approval,
-        autocompact=payload.autocompact,
-        effort=payload.effort,
-        sandbox=payload.sandbox,
-        harness=harness,
-        passthrough_args=payload.passthrough_args,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
             continue_harness=resolved_reference.harness,
@@ -1453,7 +1441,7 @@ def _build_fork_create_input(
             source_execution_cwd=resolved_reference.source_execution_cwd,
             source_claude_config_dir=resolved_reference.source_claude_config_dir,
         ),
-        debug=payload.debug,
+        **launch_options,
     )
 
 
@@ -1603,24 +1591,18 @@ def spawn_continue_sync(
 
     derived_prompt = _prompt_for_follow_up(source_spawn, resolved_spawn_id, payload.prompt)
     resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
+    launch_options = payload.launch_option_updates()
+    launch_options["harness"] = requested_harness
     create_input = SpawnCreateInput(
         prompt=derived_prompt,
         model=_model_for_follow_up(source_spawn, payload.model),
         files=payload.files,
         template_vars=payload.template_vars,
-        harness=requested_harness,
         agent=payload.agent,
         skills=payload.skills,
         goal=resolved_goal,
         desc=payload.desc,
         work=payload.work,
-        project_root=payload.project_root,
-        dry_run=payload.dry_run,
-        verbose=payload.verbose,
-        quiet=payload.quiet,
-        stream=payload.stream,
-        timeout=payload.timeout,
-        background=payload.background,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
             continue_harness=resolved_reference.harness,
@@ -1632,12 +1614,7 @@ def spawn_continue_sync(
             source_execution_cwd=resolved_reference.source_execution_cwd,
             source_claude_config_dir=resolved_reference.source_claude_config_dir,
         ),
-        passthrough_args=payload.passthrough_args,
-        approval=payload.approval,
-        autocompact=payload.autocompact,
-        effort=payload.effort,
-        sandbox=payload.sandbox,
-        debug=payload.debug,
+        **launch_options,
     )
     target_harness = _resolve_effective_fork_target_harness(
         create_input,

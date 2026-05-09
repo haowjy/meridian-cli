@@ -403,6 +403,7 @@ def _init_spawn(
         prompt=request.prompt,
         desc=resolved_desc,
         work_id=resolved_work_id,
+        goal=request.goal,
         # I-10: do NOT pre-populate harness_session_id on fork starts.
         # materialize_fork() writes it via update_spawn after the row exists.
         harness_session_id=(
@@ -460,6 +461,7 @@ def _write_params_json(
         "user_turn_content": request.prompt_payload.user_turn_content,
         "desc": desc,
         "work_id": work_id,
+        "goal": request.goal,
         "prompt_length": len(request.prompt),
         "reference_files": list(request.reference_files),
         "template_vars": request.template_vars,

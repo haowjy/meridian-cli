@@ -487,7 +487,12 @@ def test_execute_spawn_blocking_returns_execution_crash_and_failed_row_when_wrap
             foreground=True,
             project_root=tmp_path.as_posix(),
         ),
-        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="codex",
+            goal="ship phase 3",
+        ),
         runtime=cast("Any", SimpleNamespace(project_root=tmp_path, sink=None)),
     )
 
@@ -501,3 +506,4 @@ def test_execute_spawn_blocking_returns_execution_crash_and_failed_row_when_wrap
     assert row.exit_code == 1
     assert row.terminal_origin == "launch_failure"
     assert row.error == "wrapper boom"
+    assert row.goal == "ship phase 3"

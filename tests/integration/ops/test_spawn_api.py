@@ -236,9 +236,10 @@ def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
 
     assert result.status == "dry-run"
     assert result.goal == "ship phase 3"
-    assert result.goal_contract_preview is not None
-    assert "# Spawn Goal" in result.goal_contract_preview
-    assert "ship phase 3" in result.goal_contract_preview
+    goal_contract_preview = result.goal_contract_preview
+    assert goal_contract_preview is not None
+    assert "# Spawn Goal" in goal_contract_preview
+    assert "ship phase 3" in goal_contract_preview
 
 
 def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:

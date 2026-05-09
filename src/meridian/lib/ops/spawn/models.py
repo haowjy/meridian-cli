@@ -1,8 +1,9 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
+from typing import TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
@@ -53,19 +54,26 @@ def _background_wait_note(spawn_id: str) -> str:
     )
 
 
-class SpawnCreateInput(BaseModel):
+class SpawnLaunchOptionUpdates(TypedDict):
+    dry_run: bool
+    verbose: bool
+    quiet: bool
+    stream: bool
+    background: bool
+    project_root: str | None
+    timeout: float | None
+    approval: str | None
+    autocompact: int | None
+    effort: str | None
+    sandbox: str | None
+    harness: str | None
+    passthrough_args: tuple[str, ...]
+    debug: bool
+
+
+class SpawnLaunchOptions(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    prompt: str = ""
-    goal: str | None = None
-    model: str = ""
-    files: tuple[str, ...] = ()
-    context_from: tuple[str, ...] = ()
-    template_vars: tuple[str, ...] = ()
-    agent: str | None = None
-    skills: tuple[str, ...] = ()
-    desc: str = ""
-    work: str = ""
     dry_run: bool = False
     verbose: bool = False
     quiet: bool = False
@@ -79,8 +87,39 @@ class SpawnCreateInput(BaseModel):
     sandbox: str | None = None
     harness: str | None = None
     passthrough_args: tuple[str, ...] = ()
-    session: SessionRequest = SessionRequest()
     debug: bool = False
+
+    def launch_option_updates(self) -> SpawnLaunchOptionUpdates:
+        return {
+            "dry_run": self.dry_run,
+            "verbose": self.verbose,
+            "quiet": self.quiet,
+            "stream": self.stream,
+            "background": self.background,
+            "project_root": self.project_root,
+            "timeout": self.timeout,
+            "approval": self.approval,
+            "autocompact": self.autocompact,
+            "effort": self.effort,
+            "sandbox": self.sandbox,
+            "harness": self.harness,
+            "passthrough_args": self.passthrough_args,
+            "debug": self.debug,
+        }
+
+
+class SpawnCreateInput(SpawnLaunchOptions):
+    prompt: str = ""
+    goal: str | None = None
+    model: str = ""
+    files: tuple[str, ...] = ()
+    context_from: tuple[str, ...] = ()
+    template_vars: tuple[str, ...] = ()
+    agent: str | None = None
+    skills: tuple[str, ...] = ()
+    desc: str = ""
+    work: str = ""
+    session: SessionRequest = SessionRequest()
 
     @field_validator("goal", mode="before")
     @classmethod
@@ -113,7 +152,6 @@ class SpawnActionOutput(BaseModel):
     report: str | None = None
     composed_prompt: str | None = None
     goal: str | None = None
-    goal_contract_preview: str | None = None
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
@@ -127,6 +165,11 @@ class SpawnActionOutput(BaseModel):
     duration_secs: float | None = None
     background: bool = False
     forked_from: str | None = None
+
+    @computed_field
+    @property
+    def goal_contract_preview(self) -> str | None:
+        return build_goal_contract_preview(self.goal)
 
     def to_wire(self) -> dict[str, object]:
         """Project minimal external JSON shape. Omit nulls and input echo."""
@@ -184,8 +227,9 @@ class SpawnActionOutput(BaseModel):
                 wire["composed_prompt"] = self.composed_prompt
             if self.goal is not None:
                 wire["goal"] = self.goal
-            if self.goal_contract_preview is not None:
-                wire["goal_contract_preview"] = self.goal_contract_preview
+            goal_contract_preview = self.goal_contract_preview
+            if goal_contract_preview is not None:
+                wire["goal_contract_preview"] = goal_contract_preview
             if self.model_selection_requested_token is not None:
                 wire["model_selection"] = {
                     "requested_token": self.model_selection_requested_token,
@@ -264,11 +308,12 @@ class SpawnActionOutput(BaseModel):
                 lines.append(f"Write root source: {self.runtime_root_source}")
         if self.status == "dry-run" and self.goal is not None:
             lines.append(f"Goal: {self.goal}")
-            if self.goal_contract_preview is not None:
+            goal_contract_preview = self.goal_contract_preview
+            if goal_contract_preview is not None:
                 lines.append("")
                 lines.append("Completion contract preview:")
                 lines.append("")
-                lines.append(self.goal_contract_preview)
+                lines.append(goal_contract_preview)
         if self.error:
             lines.append(f"Error: {self.error}")
         if self.warning:
@@ -803,34 +848,18 @@ class SpawnWrittenFilesOutput(BaseModel):
         return "\n".join(self.written_files)
 
 
-class SpawnContinueInput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
+class SpawnContinueInput(SpawnLaunchOptions):
     spawn_id: str
     prompt: str
     model: str = ""
     files: tuple[str, ...] = ()
     template_vars: tuple[str, ...] = ()
-    harness: str | None = None
     agent: str | None = None
     skills: tuple[str, ...] = ()
     goal: str | None = None
     desc: str = ""
     work: str = ""
     fork: bool = False
-    dry_run: bool = False
-    verbose: bool = False
-    quiet: bool = False
-    stream: bool = False
-    timeout: float | None = None
-    background: bool = False
-    project_root: str | None = None
-    passthrough_args: tuple[str, ...] = ()
-    approval: str | None = None
-    autocompact: int | None = None
-    effort: str | None = None
-    sandbox: str | None = None
-    debug: bool = False
 
     @field_validator("goal", mode="before")
     @classmethod
@@ -840,9 +869,7 @@ class SpawnContinueInput(BaseModel):
         return normalize_goal(value)
 
 
-class SpawnForkInput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
+class SpawnForkInput(SpawnLaunchOptions):
     source_ref: str
     prompt: str
     model: str = ""
@@ -854,20 +881,6 @@ class SpawnForkInput(BaseModel):
     goal: str | None = None
     desc: str = ""
     work: str = ""
-    dry_run: bool = False
-    verbose: bool = False
-    quiet: bool = False
-    stream: bool = False
-    background: bool = False
-    timeout: float | None = None
-    project_root: str | None = None
-    approval: str | None = None
-    autocompact: int | None = None
-    effort: str | None = None
-    sandbox: str | None = None
-    harness: str | None = None
-    passthrough_args: tuple[str, ...] = ()
-    debug: bool = False
 
     @field_validator("goal", mode="before")
     @classmethod
@@ -1018,6 +1031,8 @@ __all__ = [
     "SpawnContinueInput",
     "SpawnCreateInput",
     "SpawnDetailOutput",
+    "SpawnLaunchOptionUpdates",
+    "SpawnLaunchOptions",
     "SpawnListEntry",
     "SpawnListInput",
     "SpawnListOutput",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -46,16 +47,23 @@ def test_execute_spawn_background_persists_runtime_override_snapshot_and_launch_
             background=True,
             project_root=tmp_path.as_posix(),
         ),
-        request=SpawnRequest(prompt="run it", model="gpt-5.4", harness="codex"),
+        request=SpawnRequest(
+            prompt="run it",
+            model="gpt-5.4",
+            harness="codex",
+            goal="ship phase 3",
+        ),
         runtime=SimpleNamespace(project_root=tmp_path, sink=None),
     )
 
     runtime_root = resolve_runtime_root(tmp_path)
     log_dir = runtime_root / "spawns" / str(result.spawn_id)
     request_path = log_dir / "bg-worker-request.json"
+    params_path = log_dir / "params.json"
     persisted = BackgroundWorkerLaunchRequest.model_validate_json(
         request_path.read_text(encoding="utf-8")
     )
+    params = json.loads(params_path.read_text(encoding="utf-8"))
     events = read_launch_boundary_events(runtime_root, str(result.spawn_id))
     record = spawn_store.get_spawn(runtime_root, str(result.spawn_id))
 
@@ -68,8 +76,10 @@ def test_execute_spawn_background_persists_runtime_override_snapshot_and_launch_
     assert events[-1].launcher_pid == 4242
     assert record is not None
     assert record.status == "running"
+    assert record.goal == "ship phase 3"
     assert record.runner_pid == 4242
     assert record.launch_mode == "background"
+    assert params["goal"] == "ship phase 3"
 
 
 def test_finalize_launch_failure_sync_keeps_fixed_terminal_tuple(tmp_path: Path) -> None:

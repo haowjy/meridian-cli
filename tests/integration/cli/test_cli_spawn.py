@@ -158,9 +158,6 @@ def test_spawn_dry_run_text_includes_goal_contract_preview(
             status="dry-run",
             message="Dry run complete.",
             goal="ship phase 3",
-            goal_contract_preview=(
-                "# Spawn Goal\n\n<goal>\nship phase 3\n</goal>\n\nDo not run forever."
-            ),
         )
 
     monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)

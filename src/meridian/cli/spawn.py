@@ -47,7 +47,7 @@ from meridian.lib.ops.spawn.api import (
     spawn_stats_sync,
     spawn_wait_sync,
 )
-from meridian.lib.ops.spawn.models import normalize_goal
+from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
 
 Emitter = Callable[[Any], None]
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
@@ -146,6 +146,41 @@ def _resolve_spawn_prompt(
     if has_files or is_continue:
         return ""
     raise ValueError("prompt required: pass --prompt-file, -p, or pipe stdin")
+
+
+def _shared_launch_input_kwargs(
+    *,
+    dry_run: bool,
+    verbose: bool,
+    quiet: bool,
+    stream: bool,
+    background: bool,
+    project_root: str | None,
+    timeout: float | None,
+    approval: str | None,
+    autocompact: int | None,
+    effort: str | None,
+    sandbox: str | None,
+    harness: str | None,
+    passthrough_args: tuple[str, ...],
+    debug: bool,
+) -> SpawnLaunchOptionUpdates:
+    return {
+        "dry_run": dry_run,
+        "verbose": verbose,
+        "quiet": quiet,
+        "stream": stream,
+        "background": background,
+        "project_root": project_root,
+        "timeout": timeout,
+        "approval": approval,
+        "autocompact": autocompact,
+        "effort": effort,
+        "sandbox": sandbox,
+        "harness": harness,
+        "passthrough_args": passthrough_args,
+        "debug": debug,
+    }
 
 
 def _spawn_create(
@@ -346,6 +381,22 @@ def _spawn_create(
     parsed_skills = parse_csv_list(skills, field_name="skills")
     resolved_goal = normalize_goal(goal)
     resolved_fork_from = (fork_from or "").strip() or None
+    shared_launch_kwargs = _shared_launch_input_kwargs(
+        dry_run=dry_run,
+        verbose=verbose,
+        quiet=quiet,
+        stream=stream,
+        background=background,
+        project_root=None,
+        timeout=timeout,
+        approval=resolved_approval,
+        autocompact=autocompact,
+        effort=effort,
+        sandbox=sandbox,
+        harness=global_harness,
+        passthrough_args=passthrough,
+        debug=debug,
+    )
     resolved_prompt = _resolve_spawn_prompt(
         prompt,
         prompt_file,
@@ -372,19 +423,7 @@ def _spawn_create(
                 inherit_source_skills=skills is None,
                 desc=desc,
                 work=work,
-                dry_run=dry_run,
-                verbose=verbose,
-                quiet=quiet,
-                stream=stream,
-                background=background,
-                timeout=timeout,
-                approval=resolved_approval,
-                autocompact=autocompact,
-                effort=effort,
-                sandbox=sandbox,
-                harness=global_harness,
-                passthrough_args=passthrough,
-                debug=debug,
+                **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
@@ -399,24 +438,12 @@ def _spawn_create(
                 model=model,
                 files=references,
                 template_vars=template_vars,
-                harness=global_harness,
                 agent=agent,
                 skills=parsed_skills,
                 goal=resolved_goal,
                 desc=desc,
                 work=work,
-                dry_run=dry_run,
-                verbose=verbose,
-                quiet=quiet,
-                stream=stream,
-                timeout=timeout,
-                background=background,
-                passthrough_args=passthrough,
-                approval=resolved_approval,
-                autocompact=autocompact,
-                effort=effort,
-                sandbox=sandbox,
-                debug=debug,
+                **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
@@ -434,19 +461,7 @@ def _spawn_create(
                 desc=desc,
                 goal=resolved_goal,
                 work=work,
-                dry_run=dry_run,
-                verbose=verbose,
-                quiet=quiet,
-                stream=stream,
-                background=background,
-                timeout=timeout,
-                approval=resolved_approval,
-                autocompact=autocompact,
-                effort=effort,
-                sandbox=sandbox,
-                harness=global_harness,
-                passthrough_args=passthrough,
-                debug=debug,
+                **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
