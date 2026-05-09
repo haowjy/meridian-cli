@@ -25,6 +25,7 @@ class SkillDocument(BaseModel):
     name: str
     description: str
     path: Path
+    skill_type: str = "reference"
     content: str
     body: str
     frontmatter: dict[str, object]
@@ -74,6 +75,7 @@ def parse_skill_file(path: Path) -> SkillDocument:
 
     name_value = frontmatter.get("name")
     description_value = frontmatter.get("description")
+    skill_type = str(frontmatter.get("type", "reference")).strip()
     name = str(name_value).strip() if name_value is not None else path.parent.name
     description = str(description_value).strip() if description_value is not None else ""
 
@@ -81,6 +83,7 @@ def parse_skill_file(path: Path) -> SkillDocument:
         name=name or path.parent.name,
         description=description,
         path=path.resolve(),
+        skill_type=skill_type or "reference",
         content=content,
         body=body,
         frontmatter=frontmatter,
@@ -327,6 +330,7 @@ class SkillRegistry:
                     name=record.base.name,
                     description=record.base.description,
                     path=variant.path,
+                    skill_type=record.base.skill_type,
                     content=content,
                     body=variant.body,
                     frontmatter=record.base.frontmatter,
@@ -366,6 +370,7 @@ class SkillRegistry:
                     description=document.description,
                     content=document.content,
                     path=str(document.path),
+                    skill_type=document.skill_type,
                 )
             )
         return loaded

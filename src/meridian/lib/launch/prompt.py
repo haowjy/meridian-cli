@@ -190,6 +190,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
                 logical_name=skill.name,
                 path=path,
                 content=f"# Skill: {path}\n\n{content}",
+                skill_type=skill.skill_type,
             )
         )
     return tuple(documents)

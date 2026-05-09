@@ -72,6 +72,7 @@ class SkillContent(BaseModel):
     description: str
     content: str
     path: str
+    skill_type: str = "reference"
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         return f"{self.name}: {self.description}\n\n{self.content}"
