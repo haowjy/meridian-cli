@@ -10,10 +10,9 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkabl
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
 from meridian.lib.core.overrides import (
-    ExecutionPolicyField,
     RuntimeOverrides,
-    normalize_execution_policy_fields,
 )
 
 if TYPE_CHECKING:
@@ -118,47 +117,6 @@ class ResolvedLaunchRouting:
             model=self.model,
             harness=self.harness.value,
             agent=self.agent,
-        )
-
-
-@dataclass(frozen=True)
-class ResolvedExecutionPolicy:
-    """Typed execution-policy output from policy resolution."""
-
-    effort: str | None = None
-    sandbox: str | None = None
-    approval: str | None = None
-    autocompact: int | None = None
-    autocompact_pct: int | None = None
-    timeout: float | None = None
-
-    def as_overrides(
-        self,
-        supported_fields: frozenset[ExecutionPolicyField] | None = None,
-    ) -> RuntimeOverrides:
-        """Compatibility view for legacy RuntimeOverrides consumers."""
-
-        allowed_fields = (
-            None
-            if supported_fields is None
-            else frozenset(normalize_execution_policy_fields(supported_fields))
-        )
-        values = {
-            "effort": self.effort,
-            "sandbox": self.sandbox,
-            "approval": self.approval,
-            "autocompact": self.autocompact,
-            "autocompact_pct": self.autocompact_pct,
-            "timeout": self.timeout,
-        }
-        if allowed_fields is not None:
-            values = {
-                field_name: value
-                for field_name, value in values.items()
-                if field_name in allowed_fields
-            }
-        return RuntimeOverrides.model_validate(
-            {field_name: value for field_name, value in values.items() if value is not None}
         )
 
 
