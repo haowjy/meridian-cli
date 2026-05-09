@@ -152,6 +152,16 @@ def work_dir_display(project_root: Path, project_state_dir: Path, work_id: str) 
     return _display_path(project_root, work_store.work_scratch_dir(project_state_dir, work_id))
 
 
+def _display_worktree_path(worktree_path: str, project_root: Path) -> str:
+    """Display-friendly worktree path, relative to project root parent when possible."""
+    try:
+        wt = Path(worktree_path)
+        rel = wt.relative_to(project_root.parent)
+        return f"../{rel.as_posix()}"
+    except ValueError:
+        return worktree_path
+
+
 class WorkDashboardItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -159,6 +169,9 @@ class WorkDashboardItem(BaseModel):
     status: str
     goal: str | None = None
     spawns: tuple[WorkDashboardSpawn, ...] = ()
+    worktree_display: str | None = None  # display-friendly path, pre-computed; None = no worktree
+    worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
+    worktree_pending: bool = False  # creation interrupted
 
 
 class WorkDashboardInput(BaseModel):
@@ -193,6 +206,11 @@ class WorkDashboardOutput(BaseModel):
             if goal:
                 row = f"{row}  {goal}"
             lines.append(row)
+            if item.worktree_pending:
+                lines.append("    \U0001f333 (creation interrupted)")
+            elif item.worktree_display is not None:
+                suffix = "" if item.worktree_exists else " (missing)"
+                lines.append(f"    \U0001f333 {item.worktree_display}{suffix}")
             lines.extend(_format_spawn_rows(item.spawns, indent="    "))
             if item.spawns:
                 has_spawns = True
@@ -277,24 +295,30 @@ class WorkShowOutput(BaseModel):
     work_dir: str
     spawns: tuple[WorkDashboardSpawn, ...] = ()
     sessions: tuple[WorkSessionItem, ...] = ()
+    worktree_path: str | None = None  # full absolute path; None = no worktree
+    worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
+    worktree_pending: bool = False  # creation interrupted
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
 
         from meridian.lib.core.formatting import kv_block
 
-        lines = [
-            kv_block(
-                [
-                    ("Work", self.name),
-                    ("Status", self.status),
-                    ("Goal", self.goal or "(none)"),
-                    ("Description", self.description or "(none)"),
-                    ("Created", self.created_at),
-                    ("Dir", self.work_dir),
-                ]
-            )
+        kv_rows: list[tuple[str, str | None]] = [
+            ("Work", self.name),
+            ("Status", self.status),
+            ("Goal", self.goal or "(none)"),
+            ("Description", self.description or "(none)"),
+            ("Created", self.created_at),
+            ("Dir", self.work_dir),
         ]
+        if self.worktree_pending:
+            kv_rows.append(("Worktree", "(creation interrupted)"))
+        elif self.worktree_path is not None:
+            suffix = "" if self.worktree_exists else " (missing)"
+            kv_rows.append(("Worktree", f"{self.worktree_path}{suffix}"))
+
+        lines = [kv_block(kv_rows)]
         if self.spawns:
             lines.append("")
             lines.append("Spawns:")
@@ -474,6 +498,13 @@ def work_dashboard_sync(
         ),
     ):
         item = items_by_name.get(work_id)
+        wt_path = item.worktree_path if item is not None else None
+        wt_pending = item.worktree_pending if item is not None else False
+        wt_display: str | None = None
+        wt_exists: bool | None = None
+        if wt_path is not None:
+            wt_display = _display_worktree_path(wt_path, project_root)
+            wt_exists = Path(wt_path).is_dir()
         items.append(
             WorkDashboardItem(
                 name=work_id,
@@ -482,6 +513,9 @@ def work_dashboard_sync(
                 spawns=tuple(
                     sorted(grouped[work_id], key=lambda spawn: _spawn_id_sort_key(spawn.id))
                 ),
+                worktree_display=wt_display,
+                worktree_exists=wt_exists,
+                worktree_pending=wt_pending,
             )
         )
 
@@ -553,6 +587,11 @@ def work_show_sync(
     ]
     associated_spawns.sort(key=lambda spawn: _spawn_id_sort_key(spawn.id))
 
+    wt_path = item.worktree_path
+    wt_exists: bool | None = None
+    if wt_path is not None:
+        wt_exists = Path(wt_path).is_dir()
+
     return WorkShowOutput(
         name=item.name,
         status=item.status,
@@ -567,6 +606,9 @@ def work_show_sync(
             item.name,
             include_all=False,
         ),
+        worktree_path=wt_path,
+        worktree_exists=wt_exists,
+        worktree_pending=item.worktree_pending,
     )
 
 
