@@ -67,6 +67,48 @@ def test_spawn_rejects_prompt_and_prompt_file_together(
     assert captured.err == "error: cannot specify both -p and --prompt-file\n"
 
 
+def test_spawn_goal_is_trimmed_and_passed_to_spawn_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["goal"] = payload.goal
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "-p", "literal", "--goal", "  ship phase 3  ", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["goal"] == "ship phase 3"
+
+
+def test_spawn_goal_rejects_empty_value(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "-p", "literal", "--goal", "   ", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: --goal cannot be empty\n"
+
+
 def test_spawn_runtime_error_is_reported_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -95,6 +137,42 @@ def test_spawn_runtime_error_is_reported_without_traceback(
     captured = capsys.readouterr()
     assert "Traceback" not in captured.err
     assert "mars.toml" in captured.err
+
+
+def test_spawn_dry_run_text_includes_goal_contract_preview(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (payload, sink, prepared)
+        return SpawnActionOutput(
+            command="spawn.create",
+            status="dry-run",
+            message="Dry run complete.",
+            goal="ship phase 3",
+            goal_contract_preview=(
+                "# Spawn Goal\n\n<goal>\nship phase 3\n</goal>\n\nDo not run forever."
+            ),
+        )
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "-p", "literal", "--goal", "ship", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "Goal: ship phase 3" in output
+    assert "Completion contract preview:" in output
+    assert "# Spawn Goal" in output
 
 
 def test_spawn_background_agent_mode_returns_wire_without_event_noise(

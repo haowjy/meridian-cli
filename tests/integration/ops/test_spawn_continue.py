@@ -37,6 +37,7 @@ def _seed_spawn(
     spawn_id: str,
     harness_session_id: str | None,
     prompt: str = "seed prompt",
+    goal: str | None = None,
     execution_cwd: str | None = None,
 ) -> None:
     spawn_store.start_spawn(
@@ -48,6 +49,7 @@ def _seed_spawn(
         skills=("skill-c",),
         harness="codex",
         prompt=prompt,
+        goal=goal,
         work_id="w-spawn",
         harness_session_id=harness_session_id,
         execution_cwd=execution_cwd,
@@ -289,6 +291,91 @@ def test_spawn_continue_forwards_shared_create_fields_to_spawn_create(
     assert captured_input.debug is True
 
 
+def test_spawn_continue_inherits_source_goal_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p23b",
+        harness_session_id="session-23b",
+        goal="ship inherited goal",
+    )
+
+    captured_input: SpawnCreateInput | None = None
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p23b",
+            prompt="follow-up prompt",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.goal == "ship inherited goal"
+
+
+def test_spawn_continue_goal_override_wins_over_source_goal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p23c",
+        harness_session_id="session-23c",
+        goal="old goal",
+    )
+
+    captured_input: SpawnCreateInput | None = None
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p23c",
+            prompt="follow-up prompt",
+            goal="  new goal  ",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.goal == "new goal"
+
+
 def test_spawn_continue_errors_on_explicit_harness_conflict(
     tmp_path: Path,
 ) -> None:
@@ -376,6 +463,7 @@ def test_spawn_continue_dry_run_with_prepared_context_does_not_require_lifecycle
             template_vars={},
             context_from=(),
             prompt=payload.prompt,
+            goal=payload.goal,
             model_selection_requested_token=None,
             model_selection_canonical_id=None,
             model_selection_harness_provenance=None,
@@ -469,6 +557,196 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     assert captured_input.session.forked_from_chat_id == "c-source"
     assert captured_input.session.source_execution_cwd == "/tmp/source-cwd"
     assert captured_input.session.source_claude_config_dir == "/tmp/source-claude"
+
+
+def test_spawn_fork_inherits_goal_for_concrete_spawn_ref_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p31",
+        harness_session_id="session-31",
+        goal="goal from p31",
+    )
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda *_args, **_kwargs: "codex",
+    )
+
+    captured_input: SpawnCreateInput | None = None
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-31",
+            harness="codex",
+            source_model="gpt-5.4",
+            source_agent="coder",
+            source_skills=(),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd="/tmp/source-cwd",
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="p31",
+            prompt="fork prompt",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.goal == "goal from p31"
+
+
+def test_spawn_fork_does_not_inherit_goal_for_chat_ref(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _state_root(project_root)
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda *_args, **_kwargs: "codex",
+    )
+
+    captured_input: SpawnCreateInput | None = None
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-c7",
+            harness="codex",
+            source_model="gpt-5.4",
+            source_agent="coder",
+            source_skills=(),
+            source_work_id="w-source",
+            source_chat_id="c7",
+            source_execution_cwd="/tmp/source-cwd",
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="c7",
+            prompt="fork prompt",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.goal is None
+
+
+def test_spawn_fork_goal_override_wins_over_inherited_goal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(
+        runtime_root,
+        spawn_id="p32",
+        harness_session_id="session-32",
+        goal="old fork goal",
+    )
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda *_args, **_kwargs: "codex",
+    )
+
+    captured_input: SpawnCreateInput | None = None
+
+    monkeypatch.setattr(
+        spawn_api,
+        "resolve_session_reference",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            missing_harness_session_id=False,
+            harness_session_id="session-32",
+            harness="codex",
+            source_model="gpt-5.4",
+            source_agent="coder",
+            source_skills=(),
+            source_work_id="w-source",
+            source_chat_id="c-source",
+            source_execution_cwd="/tmp/source-cwd",
+            source_claude_config_dir=None,
+            tracked=True,
+        ),
+    )
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        ctx=None,
+        *,
+        sink=None,
+    ) -> SpawnActionOutput:
+        _ = (ctx, sink)
+        nonlocal captured_input
+        captured_input = payload
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+
+    result = spawn_api.spawn_fork_sync(
+        SpawnForkInput(
+            source_ref="p32",
+            prompt="fork prompt",
+            goal="  new fork goal  ",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert captured_input is not None
+    assert captured_input.goal == "new fork goal"
 
 
 def test_spawn_fork_uses_requested_model_agent_and_resolves_harness_from_policy(

@@ -60,3 +60,10 @@ def test_spawn_detail_terminal_status_shows_attempt_exit_fields() -> None:
 
     assert "Exited at: 2026-04-23T12:00:00Z" in text
     assert "Process exit code: 1" in text
+
+
+def test_spawn_detail_includes_goal_in_text_and_wire() -> None:
+    detail = _spawn_detail(status="succeeded", goal="ship phase 3")
+
+    assert "Goal: ship phase 3" in detail.format_text()
+    assert detail.to_cli_wire()["goal"] == "ship phase 3"

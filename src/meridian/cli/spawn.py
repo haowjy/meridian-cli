@@ -47,6 +47,7 @@ from meridian.lib.ops.spawn.api import (
     spawn_stats_sync,
     spawn_wait_sync,
 )
+from meridian.lib.ops.spawn.models import normalize_goal
 
 Emitter = Callable[[Any], None]
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
@@ -223,6 +224,16 @@ def _spawn_create(
         str,
         Parameter(name=["--desc", "--description"], help="Short description for the spawn."),
     ] = "",
+    goal: Annotated[
+        str | None,
+        Parameter(
+            name="--goal",
+            help=(
+                "Completion goal for this spawn. Injected as a bounded "
+                "completion contract and persisted as spawn metadata."
+            ),
+        ),
+    ] = None,
     work: Annotated[
         str,
         Parameter(name="--work", help="Associate the spawn with a work item id."),
@@ -333,6 +344,7 @@ def _spawn_create(
         )
     resolved_approval = approval if approval is not None else ("yolo" if yolo else None)
     parsed_skills = parse_csv_list(skills, field_name="skills")
+    resolved_goal = normalize_goal(goal)
     resolved_fork_from = (fork_from or "").strip() or None
     resolved_prompt = _resolve_spawn_prompt(
         prompt,
@@ -356,6 +368,7 @@ def _spawn_create(
                 template_vars=template_vars,
                 agent=agent,
                 skills=parsed_skills,
+                goal=resolved_goal,
                 inherit_source_skills=skills is None,
                 desc=desc,
                 work=work,
@@ -389,6 +402,7 @@ def _spawn_create(
                 harness=global_harness,
                 agent=agent,
                 skills=parsed_skills,
+                goal=resolved_goal,
                 desc=desc,
                 work=work,
                 dry_run=dry_run,
@@ -418,6 +432,7 @@ def _spawn_create(
                 agent=agent,
                 skills=parsed_skills,
                 desc=desc,
+                goal=resolved_goal,
                 work=work,
                 dry_run=dry_run,
                 verbose=verbose,

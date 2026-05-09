@@ -191,6 +191,56 @@ def test_spawn_create_with_prepared_skips_self_bootstrap(
     assert result.harness_id == "codex"
 
 
+def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setattr(
+        spawn_api,
+        "build_create_payload",
+        lambda payload, runtime=None, preflight_warning=None, ctx=None: type(
+            "Prepared",
+            (),
+            {
+                "harness": payload.harness or "codex",
+                "model": payload.model,
+                "warning": preflight_warning,
+                "agent": payload.agent,
+                "agent_metadata": {},
+                "skills": payload.skills,
+                "skill_paths": (),
+                "reference_files": (),
+                "template_vars": {},
+                "context_from": (),
+                "prompt": payload.prompt,
+                "goal": payload.goal,
+                "model_selection_requested_token": None,
+                "model_selection_canonical_id": None,
+                "model_selection_harness_provenance": None,
+                "terminal_surface_mode": None,
+                "cli_command": ("codex",),
+            },
+        )(),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            goal="ship phase 3",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert result.goal == "ship phase 3"
+    assert result.goal_contract_preview is not None
+    assert "# Spawn Goal" in result.goal_contract_preview
+    assert "ship phase 3" in result.goal_contract_preview
+
+
 def test_spawn_stats_includes_finalizing_bucket(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -369,6 +419,33 @@ def test_spawn_list_and_show_suppress_terminal_primary_activity(
     assert detail.activity is None
     assert detail.backend_pid == 4242
     assert detail.tui_pid == 4343
+
+
+def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p77",
+        chat_id="c77",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        goal="ship the migration",
+    )
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
+    )
+
+    assert detail.goal == "ship the migration"
+    rendered = detail.format_text()
+    assert "Goal: ship the migration" in rendered
+    wire = detail.to_cli_wire()
+    assert wire["goal"] == "ship the migration"
 
 
 def test_wait_yield_default_uses_parent_harness_interval(

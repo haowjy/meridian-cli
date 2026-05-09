@@ -309,6 +309,7 @@ def detail_from_row(
         harness=row.harness or "",
         parent_id=row.parent_id,
         work_id=row.work_id,
+        goal=row.goal,
         desc=row.desc,
         started_at=row.started_at or "",
         finished_at=row.finished_at,

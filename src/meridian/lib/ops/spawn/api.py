@@ -73,6 +73,7 @@ from .models import (
     SpawnWaitMultiOutput,
     SpawnWrittenFilesInput,
     SpawnWrittenFilesOutput,
+    build_goal_contract_preview,
 )
 from .prepare import build_create_payload, validate_create_input
 from .query import (
@@ -84,6 +85,11 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
+
+
+def _looks_like_spawn_ref(ref: str) -> bool:
+    normalized = ref.strip()
+    return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -295,6 +301,8 @@ def spawn_create_sync(
             template_vars=prepared_request.template_vars,
             context_from_resolved=tuple(prepared_request.context_from or ()),
             composed_prompt=prepared_request.prompt,
+            goal=prepared_request.goal,
+            goal_contract_preview=build_goal_contract_preview(prepared_request.goal),
             model_selection_requested_token=prepared_request.model_selection_requested_token,
             model_selection_canonical_id=prepared_request.model_selection_canonical_id,
             model_selection_harness_provenance=(
@@ -1409,6 +1417,7 @@ def _build_fork_create_input(
     requested_agent: str | None,
     inherited_skills: tuple[str, ...],
     requested_work: str,
+    requested_goal: str | None,
     harness: str | None,
 ) -> SpawnCreateInput:
     return SpawnCreateInput(
@@ -1420,6 +1429,7 @@ def _build_fork_create_input(
         skills=inherited_skills,
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
+        goal=requested_goal,
         dry_run=payload.dry_run,
         verbose=payload.verbose,
         quiet=payload.quiet,
@@ -1495,6 +1505,15 @@ def spawn_fork_sync(
     requested_model = payload.model.strip()
     requested_agent = (payload.agent or "").strip() or None
     requested_work = payload.work.strip()
+    requested_goal = payload.goal
+    if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
+        source_row = read_spawn_row(
+            project_root,
+            normalized_source_ref,
+            runtime_root=runtime_root,
+        )
+        if source_row is not None:
+            requested_goal = source_row.goal
     requested_harness = (payload.harness or "").strip() or None
     source_harness = (resolved_reference.harness or "").strip() or None
 
@@ -1512,6 +1531,7 @@ def spawn_fork_sync(
         requested_agent=requested_agent,
         inherited_skills=inherited_skills,
         requested_work=requested_work,
+        requested_goal=requested_goal,
         harness=requested_harness,
     )
     target_harness = _resolve_effective_fork_target_harness(
@@ -1582,6 +1602,7 @@ def spawn_continue_sync(
         )
 
     derived_prompt = _prompt_for_follow_up(source_spawn, resolved_spawn_id, payload.prompt)
+    resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
     create_input = SpawnCreateInput(
         prompt=derived_prompt,
         model=_model_for_follow_up(source_spawn, payload.model),
@@ -1590,6 +1611,7 @@ def spawn_continue_sync(
         harness=requested_harness,
         agent=payload.agent,
         skills=payload.skills,
+        goal=resolved_goal,
         desc=payload.desc,
         work=payload.work,
         project_root=payload.project_root,

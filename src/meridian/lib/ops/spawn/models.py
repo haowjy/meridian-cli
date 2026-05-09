@@ -2,7 +2,7 @@
 
 import shlex
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
@@ -12,6 +12,24 @@ from meridian.lib.launch.request import SessionRequest
 
 def _empty_template_vars() -> dict[str, str]:
     return {}
+
+
+def normalize_goal(goal: str | None) -> str | None:
+    if goal is None:
+        return None
+    normalized = goal.strip()
+    if not normalized:
+        raise ValueError("--goal cannot be empty")
+    return normalized
+
+
+def build_goal_contract_preview(goal: str | None) -> str | None:
+    normalized_goal = normalize_goal(goal)
+    if normalized_goal is None:
+        return None
+    from meridian.lib.launch.prompt import build_goal_instruction
+
+    return build_goal_instruction(normalized_goal)
 
 
 def _truncate_cell(value: str, *, max_chars: int) -> str:
@@ -64,6 +82,13 @@ class SpawnCreateInput(BaseModel):
     session: SessionRequest = SessionRequest()
     debug: bool = False
 
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_goal(value)
+
 
 class SpawnActionOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -87,6 +112,8 @@ class SpawnActionOutput(BaseModel):
     context_from_resolved: tuple[str, ...] = ()
     report: str | None = None
     composed_prompt: str | None = None
+    goal: str | None = None
+    goal_contract_preview: str | None = None
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
@@ -155,6 +182,10 @@ class SpawnActionOutput(BaseModel):
                 wire["template_vars"] = dict(self.template_vars)
             if self.composed_prompt is not None:
                 wire["composed_prompt"] = self.composed_prompt
+            if self.goal is not None:
+                wire["goal"] = self.goal
+            if self.goal_contract_preview is not None:
+                wire["goal_contract_preview"] = self.goal_contract_preview
             if self.model_selection_requested_token is not None:
                 wire["model_selection"] = {
                     "requested_token": self.model_selection_requested_token,
@@ -231,6 +262,13 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Write root: {self.runtime_root}")
             if self.runtime_root_source:
                 lines.append(f"Write root source: {self.runtime_root_source}")
+        if self.status == "dry-run" and self.goal is not None:
+            lines.append(f"Goal: {self.goal}")
+            if self.goal_contract_preview is not None:
+                lines.append("")
+                lines.append("Completion contract preview:")
+                lines.append("")
+                lines.append(self.goal_contract_preview)
         if self.error:
             lines.append(f"Error: {self.error}")
         if self.warning:
@@ -532,6 +570,7 @@ class SpawnDetailOutput(BaseModel):
     backend_port: int | None = None
     parent_id: str | None = None
     work_id: str | None = None
+    goal: str | None = None
     desc: str | None = None
     started_at: str
     finished_at: str | None
@@ -603,6 +642,8 @@ class SpawnDetailOutput(BaseModel):
             wire["work_id"] = self.work_id
         if self.desc is not None:
             wire["desc"] = self.desc
+        if self.goal is not None:
+            wire["goal"] = self.goal
         if self.duration_secs is not None:
             wire["duration_secs"] = round(self.duration_secs, 2)
         if self.exit_code is not None:
@@ -706,6 +747,7 @@ class SpawnDetailOutput(BaseModel):
             ("Duration", duration_value),
             ("Parent", parent_value),
             ("Work", work_value),
+            ("Goal", self.goal),
             ("Desc", desc_value),
             (failure_label or "Failure", failure_value),
             ("Input tokens", None if self.input_tokens is None else str(self.input_tokens)),
@@ -772,6 +814,7 @@ class SpawnContinueInput(BaseModel):
     harness: str | None = None
     agent: str | None = None
     skills: tuple[str, ...] = ()
+    goal: str | None = None
     desc: str = ""
     work: str = ""
     fork: bool = False
@@ -789,6 +832,13 @@ class SpawnContinueInput(BaseModel):
     sandbox: str | None = None
     debug: bool = False
 
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_goal(value)
+
 
 class SpawnForkInput(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -801,6 +851,7 @@ class SpawnForkInput(BaseModel):
     agent: str | None = None
     skills: tuple[str, ...] = ()
     inherit_source_skills: bool = False
+    goal: str | None = None
     desc: str = ""
     work: str = ""
     dry_run: bool = False
@@ -817,6 +868,13 @@ class SpawnForkInput(BaseModel):
     harness: str | None = None
     passthrough_args: tuple[str, ...] = ()
     debug: bool = False
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_goal(value)
 
 
 class SpawnWaitInput(BaseModel):
@@ -970,4 +1028,6 @@ __all__ = [
     "SpawnWaitMultiOutput",
     "SpawnWrittenFilesInput",
     "SpawnWrittenFilesOutput",
+    "build_goal_contract_preview",
+    "normalize_goal",
 ]
