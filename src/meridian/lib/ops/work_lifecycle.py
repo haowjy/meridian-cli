@@ -559,7 +559,11 @@ def work_start_sync(
         explicit_worktree=payload.worktree,
         project_root=project_root,
     )
-    if worktree_requested and (created or item.worktree_path is None):
+    # Re-provision when: newly created, no path recorded, or path was removed externally.
+    worktree_path_stale = (
+        item.worktree_path is not None and not Path(item.worktree_path).is_dir()
+    )
+    if worktree_requested and (created or item.worktree_path is None or worktree_path_stale):
         from meridian.lib.config.settings import load_config  # local to avoid circular import
 
         cfg = load_config(project_root)

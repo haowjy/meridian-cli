@@ -175,7 +175,16 @@ def _check_worktree_health(
     # Check for orphaned worktrees on disk with no matching work item.
     main_root = resolve_main_repo_root(project_root)
     if main_root is not None:
-        worktrees_base = main_root.parent / f"{main_root.name}.worktrees"
+        from meridian.lib.config.settings import load_config  # local to avoid circular import
+
+        cfg = load_config(project_root)
+        if cfg.work.worktree_base is not None:
+            _wt_base = Path(cfg.work.worktree_base)
+            if not _wt_base.is_absolute():
+                _wt_base = main_root / _wt_base
+            worktrees_base = _wt_base.resolve()
+        else:
+            worktrees_base = main_root.parent / f"{main_root.name}.worktrees"
         if worktrees_base.is_dir():
             known_paths = {item.worktree_path for item in items if item.worktree_path}
             for child in worktrees_base.iterdir():
