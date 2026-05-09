@@ -21,6 +21,18 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
+from meridian.lib.ops.worktree_format import (
+    format_cleanup_notice,
+    format_provision_notice,
+    format_restore_notice,
+)
+from meridian.lib.ops.worktree_lifecycle import (
+    cleanup_for_delete,
+    cleanup_for_done,
+    provision_for_start,
+    recover_pending,
+    restore_for_reopen,
+)
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.telemetry import emit_telemetry
 
@@ -66,182 +78,6 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     if not warnings:
         return None
     return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
-
-
-def _check_worktree_unpushed(item: work_store.WorkItem, *, force: bool) -> None:
-    """Raise ValueError if the worktree branch has unpushed commits and force is False.
-
-    Pure check — does not touch the filesystem.  Intended as a pre-flight guard
-    before committing a work item state transition.
-    """
-    if not item.worktree_path or force:
-        return
-    wt_path = Path(item.worktree_path)
-    if not wt_path.is_dir():
-        return
-
-    from meridian.lib.ops.worktree_ops import has_unpushed_commits  # local to avoid side effects
-
-    if has_unpushed_commits(wt_path):
-        raise ValueError(
-            "Worktree branch has unpushed commits. "
-            "Push first or use --force to remove anyway."
-        )
-
-
-def _remove_worktree_on_done(item: work_store.WorkItem) -> str | None:
-    """Remove the worktree for a work item that has been archived.
-
-    Caller is responsible for running ``_check_worktree_unpushed`` first.
-    Returns a human-readable summary on success, or None if there is no worktree
-    to remove.
-
-    Raises:
-        ValueError: If ``git worktree remove`` fails (e.g., dirty working tree
-                    — uncommitted changes prevent removal without --force).
-    """
-    if not item.worktree_path:
-        return None
-    wt_path = Path(item.worktree_path)
-    if not wt_path.is_dir():
-        # Worktree already gone — nothing to do.
-        return None
-
-    from meridian.lib.ops.worktree_ops import (  # local to avoid side effects
-        remove_worktree,
-        resolve_main_repo_root,
-    )
-
-    repo_root = resolve_main_repo_root(wt_path)
-    if repo_root is None:
-        raise ValueError(
-            f"Could not determine git repository root for worktree at '{wt_path}'. "
-            f"Remove the worktree manually with: git worktree remove {item.worktree_path}"
-        )
-
-    remove_worktree(repo_root, wt_path)  # raises ValueError on failure
-    logger.info(
-        "work_lifecycle.remove_worktree_on_done.done",
-        work_id=item.name,
-        worktree_path=str(wt_path),
-    )
-    return f"Removed worktree at {item.worktree_path}"
-
-
-def _remove_worktree_on_delete(item: work_store.WorkItem) -> str | None:
-    """Remove the worktree for a work item being deleted, bypassing push checks.
-
-    Uses ``git worktree remove --force``.  Logs but does not raise on failure —
-    the metadata deletion has already happened; the user should still see the
-    delete succeed even if worktree cleanup encounters an error.
-    """
-    if not item.worktree_path:
-        return None
-    wt_path = Path(item.worktree_path)
-    if not wt_path.is_dir():
-        return None
-
-    from meridian.lib.ops.worktree_ops import (  # local to avoid side effects
-        remove_worktree,
-        resolve_main_repo_root,
-    )
-
-    repo_root = resolve_main_repo_root(wt_path)
-    if repo_root is None:
-        logger.warning(
-            "work_lifecycle.remove_worktree_on_delete.no_repo_root",
-            work_id=item.name,
-            worktree_path=str(wt_path),
-        )
-        return (
-            f"Warning: could not remove worktree at {item.worktree_path} "
-            "(could not determine git repo root)."
-        )
-
-    try:
-        remove_worktree(repo_root, wt_path, force=True)
-        logger.info(
-            "work_lifecycle.remove_worktree_on_delete.done",
-            work_id=item.name,
-            worktree_path=str(wt_path),
-        )
-        return f"Removed worktree at {item.worktree_path}"
-    except Exception as exc:
-        logger.warning(
-            "work_lifecycle.remove_worktree_on_delete.failed",
-            work_id=item.name,
-            worktree_path=str(wt_path),
-            error=str(exc),
-        )
-        return f"Warning: could not remove worktree at {item.worktree_path}: {exc}"
-
-
-def _try_restore_worktree(
-    project_state_dir: Path,
-    item: work_store.WorkItem,
-    project_root: Path,
-) -> str | None:
-    """Attempt to restore a previously-created worktree from its existing branch.
-
-    Called when an item has a recorded ``worktree_path`` but the directory no
-    longer exists on disk (e.g., removed by ``work done`` or externally).
-    The branch is assumed to still exist; we call ``git worktree add`` without
-    ``-b`` so git attaches to the existing branch rather than creating a new one.
-
-    Updates ``worktree_path`` metadata on success.
-
-    Returns a message string in all cases (success or failure).  Never raises —
-    worktree restoration is best-effort.
-    """
-    if not item.worktree_path:
-        return None
-    wt_path = Path(item.worktree_path)
-    if wt_path.is_dir():
-        return f"Worktree available at {item.worktree_path}"
-
-    from meridian.lib.ops.worktree_ops import create_worktree, resolve_main_repo_root
-
-    main_root = resolve_main_repo_root(project_root)
-    if main_root is None:
-        return (
-            f"Worktree was removed: {item.worktree_path}\n"
-            "Spawns will use the project root for CWD."
-        )
-
-    branch = item.worktree_branch
-    if not branch:
-        logger.warning(
-            "work_lifecycle.try_restore_worktree.missing_branch",
-            work_id=item.name,
-            worktree_path=str(wt_path),
-        )
-        return None
-    try:
-        result = create_worktree(main_root, wt_path, branch)
-        work_store.update_work_item_worktree(
-            project_state_dir,
-            item.name,
-            path=str(result.path),
-            branch=result.branch,
-            pending=False,
-        )
-        logger.info(
-            "work_lifecycle.try_restore_worktree.done",
-            work_id=item.name,
-            worktree_path=str(result.path),
-        )
-        return f"Recreated worktree at {result.path}"
-    except Exception as exc:
-        logger.warning(
-            "work_lifecycle.try_restore_worktree.failed",
-            work_id=item.name,
-            worktree_path=str(wt_path),
-            error=str(exc),
-        )
-        return (
-            f"Could not recreate worktree at '{wt_path}': {exc}\n"
-            "Spawns will use the project root for CWD."
-        )
 
 
 def _dispatch_work_hook_event(
@@ -465,63 +301,6 @@ class WorkClearOutput(BaseModel):
         return ""
 
 
-def _recover_pending_worktree(
-    project_state_dir: Path,
-    item: work_store.WorkItem,
-    project_root: Path,
-) -> None:
-    """WT-65: Heal interrupted worktree-create by checking actual disk state.
-
-    Called when an existing work item has ``worktree_pending=True``, indicating
-    a previous ``work start`` was killed between ``git worktree add`` and the
-    metadata write.  Two outcomes:
-
-    - Worktree exists on disk: record the path and clear pending (healed).
-    - Worktree absent: clear pending so normal provisioning can retry.
-    """
-    from meridian.lib.config.settings import load_config  # local to avoid circular import
-    from meridian.lib.ops.worktree_ops import (
-        resolve_main_repo_root,
-        resolve_worktree_path,
-        worktree_exists,
-    )
-
-    cfg = load_config(project_root)
-    main_root = resolve_main_repo_root(project_root)
-    if main_root is None:
-        # Not a git repo or git unavailable — just clear pending so retries work cleanly.
-        work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
-        logger.info(
-            "work_lifecycle.recover_pending.no_git_repo",
-            work_id=item.name,
-        )
-        return
-
-    branch = item.worktree_branch or f"feature/{item.name}"
-    expected_path = resolve_worktree_path(main_root, item.name, cfg.work.worktree_base)
-    if worktree_exists(expected_path):
-        # Worktree was created before the crash — fix up the metadata.
-        work_store.update_work_item_worktree(
-            project_state_dir,
-            item.name,
-            path=str(expected_path.resolve()),
-            branch=branch,
-            pending=False,
-        )
-        logger.info(
-            "work_lifecycle.recover_pending.healed",
-            work_id=item.name,
-            worktree_path=str(expected_path),
-        )
-    else:
-        # Worktree was never created — clear pending so provisioning can retry.
-        work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
-        logger.info(
-            "work_lifecycle.recover_pending.cleared",
-            work_id=item.name,
-        )
-
-
 def _resolve_worktree_intent(
     *,
     explicit_worktree: bool | None,
@@ -541,133 +320,6 @@ def _resolve_worktree_intent(
 
     config = load_config(project_root)
     return config.work.default_worktree
-
-
-def _provision_worktree(
-    project_state_dir: Path,
-    item: work_store.WorkItem,
-    project_root: Path,
-    *,
-    explicit: bool,
-    created: bool,
-    worktree_base: str | None,
-) -> str | None:
-    """Create or reuse a git worktree for *item*.
-
-    Returns:
-        None on success.
-        A non-empty warning string on soft failure (WT-06: config default +
-        no git repo).
-
-    Raises:
-        ValueError on hard failure:
-            - WT-02: explicit ``--worktree`` outside git repo.
-            - WT-03 / general: git worktree creation error.
-
-    For newly created work items (``created=True``) any hard failure triggers
-    rollback (delete the item) before the exception propagates so the caller
-    sees a clean failure.
-    """
-    from meridian.lib.ops.worktree_ops import (  # local to avoid import-time side effects
-        create_worktree,
-        detect_git_repo,
-        resolve_main_repo_root,
-        resolve_worktree_path,
-    )
-
-    # 1. Mark provisioning in progress.
-    work_store.update_work_item_worktree(project_state_dir, item.name, pending=True)
-
-    # 2. Detect git repo.
-    if not detect_git_repo(project_root):
-        # Clear pending — nothing changed on disk yet.
-        try:
-            work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
-        except Exception:
-            logger.warning(
-                "work_lifecycle.provision_worktree.clear_pending_failed",
-                work_id=item.name,
-            )
-        if explicit:
-            # WT-02: hard failure — explicit request, not a git repo.
-            if created:
-                try:
-                    work_store.delete_work_item(project_state_dir, item.name, force=True)
-                    logger.info(
-                        "work_lifecycle.provision_worktree.rollback_done", work_id=item.name
-                    )
-                except Exception:
-                    logger.exception(
-                        "work_lifecycle.provision_worktree.rollback_failed",
-                        work_id=item.name,
-                    )
-            raise ValueError(
-                f"Cannot create git worktree for '{item.name}': "
-                f"'{project_root}' is not inside a git repository. "
-                "Pass --no-worktree to skip worktree creation."
-            )
-        # WT-06: soft failure — config default, not a git repo.
-        return (
-            f"Skipped worktree creation for '{item.name}': "
-            "project is not inside a git repository."
-        )
-
-    # 3. Attempt worktree creation.
-    try:
-        repo_root = resolve_main_repo_root(project_root)
-        if repo_root is None:
-            raise ValueError(f"Could not determine git repository root from '{project_root}'.")
-
-        target_path = resolve_worktree_path(repo_root, item.name, worktree_base)
-        branch = item.worktree_branch or f"feature/{item.name}"
-        result = create_worktree(repo_root, target_path, branch)
-
-        work_store.update_work_item_worktree(
-            project_state_dir,
-            item.name,
-            path=str(result.path),
-            branch=result.branch,
-            pending=False,
-        )
-        logger.info(
-            "work_lifecycle.provision_worktree.done",
-            work_id=item.name,
-            worktree_path=str(result.path),
-            branch=branch,
-            created_new=result.created,
-        )
-        return None
-
-    except Exception as exc:
-        # Clear pending flag.
-        try:
-            work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
-        except Exception:
-            logger.warning(
-                "work_lifecycle.provision_worktree.clear_pending_failed",
-                work_id=item.name,
-            )
-
-        if created:
-            # WT-03: rollback the newly created work item.
-            try:
-                work_store.delete_work_item(project_state_dir, item.name, force=True)
-                logger.info("work_lifecycle.provision_worktree.rollback_done", work_id=item.name)
-            except Exception:
-                logger.exception(
-                    "work_lifecycle.provision_worktree.rollback_failed",
-                    work_id=item.name,
-                )
-        else:
-            logger.error(
-                "work_lifecycle.provision_worktree.failed",
-                work_id=item.name,
-                error=str(exc),
-            )
-
-        raise ValueError(
-            f"Failed to create git worktree for '{item.name}': {exc}"
-        ) from exc
 
 
 def work_start_sync(
@@ -704,7 +356,14 @@ def work_start_sync(
             # WT-65: interrupted-create recovery — a previous `work start` was killed
             # between `git worktree add` and the metadata write.  Heal before continuing.
             if item.worktree_pending:
-                _recover_pending_worktree(project_state_dir, item, project_root)
+                recovered = recover_pending(project_root, item)
+                work_store.update_work_item_worktree(
+                    project_state_dir,
+                    item.name,
+                    path=recovered.metadata.path,
+                    branch=recovered.metadata.branch,
+                    pending=recovered.metadata.pending,
+                )
                 item = work_store.get_work_item(project_state_dir, item.name) or item
     else:
         item = work_store.create_work_item(
@@ -719,10 +378,15 @@ def work_start_sync(
     # (new item deleted on git failure) leaves the session unaffected.
     worktree_warning: str | None = None
     if was_reopened:
-        # Reopen path: restore the worktree if one was previously provisioned.
-        # Behaves the same as `work reopen` — uses existing branch, ignores
-        # worktree_requested so the restore is unconditional when a path is recorded.
-        worktree_warning = _try_restore_worktree(project_state_dir, item, project_root)
+        restored = restore_for_reopen(project_root, item)
+        work_store.update_work_item_worktree(
+            project_state_dir,
+            item.name,
+            path=restored.metadata.path,
+            branch=restored.metadata.branch,
+            pending=restored.metadata.pending,
+        )
+        worktree_warning = format_restore_notice(restored)
         item = work_store.get_work_item(project_state_dir, item.name) or item
     else:
         worktree_requested = _resolve_worktree_intent(
@@ -737,14 +401,43 @@ def work_start_sync(
             from meridian.lib.config.settings import load_config  # local to avoid circular import
 
             cfg = load_config(project_root)
-            worktree_warning = _provision_worktree(
+            work_store.update_work_item_worktree(project_state_dir, item.name, pending=True)
+            try:
+                provisioned = provision_for_start(
+                    project_root,
+                    item.name,
+                    cfg.work,
+                    existing=item.worktree,
+                )
+            except Exception:
+                work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
+                if created:
+                    work_store.delete_work_item(project_state_dir, item.name, force=True)
+                raise
+
+            if provisioned.status == "skipped_not_git_repo" and payload.worktree is True:
+                work_store.update_work_item_worktree(
+                    project_state_dir,
+                    item.name,
+                    branch=provisioned.metadata.branch,
+                    pending=False,
+                )
+                if created:
+                    work_store.delete_work_item(project_state_dir, item.name, force=True)
+                raise ValueError(
+                    f"Cannot create git worktree for '{item.name}': "
+                    f"'{project_root}' is not inside a git repository. "
+                    "Pass --no-worktree to skip worktree creation."
+                )
+
+            work_store.update_work_item_worktree(
                 project_state_dir,
-                item,
-                project_root,
-                explicit=payload.worktree is True,
-                created=created,
-                worktree_base=cfg.work.worktree_base,
+                item.name,
+                path=provisioned.metadata.path,
+                branch=provisioned.metadata.branch,
+                pending=provisioned.metadata.pending,
             )
+            worktree_warning = format_provision_notice(provisioned, work_id=item.name)
             # Re-read to pick up updated worktree_path / cleared worktree_pending.
             item = work_store.get_work_item(project_state_dir, item.name) or item
 
@@ -787,8 +480,7 @@ def work_update_sync(
     current = _require_work_item(project_state_dir, payload.work_id)
     if payload.status == "done":
         attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-        # Pre-flight: fail before archiving if unpushed commits exist.
-        _check_worktree_unpushed(current, force=False)  # raises on unpushed
+        cleanup_for_done(roots.project_root, current, force=False, remove=False)
         item = work_store.archive_work_item(
             project_state_dir,
             payload.work_id,
@@ -806,9 +498,10 @@ def work_update_sync(
             work_id=item.name,
             data={"status": item.status},
         )
-        worktree_message: str | None = None
         try:
-            worktree_message = _remove_worktree_on_done(item)
+            worktree_message = format_cleanup_notice(
+                cleanup_for_done(roots.project_root, item, force=False)
+            )
         except Exception as exc:
             worktree_message = (
                 f"Warning: work item archived but worktree removal failed: {exc}\n"
@@ -849,10 +542,8 @@ def work_done_sync(
     runtime_state_root = roots.runtime_root
     attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
 
-    # Pre-flight: check unpushed commits before committing the state change so
-    # that the work item stays active if the check fails.
     pre_item = _require_work_item(project_state_dir, payload.work_id)
-    _check_worktree_unpushed(pre_item, force=payload.force)  # raises on unpushed if not force
+    cleanup_for_done(roots.project_root, pre_item, force=payload.force, remove=False)
 
     item = work_store.archive_work_item(project_state_dir, payload.work_id)
     _dispatch_work_hook_event(
@@ -870,9 +561,10 @@ def work_done_sync(
     # Remove the worktree now that the item is archived.  The push check already
     # passed; if removal fails (e.g., dirty working tree), surface a warning
     # rather than rolling back the archive.
-    worktree_message: str | None = None
     try:
-        worktree_message = _remove_worktree_on_done(item)
+        worktree_message = format_cleanup_notice(
+            cleanup_for_done(roots.project_root, item, force=payload.force)
+        )
     except Exception as exc:
         worktree_message = (
             f"Warning: work item archived but worktree removal failed: {exc}\n"
@@ -904,7 +596,7 @@ def work_delete_sync(
     )
     # Remove the worktree unconditionally — delete is already a destructive operation.
     # Uses --force so dirty state doesn't block cleanup.  Failure is non-fatal.
-    worktree_message = _remove_worktree_on_delete(item)
+    worktree_message = format_cleanup_notice(cleanup_for_delete(roots.project_root, item))
     combined_warning = _merge_warnings(nested_warning, worktree_message)
     return WorkDeleteOutput(
         name=item.name,
@@ -928,11 +620,15 @@ def work_reopen_sync(
         work_id=item.name,
         data={"status": item.status},
     )
-    # Restore worktree if it was previously provisioned.
-    # _try_restore_worktree handles both "still present" and "removed" cases:
-    # - dir exists → inform user it is available
-    # - dir gone → recreate from existing branch (work done removes dir, not branch)
-    reopen_message = _try_restore_worktree(project_state_dir, item, project_root)
+    restored = restore_for_reopen(project_root, item)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=restored.metadata.path,
+        branch=restored.metadata.branch,
+        pending=restored.metadata.pending,
+    )
+    reopen_message = format_restore_notice(restored)
     return WorkReopenOutput(
         name=item.name,
         status=item.status,

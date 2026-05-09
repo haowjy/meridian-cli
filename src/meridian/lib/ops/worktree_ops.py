@@ -17,6 +17,30 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+class WorktreeError(RuntimeError):
+    """Base domain error for git worktree operations."""
+
+
+class WorktreeCreateFailed(WorktreeError):
+    """Git could not create or attach the requested worktree."""
+
+
+class WorktreeConflictError(WorktreeCreateFailed):
+    """The requested path or branch conflicts with an existing worktree state."""
+
+
+class WorktreeRemoveFailed(WorktreeError):
+    """Git could not remove the requested worktree."""
+
+
+class WorktreeUnpushedError(WorktreeError):
+    """The worktree branch has local commits that are not safely removable."""
+
+
+class WorktreeRepoResolutionError(WorktreeError):
+    """Git repository discovery failed."""
+
+
 @dataclass(frozen=True)
 class WorktreeCreateResult:
     path: Path
@@ -24,66 +48,69 @@ class WorktreeCreateResult:
     created: bool  # False if reusing existing worktree
 
 
-def detect_git_repo(project_root: Path) -> bool:
-    """Check if project_root is inside a git repo.
-
-    Uses ``git rev-parse --is-inside-work-tree``.
-    Returns False if git is not installed or the path is not in a repo.
-    """
+def _run_git(
+    cwd: Path,
+    args: list[str],
+    *,
+    error_type: type[WorktreeError],
+) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(
-            ["git", "-C", str(project_root), "rev-parse", "--is-inside-work-tree"],
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
             capture_output=True,
             text=True,
             check=True,
         )
-        return result.stdout.strip() == "true"
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except FileNotFoundError as exc:
+        raise error_type("git is not installed.") from exc
+    except subprocess.CalledProcessError as exc:
+        details = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise error_type(details or f"git {' '.join(args)} failed.") from exc
+
+
+def detect_git_repo(project_root: Path) -> bool:
+    """Check if project_root is inside a git repo."""
+    try:
+        result = _run_git(
+            project_root,
+            ["rev-parse", "--is-inside-work-tree"],
+            error_type=WorktreeRepoResolutionError,
+        )
+    except WorktreeRepoResolutionError:
         return False
+    return result.stdout.strip() == "true"
 
 
 def resolve_main_repo_root(project_root: Path) -> Path | None:
-    """Resolve the main git repo root, navigating through worktrees if needed.
-
-    Uses ``git rev-parse --git-common-dir`` to find the shared ``.git``
-    directory.  From a worktree that path is absolute; from the main repo it is
-    the relative string ``.git``.  In both cases the main repo root is the
-    parent of the resolved common-dir path.
-
-    Falls back to ``git rev-parse --show-toplevel`` when the common-dir path
-    does not end in ``.git`` (unusual git configurations with relocated git
-    dirs).  Returns None if the path is not inside a git repo.
-    """
+    """Resolve the main git repo root, navigating through worktrees if needed."""
     try:
-        result = subprocess.run(
-            ["git", "-C", str(project_root), "rev-parse", "--git-common-dir"],
-            capture_output=True,
-            text=True,
-            check=True,
+        result = _run_git(
+            project_root,
+            ["rev-parse", "--git-common-dir"],
+            error_type=WorktreeRepoResolutionError,
         )
-        git_common_dir_raw = result.stdout.strip()
-        # Resolve to an absolute path.  The output may be relative (e.g. ".git"
-        # when run from the main repo) so anchor it to project_root.
-        common_dir = (project_root / git_common_dir_raw).resolve()
-        if common_dir.name == ".git":
-            return common_dir.parent
-
-        # Fallback for unusual git configurations where the common dir is not
-        # named ".git" (bare repos with relocated git dirs, etc.).
-        logger.debug(
-            "worktree_ops.resolve_main_repo_root.fallback",
-            common_dir=str(common_dir),
-            project_root=str(project_root),
-        )
-        fallback = subprocess.run(
-            ["git", "-C", str(project_root), "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return Path(fallback.stdout.strip()).resolve()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except WorktreeRepoResolutionError:
         return None
+
+    git_common_dir_raw = result.stdout.strip()
+    common_dir = (project_root / git_common_dir_raw).resolve()
+    if common_dir.name == ".git":
+        return common_dir.parent
+
+    logger.debug(
+        "worktree_ops.resolve_main_repo_root.fallback",
+        common_dir=str(common_dir),
+        project_root=str(project_root),
+    )
+    try:
+        fallback = _run_git(
+            project_root,
+            ["rev-parse", "--show-toplevel"],
+            error_type=WorktreeRepoResolutionError,
+        )
+    except WorktreeRepoResolutionError:
+        return None
+    return Path(fallback.stdout.strip()).resolve()
 
 
 def resolve_worktree_path(
@@ -91,12 +118,7 @@ def resolve_worktree_path(
     work_slug: str,
     worktree_base: str | None = None,
 ) -> Path:
-    """Compute the target filesystem path for a worktree.
-
-    Default: ``<repo_parent>/<repo_name>.worktrees/<work_slug>/``
-    If *worktree_base* is given, it is used as the parent directory instead.
-    All returned paths are fully resolved (no symlinks, no ``..`` components).
-    """
+    """Compute the target filesystem path for a worktree."""
     if worktree_base is not None:
         base_path = Path(worktree_base)
         if not base_path.is_absolute():
@@ -108,33 +130,52 @@ def resolve_worktree_path(
 
 
 def worktree_exists(path: Path) -> bool:
-    """Return True if *path* is a valid git worktree.
-
-    A valid worktree has a ``.git`` *file* (not a directory) that points back
-    to the main repo's worktree metadata directory.
-    """
-    git_entry = path / ".git"
-    return git_entry.is_file()
+    """Return True if *path* is a valid git worktree."""
+    return (path / ".git").is_file()
 
 
-def is_worktree_dirty(worktree_path: Path) -> bool:
-    """Return True if the worktree at *worktree_path* has uncommitted changes.
-
-    Uses ``git -C <path> status --porcelain``.  Returns False if the path does
-    not exist or is not a valid worktree rather than raising.
-    """
+def ensure_no_unpushed_commits(worktree_path: Path) -> None:
+    """Raise when the worktree branch has local commits not on its upstream."""
     if not worktree_path.exists() or not worktree_exists(worktree_path):
-        return False
+        return
     try:
-        result = subprocess.run(
-            ["git", "-C", str(worktree_path), "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True,
+        result = _run_git(
+            worktree_path,
+            ["log", "@{upstream}..HEAD", "--oneline"],
+            error_type=WorktreeUnpushedError,
         )
-        return bool(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    except WorktreeUnpushedError as exc:
+        stderr = str(exc).lower()
+        if "upstream" in stderr or "no such branch" in stderr:
+            raise WorktreeUnpushedError("Worktree branch has unpushed commits.") from exc
+        raise WorktreeUnpushedError(
+            "Unable to verify whether the worktree branch is pushed."
+        ) from exc
+    if result.stdout.strip():
+        raise WorktreeUnpushedError("Worktree branch has unpushed commits.")
+
+
+def remove_worktree(repo_root: Path, worktree_path: Path, *, force: bool = False) -> None:
+    """Remove a git worktree via ``git worktree remove``."""
+    args = ["worktree", "remove", str(worktree_path)]
+    if force:
+        args.append("--force")
+    _run_git(repo_root, args, error_type=WorktreeRemoveFailed)
+    logger.info(
+        "worktree_ops.remove_worktree.done",
+        repo_root=str(repo_root),
+        worktree_path=str(worktree_path),
+        force=force,
+    )
+
+
+def _current_worktree_branch(worktree_path: Path) -> str:
+    result = _run_git(
+        worktree_path,
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        error_type=WorktreeCreateFailed,
+    )
+    return result.stdout.strip()
 
 
 def create_worktree(
@@ -142,70 +183,37 @@ def create_worktree(
     target_path: Path,
     branch: str,
 ) -> WorktreeCreateResult:
-    """Create a git worktree at *target_path* on *branch*.
-
-    Behavior:
-    1. If *target_path* already exists and is a valid worktree, reuse it
-       (``created=False``).
-    2. If *target_path* exists but is NOT a valid worktree, raise ValueError.
-    3. Try ``git worktree add <target> -b <branch>`` (create new branch).
-    4. If that fails because the branch already exists, try
-       ``git worktree add <target> <branch>`` (attach to existing branch).
-    5. If the branch is already checked out in another worktree, raise
-       ValueError with a clear message.
-    6. All other git errors propagate as subprocess.CalledProcessError.
-    """
+    """Create a git worktree at *target_path* on *branch*."""
     if target_path.exists():
-        if worktree_exists(target_path):
-            # Verify the existing worktree belongs to the same main repo.
-            target_main = resolve_main_repo_root(target_path)
-            expected_main = resolve_main_repo_root(repo_root)
-            if target_main is None or expected_main is None or target_main != expected_main:
-                raise ValueError(
-                    f"Path {target_path} is a git worktree for a different repository "
-                    f"({target_main} != {expected_main}). "
-                    "Remove or relocate it before creating a worktree here."
-                )
-            # Verify the checked-out branch matches the requested branch.
-            branch_result = subprocess.run(
-                ["git", "-C", str(target_path), "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True,
-                text=True,
-                check=True,
+        if not worktree_exists(target_path):
+            raise WorktreeCreateFailed(
+                f"Path {target_path} already exists but is not a valid git worktree."
             )
-            current_branch = branch_result.stdout.strip()
-            if current_branch != branch:
-                raise ValueError(
-                    f"Worktree at {target_path} is on branch '{current_branch}', "
-                    f"not '{branch}'. Use a different branch name or a different path."
-                )
-            logger.info(
-                "worktree_ops.create_worktree.reuse",
-                path=str(target_path),
-                branch=branch,
-            )
-            return WorktreeCreateResult(path=target_path, branch=branch, created=False)
-        raise ValueError(
-            f"Path {target_path} already exists but is not a valid git worktree. "
-            "Remove or relocate it before creating a worktree here."
-        )
 
-    # Attempt 1: create a new branch and check it out in the new worktree.
+        target_main = resolve_main_repo_root(target_path)
+        expected_main = resolve_main_repo_root(repo_root)
+        if target_main is None or expected_main is None or target_main != expected_main:
+            raise WorktreeConflictError(
+                f"Path {target_path} is a git worktree for a different repository."
+            )
+
+        current_branch = _current_worktree_branch(target_path)
+        if current_branch != branch:
+            raise WorktreeConflictError(
+                f"Worktree at {target_path} is on branch '{current_branch}', not '{branch}'."
+            )
+        logger.info(
+            "worktree_ops.create_worktree.reuse",
+            path=str(target_path),
+            branch=branch,
+        )
+        return WorktreeCreateResult(path=target_path, branch=branch, created=False)
+
     try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_root),
-                "worktree",
-                "add",
-                str(target_path),
-                "-b",
-                branch,
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
+        _run_git(
+            repo_root,
+            ["worktree", "add", str(target_path), "-b", branch],
+            error_type=WorktreeCreateFailed,
         )
         logger.info(
             "worktree_ops.create_worktree.created",
@@ -213,28 +221,15 @@ def create_worktree(
             branch=branch,
         )
         return WorktreeCreateResult(path=target_path, branch=branch, created=True)
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr or ""
-        # Git emits "already exists" or "A branch named '…' already exists"
-        # when the branch was previously created.  Fall through to attempt 2.
-        if "already exists" not in stderr:
+    except WorktreeCreateFailed as exc:
+        if "already exists" not in str(exc):
             raise
 
-    # Attempt 2: attach to the existing branch.
     try:
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_root),
-                "worktree",
-                "add",
-                str(target_path),
-                branch,
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
+        _run_git(
+            repo_root,
+            ["worktree", "add", str(target_path), branch],
+            error_type=WorktreeCreateFailed,
         )
         logger.info(
             "worktree_ops.create_worktree.created_existing_branch",
@@ -242,11 +237,27 @@ def create_worktree(
             branch=branch,
         )
         return WorktreeCreateResult(path=target_path, branch=branch, created=True)
-    except subprocess.CalledProcessError as exc2:
-        stderr2 = exc2.stderr or ""
-        if "is already checked out" in stderr2:
-            raise ValueError(
-                f"Branch '{branch}' is already checked out in another worktree. "
-                "Use a different branch name or remove the conflicting worktree first."
-            ) from exc2
+    except WorktreeCreateFailed as exc:
+        if "is already checked out" in str(exc):
+            raise WorktreeConflictError(
+                f"Branch '{branch}' is already checked out in another worktree."
+            ) from exc
         raise
+
+
+__all__ = [
+    "WorktreeConflictError",
+    "WorktreeCreateFailed",
+    "WorktreeCreateResult",
+    "WorktreeError",
+    "WorktreeRemoveFailed",
+    "WorktreeRepoResolutionError",
+    "WorktreeUnpushedError",
+    "create_worktree",
+    "detect_git_repo",
+    "ensure_no_unpushed_commits",
+    "remove_worktree",
+    "resolve_main_repo_root",
+    "resolve_worktree_path",
+    "worktree_exists",
+]

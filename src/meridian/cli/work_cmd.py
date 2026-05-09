@@ -196,8 +196,15 @@ def _work_done(
         str,
         Parameter(help="Work item id."),
     ],
+    force: Annotated[
+        bool,
+        Parameter(
+            name="--force",
+            help="Remove worktree even if the branch has unpushed commits.",
+        ),
+    ] = False,
 ) -> None:
-    emit(work_done_sync(WorkDoneInput(work_id=work_id)))
+    emit(work_done_sync(WorkDoneInput(work_id=work_id, force=force)))
 
 
 def _work_delete(

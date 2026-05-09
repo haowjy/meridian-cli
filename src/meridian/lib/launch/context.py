@@ -1312,25 +1312,14 @@ def bind_launch_context(
     model_selection = prepared.model_selection
     report_output_path = bindings.report_output_path
     execution_cwd = project_paths.execution_cwd
-    # Resolve worktree path: when the active work item has a git worktree,
-    # spawn inside it so the agent sees the worktree's file tree as its CWD.
-    # MERIDIAN_PROJECT_DIR in the child env is NOT changed by this — it stays
-    # anchored to the original project root (see ChildEnvContext.child_context).
-    worktree_path_for_cwd: Path | None = None
     _bind_work_id = _normalize_explicit_work_id(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
-    if _bind_work_id:
-        _bind_paths = resolve_project_paths(project_paths.project_root)
-        _bind_item = work_store.get_work_item(_bind_paths.root_dir, _bind_work_id)
-        if _bind_item is not None and _bind_item.worktree_path is not None:
-            worktree_path_for_cwd = Path(_bind_item.worktree_path)
     child_cwd = resolve_child_execution_cwd(
         project_root=execution_cwd,
-        spawn_id=bindings.spawn_id,
-        harness_id=harness.id.value,
-        worktree_path=worktree_path_for_cwd,
+        project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+        work_id=_bind_work_id,
     )
     try:
         preflight = harness.preflight(

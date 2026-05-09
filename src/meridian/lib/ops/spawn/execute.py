@@ -1004,8 +1004,8 @@ async def _execute_existing_spawn(
         resolved_execution_cwd = str(
             resolve_child_execution_cwd(
                 project_root=project_paths.project_root,
-                spawn_id=str(spawn_id),
-                harness_id=resolved_harness_id,
+                project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+                work_id=spawn_record.work_id,
             )
         )
 
@@ -1091,8 +1091,8 @@ def execute_spawn_background(
     execution_cwd_str = str(
         resolve_child_execution_cwd(
             project_root=project_paths.project_root,
-            spawn_id=spawn_id_text,
-            harness_id=request.harness or "",
+            project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+            work_id=context.work_id,
         )
     )
     # Record pre-computed execution_cwd immediately so it's correct even if
@@ -1323,8 +1323,8 @@ def execute_spawn_blocking(
         execution_cwd_str = str(
             resolve_child_execution_cwd(
                 project_root=project_paths.project_root,
-                spawn_id=str(spawn.spawn_id),
-                harness_id=request.harness or "",
+                project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+                work_id=context.work_id,
             )
         )
         if execution_cwd_str != str(project_paths.project_root):
