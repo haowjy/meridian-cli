@@ -54,7 +54,6 @@ from meridian.lib.harness.common import (
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
 from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source
@@ -245,7 +244,7 @@ def _tool_call_from_payload(payload: dict[str, object]) -> ToolCall | None:
     return ToolCall(tool_name=tool_name, input=tool_input, output=output_text)
 
 
-class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
+class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `claude`."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
@@ -284,7 +283,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
                 observer_controller_required=False,
             ),
             projection=ProjectionContract(
-                launch_spec_cls="ClaudeLaunchSpec",
+                launch_spec_cls="ResolvedLaunchSpec",
                 mode=ProjectionMode.PROMPT_FILE_APPEND_SYSTEM,
             ),
             extraction=ExtractionContract(
@@ -337,7 +336,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> ClaudeLaunchSpec:
+    def resolve_launch_spec(
+        self, run: SpawnParams, perms: PermissionResolver
+    ) -> ResolvedLaunchSpec:
         effort = run.effort
         normalized_effort = None
         if effort is not None:
@@ -369,7 +370,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             prompt_file_path = str(Path(run.project_root) / "system-prompt.md")
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
-        return ClaudeLaunchSpec(
+        return ResolvedLaunchSpec(
             model=str(run.model).strip() if run.model else None,
             effort=normalized_effort,
             prompt=run.prompt,
@@ -425,8 +426,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         spec: ResolvedLaunchSpec,
         command: tuple[str, ...],
     ) -> str | None:
-        if not isinstance(spec, ClaudeLaunchSpec):
-            return None
         return extract_session_id_from_args(command)
 
     def derive_streaming_seeded_session_id(
@@ -434,8 +433,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         *,
         spec: ResolvedLaunchSpec,
     ) -> str | None:
-        if not isinstance(spec, ClaudeLaunchSpec):
-            return None
         return extract_session_id_from_args(spec.extra_args)
 
     def prepare_prelaunch(
@@ -633,7 +630,7 @@ register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CLAUDE,
         adapter=ClaudeAdapter(),
-        spec_cls=ClaudeLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=CLAUDE_EXTRACTOR,
         connections={TransportId.STREAMING: ClaudeConnection},
         projections=HarnessProjectionPorts(

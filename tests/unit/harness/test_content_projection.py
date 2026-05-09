@@ -4,13 +4,13 @@ from pathlib import Path
 
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.codex import CodexAdapter
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec, CodexLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
 )
 from meridian.lib.launch.composition import ComposedLaunchContent, PromptDocument
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.reference import ReferenceItem
 from meridian.lib.safety.permissions import PermissionConfig, TieredPermissionResolver
 
@@ -169,7 +169,7 @@ def test_claude_cli_projection_uses_system_prompt_file_and_positional_user_turn(
     user_turn = "USER: task prompt\n\nCONTEXT: reference file"
 
     command = project_claude_spec_to_cli_args(
-        ClaudeLaunchSpec(
+        ResolvedLaunchSpec(
             appended_system_prompt="SYSTEM: managed prompt",
             prompt_file_path=str(system_prompt_file),
             user_turn_content=user_turn,
@@ -190,7 +190,7 @@ def test_claude_cli_projection_uses_system_prompt_file_and_positional_user_turn(
 
 def test_claude_subprocess_projection_adds_stdin_sentinel_inside_projector() -> None:
     command = project_claude_spec_to_cli_args(
-        ClaudeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="USER: task prompt",
             interactive=False,
             permission_resolver=_resolver(),
@@ -210,7 +210,7 @@ def test_claude_subprocess_projection_adds_stdin_sentinel_inside_projector() -> 
 
 def test_codex_cli_projection_combines_instruction_fields_before_user_turn() -> None:
     command = project_codex_spec_to_cli_args(
-        CodexLaunchSpec(
+        ResolvedLaunchSpec(
             base_instructions="SYSTEM: base",
             developer_instructions="SYSTEM: developer",
             prompt="USER: task",

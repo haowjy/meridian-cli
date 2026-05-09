@@ -95,6 +95,31 @@ class ResolvedLaunchSpec(BaseModel):
     # First-class workspace root projection — harness-agnostic, deduplicated.
     projected_roots: tuple[Path, ...] = ()
 
+    # Adapter-local projections: fields used by specific harness adapters.
+    # All are optional and default to their zero values so unused adapters
+    # don't need to set them.
+
+    # Claude + OpenCode
+    agent_name: str | None = None
+    appended_system_prompt: str | None = None
+
+    # Claude only
+    agents_payload: str | None = None
+    prompt_file_path: str | None = None
+
+    # Claude + Codex
+    user_turn_content: str | None = None
+
+    # Codex only
+    report_output_path: str | None = None
+    base_instructions: str | None = None
+    developer_instructions: str | None = None
+
+    # OpenCode only
+    skills: tuple[str, ...] = ()
+    # Using Any for reference_items to avoid circular import with ReferenceItem.
+    reference_items: tuple[Any, ...] = ()
+
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:
         if self.continue_fork and not self.continue_session_id:

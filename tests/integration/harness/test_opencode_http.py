@@ -22,12 +22,12 @@ from meridian.lib.harness.connections.opencode_http import (
     SessionNotReadyError,
     _materialize_system_prompt,
 )
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.projections.project_opencode_streaming import (
     HarnessCapabilityMismatch,
     project_opencode_spec_to_serve_command,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (
     PermissionConfig,
     TieredPermissionResolver,
@@ -156,14 +156,14 @@ class _StartProbeOpenCodeConnection(OpenCodeConnection):
         self.launch_calls = 0
         self.create_session_calls = 0
 
-    async def _launch_process(self, config: ConnectionConfig, spec: OpenCodeLaunchSpec) -> None:
+    async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
         self.launch_calls += 1
         self._process = _FakeProcess()
 
     async def _create_session_with_retry(
         self,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
         *,
         timeout_seconds: float,
     ) -> str:
@@ -222,7 +222,7 @@ async def test_opencode_start_primary_observer_mode_controls_initial_prompt_post
 ) -> None:
     connection = _StartProbeOpenCodeConnection()
     config = _build_connection_config(tmp_path)
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -265,7 +265,7 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
 ) -> None:
     connection = OpenCodeConnection()
     config = _build_connection_config(tmp_path)
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
     fake_process = _FakeProcess()
@@ -339,7 +339,7 @@ async def test_create_session_uses_spec_model_not_connection_config(tmp_path) ->
     )
 
     session_id = await connection._create_session(
-        OpenCodeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="hello",
             model="spec-model",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -360,7 +360,7 @@ async def test_create_session_uses_already_normalized_model_from_launch_spec() -
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-2"}, "")])
     await connection._create_session(spec)
 
-    assert isinstance(spec, OpenCodeLaunchSpec)
+    assert isinstance(spec, ResolvedLaunchSpec)
     assert connection.requests[0][1]["model"] == "gpt-5.3-codex"
     assert connection.requests[0][1]["modelID"] == "gpt-5.3-codex"
 
@@ -370,7 +370,7 @@ async def test_create_session_omits_model_fields_when_launch_spec_model_is_none(
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-none"}, "")])
 
     await connection._create_session(
-        OpenCodeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="hello",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
@@ -404,7 +404,7 @@ async def test_create_session_forwards_agent_and_skills_from_opencode_launch_spe
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-3"}, "")])
 
     await connection._create_session(
-        OpenCodeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="hello",
             model="gpt-5.3-codex",
             agent_name="worker",
@@ -423,7 +423,7 @@ async def test_create_session_logs_unsupported_effort(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-4"}, "")])
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         effort="high",
@@ -445,7 +445,7 @@ async def test_create_session_logs_unsupported_effort(
 async def test_create_session_raises_when_continue_fork_requested() -> None:
     # continue_fork is rejected before any network I/O.
     connection = _TestableOpenCodeConnection(responses=[])
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -464,7 +464,7 @@ async def test_create_session_resume_verifies_existing_session_via_get() -> None
         responses=[],
         get_responses=[(200, {"id": "sess-parent"}, "")],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -484,7 +484,7 @@ async def test_create_session_resume_raises_on_get_404() -> None:
         responses=[],
         get_responses=[(404, None, "")],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -503,7 +503,7 @@ async def test_create_session_resume_rejects_fork_even_when_get_succeeds() -> No
         responses=[],
         get_responses=[(200, {"id": "sess-parent"}, "")],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -524,7 +524,7 @@ async def test_create_session_with_retry_fresh_retries_404_then_succeeds() -> No
             (200, {"session_id": "sess-fresh"}, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -544,7 +544,7 @@ async def test_create_session_with_retry_fresh_retries_transport_error_then_succ
             (200, {"session_id": "sess-fresh"}, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -566,7 +566,7 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
             (200, {"id": "sess-parent"}, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -587,7 +587,7 @@ async def test_create_session_with_retry_resume_retries_404_then_succeeds() -> N
 async def test_real_get_json_body_read_error_bubbles_and_resume_retries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -651,7 +651,7 @@ async def test_create_session_with_retry_resume_retries_get_transport_error_then
             (200, {"id": "sess-parent"}, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -677,7 +677,7 @@ async def test_create_session_with_retry_resume_repeated_404_times_out() -> None
             (404, None, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -700,7 +700,7 @@ async def test_create_session_with_retry_resume_500_fails_immediately() -> None:
             (200, {"id": "sess-parent"}, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -722,7 +722,7 @@ async def test_create_session_with_retry_resume_mismatched_id_fails_immediately(
             (200, {"id": "sess-parent"}, ""),
         ],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -741,7 +741,7 @@ async def test_create_session_with_retry_continue_fork_fails_immediately() -> No
         responses=[],
         get_responses=[(200, {"id": "sess-parent"}, "")],
     )
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="gpt-5.3-codex",
         continue_session_id="sess-parent",
@@ -758,7 +758,7 @@ async def test_create_session_with_retry_continue_fork_fails_immediately() -> No
 @pytest.mark.asyncio
 async def test_create_session_forwards_mcp_tools_in_payload() -> None:
     connection = _TestableOpenCodeConnection(responses=[(200, {"session_id": "sess-6"}, "")])
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         model="openrouter/gpt-4o-mini",
         mcp_tools=("tool-a=echo a", "tool-b=echo b"),
@@ -773,7 +773,7 @@ async def test_create_session_forwards_mcp_tools_in_payload() -> None:
 
 def test_opencode_streaming_serve_command_keeps_verbatim_extra_args_tail() -> None:
     command = project_opencode_spec_to_serve_command(
-        OpenCodeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="hello",
             extra_args=("--port", "9999"),
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -798,11 +798,11 @@ def test_opencode_connection_explicitly_binds_harness_connection_generic() -> No
     ]
 
     assert matching_bases
-    assert get_args(matching_bases[0]) == (OpenCodeLaunchSpec,)
+    assert get_args(matching_bases[0]) == (ResolvedLaunchSpec,)
 
 
 def test_missing_harness_connection_abstract_method_raises_type_error() -> None:
-    class _MissingCancel(HarnessConnection[OpenCodeLaunchSpec]):
+    class _MissingCancel(HarnessConnection[ResolvedLaunchSpec]):
         @property
         def state(self) -> ConnectionState:
             return "created"
@@ -833,7 +833,7 @@ def test_missing_harness_connection_abstract_method_raises_type_error() -> None:
         def subprocess_pid(self) -> int | None:
             return None
 
-        async def start(self, config: ConnectionConfig, spec: OpenCodeLaunchSpec) -> None:
+        async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = config, spec
 
         async def stop(self) -> None:

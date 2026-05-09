@@ -9,7 +9,6 @@ from typing import Any
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import PassthroughError, TuiCommandBuilder
@@ -65,8 +64,6 @@ class CodexPassthrough:
         execution_cwd: Path,
         env: dict[str, str],
     ) -> ConnectionConfig:
-        if not isinstance(spec, CodexLaunchSpec):
-            raise PassthroughError(f"Expected CodexLaunchSpec, got {type(spec).__name__}")
         ws_bind_host = "127.0.0.1"
         return ConnectionConfig(
             spawn_id=spawn_id,
@@ -83,8 +80,6 @@ class CodexPassthrough:
         connection: HarnessConnection[Any],
         spec: ResolvedLaunchSpec,
     ) -> TuiCommandBuilder:
-        if not isinstance(spec, CodexLaunchSpec):
-            raise PassthroughError(f"Expected CodexLaunchSpec, got {type(spec).__name__}")
 
         return lambda session_id: _build_codex_attach_command(
             session_id=session_id,

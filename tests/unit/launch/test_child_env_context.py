@@ -174,8 +174,7 @@ def test_child_env_context_keeps_repo_root_when_execution_cwd_is_spawn_artifact(
     ).resolve().as_posix()
 
 
-def test_child_env_context_child_context_routes_through_contract_helpers(
-    monkeypatch: pytest.MonkeyPatch,
+def test_child_env_context_child_context_produces_correct_overrides(
     tmp_path: Path,
 ) -> None:
     ctx = ChildEnvContext(
@@ -192,7 +191,10 @@ def test_child_env_context_child_context_routes_through_contract_helpers(
             ("docs", tmp_path / "repo/.meridian/docs"),
         ),
     )
-    expected = {
+
+    result = ctx.child_context()
+
+    assert result == {
         "MERIDIAN_DEPTH": "6",
         "MERIDIAN_PROJECT_DIR": ctx.project_root.as_posix(),
         "MERIDIAN_RUNTIME_DIR": ctx.runtime_root.as_posix(),
@@ -203,43 +205,6 @@ def test_child_env_context_child_context_routes_through_contract_helpers(
         "MERIDIAN_CONTEXT_KB_DIR": (tmp_path / "repo/.meridian/kb").as_posix(),
         "MERIDIAN_CONTEXT_DOCS_DIR": (tmp_path / "repo/.meridian/docs").as_posix(),
     }
-    seen: list[dict[str, str]] = []
-
-    def fake_build_child_env_overrides(**kwargs: object) -> dict[str, str]:
-        assert kwargs == {
-            "parent_spawn_id": None,
-            "child_spawn_id": None,
-            "project_root": ctx.project_root,
-            "runtime_root": ctx.runtime_root,
-            "parent_chat_id": "chat-parent",
-            "parent_depth": 5,
-            "work_id": "work-55",
-            "work_dir": tmp_path / "repo/.meridian/work/work-55",
-            "context_dirs": (
-                ("work", tmp_path / "repo/.meridian/work"),
-                ("kb", tmp_path / "repo/.meridian/kb"),
-                ("docs", tmp_path / "repo/.meridian/docs"),
-            ),
-            "increment_depth": True,
-        }
-        return dict(expected)
-
-    def fake_validate_child_env_keys(overrides: dict[str, str]) -> None:
-        seen.append(dict(overrides))
-
-    monkeypatch.setattr(
-        "meridian.lib.launch.context.build_child_env_overrides",
-        fake_build_child_env_overrides,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.launch.context.validate_child_env_keys",
-        fake_validate_child_env_keys,
-    )
-
-    result = ctx.child_context()
-
-    assert result == expected
-    assert seen == [expected]
 
 
 def test_child_env_context_can_preserve_depth_for_primary_surface(
@@ -261,7 +226,6 @@ def test_child_env_context_can_preserve_depth_for_primary_surface(
 
 
 def test_child_env_context_passes_child_spawn_id_through(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     ctx = ChildEnvContext(
@@ -272,23 +236,8 @@ def test_child_env_context_passes_child_spawn_id_through(
         parent_depth=1,
     )
 
-    seen_kwargs: dict[str, object] = {}
-
-    def fake_build_child_env_overrides(**kwargs: object) -> dict[str, str]:
-        seen_kwargs.update(kwargs)
-        return {
-            "MERIDIAN_DEPTH": "2",
-            "MERIDIAN_SPAWN_ID": "p2",
-            "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
-        }
-
-    monkeypatch.setattr(
-        "meridian.lib.launch.context.build_child_env_overrides",
-        fake_build_child_env_overrides,
-    )
-
     result = ctx.child_context(child_spawn_id="p2")
 
     assert result["MERIDIAN_SPAWN_ID"] == "p2"
-    assert seen_kwargs["child_spawn_id"] == "p2"
-    assert seen_kwargs["increment_depth"] is True
+    assert result["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
+    assert result["MERIDIAN_DEPTH"] == "2"

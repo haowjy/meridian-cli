@@ -8,7 +8,6 @@ import pytest
 
 from meridian.lib.harness.connections import codex_ws
 from meridian.lib.harness.connections.base import AutoAcceptHandler, PrimaryRuntimeRequestPolicy
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.projections.project_codex_common import (
     HarnessCapabilityMismatch,
     map_codex_approval_policy,
@@ -17,6 +16,7 @@ from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (
     PermissionConfig,
     TieredPermissionResolver,
@@ -49,7 +49,7 @@ def test_codex_ws_primary_runtime_request_policy_none_keeps_auto_accept() -> Non
 def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_report_path(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    spec = CodexLaunchSpec(
+    spec = ResolvedLaunchSpec(
         permission_resolver=TieredPermissionResolver(
             config=PermissionConfig(sandbox="read-only", approval="auto")
         ),
@@ -84,7 +84,7 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
     ("spec", "cwd", "expected_method", "expected_payload"),
     [
         (
-            CodexLaunchSpec(
+            ResolvedLaunchSpec(
                 prompt="hello",
                 model="gpt-5.3-codex",
                 effort="high",
@@ -103,7 +103,7 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
             },
         ),
         (
-            CodexLaunchSpec(
+            ResolvedLaunchSpec(
                 prompt="hello",
                 model="gpt-5.3-codex",
                 continue_session_id="thread-123",
@@ -121,7 +121,7 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
             },
         ),
         (
-            CodexLaunchSpec(
+            ResolvedLaunchSpec(
                 prompt="hello",
                 model="gpt-5.3-codex",
                 continue_session_id="thread-123",
@@ -141,7 +141,7 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
             },
         ),
         (
-            CodexLaunchSpec(
+            ResolvedLaunchSpec(
                 prompt="hello",
                 model="gpt-5.3-codex",
                 permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -157,7 +157,7 @@ def test_codex_streaming_projection_builds_appserver_command_and_logs_ignored_re
     ids=["start-with-policy", "resume", "fork", "start-default"],
 )
 def test_codex_ws_thread_request_projection(
-    spec: CodexLaunchSpec,
+    spec: ResolvedLaunchSpec,
     cwd: str,
     expected_method: str,
     expected_payload: dict[str, object],

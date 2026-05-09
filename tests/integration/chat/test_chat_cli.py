@@ -16,9 +16,8 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.chat.policy import build_chat_backend_launch_plan, default_chat_policy_snapshot
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.launch_types import CompositionWarning
+from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.service_context import ApplicationContext, ApplicationServices, ChatEntryPoint
 from tests.support.fixtures import write_skill
@@ -1007,7 +1006,7 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
 
     assert plan.harness_id == HarnessId.CODEX
     assert plan.connection_config.harness_id == HarnessId.CODEX
-    assert isinstance(plan.spec, CodexLaunchSpec)
+    assert isinstance(plan.spec, ResolvedLaunchSpec)
     assert plan.spec.model == "gpt-5.4-mini"
     assert plan.spec.base_instructions == "Reviewer profile body."
     assert plan.spec.user_turn_content == "Please review this change."

@@ -11,17 +11,12 @@ from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.claude import ClaudeAdapter
 from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.codex import CodexAdapter
-from meridian.lib.harness.launch_spec import (
-    ClaudeLaunchSpec,
-    CodexLaunchSpec,
-    OpenCodeLaunchSpec,
-    ResolvedLaunchSpec,
-)
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.projections.project_opencode_subprocess import (
     HarnessCapabilityMismatch,
     project_opencode_spec_to_cli_args,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.reference import ReferenceItem
 from meridian.lib.safety.permissions import (
     ApprovalMode,
@@ -173,7 +168,7 @@ def test_opencode_build_command_does_not_emit_dangerous_skip_permissions() -> No
 def test_opencode_subprocess_projection_logs_model_flag_collision_and_keeps_tail(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="test prompt",
         model="anthropic/claude-sonnet-4-5",
         extra_args=("-m", "override-model"),
@@ -193,7 +188,7 @@ def test_opencode_subprocess_projection_logs_model_flag_collision_and_keeps_tail
 def test_opencode_interactive_projection_omits_prompt_flag() -> None:
     """Interactive TUI launches go through managed attach; --prompt is not emitted."""
     command = project_opencode_spec_to_cli_args(
-        OpenCodeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="prompt text",
             interactive=True,
             permission_resolver=_resolver(),
@@ -206,7 +201,7 @@ def test_opencode_interactive_projection_omits_prompt_flag() -> None:
 
 
 def test_opencode_subprocess_projection_does_not_emit_file_injection_flags() -> None:
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="test prompt",
         permission_resolver=_resolver(),
         reference_items=(
@@ -260,17 +255,9 @@ def test_resolve_launch_spec_keeps_none_effort(adapter: SubprocessHarness) -> No
     assert spec.effort is None
 
 
-@pytest.mark.parametrize(
-    "spec_cls",
-    (
-        ClaudeLaunchSpec,
-        CodexLaunchSpec,
-        OpenCodeLaunchSpec,
-    ),
-)
-def test_continue_fork_requires_continue_session_id(spec_cls: type[ResolvedLaunchSpec]) -> None:
+def test_continue_fork_requires_continue_session_id() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        spec_cls(
+        ResolvedLaunchSpec(
             prompt="test",
             continue_fork=True,
             permission_resolver=_resolver(),
@@ -288,22 +275,17 @@ def test_continue_fork_requires_continue_session_id(spec_cls: type[ResolvedLaunc
 
 
 @pytest.mark.parametrize(
-    ("spec_cls", "continue_session_id", "continue_fork"),
+    ("continue_session_id", "continue_fork"),
     (
-        (ClaudeLaunchSpec, None, False),
-        (ClaudeLaunchSpec, "claude-session", True),
-        (CodexLaunchSpec, None, False),
-        (CodexLaunchSpec, "codex-session", True),
-        (OpenCodeLaunchSpec, None, False),
-        (OpenCodeLaunchSpec, "opencode-session", True),
+        (None, False),
+        ("some-session", True),
     ),
 )
 def test_continue_fork_valid_combinations_pass(
-    spec_cls: type[ResolvedLaunchSpec],
     continue_session_id: str | None,
     continue_fork: bool,
 ) -> None:
-    spec = spec_cls(
+    spec = ResolvedLaunchSpec(
         prompt="test",
         continue_session_id=continue_session_id,
         continue_fork=continue_fork,
@@ -352,8 +334,6 @@ def test_user_supplied_session_id_not_duplicated() -> None:
     assert extract_session_id_from_args(spec.extra_args) == "user-session"
 
 
-
-
 @pytest.mark.parametrize(
     "extra_args",
     (
@@ -376,6 +356,7 @@ def test_claude_passthrough_session_identity_flags_are_not_seeded(
 
     assert spec.extra_args == extra_args
 
+
 def test_interactive_spawn_gets_seeded_session_id() -> None:
     spec = ClaudeAdapter().resolve_launch_spec(
         SpawnParams(prompt="test prompt", interactive=True),
@@ -384,6 +365,7 @@ def test_interactive_spawn_gets_seeded_session_id() -> None:
 
     seeded = extract_session_id_from_args(spec.extra_args)
     assert seeded is not None, "Interactive sessions should get a seeded --session-id"
+
 
 def test_opencode_explicit_harness_allows_raw_provider_model() -> None:
     """When harness is explicit, raw provider/model IDs pass through unchanged."""

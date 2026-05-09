@@ -56,7 +56,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
 from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,
@@ -77,7 +76,7 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_CODEX_SUBPROCESS,
     PRIMARY_BASE_COMMAND_CODEX,
 )
-from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -158,7 +157,7 @@ def _resolve_rollout_session_id(path: Path, resolved_repo: Path) -> str | None:
 
 
 def project_codex_spec_to_thread_request_for_project(
-    spec: CodexLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     project_root: Path,
 ) -> tuple[str, dict[str, object]]:
@@ -243,7 +242,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return False
 
 
-class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
+class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
@@ -297,7 +296,7 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
                 observer_controller_required=True,
             ),
             projection=ProjectionContract(
-                launch_spec_cls="CodexLaunchSpec",
+                launch_spec_cls="ResolvedLaunchSpec",
                 mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
             ),
             extraction=ExtractionContract(
@@ -363,9 +362,11 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
         _ = name, description
         return prompt.strip()
 
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> CodexLaunchSpec:
+    def resolve_launch_spec(
+        self, run: SpawnParams, perms: PermissionResolver
+    ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        return CodexLaunchSpec(
+        return ResolvedLaunchSpec(
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
@@ -544,7 +545,7 @@ register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CODEX,
         adapter=CodexAdapter(),
-        spec_cls=CodexLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=CODEX_EXTRACTOR,
         connections={TransportId.STREAMING: CodexConnection},
         projections=HarnessProjectionPorts(

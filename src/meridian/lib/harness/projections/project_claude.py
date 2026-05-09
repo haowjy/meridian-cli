@@ -1,4 +1,4 @@
-"""Claude command-line projection from ``ClaudeLaunchSpec``."""
+"""Claude command-line projection from ``ResolvedLaunchSpec``."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from collections.abc import Iterable, Sequence
 
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.text_utils import dedupe_nonempty, split_csv_entries
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,15 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_DELEGATED_FIELDS: frozenset[str] = frozenset()
+_DELEGATED_FIELDS: frozenset[str] = frozenset(
+    {
+        "base_instructions",
+        "developer_instructions",
+        "reference_items",
+        "report_output_path",
+        "skills",
+    }
+)
 
 
 def _split_internal_parent_allowed_tools(
@@ -144,11 +152,11 @@ def _project_mcp_tools(mcp_tools: Iterable[str]) -> list[str]:
 
 
 def project_claude_spec_to_cli_args(
-    spec: ClaudeLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ClaudeLaunchSpec`` into an ordered command list."""
+    """Project one ``ResolvedLaunchSpec`` into an ordered command list."""
 
     command: list[str] = list(base_command)
     if not spec.interactive:
@@ -221,7 +229,7 @@ def project_claude_spec_to_cli_args(
 
 
 _check_projection_drift(
-    ClaudeLaunchSpec,
+    ResolvedLaunchSpec,
     projected=_PROJECTED_FIELDS,
     delegated=_DELEGATED_FIELDS,
 )

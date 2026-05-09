@@ -1,4 +1,4 @@
-"""Codex subprocess command projection from ``CodexLaunchSpec``."""
+"""Codex subprocess command projection from ``ResolvedLaunchSpec``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import json
 from collections.abc import Iterable
 from typing import cast
 
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -15,7 +14,7 @@ from meridian.lib.harness.projections.project_codex_common import (
     map_codex_sandbox_mode,
     project_codex_mcp_config_flags,
 )
-from meridian.lib.launch.launch_types import PermissionResolver
+from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
 
 _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
@@ -36,7 +35,16 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_DELEGATED_FIELDS: frozenset[str] = frozenset()
+_DELEGATED_FIELDS: frozenset[str] = frozenset(
+    {
+        "agent_name",
+        "agents_payload",
+        "appended_system_prompt",
+        "prompt_file_path",
+        "reference_items",
+        "skills",
+    }
+)
 
 
 def _coerce_permission_flags(raw: object) -> tuple[str, ...]:
@@ -101,11 +109,11 @@ def project_codex_permission_flags(permission_resolver: PermissionResolver) -> t
 
 
 def project_codex_spec_to_cli_args(
-    spec: CodexLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``CodexLaunchSpec`` into an ordered subprocess command list."""
+    """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
 
     command: list[str] = list(base_command)
     prompt_parts = (
@@ -151,7 +159,7 @@ def project_codex_spec_to_cli_args(
 
 
 _check_projection_drift(
-    CodexLaunchSpec,
+    ResolvedLaunchSpec,
     projected=_PROJECTED_FIELDS,
     delegated=_DELEGATED_FIELDS,
 )

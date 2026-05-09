@@ -29,13 +29,13 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_STREAMING,
     BLOCKED_CHILD_ENV_VARS,
 )
 from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
@@ -59,7 +59,7 @@ _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
 )
 
 
-class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
+class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional Claude harness connection via stdin/stdout stream-json.
 
     Launches ``claude -p --input-format stream-json --output-format stream-json``
@@ -136,7 +136,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
             return None
         return process.pid
 
-    async def start(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> None:
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         """Launch Claude subprocess and send the initial user prompt via stdin."""
 
         if self._state != "created":
@@ -338,7 +338,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
                 return token.strip()
         return None
 
-    async def _start_subprocess(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> None:
+    async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         spawn_dir = resolve_spawn_log_dir(config.project_root, config.spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
 
@@ -370,7 +370,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
                 binary_name=command[0],
             ) from exc
 
-    def _build_command(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> list[str]:
+    def _build_command(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> list[str]:
         _ = config
         return project_subprocess_spec(
             self.harness_id,

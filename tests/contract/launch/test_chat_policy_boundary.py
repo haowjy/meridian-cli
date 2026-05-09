@@ -56,9 +56,6 @@ def test_non_owner_chat_launch_modules_do_not_compose_launch_specs_directly() ->
         ("resolve_permission_pipeline", r"\bresolve_permission_pipeline\s*\("),
         ("resolve_launch_spec_stage", r"\bresolve_launch_spec_stage\s*\("),
         ("materialize_launch_artifacts", r"\bmaterialize_launch_artifacts\s*\("),
-        ("ClaudeLaunchSpec", r"\bClaudeLaunchSpec\s*\("),
-        ("CodexLaunchSpec", r"\bCodexLaunchSpec\s*\("),
-        ("OpenCodeLaunchSpec", r"\bOpenCodeLaunchSpec\s*\("),
         ("UnsafeNoOpPermissionResolver", r"\bUnsafeNoOpPermissionResolver\s*\("),
     ]
 

@@ -52,7 +52,6 @@ from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec, CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import (
     PermissionResolver,
@@ -209,7 +208,7 @@ class _ManagedPrimaryHarness(_CompleteHarness):
     @property
     def contract(self) -> HarnessContract:
         return _test_contract(
-            launch_spec_cls="CodexLaunchSpec",
+            launch_spec_cls="ResolvedLaunchSpec",
             bootstrap_mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
         )
 
@@ -351,10 +350,15 @@ def test_register_harness_bundle_rejects_projection_spec_mismatch(
 
     monkeypatch.setattr(bundle_module, "_REGISTRY", {})
 
+    # A custom subclass has a different __name__, so it mismatches the contract
+    # which declares launch_spec_cls="ResolvedLaunchSpec".
+    class _CustomSpec(ResolvedLaunchSpec):
+        pass
+
     bundle = _make_bundle(
         harness_id=HarnessId.CLAUDE,
         adapter=_CompleteHarness(),
-        spec_cls=ClaudeLaunchSpec,
+        spec_cls=_CustomSpec,
     )
 
     with pytest.raises(ValueError, match="projection launch_spec_cls"):
@@ -379,7 +383,7 @@ def test_register_harness_bundle_rejects_managed_primary_port_drift(
     codex_without_managed_primary = _make_bundle(
         harness_id=HarnessId.CODEX,
         adapter=_ManagedPrimaryHarness(),
-        spec_cls=CodexLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
     )
     with pytest.raises(ValueError, match="requires managed-primary projection ports"):
         register_harness_bundle(codex_without_managed_primary)

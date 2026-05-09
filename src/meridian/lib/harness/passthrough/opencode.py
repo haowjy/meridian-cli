@@ -8,7 +8,6 @@ from typing import Any
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import PassthroughError, TuiCommandBuilder
@@ -52,8 +51,6 @@ class OpenCodePassthrough:
         execution_cwd: Path,
         env: dict[str, str],
     ) -> ConnectionConfig:
-        if not isinstance(spec, OpenCodeLaunchSpec):
-            raise PassthroughError(f"Expected OpenCodeLaunchSpec, got {type(spec).__name__}")
         return ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.OPENCODE,

@@ -17,8 +17,8 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
 )
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import ChildStartedHook, LaunchedProcess, ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
@@ -40,8 +40,8 @@ def _build_config(*, spawn_id: SpawnId, project_root: Path, ws_port: int = 0) ->
     )
 
 
-def _build_spec() -> CodexLaunchSpec:
-    return CodexLaunchSpec(
+def _build_spec() -> ResolvedLaunchSpec:
+    return ResolvedLaunchSpec(
         prompt="hello",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         interactive=True,
@@ -101,7 +101,7 @@ class FakeManagedConnection:
     async def start(
         self,
         config: ConnectionConfig,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         _ = spec
         self.start_calls += 1
@@ -125,7 +125,7 @@ class FakeManagedConnection:
     async def start_observer(
         self,
         config: ConnectionConfig,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         self.started_primary_observer_mode = True
         await self.start(config, spec)

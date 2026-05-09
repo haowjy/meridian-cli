@@ -12,7 +12,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionConfig,
     HarnessEvent,
 )
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.signals import (
     SignalCoordinator,
     SignalForwarder,
@@ -132,7 +132,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
                 project_root=tmp_path,
                 env_overrides={},
             ),
-            spec=CodexLaunchSpec(
+            spec=ResolvedLaunchSpec(
                 prompt="hello",
                 permission_resolver=TieredPermissionResolver(config=PermissionConfig()),
             ),

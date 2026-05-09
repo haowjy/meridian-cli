@@ -22,7 +22,7 @@ import psutil
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection, HarnessEvent
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
+from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
@@ -145,9 +145,9 @@ class _StartupTelemetry:
         self._last_message = ""
 
 
-def _startup_phase_message(connection: HarnessConnection[Any], spec: ResolvedLaunchSpec) -> str:
+def _startup_phase_message(connection: HarnessConnection[Any]) -> str:
     harness_label = connection.harness_id.value.capitalize()
-    if isinstance(spec, CodexLaunchSpec):
+    if connection.harness_id is HarnessId.CODEX:
         return f"Starting {harness_label} app-server..."
     return f"Starting {harness_label} managed session..."
 
@@ -193,7 +193,7 @@ class PrimaryAttachLauncher:
         telemetry = _StartupTelemetry()
 
         try:
-            telemetry.update(_startup_phase_message(self._connection, spec))
+            telemetry.update(_startup_phase_message(self._connection))
 
             config = await self._start_primary_observer_connection_with_retry(
                 config=config,

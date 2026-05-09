@@ -40,7 +40,6 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
@@ -48,6 +47,7 @@ from meridian.lib.harness.projections.projection_errors import HarnessCapability
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.harness.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
@@ -71,7 +71,7 @@ class SessionNotReadyError(RuntimeError):
 
 
 def project_opencode_spec_to_serve_command(
-    spec: OpenCodeLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     host: str,
     port: int,
@@ -87,7 +87,7 @@ def project_opencode_spec_to_serve_command(
 
 
 def project_opencode_spec_to_session_payload(
-    spec: OpenCodeLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     project_root: Path | None = None,
 ) -> dict[str, object]:
@@ -106,7 +106,7 @@ def project_opencode_spec_to_session_payload(
     return cast("dict[str, object]", projected)
 
 
-class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
+class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional OpenCode connection over the OpenCode HTTP API."""
 
     _CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
@@ -230,7 +230,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
     async def start(
         self,
         config: ConnectionConfig,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         if self._state not in {"created", "stopped", "failed"}:
             raise RuntimeError(f"Cannot start OpenCode connection from state '{self._state}'")
@@ -277,7 +277,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
     async def start_observer(
         self,
         config: ConnectionConfig,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         """Start connection in primary observer mode."""
 
@@ -401,7 +401,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 return
             await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
 
-    async def _launch_process(self, config: ConnectionConfig, spec: OpenCodeLaunchSpec) -> None:
+    async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         port = _find_free_port()
         self._base_url = f"http://127.0.0.1:{port}"
         command = project_managed_primary_backend_command(
@@ -467,7 +467,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
 
     async def _create_session_with_retry(
         self,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
         *,
         timeout_seconds: float,
     ) -> str:
@@ -489,7 +489,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 ) from last_error
             await asyncio.sleep(0.2)
 
-    async def _create_session(self, spec: OpenCodeLaunchSpec) -> str:
+    async def _create_session(self, spec: ResolvedLaunchSpec) -> str:
         """Create or resume an OpenCode session.
 
         For fresh sessions, POST /session to create a new one.

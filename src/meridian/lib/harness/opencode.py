@@ -44,7 +44,6 @@ from meridian.lib.harness.common import (
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
 from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
 from meridian.lib.harness.projections.project_opencode_streaming import (
@@ -67,7 +66,7 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_OPENCODE_SUBPROCESS,
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
-from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -259,7 +258,7 @@ def _detect_primary_session_id(
 
 
 def project_opencode_spec_to_session_payload_for_project(
-    spec: OpenCodeLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     project_root: Path,
 ) -> dict[str, object]:
@@ -316,7 +315,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return _legacy_owns_session(project_root, normalized)
 
 
-class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
+class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `opencode`."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
@@ -369,7 +368,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
                 observer_controller_required=True,
             ),
             projection=ProjectionContract(
-                launch_spec_cls="OpenCodeLaunchSpec",
+                launch_spec_cls="ResolvedLaunchSpec",
                 mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
             ),
             extraction=ExtractionContract(
@@ -428,12 +427,12 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
         self,
         run: SpawnParams,
         perms: PermissionResolver,
-    ) -> OpenCodeLaunchSpec:
+    ) -> ResolvedLaunchSpec:
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model))
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        return OpenCodeLaunchSpec(
+        return ResolvedLaunchSpec(
             model=normalized_model,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
@@ -544,7 +543,7 @@ register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.OPENCODE,
         adapter=OpenCodeAdapter(),
-        spec_cls=OpenCodeLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=OPENCODE_EXTRACTOR,
         connections={TransportId.STREAMING: OpenCodeConnection},
         projections=HarnessProjectionPorts(

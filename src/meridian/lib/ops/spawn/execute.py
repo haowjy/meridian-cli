@@ -23,11 +23,11 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_write,
 )
 from meridian.lib.config.project_paths import ProjectConfigPaths, resolve_project_config_paths
-from meridian.lib.core.child_env import build_child_env_overrides
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.adapter import (
@@ -287,19 +287,14 @@ def _spawn_background_worker_env(
             normalized_work_id,
         )
 
-    # Omit project_root/runtime_root/chat_id (pass None) — those are already
-    # correct in the inherited os.environ.  increment_depth=False because the
-    # background worker is a peer, not a depth-child.
-    child_env = build_child_env_overrides(
-        parent_spawn_id=None,  # inherited from os.environ
-        project_root=None,
-        runtime_root=None,
-        parent_chat_id=None,
-        parent_depth=parent_depth,
+    # Omit project_root/runtime_root/chat_id (leave at defaults) — those are
+    # already correct in the inherited os.environ.  increment_depth=False because
+    # the background worker is a peer, not a depth-child.
+    child_env = ResolvedContext(
+        depth=parent_depth,
         work_id=normalized_work_id,
         work_dir=work_dir,
-        increment_depth=False,
-    )
+    ).child_env_overrides(increment_depth=False)
     if autocompact is not None:
         child_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(autocompact)
     return child_env

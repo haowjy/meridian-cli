@@ -10,12 +10,12 @@ import pytest
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ObserverEndpoint
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec, CodexLaunchSpec, OpenCodeLaunchSpec
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.passthrough.claude import ClaudePassthrough
 from meridian.lib.harness.passthrough.codex import CodexPassthrough
 from meridian.lib.harness.passthrough.opencode import OpenCodePassthrough
 from meridian.lib.harness.passthrough.registry import get_passthrough
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
@@ -58,7 +58,7 @@ def test_codex_passthrough_builds_connection_config_with_ws_port(
     env = {"MERIDIAN_TEST": "1"}
     config = CodexPassthrough().build_config(
         spawn_id=SpawnId("p100"),
-        spec=CodexLaunchSpec(
+        spec=ResolvedLaunchSpec(
             prompt="hello codex",
             model="codex-test",
             permission_resolver=_permission_resolver(),
@@ -82,7 +82,7 @@ def test_opencode_passthrough_builds_connection_config(tmp_path: Path) -> None:
     env = {"MERIDIAN_TEST": "1"}
     config = OpenCodePassthrough().build_config(
         spawn_id=SpawnId("p101"),
-        spec=OpenCodeLaunchSpec(
+        spec=ResolvedLaunchSpec(
             prompt="hello opencode",
             appended_system_prompt="system prompt",
             permission_resolver=_permission_resolver(),
@@ -111,7 +111,7 @@ def test_claude_passthrough_stub_raises_for_managed_primary_attach(tmp_path: Pat
     ):
         passthrough.build_config(
             spawn_id=SpawnId("p102"),
-            spec=ClaudeLaunchSpec(
+            spec=ResolvedLaunchSpec(
                 prompt="hello claude",
                 permission_resolver=_permission_resolver(),
             ),
@@ -125,7 +125,7 @@ def test_claude_passthrough_stub_raises_for_managed_primary_attach(tmp_path: Pat
     ):
         passthrough.build_tui_command(
             cast("Any", object()),
-            ClaudeLaunchSpec(
+            ResolvedLaunchSpec(
                 prompt="hello claude",
                 permission_resolver=_permission_resolver(),
             ),
@@ -175,7 +175,7 @@ def test_codex_passthrough_builds_tui_command_from_ws_observer_endpoint() -> Non
 
     command = CodexPassthrough().build_tui_command(
         connection,
-        CodexLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="hello codex",
             permission_resolver=_permission_resolver(),
             projected_roots=(Path("/tmp/root-a"), Path("/tmp/root b")),
@@ -215,7 +215,7 @@ def test_opencode_passthrough_builds_tui_command_from_http_observer_endpoint() -
 
     command = OpenCodePassthrough().build_tui_command(
         connection,
-        OpenCodeLaunchSpec(
+        ResolvedLaunchSpec(
             prompt="hello opencode",
             permission_resolver=_permission_resolver(),
         ),

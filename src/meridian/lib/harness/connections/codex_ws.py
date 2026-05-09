@@ -53,9 +53,9 @@ from meridian.lib.harness.connections.base import (
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
@@ -160,7 +160,7 @@ async def _aiohttp_connect(ws_url: str) -> _AiohttpWebSocketCompat:
     return _AiohttpWebSocketCompat(session, ws)
 
 
-class CodexConnection(HarnessConnection[CodexLaunchSpec]):
+class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     """JSON-RPC 2.0 bridge between Meridian and Codex app-server."""
 
     _ALLOWED_TRANSITIONS: Final[dict[ConnectionState, set[ConnectionState]]] = {
@@ -176,7 +176,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
         self._state: ConnectionState = "created"
         self._spawn_id: SpawnId = SpawnId("")
         self._config: ConnectionConfig | None = None
-        self._launch_spec: CodexLaunchSpec | None = None
+        self._launch_spec: ResolvedLaunchSpec | None = None
         self._request_handler = request_handler or AutoAcceptHandler()
 
         self._process: Process | None = None
@@ -278,7 +278,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
     async def start(
         self,
         config: ConnectionConfig,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         if self._state not in {"created", "stopped", "failed"}:
             raise RuntimeError(f"Cannot start CodexConnection from state '{self._state}'")
@@ -438,7 +438,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
     async def start_observer(
         self,
         config: ConnectionConfig,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         """Start connection in primary observer mode."""
 
@@ -1096,7 +1096,7 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             return
         emitter.emit(phase)
 
-    def _is_fresh_session(self, spec: CodexLaunchSpec) -> bool:
+    def _is_fresh_session(self, spec: ResolvedLaunchSpec) -> bool:
         """Check if this is a fresh session (not resume or fork)."""
         return not (spec.continue_session_id or "").strip()
 
@@ -1159,13 +1159,13 @@ class CodexConnection(HarnessConnection[CodexLaunchSpec]):
             if not process_running or not ws_open:
                 raise RuntimeError("Codex connection lost during bootstrap turn")
 
-    async def _bootstrap_thread(self, spec: CodexLaunchSpec) -> dict[str, object]:
+    async def _bootstrap_thread(self, spec: ResolvedLaunchSpec) -> dict[str, object]:
         method, payload = self._thread_bootstrap_request(spec)
         return await self._request(method, payload)
 
     def _thread_bootstrap_request(
         self,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> tuple[str, dict[str, object]]:
         config = self._config
         if config is None:

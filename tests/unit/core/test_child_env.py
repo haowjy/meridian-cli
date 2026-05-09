@@ -6,10 +6,10 @@ import pytest
 
 from meridian.lib.core.child_env import (
     ALLOWED_CHILD_ENV_KEYS,
-    build_child_env_overrides,
     validate_child_env_keys,
 )
 from meridian.lib.core.resolved_context import ResolvedContext
+from meridian.lib.core.types import SpawnId
 
 # ---------------------------------------------------------------------------
 # validate_child_env_keys
@@ -66,61 +66,40 @@ def test_validate_rejects_context_dir_near_misses() -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_child_env_overrides
+# ResolvedContext.child_env_overrides
 # ---------------------------------------------------------------------------
 
 
-def test_build_produces_depth_always() -> None:
+def test_child_env_overrides_produces_depth_always() -> None:
     """MERIDIAN_DEPTH must always appear in the result."""
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
-        project_root=None,
-        runtime_root=None,
-        parent_chat_id=None,
-        parent_depth=0,
-    )
+    result = ResolvedContext(depth=0).child_env_overrides()
     assert "MERIDIAN_DEPTH" in result
 
 
-def test_build_increments_depth_by_default() -> None:
-    """Default increment_depth=True must produce parent_depth + 1."""
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
-        project_root=None,
-        runtime_root=None,
-        parent_chat_id=None,
-        parent_depth=3,
-    )
+def test_child_env_overrides_increments_depth_by_default() -> None:
+    """Default increment_depth=True must produce depth + 1."""
+    result = ResolvedContext(depth=3).child_env_overrides()
     assert result["MERIDIAN_DEPTH"] == "4"
 
 
-def test_build_omits_none_fields() -> None:
+def test_child_env_overrides_omits_none_fields() -> None:
     """Fields that are None/empty must not appear in the result dict."""
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
-        project_root=None,
-        runtime_root=None,
-        parent_chat_id=None,
-        parent_depth=0,
-        work_id=None,
-        work_dir=None,
-    )
+    result = ResolvedContext(depth=0).child_env_overrides()
     assert "MERIDIAN_PROJECT_DIR" not in result
     assert "MERIDIAN_RUNTIME_DIR" not in result
     assert "MERIDIAN_CHAT_ID" not in result
     assert "MERIDIAN_ACTIVE_WORK_ID" not in result
 
 
-def test_build_full_overrides() -> None:
+def test_child_env_overrides_full_overrides() -> None:
     """All populated fields must appear with correct string values."""
     repo = Path("/repo")
     state = Path("/runtime/state")
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
+    result = ResolvedContext(
+        depth=1,
         project_root=repo,
         runtime_root=state,
-        parent_chat_id="c99",
-        parent_depth=1,
+        chat_id="c99",
         work_id="w1",
         work_dir=Path("/repo/.meridian/work/w1"),
         context_dirs=(
@@ -128,7 +107,7 @@ def test_build_full_overrides() -> None:
             ("work_archive", Path("/repo/.meridian/archive/work")),
             ("kb", Path("/repo/.meridian/kb")),
         ),
-    )
+    ).child_env_overrides()
 
     assert result == {
         "MERIDIAN_DEPTH": "2",
@@ -143,81 +122,34 @@ def test_build_full_overrides() -> None:
     }
 
 
-def test_build_with_child_spawn_id() -> None:
-    result = build_child_env_overrides(
-        parent_spawn_id="p-parent",
-        child_spawn_id="p-child",
-        project_root=None,
-        runtime_root=None,
-        parent_chat_id=None,
-        parent_depth=1,
-    )
+def test_child_env_overrides_with_child_spawn_id() -> None:
+    result = ResolvedContext(
+        spawn_id=SpawnId("p-parent"),
+        depth=1,
+    ).child_env_overrides(child_spawn_id="p-child")
 
     assert result["MERIDIAN_SPAWN_ID"] == "p-child"
     assert result["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
 
 
-def test_build_with_context_dirs() -> None:
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
-        project_root=None,
-        runtime_root=None,
-        parent_chat_id=None,
-        parent_depth=0,
+def test_child_env_overrides_with_context_dirs() -> None:
+    result = ResolvedContext(
+        depth=0,
         context_dirs=(("docs", Path("/contexts/docs")),),
-    )
+    ).child_env_overrides()
 
     assert result["MERIDIAN_CONTEXT_DOCS_DIR"] == "/contexts/docs"
 
 
-def test_build_result_keys_are_subset_of_allowed() -> None:
-    """All keys produced by build_child_env_overrides must be in ALLOWED_CHILD_ENV_KEYS."""
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
+def test_child_env_overrides_result_keys_are_subset_of_allowed() -> None:
+    """All keys produced by child_env_overrides must be in ALLOWED_CHILD_ENV_KEYS."""
+    result = ResolvedContext(
+        depth=0,
         project_root=Path("/r"),
         runtime_root=Path("/s"),
-        parent_chat_id="c1",
-        parent_depth=0,
+        chat_id="c1",
         work_id="wid",
         work_dir=Path("/s/work/wid"),
-    )
+    ).child_env_overrides()
     unexpected = set(result) - ALLOWED_CHILD_ENV_KEYS
     assert unexpected == set(), f"Unexpected keys: {unexpected}"
-
-
-# ---------------------------------------------------------------------------
-# Integration: build_child_env_overrides ↔ ResolvedContext.child_env_overrides
-# ---------------------------------------------------------------------------
-
-
-def test_integration_matches_resolved_context_child_env_overrides() -> None:
-    """build_child_env_overrides must produce identical output to the underlying
-    ResolvedContext.child_env_overrides() call it delegates to."""
-    repo = Path("/my/repo")
-    state = Path("/my/state")
-    context_dirs = (("kb", Path("/my/repo/.meridian/kb")),)
-
-    ctx = ResolvedContext(
-        depth=2,
-        project_root=repo,
-        runtime_root=state,
-        chat_id="c7",
-        work_id="w42",
-        work_dir=Path("/my/state/work/w42"),
-        context_dirs=context_dirs,
-    )
-    expected = ctx.child_env_overrides()
-
-    result = build_child_env_overrides(
-        parent_spawn_id=None,
-        child_spawn_id=None,
-        project_root=repo,
-        runtime_root=state,
-        parent_chat_id="c7",
-        parent_depth=2,
-        work_id="w42",
-        work_dir=Path("/my/state/work/w42"),
-        context_dirs=context_dirs,
-    )
-
-    assert result == expected

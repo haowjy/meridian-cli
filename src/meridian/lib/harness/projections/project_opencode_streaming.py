@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.launch.constants import BASE_COMMAND_OPENCODE_STREAMING
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +42,19 @@ _ACCOUNTED_FIELDS: frozenset[str] = (
     _SERVE_COMMAND_FIELDS | _SESSION_PAYLOAD_FIELDS | _MESSAGE_FIELDS | _REFERENCE_FIELDS
 )
 _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
-_DELEGATED_FIELDS: frozenset[str] = frozenset()
+_DELEGATED_FIELDS: frozenset[str] = frozenset(
+    {
+        "agents_payload",
+        "base_instructions",
+        "developer_instructions",
+        "prompt_file_path",
+        "report_output_path",
+        "user_turn_content",
+    }
+)
 
 
-def _consume_streaming_lifecycle_fields(spec: OpenCodeLaunchSpec) -> None:
+def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
     _ = spec.prompt
     _ = spec.appended_system_prompt
     if spec.reference_items:
@@ -73,12 +82,12 @@ def _consume_streaming_lifecycle_fields(spec: OpenCodeLaunchSpec) -> None:
 
 
 def project_opencode_spec_to_serve_command(
-    spec: OpenCodeLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     host: str,
     port: int,
 ) -> list[str]:
-    """Build one ``opencode serve`` command from ``OpenCodeLaunchSpec``."""
+    """Build one ``opencode serve`` command from ``ResolvedLaunchSpec``."""
 
     _consume_streaming_lifecycle_fields(spec)
 
@@ -100,7 +109,7 @@ def project_opencode_spec_to_serve_command(
     return command
 
 
-def project_opencode_spec_to_session_payload(spec: OpenCodeLaunchSpec) -> dict[str, object]:
+def project_opencode_spec_to_session_payload(spec: ResolvedLaunchSpec) -> dict[str, object]:
     """Build session-creation payload for the OpenCode HTTP API."""
 
     _consume_streaming_lifecycle_fields(spec)
@@ -143,7 +152,7 @@ def project_opencode_spec_to_session_payload(spec: OpenCodeLaunchSpec) -> dict[s
 
 
 _check_projection_drift(
-    OpenCodeLaunchSpec,
+    ResolvedLaunchSpec,
     projected=_ACCOUNTED_FIELDS,
     delegated=_DELEGATED_FIELDS,
 )

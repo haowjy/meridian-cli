@@ -1,4 +1,4 @@
-"""OpenCode subprocess command projection from ``OpenCodeLaunchSpec``."""
+"""OpenCode subprocess command projection from ``ResolvedLaunchSpec``."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import logging
 from collections.abc import Iterable, Sequence
 
 from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,17 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-_DELEGATED_FIELDS: frozenset[str] = frozenset({"reference_items"})
+_DELEGATED_FIELDS: frozenset[str] = frozenset(
+    {
+        "agents_payload",
+        "base_instructions",
+        "developer_instructions",
+        "prompt_file_path",
+        "reference_items",
+        "report_output_path",
+        "user_turn_content",
+    }
+)
 
 
 def _normalized_nonempty(values: Iterable[str]) -> tuple[str, ...]:
@@ -80,11 +90,11 @@ def _log_collision_if_needed(
 
 
 def project_opencode_spec_to_cli_args(
-    spec: OpenCodeLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``OpenCodeLaunchSpec`` into an ordered subprocess command list."""
+    """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
 
     projected_mcp_tools = _normalized_nonempty(spec.mcp_tools)
     if projected_mcp_tools:
@@ -182,7 +192,7 @@ def project_opencode_spec_to_cli_args(
 
 
 _check_projection_drift(
-    OpenCodeLaunchSpec,
+    ResolvedLaunchSpec,
     projected=_PROJECTED_FIELDS,
     delegated=_DELEGATED_FIELDS,
 )

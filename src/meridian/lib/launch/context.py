@@ -22,10 +22,10 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
-from meridian.lib.core.child_env import build_child_env_overrides, validate_child_env_keys
+from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.workspace_projection import (
@@ -212,17 +212,19 @@ class ChildEnvContext:
         child_spawn_id: str | None = None,
         increment_depth: bool = True,
     ) -> dict[str, str]:
-        overrides = build_child_env_overrides(
-            parent_spawn_id=self.parent_spawn_id,
-            child_spawn_id=child_spawn_id,
+        ctx = ResolvedContext(
+            spawn_id=SpawnId(self.parent_spawn_id) if self.parent_spawn_id else None,
+            depth=self.parent_depth,
             project_root=self.project_root,
             runtime_root=self.runtime_root,
-            parent_chat_id=self.parent_chat_id,
-            parent_depth=self.parent_depth,
+            chat_id=self.parent_chat_id or "",
             work_id=self.work_id,
             work_dir=self.work_dir,
             context_dirs=self.context_dirs,
+        )
+        overrides = ctx.child_env_overrides(
             increment_depth=increment_depth,
+            child_spawn_id=child_spawn_id,
         )
         validate_child_env_keys(overrides)
         return overrides

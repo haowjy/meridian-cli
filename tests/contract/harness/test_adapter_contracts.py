@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from meridian.lib.harness import HARNESS_EXTENSION_TOUCHPOINTS, ensure_bootstrap
 from meridian.lib.harness.adapter import (
     BootstrapMode,
@@ -18,19 +14,14 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     get_bundle_registry,
     get_connection_cls,
-    project_managed_primary_backend_command,
-    project_managed_primary_bootstrap,
-    project_subprocess_spec,
 )
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
 def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() -> None:
@@ -136,30 +127,20 @@ def test_codex_contract_declares_primary_runtime_event_surfacing() -> None:
     assert contract.bootstrap.primary_attach_failure_policy == "raise"
 
 
-def test_bundle_projection_helpers_reject_spec_mismatch() -> None:
+def test_all_harness_bundles_use_resolved_launch_spec() -> None:
+    """All harness bundles share the single ResolvedLaunchSpec — no subtype narrowing."""
+    from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+
     ensure_bootstrap()
-
-    spec = ClaudeLaunchSpec(
-        prompt="hi",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    with pytest.raises(TypeError, match="expected CodexLaunchSpec"):
-        project_subprocess_spec(HarnessId.CODEX, spec, base_command=("codex",))
-
-    with pytest.raises(TypeError, match="expected OpenCodeLaunchSpec"):
-        project_managed_primary_backend_command(
-            HarnessId.OPENCODE,
-            spec,
-            host="127.0.0.1",
-            port=9999,
+    for harness_id, bundle in get_bundle_registry().items():
+        assert bundle.spec_cls is ResolvedLaunchSpec, (
+            f"harness {harness_id} uses spec_cls={bundle.spec_cls.__name__!r}; "
+            "expected ResolvedLaunchSpec"
         )
-
-    with pytest.raises(TypeError, match="expected OpenCodeLaunchSpec"):
-        project_managed_primary_bootstrap(
-            HarnessId.OPENCODE,
-            spec,
-            project_root=Path("."),
+        assert bundle.adapter.contract.projection.launch_spec_cls == "ResolvedLaunchSpec", (
+            f"harness {harness_id} contract declares launch_spec_cls="
+            f"{bundle.adapter.contract.projection.launch_spec_cls!r}; "
+            "expected 'ResolvedLaunchSpec'"
         )
 
 

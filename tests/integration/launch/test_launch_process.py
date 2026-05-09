@@ -14,7 +14,6 @@ import pytest
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode, ForkMaterializationMode
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
 from meridian.lib.launch import process
@@ -23,6 +22,7 @@ from meridian.lib.launch.constants import (
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
@@ -143,7 +143,7 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         log_dir=tmp_path,
         child_cwd=tmp_path,
         child_env={},
-        launch_spec=CodexLaunchSpec(
+        launch_spec=ResolvedLaunchSpec(
             prompt="hello",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             interactive=True,
@@ -204,7 +204,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         log_dir=tmp_path,
         child_cwd=tmp_path,
         child_env={},
-        launch_spec=CodexLaunchSpec(
+        launch_spec=ResolvedLaunchSpec(
             prompt="hello",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
             interactive=True,
@@ -324,7 +324,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
 
     def fake_project_subprocess_spec(
         harness_id: HarnessId,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
         *,
         base_command: tuple[str, ...],
     ) -> list[str]:
@@ -451,7 +451,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
 
     def fake_project_subprocess_spec(
         harness_id: HarnessId,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
         *,
         base_command: tuple[str, ...],
     ) -> list[str]:

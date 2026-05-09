@@ -17,9 +17,9 @@ from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.extractors.base import HarnessExtractor
 from meridian.lib.harness.extractors.claude import ClaudeHarnessExtractor
 from meridian.lib.harness.ids import TransportId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec, CodexLaunchSpec, ResolvedLaunchSpec
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.launch.extract import enrich_finalize
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import extract_or_fallback_report
 from meridian.lib.launch.written_files import extract_written_files
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -85,7 +85,7 @@ def _bundle_for_extractor(
             handled_fields=frozenset(),
             owns_untracked_session=lambda **kwargs: False,
         ),
-        spec_cls=CodexLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=extractor,
         connections={TransportId.STREAMING: CodexConnection},
         projections=HarnessProjectionPorts(
@@ -456,7 +456,7 @@ def test_streaming_extractor_prefers_live_connection_session_id() -> None:
     class _LiveConnection:
         session_id = "thread-live-123"
 
-    spec = CodexLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
@@ -473,7 +473,7 @@ def test_streaming_extractor_prefers_live_connection_session_id() -> None:
 
 
 def test_streaming_extractor_falls_back_to_harness_owned_artifact_detection() -> None:
-    spec = CodexLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
@@ -598,7 +598,7 @@ def test_claude_extractor_no_scan_when_ids_absent(tmp_path: Path) -> None:
     project_dir.mkdir(parents=True)
     session_file = project_dir / "heuristic-claude-session.jsonl"
     session_file.write_text('{"sessionId":"heuristic-claude-session"}\n', encoding="utf-8")
-    spec = ClaudeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
@@ -614,7 +614,7 @@ def test_claude_extractor_no_scan_when_ids_absent(tmp_path: Path) -> None:
 
 
 def test_claude_extractor_trusts_seeded_session_id() -> None:
-    spec = ClaudeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         extra_args=("--session-id", "seeded-claude-session"),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
@@ -632,7 +632,7 @@ def test_claude_extractor_trusts_seeded_session_id() -> None:
 
 
 def test_claude_extractor_prefers_continue_session_id() -> None:
-    spec = ClaudeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         continue_session_id="continued-claude-session",
         extra_args=("--session-id", "seeded-claude-session"),

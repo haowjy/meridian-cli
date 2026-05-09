@@ -22,12 +22,12 @@ from meridian.lib.harness.common import (
     extract_usage_from_artifacts,
 )
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.opencode_storage import (
     iter_opencode_session_files,
     opencode_session_id_from_path,
     resolve_opencode_storage_root,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform import get_home_path
 
 from .base import HarnessExtractor, session_from_mapping_with_keys
@@ -266,7 +266,7 @@ def _detect_storage_session_id(
     return candidates[0][1]
 
 
-class OpenCodeHarnessExtractor(HarnessExtractor[OpenCodeLaunchSpec]):
+class OpenCodeHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for OpenCode artifacts and events."""
 
     def detect_session_id_from_event(self, event: HarnessEvent) -> str | None:
@@ -278,7 +278,7 @@ class OpenCodeHarnessExtractor(HarnessExtractor[OpenCodeLaunchSpec]):
     def detect_session_id_from_artifacts(
         self,
         *,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
         launch_env: Mapping[str, str],
         child_cwd: Path,
         runtime_root: Path,
