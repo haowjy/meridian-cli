@@ -119,6 +119,7 @@ def test_follow_up_input_exposes_shared_launch_option_updates() -> None:
         "timeout": 12.5,
         "approval": "auto",
         "autocompact": 44,
+        "autocompact_pct": None,
         "effort": "high",
         "sandbox": "workspace-write",
         "harness": "codex",

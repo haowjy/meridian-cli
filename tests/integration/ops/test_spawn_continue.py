@@ -266,7 +266,7 @@ def test_spawn_continue_forwards_shared_create_fields_to_spawn_create(
             verbose=True,
             quiet=True,
             stream=True,
-            autocompact=44,
+            autocompact=200000,
             effort="high",
             sandbox="workspace-write",
             approval="auto",
@@ -284,7 +284,7 @@ def test_spawn_continue_forwards_shared_create_fields_to_spawn_create(
     assert captured_input.verbose is True
     assert captured_input.quiet is True
     assert captured_input.stream is True
-    assert captured_input.autocompact == 44
+    assert captured_input.autocompact == 200000
     assert captured_input.effort == "high"
     assert captured_input.sandbox == "workspace-write"
     assert captured_input.approval == "auto"

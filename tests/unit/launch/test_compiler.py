@@ -34,7 +34,7 @@ def _alias_entry(alias: str = "gptmini") -> AliasEntry:
         model_id=ModelId("openai/gpt-5.4-mini"),
         resolved_harness=HarnessId.CODEX,
         default_effort="medium",
-        default_autocompact=50,
+        default_autocompact=50000,
     )
 
 

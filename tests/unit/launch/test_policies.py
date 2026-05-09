@@ -61,15 +61,15 @@ def test_resolve_policy_fields_resolves_per_field_precedence() -> None:
         RuntimeOverrides(timeout=12.5),
         RuntimeOverrides(sandbox="workspace-write"),
         RuntimeOverrides(effort="medium", sandbox="read-only"),
-        RuntimeOverrides(approval="confirm", autocompact=70),
-        RuntimeOverrides(effort="low", approval="auto", autocompact=30),
+        RuntimeOverrides(approval="confirm", autocompact=70000),
+        RuntimeOverrides(effort="low", approval="auto", autocompact=30000),
     )
 
     assert resolved.timeout == 12.5
     assert resolved.sandbox == "workspace-write"
     assert resolved.effort == "medium"
     assert resolved.approval == "confirm"
-    assert resolved.autocompact == 70
+    assert resolved.autocompact == 70000
 
 
 def test_resolve_policy_fields_tuple_form_matches_positional_form() -> None:

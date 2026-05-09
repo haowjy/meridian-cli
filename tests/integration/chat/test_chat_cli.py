@@ -934,7 +934,7 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
         "name: reviewer\n"
         "model: claude-sonnet-4-6\n"
         "approval: auto\n"
-        "autocompact: 37\n"
+        "autocompact: 200000\n"
         "sandbox: workspace-write\n"
         "skills:\n"
         "  - profile-skill\n"
@@ -983,7 +983,7 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert snapshot.approval == "auto"
     assert snapshot.sandbox == "workspace-write"
     assert snapshot.effort == "low"
-    assert snapshot.autocompact == 37
+    assert snapshot.autocompact == 200000
     assert snapshot.skills == ("profile-skill", "cli-skill")
     assert snapshot.allowed_tools == ("Read",)
     assert snapshot.disallowed_tools == ("Bash",)

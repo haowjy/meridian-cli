@@ -87,7 +87,7 @@ def test_parse_agent_profile_models_preserves_supported_overrides(
             "models:",
             "  gpt55:",
             "    effort: low",
-            "    autocompact: 35",
+            "    autocompact: 200000",
             "    lane: correctness",
             "  unknown-only:",
             "    custom_field: ok",
@@ -100,7 +100,7 @@ def test_parse_agent_profile_models_preserves_supported_overrides(
 
     assert tuple(profile.models.keys()) == ("gpt55", "unknown-only")
     assert profile.models["gpt55"].effort == "low"
-    assert profile.models["gpt55"].autocompact == 35
+    assert profile.models["gpt55"].autocompact == 200000
     assert profile.models["unknown-only"].effort is None
     assert profile.models["unknown-only"].autocompact is None
     assert "uses legacy models" in caplog.text
@@ -366,12 +366,12 @@ def test_parse_agent_profile_keeps_valid_profile_autocompact(tmp_path: Path) -> 
         [
             "name: Coder",
             "model: gpt-5.4",
-            "autocompact: 40",
+            "autocompact: 200000",
         ],
     )
 
     profile = parse_agent_profile(profile_path)
-    assert profile.autocompact == 40
+    assert profile.autocompact == 200000
 
 
 def test_parse_agent_profile_drops_out_of_range_profile_autocompact(
