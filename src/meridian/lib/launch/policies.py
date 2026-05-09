@@ -371,6 +371,7 @@ def _build_final_resolved_views(
         sandbox=scoped_execution_policy.sandbox,
         approval=scoped_execution_policy.approval,
         autocompact=scoped_execution_policy.autocompact,
+        autocompact_pct=scoped_execution_policy.autocompact_pct,
         timeout=scoped_execution_policy.timeout,
     )
     return resolved_routing, resolved_execution_policy
