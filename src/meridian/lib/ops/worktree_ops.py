@@ -98,7 +98,10 @@ def resolve_worktree_path(
     All returned paths are fully resolved (no symlinks, no ``..`` components).
     """
     if worktree_base is not None:
-        base = Path(worktree_base)
+        base_path = Path(worktree_base)
+        if not base_path.is_absolute():
+            base_path = repo_root / base_path
+        base = base_path
     else:
         base = repo_root.parent / f"{repo_root.name}.worktrees"
     return (base / work_slug).resolve()
@@ -154,6 +157,28 @@ def create_worktree(
     """
     if target_path.exists():
         if worktree_exists(target_path):
+            # Verify the existing worktree belongs to the same main repo.
+            target_main = resolve_main_repo_root(target_path)
+            expected_main = resolve_main_repo_root(repo_root)
+            if target_main is None or expected_main is None or target_main != expected_main:
+                raise ValueError(
+                    f"Path {target_path} is a git worktree for a different repository "
+                    f"({target_main} != {expected_main}). "
+                    "Remove or relocate it before creating a worktree here."
+                )
+            # Verify the checked-out branch matches the requested branch.
+            branch_result = subprocess.run(
+                ["git", "-C", str(target_path), "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            current_branch = branch_result.stdout.strip()
+            if current_branch != branch:
+                raise ValueError(
+                    f"Worktree at {target_path} is on branch '{current_branch}', "
+                    f"not '{branch}'. Use a different branch name or a different path."
+                )
             logger.info(
                 "worktree_ops.create_worktree.reuse",
                 path=str(target_path),
