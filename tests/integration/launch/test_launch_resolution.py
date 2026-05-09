@@ -77,6 +77,32 @@ def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
 
 
 @pytest.mark.parametrize(
+    ("model", "requires_initial_prompt"),
+    [
+        ("claude-sonnet-4", False),
+        ("gpt-5.4", True),
+        ("gemini-2.5-pro", False),
+        ("", False),
+    ],
+    ids=["claude-model", "codex-model", "opencode-model", "no-model"],
+)
+def test_build_primary_spawn_request_infers_prompt_requirement_from_model(
+    model: str,
+    requires_initial_prompt: bool,
+) -> None:
+    """When harness is not explicit, prompt requirement is inferred from the model."""
+
+    request = LaunchRequest(model=model)
+
+    spawn_request = build_primary_spawn_request(request=request)
+
+    if requires_initial_prompt:
+        assert spawn_request.prompt == build_primary_prompt(request)
+    else:
+        assert spawn_request.prompt == ""
+
+
+@pytest.mark.parametrize(
     ("model", "peer_name", "peer_model", "skill_name", "skill_description"),
     [
         (
