@@ -68,6 +68,28 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
 
 
+def _worktree_done_message(item: work_store.WorkItem) -> str | None:
+    """Build worktree cleanup guidance for a just-archived work item (WT-30, WT-32).
+
+    Returns None when the item has no worktree_path.
+    Returns a message with an optional dirty-state prefix when the worktree
+    directory still exists on disk.
+    """
+    if not item.worktree_path:
+        return None
+    wt_path = Path(item.worktree_path)
+    if not wt_path.is_dir():
+        return None
+    from meridian.lib.ops.worktree_ops import is_worktree_dirty  # local to avoid side effects
+
+    dirty_prefix = ""
+    if is_worktree_dirty(wt_path):
+        dirty_prefix = "Warning: worktree has uncommitted changes.\n"
+    return (
+        f"{dirty_prefix}"
+        f"Worktree preserved at {item.worktree_path}\n"
+        f"To clean up: git worktree remove {item.worktree_path}"
+    )
 
 
 def _dispatch_work_hook_event(
@@ -167,6 +189,8 @@ class WorkUpdateOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
+        if self.warning:
+            return self.warning
         return ""
 
 
@@ -243,6 +267,8 @@ class WorkReopenOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
+        if self.warning:
+            return self.warning
         return ""
 
 
@@ -544,10 +570,13 @@ def work_update_sync(
             work_id=item.name,
             data={"status": item.status},
         )
+        # WT-30, WT-32: preserve worktree on done; emit cleanup guidance + dirty check.
+        # WT-31: intentional — worktrees are never auto-removed by meridian.
+        worktree_message = _worktree_done_message(item)
         return WorkUpdateOutput(
             name=item.name,
             status=item.status,
-            warning=_merge_warnings(warning, attachment_warning),
+            warning=_merge_warnings(warning, attachment_warning, worktree_message),
         )
     if current.status == "done" and payload.status is not None:
         raise ValueError(
@@ -591,10 +620,13 @@ def work_done_sync(
         work_id=item.name,
         data={"status": item.status},
     )
+    # WT-30, WT-32: preserve worktree on done; emit cleanup guidance + dirty check.
+    # WT-31: intentional — worktrees are never auto-removed by meridian.
+    worktree_message = _worktree_done_message(item)
     return WorkUpdateOutput(
         name=item.name,
         status=item.status,
-        warning=_merge_warnings(nested_warning, attachment_warning),
+        warning=_merge_warnings(nested_warning, attachment_warning, worktree_message),
     )
 
 
@@ -615,6 +647,8 @@ def work_delete_sync(
         work_id=item.name,
         data={"status": item.status, "had_artifacts": had_artifacts},
     )
+    # WT-40, WT-41: intentional — worktrees are never auto-removed by meridian on delete.
+    # The work item state directory is removed; the git worktree is left for the user to manage.
     return WorkDeleteOutput(
         name=item.name,
         had_artifacts=had_artifacts,
@@ -635,7 +669,24 @@ def work_reopen_sync(
         work_id=item.name,
         data={"status": item.status},
     )
-    return WorkReopenOutput(name=item.name, status=item.status, warning=warning)
+    # WT-35, WT-36: surface worktree availability after reopen.
+    reopen_message: str | None = None
+    if item.worktree_path:
+        wt_path = Path(item.worktree_path)
+        if wt_path.is_dir():
+            # WT-35: worktree still present — inform the user.
+            reopen_message = f"Worktree available at {item.worktree_path}"
+        else:
+            # WT-36: worktree was removed externally — warn that CWD falls back to project root.
+            reopen_message = (
+                f"Worktree was removed: {item.worktree_path}\n"
+                "Spawns will use the project root for CWD."
+            )
+    return WorkReopenOutput(
+        name=item.name,
+        status=item.status,
+        warning=_merge_warnings(warning, reopen_message),
+    )
 
 
 def work_switch_sync(
@@ -683,11 +734,16 @@ def work_rename_sync(
         work_id=item.name,
         data={"old_name": old_name, "new_name": item.name, "status": item.status},
     )
+    # WT-45: worktree_path is preserved through the rename (directory rename carries metadata).
+    # Inform the user that the worktree path is unchanged so they can update any saved references.
+    rename_warning: str | None = None
+    if item.worktree_path:
+        rename_warning = f"Note: worktree path unchanged at {item.worktree_path}"
     return WorkRenameOutput(
         old_name=old_name,
         new_name=item.name,
         changed=old_name != item.name,
-        warning=warning,
+        warning=_merge_warnings(warning, rename_warning),
     )
 
 
