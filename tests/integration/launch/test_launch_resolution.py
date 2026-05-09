@@ -21,7 +21,7 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
-from meridian.lib.launch.types import LaunchRequest
+from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.plugin_api.git import resolve_clone_path
 from tests.support.fixtures import write_agent, write_skill
 
@@ -48,6 +48,32 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
 
     assert runtime.project_paths_project_root == project_root.resolve().as_posix()
     assert runtime.project_paths_execution_cwd == execution_cwd.resolve().as_posix()
+
+
+@pytest.mark.parametrize(
+    ("harness", "requires_initial_prompt"),
+    [
+        (HarnessId.CLAUDE, False),
+        (HarnessId.OPENCODE, False),
+        (HarnessId.CODEX, True),
+    ],
+    ids=["claude", "opencode", "codex"],
+)
+def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
+    harness: HarnessId,
+    requires_initial_prompt: bool,
+) -> None:
+    request = LaunchRequest(
+        model="test-model",
+        harness=harness.value,
+    )
+
+    spawn_request = build_primary_spawn_request(request=request)
+
+    if requires_initial_prompt:
+        assert spawn_request.prompt == build_primary_prompt(request)
+    else:
+        assert spawn_request.prompt == ""
 
 
 @pytest.mark.parametrize(

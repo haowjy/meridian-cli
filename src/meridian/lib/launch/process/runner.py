@@ -566,6 +566,7 @@ def _create_managed_primary_connection(
             request_handler = PermissionBroker(
                 spawn_dir=spawn_dir,
                 event_sink=_event_sink,
+                auto_reject_runtime_requests=False,
             )
 
         connection.configure_primary_runtime_requests(

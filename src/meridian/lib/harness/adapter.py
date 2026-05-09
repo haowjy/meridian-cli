@@ -98,6 +98,10 @@ class HarnessCapabilities(BaseModel):
     supports_native_skills: bool = False
     supports_native_agents: bool = False
     supports_primary_launch: bool = False
+    # Whether primary launch needs a synthetic first user prompt to bootstrap
+    # one session. Harnesses that can attach without a first-turn prompt keep
+    # this disabled.
+    requires_initial_prompt: bool = False
 
     # Whether native file injection is available (e.g., OpenCode --file)
     supports_native_file_injection: bool = False

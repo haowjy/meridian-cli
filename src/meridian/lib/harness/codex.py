@@ -347,6 +347,7 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
             supports_native_skills=True,
             supports_native_agents=True,
             supports_primary_launch=True,
+            requires_initial_prompt=True,
             supports_native_file_injection=False,
             terminal_surface_modes=(
                 TerminalSurfaceMode.PTY_MEDIATED,

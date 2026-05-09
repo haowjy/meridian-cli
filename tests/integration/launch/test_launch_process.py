@@ -1192,11 +1192,11 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
 
 
 @pytest.mark.slow
-def test_run_harness_process_fresh_claude_primary_does_not_inject_seed_args(
+def test_run_harness_process_fresh_claude_primary_seeds_session_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Fresh Claude primary launch must not inject unsupported --session-id args."""
+    """Fresh Claude primary launch seeds --session-id for all launches."""
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     project_root = tmp_path / "seed-reuse"
     project_root.mkdir()
@@ -1230,12 +1230,14 @@ def test_run_harness_process_fresh_claude_primary_does_not_inject_seed_args(
 
     outcome = process.run_harness_process(launch_context, harness_registry)
 
+    # No pre-seeded session from the launch context; Claude generates one in the command.
     assert launch_context.seed_harness_session_id in (None, "")
-    assert "command_session_id" not in captured
-    assert outcome.resolved_harness_session_id == ""
+    assert "command_session_id" in captured
+    seeded_id = captured["command_session_id"]
+    assert outcome.resolved_harness_session_id == seeded_id
     spawns = list_spawns(launch_context.runtime_root)
     assert len(spawns) == 1
-    assert spawns[0].harness_session_id in (None, "")
+    assert spawns[0].harness_session_id == seeded_id
 
 
 @pytest.mark.slow
@@ -1257,9 +1259,25 @@ def test_run_harness_process_records_generated_claude_command_session_id(
 
     def fake_build_launch_context(*args: object, **kwargs: object) -> Any:
         runtime_context = original_build_launch_context(*args, **kwargs)
+        # Strip any --session-id already injected by resolve_launch_spec so the
+        # test-controlled value is the only one present in the command.
+        base_argv = runtime_context.binding.argv
+        stripped: list[str] = []
+        skip_next = False
+        for token in base_argv:
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "--session-id":
+                skip_next = True
+                continue
+            if token.startswith("--session-id="):
+                continue
+            stripped.append(token)
+        new_argv = (*stripped, "--session-id", generated_session_id)
         updated_binding = replace(
             runtime_context.binding,
-            argv=(*runtime_context.binding.argv, "--session-id", generated_session_id),
+            argv=new_argv,
             effective_harness_session_id="",
         )
         return replace(

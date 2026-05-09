@@ -41,6 +41,7 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
     assert claude.capabilities.terminal_surface_modes == (
         TerminalSurfaceMode.PTY_MEDIATED,
     )
+    assert claude.capabilities.requires_initial_prompt is False
     assert claude.bootstrap.mode.value == "subprocess_only"
     assert claude.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK
     assert claude.bootstrap.primary_session_seed_mode is SessionSeedMode.PROJECTED_ARGS
@@ -66,6 +67,7 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
         assert contract.bootstrap.prelaunch_bootstrap_mode is PrelaunchBootstrapMode.NONE
         assert contract.bootstrap.observer_controller is not None
         assert contract.transport.observer_controller_required is True
+        assert contract.capabilities.requires_initial_prompt is (harness_id is HarnessId.CODEX)
     assert (
         registry.get_contract(HarnessId.CODEX).bootstrap.fork_materialization
         is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK

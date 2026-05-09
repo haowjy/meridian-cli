@@ -4,6 +4,8 @@ from pathlib import Path
 from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 from .request import (
@@ -16,6 +18,24 @@ from .request import (
 from .types import LaunchRequest, SessionMode, build_primary_prompt
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
+
+
+def _requires_primary_synthetic_prompt(request: LaunchRequest) -> bool:
+    """Return whether the resolved harness requires a synthetic first prompt."""
+
+    explicit_harness = (request.harness or "").strip()
+    if not explicit_harness:
+        # Keep legacy behavior when harness is unresolved at this boundary.
+        return True
+
+    try:
+        harness_id = HarnessId(explicit_harness)
+    except ValueError:
+        # Preserve old behavior; harness validation still happens in policy resolution.
+        return True
+
+    harness = get_default_harness_registry().get_subprocess_harness(harness_id)
+    return harness.capabilities.requires_initial_prompt
 
 
 def _normalize_primary_session(request: LaunchRequest) -> SessionRequest:
@@ -43,7 +63,12 @@ def build_primary_spawn_request(
     """Translate primary launch inputs into the factory request shape."""
 
     normalized_session = _normalize_primary_session(request)
-    base_prompt = prompt if prompt is not None else build_primary_prompt(request)
+    if prompt is not None:
+        base_prompt = prompt
+    elif _requires_primary_synthetic_prompt(request):
+        base_prompt = build_primary_prompt(request)
+    else:
+        base_prompt = ""
 
     return SpawnRequest(
         prompt=base_prompt,

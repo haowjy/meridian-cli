@@ -143,6 +143,53 @@ async def test_permission_broker_pending_request_emits_and_persists_without_auto
 
 
 @pytest.mark.asyncio
+async def test_permission_broker_auto_rejects_runtime_requests_when_enabled(
+    tmp_path: Path,
+) -> None:
+    broker = PermissionBroker(
+        spawn_dir=tmp_path,
+        auto_reject_runtime_requests=True,
+    )
+    connection = _DummyConnection()
+
+    await broker.handle_request(
+        connection,
+        HarnessRequest(
+            request_id="approval-1",
+            request_type="approval",
+            method="item/commandExecution/requestApproval",
+            payload={"command": "make test"},
+        ),
+    )
+    await broker.handle_request(
+        connection,
+        HarnessRequest(
+            request_id="user-input-1",
+            request_type="user_input",
+            method="item/tool/requestUserInput",
+            payload={"schema": {"type": "object"}},
+        ),
+    )
+
+    assert connection.responses == [
+        ("approval-1", "reject", None),
+        ("user-input-1", "reject", None),
+    ]
+    assert broker.get_request("approval-1") is not None
+    assert broker.get_request("approval-1").status == "resolved"
+    assert broker.get_request("approval-1").resolution == {"decision": "reject"}
+    assert broker.get_request("user-input-1") is not None
+    assert broker.get_request("user-input-1").status == "resolved"
+    assert broker.get_request("user-input-1").resolution == {"decision": "reject"}
+    assert _journal_statuses(tmp_path / "permission_requests.jsonl") == [
+        "pending",
+        "resolved",
+        "pending",
+        "resolved",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_permission_broker_tracks_resolved_failed_and_cancelled_states(
     tmp_path: Path,
 ) -> None:

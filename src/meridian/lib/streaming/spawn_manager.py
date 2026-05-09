@@ -125,6 +125,7 @@ async def dispatch_start(
         request_handler = PermissionBroker(
             spawn_dir=resolve_spawn_log_dir(config.project_root, config.spawn_id),
             event_sink=_runtime_event_sink,
+            auto_reject_runtime_requests=True,
         )
 
     connection: HarnessConnection[Any]

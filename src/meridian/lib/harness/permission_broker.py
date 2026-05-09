@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -56,6 +57,7 @@ class PermissionTransition:
 
 
 PermissionTransitionSink = Callable[[PermissionTransition], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 class PermissionBroker(ServerRequestHandler):
@@ -72,10 +74,12 @@ class PermissionBroker(ServerRequestHandler):
         spawn_dir: Path,
         event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
         policy_hook: PermissionTransitionSink | None = None,
+        auto_reject_runtime_requests: bool = False,
     ) -> None:
         self._spawn_dir = spawn_dir
         self._event_sink = event_sink
         self._policy_hook = policy_hook
+        self._auto_reject_runtime_requests = auto_reject_runtime_requests
         self._journal_path = self._spawn_dir / "permission_requests.jsonl"
         self._cursor_path = self._spawn_dir / "permission_request_cursors.json"
 
@@ -93,7 +97,6 @@ class PermissionBroker(ServerRequestHandler):
         connection: HarnessConnection[Any],
         request: HarnessRequest,
     ) -> None:
-        _ = connection
         async with self._lock:
             existing = self._requests.get(request.request_id)
             if existing is not None:
@@ -111,6 +114,32 @@ class PermissionBroker(ServerRequestHandler):
             )
 
         await self._dispatch_transition(transition)
+        if self._auto_reject_runtime_requests:
+            await self._auto_reject_request(connection, request)
+
+    async def _auto_reject_request(
+        self,
+        connection: HarnessConnection[Any],
+        request: HarnessRequest,
+    ) -> None:
+        try:
+            await connection.respond_request(request.request_id, "reject")
+        except Exception as exc:
+            logger.warning(
+                "Failed to auto-reject runtime request %s",
+                request.request_id,
+                exc_info=True,
+            )
+            await self.on_request_failed(request.request_id, error=str(exc))
+            return
+
+        record = self.get_request(request.request_id)
+        if record is None or record.status != "pending":
+            return
+        await self.on_request_resolved(
+            request.request_id,
+            resolution={"decision": "reject"},
+        )
 
     async def on_request_resolved(
         self,
