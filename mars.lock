@@ -6,8 +6,8 @@ commit = "d230a6dd6eb1a0dbee9fec55e2f00a96e28dff81"
 
 [dependencies.meridian-base]
 url = "https://github.com/meridian-flow/meridian-base"
-version = "v0.3.0"
-commit = "4dd5476ecae78171aa7fe4a25c19131e41759f11"
+version = "v0.3.1"
+commit = "38d5e215d776042ea8e0e9164c96a3f55509a092"
 
 [dependencies.meridian-dev-workflow]
 url = "https://github.com/meridian-flow/meridian-dev-workflow"
@@ -608,13 +608,13 @@ installed_checksum = "sha256:8af966581f5ea6cc16066e926c1e9b5f96061bfb0c002292a92
 [items."skill/meridian-spawn"]
 source = "meridian-base"
 kind = "skill"
-version = "v0.3.0"
-source_checksum = "sha256:658f92907355ad8e0e1bce1fb22c84fe677be6ba764fda4a4437cd9c5acd801b"
+version = "v0.3.1"
+source_checksum = "sha256:44d66d6c0626f34133840cb3a9cea4103c550d4530d88b141fa97aee29be19b5"
 
 [[items."skill/meridian-spawn".outputs]]
 target_root = ".mars"
 dest_path = "skills/meridian-spawn"
-installed_checksum = "sha256:658f92907355ad8e0e1bce1fb22c84fe677be6ba764fda4a4437cd9c5acd801b"
+installed_checksum = "sha256:44d66d6c0626f34133840cb3a9cea4103c550d4530d88b141fa97aee29be19b5"
 
 [items."skill/meridian-work-coordination"]
 source = "meridian-base"
