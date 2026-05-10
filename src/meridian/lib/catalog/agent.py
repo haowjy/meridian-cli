@@ -14,7 +14,8 @@ from meridian.lib.core.overrides import (
     KNOWN_EFFORT_VALUES,
     AutocompactPctValue,
     AutocompactValue,
-    RuntimeOverrides,
+    _validate_autocompact_pct_value,
+    _validate_autocompact_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -346,46 +347,44 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     autocompact: int | None = None
     if autocompact_value is not None:
         try:
-            autocompact = int(str(autocompact_value))
+            raw_autocompact = int(str(autocompact_value))
         except (TypeError, ValueError):
             logger.warning(
                 "Agent profile '%s' has invalid autocompact '%s': expected int.",
                 profile_name,
                 autocompact_value,
             )
-            autocompact = None
-        if autocompact is not None:
+        else:
             try:
-                autocompact = RuntimeOverrides(autocompact=autocompact).autocompact
+                autocompact = cast("int | None", _validate_autocompact_value(raw_autocompact))
             except ValueError:
                 logger.warning(
                     "Agent profile '%s' has autocompact %d outside valid range.",
                     profile_name,
-                    autocompact,
+                    raw_autocompact,
                 )
-                autocompact = None
 
     autocompact_pct: int | None = None
     if autocompact_pct_value is not None:
         try:
-            autocompact_pct = int(str(autocompact_pct_value))
+            raw_autocompact_pct = int(str(autocompact_pct_value))
         except (TypeError, ValueError):
             logger.warning(
                 "Agent profile '%s' has invalid autocompact_pct '%s': expected int.",
                 profile_name,
                 autocompact_pct_value,
             )
-            autocompact_pct = None
-        if autocompact_pct is not None:
+        else:
             try:
-                autocompact_pct = RuntimeOverrides(autocompact_pct=autocompact_pct).autocompact_pct
+                autocompact_pct = cast(
+                    "int | None", _validate_autocompact_pct_value(raw_autocompact_pct)
+                )
             except ValueError:
                 logger.warning(
                     "Agent profile '%s' has autocompact_pct %d outside valid range (1-100).",
                     profile_name,
-                    autocompact_pct,
+                    raw_autocompact_pct,
                 )
-                autocompact_pct = None
 
     models = _parse_model_overrides(models_value, profile_name=profile_name)
     model_policies = _parse_model_policies(
