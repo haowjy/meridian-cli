@@ -227,9 +227,11 @@ def test_user_global_workspace_config_is_ignored_for_snapshot_and_launch(
     assert snapshot.source_paths == ()
     assert snapshot.roots == ()
     assert snapshot.findings == ()
-    assert user_workspace_root.as_posix() not in runtime_ctx.env_overrides.values()
+    bind_overrides = runtime_ctx.binding.environment.bind_env_overrides
+    assert user_workspace_root.as_posix() not in bind_overrides.values()
     assert all(
-        user_workspace_root.as_posix() not in arg for arg in runtime_ctx.run_params.extra_args
+        user_workspace_root.as_posix() not in arg
+        for arg in runtime_ctx.binding.run_params.extra_args
     )
 
 
@@ -247,7 +249,7 @@ def test_workspace_entries_do_not_create_context_env_vars(tmp_path: Path) -> Non
     runtime_ctx = _build_workspace_launch_context(project_root=project_root)
 
     assert get_projectable_roots(snapshot) == (workspace_root.resolve(),)
-    assert "MERIDIAN_CONTEXT_DOCS_DIR" not in runtime_ctx.env_overrides
+    assert "MERIDIAN_CONTEXT_DOCS_DIR" not in runtime_ctx.binding.environment.bind_env_overrides
 
 
 def test_workspace_entries_do_not_enter_system_prompt_context(tmp_path: Path) -> None:
@@ -265,7 +267,7 @@ def test_workspace_entries_do_not_enter_system_prompt_context(tmp_path: Path) ->
         project_root=project_root,
         surface=LaunchCompositionSurface.PRIMARY,
     )
-    system_prompt = runtime_ctx.run_params.appended_system_prompt or ""
+    system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
 
     assert "workspace-docs" not in system_prompt
     assert "MERIDIAN_CONTEXT_DOCS_DIR" not in system_prompt

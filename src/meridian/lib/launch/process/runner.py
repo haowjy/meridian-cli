@@ -685,7 +685,7 @@ def run_harness_process(
     execution_cwd = launch_context.execution_cwd
     runtime_root = launch_context.runtime_root
     preview_context = launch_context
-    command = preview_context.argv
+    command = preview_context.binding.argv
     spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
     session_mode = resolve_primary_session_mode(preview_context)

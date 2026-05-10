@@ -1413,7 +1413,6 @@ def test_run_harness_process_records_generated_claude_command_session_id(
         return replace(
             runtime_context,
             binding=updated_binding,
-            argv=updated_binding.argv,
             seed_harness_session_id="",
         )
 

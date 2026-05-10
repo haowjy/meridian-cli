@@ -109,7 +109,7 @@ async def streaming_serve(
     try:
         outcome = await run_streaming_spawn(
             config=connection_config,
-            spec=launch_ctx.spec,
+            spec=launch_ctx.binding.spec,
             runtime_root=runtime_root,
             project_root=project_root,
             spawn_id=spawn_id,

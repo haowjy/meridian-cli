@@ -787,7 +787,7 @@ async def launch_prepared_spawn(
             prepare_prelaunch = getattr(handoff.launch_context.harness, "prepare_prelaunch", None)
             child_env: dict[str, str] | None = None
             if callable(prepare_prelaunch):
-                child_env = dict(handoff.launch_context.env)
+                child_env = dict(handoff.launch_context.binding.environment.final_env)
 
                 def _record_effective_config_dir(config_dir: str) -> None:
                     spawn_store.update_spawn(
@@ -806,7 +806,7 @@ async def launch_prepared_spawn(
                     runtime_root=runtime_root,
                     spawn_id=spawn.spawn_id,
                     session=handoff.resolved_request.session,
-                    child_cwd=handoff.launch_context.child_cwd,
+                    child_cwd=handoff.launch_context.binding.child_cwd,
                     child_env=child_env,
                     resolved_harness_session_id="",
                     record_effective_config_dir=_record_effective_config_dir,
@@ -833,7 +833,6 @@ async def launch_prepared_spawn(
                         handoff.launch_context.binding,
                         environment=updated_environment,
                     ),
-                    env=MappingProxyType(child_env),
                 )
         except Exception as exc:
             await finalize_launch_failure(

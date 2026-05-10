@@ -153,7 +153,7 @@ def launch_primary(
 
     if request.dry_run:
         return LaunchResult(
-            command=preview_context.argv,
+            command=preview_context.binding.argv,
             exit_code=0,
             continue_ref=None,
             continue_chat_id=None,

@@ -8,8 +8,6 @@ from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.launch.launch_types import PermissionResolver, ResolvedLaunchSpec
 
-from .run_inputs import ResolvedRunInputs, to_spawn_params
-
 
 def normalize_system_prompt_passthrough_args(
     passthrough_args: tuple[str, ...],
@@ -48,30 +46,24 @@ def normalize_system_prompt_passthrough_args(
 def resolve_launch_spec_stage(
     *,
     adapter: SubprocessHarness,
-    run_inputs: ResolvedRunInputs | SpawnParams,
+    run_inputs: SpawnParams,
     perms: PermissionResolver,
 ) -> ResolvedLaunchSpec:
     """Stage-owned adapter callsite for `resolve_launch_spec`.
 
-    Reference delivery flow (intentional split):
-    1. `build_launch_context()` loads `reference_items` into `ResolvedRunInputs`.
-    2. `to_spawn_params()` intentionally drops `reference_items` because most harnesses
-       never consume them.
-    3. This stage selectively re-attaches `reference_items` onto the resolved spec only
-       when the active adapter advertises native file injection support and the spec model
-       exposes a `reference_items` field.
-
-    This keeps generic `SpawnParams` stable while still making native-injection data
-    available to any harness projection that explicitly supports it.
+    Reference delivery flow: `SpawnParams.reference_items` is selectively
+    re-attached onto the resolved spec only when the active adapter advertises
+    native file injection support and the spec model exposes a `reference_items`
+    field. All current adapters have `supports_native_file_injection=False` so
+    the block below is a future-proofing hook.
     """
 
-    spec = adapter.resolve_launch_spec(to_spawn_params(run_inputs), perms)
+    spec = adapter.resolve_launch_spec(run_inputs, perms)
 
     # If harness supports native file injection and we have reference_items,
     # update the spec with them (only for specs that have the field)
     if (
-        isinstance(run_inputs, ResolvedRunInputs)
-        and run_inputs.reference_items
+        run_inputs.reference_items
         and adapter.capabilities.supports_native_file_injection
         and hasattr(spec, "reference_items")
     ):
@@ -97,7 +89,7 @@ def _base_command(adapter: SubprocessHarness, *, interactive: bool) -> tuple[str
 def build_launch_argv(
     *,
     adapter: SubprocessHarness,
-    run_inputs: ResolvedRunInputs | SpawnParams,
+    run_inputs: SpawnParams,
     perms: PermissionResolver,
     projected_spec: ResolvedLaunchSpec,
 ) -> tuple[str, ...]:

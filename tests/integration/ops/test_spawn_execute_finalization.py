@@ -425,9 +425,10 @@ async def test_launch_prepared_spawn_terminalizes_launch_failure_when_adapter_pr
                         id=HarnessId.CODEX,
                         prepare_prelaunch=fail_prepare_prelaunch,
                     ),
-                    env={},
-                    binding=SimpleNamespace(environment=SimpleNamespace(final_env={})),
-                    child_cwd=tmp_path,
+                    binding=SimpleNamespace(
+                        child_cwd=tmp_path,
+                        environment=SimpleNamespace(final_env={}),
+                    ),
                 ),
             ),
             session_context=_SessionExecutionContext(

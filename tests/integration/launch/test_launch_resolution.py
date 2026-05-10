@@ -156,7 +156,7 @@ def test_primary_launch_injects_inventory_by_harness_family(
     text = (
         preview.projected_content.system_prompt
         if preview.projected_content and preview.projected_content.system_prompt
-        else preview.run_params.prompt
+        else preview.binding.run_params.prompt
     )
     assert "# Meridian Agents" in text
     assert "## Subagent" in text
@@ -365,15 +365,15 @@ def test_workspace_roots_append_after_claude_preflight_projection(
     )
 
     runtime_root = tmp_path / ".meridian"
-    assert preview.child_cwd == tmp_path
-    args = preview.run_params.extra_args
+    assert preview.binding.child_cwd == tmp_path
+    args = preview.binding.run_params.extra_args
     assert args[:2] == ("--user-tail", "1")
     assert "--add-dir" not in args
-    projected_roots = {path.as_posix() for path in preview.spec.projected_roots}
+    projected_roots = {path.as_posix() for path in preview.binding.spec.projected_roots}
     assert shared_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
-    assert shared_root.as_posix() in preview.argv
-    assert runtime_root.as_posix() in preview.argv
+    assert shared_root.as_posix() in preview.binding.argv
+    assert runtime_root.as_posix() in preview.binding.argv
 
 
 def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Path) -> None:
@@ -418,14 +418,14 @@ def test_named_workspace_roots_project_through_codex_launch_context(tmp_path: Pa
     )
 
     runtime_root = tmp_path / ".meridian"
-    assert "--add-dir" not in preview.run_params.extra_args
-    projected_roots = {path.as_posix() for path in preview.spec.projected_roots}
+    assert "--add-dir" not in preview.binding.run_params.extra_args
+    projected_roots = {path.as_posix() for path in preview.binding.spec.projected_roots}
     assert local_override_root.as_posix() in projected_roots
     assert local_only_root.as_posix() in projected_roots
     assert runtime_root.as_posix() in projected_roots
     codex_add_dir_pairs = {
-        (preview.argv[index], preview.argv[index + 1])
-        for index, token in enumerate(preview.argv[:-1])
+        (preview.binding.argv[index], preview.binding.argv[index + 1])
+        for index, token in enumerate(preview.binding.argv[:-1])
         if token == "--add-dir"
     }
     assert ("--add-dir", local_override_root.as_posix()) in codex_add_dir_pairs
@@ -474,7 +474,7 @@ def test_git_backed_context_remote_projects_clone_root_once(
 
     clone_root = resolve_clone_path(remote)
     runtime_root = tmp_path / ".meridian"
-    projected_root_values = [path.as_posix() for path in preview.spec.projected_roots]
+    projected_root_values = [path.as_posix() for path in preview.binding.spec.projected_roots]
     assert projected_root_values.count(clone_root.as_posix()) == 1
     assert projected_root_values.count(runtime_root.as_posix()) == 1
 
@@ -497,8 +497,8 @@ def test_git_backed_context_remote_projects_clone_root_once(
     )
     claude_clone_root_pairs = sum(
         1
-        for index, token in enumerate(claude_preview.argv[:-1])
-        if token == "--add-dir" and claude_preview.argv[index + 1] == clone_root.as_posix()
+        for index, token in enumerate(claude_preview.binding.argv[:-1])
+        if token == "--add-dir" and claude_preview.binding.argv[index + 1] == clone_root.as_posix()
     )
     assert claude_clone_root_pairs == 1
 
@@ -536,7 +536,8 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     )
 
     runtime_root = tmp_path / ".meridian"
-    payload = json.loads(preview.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
+    bind_env = preview.binding.environment.bind_env_overrides
+    payload = json.loads(bind_env[OPENCODE_CONFIG_CONTENT_ENV])
     external_dirs = payload["permission"]["external_directory"]
     assert external_dirs[docs_root.as_posix() + "/**"] == "allow"
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
@@ -589,7 +590,8 @@ def test_opencode_workspace_projection_merges_parent_env(
 
     warning_codes = {warning.code for warning in preview.warnings}
     runtime_root = tmp_path / ".meridian"
-    payload = json.loads(preview.env_overrides[OPENCODE_CONFIG_CONTENT_ENV])
+    bind_env = preview.binding.environment.bind_env_overrides
+    payload = json.loads(bind_env[OPENCODE_CONFIG_CONTENT_ENV])
     external_dirs = payload["permission"]["external_directory"]
     assert external_dirs[shared_root.as_posix() + "/**"] == "allow"
     assert external_dirs[runtime_root.as_posix() + "/**"] == "allow"
@@ -631,8 +633,8 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         dry_run=True,
     )
 
-    assert "--file" not in preview.argv
-    assert file_ref.as_posix() not in preview.argv
+    assert "--file" not in preview.binding.argv
+    assert file_ref.as_posix() not in preview.binding.argv
     assert preview.projected_content is not None
     assert [route.to_dict() for route in preview.projected_content.reference_routing] == [
         {
@@ -765,9 +767,9 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     assert "# Skill:" not in projected.user_turn_content
     assert "# Meridian Agents" not in projected.user_turn_content
 
-    assert preview.run_params.prompt == projected.user_turn_content
-    assert "# Skill:" not in preview.run_params.prompt
-    assert "# Meridian Agents" not in preview.run_params.prompt
+    assert preview.binding.run_params.prompt == projected.user_turn_content
+    assert "# Skill:" not in preview.binding.run_params.prompt
+    assert "# Meridian Agents" not in preview.binding.run_params.prompt
 
 
 def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
@@ -817,8 +819,8 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert preview.projected_content is not None
     projected = preview.projected_content
 
-    assert preview.run_params.continue_harness_session_id == harness_session_id
-    assert preview.run_params.continue_fork is True
+    assert preview.binding.run_params.continue_harness_session_id == harness_session_id
+    assert preview.binding.run_params.continue_fork is True
     assert "Use verification checklist." in projected.system_prompt
     assert "# Meridian Agents" in projected.system_prompt
     assert "# Report" in projected.system_prompt

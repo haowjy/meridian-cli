@@ -216,7 +216,7 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     assert CLAUDE_NATIVE_DELEGATION_TOOLS.issubset(
         set(context.resolved_request.disallowed_tools)
     )
-    assert "--allowedTools" not in context.argv
+    assert "--allowedTools" not in context.binding.argv
 
 
 def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
@@ -243,8 +243,8 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
 
     assert context.resolved_request.allowed_tools == ("Bash",)
     assert "Agent" in context.resolved_request.disallowed_tools
-    allowed_flag_index = context.argv.index("--allowedTools")
-    assert context.argv[allowed_flag_index + 1] == "Bash"
+    allowed_flag_index = context.binding.argv.index("--allowedTools")
+    assert context.binding.argv[allowed_flag_index + 1] == "Bash"
 
 
 def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:

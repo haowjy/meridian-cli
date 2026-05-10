@@ -63,6 +63,44 @@ def _validate_autocompact_pct_value(v: object) -> object:
 AutocompactValue = Annotated[int | None, BeforeValidator(_validate_autocompact_value)]
 AutocompactPctValue = Annotated[int | None, BeforeValidator(_validate_autocompact_pct_value)]
 KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "yolo"})
+
+
+def _validate_effort_value(v: object) -> object:
+    """Shared validator: normalize and check effort against known values."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"effort must be a string, got {type(v).__name__}")
+    normalized = v.strip()
+    if not normalized:
+        return None
+    if normalized not in KNOWN_EFFORT_VALUES:
+        raise ValueError(
+            f"expected one of {sorted(KNOWN_EFFORT_VALUES)}, got {v!r}"
+        )
+    return normalized
+
+
+def _validate_approval_value(v: object) -> object:
+    """Shared validator: normalize and check approval against known values."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"approval must be a string, got {type(v).__name__}")
+    normalized = v.strip()
+    if not normalized:
+        return None
+    if normalized not in KNOWN_APPROVAL_VALUES:
+        raise ValueError(
+            f"expected one of {sorted(KNOWN_APPROVAL_VALUES)}, got {v!r}"
+        )
+    return normalized
+
+
+EffortValue = Annotated[str | None, BeforeValidator(_validate_effort_value)]
+ApprovalValue = Annotated[str | None, BeforeValidator(_validate_approval_value)]
+
+
 RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
     "model": "MERIDIAN_MODEL",
     "agent": "MERIDIAN_AGENT",
@@ -150,9 +188,9 @@ class RuntimeOverrides(BaseModel):
     model: str | None = None
     harness: str | None = None
     agent: str | None = None
-    effort: str | None = None
+    effort: EffortValue = None
     sandbox: str | None = None
-    approval: str | None = None
+    approval: ApprovalValue = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
@@ -202,32 +240,6 @@ class RuntimeOverrides(BaseModel):
                 continue
             rendered[env_name] = str(value)
         return rendered
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value)
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                "Invalid runtime override 'effort': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("approval")
-    @classmethod
-    def _validate_approval(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value)
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                "Invalid runtime override 'approval': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        return normalized
 
     @field_validator("timeout")
     @classmethod
@@ -389,10 +401,14 @@ __all__ = [
     "EXECUTION_POLICY_FIELDS",
     "KNOWN_APPROVAL_VALUES",
     "KNOWN_EFFORT_VALUES",
+    "ApprovalValue",
     "AutocompactPctValue",
     "AutocompactValue",
+    "EffortValue",
     "ExecutionPolicyField",
     "RuntimeOverrides",
+    "_validate_approval_value",
+    "_validate_effort_value",
     "normalize_execution_policy_fields",
     "resolve",
 ]

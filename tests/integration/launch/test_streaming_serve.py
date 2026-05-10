@@ -32,15 +32,19 @@ def _fake_launch_context(
                 "session_agent_path": str(child_cwd / "agent.md"),
             },
         ),
-        child_cwd=child_cwd,
         work_id=None,
-        env_overrides={
-            "MERIDIAN_SPAWN_ID": spawn_id,
-            "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
-            "EXTRA_ENV": "present",
-        },
-        spec=SimpleNamespace(name="fake-spec"),
-        run_params=SimpleNamespace(appended_system_prompt=system or ""),
+        binding=SimpleNamespace(
+            child_cwd=child_cwd,
+            environment=SimpleNamespace(
+                bind_env_overrides={
+                    "MERIDIAN_SPAWN_ID": spawn_id,
+                    "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
+                    "EXTRA_ENV": "present",
+                },
+            ),
+            spec=SimpleNamespace(name="fake-spec"),
+            run_params=SimpleNamespace(appended_system_prompt=system or ""),
+        ),
     )
 
 

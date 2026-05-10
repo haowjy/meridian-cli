@@ -142,13 +142,13 @@ def test_build_launch_context_behaviors(
             harness_registry=registry,
             dry_run=True,
         )
-        assert runtime_ctx.argv == dry_run_ctx.argv
+        assert runtime_ctx.binding.argv == dry_run_ctx.binding.argv
 
     if expected_argv is not None:
-        assert runtime_ctx.argv == expected_argv
+        assert runtime_ctx.binding.argv == expected_argv
 
     if patch_argv_failure:
-        assert runtime_ctx.spec is not None
+        assert runtime_ctx.binding.spec is not None
 
 
 def test_build_launch_context_projects_runtime_child_env_paths(
@@ -169,36 +169,31 @@ def test_build_launch_context_projects_runtime_child_env_paths(
         dry_run=True,
     )
 
-    assert runtime_ctx.env_overrides["MERIDIAN_DEPTH"] == "3"
-    assert runtime_ctx.env_overrides["MERIDIAN_SPAWN_ID"] == "p-child-env"
-    assert runtime_ctx.env_overrides["MERIDIAN_CHAT_ID"] == "c-parent"
-    assert runtime_ctx.env_overrides["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_RUNTIME_DIR"] == (
-        tmp_path / ".meridian"
-    ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_ACTIVE_WORK_ID"] == "work-alpha"
-    assert runtime_ctx.env_overrides["MERIDIAN_ACTIVE_WORK_DIR"] == (
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    assert bind_env["MERIDIAN_DEPTH"] == "3"
+    assert bind_env["MERIDIAN_SPAWN_ID"] == "p-child-env"
+    assert bind_env["MERIDIAN_CHAT_ID"] == "c-parent"
+    assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_RUNTIME_DIR"] == (tmp_path / ".meridian").as_posix()
+    assert bind_env["MERIDIAN_ACTIVE_WORK_ID"] == "work-alpha"
+    assert bind_env["MERIDIAN_ACTIVE_WORK_DIR"] == (
         tmp_path / ".meridian" / "work" / "work-alpha"
     ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_WORK_DIR"] == (
-        tmp_path / ".meridian" / "work"
-    ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_KB_DIR"] == (
-        tmp_path / ".meridian" / "kb"
-    ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
+    assert bind_env["MERIDIAN_CONTEXT_WORK_DIR"] == (tmp_path / ".meridian" / "work").as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
         tmp_path / ".meridian" / "archive" / "work"
     ).as_posix()
     # MERIDIAN_HARNESS is informational (yield timing), not a policy override.
-    assert runtime_ctx.env_overrides["MERIDIAN_HARNESS"] == "codex"
-    assert runtime_ctx.env["MERIDIAN_HARNESS"] == "codex"
+    assert bind_env["MERIDIAN_HARNESS"] == "codex"
+    assert runtime_ctx.binding.environment.final_env["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.binding.environment.child_context_env["MERIDIAN_SPAWN_ID"] == "p-child-env"
     assert runtime_ctx.binding.environment.runtime_override_env == {}
     assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.binding.environment.final_env["MERIDIAN_HARNESS"] == "codex"
     unexpected = {
         key
-        for key in runtime_ctx.env_overrides
+        for key in bind_env
         if key not in ALLOWED_CHILD_ENV_KEYS
         and not key.startswith("MERIDIAN_CONTEXT_")
         and key != "MERIDIAN_HARNESS"
@@ -237,7 +232,7 @@ def test_build_launch_context_uses_runtime_override_snapshot_not_live_env(
         "MERIDIAN_APPROVAL": "confirm"
     }
     assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_APPROVAL"] == "confirm"
-    assert runtime_ctx.env["MERIDIAN_APPROVAL"] == "confirm"
+    assert runtime_ctx.binding.environment.final_env["MERIDIAN_APPROVAL"] == "confirm"
 
 
 def test_build_launch_context_explicit_empty_snapshot_blocks_live_policy_env_leak(
@@ -262,7 +257,7 @@ def test_build_launch_context_explicit_empty_snapshot_blocks_live_policy_env_lea
     assert runtime_ctx.resolved_request.execution_policy.approval is None
     assert runtime_ctx.binding.environment.runtime_override_env == {}
     assert "MERIDIAN_APPROVAL" not in runtime_ctx.binding.environment.bind_env_overrides
-    assert "MERIDIAN_APPROVAL" not in runtime_ctx.env
+    assert "MERIDIAN_APPROVAL" not in runtime_ctx.binding.environment.final_env
 
 
 @pytest.mark.parametrize(
@@ -297,9 +292,9 @@ def test_build_launch_context_primary_preserves_runtime_depth(
         dry_run=True,
     )
 
-    assert runtime_ctx.env_overrides["MERIDIAN_DEPTH"] == expected_depth
-    assert runtime_ctx.env_overrides["MERIDIAN_SPAWN_ID"] == "p-primary"
-    assert "MERIDIAN_PARENT_SPAWN_ID" not in runtime_ctx.env_overrides
+    assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_DEPTH"] == expected_depth
+    assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_SPAWN_ID"] == "p-primary"
+    assert "MERIDIAN_PARENT_SPAWN_ID" not in runtime_ctx.binding.environment.bind_env_overrides
 
 
 def test_build_launch_context_primary_projects_supplemental_documents(
@@ -330,7 +325,8 @@ def test_build_launch_context_primary_projects_supplemental_documents(
         dry_run=True,
     )
 
-    assert "# Bootstrap: setup\n\nsetup docs" in runtime_ctx.run_params.appended_system_prompt
+    appended = runtime_ctx.binding.run_params.appended_system_prompt
+    assert "# Bootstrap: setup\n\nsetup docs" in appended
 
 
 def test_build_launch_context_spawn_prepare_injects_goal_completion_contract(
@@ -357,8 +353,8 @@ def test_build_launch_context_spawn_prepare_injects_goal_completion_contract(
     projected_goal_contract = "\n".join(
         channel
         for channel in (
-            runtime_ctx.run_params.appended_system_prompt or "",
-            runtime_ctx.run_params.user_turn_content or "",
+            runtime_ctx.binding.run_params.appended_system_prompt or "",
+            runtime_ctx.binding.run_params.user_turn_content or "",
         )
         if channel
     )
@@ -403,16 +399,13 @@ def test_build_launch_context_primary_exports_configured_context_dirs(
         dry_run=True,
     )
 
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_WORK_DIR"] == (
-        tmp_path / "ctx/work"
-    ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    assert bind_env["MERIDIAN_CONTEXT_WORK_DIR"] == (tmp_path / "ctx/work").as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
         tmp_path / "ctx/archive/work"
     ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / "ctx/kb").as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (
-        tmp_path / "ctx/strategy"
-    ).as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / "ctx/kb").as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (tmp_path / "ctx/strategy").as_posix()
 
 
 def test_build_launch_context_env_keeps_project_root_when_execution_cwd_differs(
@@ -433,9 +426,10 @@ def test_build_launch_context_env_keeps_project_root_when_execution_cwd_differs(
         dry_run=True,
     )
 
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
     assert runtime_ctx.execution_cwd == execution_cwd
-    assert runtime_ctx.env_overrides["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_KB_DIR"] == (
+    assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (
         tmp_path / ".meridian" / "kb"
     ).as_posix()
 
@@ -457,8 +451,9 @@ def test_build_launch_context_emits_child_spawn_id(
         dry_run=True,
     )
 
-    assert runtime_ctx.env_overrides["MERIDIAN_SPAWN_ID"] == "p-child"
-    assert runtime_ctx.env_overrides["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    assert bind_env["MERIDIAN_SPAWN_ID"] == "p-child"
+    assert bind_env["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
 
 
 def test_build_launch_context_projects_context_paths_to_workspace_roots(
@@ -506,30 +501,27 @@ def test_build_launch_context_projects_context_paths_to_workspace_roots(
     )
 
     # Verify env vars are still exported (existing behavior)
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_WORK_DIR"] == (
-        tmp_path / "ctx" / "work"
-    ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    assert bind_env["MERIDIAN_CONTEXT_WORK_DIR"] == (tmp_path / "ctx" / "work").as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
         tmp_path / "ctx" / "archive" / "work"
     ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_KB_DIR"] == (
-        tmp_path / "ctx" / "kb"
-    ).as_posix()
-    assert runtime_ctx.env_overrides["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (
+    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / "ctx" / "kb").as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (
         tmp_path / "ctx" / "strategy"
     ).as_posix()
 
     # Verify workspace projection includes context paths for all harnesses.
     # For OpenCode: check OPENCODE_CONFIG_CONTENT env override.
-    if "OPENCODE_CONFIG_CONTENT" in runtime_ctx.env_overrides:
+    if "OPENCODE_CONFIG_CONTENT" in bind_env:
         import json
-        config = json.loads(runtime_ctx.env_overrides["OPENCODE_CONFIG_CONTENT"])
+        config = json.loads(bind_env["OPENCODE_CONFIG_CONTENT"])
         external_dirs = config.get("permission", {}).get("external_directory", {})
         assert (tmp_path / "ctx" / "work").as_posix() in external_dirs
         assert (tmp_path / "ctx" / "kb").as_posix() in external_dirs
         assert (tmp_path / "ctx" / "strategy").as_posix() in external_dirs
 
-    projected_roots = {path.as_posix() for path in runtime_ctx.spec.projected_roots}
+    projected_roots = {path.as_posix() for path in runtime_ctx.binding.spec.projected_roots}
     assert (tmp_path / "ctx" / "work").as_posix() in projected_roots
     assert (tmp_path / "ctx" / "archive" / "work").as_posix() in projected_roots
     assert (tmp_path / "ctx" / "kb").as_posix() in projected_roots
@@ -583,8 +575,9 @@ def test_build_launch_context_opencode_includes_context_paths_in_external_direct
         dry_run=True,
     )
 
-    assert "OPENCODE_CONFIG_CONTENT" in runtime_ctx.env_overrides
-    config = json.loads(runtime_ctx.env_overrides["OPENCODE_CONFIG_CONTENT"])
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    assert "OPENCODE_CONFIG_CONTENT" in bind_env
+    config = json.loads(bind_env["OPENCODE_CONFIG_CONTENT"])
     external_dirs = config.get("permission", {}).get("external_directory", {})
 
     work_path = (tmp_path / "ctx" / "work").as_posix() + "/**"

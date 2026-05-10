@@ -268,7 +268,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "user_turn_content",
         }
     )
-    _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset({"report_output_path"})
+    _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"report_output_path", "context_from_payload", "reference_items"}
+    )
 
     @property
     def id(self) -> HarnessId:

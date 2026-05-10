@@ -25,8 +25,10 @@ from meridian.lib.config.schema import (
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
+    ApprovalValue,
     AutocompactPctValue,
     AutocompactValue,
+    EffortValue,
 )
 
 logger = logging.getLogger(__name__)
@@ -1277,7 +1279,7 @@ class PrimaryConfig(BaseModel):
         ),
     ] = None
     effort: Annotated[
-        str | None,
+        EffortValue,
         config_field(
             "primary.effort",
             value_kind="str",
@@ -1295,7 +1297,7 @@ class PrimaryConfig(BaseModel):
         ),
     ] = None
     approval: Annotated[
-        str | None,
+        ApprovalValue,
         config_field(
             "primary.approval",
             value_kind="str",
@@ -1317,32 +1319,6 @@ class PrimaryConfig(BaseModel):
     @classmethod
     def _validate_optional_string_fields(cls, value: str | None) -> str | None:
         return _normalize_optional_string(value, source="primary")
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="primary.effort")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                "Invalid value for 'primary.effort': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("approval")
-    @classmethod
-    def _validate_approval(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="primary.approval")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                "Invalid value for 'primary.approval': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        return normalized
 
     @field_validator("timeout")
     @classmethod
@@ -1429,8 +1405,8 @@ class AgentOverlayConfig(BaseModel):
 
     model: str | None = None
     harness: str | None = None
-    effort: str | None = None
-    approval: str | None = None
+    effort: EffortValue = None
+    approval: ApprovalValue = None
     sandbox: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
@@ -1449,32 +1425,6 @@ class AgentOverlayConfig(BaseModel):
     @classmethod
     def _validate_optional_string_fields(cls, value: str | None) -> str | None:
         return _normalize_optional_string(value, source="agents")
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="agents.effort")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                "Invalid value for 'agents.effort': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("approval")
-    @classmethod
-    def _validate_approval(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="agents.approval")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                "Invalid value for 'agents.approval': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        return normalized
 
 
 

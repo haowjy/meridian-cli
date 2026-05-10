@@ -36,10 +36,14 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
         spawn_id = str(kwargs["spawn_id"])
         return SimpleNamespace(
             resolved_request=request,
-            child_cwd=child_cwd,
             work_id=None,
-            env_overrides={"MERIDIAN_SPAWN_ID": spawn_id},
-            run_params=SimpleNamespace(appended_system_prompt=""),
+            binding=SimpleNamespace(
+                child_cwd=child_cwd,
+                environment=SimpleNamespace(
+                    bind_env_overrides={"MERIDIAN_SPAWN_ID": spawn_id},
+                ),
+                run_params=SimpleNamespace(appended_system_prompt=""),
+            ),
         )
 
     return _build_launch_context

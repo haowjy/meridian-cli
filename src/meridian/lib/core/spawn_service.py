@@ -346,7 +346,7 @@ class SpawnApplicationService:
                 metadata=start_metadata,
                 spawn_id=str(final_spawn_id),
                 harness_session_id=resolved_request.session.requested_harness_session_id,
-                execution_cwd=str(launch_ctx.child_cwd),
+                execution_cwd=str(launch_ctx.binding.child_cwd),
                 launch_mode=payload.launch_mode,
                 runner_pid=payload.runner_pid,
                 status=payload.initial_status,
@@ -363,9 +363,9 @@ class SpawnApplicationService:
             spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.resolved_request.prompt,
-            project_root=launch_ctx.child_cwd,
-            env_overrides=dict(launch_ctx.env_overrides),
-            system=launch_ctx.run_params.appended_system_prompt,
+            project_root=launch_ctx.binding.child_cwd,
+            env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
+            system=launch_ctx.binding.run_params.appended_system_prompt,
             debug_tracer=payload.debug_tracer,
         )
 

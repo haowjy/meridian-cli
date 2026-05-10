@@ -13,10 +13,10 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
 
 if TYPE_CHECKING:
+    from meridian.lib.harness.adapter import SpawnParams
     from meridian.lib.harness.ids import HarnessId
     from meridian.lib.launch.composition import ProjectedContent
     from meridian.lib.launch.reference import ReferenceItem
-    from meridian.lib.launch.run_inputs import ResolvedRunInputs
     from meridian.lib.safety.permissions import PermissionConfig
 
 
@@ -208,7 +208,7 @@ class ResolvedLaunchBinding:
     work_id: str | None
     child_cwd: Path
     report_output_path: Path
-    run_params: ResolvedRunInputs
+    run_params: SpawnParams
     permission_config: PermissionConfig
     perms: PermissionResolver
     spec: ResolvedLaunchSpec

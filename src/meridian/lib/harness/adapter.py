@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
-from typing import Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -232,6 +232,8 @@ class SpawnParams(BaseModel):
     appended_system_prompt: str | None = None
     report_output_path: str | None = None
     user_turn_content: str | None = None
+    context_from_payload: tuple[str, ...] = ()
+    reference_items: tuple[Any, ...] = ()
 
 
 class McpConfig(BaseModel):

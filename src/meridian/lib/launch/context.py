@@ -27,7 +27,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.diagnostics import capture_library_diagnostics
-from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.harness.workspace_projection import (
     OPENCODE_CONFIG_CONTENT_ENV,
     project_workspace_roots,
@@ -104,7 +104,6 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .run_inputs import ResolvedRunInputs
 from .workspace import resolve_workspace_snapshot_for_launch
 
 if TYPE_CHECKING:
@@ -239,14 +238,6 @@ class LaunchContext:
     runtime_root: Path
     work_id: str | None
     binding: ResolvedLaunchBinding
-    argv: tuple[str, ...]
-    run_params: ResolvedRunInputs
-    perms: PermissionResolver
-    spec: ResolvedLaunchSpec
-    child_cwd: Path
-    env: Mapping[str, str]
-    env_overrides: Mapping[str, str]
-    report_output_path: Path
     harness: SubprocessHarness
     resolved_request: SpawnRequest
     projected_content: ProjectedContent | None = None
@@ -312,7 +303,7 @@ class PreparedLaunchSurface:
 class MaterializedLaunchArtifacts:
     """Shared launch materialization below policy resolution."""
 
-    run_params: ResolvedRunInputs
+    run_params: SpawnParams
     permission_config: PermissionConfig
     perms: PermissionResolver
     spec: ResolvedLaunchSpec
@@ -456,7 +447,7 @@ def materialize_launch_artifacts(
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
-    run_params = ResolvedRunInputs(
+    run_params = SpawnParams(
         prompt=prompt,
         model=ModelId(model) if model else None,
         effort=effort,
@@ -1499,14 +1490,6 @@ def bind_launch_context(
         runtime_root=runtime_root,
         work_id=effective_work_id,
         binding=binding,
-        argv=argv,
-        run_params=run_params,
-        perms=perms,
-        spec=spec,
-        child_cwd=child_cwd,
-        env=environment.final_env,
-        env_overrides=environment.bind_env_overrides,
-        report_output_path=report_output_path,
         harness=harness,
         resolved_request=resolved_request,
         projected_content=projected_content,

@@ -263,7 +263,7 @@ def build_create_payload(
             dry_run=True,
         )
         return preview_context.resolved_request.model_copy(
-            update={"cli_command": preview_context.argv}
+            update={"cli_command": preview_context.binding.argv}
         )
 
 
