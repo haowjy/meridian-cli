@@ -23,6 +23,12 @@ Bump types:
   major   0.0.33 → 1.0.0
   rc      0.0.33 → 0.0.34-rc.1, or 0.0.34-rc.1 → 0.0.34-rc.2
 
+Side effects:
+  - Runs preflight checks (ruff, pyright, tests)
+  - Builds frontend (if pnpm and meridian-web are available)
+  - Promotes CHANGELOG.md [Unreleased] section to [X.Y.Z] - YYYY-MM-DD
+  - Stages version file, frontend dist, and changelog in the release commit
+
 Behavior:
   Stable: prepare pushes branch, waits for CI, then auto-resumes to tag.
   RC: prepare commits, tags, and pushes immediately (no CI gate).
