@@ -11,6 +11,7 @@ from meridian.lib.chat.protocol import ChatEvent, utc_now_iso
 from meridian.lib.chat.server import app, configure
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.paths import RuntimePaths
+from tests.conftest import posix_only
 
 
 class Handle:
@@ -151,6 +152,7 @@ def test_restart_recovery_tolerates_truncated_jsonl_tail(tmp_path: Path) -> None
         assert _event_types(client, chat_id, 1) == ["chat.started"]
 
 
+@posix_only  # Windows holds SQLite file handles past server shutdown, blocking unlink/overwrite
 def test_restart_recovery_rebuilds_missing_or_corrupt_index_from_jsonl(
     tmp_path: Path,
 ) -> None:

@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -256,7 +257,15 @@ def test_claude_adapter_uses_claude_config_dir_override(
 @pytest.mark.parametrize(
     ("configured_root", "cwd_relative", "expected_suffix"),
     [
-        ("~/claude-root", False, ("home", "claude-root")),
+        pytest.param(
+            "~/claude-root",
+            False,
+            ("home", "claude-root"),
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="HOME env var is not used by Path.expanduser() on Windows",
+            ),
+        ),
         ("relative-claude-root", True, ("repo", "relative-claude-root")),
     ],
 )

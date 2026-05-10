@@ -168,7 +168,8 @@ def test_frontend_mount_serves_root_spa_and_assets(tmp_path: Path) -> None:
 
         asset_response = client.get("/assets/app.js")
         assert asset_response.status_code == 200
-        assert asset_response.headers["content-type"].startswith("text/javascript")
+        # Accept any JS MIME type; Windows registry may return application/javascript
+        assert "javascript" in asset_response.headers["content-type"]
         assert "console.log" in asset_response.text
 
 

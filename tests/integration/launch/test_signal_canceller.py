@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import signal
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -116,10 +115,18 @@ async def test_signal_canceller_cli_lane_sends_sigterm_and_returns_terminal_row(
         "meridian.lib.streaming.signal_canceller.is_process_alive",
         fake_is_process_alive,
     )
-    sent_signals: list[tuple[int, int]] = []
+    terminated_pids: list[int] = []
 
-    def _fake_kill(pid: int, sig: int) -> None:
-        sent_signals.append((pid, sig))
+    def _fake_terminate_tree_sync(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "cancel",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> None:
+        terminated_pids.append(pid)
         spawn_store.finalize_spawn(
             runtime_root,
             spawn_id,
@@ -129,13 +136,16 @@ async def test_signal_canceller_cli_lane_sends_sigterm_and_returns_terminal_row(
             error="cancelled",
         )
 
-    monkeypatch.setattr(os, "kill", _fake_kill)
+    monkeypatch.setattr(
+        "meridian.lib.streaming.signal_canceller.terminate_tree_sync",
+        _fake_terminate_tree_sync,
+    )
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
         complete_spawn=_complete_spawn_for_runtime(runtime_root),
     ).cancel(SpawnId(spawn_id))
 
-    assert sent_signals == [(7654, signal.SIGTERM)]
+    assert terminated_pids == [7654]
     assert outcome.status == "cancelled"
     assert outcome.origin == "runner"
     assert outcome.exit_code == 143

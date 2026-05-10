@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import get_args, get_origin
@@ -320,8 +321,10 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
 
     oc_config = _json.loads(env_result["OPENCODE_CONFIG_CONTENT"])
     assert len(oc_config["instructions"]) == 1
-    assert oc_config["instructions"][0].startswith("/tmp/meridian-sysprompt-")
-    assert oc_config["instructions"][0].endswith(".md")
+    instruction_path = Path(oc_config["instructions"][0])
+    assert instruction_path.parent == Path(tempfile.gettempdir())
+    assert instruction_path.name.startswith("meridian-sysprompt-")
+    assert instruction_path.suffix == ".md"
     assert connection.subprocess_pid == fake_process.pid
 
     await connection._cleanup_runtime()

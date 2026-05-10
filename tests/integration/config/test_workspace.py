@@ -13,6 +13,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.workspace import ensure_workspace_valid_for_launch
+from tests.conftest import posix_only
 
 
 @pytest.fixture(autouse=True)
@@ -176,6 +177,7 @@ def test_workspace_snapshot_unknown_entry_keys_are_findings(tmp_path: Path) -> N
     assert snapshot.findings[0].payload == {"keys": ["workspace.root.enabled"]}
 
 
+@posix_only  # HOME env var is not used by Path.expanduser() on Windows (uses USERPROFILE)
 def test_named_workspace_resolves_absolute_and_tilde_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

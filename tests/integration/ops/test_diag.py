@@ -46,11 +46,11 @@ def _create_agent_skill_dirs(
 
 def _set_tree_mtime(path: Path, mtime: float) -> None:
     for current in (path, *path.rglob("*")):
-        os.utime(current, (mtime, mtime), follow_symlinks=False)
+        os.utime(current, (mtime, mtime))
 
 
 def _set_path_mtime(path: Path, mtime: float) -> None:
-    os.utime(path, (mtime, mtime), follow_symlinks=False)
+    os.utime(path, (mtime, mtime))
 
 
 def _write_text(path: Path, text: str) -> None:

@@ -9,6 +9,7 @@ import pytest
 
 from meridian.lib.platform.process_scope import posix
 from meridian.lib.platform.process_scope.base import CleanupResult
+from tests.conftest import posix_only
 
 
 @dataclass
@@ -33,6 +34,7 @@ class _FakeChild:
         self.pid = pid
 
 
+@posix_only
 def test_terminate_pgid_skips_when_birth_time_mismatches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -80,6 +82,7 @@ def test_terminate_pgid_on_windows_raises_runtime_error(
         )
 
 
+@posix_only
 def test_terminate_pgid_escalates_to_sigkill_for_remaining_descendants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

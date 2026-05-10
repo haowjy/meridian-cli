@@ -17,6 +17,7 @@ from meridian.lib.state.spawn_store import (
     start_spawn,
     update_spawn,
 )
+from tests.conftest import posix_only
 
 
 def _write_start_and_finalize(project_root: str, idx: int) -> None:
@@ -97,6 +98,7 @@ def _concurrent_update_in_subprocess(
     result_queue.put(row.model_dump())
 
 
+@posix_only  # Multiprocessing spawn + msvcrt.locking shows a race condition on Windows CI
 def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
     runtime_root = tmp_path / ".meridian"
     runtime_root.mkdir(parents=True, exist_ok=True)
