@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 
 import psutil
 
@@ -37,7 +37,7 @@ def assign_to_new_job(pid: int) -> tuple[str, Any] | None:
     import ctypes
     import ctypes.wintypes
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32 = cast("Any", ctypes.windll.kernel32)  # type: ignore[attr-defined]
 
     job_name = f"meridian-scope-{uuid.uuid4().hex}"
     job_handle = kernel32.CreateJobObjectW(None, job_name)
@@ -137,7 +137,7 @@ def terminate_job(
 
     import ctypes
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32 = cast("Any", ctypes.windll.kernel32)  # type: ignore[attr-defined]
 
     # --- PID reuse guard (PROC-006) ---
     skip_reason: str | None = None
