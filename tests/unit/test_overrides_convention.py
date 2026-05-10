@@ -41,18 +41,26 @@ _TEST_VALUES: dict[str, str] = {
 
 def test_runtime_overrides_fields_are_exposed_across_env_config_and_cli_layers() -> None:
     from meridian.lib.config.settings import MeridianConfig, PrimaryConfig
-    from meridian.lib.core.overrides import RuntimeOverrides
+    from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+    from meridian.lib.core.overrides import EXECUTION_POLICY_FIELDS, RuntimeOverrides
     from meridian.lib.launch.types import LaunchRequest
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
     runtime_fields = set(RuntimeOverrides.model_fields.keys())
+    policy_field_names = set(EXECUTION_POLICY_FIELDS)
     config_fields = set(PrimaryConfig.model_fields.keys())
-    launch_fields = set(LaunchRequest.model_fields.keys())
+    # LaunchRequest uses a carrier for policy fields — check routing fields directly
+    # and policy fields via the execution_policy sub-model.
+    launch_routing_fields = set(LaunchRequest.model_fields.keys())
+    launch_policy_fields = set(ResolvedExecutionPolicy.model_fields.keys())
     spawn_fields = set(SpawnCreateInput.model_fields.keys())
 
     for field_name in runtime_fields:
         assert field_name in config_fields
-        assert field_name in launch_fields
+        if field_name in policy_field_names:
+            assert field_name in launch_policy_fields
+        else:
+            assert field_name in launch_routing_fields
         assert field_name in spawn_fields
 
     env_values = {f"MERIDIAN_{k.upper()}": v for k, v in _TEST_VALUES.items()}

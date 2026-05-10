@@ -35,10 +35,6 @@ from .models import SpawnCreateInput
 
 logger = structlog.get_logger(__name__)
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
-# Backward-compatible monkeypatch target for tests/consumers that asserted the
-# old preflight hook. Validation no longer calls this; definitive resolution
-# happens in build_launch_context().
-resolve_model: object | None = None
 
 
 def _read_local_merged_models(project_root: Path | None) -> dict[str, object]:

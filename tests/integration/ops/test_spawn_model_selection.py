@@ -44,22 +44,12 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
         resolved_harness=HarnessId.CODEX,
     )
 
-    prepare_calls: list[str] = []
     policy_calls: list[str] = []
-
-    def prepare_resolve_model(name: str, project_root: Path | None = None) -> AliasEntry:
-        _ = project_root
-        prepare_calls.append(name)
-        return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
     def policy_resolve_model(self: CatalogSession, name: str) -> AliasEntry:
         policy_calls.append(name)
         return {"gpt55": alias, "gpt-5.5": canonical}[name]
 
-    monkeypatch.setattr(
-        "meridian.lib.ops.spawn.prepare.resolve_model",
-        prepare_resolve_model,
-    )
     monkeypatch.setattr(
         CatalogSession,
         "resolve_model",
@@ -84,7 +74,6 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
     assert result.status == "dry-run"
     assert result.model == "gpt-5.5"
     assert result.harness_id == "codex"
-    assert prepare_calls == []
     assert policy_calls == ["gpt55"]
 
     assert result.to_wire()["model_selection"] == {

@@ -11,9 +11,6 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast, runtime_checkabl
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
-from meridian.lib.core.overrides import (
-    RuntimeOverrides,
-)
 
 if TYPE_CHECKING:
     from meridian.lib.harness.ids import HarnessId
@@ -134,15 +131,6 @@ class ResolvedLaunchRouting:
     model: str | None
     harness: HarnessId
     agent: str | None
-
-    def as_overrides(self) -> RuntimeOverrides:
-        """Compatibility view for legacy RuntimeOverrides consumers."""
-
-        return RuntimeOverrides(
-            model=self.model,
-            harness=self.harness.value,
-            agent=self.agent,
-        )
 
 
 @dataclass(frozen=True)

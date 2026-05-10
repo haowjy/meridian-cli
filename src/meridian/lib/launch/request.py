@@ -1,9 +1,8 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
-from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -118,27 +117,6 @@ class SpawnRequest(BaseModel):
     terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_flat_policy_fields(cls, data: object) -> object:
-        """Migrate legacy flat policy fields to the execution_policy carrier.
-
-        Handles persisted JSON from before the carrier refactor (B-10).
-        """
-        if not isinstance(data, dict):
-            return data
-        data = cast("dict[str, Any]", data).copy()
-        if "execution_policy" in data:
-            return data
-        policy_fields: dict[str, Any] = {}
-        for field_name in ("effort", "sandbox", "approval", "autocompact", "autocompact_pct",
-                           "timeout"):
-            if field_name in data:
-                policy_fields[field_name] = data.pop(field_name)
-        if policy_fields:
-            data["execution_policy"] = policy_fields
-        return data
 
 
 class LaunchArgvIntent(StrEnum):

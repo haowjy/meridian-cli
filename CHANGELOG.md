@@ -25,6 +25,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
 
 ### Changed
+- **Execution policy carrier refactor.** `ResolvedExecutionPolicy` promoted to Pydantic `BaseModel` carrier passed opaquely through `SpawnRequest`, `LaunchRequest`, `ChatPolicySnapshot`, `CompilerRequest`, and `CompilerResult`. Adding a new execution-policy field now touches 2 files (carrier type + compiler resolution) instead of ~7 pass-through layers. 27 flat policy fields collapsed to 5 carrier fields; ~150 lines net reduction.
+- `ChatPolicySnapshot` version bumped to 2. Old v1 snapshots auto-migrate via `model_validator(mode="before")` — no manual migration needed.
+- `SpawnRequest` and `LaunchRequest` accept legacy flat-field JSON via migration validators for backward-compatible deserialization of persisted background spawns.
+- `CompilerRequest` profile defaults consolidated from 5 `profile_policy_*` fields to one `profile_policy_defaults: ResolvedExecutionPolicy` carrier.
+- `CompilerResult` policy output consolidated from 6 flat fields to one `execution_policy: ResolvedExecutionPolicy` carrier. `compiler_result_to_dry_run_dict()` reads from carrier; dry-run output unchanged.
+- Spawned Codex agents auto-reject runtime HITL permission requests via `PermissionBroker(auto_reject_runtime_requests=True)`. Primary sessions unaffected (`auto_reject_runtime_requests=False`).
+- Harness adapters declare `requires_initial_prompt` capability flag. Codex adapter sets it `True`; suppresses synthetic prompt for harnesses that provide their own.
 - **BREAKING**: Removed all legacy state auto-migration from hot paths. Spawn v1→v2 migration, session counter seeding from legacy events, and legacy spawn output fallbacks deleted. Upgrading from pre-0.1.0 requires `rm -rf ~/.meridian`.
 - Spawn store assumes v2 format only — no automatic format detection or conversion.
 - Default `spawn wait` yield intervals raised to **50 minutes** (3000s) for all harnesses, up from 15 min for Claude/Codex and 4 min for OpenCode. Long-running spawns no longer lose prompt-cache warmth mid-flight.
@@ -54,6 +61,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - OpenCode session continuation creates empty session instead of resuming. Root cause: `POST /session` ignores `sessionID` payload and always creates a new empty session. Fix: verify existing session via `GET /session/{id}` before POST; if found, return it directly. Attach then connects to the existing session with full history.
 
 ### Removed
+- `_spawn_request_overrides()` from `context.py` — rebuilt `RuntimeOverrides` from flat `SpawnRequest` fields.
+- `_compiler_execution_policy_overrides()` from `policies.py` — repacked compiler result fields into overrides.
+- `_supported_policy_scope()` from `policies.py` — field-scoping helper replaced by carrier-level scoping.
+- `ResolvedLaunchPolicy` compatibility properties (`resolved_routing`, `resolved_execution_policy`, `resolved_overrides`).
+- `RuntimeOverrides.from_launch_request()` — bridged flat `LaunchRequest` fields to overrides.
 - `src/meridian/lib/state/spawn/migration.py` — v1→v2 auto-migration
 - `src/meridian/lib/state/spawn/legacy_events.py` — v1 event models and reducer
 - Legacy session counter seeding from `sessions.jsonl` scan

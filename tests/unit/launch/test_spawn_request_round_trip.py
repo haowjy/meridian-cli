@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
@@ -22,12 +23,14 @@ def test_spawn_request_round_trip_json_with_all_fields() -> None:
         skills=("review", "verification"),
         extra_args=("--json", "--foo=bar"),
         mcp_tools=("github=gh",),
-        sandbox="workspace-write",
-        approval="auto",
+        execution_policy=ResolvedExecutionPolicy(
+            sandbox="workspace-write",
+            approval="auto",
+            autocompact=65000,
+            effort="high",
+        ),
         allowed_tools=("Read", "Write"),
         disallowed_tools=("Bash(rm)",),
-        autocompact=65000,
-        effort="high",
         retry=RetryPolicy(max_attempts=3, backoff_secs=1.5),
         budget=ExecutionBudget(timeout_secs=600, kill_grace_secs=45),
         session=SessionRequest(
@@ -92,9 +95,6 @@ def test_spawn_request_does_not_require_arbitrary_types() -> None:
     assert LaunchRuntime.model_config.get("arbitrary_types_allowed") is not True
 
 
-def test_spawn_request_rejects_bool_autocompact() -> None:
+def test_execution_policy_rejects_bool_autocompact() -> None:
     with pytest.raises(ValidationError):
-        SpawnRequest(
-            prompt="Implement phase 2",
-            autocompact=True,
-        )
+        ResolvedExecutionPolicy(autocompact=True)
