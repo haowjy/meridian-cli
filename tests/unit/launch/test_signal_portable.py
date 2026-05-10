@@ -24,9 +24,16 @@ from meridian.lib.launch.streaming_runner import (
 # ---------------------------------------------------------------------------
 
 
-def _send_signal(signum: signal.Signals) -> None:
-    """Send a signal to the current process."""
-    os.kill(os.getpid(), signum)
+def _invoke_handler(signum: signal.Signals) -> None:
+    """Invoke the currently installed signal handler directly, without OS delivery.
+
+    Calling os.kill(os.getpid(), signum) terminates the process on Windows instead
+    of firing the Python-level handler.  Capturing and calling the handler directly
+    exercises exactly the same code path on every platform.
+    """
+    handler = signal.getsignal(signum)
+    if callable(handler):
+        handler(signum, None)
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +64,7 @@ async def test_sigint_sets_shutdown_event() -> None:
     cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     try:
-        _send_signal(signal.SIGINT)
+        _invoke_handler(signal.SIGINT)
         # Allow the event loop to process the call_soon_threadsafe callback
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -77,7 +84,7 @@ async def test_sigterm_sets_shutdown_event() -> None:
     cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
     assert cleanup is not None
     try:
-        _send_signal(signal.SIGTERM)
+        _invoke_handler(signal.SIGTERM)
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert shutdown_event.is_set()
@@ -188,8 +195,8 @@ async def test_layering_streaming_handlers_restored_after_forwarder_unregisters(
         assert restored_sigint is streaming_handler_sigint
         assert restored_sigterm is streaming_handler_sigterm
 
-        # Now send SIGINT — the streaming handler should fire
-        _send_signal(signal.SIGINT)
+        # Now invoke SIGINT — the streaming handler should fire
+        _invoke_handler(signal.SIGINT)
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert shutdown_event.is_set()
