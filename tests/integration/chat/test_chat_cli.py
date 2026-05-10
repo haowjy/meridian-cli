@@ -60,8 +60,6 @@ def _stable_policy_resolution(monkeypatch, request):
 
 def test_chat_cli_auto_port_prints_local_backend_url(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / "runtime")
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
     calls: list[dict[str, object]] = []
 
     def fake_run(app, *, host: str, port: int) -> None:
@@ -86,8 +84,6 @@ def test_chat_cli_auto_port_prints_local_backend_url(monkeypatch, tmp_path) -> N
 
 def test_chat_cli_uses_requested_host_and_port(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / "runtime")
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
     calls: list[tuple[str, int]] = []
 
     def fake_run(_app, *, host: str, port: int) -> None:
@@ -111,8 +107,6 @@ def test_chat_cli_uses_requested_host_and_port(monkeypatch, tmp_path) -> None:
 @pytest.mark.parametrize("harness", ["claude", "codex", "opencode"])
 def test_chat_cli_accepts_supported_harness_matrix(monkeypatch, tmp_path, harness: str) -> None:
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / harness)
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
 
     run_chat_server(
         harness=harness,
@@ -125,8 +119,6 @@ def test_chat_cli_accepts_supported_harness_matrix(monkeypatch, tmp_path, harnes
 
 def test_chat_cli_rejects_unknown_harness(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / "runtime")
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
 
     with pytest.raises(ValueError, match="unsupported chat harness"):
         run_chat_server(
@@ -160,7 +152,6 @@ def test_chat_cli_static_mode_mounts_assets_and_writes_server_discovery(
     runtime_root = tmp_path / "runtime"
     dist = _write_dist(tmp_path)
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.chdir(tmp_path)
     mounted: dict[str, object] = {}
 
     def fake_mount(app, assets) -> None:
@@ -230,8 +221,6 @@ def test_chat_cli_static_mode_uses_default_asset_resolution(monkeypatch, tmp_pat
 def test_chat_cli_headless_skips_frontend_serving(monkeypatch, tmp_path) -> None:
     runtime_root = tmp_path / "runtime"
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
     stdout = StringIO()
 
     actual_port = run_chat_server(
@@ -248,8 +237,6 @@ def test_chat_cli_headless_skips_frontend_serving(monkeypatch, tmp_path) -> None
 
 def test_chat_cli_missing_assets_exits_with_actionable_error(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / "runtime")
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
     stdout = StringIO()
 
     with pytest.raises(SystemExit) as exc_info:
@@ -1129,7 +1116,6 @@ def test_chat_cli_rejects_invalid_flag_combinations_before_startup(
 ) -> None:
     runtime_root = tmp_path / "runtime"
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.chdir(tmp_path)
     stdout = StringIO()
     launch_attempts: list[str] = []
 
@@ -1155,7 +1141,6 @@ def test_chat_cli_rejects_invalid_flag_combinations_before_startup(
 def test_chat_cli_headless_rejects_dev_mode(monkeypatch, tmp_path) -> None:
     runtime_root = tmp_path / "runtime"
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.chdir(tmp_path)
     stdout = StringIO()
 
     with pytest.raises(SystemExit) as exc_info:
@@ -1292,7 +1277,6 @@ def test_chat_cli_dev_mode_uses_frontend_root_launcher_supervisor_and_warning(
         lambda **_kwargs: launcher,
     )
     monkeypatch.setattr("meridian.lib.chat.dev_frontend.DevSupervisor", FakeSupervisor)
-    monkeypatch.chdir(tmp_path)
     stdout = StringIO()
 
     actual_port = run_chat_server(
@@ -1356,8 +1340,6 @@ def test_chat_cli_dev_mode_surfaces_frontend_launch_errors(monkeypatch, tmp_path
 def test_chat_cli_headless_warns_on_open(monkeypatch, tmp_path) -> None:
     runtime_root = tmp_path / "runtime"
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "meridian.toml").touch()
     stdout = StringIO()
     opened: list[str] = []
     monkeypatch.setattr(chat_cmd.webbrowser, "open", lambda url: opened.append(url))
