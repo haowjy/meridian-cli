@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
-import signal
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+
+import psutil
 
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.state.liveness import is_process_alive
@@ -227,13 +228,13 @@ def read_managed_primary_snapshot(
 
 
 def _terminate_pid(pid: int) -> bool:
-    """Send SIGTERM to a single PID."""
+    """Terminate a single process by PID using psutil."""
 
     if pid <= 0 or pid == os.getpid():
         return False
     try:
-        os.kill(pid, signal.SIGTERM)
-    except (OSError, ProcessLookupError):
+        psutil.Process(pid).terminate()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         return False
     return True
 

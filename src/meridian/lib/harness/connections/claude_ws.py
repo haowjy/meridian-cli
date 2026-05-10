@@ -42,6 +42,7 @@ from meridian.lib.observability.trace_helpers import (
     trace_wire_recv,
     trace_wire_send,
 )
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
@@ -405,7 +406,12 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         if process is None or process.returncode is not None:
             return
         trace_wire_send(self._tracer, "signal_sent", "", signal=sig.name)
-        process.send_signal(sig)
+        if IS_WINDOWS:
+            # GenerateConsoleCtrlEvent(CTRL_C_EVENT) is unreliable for
+            # non-console-sharing processes; use TerminateProcess instead.
+            process.terminate()
+        else:
+            process.send_signal(sig)
 
     async def _cleanup_resources(self, *, terminate_process: bool) -> None:
         if terminate_process:

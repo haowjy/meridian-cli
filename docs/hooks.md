@@ -82,6 +82,44 @@ event   = "spawn.finalized"
 
 `command` and `builtin` are mutually exclusive.
 
+### Shell Behavior
+
+Hook `command` strings are executed via the platform default shell: `sh -c` on POSIX (Linux/macOS) and `cmd.exe /c` on Windows. This is standard Python `subprocess(shell=True)` behavior. Inline commands that rely on bash syntax — `&&`, `||`, `$()`, `[[`, or POSIX-only tools — will fail on Windows because `cmd.exe` does not understand them.
+
+For hooks that must run on both platforms, use a script file with an appropriate extension:
+
+```toml
+# POSIX — shell script
+[[hooks]]
+name    = "check"
+command = "./scripts/check.sh"
+event   = "spawn.finalized"
+
+# Windows — batch file or PowerShell
+[[hooks]]
+name    = "check"
+command = "powershell -File scripts/check.ps1"
+event   = "spawn.finalized"
+```
+
+If you only target one platform, inline commands are fine. If portability matters, point `command` at a script file rather than embedding shell syntax in TOML.
+
+### `repo` → `remote` Migration
+
+`repo` is accepted as a deprecated alias for `remote`. Meridian emits a warning when it sees `repo`. Update your config:
+
+```toml
+# Before (deprecated)
+[[hooks]]
+builtin = "git-autosync"
+repo = "git@github.com:team/docs.git"
+
+# After
+[[hooks]]
+builtin = "git-autosync"
+remote = "git@github.com:team/docs.git"
+```
+
 ## Builtin: `git-autosync`
 
 `git-autosync` keeps a remote Git repo in sync with local changes. On each trigger it:

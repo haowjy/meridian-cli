@@ -40,6 +40,11 @@ def main() -> None:
 
     import sys
 
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+
     args = sys.argv[1:]
 
     # Keep classifier import/use on this startup-cheap path so command catalog

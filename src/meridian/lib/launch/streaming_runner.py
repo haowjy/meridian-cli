@@ -7,7 +7,7 @@ import json
 import os
 import signal
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -170,30 +170,40 @@ def _install_signal_handlers(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
     received_signal: list[signal.Signals | None],
-) -> list[signal.Signals]:
-    installed: list[signal.Signals] = []
+) -> Callable[[], None] | None:
+    """Install portable signal handlers that set the shutdown event.
 
-    def _handle_signal(signum: signal.Signals) -> None:
+    Uses signal.signal() instead of loop.add_signal_handler() for Windows
+    compatibility (ProactorEventLoop does not support add_signal_handler).
+
+    Returns a cleanup callable that restores previous handlers, or None if
+    installation failed (non-main thread).
+    """
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return None
+
+    previous_handlers: dict[int, Any] = {}
+
+    def _handle(signum: int, frame: object) -> None:
         if received_signal[0] is None:
-            received_signal[0] = signum
-        shutdown_event.set()
+            received_signal[0] = signal.Signals(signum)
+        loop.call_soon_threadsafe(shutdown_event.set)
 
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(signum, _handle_signal, signum)
-            installed.append(signum)
-        except (NotImplementedError, RuntimeError):
+            previous_handlers[int(signum)] = signal.getsignal(signum)
+            signal.signal(signum, _handle)
+        except (ValueError, OSError):
             continue
-    return installed
 
+    def _cleanup() -> None:
+        for signum_int, prev in previous_handlers.items():
+            with suppress(Exception):
+                signal.signal(signal.Signals(signum_int), prev)
 
-def _remove_signal_handlers(
-    loop: asyncio.AbstractEventLoop,
-    installed: Iterable[signal.Signals],
-) -> None:
-    for signum in installed:
-        with suppress(Exception):
-            loop.remove_signal_handler(signum)
+    return _cleanup
 
 
 def _truncate_attempt_logs(log_dir: Path) -> None:
@@ -377,7 +387,7 @@ async def run_streaming_spawn(
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
-    installed_signals = _install_signal_handlers(loop, shutdown_event, received_signal)
+    signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
 
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     signal_task: asyncio.Task[bool] | None = None
@@ -474,7 +484,8 @@ async def run_streaming_spawn(
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
-            _remove_signal_handlers(loop, installed_signals)
+            if signal_cleanup is not None:
+                signal_cleanup()
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
 
@@ -703,7 +714,7 @@ async def execute_with_streaming(
     conclusion = StreamingRunConclusion()
     lifecycle_service: SpawnLifecycleService | None = None
     manager: SpawnManager | None = None
-    installed_signals: list[signal.Signals] = []
+    signal_cleanup: Callable[[], None] | None = None
     loop: asyncio.AbstractEventLoop | None = None
     received_signal: list[signal.Signals | None] = [None]
 
@@ -816,7 +827,7 @@ async def execute_with_streaming(
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
-        installed_signals = _install_signal_handlers(loop, shutdown_event, received_signal)
+        signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
 
         try:
             while True:
@@ -1114,8 +1125,8 @@ async def execute_with_streaming(
             harness_id=str(launch_context.harness.id),
         )
     finally:
-        if loop is not None and installed_signals:
-            _remove_signal_handlers(loop, installed_signals)
+        if signal_cleanup is not None:
+            signal_cleanup()
         if manager is not None:
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")

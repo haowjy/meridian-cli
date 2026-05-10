@@ -298,6 +298,28 @@ target_root = ".mars"
 dest_path = "agents/qa-lead.md"
 installed_checksum = "sha256:da3c59fee3ba66fb309138eec1180e47445e6cd24937e4038298f24485f65d56"
 
+[items."agent/refactor-coder"]
+source = "meridian-dev-workflow"
+kind = "agent"
+version = "v0.4.0"
+source_checksum = "sha256:8221d6a2b53c30b27c6813b52c721db14b438dde4e63fa5c545cb61b3d9e8092"
+
+[[items."agent/refactor-coder".outputs]]
+target_root = ".mars"
+dest_path = "agents/refactor-coder.md"
+installed_checksum = "sha256:8221d6a2b53c30b27c6813b52c721db14b438dde4e63fa5c545cb61b3d9e8092"
+
+[items."agent/refactor-reviewer"]
+source = "meridian-dev-workflow"
+kind = "agent"
+version = "v0.4.0"
+source_checksum = "sha256:958a2cadb6b6b88d213586dbe0651789c7ac91a23f09349aa99b957fefe358bc"
+
+[[items."agent/refactor-reviewer".outputs]]
+target_root = ".mars"
+dest_path = "agents/refactor-reviewer.md"
+installed_checksum = "sha256:958a2cadb6b6b88d213586dbe0651789c7ac91a23f09349aa99b957fefe358bc"
+
 [items."agent/reviewer"]
 source = "meridian-dev-workflow"
 kind = "agent"
@@ -396,6 +418,17 @@ source_checksum = "sha256:5f66103885c70e44a5ff602d01649b64b445b1d5c2caf48c0714dd
 target_root = ".mars"
 dest_path = "agents/web-researcher.md"
 installed_checksum = "sha256:5f66103885c70e44a5ff602d01649b64b445b1d5c2caf48c0714dd8bba5642af"
+
+[items."bootstrap-doc/feature-worktree"]
+source = "meridian-dev-workflow"
+kind = "bootstrapdoc"
+version = "v0.4.0"
+source_checksum = "sha256:3e83d26621b9a092a80d31fa5347be6f26663da34a760fed4d0c0810f2874894"
+
+[[items."bootstrap-doc/feature-worktree".outputs]]
+target_root = ".mars"
+dest_path = "bootstrap/feature-worktree/BOOTSTRAP.md"
+installed_checksum = "sha256:3e83d26621b9a092a80d31fa5347be6f26663da34a760fed4d0c0810f2874894"
 
 [items."bootstrap-doc/feature-worktree"]
 source = "meridian-dev-workflow"
@@ -517,6 +550,17 @@ source_checksum = "sha256:1db85ac3f7a0344ce88510ebdf36480de600c6798617d64f988564
 target_root = ".mars"
 dest_path = "skills/ears-parsing"
 installed_checksum = "sha256:1db85ac3f7a0344ce88510ebdf36480de600c6798617d64f988564ed113bd89b"
+
+[items."skill/feature-worktree"]
+source = "meridian-dev-workflow"
+kind = "skill"
+version = "v0.4.0"
+source_checksum = "sha256:b69290864c62cac621d177cca35a8c8e2a084c83f555769ad753d86fbb96629c"
+
+[[items."skill/feature-worktree".outputs]]
+target_root = ".mars"
+dest_path = "skills/feature-worktree"
+installed_checksum = "sha256:b69290864c62cac621d177cca35a8c8e2a084c83f555769ad753d86fbb96629c"
 
 [items."skill/frontend-design"]
 source = "anthropic-skills"
@@ -670,6 +714,17 @@ target_root = ".mars"
 dest_path = "skills/prompt-review"
 installed_checksum = "sha256:da083eff1c87f29134d4851f16c3ef82c7b6fb18e93a79e3b290712dcd1ff354"
 
+[items."skill/refactoring-principles"]
+source = "meridian-dev-workflow"
+kind = "skill"
+version = "v0.4.0"
+source_checksum = "sha256:ce4e741fca118f1e243ffc33b32ed93b7818d5f327af474b29825770d7107d7e"
+
+[[items."skill/refactoring-principles".outputs]]
+target_root = ".mars"
+dest_path = "skills/refactoring-principles"
+installed_checksum = "sha256:ce4e741fca118f1e243ffc33b32ed93b7818d5f327af474b29825770d7107d7e"
+
 [items."skill/reflection"]
 source = "meridian-base"
 kind = "skill"
@@ -768,3 +823,14 @@ source_checksum = "sha256:31dbad3685aceac689e04ff97b18cafbfddeef967750f9c41596bb
 target_root = ".mars"
 dest_path = "skills/unit-test"
 installed_checksum = "sha256:31dbad3685aceac689e04ff97b18cafbfddeef967750f9c41596bb440f00f767"
+
+[items."skill/verification"]
+source = "meridian-dev-workflow"
+kind = "skill"
+version = "v0.3.5"
+source_checksum = "sha256:959708499a62edd9b91d5f713ca76c8b13d5e59725128c9c738534366875bf53"
+
+[[items."skill/verification".outputs]]
+target_root = ".mars"
+dest_path = "skills/verification"
+installed_checksum = "sha256:959708499a62edd9b91d5f713ca76c8b13d5e59725128c9c738534366875bf53"

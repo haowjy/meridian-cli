@@ -1,6 +1,3 @@
-[dependencies.meridian-base]
-url = "https://github.com/meridian-flow/meridian-base"
-
 [dependencies.meridian-dev-workflow]
 url = "https://github.com/meridian-flow/meridian-dev-workflow"
 

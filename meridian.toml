@@ -89,4 +89,3 @@ remote = "git@github.com:meridian-flow/docs.git"
 # See docs/configuration.md "Claude Code Skill Leakage" for details.
 [workspace.sibling-repos]
 path = ".."
-

@@ -59,6 +59,7 @@ def _run_git(
             ["git", "-C", str(cwd), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
     except FileNotFoundError as exc:

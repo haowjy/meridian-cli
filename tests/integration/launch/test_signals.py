@@ -107,11 +107,11 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
         loop: asyncio.AbstractEventLoop,
         shutdown_event: asyncio.Event,
         received_signal: list[signal.Signals | None],
-    ) -> list[signal.Signals]:
+    ) -> None:
         _ = loop
         received_signal[0] = signal.SIGTERM
         shutdown_event.set()
-        return []
+        return None
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
