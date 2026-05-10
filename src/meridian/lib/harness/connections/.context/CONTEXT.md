@@ -15,6 +15,13 @@ writes NDJSON to the subprocess stdin and reads NDJSON from stdout. The `--input
 stream-json --output-format stream-json` flags select this mode. Do not reach for a WS
 library when reading this file.
 
+**`opencode_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV` from
+`meridian.lib.launch.workspace_projection`** — a cross-layer dependency on `launch/`
+rather than `harness/`. This is intentional: `workspace_projection.py` was moved to
+`launch/` to break a circular bootstrap dependency. Connections modules may import
+shared constants from `launch/` when those constants live there by architecture
+necessity.
+
 ## Contracts
 
 ### HarnessConnection ABC

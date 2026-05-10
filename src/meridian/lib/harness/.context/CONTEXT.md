@@ -143,6 +143,14 @@ override). If the parent process already exported this var, Meridian deep-merges
 new workspace entries into the parent config rather than suppressing projection.
 Suppression would silently drop workspace roots inherited from the spawner.
 
+The implementation (`project_workspace_roots()`, `OPENCODE_CONFIG_CONTENT_ENV`)
+lives in `launch/workspace_projection.py`, not in `harness/`. It was moved there
+to break a circular import in Python 3.14: `harness/__init__` → `opencode.py` →
+`opencode_http.py` → `workspace_projection` as a harness submodule, while harness
+was still initializing. The module only depends on `core.types` — it never depended
+on harness internals. `opencode_http.py` now imports `OPENCODE_CONFIG_CONTENT_ENV`
+from `meridian.lib.launch.workspace_projection`.
+
 ## Patterns
 
 ### Adding a Harness

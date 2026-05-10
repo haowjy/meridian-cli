@@ -135,6 +135,14 @@ not the spawns it is waiting on.
 
 ### Workspace Projection
 
+`workspace_projection.py` in this module owns `project_workspace_roots()` and
+`OPENCODE_CONFIG_CONTENT_ENV`. It was moved here from `harness/` to eliminate a
+circular import in Python 3.14 bootstrap (`harness/__init__` → `opencode.py` →
+`opencode_http.py` → `workspace_projection` as a harness submodule while harness
+was still initializing). The module only depends on `core.types` — never on harness
+internals. `harness/connections/opencode_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV`
+from this module.
+
 Two steps inside `bind_launch_context()`:
 
 1. **Gate**: `resolve_workspace_snapshot_for_launch()` raises on `"invalid"` workspace.

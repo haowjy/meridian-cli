@@ -50,6 +50,19 @@ a root/primary context (no `MERIDIAN_SPAWN_ID`), the full chat scope applies.
 `--include-others` bypasses the subtree scope and cancels across all non-primary running spawns.
 `--include-primaries` is separately required to cancel primary sessions.
 
+**Early-exit guard:** `spawn_cancel_all_sync()` exits immediately with no side effects when
+`caller_chat_id is None and caller_spawn_id is None and not payload.include_others`. Both
+identity fields must be absent — a nested spawn that has a `spawn_id` but no `chat_id` should
+not be early-exited; it can still scope cancel-all to its descendants. The previous guard only
+checked `caller_chat_id is None`, which incorrectly short-circuited nested spawns without a
+chat_id.
+
+**`_row_in_cancel_scope()` helper:** Extracted from the inline boolean in the list comprehension.
+Encapsulates the three-branch cancel scope logic:
+- `include_others=True` → always in scope
+- `descendant_ids` set (nested spawn caller) → only if row.id is in the subtree
+- `descendant_ids=None` (root/primary caller) → only if row.chat_id matches caller_chat_id
+
 ## session_config_dir Wire Rename
 
 `SpawnDetailOutput` exposes the field as `session_config_dir` (wire key: `session_config_dir`).
