@@ -1,0 +1,130 @@
+# ops/ — Operation Policy Layer
+
+## Architecture
+
+`ops/` sits between surfaces (CLI commands, MCP tools, REST routes) and mechanisms
+(`launch/`, `state/`, `harness/`). It owns *what* to do, not *how* to run a process.
+
+```
+CLI / MCP / REST
+      │
+      ▼
+ops/          ← policy: access control, input validation, lifecycle sequencing
+      │
+      ├──→ launch/      ← composition + execution mechanism
+      ├──→ state/       ← spawn/session event stores
+      └──→ harness/     ← process adapters (indirectly through launch/)
+```
+
+### ops/spawn/ — The Spawn Policy Layer
+
+`ops/spawn/` is the second of four driving adapters into `lib/launch/`. It owns
+the foreground and background spawn paths for child spawns (not primary sessions).
+
+**SpawnApplicationService** (in `lib/bootstrap/services.py`, built by `build_spawn_application_service()`)
+is the policy coordinator that `ops/spawn/api.py` instantiates. It sits above
+`SpawnLifecycleService` (sole state writer) and below the driving adapters:
+
+```
+Layer 3: build_launch_context()      ← pure resolution, may fail, no side effects
+Layer 4: SpawnApplicationService     ← lifecycle policy
+Layer 5: SpawnLifecycleService       ← sole state writer (spawn_store)
+```
+
+Key `SpawnApplicationService` methods:
+- `prepare_spawn()` — resolve-before-persist; REST and streaming-serve entry point
+- `cancel()` — surface-neutral cancel pipeline; managed-primary, signal, finalizing races
+- `complete_spawn()` — idempotent terminal seam; acquires per-spawn lock internally
+- `archive()` — validates terminal state, emits exactly one `spawn.archived`
+
+### Execution Paths in ops/spawn/execute.py
+
+**Foreground:** `execute_spawn_blocking()` → creates spawn row → calls
+`launch_prepared_spawn()` via `asyncio.run()` → `execute_with_streaming()`.
+
+**Background:** `execute_spawn_background()` → creates spawn row → persists
+`BackgroundWorkerLaunchRequest` to disk → detaches subprocess. Worker calls
+`_execute_existing_spawn()` → `launch_prepared_spawn()`.
+
+Both paths converge at `launch_prepared_spawn()`. This helper:
+1. Resolves session continuation (if resuming or forking)
+2. Materializes fork (only after spawn row exists — invariant I-10)
+3. Builds child env overrides
+4. Calls `build_launch_context()`
+5. Calls `execute_with_streaming()`
+
+`launch_prepared_spawn()` owns pre-run failure finalization via a broad `except`.
+This is safe because `complete_spawn()` is idempotent.
+
+### Resolve-Before-Persist Pattern
+
+The spawn subprocess path creates the row *before* calling `build_launch_context()`.
+This is a known gap — it differs from the REST/streaming-serve paths which use
+resolve-before-persist (`build_launch_context()` first, row creation only on success).
+Row-creation order unification is tracked as follow-up work.
+
+For the REST path, `SpawnApplicationService.prepare_spawn()` enforces:
+- **SEAM-1**: No spawn row on resolution failure
+- **SEAM-2**: Row metadata always reflects resolved model/agent/harness
+- **SEAM-3**: `ConnectionConfig.env_overrides` populated from `LaunchContext.env_overrides`
+
+### ops/spawn/prepare.py — The Exception to SPEC_ONLY
+
+`prepare.py` uses `LaunchCompositionSurface.SPAWN_PREPARE` and
+`LaunchArgvIntent.REQUIRED`. This is the only execution path that needs a real
+argv — it populates `cli_command` for dry-run display. All actual execution paths
+use `SPEC_ONLY`. Do not set `REQUIRED` on execution paths.
+
+## Contracts
+
+### OperationRuntime
+
+`runtime.py` provides `OperationRuntime` and `build_runtime()` — the ops-layer
+equivalent of `LaunchRuntime`. It resolves runtime root from env (`MERIDIAN_RUNTIME_DIR`),
+project state, or user home. Operations that need both project and runtime state
+use `resolve_runtime_root_and_config()`.
+
+### Depth Guard
+
+`ops/spawn/api.py` checks `max_depth_reached()` before executing spawns. A spawn
+inside a spawn inside a spawn eventually hits the depth limit; the outer caller
+gets `depth_exceeded_output()` instead of a new spawn. The reaper also checks
+`MERIDIAN_DEPTH` and skips reaping when inside a spawn.
+
+### Session Reference Resolution
+
+`ops/reference.py` exposes `resolve_session_reference()` → `ResolvedSessionReference`.
+This resolves spawn IDs (e.g., `p123`), chat IDs, and bare references to canonical
+spawn rows. Operations that accept `--from` or `-f` go through this.
+
+### Logging Convention
+
+`ops/` uses `structlog.get_logger()` throughout. Do not use stdlib `logging` —
+the logging split between catalog/config (stdlib) and ops/launch/harness (structlog)
+matters for the `capture_library_diagnostics()` boundary in `build_launch_context()`.
+
+## Patterns
+
+**ops/ is policy, not mechanism.** If you find yourself building argv, merging
+envs, or projecting workspace roots inside ops/, that logic belongs in `launch/`.
+
+**`commands.py` is the operation manifest.** CLI and MCP surfaces discover
+available operations through this module. Adding a new operation requires an entry
+here; otherwise it is invisible to those surfaces.
+
+**Work item attachment is ops-layer responsibility.** `work_attachment.py:ensure_explicit_work_item()`
+handles `--work` resolution before the spawn row is created. The resumed-session
+case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
+`launch/process/`.
+
+## Related KB
+
+- `architecture/launch-system.md` — full four-adapter diagram; ops/spawn is adapter #2
+- `concepts/spawn-lifecycle.md` — spawn status machine ops surfaces expose
+- `architecture/spawn-finalization.md` — `SpawnApplicationService.complete_spawn()`,
+  `CompleteSpawnOutcome`, per-spawn lock
+
+## Lateral Links
+
+- `../launch/.context/CONTEXT.md` — mechanism layer ops/spawn drives
+- `../spawn/.context/CONTEXT.md` — archive visibility ops/spawn reads
