@@ -155,7 +155,7 @@ def test_status_dict_is_json_serializable(tmp_path: Path) -> None:
     result = status_to_dict(status)
 
     json.dumps(result)
-    assert result["telemetry_dir"] == str(tmp_path / "telemetry")
+    assert Path(result["telemetry_dir"]) == tmp_path / "telemetry"
     assert result["total_size_human"] == status.total_size_human
 
 

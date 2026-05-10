@@ -13,7 +13,6 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.workspace import ensure_workspace_valid_for_launch
-from tests.conftest import posix_only
 
 
 @pytest.fixture(autouse=True)
@@ -177,7 +176,6 @@ def test_workspace_snapshot_unknown_entry_keys_are_findings(tmp_path: Path) -> N
     assert snapshot.findings[0].payload == {"keys": ["workspace.root.enabled"]}
 
 
-@posix_only  # HOME env var is not used by Path.expanduser() on Windows (uses USERPROFILE)
 def test_named_workspace_resolves_absolute_and_tilde_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -189,7 +187,9 @@ def test_named_workspace_resolves_absolute_and_tilde_paths(
     tilde_root.mkdir()
     absolute_root = tmp_path / "absolute-workspace-root"
     absolute_root.mkdir()
+    # Seed both HOME (POSIX) and USERPROFILE (Windows) so Path.expanduser() works on both platforms.
     monkeypatch.setenv("HOME", fake_home.as_posix())
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     (project_root / "meridian.local.toml").write_text(
         "[workspace.tilde]\n"
         'path = "~/tilde-workspace-root"\n'

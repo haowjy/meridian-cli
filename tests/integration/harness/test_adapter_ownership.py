@@ -2,7 +2,6 @@
 
 import json
 import os
-import sys
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -257,15 +256,7 @@ def test_claude_adapter_uses_claude_config_dir_override(
 @pytest.mark.parametrize(
     ("configured_root", "cwd_relative", "expected_suffix"),
     [
-        pytest.param(
-            "~/claude-root",
-            False,
-            ("home", "claude-root"),
-            marks=pytest.mark.skipif(
-                sys.platform == "win32",
-                reason="HOME env var is not used by Path.expanduser() on Windows",
-            ),
-        ),
+        ("~/claude-root", False, ("home", "claude-root")),
         ("relative-claude-root", True, ("repo", "relative-claude-root")),
     ],
 )
@@ -281,7 +272,9 @@ def test_claude_prepare_prelaunch_normalizes_config_dir_for_env_and_metadata(
     child_root = repo_root / "child"
     fake_home.mkdir(parents=True)
     child_root.mkdir(parents=True)
+    # Seed both HOME (POSIX) and USERPROFILE (Windows) so Path.expanduser() works on both platforms.
     monkeypatch.setenv("HOME", fake_home.as_posix())
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", configured_root)
     if cwd_relative:
         monkeypatch.chdir(repo_root)

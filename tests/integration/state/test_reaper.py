@@ -641,18 +641,23 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
         "meridian.lib.state.managed_primary.is_process_alive",
         lambda *_args, **_kwargs: False,
     )
-    sent_signals: list[tuple[int, int]] = []
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.os.kill",
-        lambda pid, sig: sent_signals.append((pid, sig)),
-    )
+    terminated_pids: list[int] = []
+
+    class _FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def terminate(self) -> None:
+            terminated_pids.append(self.pid)
+
+    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
     assert reconciled.status == "succeeded"
     assert reconciled.exit_code == 0
     assert reconciled.error is None
-    assert sent_signals == []
+    assert terminated_pids == []
 
 
 def test_reconcile_active_spawn_finalizing_stale_heartbeat_marks_orphan_finalization(
@@ -1115,11 +1120,16 @@ def test_cancel_terminal_non_orphan_primary_does_not_terminate_children(
         runtime_root=runtime_root,
         spawn_id=spawn_id,
     )
-    sent_signals: list[tuple[int, int]] = []
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.os.kill",
-        lambda pid, sig: sent_signals.append((pid, sig)),
-    )
+    terminated_pids: list[int] = []
+
+    class _FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def terminate(self) -> None:
+            terminated_pids.append(self.pid)
+
+    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
 
     output = spawn_api.spawn_cancel_sync(
         SpawnCancelInput(
@@ -1131,7 +1141,7 @@ def test_cancel_terminal_non_orphan_primary_does_not_terminate_children(
     assert output.status == "succeeded"
     assert output.exit_code == 1
     assert output.message == f"Spawn '{spawn_id}' is already succeeded."
-    assert sent_signals == []
+    assert terminated_pids == []
 
 
 def test_spawn_cancel_managed_primary_signals_launcher_first(
@@ -1274,11 +1284,16 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     )
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
     monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
-    sent_signals: list[tuple[int, int]] = []
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.os.kill",
-        lambda pid, sig: sent_signals.append((pid, sig)),
-    )
+    terminated_pids: list[int] = []
+
+    class _FakeProcess:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def terminate(self) -> None:
+            terminated_pids.append(self.pid)
+
+    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
 
     output = spawn_api.spawn_cancel_sync(
         SpawnCancelInput(
@@ -1289,7 +1304,7 @@ def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
 
     assert output.status == "failed"
     assert output.exit_code == 1
-    assert sent_signals == []
+    assert terminated_pids == []
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "cancel_timeout"

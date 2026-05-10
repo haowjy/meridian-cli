@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -85,10 +84,13 @@ async def test_signal_canceller_finalizing_gate_skips_sigterm(
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=4321)
     assert spawn_store.mark_finalizing(runtime_root, spawn_id) is True
 
-    def _unexpected_kill(pid: int, sig: int) -> None:
-        raise AssertionError(f"os.kill must not run for finalizing rows: pid={pid}, sig={sig}")
+    def _unexpected_terminate(pid: int, **_kwargs: object) -> None:
+        raise AssertionError(f"terminate_tree_sync must not run for finalizing rows: pid={pid}")
 
-    monkeypatch.setattr(os, "kill", _unexpected_kill)
+    monkeypatch.setattr(
+        "meridian.lib.streaming.signal_canceller.terminate_tree_sync",
+        _unexpected_terminate,
+    )
     outcome = await SignalCanceller(
         runtime_root=runtime_root,
         grace_seconds=0.01,

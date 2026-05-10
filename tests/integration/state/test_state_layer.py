@@ -98,7 +98,12 @@ def _concurrent_update_in_subprocess(
     result_queue.put(row.model_dump())
 
 
-@posix_only  # Multiprocessing spawn + msvcrt.locking shows a race condition on Windows CI
+@posix_only  # msvcrt.locking (used by the fcntl-shim on Windows) has a write-contention race when
+# multiple spawned subprocesses try to acquire the per-spawn lock simultaneously.  The test already
+# uses multiprocessing.get_context("spawn"), so fork semantics are not the issue; the underlying
+# Windows file-locking primitives are not equivalent to fcntl.flock for concurrent writers.
+# To enable this on Windows the state-layer locking would need to be ported to a Windows-native
+# advisory lock (e.g. LockFileEx) behind a platform adapter.
 def test_locking_contention_writes_clean_v2_state(tmp_path: Path) -> None:
     runtime_root = tmp_path / ".meridian"
     runtime_root.mkdir(parents=True, exist_ok=True)

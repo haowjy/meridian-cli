@@ -152,7 +152,12 @@ def test_restart_recovery_tolerates_truncated_jsonl_tail(tmp_path: Path) -> None
         assert _event_types(client, chat_id, 1) == ["chat.started"]
 
 
-@posix_only  # Windows holds SQLite file handles past server shutdown, blocking unlink/overwrite
+@posix_only  # Windows holds SQLite file handles open past TestClient.__exit__, so
+# index_path.unlink() and index_path.write_bytes() fail with PermissionError before the second
+# configure() call.  Fixing this would require (a) explicit connection-pool draining in the server
+# shutdown path, or (b) a gc.collect() + retry loop in the test.  Neither is a one-liner given
+# the current TestClient/anyio integration.  The rebuild logic itself is cross-platform; only the
+# test harness is blocked on Windows.
 def test_restart_recovery_rebuilds_missing_or_corrupt_index_from_jsonl(
     tmp_path: Path,
 ) -> None:
