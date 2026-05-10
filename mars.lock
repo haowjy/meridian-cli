@@ -6,13 +6,13 @@ commit = "f458cee31a7577a47ba0c9a101976fa599385174"
 
 [dependencies.meridian-base]
 url = "https://github.com/meridian-flow/meridian-base"
-version = "v0.3.7"
-commit = "424c9d73181fc3d14c3abd7a5c957345f90ed097"
+version = "v0.3.9"
+commit = "47d9d89dd6000156e52d0e75f4c7ea3fa446d766"
 
 [dependencies.meridian-dev-workflow]
 url = "https://github.com/meridian-flow/meridian-dev-workflow"
-version = "v0.5.6"
-commit = "6a074ca4922dab5fd811817aa4377b076cac5fc6"
+version = "v0.5.7"
+commit = "5dcc430d86b8d775238a336d317fa35ffe64ad27"
 
 [dependencies.meridian-prompter]
 url = "https://github.com/meridian-flow/meridian-prompter"
@@ -180,13 +180,13 @@ installed_checksum = "sha256:28e7ccb8759e86aefa141ba28404c02ce465c8b06222ff01ce4
 [items."agent/kb-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.5.4"
-source_checksum = "sha256:58cd39da5b693e76b6f3416ad8d2b65348ece89c528d525da924e280909c9742"
+version = "v0.5.7"
+source_checksum = "sha256:b46019236f1d9c21109080f3ce5c99c4500330f61484bea3ec699c7e2a542bb5"
 
 [[items."agent/kb-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/kb-lead.md"
-installed_checksum = "sha256:58cd39da5b693e76b6f3416ad8d2b65348ece89c528d525da924e280909c9742"
+installed_checksum = "sha256:b46019236f1d9c21109080f3ce5c99c4500330f61484bea3ec699c7e2a542bb5"
 
 [items."agent/kb-maintainer"]
 source = "meridian-base"
@@ -202,13 +202,13 @@ installed_checksum = "sha256:374db443d13d70526ece21439a2dc58aa3289efe485f8c25d45
 [items."agent/kb-writer"]
 source = "meridian-base"
 kind = "agent"
-version = "v0.3.3"
-source_checksum = "sha256:2f8bf9c399674760b3b77b70f0d4b1b4b6a5cde9a9935cd8f2d5082ee15cbb67"
+version = "v0.3.9"
+source_checksum = "sha256:78fe4e2833c18e55b2235b6f853ed829bf8943b496e95882926c10f3075b8d49"
 
 [[items."agent/kb-writer".outputs]]
 target_root = ".mars"
 dest_path = "agents/kb-writer.md"
-installed_checksum = "sha256:2f8bf9c399674760b3b77b70f0d4b1b4b6a5cde9a9935cd8f2d5082ee15cbb67"
+installed_checksum = "sha256:78fe4e2833c18e55b2235b6f853ed829bf8943b496e95882926c10f3075b8d49"
 
 [items."agent/meridian-default-orchestrator"]
 source = "meridian-base"
