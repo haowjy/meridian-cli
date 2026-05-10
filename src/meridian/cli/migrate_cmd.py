@@ -26,10 +26,10 @@ def register_migrate_command(app: App, emit: Emitter) -> None:
 
         Exits 0 on success or when no migration is needed. Exits 1 when blocked.
         """
-        from meridian.cli.utils import require_project_root
+        from meridian.cli.utils import require_established_project_root
         from meridian.lib.ops.migration import migrate_project_id
 
-        project_root = require_project_root()
+        project_root = require_established_project_root()
         result = migrate_project_id(project_root)
 
         if result.status == "migrated":

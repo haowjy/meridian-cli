@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from cyclopts import App, Parameter
 
-from meridian.cli.utils import parse_csv_list, require_project_root
+from meridian.cli.utils import parse_csv_list, require_established_project_root
 from meridian.lib.bootstrap.services import (
     build_chat_entrypoint,
     prepare_for_runtime_read,
@@ -502,7 +502,7 @@ def run_chat_server(
 def _prepare_chat_runtime_read_entrypoint() -> ChatEntryPoint:
     """Prepare the minimal chat entrypoint seam for read-only chat clients."""
 
-    prepared = prepare_for_runtime_read(require_project_root())
+    prepared = prepare_for_runtime_read(require_established_project_root())
     return build_chat_entrypoint(prepared)
 
 
@@ -511,7 +511,7 @@ def _resolve_chat_project_root(entrypoint: ChatEntryPoint | None) -> Path:
 
     if entrypoint is not None:
         return _chat_project_root(entrypoint)
-    return require_project_root()
+    return require_established_project_root()
 
 
 def _chat_project_root(entrypoint: ChatEntryPoint) -> Path:
@@ -527,7 +527,7 @@ def _check_stale_assets(assets: FrontendAssets, output: Any) -> None:
     """Warn if checkout-local frontend source appears newer than built assets."""
 
     try:
-        source_dir = require_project_root().parent / "meridian-web" / "src"
+        source_dir = require_established_project_root().parent / "meridian-web" / "src"
         if not source_dir.is_dir():
             return
 

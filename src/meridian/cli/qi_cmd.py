@@ -48,7 +48,7 @@ def cmd_qi_graph(
     ] = "text",
 ) -> None:
     """Show inline knowledge boundary for a path."""
-    from meridian.cli.utils import require_project_root
+    from meridian.cli.utils import require_established_project_root
     from meridian.lib.ops.qi import qi_show_sync
 
     resolved = path.resolve()
@@ -56,7 +56,7 @@ def cmd_qi_graph(
         print(f"Error: path not found: {path}", file=sys.stderr)
         raise SystemExit(2)
 
-    project_root = require_project_root()
+    project_root = require_established_project_root()
     result = qi_show_sync(resolved, project_root)
 
     if resolve_fmt(fmt) == "json":

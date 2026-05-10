@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal, overload
 
 
-def require_project_root() -> Path:
+def require_established_project_root() -> Path:
     """Resolve project root from GlobalOptions or CWD walk, erroring if none found.
 
     Reads opts.project_root first (set from --project-root flag), then falls
