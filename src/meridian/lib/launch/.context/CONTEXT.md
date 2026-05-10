@@ -173,5 +173,5 @@ resolved when persisted. Empty `model` is accepted — model-optional profiles e
 
 ## Lateral Links
 
-- `../ops/spawn/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
-- `../harness/` — adapters this layer calls into for `project_content()`, `preflight()`, `build_launch_argv()`
+- `../../ops/.context/CONTEXT.md` — how `ops/spawn/` drives this layer
+- `../../harness/` — adapters this layer calls into for `project_content()`, `preflight()`, `build_launch_argv()`

@@ -36,6 +36,6 @@ it stays there. This is intentional — archive is a one-way visibility suppress
 
 ## Lateral Links
 
-- `../ops/spawn/.context/CONTEXT.md` — `SpawnApplicationService.archive()` enforces
+- `../../ops/.context/CONTEXT.md` — `SpawnApplicationService.archive()` enforces
   terminal-state precondition before calling into this module
-- `../state/` — authoritative spawn records; untouched by archiving
+- `../../state/` — authoritative spawn records; untouched by archiving

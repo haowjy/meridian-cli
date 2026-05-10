@@ -126,5 +126,5 @@ case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
 
 ## Lateral Links
 
-- `../launch/.context/CONTEXT.md` — mechanism layer ops/spawn drives
-- `../spawn/.context/CONTEXT.md` — archive visibility ops/spawn reads
+- `../../launch/.context/CONTEXT.md` — mechanism layer ops/spawn drives
+- `../../spawn/.context/CONTEXT.md` — archive visibility ops/spawn reads
