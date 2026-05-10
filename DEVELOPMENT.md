@@ -125,6 +125,33 @@ scripts/release.sh abort
 uv run meridian --help
 ```
 
+## Windows Support
+
+Windows is a supported platform. The CLI and runtime run natively without WSL.
+
+### CI
+
+A `windows-gate` job in `.github/workflows/meridian-ci.yml` runs on `windows-latest` on every push, executing `uv run pytest -n auto -m "not slow"`.
+
+### Developer scripts
+
+PowerShell mirrors exist for the standard developer workflow:
+
+| Task | POSIX | Windows |
+|------|-------|---------|
+| Setup git hooks | `scripts/setup-hooks.sh` | `scripts\setup-hooks.ps1` |
+| Pre-push gate | `scripts/check.sh` | `scripts\check.ps1` |
+| Full preflight | `scripts/preflight.sh` | `scripts\preflight.ps1` |
+
+`scripts/release.sh` does not have a PowerShell mirror. Windows developers who need to cut releases should use WSL.
+
+### Deferred items
+
+The following are explicitly out of scope and not implemented:
+
+- **ConPTY / terminal passthrough**: Primary-session TUI capture for Claude Code and Codex session-ID extraction relies on PTY semantics. Windows ConPTY support is not implemented — harness features that depend on PTY capture may not work correctly natively on Windows. WSL is the supported path for primary-session use on Windows.
+- **Full bash script parity**: Only the three scripts above have PowerShell mirrors. `scripts/release.sh`, `scripts/quality-issues.sh`, and other helpers remain POSIX-only.
+
 ## Workspace conventions
 
 Workspace config declares sibling directories that harnesses may access during launches.
