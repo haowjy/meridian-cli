@@ -33,7 +33,7 @@ def set_scalar_option(
 
     primary_alias = _primary_file_alias(option)
     target_table = _ensure_table(document, primary_alias.table_path)
-    target_table[primary_alias.key] = tomlkit.item(_coerce_toml_scalar(value))
+    target_table[primary_alias.key] = tomlkit.item(_coerce_toml_scalar(value))  # pyright: ignore[reportUnknownMemberType]
 
     return ScalarEditResult(text=_render_document(document, original_text=text), removed=False)
 
@@ -66,7 +66,7 @@ def _ensure_table(
 ) -> TOMLDocument | Table:
     container: TOMLDocument | Table = document
     for depth, segment in enumerate(table_path):
-        child = cast("object | None", container.get(segment))
+        child = cast("object | None", container.get(segment))  # pyright: ignore[reportUnknownMemberType]
         if child is None:
             new_table = tomlkit.table(is_super_table=depth < len(table_path) - 1)
             container[segment] = new_table
@@ -87,7 +87,7 @@ def _remove_alias(
     ancestors: list[tuple[TOMLDocument | Table, str, Table]] = []
 
     for segment in table_path:
-        child = cast("object | None", container.get(segment))
+        child = cast("object | None", container.get(segment))  # pyright: ignore[reportUnknownMemberType]
         if not isinstance(child, Table):
             return False
         ancestors.append((container, segment, child))
@@ -109,20 +109,20 @@ def _prune_empty_tables(ancestors: list[tuple[TOMLDocument | Table, str, Table]]
 
 
 def _render_document(document: TOMLDocument, *, original_text: str) -> str:
-    rendered = cast("str", tomlkit.dumps(document))
+    rendered = tomlkit.dumps(document)  # pyright: ignore[reportUnknownMemberType]
     if rendered.startswith("\n") and not original_text.startswith("\n"):
         return rendered.removeprefix("\n")
     return rendered
 
 
 def _parse_document(text: str) -> TOMLDocument:
-    return cast("TOMLDocument", tomlkit.parse(text))
+    return tomlkit.parse(text)
 
 
 def _coerce_toml_scalar(value: object) -> TomlEditableScalar:
     if isinstance(value, bool | int | float | str):
         return value
     if isinstance(value, tuple):
-        items = [str(item) for item in value]
+        items = [str(item) for item in cast("tuple[object, ...]", value)]
         return items
     raise ValueError(f"Unsupported config value type: {type(value).__name__}")

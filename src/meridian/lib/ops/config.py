@@ -493,7 +493,7 @@ def _dynamic_value_source(
     for part in path:
         if not isinstance(current, dict) or part not in current:
             break
-        current = cast("dict[str, object]", current)[part]
+        current = cast("dict[str, object]", current)[part]  # pyright: ignore[reportUnnecessaryCast]
     else:
         return "file"
 
@@ -501,7 +501,7 @@ def _dynamic_value_source(
     for part in path:
         if not isinstance(current, dict) or part not in current:
             break
-        current = cast("dict[str, object]", current)[part]
+        current = cast("dict[str, object]", current)[part]  # pyright: ignore[reportUnnecessaryCast]
     else:
         return "user-config"
 
@@ -581,11 +581,12 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                 continue
             if not isinstance(policies, list | tuple):
                 continue
-            if len(policies) == 0:
+            policies_seq = cast("list[object] | tuple[object, ...]", policies)
+            if len(policies_seq) == 0:
                 rendered_policy_value = "[] (suppressed)"
             else:
                 rules_desc: list[str] = []
-                for policy_value in cast("list[object] | tuple[object, ...]", policies):
+                for policy_value in policies_seq:
                     if not isinstance(policy_value, dict):
                         continue
                     policy = cast("dict[str, object]", policy_value)
@@ -601,9 +602,9 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                         + (f" → {override_keys}" if override_keys else "")
                     )
                 rendered_policy_value = (
-                    f"{len(policies)} rules ({'; '.join(rules_desc)})"
+                    f"{len(policies_seq)} rules ({'; '.join(rules_desc)})"
                     if rules_desc
-                    else f"{len(policies)} rules"
+                    else f"{len(policies_seq)} rules"
                 )
             values.append(
                 ConfigResolvedValue(
