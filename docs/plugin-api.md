@@ -110,6 +110,8 @@ command = "notify-send 'spawn done'"
 event   = "spawn.finalized"
 ```
 
+**Shell behavior:** The `command` string is passed to the platform default shell — `sh -c` on POSIX and `cmd.exe /c` on Windows. Inline bash syntax will not work on Windows. For cross-platform hooks, point `command` at a script file (`.sh`, `.ps1`, or `.bat`) rather than embedding shell syntax inline.
+
 A Python builtin-style hook using the plugin API (for hooks distributed as packages):
 
 ```python

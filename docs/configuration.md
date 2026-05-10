@@ -320,7 +320,9 @@ event   = "spawn.finalized"
 failure_policy = "warn"
 ```
 
-See [hooks.md](hooks.md) for the full hook schema, event names, and builtin reference.
+Hook `command` strings run via the platform default shell — `sh -c` on POSIX, `cmd.exe /c` on Windows. Bash syntax in inline commands will not work on Windows; use a `.sh` / `.ps1` / `.bat` script file instead for cross-platform hooks.
+
+See [hooks.md](hooks.md) for the full hook schema, event names, builtin reference, and cross-platform guidance.
 
 ### `repo` → `remote`
 
