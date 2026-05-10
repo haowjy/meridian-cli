@@ -100,6 +100,12 @@ def _validate_approval_value(v: object) -> object:
 EffortValue = Annotated[str | None, BeforeValidator(_validate_effort_value)]
 ApprovalValue = Annotated[str | None, BeforeValidator(_validate_approval_value)]
 
+# Public aliases for external consumers (avoids reportPrivateUsage pyright warnings)
+validate_autocompact_value = _validate_autocompact_value
+validate_autocompact_pct_value = _validate_autocompact_pct_value
+validate_effort_value = _validate_effort_value
+validate_approval_value = _validate_approval_value
+
 
 RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
     "model": "MERIDIAN_MODEL",
@@ -407,8 +413,10 @@ __all__ = [
     "EffortValue",
     "ExecutionPolicyField",
     "RuntimeOverrides",
-    "_validate_approval_value",
-    "_validate_effort_value",
     "normalize_execution_policy_fields",
     "resolve",
+    "validate_approval_value",
+    "validate_autocompact_pct_value",
+    "validate_autocompact_value",
+    "validate_effort_value",
 ]

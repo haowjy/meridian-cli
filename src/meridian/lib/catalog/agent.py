@@ -14,8 +14,8 @@ from meridian.lib.core.overrides import (
     KNOWN_EFFORT_VALUES,
     AutocompactPctValue,
     AutocompactValue,
-    _validate_autocompact_pct_value,
-    _validate_autocompact_value,
+    validate_autocompact_pct_value,
+    validate_autocompact_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -356,7 +356,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
             )
         else:
             try:
-                autocompact = cast("int | None", _validate_autocompact_value(raw_autocompact))
+                autocompact = cast("int | None", validate_autocompact_value(raw_autocompact))
             except ValueError:
                 logger.warning(
                     "Agent profile '%s' has autocompact %d outside valid range.",
@@ -377,7 +377,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         else:
             try:
                 autocompact_pct = cast(
-                    "int | None", _validate_autocompact_pct_value(raw_autocompact_pct)
+                    "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
                 )
             except ValueError:
                 logger.warning(
