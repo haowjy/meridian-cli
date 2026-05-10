@@ -1144,27 +1144,7 @@ async def execute_with_streaming(
                 terminal_facts,
                 origin="runner",
                 duration_secs=duration_seconds,
-                total_cost_usd=(
-                    finalized_usage.total_cost_usd if finalized_usage is not None else None
-                ),
-                input_tokens=finalized_usage.input_tokens if finalized_usage is not None else None,
-                output_tokens=(
-                    finalized_usage.output_tokens if finalized_usage is not None else None
-                ),
-                cache_read_input_tokens=(
-                    finalized_usage.cache_read_input_tokens if finalized_usage is not None else None
-                ),
-                cache_creation_input_tokens=(
-                    finalized_usage.cache_creation_input_tokens
-                    if finalized_usage is not None
-                    else None
-                ),
-                reasoning_tokens=(
-                    finalized_usage.reasoning_tokens if finalized_usage is not None else None
-                ),
-                cost_is_estimate=(
-                    finalized_usage.cost_is_estimate if finalized_usage is not None else False
-                ),
+                usage=finalized_usage,
             )
             conclusion.exit_code = execution_outcome.resolved.exit_code
             conclusion.failure_reason = execution_outcome.resolved.error

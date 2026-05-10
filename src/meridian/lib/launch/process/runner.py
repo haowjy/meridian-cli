@@ -423,17 +423,7 @@ def _finalize_lifecycle_and_observe_session(
                 ),
                 origin="launcher",
                 duration_secs=duration,
-                total_cost_usd=usage.total_cost_usd if usage is not None else None,
-                input_tokens=usage.input_tokens if usage is not None else None,
-                output_tokens=usage.output_tokens if usage is not None else None,
-                cache_read_input_tokens=(
-                    usage.cache_read_input_tokens if usage is not None else None
-                ),
-                cache_creation_input_tokens=(
-                    usage.cache_creation_input_tokens if usage is not None else None
-                ),
-                reasoning_tokens=usage.reasoning_tokens if usage is not None else None,
-                cost_is_estimate=usage.cost_is_estimate if usage is not None else False,
+                usage=usage,
             )
         )
         resolved_exit_code = execution_outcome.resolved.exit_code

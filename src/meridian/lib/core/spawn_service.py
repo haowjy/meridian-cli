@@ -8,9 +8,9 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
@@ -623,7 +623,8 @@ class SpawnApplicationService:
         *,
         origin: str,
         duration_secs: float | None = None,
-        **metrics: object,
+        usage: TokenUsage | None = None,
+        error: str | None = None,
     ) -> CompleteSpawnOutcome:
         """Finalize a spawn through the shared idempotent terminal seam.
 
@@ -638,7 +639,8 @@ class SpawnApplicationService:
                 exit_code,
                 origin=origin,
                 duration_secs=duration_secs,
-                **metrics,
+                usage=usage,
+                error=error,
             )
 
     async def complete_execution(
@@ -648,7 +650,7 @@ class SpawnApplicationService:
         *,
         origin: str,
         duration_secs: float | None = None,
-        **metrics: object,
+        usage: TokenUsage | None = None,
     ) -> CompleteExecutionOutcome:
         """Resolve execution facts, then finalize through the lifecycle authority."""
 
@@ -659,8 +661,8 @@ class SpawnApplicationService:
             resolved.exit_code,
             origin=origin,
             duration_secs=duration_secs,
+            usage=usage,
             error=resolved.error,
-            **metrics,
         )
         return CompleteExecutionOutcome(
             resolved=resolved,
@@ -675,7 +677,8 @@ class SpawnApplicationService:
         *,
         origin: str,
         duration_secs: float | None = None,
-        **metrics: object,
+        usage: TokenUsage | None = None,
+        error: str | None = None,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -699,7 +702,8 @@ class SpawnApplicationService:
             exit_code,
             origin=cast("SpawnOrigin", origin),
             duration_secs=duration_secs,
-            **cast("dict[str, Any]", metrics),
+            usage=usage,
+            error=error,
         )
         if outcome.wrote:
             from meridian.lib.state.process_scope_projection import (

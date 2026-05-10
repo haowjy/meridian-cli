@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.launch.types import PrimarySessionMetadata
 
@@ -83,7 +84,7 @@ def test_spawn_lifecycle_dispatches_spawn_hooks_with_expected_context(
         exit_code=0,
         origin="runner",
         duration_secs=3.0,
-        total_cost_usd=0.25,
+        usage=TokenUsage(total_cost_usd=0.25),
     )
 
     payloads = [json.loads(line) for line in marker.read_text(encoding="utf-8").splitlines()]

@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from meridian.lib.core.clock import Clock
-    from meridian.lib.core.domain import SpawnStatus
+    from meridian.lib.core.domain import SpawnStatus, TokenUsage
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
@@ -385,13 +385,7 @@ class SpawnLifecycleService:
         *,
         origin: SpawnOrigin,
         duration_secs: float | None = None,
-        total_cost_usd: float | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_read_input_tokens: int | None = None,
-        cache_creation_input_tokens: int | None = None,
-        reasoning_tokens: int | None = None,
-        cost_is_estimate: bool = False,
+        usage: TokenUsage | None = None,
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
@@ -418,13 +412,7 @@ class SpawnLifecycleService:
                 exit_code,
                 origin=origin,
                 duration_secs=duration_secs,
-                total_cost_usd=total_cost_usd,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_input_tokens=cache_read_input_tokens,
-                cache_creation_input_tokens=cache_creation_input_tokens,
-                reasoning_tokens=reasoning_tokens,
-                cost_is_estimate=cost_is_estimate,
+                usage=usage,
                 finished_at=finished_at,
                 error=error,
                 clock=clock,
@@ -474,13 +462,7 @@ class SpawnLifecycleService:
         exit_code: int = 130,
         *,
         duration_secs: float | None = None,
-        total_cost_usd: float | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_read_input_tokens: int | None = None,
-        cache_creation_input_tokens: int | None = None,
-        reasoning_tokens: int | None = None,
-        cost_is_estimate: bool = False,
+        usage: TokenUsage | None = None,
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
@@ -501,13 +483,7 @@ class SpawnLifecycleService:
                 exit_code,
                 origin="cancel",
                 duration_secs=duration_secs,
-                total_cost_usd=total_cost_usd,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_input_tokens=cache_read_input_tokens,
-                cache_creation_input_tokens=cache_creation_input_tokens,
-                reasoning_tokens=reasoning_tokens,
-                cost_is_estimate=cost_is_estimate,
+                usage=usage,
                 finished_at=finished_at,
                 error=error,
                 clock=clock,

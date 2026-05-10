@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
@@ -398,7 +398,7 @@ def test_finalize_rejects_losing_authoritative_after_terminal(tmp_path: Path) ->
         exit_code=1,
         origin="launcher",
         duration_secs=99.0,
-        total_cost_usd=5.0,
+        usage=TokenUsage(total_cost_usd=5.0),
         error="loser",
     )
 
@@ -432,9 +432,7 @@ def test_losing_authoritative_finalize_does_not_overwrite_winner_metrics(
         exit_code=0,
         origin="runner",
         duration_secs=30.0,
-        total_cost_usd=2.0,
-        input_tokens=100,
-        output_tokens=50,
+        usage=TokenUsage(total_cost_usd=2.0, input_tokens=100, output_tokens=50),
         finished_at="2026-01-01T00:01:00Z",
     )
     second = finalize_spawn(
@@ -444,9 +442,7 @@ def test_losing_authoritative_finalize_does_not_overwrite_winner_metrics(
         exit_code=1,
         origin="launcher",
         duration_secs=99.0,
-        total_cost_usd=99.0,
-        input_tokens=999,
-        output_tokens=999,
+        usage=TokenUsage(total_cost_usd=99.0, input_tokens=999, output_tokens=999),
         error="wrong",
         finished_at="2026-01-01T00:02:00Z",
     )
@@ -490,7 +486,7 @@ def test_finalize_allows_authoritative_to_replace_reconciler_terminal(
         exit_code=0,
         origin="runner",
         duration_secs=30.0,
-        total_cost_usd=2.0,
+        usage=TokenUsage(total_cost_usd=2.0),
     )
 
     assert reconciler.wrote is True
