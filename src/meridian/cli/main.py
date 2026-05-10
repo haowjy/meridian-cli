@@ -661,6 +661,11 @@ def _register_commands_for_invocation(
 
         _ = _mermaid_cmd
 
+    def _register_qi() -> None:
+        import meridian.cli.qi_cmd as _qi_cmd
+
+        _ = _qi_cmd
+
     def _register_report() -> None:
         from meridian.cli.report_cmd import register_report_commands
 
@@ -690,6 +695,7 @@ def _register_commands_for_invocation(
         "chat": ("chat", _register_chat),
         "kg": ("kg", _register_kg),
         "mermaid": ("mermaid", _register_mermaid),
+        "qi": ("qi", _register_qi),
         "report": ("report", _register_report),
         "migrate": ("migrate", _register_migrate),
     }

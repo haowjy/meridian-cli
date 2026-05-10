@@ -418,6 +418,9 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_project(("kg", "graph"), "Render knowledge graph."),
     _read_project(("kg", "check"), "Check knowledge graph links."),
     _read_project(("mermaid", "check"), "Check Mermaid diagrams."),
+    _read_project(("qi",), "Show inline knowledge for current path."),
+    _read_project(("qi", "list"), "List all inline knowledge locations."),
+    _read_project(("qi", "check"), "Check inline knowledge health."),
     _write_runtime(("streaming", "test"), "Run streaming test."),
     _descriptor(
         ("streaming", "serve"),

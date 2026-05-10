@@ -124,6 +124,11 @@ mermaid_app = App(
     ),
     help_formatter="plain",
 )
+qi_app = App(
+    name="qi",
+    help="Inline knowledge navigation: AGENTS.md and .context/ locations.",
+    help_formatter="plain",
+)
 telemetry_app = App(
     name="telemetry",
     help="Telemetry inspection: tail, query, and status over local segments.",
@@ -152,6 +157,7 @@ app.command(config_app, name="config")
 app.command(workspace_app, name="workspace")
 app.command(kg_app, name="kg")
 app.command(mermaid_app, name="mermaid")
+app.command(qi_app, name="qi")
 app.command(telemetry_app, name="telemetry")
 app.command(completion_app, name="completion")
 
@@ -165,6 +171,7 @@ __all__ = [
     "kg_app",
     "mermaid_app",
     "models_app",
+    "qi_app",
     "report_app",
     "session_app",
     "spawn_app",
