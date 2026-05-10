@@ -111,8 +111,3 @@ def get_context_home(project_id: str) -> Path:
     """
 
     return get_user_home() / "context" / project_id
-
-
-# Temporary aliases — callers updated incrementally
-get_project_uuid = get_project_id
-get_or_create_project_uuid = get_or_create_project_id
