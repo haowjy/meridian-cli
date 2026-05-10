@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Added
+- Three-word project IDs (`adjective-noun-noun`, e.g. `bright-falcon-harbor`). New projects get word IDs; existing UUID projects keep working. Bundled word lists — no external dependency.
+- `meridian migrate` command converts UUID project IDs to three-word format. Blocks when active spawns exist; moves context and runtime dirs atomically.
+- Context directories default to user-level storage (`~/.meridian/context/{project}/work`, `~/.meridian/context/{project}/kb`). Project-local `.meridian/` stays lean — identity and config only.
+- `git-autosync` hook supports local-only mode (`path` option, no `remote`). Auto-initializes git repo and commits at lifecycle events without network ops.
 - `WorkItem` gains `worktree_path` (absolute path string or None) and `worktree_pending` (bool) fields. Persisted in `__status.json`. Legacy files without these fields read as `None`/`False` — no migration needed.
 - `update_work_item()` accepts `worktree_path` and `worktree_pending` so the ops layer can record worktree state without re-reading the item.
 - `WorkConfig` model (`default_worktree: bool`, `worktree_base: str | None`) surfaced as `MeridianConfig.work`. Populated from `[work]` TOML section.
@@ -25,6 +29,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
 
 ### Changed
+- `source = "git"` without `remote` in context config is now valid (local-only tracking) instead of logging a warning and falling back.
 - **Execution policy carrier refactor.** `ResolvedExecutionPolicy` promoted to Pydantic `BaseModel` carrier passed opaquely through `SpawnRequest`, `LaunchRequest`, `ChatPolicySnapshot`, `CompilerRequest`, and `CompilerResult`. Adding a new execution-policy field now touches 2 files (carrier type + compiler resolution) instead of ~7 pass-through layers. 27 flat policy fields collapsed to 5 carrier fields; ~150 lines net reduction.
 - `ChatPolicySnapshot` version bumped to 2. Old v1 snapshots auto-migrate via `model_validator(mode="before")` — no manual migration needed.
 - `SpawnRequest` and `LaunchRequest` accept legacy flat-field JSON via migration validators for backward-compatible deserialization of persisted background spawns.
