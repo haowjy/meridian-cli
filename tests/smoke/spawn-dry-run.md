@@ -5,11 +5,8 @@ Tests prompt assembly without harness invocation.
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
-mkdir -p "$SCRATCH/.mars/agents"
-echo "# Reviewer" > "$SCRATCH/.mars/agents/reviewer.md"
+. tests/smoke/scripts/setup.sh
+smoke_add_agent reviewer
 ```
 
 ## Basic dry-run

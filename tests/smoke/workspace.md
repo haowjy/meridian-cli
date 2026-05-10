@@ -5,10 +5,7 @@ Workspace init and inspection — idempotency, config surface, doctor warnings.
 ## Setup (git required)
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
-git -C "$SCRATCH" init --quiet
+. tests/smoke/scripts/setup.sh --git
 ```
 
 ## workspace init — creates local scaffold and updates gitignore

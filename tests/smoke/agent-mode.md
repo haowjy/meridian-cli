@@ -5,9 +5,7 @@ Restricted help, output defaults, and flag behavior in agent mode.
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
+. tests/smoke/scripts/setup.sh
 ```
 
 ## Agent help is restricted

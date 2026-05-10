@@ -5,11 +5,8 @@ Clean failures without tracebacks on invalid input.
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
-mkdir -p "$SCRATCH/.mars/agents"
-echo "# Reviewer" > "$SCRATCH/.mars/agents/reviewer.md"
+. tests/smoke/scripts/setup.sh
+smoke_add_agent reviewer
 echo '[settings]' > "$SCRATCH/mars.toml"
 echo 'models_cache_ttl_hours = 24' >> "$SCRATCH/mars.toml"
 ```

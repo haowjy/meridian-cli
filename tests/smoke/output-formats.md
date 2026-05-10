@@ -5,11 +5,8 @@ JSON and text rendering across commands.
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
-mkdir -p "$SCRATCH/.mars/agents"
-echo "# Test" > "$SCRATCH/.mars/agents/test.md"
+. tests/smoke/scripts/setup.sh
+smoke_add_agent test
 ```
 
 ## --json flag produces JSON for spawn dry-run

@@ -5,9 +5,7 @@ Context path resolution — work, kb, strategy, verbose, JSON.
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
+. tests/smoke/scripts/setup.sh
 ```
 
 ## context work — no active item

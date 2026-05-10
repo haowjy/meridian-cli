@@ -5,9 +5,7 @@ Agent-mode subcommand help text includes agent-specific notes and safe search pl
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
+. tests/smoke/scripts/setup.sh
 ```
 
 ## spawn --help in agent mode includes agent notes

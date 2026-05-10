@@ -5,9 +5,7 @@ Work item lifecycle — list, start, done, delete, rename.
 ## Setup
 
 ```bash
-export SCRATCH=$(mktemp -d)
-export MERIDIAN_HOME=$(mktemp -d)
-export MERIDIAN_PROJECT_DIR=$SCRATCH
+. tests/smoke/scripts/setup.sh
 ```
 
 ## work list — empty
