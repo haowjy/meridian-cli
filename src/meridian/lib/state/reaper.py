@@ -473,14 +473,37 @@ def reconcile_active_spawn(
         signaled = terminate_managed_primary_processes(
             managed_snapshot.metadata,
             started_epoch=managed_snapshot.started_epoch,
-            include_launcher=False,
+            include_launcher=True,
             include_runtime_children=True,
         )
         if signaled:
             logger.warning(
-                "Terminated managed primary tracked runtime children during orphan reconciliation.",
+                "Terminated managed primary tracked processes during orphan reconciliation.",
                 spawn_id=record.id,
                 signaled_pids=signaled,
+            )
+    elif _is_potential_managed_primary(record):
+        from meridian.lib.state.primary_meta import read_primary_metadata
+
+        metadata = read_primary_metadata(runtime_root, record.id)
+        if metadata is not None:
+            signaled = terminate_managed_primary_processes(
+                metadata,
+                started_epoch=generic_snapshot.started_epoch,
+                include_launcher=True,
+                include_runtime_children=True,
+            )
+            if signaled:
+                logger.warning(
+                    "Terminated managed primary processes during orphan reconciliation.",
+                    spawn_id=record.id,
+                    signaled_pids=signaled,
+                    metadata_source="late_read",
+                )
+        else:
+            logger.warning(
+                "Managed primary orphaned; metadata unreadable, zombie processes may remain.",
+                spawn_id=record.id,
             )
     return _finalize_failed(
         project_root,
