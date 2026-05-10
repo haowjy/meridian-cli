@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness import HARNESS_EXTENSION_TOUCHPOINTS, ensure_bootstrap
 from meridian.lib.harness.adapter import (
     BootstrapMode,
@@ -19,7 +20,6 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 

@@ -17,9 +17,9 @@ from types import SimpleNamespace
 import pytest
 
 import meridian.lib.harness as harness_pkg
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.bundle import project_subprocess_spec
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver

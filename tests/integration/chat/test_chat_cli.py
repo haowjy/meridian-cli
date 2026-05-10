@@ -14,8 +14,7 @@ from meridian.cli.output import OutputConfig
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.chat.policy import build_chat_backend_launch_plan, default_chat_policy_snapshot
-from meridian.lib.core.types import ModelId, SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver

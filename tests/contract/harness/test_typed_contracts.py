@@ -12,7 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness import ensure_bootstrap
 from meridian.lib.harness.adapter import (
     ApprovalContract,
@@ -51,7 +51,6 @@ from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.base import HarnessExtractor
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import (
     PermissionResolver,
