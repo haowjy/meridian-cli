@@ -542,7 +542,7 @@ def _check_stale_assets(assets: FrontendAssets, output: Any) -> None:
                         flush=True,
                     )
                     return
-    except Exception:
+    except BaseException:
         return
 
 
