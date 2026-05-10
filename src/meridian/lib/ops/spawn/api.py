@@ -842,6 +842,26 @@ def _spawn_matches_work_item(
     return (spawn.work_id or "").strip() == normalized_work_id
 
 
+def _row_in_cancel_scope(
+    row: SpawnRecord,
+    *,
+    include_others: bool,
+    descendant_ids: set[str] | None,
+    caller_chat_id: str | None,
+) -> bool:
+    """Return whether a row falls within the caller's cancel scope.
+
+    include_others=True: unrestricted (all non-primary running spawns).
+    descendant_ids set:  nested-spawn caller — only this subtree.
+    descendant_ids None: primary/root caller — same chat session.
+    """
+    if include_others:
+        return True
+    if descendant_ids is not None:
+        return row.id in descendant_ids
+    return (row.chat_id or "").strip() == (caller_chat_id or "")
+
+
 async def _spawn_cancel_impl(
     payload: SpawnCancelInput,
     *,
@@ -910,7 +930,8 @@ def spawn_cancel_all_sync(
     work_id = _normalize_work_filter(payload.work)
     caller_chat_id = (resolved_context.chat_id or "").strip() or None
     caller_spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
-    if caller_chat_id is None and not payload.include_others:
+    # Descendant-scope doesn't need chat_id; only raise when we have neither anchor.
+    if caller_chat_id is None and caller_spawn_id is None and not payload.include_others:
         raise ValueError(
             "No session context (MERIDIAN_CHAT_ID not set). "
             "Use --include-others to cancel all non-primary running spawns."
@@ -954,10 +975,11 @@ def spawn_cancel_all_sync(
             )
         )
         and (payload.include_primaries or (row.kind or "").strip() != "primary")
-        and (
-            payload.include_others
-            or (descendant_ids is not None and row.id in descendant_ids)
-            or (descendant_ids is None and (row.chat_id or "").strip() == (caller_chat_id or ""))
+        and _row_in_cancel_scope(
+            row,
+            include_others=payload.include_others,
+            descendant_ids=descendant_ids,
+            caller_chat_id=caller_chat_id,
         )
     ]
 
