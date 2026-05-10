@@ -125,7 +125,8 @@ class SignalCanceller:
 
         started_epoch = _started_at_epoch(record.started_at)
         with suppress(ProcessLookupError):
-            terminate_tree_sync(
+            await asyncio.to_thread(
+                terminate_tree_sync,
                 runner_pid,
                 created_at_epoch=started_epoch if started_epoch is not None else 0.0,
                 grace_secs=self._grace_seconds,
