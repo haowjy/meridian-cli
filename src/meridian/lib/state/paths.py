@@ -276,7 +276,11 @@ def resolve_project_paths_from_context(
     project_config_paths: ProjectConfigPaths | None = None,
     create_project_uuid: bool = False,
 ) -> ProjectPaths:
-    """Resolve project paths with optional context config, falling back to defaults."""
+    """Resolve project paths with optional context config, falling back to defaults.
+
+    When no explicit config is provided and no file-level config exists, the
+    ``ContextConfig()`` defaults (user-level placeholder paths) are used.
+    """
 
     if context_config is None:
         context_config = _try_load_context_config(
@@ -284,8 +288,8 @@ def resolve_project_paths_from_context(
             project_config_paths=project_config_paths,
         )
 
-    if context_config is None:
-        return ProjectPaths.from_root_dir(project_root / _MERIDIAN_DIR)
+    # Default to ContextConfig() which has user-level placeholder defaults
+    effective_config = context_config or ContextConfig()
 
     from meridian.lib.context.resolver import (
         context_uses_project_placeholder,
@@ -294,7 +298,7 @@ def resolve_project_paths_from_context(
 
     project_state_dir = project_root / _MERIDIAN_DIR
     project_id: str | None = None
-    if context_uses_project_placeholder(context_config):
+    if context_uses_project_placeholder(effective_config):
         if create_project_uuid:
             project_id = get_or_create_project_id(project_state_dir)
         else:
@@ -304,7 +308,7 @@ def resolve_project_paths_from_context(
 
     resolved = resolve_context_paths(
         project_root,
-        context_config,
+        effective_config,
         project_id=project_id,
     )
     return ProjectPaths(

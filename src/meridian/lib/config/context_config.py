@@ -21,8 +21,8 @@ class WorkContextConfig(BaseModel):
 
     source: ContextSourceType = ContextSourceType.LOCAL
     remote: str | None = None  # Git remote URL when source = "git"
-    path: str = ".meridian/work"
-    archive: str = ".meridian/archive/work"
+    path: str = "{user_home}/context/{project}/work"
+    archive: str = "{user_home}/context/{project}/archive/work"
 
 
 class KbContextConfig(BaseModel):
@@ -32,7 +32,7 @@ class KbContextConfig(BaseModel):
 
     source: ContextSourceType = ContextSourceType.LOCAL
     remote: str | None = None  # Git remote URL when source = "git"
-    path: str = ".meridian/kb"
+    path: str = "{user_home}/context/{project}/kb"
 
 
 class ArbitraryContextConfig(BaseModel):

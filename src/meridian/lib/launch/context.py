@@ -537,10 +537,8 @@ def _collect_context_projection_roots(
     Includes work_root, work_archive, kb_root, and any extra context dirs.
     These are the paths that meridian exports as MERIDIAN_CONTEXT_*_DIR env vars.
     """
-    if config is None:
-        return ()
-
-    resolved = resolve_context_paths(project_root, config)
+    effective = config or ContextConfig()
+    resolved = resolve_context_paths(project_root, effective)
     roots: list[Path] = [
         resolved.work_root,
         resolved.work_archive,

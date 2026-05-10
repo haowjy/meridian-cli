@@ -138,8 +138,9 @@ class ResolvedContext:
             resolved_config = state_paths.load_context_config(project_root)
 
         context_dirs: tuple[tuple[str, Path], ...] = ()
-        if project_root is not None and resolved_config is not None:
-            resolved_context_paths = resolve_context_paths(project_root, resolved_config)
+        if project_root is not None:
+            effective_config = resolved_config or ContextConfig()
+            resolved_context_paths = resolve_context_paths(project_root, effective_config)
             context_dirs = (
                 ("work", resolved_context_paths.work_root),
                 ("work_archive", resolved_context_paths.work_archive),

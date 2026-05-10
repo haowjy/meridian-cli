@@ -58,15 +58,27 @@ def _resolve_path(
     *,
     source: ContextSourceType = ContextSourceType.LOCAL,
     remote: str | None = None,
-) -> Path:
+) -> Path | None:
     """Resolve one path spec with substitution and root rules.
+
+    Returns None when a ``{project}`` placeholder is present but no project ID
+    is available (fresh project on a read path).
 
     When source is GIT and remote is provided, resolves path relative to
     the auto-cloned repository location. The clone itself is handled lazily
     by git-autosync hooks, not here.
     """
-    if project_id and "{project}" in path_spec:
-        path_spec = path_spec.replace("{project}", project_id)
+    if "{project}" in path_spec:
+        if project_id:
+            path_spec = path_spec.replace("{project}", project_id)
+        else:
+            # Can't resolve — fresh project on read path
+            return None
+
+    if "{user_home}" in path_spec:
+        from meridian.lib.state.user_paths import get_user_home
+
+        path_spec = path_spec.replace("{user_home}", str(get_user_home()))
 
     # For git-backed contexts, resolve relative to the expected clone location
     if source == ContextSourceType.GIT and isinstance(remote, str) and remote.strip():
@@ -84,32 +96,46 @@ def resolve_context_paths(
     config: ContextConfig,
     project_id: str | None = None,
 ) -> ResolvedContextPaths:
-    """Resolve context paths from config."""
+    """Resolve context paths from config.
+
+    Paths containing ``{project}`` without a resolvable project ID fall back to
+    project-local ``.meridian/`` equivalents.
+    """
 
     if project_id is None:
         project_id = get_project_id(project_root / ".meridian")
 
-    work_root = _resolve_path(
+    fallback_root = project_root / ".meridian"
+
+    work_root_resolved = _resolve_path(
         config.work.path,
         project_root,
         project_id,
         source=config.work.source,
         remote=config.work.remote,
     )
-    work_archive = _resolve_path(
+    work_archive_resolved = _resolve_path(
         config.work.archive,
         project_root,
         project_id,
         source=config.work.source,
         remote=config.work.remote,
     )
-    kb_root = _resolve_path(
+    kb_root_resolved = _resolve_path(
         config.kb.path,
         project_root,
         project_id,
         source=config.kb.source,
         remote=config.kb.remote,
     )
+
+    work_root = work_root_resolved if work_root_resolved is not None else fallback_root / "work"
+    work_archive = (
+        work_archive_resolved
+        if work_archive_resolved is not None
+        else fallback_root / "archive" / "work"
+    )
+    kb_root = kb_root_resolved if kb_root_resolved is not None else fallback_root / "kb"
 
     extra: dict[str, tuple[Path, ContextSourceType]] = {}
     extras_raw = getattr(config, "__pydantic_extra__", None)
@@ -120,16 +146,17 @@ def resolve_context_paths(
             if isinstance(value, ArbitraryContextConfig)
             else ArbitraryContextConfig.model_validate(value)
         )
-        extra[name] = (
-            _resolve_path(
-                parsed.path,
-                project_root,
-                project_id,
-                source=parsed.source,
-                remote=parsed.remote,
-            ),
-            parsed.source,
+        resolved = _resolve_path(
+            parsed.path,
+            project_root,
+            project_id,
+            source=parsed.source,
+            remote=parsed.remote,
         )
+        if resolved is None:
+            # Skip extra contexts that can't resolve without a project ID
+            continue
+        extra[name] = (resolved, parsed.source)
 
     return ResolvedContextPaths(
         work_root=work_root,

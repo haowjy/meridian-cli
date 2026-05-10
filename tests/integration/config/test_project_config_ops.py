@@ -152,15 +152,21 @@ def test_runtime_bootstrap_git_source_without_remote_falls_back_to_local_dirs(
     remote_line: str,
 ) -> None:
     project_root = _repo(tmp_path)
+    # Explicit project-local paths so assertions work regardless of default changes.
+    # The key behavior under test: source=git with no remote should not attempt a
+    # clone, and should create dirs at the configured paths instead.
     (project_root / "meridian.toml").write_text(
         "\n".join(
             [
                 "[context.work]",
                 'source = "git"',
+                'path = ".meridian/work"',
+                'archive = ".meridian/archive/work"',
                 remote_line.rstrip("\n"),
                 "",
                 "[context.kb]",
                 'source = "git"',
+                'path = ".meridian/kb"',
                 remote_line.rstrip("\n"),
                 "",
             ]
