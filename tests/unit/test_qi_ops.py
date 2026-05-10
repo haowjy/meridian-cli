@@ -11,13 +11,13 @@ from meridian.lib.ops.qi import (
     QiCheckFinding,
     QiCheckOutput,
     QiKnowledgePoint,
-    QiListOutput,
     QiShowOutput,
+    QiSummaryOutput,
     discover_knowledge_points,
     find_boundary,
     qi_check_sync,
-    qi_list_sync,
     qi_show_sync,
+    qi_summary_sync,
 )
 
 # ---------------------------------------------------------------------------
@@ -149,30 +149,48 @@ class TestFindBoundary:
 
 
 # ---------------------------------------------------------------------------
-# qi_list_sync
+# qi_summary_sync
 # ---------------------------------------------------------------------------
 
 
-class TestQiListSync:
-    def test_returns_qi_list_output(self, tmp_path: Path) -> None:
-        result = qi_list_sync(tmp_path)
-        assert isinstance(result, QiListOutput)
+class TestQiSummarySync:
+    def test_returns_qi_summary_output(self, tmp_path: Path) -> None:
+        result = qi_summary_sync(tmp_path)
+        assert isinstance(result, QiSummaryOutput)
 
-    def test_empty_points(self, tmp_path: Path) -> None:
-        result = qi_list_sync(tmp_path)
-        assert result.points == []
+    def test_empty_counts(self, tmp_path: Path) -> None:
+        result = qi_summary_sync(tmp_path)
+        assert result.agents_count == 0
+        assert result.context_count == 0
 
-    def test_format_text_empty(self, tmp_path: Path) -> None:
-        result = qi_list_sync(tmp_path)
-        text = result.format_text()
-        assert "No inline knowledge" in text
-
-    def test_format_text_with_points(self, tmp_path: Path) -> None:
+    def test_counts_agents_md(self, tmp_path: Path) -> None:
         _make_agents_md(tmp_path)
-        result = qi_list_sync(tmp_path)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        _make_agents_md(sub)
+        result = qi_summary_sync(tmp_path)
+        assert result.agents_count == 2
+        assert result.context_count == 0
+
+    def test_counts_context_md(self, tmp_path: Path) -> None:
+        _make_context_md(tmp_path)
+        result = qi_summary_sync(tmp_path)
+        assert result.agents_count == 0
+        assert result.context_count == 1
+
+    def test_format_text_shows_counts(self, tmp_path: Path) -> None:
+        _make_agents_md(tmp_path)
+        _make_context_md(tmp_path)
+        result = qi_summary_sync(tmp_path)
         text = result.format_text()
-        assert "[agents]" in text
         assert "AGENTS.md" in text
+        assert ".context/" in text
+
+    def test_format_text_shows_subcommands(self, tmp_path: Path) -> None:
+        result = qi_summary_sync(tmp_path)
+        text = result.format_text()
+        assert "qi graph" in text
+        assert "qi check" in text
 
 
 # ---------------------------------------------------------------------------
