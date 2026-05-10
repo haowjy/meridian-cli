@@ -37,27 +37,28 @@ class QiKnowledgePoint(BaseModel):
     kind: str  # "agents" or "context"
 
 
-class QiListOutput(BaseModel):
-    """Output for `meridian qi list`."""
+class QiSummaryOutput(BaseModel):
+    """Output for bare ``meridian qi``."""
 
     model_config = ConfigDict(frozen=True)
 
     root: str
-    points: list[QiKnowledgePoint]
+    agents_count: int
+    context_count: int
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        if not self.points:
-            return f"No inline knowledge found under {self.root}"
-        lines: list[str] = [f"Inline knowledge under {self.root}:", ""]
-        for point in self.points:
-            tag = "[agents]" if point.kind == "agents" else "[context]"
-            lines.append(f"  {tag}  {point.rel_path}")
-        return "\n".join(lines)
+        return (
+            f"Inline Knowledge: {self.root}\n"
+            f"  {self.agents_count} AGENTS.md  {self.context_count} .context/ files\n"
+            f"\n"
+            f"  meridian qi graph           Show inline knowledge boundary for a path\n"
+            f"  meridian qi check           Check inline knowledge health"
+        )
 
 
 class QiShowOutput(BaseModel):
-    """Output for `meridian qi <path>` and bare `meridian qi`."""
+    """Output for ``meridian qi graph``."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -197,14 +198,18 @@ class QiCheckOutput(BaseModel):
         return "\n".join(lines)
 
 
-def qi_list_sync(root: Path) -> QiListOutput:
-    """Synchronous handler for `meridian qi list`."""
+def qi_summary_sync(root: Path) -> QiSummaryOutput:
+    """Synchronous handler for bare ``meridian qi``."""
     points = discover_knowledge_points(root)
-    return QiListOutput(root=root.as_posix(), points=points)
+    return QiSummaryOutput(
+        root=root.as_posix(),
+        agents_count=sum(1 for p in points if p.kind == "agents"),
+        context_count=sum(1 for p in points if p.kind == "context"),
+    )
 
 
 def qi_show_sync(path: Path, project_root: Path) -> QiShowOutput:
-    """Synchronous handler for `meridian qi <path>` / bare `meridian qi`."""
+    """Synchronous handler for ``meridian qi graph``."""
 
     resolved = path.resolve()
     boundary = find_boundary(resolved)
@@ -357,11 +362,11 @@ __all__ = [
     "QiCheckFinding",
     "QiCheckOutput",
     "QiKnowledgePoint",
-    "QiListOutput",
     "QiShowOutput",
+    "QiSummaryOutput",
     "discover_knowledge_points",
     "find_boundary",
     "qi_check_sync",
-    "qi_list_sync",
     "qi_show_sync",
+    "qi_summary_sync",
 ]
