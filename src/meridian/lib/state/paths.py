@@ -23,24 +23,10 @@ _GITIGNORE_CONTENT = (
     "\n"
     "# Track project identity\n"
     "!id\n"
-    "\n"
-    "# Track shared repo state\n"
-    "!kb/\n"
-    "!kb/**\n"
-    "!work/\n"
-    "!work/**\n"
-    "!archive/\n"
-    "!archive/**\n"
 )
 _REQUIRED_GITIGNORE_LINES = (
     "!.gitignore",
     "!id",
-    "!kb/",
-    "!kb/**",
-    "!work/",
-    "!work/**",
-    "!archive/",
-    "!archive/**",
 )
 
 

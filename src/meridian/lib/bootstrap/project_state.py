@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +20,20 @@ from meridian.lib.state.paths import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _try_git_init(context_dir: Path) -> None:
+    """Attempt git init for local version history. Silent on failure."""
+
+    if (context_dir / ".git").exists():
+        return
+    with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        subprocess.run(
+            ["git", "init"],
+            cwd=str(context_dir),
+            capture_output=True,
+            timeout=10,
+        )
 
 
 @dataclass(frozen=True)
@@ -73,6 +89,8 @@ def _has_non_empty_remote(remote: str | None) -> bool:
 def ensure_project_dirs(project_root: Path) -> None:
     """Create project-local directories required by the context policy."""
 
+    from meridian.lib.state.user_paths import get_context_home, get_project_id, get_user_home
+
     context_config = load_context_config(project_root)
     project_paths = resolve_project_paths_for_write(project_root)
     project_paths.root_dir.mkdir(parents=True, exist_ok=True)
@@ -81,33 +99,42 @@ def ensure_project_dirs(project_root: Path) -> None:
         project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
         project_paths.work_dir.mkdir(parents=True, exist_ok=True)
         project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
-        return
-
-    kb_git_with_remote = (
-        context_config.kb.source == ContextSourceType.GIT
-        and _has_non_empty_remote(context_config.kb.remote)
-    )
-    work_git_with_remote = (
-        context_config.work.source == ContextSourceType.GIT
-        and _has_non_empty_remote(context_config.work.remote)
-    )
-
-    if context_config.kb.source == ContextSourceType.GIT and not kb_git_with_remote:
-        logger.warning(
-            "context_source_git_missing_remote_fallback_local",
-            extra={"context": "kb", "configured_remote": context_config.kb.remote},
+    else:
+        kb_git_with_remote = (
+            context_config.kb.source == ContextSourceType.GIT
+            and _has_non_empty_remote(context_config.kb.remote)
         )
-    if context_config.work.source == ContextSourceType.GIT and not work_git_with_remote:
-        logger.warning(
-            "context_source_git_missing_remote_fallback_local",
-            extra={"context": "work", "configured_remote": context_config.work.remote},
+        work_git_with_remote = (
+            context_config.work.source == ContextSourceType.GIT
+            and _has_non_empty_remote(context_config.work.remote)
         )
 
-    if not kb_git_with_remote:
-        project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
-    if not work_git_with_remote:
-        project_paths.work_dir.mkdir(parents=True, exist_ok=True)
-        project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
+        if context_config.kb.source == ContextSourceType.GIT and not kb_git_with_remote:
+            logger.warning(
+                "context_source_git_missing_remote_fallback_local",
+                extra={"context": "kb", "configured_remote": context_config.kb.remote},
+            )
+        if context_config.work.source == ContextSourceType.GIT and not work_git_with_remote:
+            logger.warning(
+                "context_source_git_missing_remote_fallback_local",
+                extra={"context": "work", "configured_remote": context_config.work.remote},
+            )
+
+        if not kb_git_with_remote:
+            project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
+        if not work_git_with_remote:
+            project_paths.work_dir.mkdir(parents=True, exist_ok=True)
+            project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
+
+    # Best-effort git init on user-level context home for local version history.
+    meridian_dir = project_root / ".meridian"
+    project_id = get_project_id(meridian_dir)
+    if project_id:
+        context_home = get_context_home(project_id)
+        user_home = get_user_home()
+        if str(context_home).startswith(str(user_home)):
+            context_home.mkdir(parents=True, exist_ok=True)
+            _try_git_init(context_home)
 
 
 def ensure_project_gitignore(project_root: Path) -> None:

@@ -39,9 +39,7 @@ def test_ensure_gitignore_preserves_existing_lines_and_adds_required_entries(
     updated = gitignore_path.read_text(encoding="utf-8")
     assert "!config.toml" in updated
     assert "!.gitignore" in updated
-    assert "!kb/" in updated
-    assert "!work/" in updated
-    assert "!archive/" in updated
+    assert "!id" in updated
 
 
 def test_resolve_runtime_paths_does_not_expose_project_config_path(tmp_path: Path) -> None:
