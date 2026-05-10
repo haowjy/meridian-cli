@@ -271,12 +271,16 @@ def qi_check_sync(root: Path) -> QiCheckOutput:
                 continue
             if ref.resolved.exists():
                 continue
-            # Broken link — categorise by whether it targets .context/CONTEXT.md
-            is_context_ref = (
-                is_agents
-                and ref.resolved.name == "CONTEXT.md"
-                and ref.resolved.parent.name == ".context"
-            )
+            # Broken link — categorise by whether it targets the *local sibling*
+            # .context/CONTEXT.md (same directory as this AGENTS.md).
+            # A link to a non-sibling .context/CONTEXT.md is still a broken_link error.
+            is_context_ref = False
+            if is_agents:
+                local_context = md_file.parent / ".context" / "CONTEXT.md"
+                try:
+                    is_context_ref = ref.resolved == local_context.resolve()
+                except OSError:
+                    is_context_ref = ref.resolved == local_context
             if is_context_ref:
                 findings.append(
                     QiCheckFinding(

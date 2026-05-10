@@ -302,6 +302,23 @@ class TestQiCheckSync:
         warns = [f for f in result.findings if f.category == "missing_agents"]
         assert warns[0].severity == "warning"
 
+    def test_non_sibling_context_link_is_broken_link_error(self, tmp_path: Path) -> None:
+        # AGENTS.md links to a non-sibling .context/CONTEXT.md (different directory)
+        # → must be a broken_link error, NOT a missing_agents warning
+        other = tmp_path / "shared"
+        other.mkdir()
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(
+            "# Agents\n\nSee [ctx](shared/.context/CONTEXT.md) for context.\n",
+            encoding="utf-8",
+        )
+        result = qi_check_sync(tmp_path)
+        cats = [f.category for f in result.findings]
+        assert "broken_link" in cats
+        assert "missing_agents" not in cats
+        errors = [f for f in result.findings if f.category == "broken_link"]
+        assert errors[0].severity == "error"
+
     def test_broken_link_in_agents_md(self, tmp_path: Path) -> None:
         # AGENTS.md links to a file that doesn't exist → error
         agents_file = tmp_path / "AGENTS.md"
