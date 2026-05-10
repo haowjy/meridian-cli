@@ -58,7 +58,33 @@ uv tool list
 For the full local preflight used by pre-push and release preparation:
 
 ```bash
+# macOS / Linux
 scripts/preflight.sh
+
+# Windows (PowerShell)
+scripts\preflight.ps1
+```
+
+Fast mode (lint only):
+
+```bash
+# macOS / Linux
+scripts/preflight.sh fast
+
+# Windows (PowerShell)
+scripts\preflight.ps1 fast
+```
+
+Pre-push gate (lint + type check + all tests, with optional `--quick` to skip smoke tests):
+
+```bash
+# macOS / Linux
+scripts/check.sh
+scripts/check.sh --quick
+
+# Windows (PowerShell)
+scripts\check.ps1
+scripts\check.ps1 -quick
 ```
 
 Individual checks:
