@@ -52,7 +52,11 @@ raises before any state is created.
 
 - `api.py` — all spawn operations (sync and async variants).
 - `models.py` — `SpawnCreateInput`, `SpawnDetailOutput`, `SpawnWaitInput`, etc.
-- `execute.py` — `execute_spawn_blocking()`, `execute_spawn_background()`.
+- `execute.py` — re-exporter for public entry points (`execute_spawn_blocking`,
+  `execute_spawn_background`) and depth guard helpers. Implementation split across:
+  `execute_init.py` (spawn record init), `execute_bg.py` (background worker),
+  `execute_runner.py` (blocking path), `execute_session.py` (session management).
+  Import from `execute.py` only — do not import `execute_*` modules from outside `ops/spawn/`.
 - `prepare.py` — `build_create_payload()` for dry-run display only.
 - `query.py` — `resolve_spawn_reference()`, read spawn records and written files.
 - `context_ref.py` — `resolve_context_ref()` for `-f` references.
