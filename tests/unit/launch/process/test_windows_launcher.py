@@ -124,6 +124,6 @@ def test_windows_console_launcher_forces_console_inheritance(
         on_child_started=child_started.append,
     )
 
-    assert captured["output_log_path"] is None
+    assert captured["output_log_path"] == tmp_path / "history.jsonl"
     assert child_started == [456]
     assert result == expected

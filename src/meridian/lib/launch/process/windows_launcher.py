@@ -36,7 +36,7 @@ class WindowsConsoleLauncher(ProcessLauncher):
             command=command,
             cwd=cwd,
             env=env,
-            output_log_path=None,
+            output_log_path=output_log_path,
             on_child_started=on_child_started,
         )
 
