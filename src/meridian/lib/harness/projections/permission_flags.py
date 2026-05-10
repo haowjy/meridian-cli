@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterable
 from typing import cast
 
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.launch_types import PermissionResolver
 from meridian.lib.safety.permissions import PermissionConfig
 

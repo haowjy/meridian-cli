@@ -19,10 +19,9 @@ from typing import Any
 
 import psutil
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection, HarnessEvent
 from meridian.lib.harness.connections.errors import PortBindError
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.semantics import activity_transition
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform import IS_WINDOWS

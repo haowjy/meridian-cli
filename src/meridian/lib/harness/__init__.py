@@ -12,7 +12,7 @@ _bootstrap_imports: tuple[object, ...] = ()
 # harness-specific seams below. Generic dispatch helpers such as
 # `harness/connections/__init__.py` are intentionally omitted.
 HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
-    "src/meridian/lib/harness/ids.py (HarnessId registration)",
+    "src/meridian/lib/core/types.py (HarnessId/TransportId registration)",
     (
         "src/meridian/lib/harness/<new_harness>.py "
         "(adapter + explicit HarnessContract + bundle registration + transport map side effect)"

@@ -7,7 +7,7 @@ over `str` / `int`. Zero runtime cost; mypy catches pass-the-wrong-id bugs
 statically. Use them on function signatures wherever spawn or model IDs are
 passed — don't accept `str` when you mean `SpawnId`.
 
-`HarnessId` is defined in `meridian.lib.harness.ids` and re-exported here.
+`HarnessId` and `TransportId` are defined here; the former `harness/ids.py` shim was deleted.
 
 ## RuntimeOverrides and Merge Semantics (`overrides.py`)
 

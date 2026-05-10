@@ -11,12 +11,11 @@ from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, ModelId, SpawnId
+from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,

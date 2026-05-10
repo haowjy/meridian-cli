@@ -13,8 +13,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy as ResolvedExecutionPolicy
 
 if TYPE_CHECKING:
+    from meridian.lib.core.types import HarnessId
     from meridian.lib.harness.adapter import SpawnParams
-    from meridian.lib.harness.ids import HarnessId
     from meridian.lib.launch.composition import ProjectedContent
     from meridian.lib.launch.reference import ReferenceItem
     from meridian.lib.safety.permissions import PermissionConfig

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
     project_managed_primary_backend_command,
     project_managed_primary_bootstrap,
@@ -39,7 +39,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )

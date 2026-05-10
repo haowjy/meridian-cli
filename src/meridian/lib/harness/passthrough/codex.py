@@ -6,9 +6,8 @@ import socket
 from pathlib import Path
 from typing import Any
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 from .base import PassthroughError, TuiCommandBuilder

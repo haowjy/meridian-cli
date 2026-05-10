@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Any, cast
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.bundle import get_bundle_registry
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 
 

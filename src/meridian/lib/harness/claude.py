@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
     ArtifactStore,
@@ -53,7 +53,6 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source

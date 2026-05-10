@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId
 
 WorkspaceApplicability = Literal[
     "active",

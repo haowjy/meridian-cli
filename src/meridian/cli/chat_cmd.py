@@ -37,8 +37,7 @@ from meridian.lib.chat.policy import (
 from meridian.lib.chat.runtime import PipelineLookup, build_chat_runtime_from_entrypoint
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.overrides import RuntimeOverrides
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.launch.policies import SurfacePolicyInput, resolve_launch_policy

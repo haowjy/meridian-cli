@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 from meridian import __version__
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import (
     project_managed_primary_backend_command,
     project_managed_primary_bootstrap,
@@ -52,7 +52,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec

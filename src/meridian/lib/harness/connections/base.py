@@ -9,8 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:

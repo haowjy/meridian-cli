@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId
 
 from .base import PassthroughError, TuiPassthrough
 from .claude import ClaudePassthrough

@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.bundle import HarnessBundle, get_bundle_registry
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec as ResolvedLaunchSpec
 
 

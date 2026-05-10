@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
     ArtifactStore,
@@ -43,7 +43,6 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
 from meridian.lib.harness.projections.project_opencode_streaming import (

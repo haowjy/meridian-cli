@@ -8,7 +8,7 @@ from meridian.lib.chat.normalization.base import EventNormalizer
 from meridian.lib.chat.normalization.claude import ClaudeNormalizer
 from meridian.lib.chat.normalization.codex import CodexNormalizer
 from meridian.lib.chat.normalization.opencode import OpenCodeNormalizer
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId
 
 NormalizerFactory = Callable[[str, str], EventNormalizer]
 

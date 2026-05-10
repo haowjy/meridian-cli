@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -28,7 +28,6 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_STREAMING,

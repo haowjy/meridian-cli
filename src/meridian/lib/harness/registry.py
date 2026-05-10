@@ -4,9 +4,9 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import HarnessContract, SubprocessHarness
 from meridian.lib.harness.bundle import get_connection_cls, get_harness_bundle
-from meridian.lib.harness.ids import HarnessId
 
 type HarnessEntry = SubprocessHarness
 

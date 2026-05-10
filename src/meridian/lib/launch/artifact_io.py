@@ -7,8 +7,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,

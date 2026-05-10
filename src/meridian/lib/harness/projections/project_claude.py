@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Sequence
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.claude_preflight import CLAUDE_PARENT_ALLOWED_TOOLS_FLAG
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )

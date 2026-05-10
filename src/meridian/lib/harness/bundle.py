@@ -8,10 +8,10 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Protocol, TypeVar, cast
 
+from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.adapter import BootstrapMode, HarnessAdapter, HarnessContract
 from meridian.lib.harness.connections.base import HarnessConnection
 from meridian.lib.harness.extractors.base import HarnessExtractor
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, SpecT
 
 ProjectorSpecT = TypeVar("ProjectorSpecT", bound=ResolvedLaunchSpec, contravariant=True)

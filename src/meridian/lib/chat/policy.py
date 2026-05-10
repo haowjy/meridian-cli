@@ -12,10 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.connections.base import ConnectionConfig
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.composition import ComposedLaunchContent, PromptDocument
 from meridian.lib.launch.context import (
     build_child_runtime_env_overrides,

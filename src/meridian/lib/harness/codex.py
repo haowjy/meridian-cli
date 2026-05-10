@@ -13,7 +13,7 @@ from typing import ClassVar, cast
 from uuid import uuid4
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
     ApprovalContract,
     ArtifactStore,
@@ -55,7 +55,6 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
-from meridian.lib.harness.ids import HarnessId, TransportId
 from meridian.lib.harness.projections.project_codex_streaming import (
     project_codex_spec_to_appserver_command,
     project_codex_spec_to_thread_request,

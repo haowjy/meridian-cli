@@ -148,7 +148,7 @@ Suppression would silently drop workspace roots inherited from the spawner.
 ### Adding a Harness
 
 Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (listed in `__init__.py`):
-1. `ids.py` — register `HarnessId`
+1. `core/types.py` — register `HarnessId`/`TransportId`
 2. `<new_harness>.py` — adapter with `HarnessContract`, bundle registration, transport map side effect
 3. `__init__.py:_run_bootstrap()` — add import wiring
 4. `projections/project_<new_harness>_subprocess.py` + `_streaming.py`
