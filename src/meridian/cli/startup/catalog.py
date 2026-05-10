@@ -398,6 +398,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(("telemetry", "tail"), "Tail telemetry events."),
     _read_runtime(("telemetry", "query"), "Query telemetry events."),
     _write_project(("init",), "Initialize meridian in a project.", root_source=RootSource.ARGV),
+    _write_project(("migrate",), "Migrate project ID from UUID to three-word format."),
     _read_runtime(("ext",), "List extension commands."),
     _read_runtime(("ext", "list"), "List extensions."),
     _read_runtime(("ext", "show"), "Show extension."),

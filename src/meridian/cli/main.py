@@ -666,6 +666,11 @@ def _register_commands_for_invocation(
 
         register_report_commands(report_app, emit)
 
+    def _register_migrate() -> None:
+        from meridian.cli.migrate_cmd import register_migrate_command
+
+        register_migrate_command(app, emit)
+
     registrations: dict[str, tuple[str, Callable[[], None]]] = {
         "spawn": ("spawn", _register_spawn),
         "session": ("session", _register_session),
@@ -686,6 +691,7 @@ def _register_commands_for_invocation(
         "kg": ("kg", _register_kg),
         "mermaid": ("mermaid", _register_mermaid),
         "report": ("report", _register_report),
+        "migrate": ("migrate", _register_migrate),
     }
 
     registration = registrations.get(first_token or "")
