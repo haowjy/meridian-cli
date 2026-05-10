@@ -44,10 +44,10 @@ the plugin API, extend the API rather than reaching into `lib/`.
 | `lib/config/` | Config loading and layering |
 | `lib/context/` | Context resolution for KB, strategy, work directories |
 | `lib/streaming/` | Harness output streaming and event parsing |
-| `lib/safety/` | Prompt injection detection |
-| `lib/spawn/` | High-level spawn coordination (SpawnManager) |
+| `lib/safety/` | Budget enforcement, guardrails, permissions, secret redaction |
+| `lib/spawn/` | Spawn archive: UI-layer visibility flag for terminal spawns |
 | `lib/chat/` | Chat session management |
-| `lib/observability/` | Metrics, structured logging |
+| `lib/observability/` | Spawn-scoped JSONL tracing for diagnosing harness failures |
 | `lib/bootstrap/` | Startup preparation stages |
 | `lib/markdown/` | Markdown parsing utilities |
 

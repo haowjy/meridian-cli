@@ -18,7 +18,7 @@ Python heuristic (default, offline) and JS strict (optional, requires Node.js).
 ## Dependencies
 
 - Uses `scanner.py` (internal) to collect `DiagramTarget` objects from files
-- Scanner finds fenced blocks (`language == "mermaid"`) via direct parsing; does not use `lib/markdown/`
+- Scanner delegates file parsing to `lib/markdown/extract.extract_file`, then filters for `language == "mermaid"` fenced blocks
 
 ## Depth
 
