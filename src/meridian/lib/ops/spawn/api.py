@@ -908,6 +908,12 @@ def spawn_cancel_all_sync(
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
     work_id = _normalize_work_filter(payload.work)
+    caller_chat_id = (payload.chat_id or "").strip() or None
+    if caller_chat_id is None and not payload.include_others:
+        raise ValueError(
+            "No session context (MERIDIAN_CHAT_ID not set). "
+            "Use --include-others to cancel all non-primary running spawns."
+        )
 
     from meridian.lib.state.reaper import reconcile_spawns
 
@@ -937,6 +943,12 @@ def spawn_cancel_all_sync(
                 work_id=work_id,
                 active_session_work_ids=active_session_work_ids,
             )
+        )
+        and (payload.include_primaries or (row.kind or "").strip() != "primary")
+        and (
+            payload.include_others
+            or caller_chat_id is None
+            or (row.chat_id or "").strip() == caller_chat_id
         )
     ]
 

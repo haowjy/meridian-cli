@@ -748,9 +748,28 @@ def _spawn_cancel_all(
         str | None,
         Parameter(name="--work", help="Only cancel running spawns for this work item."),
     ] = None,
+    include_primaries: Annotated[
+        bool,
+        Parameter(name="--include-primaries", help="Also cancel primary sessions."),
+    ] = False,
+    include_others: Annotated[
+        bool,
+        Parameter(
+            name="--include-others",
+            help="Also cancel spawns from other sessions (or when no session context exists).",
+        ),
+    ] = False,
 ) -> None:
+    import os
+
+    chat_id = os.getenv("MERIDIAN_CHAT_ID", "").strip() or None
     result = spawn_cancel_all_sync(
-        SpawnCancelAllInput(work=work),
+        SpawnCancelAllInput(
+            work=work,
+            include_primaries=include_primaries,
+            include_others=include_others,
+            chat_id=chat_id,
+        ),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
