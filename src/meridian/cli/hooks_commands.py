@@ -28,8 +28,11 @@ Emitter = Callable[[Any], None]
 
 
 def _resolved_project_root() -> str:
+    # ignore_env=True: hooks commands resolve from actual CWD, not the
+    # inherited MERIDIAN_PROJECT_DIR of the calling session.
     return resolve_project_root_resolution(
-        execution_cwd=Path.cwd().resolve()
+        execution_cwd=Path.cwd().resolve(),
+        ignore_env=True,
     ).project_root.as_posix()
 
 

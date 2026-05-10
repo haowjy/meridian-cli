@@ -63,8 +63,14 @@ def resolve_project_root_resolution(
     explicit: Path | None = None,
     *,
     execution_cwd: Path | None = None,
+    ignore_env: bool = False,
 ) -> ProjectRootResolution:
-    """Resolve project root and describe how it was discovered."""
+    """Resolve project root and describe how it was discovered.
+
+    ``ignore_env`` skips the ``MERIDIAN_PROJECT_DIR`` env var check, forcing
+    CWD-based discovery. Use this when the caller must resolve relative to the
+    actual CWD and not the inherited session project (e.g. hooks commands).
+    """
 
     resolved_execution_cwd = (execution_cwd or Path.cwd()).expanduser().resolve()
     if explicit is not None:
@@ -74,13 +80,14 @@ def resolve_project_root_resolution(
             source="explicit",
         )
 
-    env_root = os.getenv("MERIDIAN_PROJECT_DIR")
-    if env_root:
-        return ProjectRootResolution(
-            project_root=Path(env_root).expanduser().resolve(),
-            execution_cwd=resolved_execution_cwd,
-            source="env",
-        )
+    if not ignore_env:
+        env_root = os.getenv("MERIDIAN_PROJECT_DIR")
+        if env_root:
+            return ProjectRootResolution(
+                project_root=Path(env_root).expanduser().resolve(),
+                execution_cwd=resolved_execution_cwd,
+                source="env",
+            )
 
     candidate = resolved_execution_cwd
     while True:
