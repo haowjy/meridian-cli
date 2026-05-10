@@ -3,6 +3,18 @@
 Without an explicit encoding, subprocess.run(text=True) inherits the locale
 code page on Windows (often cp1252), which raises UnicodeDecodeError when git
 emits branch names or commit messages containing non-ASCII characters.
+
+# qa-validated: test-suite-redesign
+
+Design note — why call_args inspection is justified here:
+  The subprocess kwargs (encoding, text, capture_output) ARE the public contract
+  being tested, not internal wiring.  The entire purpose of _run_git() is to call
+  subprocess.run with the correct parameters so that UTF-8 decoding works on
+  Windows.  There is no higher-level behavioral substitute: the only observable
+  outcome of encoding='utf-8' is that non-ASCII git output decodes correctly,
+  which requires a real git process.  Inspecting the kwargs passed to the mocked
+  subprocess boundary is the correct approach here — analogous to verifying a
+  socket call includes the right TLS version.
 """
 
 from __future__ import annotations
@@ -41,6 +53,9 @@ def test_run_git_passes_utf8_encoding(tmp_path: Path) -> None:
             error_type=WorktreeRepoResolutionError,
         )
 
+    # call_args inspection is justified: encoding= IS the contract being tested.
+    # The only way to verify correct Windows encoding without a real git process
+    # is to assert the parameter was explicitly supplied to the subprocess boundary.
     call_kwargs = mock_run.call_args.kwargs
     assert call_kwargs.get("encoding") == "utf-8", (
         "encoding='utf-8' must be passed explicitly; "
@@ -56,6 +71,8 @@ def test_run_git_uses_text_mode(tmp_path: Path) -> None:
             error_type=WorktreeRepoResolutionError,
         )
 
+    # call_args inspection is justified: text=True + encoding='utf-8' together
+    # define the subprocess decoding contract (see module docstring).
     call_kwargs = mock_run.call_args.kwargs
     assert call_kwargs.get("text") is True
 
@@ -68,6 +85,8 @@ def test_run_git_captures_output(tmp_path: Path) -> None:
             error_type=WorktreeRepoResolutionError,
         )
 
+    # call_args inspection is justified: capture_output=True is required for
+    # the caller to read stdout/stderr — it is a subprocess interface contract.
     call_kwargs = mock_run.call_args.kwargs
     assert call_kwargs.get("capture_output") is True
 

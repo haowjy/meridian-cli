@@ -1,3 +1,4 @@
+# qa-validated: test-suite-redesign
 from pathlib import Path
 
 import pytest
@@ -7,21 +8,7 @@ from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from tests.support.fixtures import write_agent
-
-
-def _write_minimal_mars_config(project_root: Path) -> None:
-    (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
-        encoding="utf-8",
-    )
-
-
-@pytest.fixture(autouse=True)
-def _isolate_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+from tests.support.fixtures import write_agent, write_minimal_mars_config
 
 
 def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch(
@@ -30,7 +17,7 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    _write_minimal_mars_config(project_root)
+    write_minimal_mars_config(project_root)
     write_agent(project_root, name="reviewer", model="gpt55")
 
     alias = AliasEntry(

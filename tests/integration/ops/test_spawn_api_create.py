@@ -1,0 +1,179 @@
+"""spawn_create_sync behavior — dry-run resolution, telemetry, and goal preview.
+
+Query/list/cancel/wait tests live in test_spawn_api_query.py.
+
+# qa-validated: test-suite-redesign
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+
+import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.telemetry import init_telemetry
+from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
+
+
+def _noop_setup_telemetry(**_kwargs: object) -> None:
+    pass
+
+
+def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    nested = project_root / "src" / "feature"
+    (project_root / ".mars" / "skills").mkdir(parents=True)
+    nested.mkdir(parents=True)
+    reference_file = project_root / "guide.md"
+    reference_file.write_text("# Guide\n", encoding="utf-8")
+    monkeypatch.chdir(nested)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="",
+            files=("guide.md",),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert result.project_root == project_root.resolve().as_posix()
+    assert result.project_root_source == "mars"
+    assert result.runtime_root is None
+    assert result.runtime_root_source == "unresolved"
+    resolved_reference = reference_file.resolve()
+    assert len(result.reference_files) == 1
+    assert Path(result.reference_files[0]).resolve() == resolved_reference
+    composed_prompt = result.composed_prompt or ""
+    assert (
+        str(resolved_reference) in composed_prompt
+        or resolved_reference.as_posix() in composed_prompt
+    )
+
+
+def test_spawn_create_dry_run_emits_usage_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(project_root)
+    monkeypatch.setattr(spawn_api, "setup_telemetry", _noop_setup_telemetry)
+    sink = RecordingTelemetrySink()
+    init_telemetry(sink=sink)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.3-codex",
+            harness="codex",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    wait_for_telemetry(
+        lambda: {"usage.model.selected", "usage.spawn.launched"}.issubset(
+            {event.event for event in sink.events}
+        )
+    )
+    usage_events = {event.event: event for event in sink.events if event.domain == "usage"}
+    assert usage_events["usage.model.selected"].data == {
+        "model_family": "gpt-5.3",
+        "harness": "codex",
+    }
+    assert "gpt-5.3-codex" not in json.dumps(usage_events["usage.model.selected"].to_dict())
+    assert usage_events["usage.spawn.launched"].data == {"harness": "codex"}
+
+
+def test_spawn_create_with_prepared_skips_self_bootstrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    prepared = prepare_for_runtime_write(project_root)
+
+    def _forbidden(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("self-bootstrap helper should not be called")
+
+    monkeypatch.setattr(spawn_api, "setup_telemetry", _forbidden)
+    monkeypatch.setattr(spawn_api, "load_config", _forbidden)
+    monkeypatch.setattr(spawn_api, "resolve_runtime_root_and_config", _forbidden)
+    monkeypatch.setattr(spawn_api, "resolve_runtime_root", _forbidden)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.3-codex",
+            harness="codex",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        ),
+        prepared=prepared,
+    )
+
+    assert result.status == "dry-run"
+    assert result.harness_id == "codex"
+
+
+def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setattr(
+        spawn_api,
+        "build_create_payload",
+        lambda payload, runtime=None, preflight_warning=None, ctx=None: type(
+            "Prepared",
+            (),
+            {
+                "harness": payload.harness or "codex",
+                "model": payload.model,
+                "warning": preflight_warning,
+                "agent": payload.agent,
+                "agent_metadata": {},
+                "skills": payload.skills,
+                "skill_paths": (),
+                "reference_files": (),
+                "template_vars": {},
+                "context_from": (),
+                "prompt": payload.prompt,
+                "goal": payload.goal,
+                "model_selection_requested_token": None,
+                "model_selection_canonical_id": None,
+                "model_selection_harness_provenance": None,
+                "terminal_surface_mode": None,
+                "cli_command": ("codex",),
+            },
+        )(),
+    )
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            goal="ship phase 3",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert result.goal == "ship phase 3"
+    goal_contract_preview = result.goal_contract_preview
+    assert goal_contract_preview is not None
+    assert "# Spawn Goal" in goal_contract_preview
+    assert "ship phase 3" in goal_contract_preview
