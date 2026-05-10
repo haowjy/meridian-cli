@@ -1053,6 +1053,7 @@ def _resolve_wait_targets(
         runtime_root,
         chat_id,
         exclude_spawn_id=self_spawn_id,
+        only_descendants_of=self_spawn_id,
     )
     return tuple(row.id for row in pending)
 
@@ -1063,8 +1064,15 @@ def _discover_pending_spawns(
     chat_id: str,
     *,
     exclude_spawn_id: str | None = None,
+    only_descendants_of: str | None = None,
 ) -> list[SpawnRecord]:
-    """Discover all active spawns for a given chat ID."""
+    """Discover active spawns for a given chat ID.
+
+    When *only_descendants_of* is set (i.e. called from a nested spawn),
+    returns only spawns that are descendants of that spawn — not siblings,
+    ancestors, or the primary session. This prevents no-arg ``spawn wait``
+    from blocking on the entire chat tree.
+    """
     from meridian.lib.state.reaper import reconcile_spawns
 
     all_spawns = reconcile_spawns(
@@ -1072,15 +1080,25 @@ def _discover_pending_spawns(
         runtime_root,
         spawn_store.list_spawns(runtime_root),
     )
+
+    # Build descendant set if scoping to a parent
+    descendant_ids: set[str] | None = None
+    if only_descendants_of is not None:
+        desc_records = _collect_descendants(only_descendants_of, all_spawns)
+        descendant_ids = {r.id for r in desc_records} - {only_descendants_of}
+
     pending = [
         row
         for row in all_spawns
         if (row.chat_id or "").strip() == chat_id
         and row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
+        and (descendant_ids is None or row.id in descendant_ids)
     ]
     pending.sort(key=lambda row: row.id)
     return pending
+
+
 
 
 def _emit_wait_set(
