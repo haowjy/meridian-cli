@@ -19,6 +19,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --fork REF -p "next"` | Start a new spawn by forking a prior spawn, chat/session, or raw harness session id |
 | `meridian spawn --from REF -p "next"` | Start a new spawn with prior spawn or chat/session context |
 | `meridian spawn cancel ID` | Cancel a running spawn |
+| `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
 | `meridian spawn inject ID --message "text"` | Inject a message into a running streaming spawn |
 | `meridian spawn stats` | Aggregate spawn statistics |
 | `meridian spawn children ID` | List direct child spawns |
@@ -42,7 +43,18 @@ Common `spawn` flags:
 
 `spawn show` includes primary-session metadata when available from `primary_meta.json`:
 `kind`, `activity`, `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
-and `harness_session_id`.
+`harness_session_id`, and `session_config_dir`.
+
+`spawn cancel-all` scopes cancellation to the calling spawn's subtree when invoked
+from inside a nested spawn (e.g., from an orchestrator agent). This prevents
+accidentally cancelling sibling spawns or other parallel work running in the same
+chat. Flags:
+
+| Flag | Description |
+| ---- | ----------- |
+| `--work SLUG` | Cancel only spawns attached to a specific work item |
+| `--include-primaries` | Also cancel primary (top-level) sessions |
+| `--include-others` | Opt out of subtree scoping — cancel across the full chat (matches the behavior before subtree scoping was introduced) |
 
 `meridian bootstrap` accepts the same launch flags as a primary session (`-m`, `--harness`, `-a`, `--work`, `--approval`, `--effort`, `--timeout`, `--dry-run`). Bootstrap docs are injected automatically — no extra flags needed. The `-a` flag selects the agent profile; if omitted, Meridian uses the default bootstrap agent from the installed catalog.
 

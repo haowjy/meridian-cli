@@ -55,7 +55,8 @@ a root/primary context (no `MERIDIAN_SPAWN_ID`), the full chat scope applies.
 `SpawnDetailOutput` exposes the field as `session_config_dir` (wire key: `session_config_dir`).
 The underlying storage field on `SpawnRecord` is still `claude_config_dir` — the rename is
 presentation-only. `detail_from_row()` in `query.py` maps `row.claude_config_dir →
-session_config_dir`. Do not rename `SpawnRecord.claude_config_dir`; that touches JSONL storage.
+session_config_dir`. Do not rename `SpawnRecord.claude_config_dir`; that touches persisted
+per-spawn `state.json` records and would require migration.
 
 ## Execute Module Split
 

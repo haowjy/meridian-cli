@@ -222,10 +222,9 @@ external writes.
   v2 migration rationale, session state, work item store, read vs write resolution
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/spawn-finalization.md` — terminal write
   authority lattice, how finalization interacts with the reaper
-- `$MERIDIAN_CONTEXT_KB_DIR/codebase/platform-abstractions.md` — `lock_file()`
-  implementation details, Windows/POSIX branching
-
 ## Related .context/
 
 - [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — `ArtifactStore` protocol that reads from `artifact_store.py`; `SpawnExtractor` contract
 - [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — launch pipeline that writes spawn state via `SpawnStore`; composition seam, prepare/bind split
+- [../../platform/.context/CONTEXT.md](../../platform/.context/CONTEXT.md) — `lock_file()`
+  implementation details, Windows/POSIX branching
