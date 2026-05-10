@@ -40,6 +40,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "base_instructions",
         "developer_instructions",
+        "harness",
         "reference_items",
         "report_output_path",
         "skills",

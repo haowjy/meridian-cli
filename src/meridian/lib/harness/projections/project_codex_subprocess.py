@@ -40,6 +40,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "agent_name",
         "agents_payload",
         "appended_system_prompt",
+        "harness",
         "prompt_file_path",
         "reference_items",
         "skills",

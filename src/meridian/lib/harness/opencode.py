@@ -435,6 +435,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             normalized_model = _normalize_opencode_model(str(run.model))
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         return ResolvedLaunchSpec(
+            harness=HarnessId.OPENCODE,
             model=normalized_model,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,

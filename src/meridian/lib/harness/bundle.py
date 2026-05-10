@@ -208,6 +208,12 @@ def _require_bundle_spec(
             f"harness {harness_id} expected {bundle.spec_cls.__name__}, "
             f"got {type(spec).__name__}"
         )
+    # Validate harness discriminator: catch specs built for another harness.
+    if hasattr(spec, "harness") and spec.harness is not None and spec.harness != harness_id:
+        raise ValueError(
+            f"spec has harness={spec.harness!r} but was passed to "
+            f"harness {harness_id!r} bundle"
+        )
     return bundle
 
 

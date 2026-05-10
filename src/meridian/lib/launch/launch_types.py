@@ -67,6 +67,8 @@ class ResolvedLaunchSpec(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     # Identity
+    # str at runtime (HarnessId is StrEnum — direct import triggers harness __init__ bootstrap).
+    harness: str | None = None
     model: str | None = None
 
     # Execution parameters

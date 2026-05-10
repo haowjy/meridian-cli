@@ -16,9 +16,13 @@ from types import SimpleNamespace
 
 import pytest
 
+import meridian.lib.harness as harness_pkg
 from meridian.lib.harness.adapter import SpawnParams
+from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.ids import HarnessId
 from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -97,3 +101,16 @@ def test_harness_package_import_is_clean_in_unmodified_tree(python_optimize: str
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_bundle_rejects_mismatched_harness_spec() -> None:
+    """Passing a spec stamped with harness=claude to the codex bundle raises ValueError."""
+    harness_pkg.ensure_bootstrap()
+
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match=r"claude.*codex|codex.*claude"):
+        project_subprocess_spec(HarnessId.CODEX, spec, base_command=("codex",))

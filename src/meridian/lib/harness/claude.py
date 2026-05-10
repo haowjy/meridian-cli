@@ -373,6 +373,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
         return ResolvedLaunchSpec(
+            harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
             effort=normalized_effort,
             prompt=run.prompt,

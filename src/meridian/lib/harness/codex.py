@@ -367,6 +367,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         return ResolvedLaunchSpec(
+            harness=HarnessId.CODEX,
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,

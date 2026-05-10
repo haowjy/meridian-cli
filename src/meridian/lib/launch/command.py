@@ -60,13 +60,8 @@ def resolve_launch_spec_stage(
 
     spec = adapter.resolve_launch_spec(run_inputs, perms)
 
-    # If harness supports native file injection and we have reference_items,
-    # update the spec with them (only for specs that have the field)
-    if (
-        run_inputs.reference_items
-        and adapter.capabilities.supports_native_file_injection
-        and hasattr(spec, "reference_items")
-    ):
+    # If harness supports native file injection and we have reference_items, attach them.
+    if run_inputs.reference_items and adapter.capabilities.supports_native_file_injection:
         spec = spec.model_copy(update={"reference_items": run_inputs.reference_items})
 
     return spec
