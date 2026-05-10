@@ -10,10 +10,13 @@ from meridian.lib.chat.dev_frontend.policy import (
     resolve_dev_frontend_launcher,
 )
 from meridian.lib.chat.dev_frontend.supervisor import DevSupervisor
-from meridian.lib.config.project_root import resolve_project_root
 
 
-def resolve_dev_frontend_root(*, explicit: str | None = None) -> Path | None:
+def resolve_dev_frontend_root(
+    *,
+    explicit: str | None = None,
+    project_root: Path | None = None,
+) -> Path | None:
     """Resolve the meridian-web source checkout for dev mode."""
 
     if explicit and explicit.strip():
@@ -23,8 +26,10 @@ def resolve_dev_frontend_root(*, explicit: str | None = None) -> Path | None:
     if env_root and env_root.strip():
         return Path(env_root).expanduser().resolve()
 
+    if project_root is None:
+        return None
     try:
-        sibling = resolve_project_root().parent / "meridian-web"
+        sibling = project_root.parent / "meridian-web"
         if sibling.is_dir():
             return sibling.resolve()
     except Exception:

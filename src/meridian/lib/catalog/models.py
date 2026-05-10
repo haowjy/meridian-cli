@@ -14,7 +14,7 @@ from meridian.lib.catalog.model_aliases import (
     run_mars_models_list_all,
     run_mars_models_resolve,
 )
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
 
 
@@ -24,7 +24,11 @@ def load_merged_aliases(
     cache: MarsResultCache | None = None,
 ) -> list[AliasEntry]:
     """Load model aliases from mars packages."""
-    resolved_root = resolve_project_root(project_root) if project_root is not None else None
+    resolved_root = (
+        resolve_project_root_resolution(project_root).project_root
+        if project_root is not None
+        else None
+    )
     return load_mars_aliases(resolved_root, cache=cache)
 
 

@@ -573,7 +573,7 @@ def test_stale_asset_warning_mentions_rebuild(monkeypatch, tmp_path) -> None:
     source_file.write_text("export function App() { return null }", encoding="utf-8")
     newer = index.stat().st_mtime + 10
     os.utime(source_file, (newer, newer))
-    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: project)
+    monkeypatch.setattr(chat_cmd, "require_project_root", lambda: project)
 
     stdout = StringIO()
     chat_cmd._check_stale_assets(
@@ -634,7 +634,7 @@ def test_chat_policy_resolution_fails_before_runtime_configure_or_discovery_writ
     configured: list[object] = []
     write_bootstrap_calls: list[Path] = []
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr(chat_cmd, "require_project_root", lambda: tmp_path)
     monkeypatch.setattr(
         chat_cmd,
         "prepare_for_runtime_write",
@@ -793,7 +793,7 @@ def test_chat_policy_snapshot_explicit_missing_agent_fails_before_startup(
     configured: list[object] = []
     write_bootstrap_calls: list[Path] = []
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.setattr(chat_cmd, "resolve_project_root", lambda: tmp_path)
+    monkeypatch.setattr(chat_cmd, "require_project_root", lambda: tmp_path)
     monkeypatch.setattr(
         chat_cmd,
         "prepare_for_runtime_write",

@@ -7,7 +7,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.logging import configure_logging
 from meridian.lib.extensions.context import (
     ExtensionInvocationContextBuilder,
@@ -139,7 +139,7 @@ async def extension_invoke(
         # In-process dispatch for local-only commands. Rootless observability
         # stays process-scoped via stderr telemetry rather than segment storage.
         dispatcher = ExtensionCommandDispatcher(registry)
-        prepared = prepare_for_runtime_read(resolve_project_root())
+        prepared = prepare_for_runtime_read(resolve_project_root_resolution().project_root)
         application = build_extension_entrypoint(prepared)
         services = build_extension_command_services(application=application)
         context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(

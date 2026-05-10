@@ -111,23 +111,6 @@ def resolve_project_root_resolution(
     )
 
 
-def resolve_project_root(
-    explicit: Path | None = None,
-    *,
-    execution_cwd: Path | None = None,
-) -> Path:
-    """Resolve project root that owns Meridian project configuration.
-
-    Precedence:
-    1. Explicit function argument.
-    2. `MERIDIAN_PROJECT_DIR` environment variable.
-    3. Current directory / ancestors containing `.mars/`.
-    4. Current directory / ancestors containing Meridian config or state markers.
-    5. Current git boundary.
-    6. Current working directory.
-    """
-    return resolve_project_root_resolution(explicit, execution_cwd=execution_cwd).project_root
-
 
 def resolve_user_config_path(user_config: Path | None) -> Path | None:
     from meridian.lib.state.user_paths import get_user_home

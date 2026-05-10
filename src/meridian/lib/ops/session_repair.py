@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync, resolve_runtime_root_for_read
 from meridian.lib.ops.session_target import resolve_session_repair_target
@@ -84,7 +84,7 @@ def repair_session_reference_sync(payload: SessionRepairInput) -> SessionRepairO
     explicit_project_root = (
         Path(payload.project_root).expanduser().resolve() if payload.project_root else None
     )
-    project_root = resolve_project_root(explicit_project_root)
+    project_root = resolve_project_root_resolution(explicit_project_root).project_root
     runtime_root = resolve_runtime_root_for_read(project_root)
     target = resolve_session_repair_target(
         ref=ref,

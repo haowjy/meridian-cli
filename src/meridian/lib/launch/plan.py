@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from meridian.lib.catalog.model_policy import pattern_fallback_harness
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId
@@ -113,7 +113,7 @@ def build_primary_launch_runtime(
 ) -> LaunchRuntime:
     """Build primary-launch runtime inputs for the shared launch factory."""
 
-    resolved_root = resolve_project_root(project_root)
+    resolved_root = resolve_project_root_resolution(project_root).project_root
     resolved_cwd = (execution_cwd or project_root).resolve()
     resolved_config = config if config is not None else load_config(resolved_root)
     runtime_root = resolve_project_runtime_root_for_write(resolved_root)

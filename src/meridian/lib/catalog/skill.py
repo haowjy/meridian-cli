@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import IndexReport, SkillContent, SkillManifest
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def scan_skills(
 ) -> list[SkillDocument]:
     """Scan configured skill directories and parse all discovered skills."""
 
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
     directories = skills_dirs if skills_dirs is not None else _skill_search_dirs(root)
     documents: list[SkillDocument] = []
     selected_by_name: dict[str, SkillDocument] = {}
@@ -220,7 +220,7 @@ class SkillRegistry:
         *,
         readonly: bool = False,
     ) -> None:
-        self._project_root = resolve_project_root(project_root)
+        self._project_root = resolve_project_root_resolution(project_root).project_root
         self._skills_dirs = tuple(_skill_search_dirs(self._project_root))
         self._readonly = readonly
         self._filesystem_documents: tuple[SkillDocument, ...] | None = None

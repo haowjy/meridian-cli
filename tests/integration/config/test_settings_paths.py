@@ -5,10 +5,7 @@ import pytest
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
 from meridian.lib.config.project_paths import ProjectConfigPaths
-from meridian.lib.config.project_root import (
-    resolve_project_root,
-    resolve_project_root_resolution,
-)
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.config.settings import load_config
 from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.config_surface import build_config_surface
@@ -25,7 +22,7 @@ def test_resolve_project_root_prefers_mars_skills_ancestor(
     nested.mkdir(parents=True)
     monkeypatch.chdir(nested)
 
-    assert resolve_project_root() == project_root.resolve()
+    assert resolve_project_root_resolution().project_root == project_root.resolve()
 
 
 def test_resolve_project_root_stops_at_git_boundary(
@@ -39,7 +36,7 @@ def test_resolve_project_root_stops_at_git_boundary(
     (project_root / ".git").mkdir()
     monkeypatch.chdir(nested)
 
-    assert resolve_project_root() == project_root.resolve()
+    assert resolve_project_root_resolution().project_root == project_root.resolve()
 
 
 def test_resolve_project_root_prefers_meridian_toml_in_plain_directory(

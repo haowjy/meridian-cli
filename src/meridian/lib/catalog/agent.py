@@ -8,7 +8,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
@@ -447,7 +447,7 @@ def scan_agent_profiles(
 ) -> list[AgentProfile]:
     """Parse all agent profiles from configured search directories."""
 
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
     _ = search_paths
     directories = search_dirs if search_dirs is not None else _agent_search_dirs(root)
     profiles: list[AgentProfile] = []
@@ -488,7 +488,7 @@ def load_agent_profile(
     if not normalized:
         raise ValueError("Agent profile name must not be empty.")
 
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
 
     for profile in scan_agent_profiles(project_root=root, search_paths=search_paths):
         if profile.path.stem == normalized or profile.name == normalized:

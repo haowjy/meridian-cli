@@ -13,7 +13,7 @@ from meridian.lib.catalog.model_policy import (
     is_default_visible_model,
 )
 from meridian.lib.catalog.models import AliasEntry
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync
@@ -166,7 +166,7 @@ class ModelsListOutput(BaseModel):
 
 def _project_root(project_root: str | None) -> Path | None:
     explicit = Path(project_root).expanduser().resolve() if project_root is not None else None
-    return resolve_project_root(explicit)
+    return resolve_project_root_resolution(explicit).project_root
 
 
 def _format_float(value: float | None) -> str | None:

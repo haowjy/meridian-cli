@@ -6,8 +6,6 @@ import importlib.resources
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.config.project_root import resolve_project_root
-
 
 @dataclass(frozen=True)
 class FrontendAssets:
@@ -18,7 +16,11 @@ class FrontendAssets:
     assets_dir: Path
 
 
-def resolve_frontend_assets(*, explicit_dist: Path | None = None) -> FrontendAssets | None:
+def resolve_frontend_assets(
+    *,
+    explicit_dist: Path | None = None,
+    project_root: Path | None = None,
+) -> FrontendAssets | None:
     """Resolve built frontend assets.
 
     Resolution order:
@@ -38,7 +40,7 @@ def resolve_frontend_assets(*, explicit_dist: Path | None = None) -> FrontendAss
         if packaged_assets is not None:
             return packaged_assets
 
-    sibling_root = _sibling_dist_path()
+    sibling_root = _sibling_dist_path(project_root)
     if sibling_root is not None:
         sibling_assets = _validate_asset_dir(sibling_root)
         if sibling_assets is not None:
@@ -66,9 +68,11 @@ def _packaged_asset_path() -> Path | None:
     return None
 
 
-def _sibling_dist_path() -> Path | None:
+def _sibling_dist_path(project_root: Path | None) -> Path | None:
+    if project_root is None:
+        return None
     try:
-        sibling = resolve_project_root().parent / "meridian-web" / "dist"
+        sibling = project_root.parent / "meridian-web" / "dist"
         if sibling.is_dir():
             return sibling.resolve()
     except Exception:

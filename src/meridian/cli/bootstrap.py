@@ -328,19 +328,19 @@ def maybe_bootstrap_runtime_state(
     if agent_mode:
         return None
     try:
+        from meridian.cli.utils import require_project_root
         from meridian.lib.bootstrap.services import (
             prepare_for_project_read,
             prepare_for_project_write,
             prepare_for_runtime_read,
             prepare_for_runtime_write,
         )
-        from meridian.lib.config.project_root import resolve_project_root
 
         requirement = state_requirement or _state_requirement_for_argv(argv)
         if requirement in {None, StateRequirement.NONE}:
             return None
 
-        project_root = resolve_project_root()
+        project_root = require_project_root()
 
         if requirement == StateRequirement.PROJECT_READ:
             prepare_for_project_read(project_root)

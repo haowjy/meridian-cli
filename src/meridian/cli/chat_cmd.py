@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from cyclopts import App, Parameter
 
-from meridian.cli.utils import parse_csv_list
+from meridian.cli.utils import parse_csv_list, require_project_root
 from meridian.lib.bootstrap.services import (
     build_chat_entrypoint,
     prepare_for_runtime_read,
@@ -35,7 +35,6 @@ from meridian.lib.chat.policy import (
     snapshot_from_resolved_policy,
 )
 from meridian.lib.chat.runtime import PipelineLookup, build_chat_runtime_from_entrypoint
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import SpawnId
@@ -402,7 +401,9 @@ def run_chat_server(
             print(f"Error: {exc}", file=output, flush=True)
             sys.exit(1)
 
-        resolved_frontend_root = resolve_dev_frontend_root(explicit=frontend_root)
+        resolved_frontend_root = resolve_dev_frontend_root(
+            explicit=frontend_root, project_root=project_root
+        )
         if resolved_frontend_root is None:
             print(
                 "Error: Dev frontend checkout not found.\n"
@@ -454,6 +455,7 @@ def run_chat_server(
     if not headless:
         assets = resolve_frontend_assets(
             explicit_dist=Path(frontend_dist) if frontend_dist else None,
+            project_root=project_root,
         )
         if assets is None:
             if frontend_dist is not None:
@@ -501,7 +503,7 @@ def run_chat_server(
 def _prepare_chat_runtime_read_entrypoint() -> ChatEntryPoint:
     """Prepare the minimal chat entrypoint seam for read-only chat clients."""
 
-    prepared = prepare_for_runtime_read(resolve_project_root())
+    prepared = prepare_for_runtime_read(require_project_root())
     return build_chat_entrypoint(prepared)
 
 
@@ -510,7 +512,7 @@ def _resolve_chat_project_root(entrypoint: ChatEntryPoint | None) -> Path:
 
     if entrypoint is not None:
         return _chat_project_root(entrypoint)
-    return resolve_project_root()
+    return require_project_root()
 
 
 def _chat_project_root(entrypoint: ChatEntryPoint) -> Path:
@@ -526,7 +528,7 @@ def _check_stale_assets(assets: FrontendAssets, output: Any) -> None:
     """Warn if checkout-local frontend source appears newer than built assets."""
 
     try:
-        source_dir = resolve_project_root().parent / "meridian-web" / "src"
+        source_dir = require_project_root().parent / "meridian-web" / "src"
         if not source_dir.is_dir():
             return
 

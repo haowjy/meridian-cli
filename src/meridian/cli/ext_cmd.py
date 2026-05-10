@@ -12,8 +12,8 @@ from cyclopts import App, Parameter
 
 from meridian.cli.app_tree import ext_app
 from meridian.cli.output import OutputFormat
+from meridian.cli.utils import require_project_root
 from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.extensions.context import (
     ExtensionCommandServices,
     ExtensionInvocationContextBuilder,
@@ -43,11 +43,7 @@ def _prepare_extension_runtime_read() -> tuple[
     ExtensionCommandServices,
     ExtensionInvocationContextBuilder,
 ]:
-    from meridian.cli.main import get_global_options
-
-    opts = get_global_options()
-    project_root = opts.project_root or resolve_project_root()
-    prepared = prepare_for_runtime_read(project_root)
+    prepared = prepare_for_runtime_read(require_project_root())
     application = build_extension_entrypoint(prepared)
     services = build_extension_command_services(application=application)
     context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.CLI).with_authority(

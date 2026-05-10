@@ -11,14 +11,13 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
-from meridian.cli.utils import parse_csv_list
+from meridian.cli.utils import parse_csv_list, require_project_root
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.extensions.registry import get_first_party_registry
@@ -71,17 +70,11 @@ def _current_output_sink() -> Any:
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
-    opts = _get_global_options()
-    if opts.project_root is not None:
-        return prepare_for_runtime_read(opts.project_root)
-    return prepare_for_runtime_read(resolve_project_root())
+    return prepare_for_runtime_read(require_project_root())
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
-    opts = _get_global_options()
-    if opts.project_root is not None:
-        return prepare_for_runtime_write(opts.project_root)
-    return prepare_for_runtime_write(resolve_project_root())
+    return prepare_for_runtime_write(require_project_root())
 
 
 def _spawn_create_exit_code(result: SpawnActionOutput) -> int:

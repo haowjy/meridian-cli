@@ -10,7 +10,7 @@ from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.cli.utils import require_project_root
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.telemetry.query import query_events
@@ -48,13 +48,7 @@ def _resolve_telemetry_dirs(global_flag: bool) -> list[Path]:
             dirs.append(legacy)
         return dirs
 
-    try:
-        project_root = resolve_project_root()
-    except Exception as exc:
-        raise ValueError(
-            "Not inside a Meridian project. Use --global to query across all projects."
-        ) from exc
-
+    project_root = require_project_root()
     try:
         runtime_root = resolve_runtime_root_for_read(project_root)
     except Exception as exc:
