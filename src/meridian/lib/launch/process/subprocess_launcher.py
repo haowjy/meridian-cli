@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 from contextlib import suppress
@@ -30,7 +31,10 @@ def _wait_for_process(process: subprocess.Popen[str] | subprocess.Popen[bytes]) 
         return process.wait()
     except KeyboardInterrupt:
         if process.poll() is None:
-            process.terminate()
+            if sys.platform == "win32":
+                process.terminate()
+            else:
+                process.send_signal(signal.SIGINT)
             return process.wait()
         return 130
 
