@@ -7,7 +7,6 @@ from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.harness.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.launch.plan import (
@@ -22,6 +21,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
+from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.plugin_api.git import resolve_clone_path
 from tests.support.fixtures import write_agent, write_skill
 

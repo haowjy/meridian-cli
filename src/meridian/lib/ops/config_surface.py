@@ -20,7 +20,7 @@ from meridian.lib.config.workspace import (
     resolve_workspace_snapshot,
 )
 from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.workspace_projection import (
+from meridian.lib.launch.workspace_projection import (
     WorkspaceApplicability,
     project_workspace_roots,
 )

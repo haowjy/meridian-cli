@@ -28,10 +28,6 @@ from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
-from meridian.lib.harness.workspace_projection import (
-    OPENCODE_CONFIG_CONTENT_ENV,
-    project_workspace_roots,
-)
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PermissionResolver,
@@ -43,6 +39,10 @@ from meridian.lib.launch.launch_types import (
     ResolvedLaunchEnvironment,
     ResolvedLaunchSpec,
     summarize_composition_warnings,
+)
+from meridian.lib.launch.workspace_projection import (
+    OPENCODE_CONFIG_CONTENT_ENV,
+    project_workspace_roots,
 )
 from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import work_store

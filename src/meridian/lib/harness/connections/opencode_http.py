@@ -46,6 +46,7 @@ from meridian.lib.harness.projections.projection_errors import HarnessCapability
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
@@ -1050,11 +1051,6 @@ def _materialize_system_prompt(
     ``Instructions from: <path>`` which the model can see).  The file only
     needs to live as long as the ``opencode serve`` process.
     """
-    # Deferred import: workspace_projection is a harness submodule imported during
-    # bootstrap; a module-level import here creates a circular lock cycle in Python
-    # 3.14's stricter _ModuleLock detection.
-    from meridian.lib.harness.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
-
     _ = spawn_dir  # reserved for future use (cleanup tracking)
     text = (system or "").strip()
     if not text:
