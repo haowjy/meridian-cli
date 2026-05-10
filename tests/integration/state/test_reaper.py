@@ -608,7 +608,8 @@ def test_reconcile_active_spawn_orphan_primary_diagnostics_include_launcher_aliv
     assert reconciled.status == "failed"
     assert reconciled.error == "orphan_primary"
     assert warnings
-    event, payload = warnings[-1]
+    # Check the diagnostic warning (first emitted) which carries launcher_alive details
+    event, payload = warnings[0]
     assert "Managed primary candidate reconciled without readable metadata" in event
     assert payload["launcher_alive"] is False
     assert payload["managed_metadata_readable"] is False

@@ -61,7 +61,9 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
         return DrainOutcome(status="cancelled", exit_code=1)
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "require_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        streaming_serve_module, "require_established_project_root", lambda: tmp_path
+    )
 
     await streaming_serve_module.streaming_serve("codex", "hello")
 
@@ -84,7 +86,9 @@ async def test_streaming_serve_start_failure_finalizes_failed_once(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "require_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        streaming_serve_module, "require_established_project_root", lambda: tmp_path
+    )
 
     with pytest.raises(RuntimeError, match="boom"):
         await streaming_serve_module.streaming_serve("codex", "hello")
@@ -123,7 +127,9 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
         _build_launch_context,
     )
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "require_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        streaming_serve_module, "require_established_project_root", lambda: tmp_path
+    )
 
     await streaming_serve_module.streaming_serve("codex", "hello", debug=True)
 
@@ -170,7 +176,9 @@ async def test_streaming_serve_reports_platform_control_endpoint(
         return DrainOutcome(status="succeeded", exit_code=0)
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "require_project_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        streaming_serve_module, "require_established_project_root", lambda: tmp_path
+    )
 
     await streaming_serve_module.streaming_serve("codex", "hello")
 

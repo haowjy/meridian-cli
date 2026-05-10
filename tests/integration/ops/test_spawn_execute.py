@@ -10,11 +10,9 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import Spawn
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
-from meridian.lib.ops.spawn.execute import (
-    PreparedExecutionHandoff,
-    _SessionExecutionContext,
-    launch_prepared_spawn,
-)
+from meridian.lib.ops.spawn.execute import launch_prepared_spawn
+from meridian.lib.ops.spawn.execute_runner import PreparedExecutionHandoff
+from meridian.lib.ops.spawn.execute_session import _SessionExecutionContext
 
 
 @pytest.mark.asyncio
@@ -22,7 +20,7 @@ async def test_launch_prepared_spawn_closes_session_scope_when_runner_raises(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import meridian.lib.ops.spawn.execute as execute_module
+    import meridian.lib.ops.spawn.execute_runner as execute_module
 
     close_count = 0
 

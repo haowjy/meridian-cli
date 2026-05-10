@@ -276,7 +276,7 @@ def test_nested_manual_hooks_ignore_inherited_roots_during_handler_execution(
         ["hooks", "run", "record-finalized"],
     ],
 )
-def test_top_level_manual_hooks_preserve_env_targeting(
+def test_top_level_manual_hooks_resolve_project_root_from_cwd(
     argv: list[str],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -345,7 +345,8 @@ def test_top_level_manual_hooks_preserve_env_targeting(
     expected_env = (parent_project.as_posix(), parent_runtime.as_posix())
     assert captured["bootstrap_env"] == expected_env
     assert captured["handler_env"] == expected_env
-    assert captured["project_root"] == parent_project.resolve().as_posix()
+    # hooks commands resolve project root from CWD (ignore_env=True), not from MERIDIAN_PROJECT_DIR
+    assert captured["project_root"] == child_project.resolve().as_posix()
 
 
 def test_top_level_hooks_run_honors_runtime_override_in_hook_context(

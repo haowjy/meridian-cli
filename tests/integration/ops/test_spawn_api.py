@@ -332,7 +332,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
     monkeypatch.setattr(spawn_api, "spawn_cancel_sync", _fake_spawn_cancel_sync)
 
     output = spawn_api.spawn_cancel_all_sync(
-        SpawnCancelAllInput(project_root=project_root.as_posix()),
+        SpawnCancelAllInput(project_root=project_root.as_posix(), include_others=True),
         prepared=prepared,
     )
 
