@@ -4,6 +4,12 @@ Replaces: tests/e2e/config/init-show-set.md
 """
 
 import json
+from pathlib import Path
+
+
+def _posix_str(p: Path | str) -> str:
+    """Normalize path to forward slashes for CLI output comparison."""
+    return str(p).replace("\\", "/")
 
 
 def test_config_init_creates_file(cli_with_git, scratch_dir):
@@ -11,7 +17,7 @@ def test_config_init_creates_file(cli_with_git, scratch_dir):
     result = cli_with_git("config", "init")
     result.assert_success()
     config_file = scratch_dir / "meridian.toml"
-    assert result.stdout.strip() == f"created: {config_file}"
+    assert result.stdout.strip() == f"created: {_posix_str(config_file)}"
     assert config_file.exists()
 
 
@@ -21,7 +27,7 @@ def test_config_show_exposes_values(cli, scratch_dir):
     result.assert_success()
     payload = json.loads(result.stdout)
     values = {row["key"]: row for row in payload["values"]}
-    assert payload["project_root"] == str(scratch_dir)
+    assert payload["project_root"] == _posix_str(scratch_dir)
     assert payload["project_root_source"] == "env"
     assert payload["runtime_root"] is None
     assert values["defaults.harness"]["value"] == "codex"
