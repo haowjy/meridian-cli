@@ -150,9 +150,10 @@ def _coerce_worktree_metadata(
 
     nested = raw.get("worktree")
     if isinstance(nested, dict):
-        path_value = nested.get("path")
-        branch_value = nested.get("branch")
-        pending_value = nested.get("pending")
+        nested_dict = cast("dict[str, object]", nested)
+        path_value = nested_dict.get("path")
+        branch_value = nested_dict.get("branch")
+        pending_value = nested_dict.get("pending")
     else:
         path_value = raw.get("worktree_path")
         branch_value = raw.get("worktree_branch")

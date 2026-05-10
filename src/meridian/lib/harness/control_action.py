@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import cast
 
 from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.connections.base import ConnectionNotReady
@@ -266,6 +267,7 @@ class ControlActionCoordinator:
                     continue
                 if not isinstance(payload, dict):
                     continue
+                payload = cast("dict[str, object]", payload)
 
                 seq = payload.get("seq")
                 if isinstance(seq, int):
