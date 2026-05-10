@@ -964,10 +964,9 @@ def spawn_cancel_all_sync(
             )
         results.append(result)
 
-    accepted_statuses = {"cancelled", "finalizing"}
-    cancelled_count = sum(1 for result in results if result.status in accepted_statuses)
     finalizing_count = sum(1 for result in results if result.status == "finalizing")
     failed_count = sum(1 for result in results if result.status == "failed")
+    cancelled_count = len(results) - failed_count
     return SpawnCancelAllOutput(
         work=work_id,
         total_running=len(target_rows),
