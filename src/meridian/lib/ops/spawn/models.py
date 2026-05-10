@@ -576,7 +576,6 @@ class SpawnCancelAllInput(BaseModel):
     project_root: str | None = None
     include_primaries: bool = False
     include_others: bool = False
-    chat_id: str | None = None
 
 
 class SpawnCancelAllOutput(BaseModel):

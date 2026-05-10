@@ -18,6 +18,7 @@ from meridian.lib.bootstrap.services import (
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
+from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.extensions.registry import get_first_party_registry
@@ -760,16 +761,13 @@ def _spawn_cancel_all(
         ),
     ] = False,
 ) -> None:
-    import os
-
-    chat_id = os.getenv("MERIDIAN_CHAT_ID", "").strip() or None
     result = spawn_cancel_all_sync(
         SpawnCancelAllInput(
             work=work,
             include_primaries=include_primaries,
             include_others=include_others,
-            chat_id=chat_id,
         ),
+        ctx=RuntimeContext.from_environment(),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )

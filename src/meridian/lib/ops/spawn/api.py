@@ -897,7 +897,7 @@ def spawn_cancel_all_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnCancelAllOutput:
-    _ = ctx
+    resolved_context = runtime_context(ctx)
     if prepared is not None:
         project_root = _project_root_from_prepared(prepared)
         runtime_root = _runtime_root_from_prepared_for_read(
@@ -908,7 +908,8 @@ def spawn_cancel_all_sync(
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
     work_id = _normalize_work_filter(payload.work)
-    caller_chat_id = (payload.chat_id or "").strip() or None
+    caller_chat_id = (resolved_context.chat_id or "").strip() or None
+    caller_spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
     if caller_chat_id is None and not payload.include_others:
         raise ValueError(
             "No session context (MERIDIAN_CHAT_ID not set). "
@@ -931,6 +932,14 @@ def spawn_cancel_all_sync(
     else:
         active_session_work_ids = None
 
+    # When called from a nested spawn, scope to that spawn's descendants only.
+    # When called from a primary/root context, scope to the full chat.
+    if caller_spawn_id is not None and not payload.include_others:
+        desc_records = _collect_descendants(caller_spawn_id, active_rows)
+        descendant_ids: set[str] | None = {r.id for r in desc_records} - {caller_spawn_id}
+    else:
+        descendant_ids = None
+
     target_rows = [
         row
         for row in active_rows
@@ -947,8 +956,8 @@ def spawn_cancel_all_sync(
         and (payload.include_primaries or (row.kind or "").strip() != "primary")
         and (
             payload.include_others
-            or caller_chat_id is None
-            or (row.chat_id or "").strip() == caller_chat_id
+            or (descendant_ids is not None and row.id in descendant_ids)
+            or (descendant_ids is None and (row.chat_id or "").strip() == (caller_chat_id or ""))
         )
     ]
 
@@ -996,7 +1005,6 @@ async def spawn_cancel_all(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnCancelAllOutput:
-    _ = ctx
     return await asyncio.to_thread(
         spawn_cancel_all_sync,
         payload,
