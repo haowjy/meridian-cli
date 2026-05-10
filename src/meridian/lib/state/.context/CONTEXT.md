@@ -45,11 +45,9 @@ Why: the global log had grown to 189 MB / 35,000 events. Every status read was
 O(n) replay of the entire file. Primary launch had degraded to 12–13 seconds.
 Per-spawn `state.json` makes reads O(1). After migration: 0.67s launch time.
 
-`spawns/v2-format.json` is a one-time migration marker. `ensure_v2_format()` in
-`state/spawn/migration.py` runs on first access to a runtime root. It replays
-the legacy `spawns.jsonl`, writes `state.json` per spawn, then renames the old
-file to `spawns.legacy-v1.jsonl`. No quiescence gate — active spawns are handled
-by the reaper after migration.
+Migration from the legacy global `spawns.jsonl` to per-spawn `state.json` is complete.
+All active installations use v2. The `spawns.jsonl` path still exists in `RuntimePaths`
+as a field but is unused by the spawn store.
 
 ### Session State
 
@@ -206,4 +204,4 @@ external writes.
 ## Related .context/
 
 - [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — `ArtifactStore` protocol that reads from `artifact_store.py`; `SpawnExtractor` contract
-- `../../launch/.context/` — launch pipeline that writes spawn state via `SpawnStore` (not yet written)
+- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — launch pipeline that writes spawn state via `SpawnStore`; composition seam, prepare/bind split

@@ -192,4 +192,4 @@ accounting invariant treats any uncovered field as a bug, not a warning.
 ## Related .context/
 
 - [../../state/.context/CONTEXT.md](../../state/.context/CONTEXT.md) — artifact store that `SpawnExtractor` reads from; atomic write primitives
-- `../../launch/.context/` — launch factory and composition pipeline that feeds SpawnParams into adapters (not yet written)
+- [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — composition seam, four driving adapters, prepare/bind split, invariants
