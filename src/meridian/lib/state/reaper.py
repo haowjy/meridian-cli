@@ -502,12 +502,9 @@ def reconcile_active_spawn(
                 )
         else:
             logger.warning(
-                "Managed primary orphaned; metadata unreadable, attempting scope-based cleanup.",
+                "Managed primary orphaned; metadata unreadable, zombie processes may remain.",
                 spawn_id=record.id,
             )
-            from meridian.lib.core.process_cleanup import cancel_managed_primary
-
-            cancel_managed_primary(runtime_root, record)
     return _finalize_failed(
         project_root,
         runtime_root,
