@@ -60,6 +60,23 @@ Human vs agent mode selects a `HelpProfile` at app-build time from the
 command catalog — no runtime mutation of shared `App` objects. Do not call
 `apply_agent_help_supplements()` (archived pattern).
 
+## `require_established_project_root()`
+
+`utils.py:require_established_project_root()` is the fail-fast guard used by
+commands that require an actual project directory. It raises `SystemExit` when
+`resolve_project_root_resolution()` returns `source="cwd"` — meaning the
+directory walk from CWD found no project marker (`.mars/`, `meridian.toml`,
+`.meridian/id`, `.git`, etc.) and fell back to bare CWD.
+
+The "established" in the name is deliberate: it makes the policy visible at
+every call site. A command that calls this asserts it cannot proceed in an
+arbitrary directory — it needs a real project root, not a best-guess fallback.
+
+Do not use this in commands that should work anywhere (e.g. `config init`,
+which creates the project marker). Use `resolve_project_root_resolution()`
+directly and handle the `source="cwd"` case explicitly if the command has
+a sensible fallback.
+
 ## `to_cli_output()` Dispatch
 
 Command handlers emit results through `to_cli_output()` dispatch rather

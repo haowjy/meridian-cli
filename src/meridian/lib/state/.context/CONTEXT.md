@@ -145,6 +145,30 @@ Liveness check sequence per active spawn:
 is not a terminal control frame (`cancelled`/`error` JSON). Used by both reaper
 and runner.
 
+**Managed-primary orphan cleanup — three tiers:**
+
+When a spawn is flagged as a potential managed primary (Codex / OpenCode kind=primary)
+and must be finalized as failed, `reconcile_active_spawn()` attempts process cleanup
+before writing the terminal state. The tier used depends on how much metadata is
+readable:
+
+1. **Managed snapshot available** (`read_managed_primary_snapshot()` succeeded):
+   `terminate_managed_primary_processes(managed_snapshot.metadata)` — terminates
+   launcher, backend, and TUI PIDs tracked in the snapshot.
+
+2. **Managed snapshot missing, metadata readable via late read**
+   (`read_primary_metadata()` on the spawn directory succeeds):
+   `terminate_managed_primary_processes(metadata)` — same termination path from
+   a fresh metadata read.
+
+3. **Metadata unreadable** (both snapshot and late read fail):
+   `cancel_managed_primary(runtime_root, record)` — scope-based fallback that
+   works without primary metadata, using only process scope records. Prevents the
+   previous silent resource leak where unreadable metadata led to no cleanup at all.
+
+All three tiers run before `_finalize_failed()` so that cleanup happens whether
+or not the finalization write succeeds.
+
 ## Patterns
 
 ### Platform Locking

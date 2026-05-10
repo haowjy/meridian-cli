@@ -64,6 +64,22 @@ finally:
 Never read `_SETTINGS_CONTEXT` outside of `settings.py` field validators or the source
 callables. It is only valid during `MeridianConfig()` construction.
 
+### `resolve_project_root_resolution()` — `ignore_env` Parameter
+
+`project_root.py:resolve_project_root_resolution()` accepts an `ignore_env`
+flag (default `False`). When `True`, it skips the `MERIDIAN_PROJECT_DIR` env
+var check and falls through to CWD-based directory-walk discovery.
+
+**Why it exists:** Hooks commands (`cli/hooks_commands.py`) run inside spawned
+processes that inherit the outer session's `MERIDIAN_PROJECT_DIR`. Without
+`ignore_env=True`, those commands would resolve the spawning session's project
+root — not the directory the hook is actually running in. Hooks need CWD-relative
+resolution, regardless of what the parent process injected.
+
+Use `ignore_env=True` only when the caller explicitly needs to resolve relative
+to the actual CWD and must not honor an inherited session project directory.
+All other callers should leave it at the default.
+
 ## Dynamic Section Merge Rules
 
 Sections in `DYNAMIC_SECTION_DESCRIPTORS` use one of three merge strategies:
