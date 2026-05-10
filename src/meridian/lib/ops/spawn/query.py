@@ -331,7 +331,7 @@ def detail_from_row(
         log_path=log_path,
         exited_at=row.exited_at,
         process_exit_code=row.process_exit_code,
-        claude_config_dir=row.claude_config_dir,
+        session_config_dir=row.claude_config_dir,
     )
 
 

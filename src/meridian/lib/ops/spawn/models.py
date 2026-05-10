@@ -642,7 +642,7 @@ class SpawnDetailOutput(BaseModel):
     log_path: str | None = None
     exited_at: str | None = None
     process_exit_code: int | None = None
-    claude_config_dir: str | None = None
+    session_config_dir: str | None = None
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -721,8 +721,8 @@ class SpawnDetailOutput(BaseModel):
             wire["report_summary"] = self.report_summary
         if self.report_body is not None:
             wire["report_body"] = self.report_body
-        if self.claude_config_dir is not None:
-            wire["claude_config_dir"] = self.claude_config_dir
+        if self.session_config_dir is not None:
+            wire["session_config_dir"] = self.session_config_dir
         return wire
 
     def to_cli_output(
