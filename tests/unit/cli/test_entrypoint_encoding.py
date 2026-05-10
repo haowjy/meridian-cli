@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import MagicMock, patch
 
-import pytest
+import pytest  # noqa: TC002
 
 import meridian.cli.entrypoint as entrypoint_module
 

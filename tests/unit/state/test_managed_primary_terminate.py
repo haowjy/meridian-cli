@@ -6,7 +6,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import psutil
-import pytest
 
 from meridian.lib.state.managed_primary import _terminate_pid
 
@@ -25,7 +24,9 @@ def test_rejects_own_pid() -> None:
 
 def test_calls_psutil_terminate_and_returns_true() -> None:
     mock_proc = MagicMock()
-    with patch("meridian.lib.state.managed_primary.psutil.Process", return_value=mock_proc) as mock_cls:
+    with patch(
+        "meridian.lib.state.managed_primary.psutil.Process", return_value=mock_proc,
+    ) as mock_cls:
         result = _terminate_pid(12345)
     mock_cls.assert_called_once_with(12345)
     mock_proc.terminate.assert_called_once()
