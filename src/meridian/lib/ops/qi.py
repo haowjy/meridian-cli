@@ -147,6 +147,56 @@ def _is_knowledge_boundary(directory: Path) -> bool:
     ).is_file()
 
 
+class QiCheckFinding(BaseModel):
+    """One structural health finding."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # "missing_context_md" | "orphan_context" | "broken_link" | "missing_agents" | "unreadable"
+    category: str
+    severity: str  # "error" or "warning"
+    file: str  # root-relative path to the file with the issue
+    line: int  # 1-indexed line number (0 if not line-specific)
+    message: str
+    detail: str | None = None  # e.g., the broken link target
+
+
+class QiCheckOutput(BaseModel):
+    """Output for `meridian qi check`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    root: str
+    findings: list[QiCheckFinding]
+    points_scanned: int
+
+    @property
+    def has_errors(self) -> bool:
+        return any(f.severity == "error" for f in self.findings)
+
+    @property
+    def error_count(self) -> int:
+        return sum(1 for f in self.findings if f.severity == "error")
+
+    @property
+    def warning_count(self) -> int:
+        return sum(1 for f in self.findings if f.severity == "warning")
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        if not self.findings:
+            return f"All checks passed ({self.points_scanned} points scanned)"
+        lines: list[str] = []
+        for finding in self.findings:
+            prefix = "ERROR" if finding.severity == "error" else "WARN "
+            loc = f"{finding.file}:{finding.line}" if finding.line else finding.file
+            lines.append(f"  [{prefix}]  {loc}  {finding.message}")
+            if finding.detail:
+                lines.append(f"           → {finding.detail}")
+        lines.append(f"\n{self.error_count} error(s), {self.warning_count} warning(s)")
+        return "\n".join(lines)
+
+
 def qi_list_sync(root: Path) -> QiListOutput:
     """Synchronous handler for `meridian qi list`."""
     points = discover_knowledge_points(root)
@@ -186,12 +236,128 @@ def qi_show_sync(path: Path, project_root: Path) -> QiShowOutput:
     )
 
 
+def qi_check_sync(root: Path) -> QiCheckOutput:
+    """Synchronous handler for `meridian qi check`."""
+    import os
+
+    from meridian.lib.markdown.extract import extract_file
+
+    findings: list[QiCheckFinding] = []
+    points_scanned = 0
+
+    def _rel(p: Path) -> str:
+        try:
+            return p.relative_to(root).as_posix()
+        except ValueError:
+            return p.as_posix()
+
+    def _check_links(md_file: Path, is_agents: bool) -> None:
+        """Extract links from *md_file* and emit findings for broken ones."""
+        doc = extract_file(md_file)
+        if doc.error is not None:
+            findings.append(
+                QiCheckFinding(
+                    category="unreadable",
+                    severity="error",
+                    file=_rel(md_file),
+                    line=0,
+                    message=f"Could not read file: {doc.error}",
+                )
+            )
+            return
+        for ref in doc.references:
+            # Skip external links and wikilinks (no filesystem path to check)
+            if ref.kind == "wikilink" or ref.resolved is None:
+                continue
+            if ref.resolved.exists():
+                continue
+            # Broken link — categorise by whether it targets .context/CONTEXT.md
+            is_context_ref = (
+                is_agents
+                and ref.resolved.name == "CONTEXT.md"
+                and ref.resolved.parent.name == ".context"
+            )
+            if is_context_ref:
+                findings.append(
+                    QiCheckFinding(
+                        category="missing_agents",
+                        severity="warning",
+                        file=_rel(md_file),
+                        line=ref.line,
+                        message="AGENTS.md references missing .context/CONTEXT.md",
+                        detail=ref.target,
+                    )
+                )
+            else:
+                findings.append(
+                    QiCheckFinding(
+                        category="broken_link",
+                        severity="error",
+                        file=_rel(md_file),
+                        line=ref.line,
+                        message=f"Broken link: {ref.target}",
+                        detail=ref.target,
+                    )
+                )
+
+    for dirpath_str, dirnames, filenames in os.walk(root):
+        dirpath = Path(dirpath_str)
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+
+        # Check .context/ directory health
+        if ".context" in dirnames:
+            context_dir = dirpath / ".context"
+            context_file = context_dir / "CONTEXT.md"
+            if not context_file.is_file():
+                findings.append(
+                    QiCheckFinding(
+                        category="missing_context_md",
+                        severity="error",
+                        file=_rel(context_dir),
+                        line=0,
+                        message=".context/ directory has no CONTEXT.md",
+                    )
+                )
+            else:
+                points_scanned += 1
+                # orphan_context: CONTEXT.md present but no sibling AGENTS.md
+                if "AGENTS.md" not in filenames:
+                    findings.append(
+                        QiCheckFinding(
+                            category="orphan_context",
+                            severity="warning",
+                            file=_rel(context_file),
+                            line=0,
+                            message=".context/CONTEXT.md has no sibling AGENTS.md",
+                        )
+                    )
+                _check_links(context_file, is_agents=False)
+
+        # Check AGENTS.md health
+        if "AGENTS.md" in filenames:
+            agents_file = dirpath / "AGENTS.md"
+            points_scanned += 1
+            _check_links(agents_file, is_agents=True)
+
+    # Sort: errors before warnings, then by file path, then by line
+    findings.sort(key=lambda f: (0 if f.severity == "error" else 1, f.file, f.line))
+
+    return QiCheckOutput(
+        root=root.as_posix(),
+        findings=findings,
+        points_scanned=points_scanned,
+    )
+
+
 __all__ = [
+    "QiCheckFinding",
+    "QiCheckOutput",
     "QiKnowledgePoint",
     "QiListOutput",
     "QiShowOutput",
     "discover_knowledge_points",
     "find_boundary",
+    "qi_check_sync",
     "qi_list_sync",
     "qi_show_sync",
 ]

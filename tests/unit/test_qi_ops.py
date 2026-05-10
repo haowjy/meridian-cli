@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.ops.qi import (
+    QiCheckFinding,
+    QiCheckOutput,
     QiKnowledgePoint,
     QiListOutput,
     QiShowOutput,
     discover_knowledge_points,
     find_boundary,
+    qi_check_sync,
     qi_list_sync,
     qi_show_sync,
 )
@@ -232,3 +238,174 @@ class TestQiShowSync:
         a_file.write_text("x = 1", encoding="utf-8")
         result = qi_show_sync(a_file, tmp_path)
         assert result.agents_content is not None
+
+
+# ---------------------------------------------------------------------------
+# qi_check_sync
+# ---------------------------------------------------------------------------
+
+
+class TestQiCheckSync:
+    def test_returns_qi_check_output(self, tmp_path: Path) -> None:
+        result = qi_check_sync(tmp_path)
+        assert isinstance(result, QiCheckOutput)
+
+    def test_empty_project_passes_cleanly(self, tmp_path: Path) -> None:
+        result = qi_check_sync(tmp_path)
+        assert result.findings == []
+        assert not result.has_errors
+        assert result.points_scanned == 0
+
+    def test_agents_only_passes_cleanly(self, tmp_path: Path) -> None:
+        # AGENTS.md without .context/ is valid — incremental adoption is fine
+        _make_agents_md(tmp_path)
+        result = qi_check_sync(tmp_path)
+        assert result.findings == []
+        assert not result.has_errors
+
+    def test_missing_context_md_in_context_dir(self, tmp_path: Path) -> None:
+        # .context/ directory exists but has no CONTEXT.md → error
+        (tmp_path / ".context").mkdir()
+        result = qi_check_sync(tmp_path)
+        cats = [f.category for f in result.findings]
+        assert "missing_context_md" in cats
+        errors = [f for f in result.findings if f.category == "missing_context_md"]
+        assert errors[0].severity == "error"
+
+    def test_orphan_context_no_sibling_agents(self, tmp_path: Path) -> None:
+        # .context/CONTEXT.md without a sibling AGENTS.md → warning
+        _make_context_md(tmp_path)
+        result = qi_check_sync(tmp_path)
+        cats = [f.category for f in result.findings]
+        assert "orphan_context" in cats
+        warns = [f for f in result.findings if f.category == "orphan_context"]
+        assert warns[0].severity == "warning"
+
+    def test_no_orphan_when_agents_present(self, tmp_path: Path) -> None:
+        # Both AGENTS.md and .context/CONTEXT.md present → no orphan warning
+        _make_agents_md(tmp_path)
+        _make_context_md(tmp_path)
+        result = qi_check_sync(tmp_path)
+        orphans = [f for f in result.findings if f.category == "orphan_context"]
+        assert orphans == []
+
+    def test_missing_agents_for_broken_context_link(self, tmp_path: Path) -> None:
+        # AGENTS.md explicitly links to .context/CONTEXT.md but file doesn't exist
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(
+            "# Agents\n\nSee [context](.context/CONTEXT.md) for context.\n",
+            encoding="utf-8",
+        )
+        result = qi_check_sync(tmp_path)
+        cats = [f.category for f in result.findings]
+        assert "missing_agents" in cats
+        warns = [f for f in result.findings if f.category == "missing_agents"]
+        assert warns[0].severity == "warning"
+
+    def test_broken_link_in_agents_md(self, tmp_path: Path) -> None:
+        # AGENTS.md links to a file that doesn't exist → error
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(
+            "# Agents\n\nSee [missing](docs/missing.md) for details.\n",
+            encoding="utf-8",
+        )
+        result = qi_check_sync(tmp_path)
+        cats = [f.category for f in result.findings]
+        assert "broken_link" in cats
+        errors = [f for f in result.findings if f.category == "broken_link"]
+        assert errors[0].severity == "error"
+
+    def test_broken_link_in_context_md(self, tmp_path: Path) -> None:
+        # .context/CONTEXT.md links to a file that doesn't exist → error
+        _make_agents_md(tmp_path)
+        ctx_dir = tmp_path / ".context"
+        ctx_dir.mkdir()
+        context_file = ctx_dir / "CONTEXT.md"
+        context_file.write_text(
+            "# Context\n\nSee [missing](../missing.md) for details.\n",
+            encoding="utf-8",
+        )
+        result = qi_check_sync(tmp_path)
+        cats = [f.category for f in result.findings]
+        assert "broken_link" in cats
+
+    def test_valid_link_in_agents_md_no_finding(self, tmp_path: Path) -> None:
+        # AGENTS.md links to a file that exists → no broken_link finding
+        readme = tmp_path / "README.md"
+        readme.write_text("# Readme\n", encoding="utf-8")
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(
+            "# Agents\n\nSee [readme](README.md) for details.\n",
+            encoding="utf-8",
+        )
+        result = qi_check_sync(tmp_path)
+        broken = [f for f in result.findings if f.category == "broken_link"]
+        assert broken == []
+
+    def test_has_errors_property(self, tmp_path: Path) -> None:
+        (tmp_path / ".context").mkdir()  # missing CONTEXT.md → error
+        result = qi_check_sync(tmp_path)
+        assert result.has_errors is True
+
+    def test_error_and_warning_counts(self, tmp_path: Path) -> None:
+        # Setup: .context/ without CONTEXT.md (error) + orphan in nested dir (warning)
+        (tmp_path / ".context").mkdir()  # error: missing_context_md
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        _make_context_md(sub)  # warning: orphan_context (no AGENTS.md sibling)
+        result = qi_check_sync(tmp_path)
+        assert result.error_count >= 1
+        assert result.warning_count >= 1
+
+    def test_format_text_clean(self, tmp_path: Path) -> None:
+        result = qi_check_sync(tmp_path)
+        text = result.format_text()
+        assert "All checks passed" in text
+
+    def test_format_text_with_findings(self, tmp_path: Path) -> None:
+        (tmp_path / ".context").mkdir()
+        result = qi_check_sync(tmp_path)
+        text = result.format_text()
+        assert "error(s)" in text
+
+    def test_findings_sorted_errors_before_warnings(self, tmp_path: Path) -> None:
+        # .context/ dir without CONTEXT.md → error, orphan context in sub → warning
+        (tmp_path / ".context").mkdir()
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        _make_context_md(sub)
+        result = qi_check_sync(tmp_path)
+        if len(result.findings) >= 2:
+            severities = [f.severity for f in result.findings]
+            # errors should come before warnings
+            first_warn = next(
+                (i for i, s in enumerate(severities) if s == "warning"), None
+            )
+            last_error = next(
+                (
+                    len(severities) - 1 - i
+                    for i, s in enumerate(reversed(severities))
+                    if s == "error"
+                ),
+                None,
+            )
+            if first_warn is not None and last_error is not None:
+                assert last_error <= first_warn
+
+    def test_findings_are_qi_check_finding_instances(self, tmp_path: Path) -> None:
+        (tmp_path / ".context").mkdir()
+        result = qi_check_sync(tmp_path)
+        assert all(isinstance(f, QiCheckFinding) for f in result.findings)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod not reliable on Windows")
+    def test_unreadable_file_produces_finding(self, tmp_path: Path) -> None:
+        agents_file = _make_agents_md(tmp_path)
+        agents_file.chmod(0o000)
+        try:
+            result = qi_check_sync(tmp_path)
+            cats = [f.category for f in result.findings]
+            assert "unreadable" in cats
+            unreadable = [f for f in result.findings if f.category == "unreadable"]
+            assert unreadable[0].severity == "error"
+        finally:
+            agents_file.chmod(0o644)

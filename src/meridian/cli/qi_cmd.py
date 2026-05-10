@@ -87,10 +87,41 @@ def cmd_qi_list(
 
 
 @qi_app.command(name="check")
-def cmd_qi_check() -> None:
-    """Check inline knowledge health (not yet implemented)."""
-    print("qi check not yet implemented")
-    raise SystemExit(0)
+def cmd_qi_check(
+    path: Annotated[
+        Path,
+        Parameter(help="Directory to check (default: cwd)."),
+    ] = Path("."),
+    *,
+    fmt: Annotated[
+        str,
+        Parameter(name="--format", help="Output format: text (default) or json."),
+    ] = "text",
+) -> None:
+    """Check inline knowledge health."""
+    from meridian.cli.main import get_global_options
+    from meridian.lib.ops.qi import qi_check_sync
+
+    resolved = path.resolve()
+    if not resolved.exists():
+        print(f"Error: path not found: {path}", file=sys.stderr)
+        raise SystemExit(2)
+    if not resolved.is_dir():
+        print(f"Error: not a directory: {path}", file=sys.stderr)
+        raise SystemExit(2)
+
+    result = qi_check_sync(resolved)
+
+    effective_fmt = "json" if get_global_options().output.format == "json" else fmt
+
+    if effective_fmt == "json":
+        import json
+
+        print(json.dumps(result.model_dump(), indent=2))
+    else:
+        print(result.format_text())
+
+    raise SystemExit(1 if result.has_errors else 0)
 
 
 __all__ = [
