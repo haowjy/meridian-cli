@@ -1,14 +1,14 @@
-"""User-level state root resolution and project UUID management."""
+"""User-level state root resolution and project ID management."""
 
 from __future__ import annotations
 
 import os
-import uuid
 from pathlib import Path
 
 from meridian.lib.platform import IS_WINDOWS, get_home_path
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.wordgen import generate_project_id
 
 
 def get_user_home() -> Path:
@@ -40,9 +40,10 @@ def get_user_home() -> Path:
     return get_home_path() / ".meridian"
 
 
-def get_project_uuid(meridian_dir: Path) -> str | None:
-    """Read-only UUID lookup from `.meridian/id`.
+def get_project_id(meridian_dir: Path) -> str | None:
+    """Read-only project ID lookup from `.meridian/id`.
 
+    Accepts any non-empty string — UUIDs, three-word IDs, or any future format.
     Returns None when the id file is missing, unreadable, or empty.
     """
 
@@ -50,41 +51,68 @@ def get_project_uuid(meridian_dir: Path) -> str | None:
     if not id_file.is_file():
         return None
     try:
-        project_uuid = id_file.read_text(encoding="utf-8").strip()
+        project_id = id_file.read_text(encoding="utf-8").strip()
     except OSError:
         return None
-    return project_uuid or None
+    return project_id or None
 
 
-def get_or_create_project_uuid(meridian_dir: Path) -> str:
-    """Read or generate the project UUID from .meridian/id.
+def get_or_create_project_id(meridian_dir: Path) -> str:
+    """Read or generate the project ID from .meridian/id.
 
-    - If .meridian/id exists, read and return it
-    - If not, generate UUID v4, create .meridian/ and id file atomically, return UUID
-    - UUID is 36 chars, no trailing newline
+    - If .meridian/id exists, read and return it (any format accepted)
+    - If not, generate a three-word ID (adjective-noun-noun), collision-check
+      against existing context/ and projects/ directories, write atomically
+    - Up to 10 retries on collision; raises RuntimeError if exhausted
     """
 
-    project_uuid = get_project_uuid(meridian_dir)
-    if project_uuid is not None:
-        return project_uuid
+    project_id = get_project_id(meridian_dir)
+    if project_id is not None:
+        return project_id
 
     lock_path = meridian_dir / "id.lock"
     with lock_file(lock_path):
-        project_uuid = get_project_uuid(meridian_dir)
-        if project_uuid is not None:
-            return project_uuid
+        project_id = get_project_id(meridian_dir)
+        if project_id is not None:
+            return project_id
+
+        user_home = get_user_home()
+        for _ in range(10):
+            candidate = generate_project_id()
+            if not (user_home / "context" / candidate).exists() and not (
+                user_home / "projects" / candidate
+            ).exists():
+                project_id = candidate
+                break
+        else:
+            raise RuntimeError(
+                "Failed to generate a unique project ID after 10 attempts"
+            )
 
         id_file = meridian_dir / "id"
-        project_uuid = str(uuid.uuid4())
         meridian_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(id_file, project_uuid)
-        return project_uuid
+        atomic_write_text(id_file, project_id)
+        return project_id
 
 
-def get_project_home(project_uuid: str) -> Path:
+def get_project_home(project_id: str) -> Path:
     """Return the user-level project data directory.
 
-    Returns: get_user_home() / "projects" / project_uuid
+    Returns: get_user_home() / "projects" / project_id
     """
 
-    return get_user_home() / "projects" / project_uuid
+    return get_user_home() / "projects" / project_id
+
+
+def get_context_home(project_id: str) -> Path:
+    """Return the user-level context directory.
+
+    Returns: get_user_home() / "context" / project_id
+    """
+
+    return get_user_home() / "context" / project_id
+
+
+# Temporary aliases — callers updated incrementally
+get_project_uuid = get_project_id
+get_or_create_project_uuid = get_or_create_project_id

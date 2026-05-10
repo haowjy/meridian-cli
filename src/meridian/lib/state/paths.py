@@ -11,7 +11,7 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.user_paths import get_or_create_project_uuid, get_project_uuid
+from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id
 
 _MERIDIAN_DIR = ".meridian"
 _GITIGNORE_CONTENT = (
@@ -293,19 +293,19 @@ def resolve_project_paths_from_context(
     )
 
     project_state_dir = project_root / _MERIDIAN_DIR
-    project_uuid: str | None = None
+    project_id: str | None = None
     if context_uses_project_placeholder(context_config):
         if create_project_uuid:
-            project_uuid = get_or_create_project_uuid(project_state_dir)
+            project_id = get_or_create_project_id(project_state_dir)
         else:
-            project_uuid = get_project_uuid(project_state_dir)
-        if project_uuid is None:
+            project_id = get_project_id(project_state_dir)
+        if project_id is None:
             return ProjectPaths.from_root_dir(project_state_dir)
 
     resolved = resolve_context_paths(
         project_root,
         context_config,
-        project_uuid=project_uuid,
+        project_id=project_id,
     )
     return ProjectPaths(
         root_dir=project_state_dir,

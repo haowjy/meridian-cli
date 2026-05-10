@@ -12,7 +12,7 @@ from meridian.lib.config.context_config import (
     ContextConfig,
     ContextSourceType,
 )
-from meridian.lib.state.user_paths import get_project_uuid
+from meridian.lib.state.user_paths import get_project_id
 from meridian.plugin_api.git import resolve_clone_path
 
 
@@ -54,7 +54,7 @@ def context_uses_project_placeholder(config: ContextConfig) -> bool:
 def _resolve_path(
     path_spec: str,
     project_root: Path,
-    project_uuid: str | None,
+    project_id: str | None,
     *,
     source: ContextSourceType = ContextSourceType.LOCAL,
     remote: str | None = None,
@@ -65,8 +65,8 @@ def _resolve_path(
     the auto-cloned repository location. The clone itself is handled lazily
     by git-autosync hooks, not here.
     """
-    if project_uuid and "{project}" in path_spec:
-        path_spec = path_spec.replace("{project}", project_uuid)
+    if project_id and "{project}" in path_spec:
+        path_spec = path_spec.replace("{project}", project_id)
 
     # For git-backed contexts, resolve relative to the expected clone location
     if source == ContextSourceType.GIT and isinstance(remote, str) and remote.strip():
@@ -82,31 +82,31 @@ def _resolve_path(
 def resolve_context_paths(
     project_root: Path,
     config: ContextConfig,
-    project_uuid: str | None = None,
+    project_id: str | None = None,
 ) -> ResolvedContextPaths:
     """Resolve context paths from config."""
 
-    if project_uuid is None:
-        project_uuid = get_project_uuid(project_root / ".meridian")
+    if project_id is None:
+        project_id = get_project_id(project_root / ".meridian")
 
     work_root = _resolve_path(
         config.work.path,
         project_root,
-        project_uuid,
+        project_id,
         source=config.work.source,
         remote=config.work.remote,
     )
     work_archive = _resolve_path(
         config.work.archive,
         project_root,
-        project_uuid,
+        project_id,
         source=config.work.source,
         remote=config.work.remote,
     )
     kb_root = _resolve_path(
         config.kb.path,
         project_root,
-        project_uuid,
+        project_id,
         source=config.kb.source,
         remote=config.kb.remote,
     )
@@ -124,7 +124,7 @@ def resolve_context_paths(
             _resolve_path(
                 parsed.path,
                 project_root,
-                project_uuid,
+                project_id,
                 source=parsed.source,
                 remote=parsed.remote,
             ),

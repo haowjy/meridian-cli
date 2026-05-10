@@ -21,12 +21,12 @@ from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.user_paths import (
-    get_or_create_project_uuid,
+    get_or_create_project_id,
     get_project_home,
     get_user_home,
 )
 from meridian.lib.state.user_paths import (
-    get_project_uuid as read_project_uuid,
+    get_project_id as read_project_id,
 )
 
 if TYPE_CHECKING:
@@ -176,7 +176,7 @@ def resolve_runtime_authority_for_read(
 
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
     override_root = _runtime_override_env_root(authority.project_root)
-    project_uuid = read_project_uuid(authority.project_state_dir)
+    project_id = read_project_id(authority.project_state_dir)
     if override_root is not None:
         runtime_root = override_root
         if (
@@ -185,8 +185,8 @@ def resolve_runtime_authority_for_read(
             and _root_has_runtime_state(authority.project_state_dir)
         ):
             runtime_root = authority.project_state_dir
-    elif project_uuid is not None:
-        candidate_runtime_root = get_project_home(project_uuid)
+    elif project_id is not None:
+        candidate_runtime_root = get_project_home(project_id)
         runtime_root = (
             authority.project_state_dir
             if (
@@ -206,7 +206,7 @@ def resolve_runtime_authority_for_read(
     elif runtime_root == authority.project_state_dir:
         runtime_source = (
             "project-state-fallback"
-            if override_root is not None or project_uuid is not None
+            if override_root is not None or project_id is not None
             else "project-state"
         )
     else:
@@ -229,7 +229,7 @@ def resolve_runtime_authority_for_write(
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
     override = _runtime_override_env_root(authority.project_root)
     runtime_root = override or get_project_home(
-        get_or_create_project_uuid(authority.project_state_dir)
+        get_or_create_project_id(authority.project_state_dir)
     )
     runtime_source: RuntimeRootSource = (
         "project-state" if runtime_root == authority.project_state_dir else "user-home-project"
@@ -347,10 +347,10 @@ def resolve_runtime_root_for_read(project_root: Path) -> Path:
     return authority.runtime_root
 
 
-def get_project_uuid(project_root: Path) -> str:
-    """Get/create project UUID, returns UUID string."""
+def get_project_id(project_root: Path) -> str:
+    """Get/create project ID, returns project ID string."""
 
-    return get_or_create_project_uuid(resolve_project_paths(project_root).root_dir)
+    return get_or_create_project_id(resolve_project_paths(project_root).root_dir)
 
 
 def resolve_roots(project_root: str | None) -> ResolvedRoots:
