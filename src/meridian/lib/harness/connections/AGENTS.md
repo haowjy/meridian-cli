@@ -1,35 +1,50 @@
-# harness/connections/
+# harness/connections/ — Bidirectional Transports
 
 Full-duplex streaming connections between Meridian and a running harness process.
-Used by the SpawnManager drain loop and `meridian chat` — not the subprocess path.
+Only used by the SpawnManager drain loop and `meridian chat` — not the subprocess
+path. If a spawn is one-shot (no streaming, no managed-primary), this package is
+not involved.
 
-## Files
+## Mental Model
 
-- `base.py` — `HarnessConnection` ABC, `HarnessEvent`, `ConnectionCapabilities`,
-  `ConnectionConfig`, `ServerRequestHandler` protocol with `AutoAcceptHandler` /
-  `InteractiveHandler`, `ObserverEndpoint`, size constants
-- `claude_ws.py` — `ClaudeConnection` (stdin/stdout NDJSON, not WebSocket despite the name)
-- `codex_ws.py` — `CodexConnection` (real WebSocket, JSON-RPC 2.0 over `codex app-server`)
-- `opencode_http.py` — `OpenCodeConnection` (HTTP+SSE over `opencode serve`)
-- `errors.py` — `ConnectionStartupError` hierarchy; `PortBindError` is retryable
-- `__init__.py` — `get_connection_class(harness_id, transport_id)` lookup via bundle registry
+Each transport wraps a long-lived process and turns its output into a stream of
+`HarnessEvent` objects consumed by the drain loop. The drain loop calls
+`terminal_outcome(event)` on each event; when that returns non-None, it breaks.
+
+Three transports exist, each different at the wire level:
+- **Claude** (`claude_ws.py`): stdin/stdout NDJSON. No WebSocket despite the filename.
+- **Codex** (`codex_ws.py`): real WebSocket to `codex app-server`, JSON-RPC 2.0.
+  Codex's `requestApproval` and `requestUserInput` messages are dispatched to
+  either `AutoAcceptHandler` (spawn paths) or `InteractiveHandler` (managed-primary attach).
+- **OpenCode** (`opencode_http.py`): HTTP+SSE to `opencode serve`.
+
+## Key Rules
+
+**Get a connection class via `get_connection_class(harness_id, transport_id)`.**
+Requires `ensure_bootstrap()` first — the registry is populated as a bootstrap side effect.
+
+**Startup errors are classified.** `PortBindError` is retryable; other
+`ConnectionStartupError` subtypes are not. The caller (SpawnManager) acts on this
+distinction.
+
+**New transport = subclass `HarnessConnection[SpecT]`**, declare `_CAPABILITIES`,
+implement all abstract methods, register in the bundle. Missing registration →
+`KeyError` at lookup time.
 
 ## Entry Points
 
-**Get a connection class:** `get_connection_class(harness_id, transport_id)` from `__init__.py`.
-Requires `ensure_bootstrap()` to have run first.
-
-**Implement a new transport:** subclass `HarnessConnection[SpecT]` in `base.py`,
-declare `_CAPABILITIES`, override all abstract methods, register in the bundle.
+- `base.py` — `HarnessConnection` ABC, `HarnessEvent`, `ConnectionCapabilities`,
+  `ConnectionConfig`, `ServerRequestHandler` protocol, size constants.
+- `__init__.py` — `get_connection_class(harness_id, transport_id)`.
 
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — transport differences, request handler
-  policy, capability flags, startup error classification
+   policy, capability flags, startup error classification.
 
 ## Related
 
-- [../.context/CONTEXT.md](../.context/CONTEXT.md) — parent harness architecture; connection
-  vs subprocess paths, SpawnManager drain loop, terminal event semantics
-- [../passthrough/AGENTS.md](../passthrough/AGENTS.md) — uses `ConnectionConfig` and
-  `HarnessConnection` for managed-primary TUI attach
+- [../.context/CONTEXT.md](../.context/CONTEXT.md) — where connections fit in the
+  translation pipeline; subprocess vs connection launch paths; terminal event semantics.
+- [../passthrough/AGENTS.md](../passthrough/AGENTS.md) — uses `ConnectionConfig` for
+  managed-primary TUI attach.

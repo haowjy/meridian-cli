@@ -1,29 +1,46 @@
-# harness/passthrough/
+# harness/passthrough/ — Managed-Primary TUI Attach
 
-TUI passthrough for managed-primary sessions — builds the `ConnectionConfig` for
-the backend connection and the attach command for the user-facing TUI process.
+Builds the two artifacts needed for managed-primary sessions: the `ConnectionConfig`
+for Meridian's backend connection to the harness, and the attach command for the
+user-facing TUI process. Nothing else.
 
-## Files
+## Mental Model
 
-- `base.py` — `TuiPassthrough` Protocol; `PassthroughError`; `TuiCommandBuilder` type
-- `claude.py` — `ClaudePassthrough` — always raises; Claude does not support managed-primary attach
-- `codex.py` — `CodexPassthrough` — pre-reserves a loopback port; builds `codex resume <id> --remote <ws_url>`
-- `opencode.py` — `OpenCodePassthrough` — builds `opencode attach <http_url> --session <id>`
-- `registry.py` — `get_passthrough(harness_id)` dispatch
+In a managed-primary session, Meridian connects to the harness first (as turn owner),
+then launches a TUI process for the user to observe/interact. This package builds
+both sides of that setup:
+1. `build_connection_config()` — produces `ConnectionConfig` for Meridian's connection.
+2. `build_tui_command()` — produces the command the user's TUI will run to attach.
+
+**Claude does not support managed-primary.** `ClaudePassthrough` always raises
+`PassthroughError`. Claude primary sessions use the PTY path instead.
+
+**Codex pre-reserves a port.** Port reservation happens inside `build_connection_config()`
+before the harness process starts. This creates a race window: if the harness binds
+a different port, the pre-reserved one is wrong. The connection layer handles retries.
+
+## Key Rules
+
+**Access via `get_passthrough(harness_id)`** — not by instantiating classes directly.
+Raises `PassthroughError` for unsupported harnesses (Claude).
+
+**The two build steps are ordered.** Call `build_connection_config()` first (creates
+the server endpoint), then `build_tui_command()` (uses the endpoint URL from the config).
+Reversing the order will produce a TUI command pointing at nothing.
 
 ## Entry Points
 
-`get_passthrough(harness_id)` from `__init__.py` (re-exports from `registry.py`).
-Returns a `TuiPassthrough` instance. Raises `PassthroughError` for unsupported harnesses.
+- `registry.py` — `get_passthrough(harness_id)`.
+- `base.py` — `TuiPassthrough` Protocol, `PassthroughError`, `TuiCommandBuilder`.
 
 ## Depth
 
-→ [.context/CONTEXT.md](.context/CONTEXT.md) — two-phase protocol, port pre-reservation
-  race, Claude exclusion, attach command shapes
+→ [.context/CONTEXT.md](.context/CONTEXT.md) — two-phase protocol detail, port
+   pre-reservation race, attach command shapes per harness.
 
 ## Related
 
-- [../.context/CONTEXT.md](../.context/CONTEXT.md) — parent architecture; managed-primary
-  vs subprocess launch paths
+- [../.context/CONTEXT.md](../.context/CONTEXT.md) — managed-primary vs subprocess
+  launch paths; where passthrough fits in the adapter lifecycle.
 - [../connections/AGENTS.md](../connections/AGENTS.md) — `ConnectionConfig` and
-  `HarnessConnection.observer_endpoint` used by both build steps
+  `HarnessConnection.observer_endpoint` used by both build steps.
