@@ -101,20 +101,9 @@ class GitAutosync:
         start = time.monotonic()
         remote_url = self._resolve_remote_url(config)
 
-        # Validate repo is configured
+        # No remote → local-only mode (git init + add + commit, no push)
         if remote_url is None:
-            return self._result(
-                config,
-                context,
-                _SyncOutcome(
-                    outcome="skipped",
-                    success=True,
-                    skipped=True,
-                    skip_reason="missing_repo",
-                    error="Hook config does not include repo.",
-                ),
-                start=start,
-            )
+            return self._execute_local(context, config, start)
 
         # Resolve clone path using plugin_api
         clone_path = resolve_clone_path(remote_url)
@@ -231,6 +220,86 @@ class GitAutosync:
             )
         return self._result(config, context, outcome, start=start)
 
+    def _execute_local(
+        self,
+        context: HookContext,
+        config: Hook,
+        start: float,
+    ) -> HookResult:
+        """Execute local-only sync: git init + add + commit, no fetch/pull/push."""
+
+        path_str = config.options.get("path")
+        if not isinstance(path_str, str) or not path_str.strip():
+            return self._result(
+                config,
+                context,
+                _SyncOutcome(
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="missing_repo_and_path",
+                    error="Hook config requires either 'remote' or 'path'.",
+                ),
+                start=start,
+            )
+
+        local_path = Path(path_str).expanduser().resolve()
+        ok, error = self._ensure_local_repo(local_path)
+        if not ok:
+            logger.warning(
+                "git_autosync_local_init_failed",
+                path=str(local_path),
+                error=error,
+            )
+            return self._result(
+                config,
+                context,
+                _SyncOutcome(
+                    outcome="skipped",
+                    success=True,
+                    skipped=True,
+                    skip_reason="local_init_failed",
+                    error=error,
+                ),
+                start=start,
+            )
+
+        conflict_policy = config.options.get("conflict_policy", "leave")
+        try:
+            outcome = self._sync(
+                str(local_path), config.exclude, conflict_policy, local_only=True
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning(
+                "git_autosync_runtime_error",
+                clone_path=str(local_path),
+                error=str(exc),
+            )
+            outcome = _SyncOutcome(
+                outcome="skipped",
+                success=True,
+                skipped=True,
+                skip_reason="git_runtime_error",
+                error=str(exc),
+            )
+        return self._result(config, context, outcome, start=start)
+
+    def _ensure_local_repo(self, path: Path) -> tuple[bool, str | None]:
+        """Ensure path is a git repository, initializing one if needed."""
+
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return False, f"Could not create directory {path}: {exc}"
+
+        if (path / ".git").exists():
+            return True, None
+
+        result = self._run_git(str(path), ["init"], timeout=30)
+        if result.returncode != 0:
+            return False, f"git init failed: {result.stderr[:_MAX_ERROR_CHARS]}"
+        return True, None
+
     def _resolve_remote_url(self, config: Hook) -> str | None:
         """Resolve remote URL from options first, then legacy top-level repo."""
 
@@ -321,11 +390,15 @@ class GitAutosync:
         clone_path: str,
         excludes: tuple[str, ...],
         conflict_policy: object = "leave",
+        local_only: bool = False,
     ) -> _SyncOutcome:
         """Execute commit-first sync workflow.
 
         Order: add -A -> commit (if needed) -> fetch -> pull --rebase (if behind) -> push
         Committing first ensures local changes are safe before rebasing.
+
+        When local_only=True, steps 5-8 (fetch/pull/push) are skipped — used for
+        local-only repos that have no remote.
         """
 
         if self._is_rebase_in_progress(clone_path):
@@ -446,6 +519,17 @@ class GitAutosync:
                     )
             else:
                 just_committed = True
+
+        # For local-only repos, stop here — no remote to fetch/pull/push.
+        if local_only:
+            if just_committed:
+                return _SyncOutcome(outcome="success", success=True)
+            return _SyncOutcome(
+                outcome="skipped",
+                success=True,
+                skipped=True,
+                skip_reason="nothing_to_sync",
+            )
 
         # 5. Fetch upstream before checking divergence.
         fetch = self._run_git(clone_path, ["fetch", "origin"], timeout=_REMOTE_TIMEOUT_SECS)

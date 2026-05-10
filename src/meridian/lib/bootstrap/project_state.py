@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,8 +15,6 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.paths import (
     load_context_config as _load_context_config,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -90,17 +87,6 @@ def ensure_project_dirs(project_root: Path) -> None:
             context_config.work.source == ContextSourceType.GIT
             and _has_non_empty_remote(context_config.work.remote)
         )
-
-        if context_config.kb.source == ContextSourceType.GIT and not kb_git_with_remote:
-            logger.warning(
-                "context_source_git_missing_remote_fallback_local",
-                extra={"context": "kb", "configured_remote": context_config.kb.remote},
-            )
-        if context_config.work.source == ContextSourceType.GIT and not work_git_with_remote:
-            logger.warning(
-                "context_source_git_missing_remote_fallback_local",
-                extra={"context": "work", "configured_remote": context_config.work.remote},
-            )
 
         if not kb_git_with_remote:
             project_paths.kb_dir.mkdir(parents=True, exist_ok=True)

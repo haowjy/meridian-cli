@@ -683,19 +683,6 @@ def ensure_runtime_state_bootstrap_sync(project_root: Path) -> None:
             context_config.work.source == ContextSourceType.GIT
             and _has_non_empty_remote(context_config.work.remote)
         )
-        if context_config.kb.source == ContextSourceType.GIT and not kb_git_with_remote:
-            logger.warning(
-                "context_source_git_missing_remote_fallback_local",
-                context="kb",
-                configured_remote=context_config.kb.remote,
-            )
-        if context_config.work.source == ContextSourceType.GIT and not work_git_with_remote:
-            logger.warning(
-                "context_source_git_missing_remote_fallback_local",
-                context="work",
-                configured_remote=context_config.work.remote,
-            )
-
         if not kb_git_with_remote:
             repo_state.kb_dir.mkdir(parents=True, exist_ok=True)
         if not work_git_with_remote:
