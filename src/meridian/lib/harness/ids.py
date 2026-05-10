@@ -1,18 +1,5 @@
-"""Harness and transport identifiers."""
+"""Harness and transport identifiers — re-exported from core.types."""
 
-from enum import StrEnum
+from meridian.lib.core.types import HarnessId, TransportId
 
-
-class HarnessId(StrEnum):
-    """Known harness identifiers."""
-
-    CLAUDE = "claude"
-    CODEX = "codex"
-    OPENCODE = "opencode"
-
-
-class TransportId(StrEnum):
-    """Known transport identifiers."""
-
-    SUBPROCESS = "subprocess"
-    STREAMING = "streaming"
+__all__ = ["HarnessId", "TransportId"]
