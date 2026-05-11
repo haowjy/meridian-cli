@@ -5,6 +5,7 @@ from typing import cast
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -114,6 +115,14 @@ def build_harness_env_overrides(
     mcp_config = adapter.mcp_config(run_params)
     if mcp_config is not None:
         merged.update(mcp_config.env_overrides)
+    if adapter.id == HarnessId.OPENCODE:
+        if run_params.interactive:
+            # Primary launch: let the OpenCode TUI handle permissions natively.
+            merged.pop("OPENCODE_PERMISSION", None)
+        elif "OPENCODE_PERMISSION" not in merged:
+            # Child spawn with no explicit restriction: allow everything so
+            # `opencode run` (subprocess mode) doesn't auto-reject all tool calls.
+            merged["OPENCODE_PERMISSION"] = '{"*":"allow"}'
     return merged
 
 

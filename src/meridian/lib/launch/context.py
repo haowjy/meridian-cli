@@ -1407,6 +1407,18 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
+    # OpenCode+profile: `tools:` entries are Claude-specific permission names.
+    # Translating them to an OPENCODE_PERMISSION deny-all JSON removes every
+    # unlisted tool from the model schema. Clear the override so Bug 1's fix
+    # can inject {"*":"allow"} for child spawns via build_harness_env_overrides.
+    if (
+        harness.id == HarnessId.OPENCODE
+        and has_profile_for_deny_optout
+        and permission_config.opencode_permission_override is not None
+    ):
+        permission_config = permission_config.model_copy(
+            update={"opencode_permission_override": None}
+        )
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
         argv = build_launch_argv(
