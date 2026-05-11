@@ -6,17 +6,29 @@ mechanism details specific to the sub-module.
 
 ## Architecture
 
+Two dispatch entry points share the same routing logic but serve different call contexts:
+
 ```
+# Async callers (launch paths)
 ScopedProcessHandle.terminate()
-  ├── containment == "posix_pgid"   → posix.terminate_pgid()
-  ├── containment == "windows_job"  → fallback (handle threading pending)
-  └── containment == "pid_tree_fallback"
-                                    → fallback.terminate_tree()
+  ├── containment == "posix_pgid"        → posix.terminate_pgid()
+  ├── containment == "windows_job"       → fallback (handle threading pending)
+  └── containment == "pid_tree_fallback" → fallback.terminate_tree()
+
+# Sync callers (reaper, cancel, session-exit) — same dispatch, sync I/O
+terminate_scope_sync(scope)
+  ├── containment == "posix_pgid"        → posix.terminate_pgid()
+  └── else                               → fallback.terminate_tree_sync()
 ```
 
-`terminate()` on `ScopedProcessHandle` never raises — exceptions are caught,
-logged with `process_scope.terminate_failed`, and returned as a degraded
-`CleanupResult` with `skip_reason="termination_exception"`.
+Both entry points never raise — exceptions are caught and returned as a degraded
+`CleanupResult` with `skip_reason="termination_exception"`. `ScopedProcessHandle.terminate()`
+logs with `process_scope.terminate_failed`; `terminate_scope_sync` logs with
+`terminate_scope_sync.failed`.
+
+`terminate_scope_sync` sets `degraded_fallback=True` when the containment type is
+anything other than `"pid_tree_fallback"` (i.e., posix_pgid fell through to fallback,
+or windows_job routed to fallback) — matching the async path's degraded semantics exactly.
 
 ## Contracts
 
@@ -66,14 +78,21 @@ but weaker than group kill or Job Object containment.
 ## Patterns
 
 - Use `ScopedProcessHandle.terminate()` from async launch callers — it handles
-  dispatch, logging, and exception safety in one call.
-- Use `terminate_tree_sync()` from hook contexts (no event loop): git-autosync,
-  process cleanup in synchronous teardown paths.
+  containment dispatch, logging, and exception safety in one call.
+- Use `terminate_scope_sync(scope, ...)` from sync callers that have a
+  `ProcessScopeSnapshot` (reaper, cancel, session-exit). This is the correct
+  sync path for all scope-aware termination; it routes to the right backend
+  based on `scope.containment`.
+- Use `terminate_tree_sync(pid, ...)` only when there is no scope metadata —
+  legacy worker-pid fallback and hook contexts (git-autosync) where a
+  `ProcessScopeSnapshot` is unavailable.
 - Do not call `posix.terminate_pgid()` or `windows_job.terminate_job()` directly
-  from outside this package — `ScopedProcessHandle` is the integration point.
+  from outside this package — `ScopedProcessHandle.terminate()` and
+  `terminate_scope_sync()` are the two integration entry points.
 
 ## Related
 
 - [`../AGENTS.md`](../AGENTS.md) — module entry points
 - [`../.context/CONTEXT.md`](../.context/CONTEXT.md) — parent platform invariants
+- [`../../../core/.context/CONTEXT.md`](../../../core/.context/CONTEXT.md) — process_cleanup.py, which owns policy decisions and calls terminate_scope_sync()
 - KB: [architecture/process-scope.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/process-scope.md)

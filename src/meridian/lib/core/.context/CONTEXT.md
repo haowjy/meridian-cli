@@ -98,8 +98,59 @@ circular import with `state/__init__`. Do not move it to the top.
 into spawn_store, streaming_runner, and reaper. Tests control time without
 patching globals. Production code always receives `RealClock`.
 
+## Process Cleanup Policy (`process_cleanup.py`)
+
+This module owns all process termination decisions. `platform/process_scope/` owns
+the mechanism (how to kill); this module owns policy (what to kill, when, and why).
+It never implements termination directly — every kill routes through
+`terminate_scope_sync()` or `terminate_tree_sync()` from the platform layer.
+
+### Public functions
+
+**`terminate_spawn_scopes(runtime_root, spawn_record, *, reason, grace_seconds)`**
+
+Reads scope metadata from durable storage and terminates all `spawn_owned` scopes.
+Skips scopes that are already released (`skip_reason="already_released"`) or that
+pass `should_skip_cleanup()` (`skip_reason="active_session_lease"`). For legacy
+spawns without scope metadata, falls back to `worker_pid` termination with
+`degraded_fallback=True`.
+
+**`cancel_managed_primary(runtime_root, spawn_record, *, grace_seconds)`**
+
+Sequenced teardown for managed primaries: terminates the `launcher` scope first
+(giving harness-driven shutdown a chance to propagate), sleeps 1 second, then
+terminates `backend` and `tui` scopes. Idempotent — already-released scopes are
+skipped silently.
+
+**`reclaim_session_owned_scopes_for_chat(runtime_root, chat_id, *, grace_seconds)`**
+
+Called at session exit. Terminates all unreleased `session_owned` scopes across
+all spawns whose `chat_id` matches. Reclaims by `chat_id` rather than individual
+`harness_session_id` — a single meridian session can span multiple harness
+sessions, and this function reclaims all of them automatically.
+
+### `should_skip_cleanup()` contract
+
+Returns `True` (preserve the scope) only when the scope is `session_owned` **and**
+the root process is still alive with a matching creation time. Returns `False`
+(reclaim) in all other cases:
+
+- Scope is `spawn_owned` → always False (always terminate)
+- Root process is dead (`NoSuchProcess`, `AccessDenied`, `OSError`) → False
+- Root PID reused (birth-time drift > 1 second) → False, logged as
+  `skip_reason="session_owned_process_dead"`
+
+This is a fail-safe for leak prevention (PROC-007): a `session_owned` scope whose
+root has already died must be reclaimed, not silently preserved forever.
+
+### Deleted: `reclaim_stale_session_scopes()`
+
+This function was removed — it had zero callers and was fully superseded by
+`reclaim_session_owned_scopes_for_chat()`. Do not reference it.
+
 ## Related KB
 
 → [KB: codebase/core-primitives.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/core-primitives.md)
 → [KB: concepts/config-precedence.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/config-precedence.md)
 → [KB: architecture/state-system.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/state-system.md)
+→ [platform/process_scope/.context/CONTEXT.md](../../platform/process_scope/.context/CONTEXT.md) — mechanism layer (dispatch, backends, PID reuse guard)
