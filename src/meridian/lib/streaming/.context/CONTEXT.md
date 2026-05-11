@@ -168,4 +168,4 @@ orphan recovery — the two paths don't share scope management logic.
 
 ## Related KB
 
-- [KB: Streaming Subsystem](../../../../../../../../.meridian/git/meridian-flow-docs/kb/codebase/streaming-subsystem.md) — cross-cutting streaming design
+- [KB: Codebase Guide](../../../../../../../../.meridian/git/meridian-flow-docs/kb/codebase/guide.md) — streaming module orientation and codebase navigation

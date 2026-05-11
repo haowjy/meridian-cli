@@ -150,7 +150,7 @@ This function was removed — it had zero callers and was fully superseded by
 
 ## Related KB
 
-→ [KB: codebase/core-primitives.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/core-primitives.md)
+→ [KB: codebase/guide.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/codebase/guide.md) — core module orientation and codebase navigation
 → [KB: concepts/config-precedence.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/concepts/config-precedence.md)
 → [KB: architecture/state-system.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/state-system.md)
 → [platform/process_scope/.context/CONTEXT.md](../../platform/process_scope/.context/CONTEXT.md) — mechanism layer (dispatch, backends, PID reuse guard)
