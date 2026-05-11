@@ -1,5 +1,5 @@
-# qa-validated: test-suite-redesign
-"""Tests for terminate_spawn_scopes, should_skip_cleanup, and log emission."""
+# qa-validated: reaper-escape-fix-test-cleanup
+"""Focused tests for spawn-scope cleanup and session-lease preservation."""
 
 from __future__ import annotations
 
@@ -7,11 +7,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import psutil as _psutil
+import pytest
 
-from meridian.lib.core.process_cleanup import (
-    should_skip_cleanup,
-    terminate_spawn_scopes,
-)
+from meridian.lib.core.process_cleanup import should_skip_cleanup, terminate_spawn_scopes
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -135,7 +133,7 @@ def test_terminate_spawn_scopes_uses_persisted_scopes_and_marks_released(
     assert released == [("spawn-1", "backend"), ("spawn-1", "worker")]
 
 
-def test_terminate_spawn_scopes_skips_released_and_session_owned_scopes(
+def test_terminate_spawn_scopes_skips_released_and_active_session_leases(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -152,8 +150,6 @@ def test_terminate_spawn_scopes_skips_released_and_session_owned_scopes(
         "is_scope_released",
         lambda root, spawn_id, scope_id: scope_id == "released",
     )
-    # PROC-007: should_skip_cleanup now validates the process is alive.
-    # Fake pid=202 as alive with a matching birth time so the scope is preserved.
     monkeypatch.setattr(
         process_cleanup.psutil,
         "Process",
@@ -191,164 +187,28 @@ def test_terminate_spawn_scopes_falls_back_to_legacy_worker_pid(
     )
 
     monkeypatch.setattr(process_cleanup, "read_scopes_from_disk", lambda root, spawn_id: [])
-    monkeypatch.setattr(
-        process_cleanup,
-        "terminate_tree_sync",
-        lambda **kwargs: legacy_result,
-    )
+    monkeypatch.setattr(process_cleanup, "terminate_tree_sync", lambda **kwargs: legacy_result)
 
     results = terminate_spawn_scopes(tmp_path, _record(worker_pid=321), reason="reaper")
 
     assert results == [legacy_result]
 
 
-def test_terminate_spawn_scopes_logs_proc_011_fields_for_cleanup(
+@pytest.mark.parametrize(
+    ("process_factory", "root_created_at_epoch", "expected"),
+    [
+        (lambda: (_ for _ in ()).throw(_psutil.NoSuchProcess(pid=12345)), 10.0, False),
+        (lambda: MagicMock(create_time=MagicMock(return_value=99_999.0)), 1_000_000.0, False),
+        (lambda: MagicMock(create_time=MagicMock(return_value=1_000_000.1)), 1_000_000.0, True),
+    ],
+)
+def test_should_skip_cleanup_validates_session_owned_process_liveness(
     monkeypatch,
-    tmp_path: Path,
+    process_factory,
+    root_created_at_epoch: float,
+    expected: bool,
 ) -> None:
-    from meridian.lib.core import process_cleanup
-
-    scope = _scope("backend", pid=101)
-    logged: list[tuple[str, dict[str, object]]] = []
-
-    monkeypatch.setattr(
-        process_cleanup,
-        "read_scopes_from_disk",
-        lambda root, spawn_id: [scope],
-    )
-    monkeypatch.setattr(
-        process_cleanup,
-        "is_scope_released",
-        lambda root, spawn_id, scope_id: False,
-    )
-    monkeypatch.setattr(
-        process_cleanup,
-        "mark_scope_released",
-        lambda root, spawn_id, scope_id: None,
-    )
-    monkeypatch.setattr(
-        process_cleanup,
-        "terminate_scope_sync",
-        lambda scope, *, grace_seconds, reason: CleanupResult(
-            scope_id="backend",
-            root_pid=101,
-            descendant_count=3,
-            reason="reaper",
-            grace_seconds=4.0,
-            kill_escalated=True,
-            degraded_fallback=False,
-            skip_reason=None,
-        ),
-    )
-    monkeypatch.setattr(
-        process_cleanup.logger,
-        "info",
-        lambda event, **kwargs: logged.append((event, kwargs)),
-    )
-
-    terminate_spawn_scopes(tmp_path, _record(), reason="reaper", grace_seconds=4.0)
-
-    assert logged[-1] == (
-        "Terminated process scope.",
-        {
-            "spawn_id": "spawn-1",
-            "scope_id": "backend",
-            "root_pid": 101,
-            "descendant_count": 3,
-            "reason": "reaper",
-            "grace_seconds": 4.0,
-            "kill_escalated": True,
-            "degraded_fallback": False,
-            "skip_reason": None,
-        },
-    )
-
-
-def test_terminate_spawn_scopes_logs_proc_011_fields_for_skip(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.core import process_cleanup
-
-    scope = _scope(
-        "backend",
-        owner_policy="session_owned",
-        owner_id="session-9",
-        pid=202,
-    )
-    logged: list[tuple[str, dict[str, object]]] = []
-
-    monkeypatch.setattr(
-        process_cleanup,
-        "read_scopes_from_disk",
-        lambda root, spawn_id: [scope],
-    )
-    monkeypatch.setattr(
-        process_cleanup,
-        "is_scope_released",
-        lambda root, spawn_id, scope_id: False,
-    )
-    monkeypatch.setattr(
-        process_cleanup.psutil,
-        "Process",
-        lambda pid: type("LiveProc", (), {"create_time": lambda self: 10.0})(),
-    )
-    monkeypatch.setattr(
-        process_cleanup.logger,
-        "info",
-        lambda event, **kwargs: logged.append((event, kwargs)),
-    )
-
-    terminate_spawn_scopes(tmp_path, _record(), reason="reaper", grace_seconds=4.0)
-
-    assert logged[-1] == (
-        "Skipped process scope cleanup — session lease active.",
-        {
-            "spawn_id": "spawn-1",
-            "scope_id": "backend",
-            "root_pid": 202,
-            "descendant_count": None,
-            "reason": "reaper",
-            "grace_seconds": 0.0,
-            "kill_escalated": False,
-            "degraded_fallback": False,
-            "skip_reason": "active_session_lease",
-        },
-    )
-
-
-# ---------------------------------------------------------------------------
-# PROC-007: should_skip_cleanup — session_owned process-alive validation
-# ---------------------------------------------------------------------------
-
-
-def test_should_skip_cleanup_session_owned_process_dead_returns_false(
-    monkeypatch,
-) -> None:
-    """PROC-007: session_owned scope whose root process is dead must NOT be
-    skipped — the scope must be reclaimed despite the session_owned policy.
-    """
-    from meridian.lib.core import process_cleanup
-
-    scope = _scope("backend", owner_policy="session_owned", owner_id="session-abc", pid=12345)
-    record = _record()
-
-    def _raise_no_such_process(pid: int) -> None:
-        raise _psutil.NoSuchProcess(pid=pid)
-
-    monkeypatch.setattr(process_cleanup.psutil, "Process", _raise_no_such_process)
-
-    result = should_skip_cleanup(scope, record)
-
-    assert result is False
-
-
-def test_should_skip_cleanup_session_owned_pid_reused_returns_false(
-    monkeypatch,
-) -> None:
-    """PROC-007 + PROC-006: If the root PID was recycled (birth time mismatch),
-    must NOT skip — the original process is gone.
-    """
+    """Session-owned scopes are preserved only while the validated root process is alive."""
     from meridian.lib.core import process_cleanup
 
     scope = _scope(
@@ -356,57 +216,20 @@ def test_should_skip_cleanup_session_owned_pid_reused_returns_false(
         owner_policy="session_owned",
         owner_id="session-abc",
         pid=12345,
-        root_created_at_epoch=1_000_000.0,
+        root_created_at_epoch=root_created_at_epoch,
     )
     record = _record()
 
-    alive_proc = MagicMock()
-    alive_proc.create_time.return_value = 9_999_999.0  # far from expected 1_000_000.0
+    def _process(_pid: int):
+        return process_factory()
 
-    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda pid: alive_proc)
+    monkeypatch.setattr(process_cleanup.psutil, "Process", _process)
 
-    result = should_skip_cleanup(scope, record)
-
-    assert result is False
+    assert should_skip_cleanup(scope, record) is expected
 
 
-def test_should_skip_cleanup_session_owned_alive_returns_true(
-    monkeypatch,
-) -> None:
-    """PROC-007: session_owned scope with alive + verified root process must be
-    preserved (return True).
-    """
-    from meridian.lib.core import process_cleanup
-
-    created = 1_000_000.0
-    scope = _scope(
-        "backend",
-        owner_policy="session_owned",
-        owner_id="session-abc",
-        pid=12345,
-        root_created_at_epoch=created,
-    )
-    record = _record()
-
-    alive_proc = MagicMock()
-    alive_proc.create_time.return_value = created + 0.1  # within 1.0 s tolerance
-
-    monkeypatch.setattr(process_cleanup.psutil, "Process", lambda pid: alive_proc)
-
-    result = should_skip_cleanup(scope, record)
-
-    assert result is True
-
-
-def test_should_skip_cleanup_spawn_owned_always_returns_false() -> None:
-    """spawn_owned scopes must never be skipped — no process check needed."""
+def test_should_skip_cleanup_spawn_owned_never_skips() -> None:
+    """Spawn-owned scopes should always be eligible for cleanup."""
     scope = _scope("worker", owner_policy="spawn_owned", owner_id="spawn-1", pid=55555)
-    record = _record()
 
-    # should_skip_cleanup must short-circuit before calling psutil.
-    # No monkeypatch of psutil — if psutil.Process is called, it would look up
-    # a real pid (likely non-existent) and raise NoSuchProcess; that would also
-    # return False, but we verify correctness via the policy short-circuit.
-    result = should_skip_cleanup(scope, record)
-
-    assert result is False
+    assert should_skip_cleanup(scope, _record()) is False

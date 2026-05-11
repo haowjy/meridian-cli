@@ -1,4 +1,5 @@
-"""Contract tests for session_scope: stop-then-reclaim ordering and exception safety."""
+# qa-validated: reaper-escape-fix-test-cleanup
+"""Contract tests for session_scope cleanup ordering and exception safety."""
 
 from __future__ import annotations
 
@@ -26,18 +27,18 @@ def _request() -> SessionRequest:
     return SessionRequest()
 
 
-def test_stop_called_before_reclaim(tmp_path: Path) -> None:
-    """_stop_session must be called before _reclaim_session_scopes."""
-    call_order: list[str] = []
+def test_session_scope_stops_then_reclaims_with_resolved_chat_id(tmp_path: Path) -> None:
+    """Normal exit should stop first, then reclaim using the resolved chat id."""
+    calls: list[tuple[str, str]] = []
 
     def fake_start(*_args: object, **_kwargs: object) -> str:
         return "chat-abc"
 
-    def fake_stop(_root: Path, _chat_id: str) -> None:
-        call_order.append("stop")
+    def fake_stop(_root: Path, chat_id: str) -> None:
+        calls.append(("stop", chat_id))
 
-    def fake_reclaim(_root: Path, _chat_id: str) -> object:
-        call_order.append("reclaim")
+    def fake_reclaim(_root: Path, chat_id: str) -> object:
+        calls.append(("reclaim", chat_id))
         return []
 
     with session_scope(
@@ -51,24 +52,38 @@ def test_stop_called_before_reclaim(tmp_path: Path) -> None:
     ):
         pass
 
-    assert call_order == ["stop", "reclaim"], f"Expected stop then reclaim, got: {call_order}"
+    assert calls == [("stop", "chat-abc"), ("reclaim", "chat-abc")]
 
 
-def test_both_called_on_exception(tmp_path: Path) -> None:
-    """Both _stop_session and _reclaim_session_scopes are called even when the block raises."""
-    call_order: list[str] = []
+@pytest.mark.parametrize(
+    ("body_raises", "stop_raises", "expected_error"),
+    [
+        (True, False, "boom"),
+        (False, True, "stop failed"),
+    ],
+)
+def test_session_scope_reclaims_on_exception_paths(
+    tmp_path: Path,
+    body_raises: bool,
+    stop_raises: bool,
+    expected_error: str,
+) -> None:
+    """Reclaim must still run when either the body or stop path fails."""
+    calls: list[str] = []
 
     def fake_start(*_args: object, **_kwargs: object) -> str:
         return "chat-xyz"
 
     def fake_stop(_root: Path, _chat_id: str) -> None:
-        call_order.append("stop")
+        calls.append("stop")
+        if stop_raises:
+            raise RuntimeError("stop failed")
 
     def fake_reclaim(_root: Path, _chat_id: str) -> object:
-        call_order.append("reclaim")
+        calls.append("reclaim")
         return []
 
-    with pytest.raises(RuntimeError, match="boom"), session_scope(
+    with pytest.raises(RuntimeError, match=expected_error), session_scope(
         runtime_root=tmp_path,
         metadata=_metadata(),
         request=_request(),
@@ -77,68 +92,7 @@ def test_both_called_on_exception(tmp_path: Path) -> None:
         _stop_session=fake_stop,
         _reclaim_session_scopes=fake_reclaim,
     ):
-        raise RuntimeError("boom")
+        if body_raises:
+            raise RuntimeError("boom")
 
-    assert call_order == ["stop", "reclaim"], (
-        f"Both must be called even on exception, got: {call_order}"
-    )
-
-
-def test_reclaim_called_even_when_stop_raises(tmp_path: Path) -> None:
-    """_reclaim_session_scopes must run even if _stop_session raises."""
-    reclaim_calls: list[str] = []
-
-    def fake_start(*_args: object, **_kwargs: object) -> str:
-        return "chat-fail"
-
-    def fake_stop(_root: Path, _chat_id: str) -> None:
-        raise RuntimeError("stop failed")
-
-    def fake_reclaim(_root: Path, _chat_id: str) -> object:
-        reclaim_calls.append("reclaim")
-        return []
-
-    with pytest.raises(RuntimeError, match="stop failed"), session_scope(
-        runtime_root=tmp_path,
-        metadata=_metadata(),
-        request=_request(),
-        harness_session_id="h-4",
-        _start_session=fake_start,
-        _stop_session=fake_stop,
-        _reclaim_session_scopes=fake_reclaim,
-    ):
-        pass
-
-    assert reclaim_calls == ["reclaim"], (
-        f"reclaim must be called even when stop raises, got: {reclaim_calls}"
-    )
-
-
-def test_reclaim_receives_resolved_chat_id(tmp_path: Path) -> None:
-    """_reclaim_session_scopes is called with the chat_id returned by _start_session."""
-    received_chat_ids: list[str] = []
-
-    def fake_start(*_args: object, **_kwargs: object) -> str:
-        return "chat-resolved-123"
-
-    def fake_stop(_root: Path, _chat_id: str) -> None:
-        pass
-
-    def fake_reclaim(_root: Path, chat_id: str) -> object:
-        received_chat_ids.append(chat_id)
-        return []
-
-    with session_scope(
-        runtime_root=tmp_path,
-        metadata=_metadata(),
-        request=_request(),
-        harness_session_id="h-3",
-        _start_session=fake_start,
-        _stop_session=fake_stop,
-        _reclaim_session_scopes=fake_reclaim,
-    ):
-        pass
-
-    assert received_chat_ids == ["chat-resolved-123"], (
-        f"Expected resolved chat_id, got: {received_chat_ids}"
-    )
+    assert calls == ["stop", "reclaim"]

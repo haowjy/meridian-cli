@@ -1,6 +1,9 @@
-"""Tests for terminate_scope_sync dispatch matrix."""
+# qa-validated: reaper-escape-fix-test-cleanup
+"""Behavior tests for terminate_scope_sync dispatch."""
 
 from __future__ import annotations
+
+import pytest
 
 from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
@@ -38,11 +41,11 @@ def _ok_result(scope_id: str = "test", degraded_fallback: bool = False) -> Clean
     )
 
 
-def test_posix_pgid_with_pgid_calls_terminate_pgid(monkeypatch) -> None:
-    """posix_pgid + non-null pgid → terminate_pgid is called."""
-    calls: list[dict] = []
+def test_posix_pgid_with_group_dispatches_to_terminate_pgid(monkeypatch) -> None:
+    """A validated process group should use the stronger PGID terminator."""
+    calls: list[dict[str, object]] = []
 
-    def _fake_terminate_pgid(**kwargs) -> CleanupResult:
+    def _fake_terminate_pgid(**kwargs: object) -> CleanupResult:
         calls.append(kwargs)
         return _ok_result(degraded_fallback=False)
 
@@ -51,8 +54,7 @@ def test_posix_pgid_with_pgid_calls_terminate_pgid(monkeypatch) -> None:
         _fake_terminate_pgid,
     )
 
-    scope = _scope("posix_pgid", pgid=42)
-    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
+    result = terminate_scope_sync(_scope("posix_pgid", pgid=42), grace_seconds=5.0, reason="reaper")
 
     assert calls == [
         {
@@ -67,70 +69,52 @@ def test_posix_pgid_with_pgid_calls_terminate_pgid(monkeypatch) -> None:
     assert result.degraded_fallback is False
 
 
-def test_posix_pgid_with_null_pgid_falls_back_degraded(monkeypatch) -> None:
-    """posix_pgid + null pgid → terminate_tree_sync with degraded_fallback=True."""
-    calls: list[dict] = []
+@pytest.mark.parametrize(
+    ("containment", "pgid", "expected_degraded"),
+    [
+        ("posix_pgid", None, True),
+        ("windows_job", None, True),
+        ("pid_tree_fallback", None, False),
+        ("some_unknown_containment", None, True),
+    ],
+)
+def test_non_native_scope_paths_use_tree_fallback_with_expected_degraded_flag(
+    monkeypatch,
+    containment: str,
+    pgid: int | None,
+    expected_degraded: bool,
+) -> None:
+    """Fallback dispatch should preserve whether the path is native or degraded."""
+    calls: list[dict[str, object]] = []
 
-    def _fake_terminate_tree_sync(**kwargs) -> CleanupResult:
+    def _fake_terminate_tree_sync(**kwargs: object) -> CleanupResult:
         calls.append(kwargs)
-        return _ok_result(degraded_fallback=kwargs.get("degraded_fallback", False))
+        return _ok_result(degraded_fallback=bool(kwargs["degraded_fallback"]))
 
     monkeypatch.setattr(
         "meridian.lib.platform.process_scope.terminate_tree_sync",
         _fake_terminate_tree_sync,
     )
 
-    scope = _scope("posix_pgid", pgid=None)
-    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
+    result = terminate_scope_sync(_scope(containment, pgid=pgid), grace_seconds=5.0, reason="reaper")
 
-    assert calls[0]["degraded_fallback"] is True
-    assert result.degraded_fallback is True
-
-
-def test_windows_job_falls_back_degraded(monkeypatch) -> None:
-    """windows_job → terminate_tree_sync with degraded_fallback=True."""
-    calls: list[dict] = []
-
-    def _fake_terminate_tree_sync(**kwargs) -> CleanupResult:
-        calls.append(kwargs)
-        return _ok_result(degraded_fallback=kwargs.get("degraded_fallback", False))
-
-    monkeypatch.setattr(
-        "meridian.lib.platform.process_scope.terminate_tree_sync",
-        _fake_terminate_tree_sync,
-    )
-
-    scope = _scope("windows_job")
-    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
-
-    assert calls[0]["degraded_fallback"] is True
-    assert result.degraded_fallback is True
+    assert calls == [
+        {
+            "pid": 100,
+            "created_at_epoch": 10.0,
+            "grace_secs": 5.0,
+            "reason": "reaper",
+            "scope_id": "test",
+            "degraded_fallback": expected_degraded,
+        }
+    ]
+    assert result.degraded_fallback is expected_degraded
 
 
-def test_pid_tree_fallback_not_degraded(monkeypatch) -> None:
-    """pid_tree_fallback → terminate_tree_sync with degraded_fallback=False."""
-    calls: list[dict] = []
+def test_terminator_exception_returns_degraded_result(monkeypatch) -> None:
+    """Termination errors should degrade to a CleanupResult instead of escaping."""
 
-    def _fake_terminate_tree_sync(**kwargs) -> CleanupResult:
-        calls.append(kwargs)
-        return _ok_result(degraded_fallback=kwargs.get("degraded_fallback", False))
-
-    monkeypatch.setattr(
-        "meridian.lib.platform.process_scope.terminate_tree_sync",
-        _fake_terminate_tree_sync,
-    )
-
-    scope = _scope("pid_tree_fallback")
-    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
-
-    assert calls[0]["degraded_fallback"] is False
-    assert result.degraded_fallback is False
-
-
-def test_exception_in_terminator_returns_degraded_result(monkeypatch) -> None:
-    """When the underlying terminator raises, terminate_scope_sync returns degraded."""
-
-    def _raising_terminate_tree_sync(**_kwargs) -> CleanupResult:
+    def _raising_terminate_tree_sync(**_kwargs: object) -> CleanupResult:
         raise OSError("kill failed")
 
     monkeypatch.setattr(
@@ -138,31 +122,10 @@ def test_exception_in_terminator_returns_degraded_result(monkeypatch) -> None:
         _raising_terminate_tree_sync,
     )
 
-    scope = _scope("pid_tree_fallback")
-    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
+    result = terminate_scope_sync(_scope("pid_tree_fallback"), grace_seconds=5.0, reason="reaper")
 
     assert result.degraded_fallback is True
     assert result.skip_reason == "termination_exception"
     assert result.scope_id == "test"
     assert result.root_pid == 100
     assert result.reason == "reaper"
-
-
-def test_unknown_containment_falls_back_degraded(monkeypatch) -> None:
-    """Unknown containment → terminate_tree_sync with degraded_fallback=True."""
-    calls: list[dict] = []
-
-    def _fake_terminate_tree_sync(**kwargs) -> CleanupResult:
-        calls.append(kwargs)
-        return _ok_result(degraded_fallback=kwargs.get("degraded_fallback", False))
-
-    monkeypatch.setattr(
-        "meridian.lib.platform.process_scope.terminate_tree_sync",
-        _fake_terminate_tree_sync,
-    )
-
-    scope = _scope("some_unknown_containment")
-    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
-
-    assert calls[0]["degraded_fallback"] is True
-    assert result.degraded_fallback is True
