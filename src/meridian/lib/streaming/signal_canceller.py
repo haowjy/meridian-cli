@@ -19,9 +19,15 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import terminate_scope_sync
 from meridian.lib.platform.terminate import terminate_tree_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.process_scope_projection import (
+    is_scope_released,
+    mark_scope_released,
+    read_scopes_from_disk,
+)
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin
 
 if TYPE_CHECKING:
@@ -119,16 +125,31 @@ class SignalCanceller:
                 )
             return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
 
-        started_epoch = _started_at_epoch(record.started_at)
-        with suppress(ProcessLookupError):
-            await asyncio.to_thread(
-                terminate_tree_sync,
-                runner_pid,
-                created_at_epoch=started_epoch if started_epoch is not None else 0.0,
-                grace_secs=self._grace_seconds,
-                reason="cancel",
-                scope_id=str(spawn_id),
-            )
+        scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
+        if scopes:
+            for scope in scopes:
+                if is_scope_released(self._runtime_root, spawn_id, scope.scope_id):
+                    continue
+                with suppress(ProcessLookupError):
+                    await asyncio.to_thread(
+                        terminate_scope_sync,
+                        scope,
+                        grace_seconds=self._grace_seconds,
+                        reason="cancel",
+                    )
+                mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
+        else:
+            # Legacy fallback: no scope metadata, use runner PID directly.
+            started_epoch = _started_at_epoch(record.started_at)
+            with suppress(ProcessLookupError):
+                await asyncio.to_thread(
+                    terminate_tree_sync,
+                    runner_pid,
+                    created_at_epoch=started_epoch if started_epoch is not None else 0.0,
+                    grace_secs=self._grace_seconds,
+                    reason="cancel",
+                    scope_id=str(spawn_id),
+                )
 
         terminal = await self._wait_for_terminal(spawn_id)
         if terminal is not None:
