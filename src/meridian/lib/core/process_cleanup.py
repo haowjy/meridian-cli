@@ -335,6 +335,19 @@ def reclaim_session_owned_scopes_for_chat(
                 continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
             mark_scope_released(runtime_root, spawn_id, scope.scope_id)
+            logger.info(
+                "Reclaimed session-owned scope at session exit.",
+                spawn_id=record.id,
+                scope_id=scope.scope_id,
+                root_pid=scope.root_pid,
+                descendant_count=result.descendant_count,
+                reason="session_exit",
+                grace_seconds=grace_seconds,
+                kill_escalated=result.kill_escalated,
+                degraded_fallback=result.degraded_fallback,
+                skip_reason=result.skip_reason,
+                chat_id=chat_id,
+            )
             results.append(result)
     return results
 

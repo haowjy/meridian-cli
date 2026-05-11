@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state.session_store import (
@@ -37,6 +38,7 @@ def session_scope(
     _start_session: Callable[..., str] = start_session,
     _stop_session: Callable[[Path, str], None] = stop_session,
     _update_session_harness_id: Callable[[Path, str, str], None] = update_session_harness_id,
+    _reclaim_session_scopes: Callable[[Path, str], object] = reclaim_session_owned_scopes_for_chat,
 ) -> Generator[ManagedSession, None, None]:
     resolved_chat_id = _start_session(
         runtime_root,
@@ -64,6 +66,7 @@ def session_scope(
         )
     finally:
         _stop_session(runtime_root, resolved_chat_id)
+        _reclaim_session_scopes(runtime_root, resolved_chat_id)
 
 
 __all__ = ["ManagedSession", "session_scope"]
