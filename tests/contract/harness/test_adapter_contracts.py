@@ -29,9 +29,7 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
     registry = get_default_harness_registry()
 
     claude = registry.get_contract(HarnessId.CLAUDE)
-    assert claude.capabilities.terminal_surface_modes == (
-        TerminalSurfaceMode.PTY_MEDIATED,
-    )
+    assert claude.capabilities.terminal_surface_modes == (TerminalSurfaceMode.PTY_MEDIATED,)
     assert claude.capabilities.requires_initial_prompt is False
     assert claude.bootstrap.mode.value == "subprocess_only"
     assert claude.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK

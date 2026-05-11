@@ -99,9 +99,7 @@ def scan_telemetry_segments(
     total_bytes = sum(s.size for s in segments)
     live = sum(1 for s in segments if s.live)
     orphaned = sum(1 for s in segments if s.orphaned)
-    expired = sum(
-        1 for s in segments if not s.live and now - s.mtime > max_age_secs
-    )
+    expired = sum(1 for s in segments if not s.live and now - s.mtime > max_age_secs)
     return RetentionStats(
         total_segments=len(segments),
         total_bytes=total_bytes,
@@ -167,9 +165,7 @@ def run_retention_cleanup(
         (
             s
             for s in segments
-            if (s.owner is None or s.owner.pid != current_pid)
-            and not s.live
-            and s.path.exists()
+            if (s.owner is None or s.owner.pid != current_pid) and not s.live and s.path.exists()
         ),
         key=lambda s: s.mtime,
     ):

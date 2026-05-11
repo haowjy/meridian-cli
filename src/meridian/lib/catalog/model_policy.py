@@ -61,9 +61,7 @@ def pattern_fallback_harness(model: str) -> HarnessId:
         return matched_harnesses[0]
     if len(matched_harnesses) > 1:
         joined = ", ".join(str(h) for h in matched_harnesses)
-        raise ValueError(
-            f"Model '{model}' matches multiple harness patterns: {joined}."
-        )
+        raise ValueError(f"Model '{model}' matches multiple harness patterns: {joined}.")
     raise ValueError(f"Unknown model '{model}'. No harness pattern matches.")
 
 
@@ -88,8 +86,10 @@ def is_default_visible_model(
         return False
 
     variant_bases = _date_variant_bases(model_id)
-    if visibility.hide_date_variants and variant_bases and any(
-        base in all_model_ids for base in variant_bases
+    if (
+        visibility.hide_date_variants
+        and variant_bases
+        and any(base in all_model_ids for base in variant_bases)
     ):
         return False
 

@@ -36,8 +36,7 @@ from meridian.lib.launch.types import SessionMode
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -114,9 +113,7 @@ def test_run_harness_process_writes_opencode_system_field_primary_projection_man
             prompt_is_composed=False,
             model="gemini-2.5-pro",
             harness=harness_id.value,
-            extra_args=(
-                f"--append-system-prompt={harness_id.value} passthrough system prompt",
-            ),
+            extra_args=(f"--append-system-prompt={harness_id.value} passthrough system prompt",),
             session=SessionRequest(
                 requested_harness_session_id="existing-opencode-session",
                 continue_chat_id="c-opencode",

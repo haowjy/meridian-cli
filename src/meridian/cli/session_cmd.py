@@ -186,7 +186,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
             ),
             "meridian.session.search": (
                 "Example:\n\n"
-                "  meridian session search \"auth bug\" c123\n\n"
+                '  meridian session search "auth bug" c123\n\n'
                 "Search is case-insensitive. Output includes navigation hints, for example:\n\n"
                 "  Navigate: meridian session log c123 -c 0 --offset 37 --last 10\n"
             ),

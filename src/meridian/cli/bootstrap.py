@@ -250,8 +250,7 @@ def extract_global_options(
         if shortcut_value in HARNESS_SHORTCUT_NAMES:
             if harness is not None and harness != shortcut_value:
                 raise SystemExit(
-                    "Conflicting harness selections: "
-                    f"'{harness}' and '{shortcut_value}'."
+                    f"Conflicting harness selections: '{harness}' and '{shortcut_value}'."
                 )
             harness = shortcut_value
             harness_source = shortcut_value

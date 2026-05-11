@@ -462,9 +462,7 @@ class ChatRuntime(PipelineLookup):
     def _load_policy_snapshot(self, chat_id: str) -> ChatPolicySnapshot:
         path = self.paths.chat_policy_path(chat_id)
         if not path.exists():
-            raise RuntimeError(
-                f"chat policy snapshot missing for recovered chat {chat_id}: {path}"
-            )
+            raise RuntimeError(f"chat policy snapshot missing for recovered chat {chat_id}: {path}")
         try:
             return read_chat_policy_snapshot(path)
         except ValueError as exc:

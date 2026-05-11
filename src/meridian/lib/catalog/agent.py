@@ -49,9 +49,7 @@ class AgentModelEntry(BaseModel):
             return None
         normalized = value.strip()
         if normalized not in _KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}"
-            )
+            raise ValueError(f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}")
         return normalized
 
 
@@ -400,11 +398,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
             "expected 'primary' or 'subagent'."
         )
 
-    if (
-        models_value is not None
-        and model_policies_value is None
-        and fanout_value is None
-    ):
+    if models_value is not None and model_policies_value is None and fanout_value is None:
         logger.warning(
             "Agent profile '%s' uses legacy models without model-policies or fanout; "
             "models is deprecated for fan-out display and policy overrides.",

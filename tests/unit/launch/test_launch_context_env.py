@@ -59,8 +59,7 @@ def _build_launch_runtime(
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -90,14 +89,16 @@ def test_build_launch_context_projects_runtime_child_env_paths(
     assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
     assert bind_env["MERIDIAN_RUNTIME_DIR"] == (tmp_path / ".meridian").as_posix()
     assert bind_env["MERIDIAN_ACTIVE_WORK_ID"] == "work-alpha"
-    assert bind_env["MERIDIAN_ACTIVE_WORK_DIR"] == (
-        tmp_path / ".meridian" / "work" / "work-alpha"
-    ).as_posix()
+    assert (
+        bind_env["MERIDIAN_ACTIVE_WORK_DIR"]
+        == (tmp_path / ".meridian" / "work" / "work-alpha").as_posix()
+    )
     assert bind_env["MERIDIAN_CONTEXT_WORK_DIR"] == (tmp_path / ".meridian" / "work").as_posix()
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
-    assert bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
-        tmp_path / ".meridian" / "archive" / "work"
-    ).as_posix()
+    assert (
+        bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"]
+        == (tmp_path / ".meridian" / "archive" / "work").as_posix()
+    )
     # MERIDIAN_HARNESS is informational (yield timing), not a policy override.
     assert bind_env["MERIDIAN_HARNESS"] == "codex"
     assert runtime_ctx.binding.environment.final_env["MERIDIAN_HARNESS"] == "codex"
@@ -142,9 +143,7 @@ def test_build_launch_context_uses_runtime_override_snapshot_not_live_env(
     )
 
     assert runtime_ctx.resolved_request.execution_policy.approval == "confirm"
-    assert runtime_ctx.binding.environment.runtime_override_env == {
-        "MERIDIAN_APPROVAL": "confirm"
-    }
+    assert runtime_ctx.binding.environment.runtime_override_env == {"MERIDIAN_APPROVAL": "confirm"}
     assert runtime_ctx.binding.environment.bind_env_overrides["MERIDIAN_APPROVAL"] == "confirm"
     assert runtime_ctx.binding.environment.final_env["MERIDIAN_APPROVAL"] == "confirm"
 
@@ -250,9 +249,9 @@ def test_build_launch_context_primary_exports_configured_context_dirs(
 
     bind_env = runtime_ctx.binding.environment.bind_env_overrides
     assert bind_env["MERIDIAN_CONTEXT_WORK_DIR"] == (tmp_path / "ctx/work").as_posix()
-    assert bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
-        tmp_path / "ctx/archive/work"
-    ).as_posix()
+    assert (
+        bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (tmp_path / "ctx/archive/work").as_posix()
+    )
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / "ctx/kb").as_posix()
     assert bind_env["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (tmp_path / "ctx/strategy").as_posix()
 
@@ -278,9 +277,7 @@ def test_build_launch_context_env_keeps_project_root_when_execution_cwd_differs(
     bind_env = runtime_ctx.binding.environment.bind_env_overrides
     assert runtime_ctx.execution_cwd == execution_cwd
     assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
-    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (
-        tmp_path / ".meridian" / "kb"
-    ).as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
 
 
 def test_build_launch_context_emits_child_spawn_id(
@@ -352,13 +349,12 @@ def test_build_launch_context_projects_context_paths_to_workspace_roots(
     # Verify env vars are still exported (existing behavior)
     bind_env = runtime_ctx.binding.environment.bind_env_overrides
     assert bind_env["MERIDIAN_CONTEXT_WORK_DIR"] == (tmp_path / "ctx" / "work").as_posix()
-    assert bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"] == (
-        tmp_path / "ctx" / "archive" / "work"
-    ).as_posix()
+    assert (
+        bind_env["MERIDIAN_CONTEXT_WORK_ARCHIVE_DIR"]
+        == (tmp_path / "ctx" / "archive" / "work").as_posix()
+    )
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / "ctx" / "kb").as_posix()
-    assert bind_env["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (
-        tmp_path / "ctx" / "strategy"
-    ).as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (tmp_path / "ctx" / "strategy").as_posix()
 
     # Verify workspace projection includes context paths for all harnesses.
     # For OpenCode: check OPENCODE_CONFIG_CONTENT env override.

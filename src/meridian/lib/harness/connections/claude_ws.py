@@ -284,8 +284,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
         allowed = self._ALLOWED_TRANSITIONS[self._state]
         if next_state not in allowed:
             raise RuntimeError(
-                "Invalid connection state transition: "
-                f"{self._state} -> {next_state}"
+                f"Invalid connection state transition: {self._state} -> {next_state}"
             )
         trace_state_change(self._tracer, "claude", self._state, next_state)
         self._state = next_state
@@ -385,9 +384,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             {"type":"user","message":{"role":"user","content":"<text>"}}
         """
-        await self._send_json(
-            {"type": "user", "message": {"role": "user", "content": text}}
-        )
+        await self._send_json({"type": "user", "message": {"role": "user", "content": text}})
 
     async def _send_json(self, payload: dict[str, object]) -> None:
         process = self._process

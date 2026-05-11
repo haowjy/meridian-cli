@@ -114,8 +114,10 @@ def _extract_claude_tool_flags(
         projected_permission_flags.append(token)
         index += 1
 
-    return projected_permission_flags, dedupe_nonempty(allowed_tools), dedupe_nonempty(
-        disallowed_tools
+    return (
+        projected_permission_flags,
+        dedupe_nonempty(allowed_tools),
+        dedupe_nonempty(disallowed_tools),
     )
 
 

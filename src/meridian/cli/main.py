@@ -457,6 +457,7 @@ def _run_primary_launch(
         )
     )
 
+
 def _run_init_link_flow_json(
     *,
     executable: str,
@@ -835,7 +836,8 @@ def _install_cli_telemetry(
 
         schedule_maintenance = (
             mode == TelemetryMode.SEGMENT
-            and startup_class in {
+            and startup_class
+            in {
                 StartupClass.WRITE_RUNTIME,
                 StartupClass.PRIMARY_LAUNCH,
             }
@@ -933,10 +935,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         explicit_format=options.explicit_format,
         agent_mode=effective_agent_mode,
     )
-    suppress_events = (
-        effective_agent_mode
-        and options.explicit_format is None
-    )
+    suppress_events = effective_agent_mode and options.explicit_format is None
     options = options.model_copy(
         update={
             "output": OutputConfig(
@@ -960,16 +959,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     # Handle descriptor-owned redirects before bootstrap work or lazy command registration.
     if descriptor is not None and descriptor.redirect is not None:
         print(
-            "`meridian models list` has moved to Mars.\n"
-            "Use `meridian mars models list` instead.",
+            "`meridian models list` has moved to Mars.\nUse `meridian mars models list` instead.",
             file=sys.stderr,
         )
         raise SystemExit(1)
 
     startup_class = (
-        descriptor.startup_class
-        if descriptor is not None
-        else StartupClass.PRIMARY_LAUNCH
+        descriptor.startup_class if descriptor is not None else StartupClass.PRIMARY_LAUNCH
     )
     bootstrap_skipped = any(arg in {"--help", "-h"} for arg in cleaned_args)
     state_requirement = descriptor.state_requirement if descriptor is not None else None

@@ -76,6 +76,8 @@ class LiveBudgetTracker(BaseModel):
                     limit_usd=per_space,
                 )
         return None
+
+
 def extract_cost_usd_from_json_line(raw_line: bytes) -> float | None:
     """Extract the first recognized cost field from one JSON line payload."""
 

@@ -252,9 +252,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
             repaired.append("orphan_runs")
 
     spawns = spawn_store.list_spawns(runtime_root)
-    active_spawn_ids = {
-        spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)
-    }
+    active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
     orphan_project_dirs: list[OrphanProjectDir] = []
     if payload.global_:
         if not is_root_side_effect_process():

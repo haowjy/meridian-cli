@@ -35,8 +35,7 @@ from meridian.lib.state.spawn_store import list_spawns
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -200,7 +199,9 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     ) -> PrimaryAttachOutcome:
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return PrimaryAttachOutcome(
-            exit_code=0, session_id="forked-session", tui_pid=111,
+            exit_code=0,
+            session_id="forked-session",
+            tui_pid=111,
         )
 
     def fake_start_session(
@@ -261,9 +262,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     native_fork_contract = codex_adapter.contract.model_copy(
         update={
             "bootstrap": codex_adapter.contract.bootstrap.model_copy(
-                update={
-                    "fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK
-                }
+                update={"fork_materialization": ForkMaterializationMode.NATIVE_CONTINUE_FORK}
             )
         }
     )

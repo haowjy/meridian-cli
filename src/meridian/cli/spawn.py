@@ -833,9 +833,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         help="Inject a message into a running streaming spawn.",
     )
     registered.add("spawn.inject")
-    descriptions["meridian.spawn.inject"] = (
-        "Inject a message into a running streaming spawn."
-    )
+    descriptions["meridian.spawn.inject"] = "Inject a message into a running streaming spawn."
     app.command(
         _spawn_log_removed,
         name="log",

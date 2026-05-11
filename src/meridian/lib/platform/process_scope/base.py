@@ -109,9 +109,7 @@ class ScopedProcessHandle:
 
                 if snap.pgid is None:
                     # Degenerate case: containment says posix_pgid but pgid is missing.
-                    result = await _fallback_terminate(
-                        self._process, snap, grace_seconds, reason
-                    )
+                    result = await _fallback_terminate(self._process, snap, grace_seconds, reason)
                 else:
                     result = terminate_pgid(
                         pgid=snap.pgid,
@@ -133,9 +131,7 @@ class ScopedProcessHandle:
 
             else:
                 # 'pid_tree_fallback' or unknown
-                result = await _fallback_terminate(
-                    self._process, snap, grace_seconds, reason
-                )
+                result = await _fallback_terminate(self._process, snap, grace_seconds, reason)
         except Exception:
             logger.warning(
                 "process_scope.terminate_failed",

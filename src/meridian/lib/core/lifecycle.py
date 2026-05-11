@@ -238,9 +238,7 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> str:
         """Start a new spawn and dispatch spawn.created."""
-        with bind_lifecycle_correlation(
-            self._correlation(operation="start", spawn_id=spawn_id)
-        ):
+        with bind_lifecycle_correlation(self._correlation(operation="start", spawn_id=spawn_id)):
             # Authoritative transition write still happens in _spawn_store().
             result_id = _spawn_store().start_spawn(
                 self._runtime_root,

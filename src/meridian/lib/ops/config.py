@@ -56,9 +56,6 @@ _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 logger = structlog.get_logger(__name__)
 
 
-
-
-
 class ConfigInitInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -120,8 +117,7 @@ class ConfigShowOutput(BaseModel):
             lines.append(f"runtime_root.source = {self.runtime_root_source}")
         lines.append(f"workspace.status = {self.workspace.status}")
         lines.append(
-            "workspace.sources = "
-            + json.dumps(list(self.workspace.sources), sort_keys=True)
+            "workspace.sources = " + json.dumps(list(self.workspace.sources), sort_keys=True)
         )
         lines.append(f"workspace.roots.count = {self.workspace.roots.count}")
         lines.append(f"workspace.roots.projected = {self.workspace.roots.projected}")
@@ -266,9 +262,7 @@ def _default_values() -> dict[str, object]:
 
 def _resolved_values(config: MeridianConfig) -> dict[str, object]:
     return {
-        option.canonical_key: normalize_runtime_scalar(
-            _get_field_value(config, option.field_path)
-        )
+        option.canonical_key: normalize_runtime_scalar(_get_field_value(config, option.field_path))
         for option in OPTION_CATALOG.visible_options
     }
 
@@ -633,9 +627,7 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                     label = row.get("name") or row.get("event") or row.get("builtin") or "hook"
                     names.append(str(label))
                 rendered_hook_value = (
-                    f"{len(hook_rows)} hooks ({', '.join(names)})"
-                    if names
-                    else len(hook_rows)
+                    f"{len(hook_rows)} hooks ({', '.join(names)})" if names else len(hook_rows)
                 )
             values.append(
                 ConfigResolvedValue(
@@ -650,6 +642,7 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
             )
 
     return values
+
 
 def _has_non_empty_remote(remote: str | None) -> bool:
     return isinstance(remote, str) and bool(remote.strip())

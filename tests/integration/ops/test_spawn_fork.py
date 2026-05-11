@@ -9,8 +9,6 @@ test_spawn_fork_harness.py.
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
@@ -25,8 +23,7 @@ def _state_root(project_root: Path) -> Path:
     mars_toml = project_root / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
-            "[settings]\n"
-            'targets = [".claude"]\n',
+            '[settings]\ntargets = [".claude"]\n',
             encoding="utf-8",
         )
     runtime_root = resolve_project_runtime_root(project_root)

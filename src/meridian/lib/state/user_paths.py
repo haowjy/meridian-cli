@@ -79,15 +79,14 @@ def get_or_create_project_id(meridian_dir: Path) -> str:
         user_home = get_user_home()
         for _ in range(10):
             candidate = generate_project_id()
-            if not (user_home / "context" / candidate).exists() and not (
-                user_home / "projects" / candidate
-            ).exists():
+            if (
+                not (user_home / "context" / candidate).exists()
+                and not (user_home / "projects" / candidate).exists()
+            ):
                 project_id = candidate
                 break
         else:
-            raise RuntimeError(
-                "Failed to generate a unique project ID after 10 attempts"
-            )
+            raise RuntimeError("Failed to generate a unique project ID after 10 attempts")
 
         id_file = meridian_dir / "id"
         meridian_dir.mkdir(parents=True, exist_ok=True)

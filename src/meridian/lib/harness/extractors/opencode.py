@@ -324,9 +324,7 @@ def _try_parse_opencode_usage(payload: dict[str, object]) -> TokenUsage | None:
     )
     nested_info_obj = properties.get("info") if properties is not None else None
     nested_info = (
-        cast("dict[str, object]", nested_info_obj)
-        if isinstance(nested_info_obj, dict)
-        else None
+        cast("dict[str, object]", nested_info_obj) if isinstance(nested_info_obj, dict) else None
     )
     nested_tokens_obj = nested_info.get("tokens") if nested_info is not None else None
     nested_tokens = (

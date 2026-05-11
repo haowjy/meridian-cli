@@ -177,10 +177,12 @@ async def extension_invoke(
         ),
     }
 
+
 def run_server() -> None:
     """Start the FastMCP stdio server."""
 
     mcp.run(transport="stdio")
+
 
 if __name__ == "__main__":
     run_server()

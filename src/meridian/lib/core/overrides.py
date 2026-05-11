@@ -41,9 +41,7 @@ def _validate_autocompact_value(v: object) -> object:
     if v is None:
         return None
     if not isinstance(v, int) or v < _AUTOCOMPACT_TOKEN_MIN:
-        raise ValueError(
-            f"expected int >= {_AUTOCOMPACT_TOKEN_MIN} (token count), got {v!r}."
-        )
+        raise ValueError(f"expected int >= {_AUTOCOMPACT_TOKEN_MIN} (token count), got {v!r}.")
     return v
 
 
@@ -75,9 +73,7 @@ def _validate_effort_value(v: object) -> object:
     if not normalized:
         return None
     if normalized not in KNOWN_EFFORT_VALUES:
-        raise ValueError(
-            f"expected one of {sorted(KNOWN_EFFORT_VALUES)}, got {v!r}"
-        )
+        raise ValueError(f"expected one of {sorted(KNOWN_EFFORT_VALUES)}, got {v!r}")
     return normalized
 
 
@@ -91,9 +87,7 @@ def _validate_approval_value(v: object) -> object:
     if not normalized:
         return None
     if normalized not in KNOWN_APPROVAL_VALUES:
-        raise ValueError(
-            f"expected one of {sorted(KNOWN_APPROVAL_VALUES)}, got {v!r}"
-        )
+        raise ValueError(f"expected one of {sorted(KNOWN_APPROVAL_VALUES)}, got {v!r}")
     return normalized
 
 

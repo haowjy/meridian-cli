@@ -382,6 +382,5 @@ def test_chat_cli_headless_warns_on_open(monkeypatch, tmp_path) -> None:
     assert actual_port == 8765
     assert opened == []
     assert stdout.getvalue() == (
-        "Warning: --open is ignored in headless mode.\n"
-        "Chat backend: http://127.0.0.1:8765\n"
+        "Warning: --open is ignored in headless mode.\nChat backend: http://127.0.0.1:8765\n"
     )

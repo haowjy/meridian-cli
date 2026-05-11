@@ -114,9 +114,9 @@ def test_workspace_init_recognizes_existing_commented_scaffold_without_duplicati
     (project_root / ".git").mkdir()
     local_path = project_root / "meridian.local.toml"
     existing = (
-        '# Local overrides\n'
-        '# Workspace topology — local path overrides and additions.\n'
-        '# [workspace.example]\n'
+        "# Local overrides\n"
+        "# Workspace topology — local path overrides and additions.\n"
+        "# [workspace.example]\n"
         '# path = "../sibling-repo"\n'
     )
     local_path.write_text(existing, encoding="utf-8")

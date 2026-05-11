@@ -142,9 +142,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         "/global/event",
         "/event",
     )
-    _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = (
-        "/session/{session_id}/abort",
-    )
+    _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/session/{session_id}/abort",)
     _PATH_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((404, 405))
     _PAYLOAD_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((400, 415, 422))
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
@@ -483,8 +481,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 last_error = exc
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    f"OpenCode session endpoint did not become ready within "
-                    f"{timeout_seconds:.1f}s"
+                    f"OpenCode session endpoint did not become ready within {timeout_seconds:.1f}s"
                 ) from last_error
             await asyncio.sleep(0.2)
 
@@ -537,9 +534,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                     f"OpenCode session resume: session {continue_session_id} not yet "
                     f"loaded (status={status})"
                 )
-            raise RuntimeError(
-                f"OpenCode session resume: GET failed with status={status}"
-            )
+            raise RuntimeError(f"OpenCode session resume: GET failed with status={status}")
 
         payload = project_opencode_spec_to_session_payload(
             spec,
@@ -574,8 +569,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                     continue
                 if status in self._PATH_RETRY_STATUSES:
                     trace_wire_recv(
-                        self._tracer, "http_probe", "",
-                        path=path, status=status, outcome="path_unavailable",
+                        self._tracer,
+                        "http_probe",
+                        "",
+                        path=path,
+                        status=status,
+                        outcome="path_unavailable",
                     )
                     last_error = (
                         f"OpenCode session endpoint unavailable on {path}: "
@@ -601,9 +600,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             content_type = str(response.headers.get("Content-Type", "")).lower()
             text_body = await response.text()
         parsed_body = _parse_response_body(text_body)
-        trace_wire_recv(
-            self._tracer, "http_response", text_body, path=path, status=status
-        )
+        trace_wire_recv(self._tracer, "http_response", text_body, path=path, status=status)
         return status, parsed_body, content_type
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -668,7 +665,9 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> tuple[int, object | None, str]:
         client = await self._ensure_http_client()
         trace_wire_send(
-            self._tracer, "http_post", json.dumps(dict(payload)),
+            self._tracer,
+            "http_post",
+            json.dumps(dict(payload)),
             path=path,
         )
         async with client.post(self._url(path), json=dict(payload)) as response:
@@ -696,8 +695,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raise
         parsed_body = _parse_response_body(text_body)
         trace_wire_recv(
-            self._tracer, "http_response", text_body,
-            path=path, status=status,
+            self._tracer,
+            "http_response",
+            text_body,
+            path=path,
+            status=status,
         )
         return status, parsed_body, content_type
 
@@ -723,8 +725,11 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             if status in self._SUCCESS_STATUSES:
                 self._event_path = path
                 trace_wire_recv(
-                    self._tracer, "sse_connect", "",
-                    path=path, status=status,
+                    self._tracer,
+                    "sse_connect",
+                    "",
+                    path=path,
+                    status=status,
                 )
                 return response
 
@@ -733,8 +738,12 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
             if status in self._PATH_RETRY_STATUSES:
                 trace_wire_recv(
-                    self._tracer, "http_probe", "",
-                    path=path, status=status, outcome="path_unavailable",
+                    self._tracer,
+                    "http_probe",
+                    "",
+                    path=path,
+                    status=status,
+                    outcome="path_unavailable",
                 )
                 last_error = (
                     f"OpenCode event endpoint unavailable on {path}: "
@@ -930,10 +939,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
                 "OpenCode process exited before becoming healthy "
                 f"(exit={exit_code}): {stderr_excerpt}"
             )
-        return RuntimeError(
-            "OpenCode process exited before becoming healthy "
-            f"(exit={exit_code})"
-        )
+        return RuntimeError(f"OpenCode process exited before becoming healthy (exit={exit_code})")
 
     def _read_startup_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle

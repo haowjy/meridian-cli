@@ -91,9 +91,7 @@ def test_session_log_resolves_opencode_storage_session_file(
 
     xdg_data_home = tmp_path / "xdg-data"
     session_id = "ses_fixture_session_12345"
-    session_file = (
-        xdg_data_home / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
-    )
+    session_file = xdg_data_home / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
     session_file.parent.mkdir(parents=True)
     session_file.write_text("[]\n", encoding="utf-8")
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())

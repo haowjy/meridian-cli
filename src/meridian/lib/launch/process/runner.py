@@ -323,9 +323,7 @@ def _execute_primary_process(
 ) -> tuple[int, str | None]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
-    use_managed_backend = (
-        harness_contract.bootstrap.mode.value == "managed_primary_attach"
-    )
+    use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
             exit_code, managed_session_id = _execute_via_managed_attach(
@@ -447,8 +445,7 @@ def _finalize_lifecycle_and_observe_session(
         if (
             observed_harness_session_id is not None
             and observed_harness_session_id.strip()
-            and observed_harness_session_id.strip()
-            != initial_persisted_harness_session_id.strip()
+            and observed_harness_session_id.strip() != initial_persisted_harness_session_id.strip()
         ):
             if not initial_persisted_harness_session_id.strip():
                 logger.debug(

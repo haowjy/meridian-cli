@@ -28,8 +28,7 @@ def _state_root(project_root: Path) -> Path:
     mars_toml = project_root / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
-            "[settings]\n"
-            'targets = [".claude"]\n',
+            '[settings]\ntargets = [".claude"]\n',
             encoding="utf-8",
         )
     runtime_root = resolve_project_runtime_root(project_root)
@@ -490,4 +489,3 @@ def test_spawn_continue_dry_run_with_prepared_context_does_not_require_lifecycle
 
     assert result.status == "dry-run"
     assert result.command == "spawn.continue"
-

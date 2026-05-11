@@ -78,9 +78,7 @@ def format_tree(
         dst = edge.dst
         if isinstance(dst, str) and _is_external_str(dst):
             if show_external:
-                outbound[edge.src].append(
-                    _Child(dst=dst, kind="external", line=edge.line)
-                )
+                outbound[edge.src].append(_Child(dst=dst, kind="external", line=edge.line))
         elif isinstance(dst, Path) and dst in result.nodes:
             outbound[edge.src].append(_Child(dst=dst, kind="local", line=edge.line))
             inbound_count[dst] += 1

@@ -103,9 +103,7 @@ def discover_skill_files(skills_dir: Path) -> list[Path]:
         return []
     return sorted(
         skill_file
-        for skill_file in (
-            child / "SKILL.md" for child in skills_dir.iterdir() if child.is_dir()
-        )
+        for skill_file in (child / "SKILL.md" for child in skills_dir.iterdir() if child.is_dir())
         if skill_file.is_file()
     )
 
@@ -240,9 +238,7 @@ class SkillRegistry:
 
     def _scan_documents(self, *, refresh: bool = False) -> tuple[SkillDocument, ...]:
         if self._filesystem_records is None or refresh:
-            documents = tuple(
-                scan_skills(self._project_root, skills_dirs=list(self._skills_dirs))
-            )
+            documents = tuple(scan_skills(self._project_root, skills_dirs=list(self._skills_dirs)))
             self._filesystem_documents = documents
             self._filesystem_records = tuple(SkillRecord(base=document) for document in documents)
         elif self._filesystem_documents is None:

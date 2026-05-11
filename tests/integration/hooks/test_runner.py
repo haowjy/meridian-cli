@@ -283,8 +283,7 @@ def test_external_runner_short_circuits_when_hooks_disabled(
 
     script = tmp_path / "should_not_run.py"
     script.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n",
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran', encoding='utf-8')\n",
         encoding="utf-8",
     )
 

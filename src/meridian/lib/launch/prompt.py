@@ -174,7 +174,6 @@ def _render_templated_section(
     return substitute_template_variables(section_text, variables)
 
 
-
 def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[PromptDocument, ...]:
     """Format loaded skills as typed supplemental prompt documents."""
 
@@ -194,6 +193,7 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
             )
         )
     return tuple(documents)
+
 
 def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
     """Format skill content for --append-system-prompt injection.

@@ -81,9 +81,7 @@ def notify_observers(event: LifecycleEvent) -> None:
         observer for observer, tier in observers if tier == LifecycleObserverTier.POLICY
     ]
     diagnostic_observers = [
-        observer
-        for observer, tier in observers
-        if tier == LifecycleObserverTier.DIAGNOSTIC
+        observer for observer, tier in observers if tier == LifecycleObserverTier.DIAGNOSTIC
     ]
 
     for observer in policy_observers:

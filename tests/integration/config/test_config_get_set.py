@@ -240,12 +240,12 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
 
     assert result.key == "defaults.harness"
     assert result.value == "opencode"
-    assert '# top-level comment' in updated
+    assert "# top-level comment" in updated
     assert 'harness = "opencode" # inline comment' in updated
     assert "[context.work]" in updated
     assert 'remote = "https://example.com/work.git"' in updated
     assert "[workspace.docs]" in updated
-    assert '[agents.reviewer]' in updated
+    assert "[agents.reviewer]" in updated
     assert 'model = "gpt55"' in updated
     assert "[custom]" in updated
     assert 'value = "keep-me"' in updated
@@ -301,11 +301,7 @@ def test_config_set_rewrites_nested_harness_alias_to_canonical_spelling(tmp_path
     project_root = _repo(tmp_path)
     config_path = project_root / "meridian.toml"
     config_path.write_text(
-        "[harness.codex]\n"
-        'model = "gpt-5.4"\n'
-        "\n"
-        "[custom]\n"
-        'value = "keep-me"\n',
+        '[harness.codex]\nmodel = "gpt-5.4"\n\n[custom]\nvalue = "keep-me"\n',
         encoding="utf-8",
     )
 

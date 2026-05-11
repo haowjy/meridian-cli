@@ -175,7 +175,6 @@ def test_reclaim_session_owned_scopes_for_chat_reclaims_all_matching_spawns(
     assert is_scope_released(runtime_root, SpawnId("p2"), "already-released") is True
 
 
-
 def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

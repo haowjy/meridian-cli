@@ -99,7 +99,9 @@ def test_session_log_chat_prefers_detected_transcript_without_mutating_tracked_i
     detected_session_id = "ses_detected_chat_real"
     log_path = _write_opencode_log(
         home_root / ".local" / "share" / "opencode" / "log",
-        project_root, detected_session_id, "2026-03-08T12:00:05",
+        project_root,
+        detected_session_id,
+        "2026-03-08T12:00:05",
     )
     _write_opencode_session(
         home_root / ".local" / "share" / "opencode" / "storage",
@@ -110,8 +112,11 @@ def test_session_log_chat_prefers_detected_transcript_without_mutating_tracked_i
     os.utime(log_path, (now, now))
 
     chat_id = session_store.start_session(
-        runtime_root, harness="opencode", harness_session_id=tracked_session_id,
-        model="gpt-5.3-codex", chat_id="c42",
+        runtime_root,
+        harness="opencode",
+        harness_session_id=tracked_session_id,
+        model="gpt-5.3-codex",
+        chat_id="c42",
     )
     try:
         spawn_store.start_spawn(
@@ -159,7 +164,9 @@ def test_session_log_spawn_prefers_detected_transcript_without_mutating_tracked_
     detected_session_id = "ses_detected_spawn_real"
     log_path = _write_opencode_log(
         home_root / ".local" / "share" / "opencode" / "log",
-        project_root, detected_session_id, "2026-03-08T12:00:05",
+        project_root,
+        detected_session_id,
+        "2026-03-08T12:00:05",
     )
     _write_opencode_session(
         home_root / ".local" / "share" / "opencode" / "storage",
@@ -170,8 +177,11 @@ def test_session_log_spawn_prefers_detected_transcript_without_mutating_tracked_
     os.utime(log_path, (now, now))
 
     chat_id = session_store.start_session(
-        runtime_root, harness="opencode", harness_session_id="",
-        model="gpt-5.3-codex", chat_id="c42",
+        runtime_root,
+        harness="opencode",
+        harness_session_id="",
+        model="gpt-5.3-codex",
+        chat_id="c42",
     )
     try:
         spawn_store.start_spawn(
@@ -219,14 +229,19 @@ def test_resolve_target_chat_detected_primary_session_without_transcript_is_not_
     detected_session_id = "ses_missing_storage_chat"
     log_path = _write_opencode_log(
         home_root / ".local" / "share" / "opencode" / "log",
-        project_root, detected_session_id, "2026-03-08T12:00:05",
+        project_root,
+        detected_session_id,
+        "2026-03-08T12:00:05",
     )
     now = time.time()
     os.utime(log_path, (now, now))
 
     chat_id = session_store.start_session(
-        runtime_root, harness="opencode", harness_session_id="",
-        model="gpt-5.3-codex", chat_id="c42",
+        runtime_root,
+        harness="opencode",
+        harness_session_id="",
+        model="gpt-5.3-codex",
+        chat_id="c42",
     )
     try:
         spawn_store.start_spawn(
@@ -244,8 +259,10 @@ def test_resolve_target_chat_detected_primary_session_without_transcript_is_not_
 
         with pytest.raises(FileNotFoundError):
             resolve_session_log_target(
-                ref=chat_id, file_path=None,
-                project_root=project_root, runtime_root=runtime_root,
+                ref=chat_id,
+                file_path=None,
+                project_root=project_root,
+                runtime_root=runtime_root,
             )
 
         assert session_store.get_session_harness_id(runtime_root, chat_id) == ""
@@ -270,7 +287,9 @@ def test_resolve_target_spawn_detected_primary_session_without_transcript_is_not
     detected_session_id = "ses_missing_storage_spawn"
     log_path = _write_opencode_log(
         home_root / ".local" / "share" / "opencode" / "log",
-        project_root, detected_session_id, "2026-03-08T12:00:05",
+        project_root,
+        detected_session_id,
+        "2026-03-08T12:00:05",
     )
     now = time.time()
     os.utime(log_path, (now, now))
@@ -290,8 +309,10 @@ def test_resolve_target_spawn_detected_primary_session_without_transcript_is_not
 
     with pytest.raises(FileNotFoundError):
         resolve_session_log_target(
-            ref="p42", file_path=None,
-            project_root=project_root, runtime_root=runtime_root,
+            ref="p42",
+            file_path=None,
+            project_root=project_root,
+            runtime_root=runtime_root,
         )
 
     primary_spawn = spawn_store.get_spawn(runtime_root, "p42")
@@ -307,8 +328,10 @@ def test_resolve_target_chat_not_found_preserves_missing_chat_error(tmp_path: Pa
 
     with pytest.raises(ValueError) as exc:
         resolve_session_log_target(
-            ref="c999", file_path=None,
-            project_root=project_root, runtime_root=runtime_root,
+            ref="c999",
+            file_path=None,
+            project_root=project_root,
+            runtime_root=runtime_root,
         )
     assert str(exc.value) == "Chat 'c999' not found"
 
@@ -333,8 +356,14 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     )
 
     spawn_store.start_spawn(
-        runtime_root, chat_id="c1", model="gpt-5.4", agent="coder",
-        harness="codex", prompt="hello", spawn_id="p1", harness_session_id=session_id,
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        spawn_id="p1",
+        harness_session_id=session_id,
     )
     state_path = runtime_root / "spawns" / "p1" / "state.json"
     before_state = state_path.read_text(encoding="utf-8")
@@ -347,8 +376,10 @@ def test_resolve_target_spawn_id_uses_read_only_lookup_without_reconciliation(
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
     resolved = resolve_session_log_target(
-        ref="p1", file_path=None,
-        project_root=project_root, runtime_root=runtime_root,
+        ref="p1",
+        file_path=None,
+        project_root=project_root,
+        runtime_root=runtime_root,
     )
 
     assert resolved.session_id == session_id
@@ -376,8 +407,11 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
     )
 
     session_store.start_session(
-        runtime_root, harness="codex", harness_session_id=session_id,
-        model="gpt-5.4", chat_id="c1",
+        runtime_root,
+        harness="codex",
+        harness_session_id=session_id,
+        model="gpt-5.4",
+        chat_id="c1",
     )
     spawn_store.start_spawn(
         runtime_root,
@@ -402,8 +436,10 @@ def test_resolve_target_chat_id_uses_read_only_lookup_without_reconciliation(
     monkeypatch.setattr("meridian.lib.ops.spawn.query.read_spawn_row", _unexpected)
 
     resolved = resolve_session_log_target(
-        ref="c1", file_path=None,
-        project_root=project_root, runtime_root=runtime_root,
+        ref="c1",
+        file_path=None,
+        project_root=project_root,
+        runtime_root=runtime_root,
     )
 
     assert resolved.session_id == session_id

@@ -1063,9 +1063,7 @@ async def execute_with_streaming(
                         ],
                     )
                     if retry_backoff_seconds > 0:
-                        await asyncio.sleep(
-                            retry_backoff_seconds * conclusion.retries_attempted
-                        )
+                        await asyncio.sleep(retry_backoff_seconds * conclusion.retries_attempted)
                     continue
 
                 stderr_key = make_artifact_key(run.spawn_id, STDERR_FILENAME)
@@ -1139,9 +1137,7 @@ async def execute_with_streaming(
                 project_root,
                 runtime_root,
             )
-        finalized_usage = (
-            conclusion.extracted.usage if conclusion.extracted is not None else None
-        )
+        finalized_usage = conclusion.extracted.usage if conclusion.extracted is not None else None
         terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
         with signal_coordinator().mask_sigterm():
             spawn_service = build_spawn_application_service_from_roots(

@@ -11,9 +11,7 @@ from meridian.lib.core.types import (
 )
 from meridian.lib.core.util import FormatContext
 
-SpawnStatus = Literal[
-    "queued", "running", "finalizing", "succeeded", "failed", "cancelled"
-]
+SpawnStatus = Literal["queued", "running", "finalizing", "succeeded", "failed", "cancelled"]
 
 
 class TokenUsage(BaseModel):

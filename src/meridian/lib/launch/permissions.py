@@ -87,11 +87,7 @@ def remove_disallowed_tools_from_allowlist(
     """Return allowed tools after explicit denies take precedence."""
 
     denied = {_normalize_tool_name(tool) for tool in disallowed_tools}
-    return tuple(
-        tool
-        for tool in allowed_tools
-        if _normalize_tool_name(tool) not in denied
-    )
+    return tuple(tool for tool in allowed_tools if _normalize_tool_name(tool) not in denied)
 
 
 def resolve_nested_claude_permission_request(

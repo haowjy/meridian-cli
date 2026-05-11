@@ -21,9 +21,7 @@ def _repo(tmp_path: Path) -> Path:
 def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.local.toml").write_text(
-        "[workspace.docs]\n"
-        'path = "./missing-root"\n'
-        'extra = "yes"\n',
+        '[workspace.docs]\npath = "./missing-root"\nextra = "yes"\n',
         encoding="utf-8",
     )
 
@@ -44,8 +42,7 @@ def test_config_show_surfaces_workspace_findings(tmp_path: Path) -> None:
     payload = to_jsonable(result)
     assert {finding["code"] for finding in payload["workspace_findings"]} == finding_codes
     assert all(
-        set(finding) == {"code", "message", "payload"}
-        for finding in payload["workspace_findings"]
+        set(finding) == {"code", "message", "payload"} for finding in payload["workspace_findings"]
     )
     text = result.format_text()
     assert "warning: workspace_unknown_key:" in text
@@ -90,16 +87,11 @@ def test_config_show_verbose_and_json_include_named_workspace_root_details(tmp_p
     docs_root.mkdir()
     committed_shared_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        "[workspace.docs]\n"
-        'path = "./docs"\n'
-        "\n"
-        "[workspace.shared]\n"
-        'path = "./committed-shared"\n',
+        '[workspace.docs]\npath = "./docs"\n\n[workspace.shared]\npath = "./committed-shared"\n',
         encoding="utf-8",
     )
     (project_root / "meridian.local.toml").write_text(
-        "[workspace.shared]\n"
-        'path = "./missing-shared"\n',
+        '[workspace.shared]\npath = "./missing-shared"\n',
         encoding="utf-8",
     )
 
@@ -177,37 +169,26 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
         encoding="utf-8",
     )
 
-    shown = config_show_sync(
-        ConfigShowInput(project_root=project_root.as_posix())
-    )
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
     # write env after initial project-only check
     assert (
-        next(item for item in shown.values if item.key == "agents.reviewer.model").source
-        == "file"
+        next(item for item in shown.values if item.key == "agents.reviewer.model").source == "file"
     )
-    assert (
-        next(item for item in shown.values if item.key == "context.work.source").source
-        == "file"
-    )
+    assert next(item for item in shown.values if item.key == "context.work.source").source == "file"
 
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
 
     assert (
-        next(item for item in shown.values if item.key == "agents.reviewer.model").source
-        == "file"
+        next(item for item in shown.values if item.key == "agents.reviewer.model").source == "file"
     )
-    assert (
-        next(item for item in shown.values if item.key == "context.work.source").source
-        == "file"
-    )
+    assert next(item for item in shown.values if item.key == "context.work.source").source == "file"
     assert (
         next(item for item in shown.values if item.key == "context.work.remote").source
         == "user-config"
     )
     assert (
-        next(item for item in shown.values if item.key == "context.kb.path").source
-        == "user-config"
+        next(item for item in shown.values if item.key == "context.kb.path").source == "user-config"
     )
     assert (
         next(item for item in shown.values if item.key == "work.artifacts.sync").source
@@ -255,10 +236,7 @@ def test_config_show_reports_project_hook_suppression_over_lower_precedence_user
     (project_root / "meridian.toml").write_text("hooks = []\n", encoding="utf-8")
     user_config = tmp_path / "user-config.toml"
     user_config.write_text(
-        "[[hooks]]\n"
-        'name = "user-hook"\n'
-        'event = "spawn"\n'
-        'command = "echo user"\n',
+        '[[hooks]]\nname = "user-hook"\nevent = "spawn"\ncommand = "echo user"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())

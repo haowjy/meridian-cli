@@ -123,8 +123,7 @@ def ext_list(
         extensions.setdefault(spec.extension_id, []).append(spec.command_id)
 
     sorted_extensions: dict[str, list[str]] = {
-        ext_id: sorted(command_ids)
-        for ext_id, command_ids in sorted(extensions.items())
+        ext_id: sorted(command_ids) for ext_id, command_ids in sorted(extensions.items())
     }
 
     json_payload = {

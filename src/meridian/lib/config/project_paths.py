@@ -4,9 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROJECT_ROOT_IGNORE_TARGETS: tuple[str, ...] = (
-    "meridian.local.toml",
-)
+PROJECT_ROOT_IGNORE_TARGETS: tuple[str, ...] = ("meridian.local.toml",)
 
 
 class ProjectConfigPaths(BaseModel):
@@ -29,6 +27,8 @@ class ProjectConfigPaths(BaseModel):
                 "meridian_local_toml",
                 self.project_root / "meridian.local.toml",
             )
+
+
 def resolve_project_config_paths(
     project_root: Path, execution_cwd: Path | None = None
 ) -> ProjectConfigPaths:

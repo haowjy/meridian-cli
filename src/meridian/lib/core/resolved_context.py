@@ -94,12 +94,16 @@ class ResolvedContext:
         project_root = (
             explicit_project_root
             if explicit_project_root is not None
-            else Path(project_root_raw) if project_root_raw else None
+            else Path(project_root_raw)
+            if project_root_raw
+            else None
         )
         runtime_root = (
             explicit_runtime_root
             if explicit_runtime_root is not None
-            else Path(runtime_root_raw) if runtime_root_raw else None
+            else Path(runtime_root_raw)
+            if runtime_root_raw
+            else None
         )
 
         # Authoritative work-ID precedence:
@@ -146,10 +150,7 @@ class ResolvedContext:
                 ("work_archive", resolved_context_paths.work_archive),
                 ("kb", resolved_context_paths.kb_root),
                 *tuple(
-                    sorted(
-                        (name, path)
-                        for name, (path, _) in resolved_context_paths.extra.items()
-                    )
+                    sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
                 ),
             )
 

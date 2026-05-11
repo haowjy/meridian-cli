@@ -104,9 +104,7 @@ class HarnessCapabilities(BaseModel):
 
     # Whether native file injection is available (e.g., OpenCode --file)
     supports_native_file_injection: bool = False
-    terminal_surface_modes: tuple[TerminalSurfaceMode, ...] = (
-        TerminalSurfaceMode.PTY_MEDIATED,
-    )
+    terminal_surface_modes: tuple[TerminalSurfaceMode, ...] = (TerminalSurfaceMode.PTY_MEDIATED,)
     default_terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
 
@@ -176,9 +174,7 @@ class BootstrapContract(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     mode: BootstrapMode
-    fork_materialization: ForkMaterializationMode = (
-        ForkMaterializationMode.NATIVE_CONTINUE_FORK
-    )
+    fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
     primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
     seeds_resume_metadata: bool = True
     primary_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
@@ -324,9 +320,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     @property
     def handled_fields(self) -> frozenset[str]: ...
 
-    def resolve_launch_spec(
-        self, run: SpawnParams, perms: PermissionResolver
-    ) -> AdapterSpecT: ...
+    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def preflight(
         self,

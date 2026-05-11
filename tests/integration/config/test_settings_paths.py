@@ -97,7 +97,7 @@ def test_load_config_reads_meridian_toml_at_project_root(tmp_path: Path) -> None
     project_root = tmp_path / "repo"
     project_root.mkdir()
     config_path = project_root / "meridian.toml"
-    config_path.write_text("[defaults]\nharness = \"claude\"\n", encoding="utf-8")
+    config_path.write_text('[defaults]\nharness = "claude"\n', encoding="utf-8")
 
     assert load_config(project_root).default_harness == "claude"
 
@@ -117,7 +117,7 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
                 "wait_yield_seconds = 270",
                 "",
                 "[harness.codex]",
-                "model = \"gpt-5.4\"",
+                'model = "gpt-5.4"',
                 "wait_yield_seconds = 20",
             ]
         ),
@@ -141,7 +141,7 @@ def test_load_config_ignores_legacy_state_path_when_root_config_missing(
     project_root.mkdir()
     legacy_path = project_root / ".meridian" / "config.toml"
     legacy_path.parent.mkdir()
-    legacy_path.write_text("[defaults]\nharness = \"claude\"\n", encoding="utf-8")
+    legacy_path.write_text('[defaults]\nharness = "claude"\n', encoding="utf-8")
 
     assert load_config(project_root).default_harness == "codex"
 
@@ -259,16 +259,14 @@ def test_build_config_surface_uses_authority_project_config_paths_after_env_chan
     frozen_workspace_root = tmp_path / "frozen-root"
     frozen_workspace_root.mkdir()
     frozen_local_path.write_text(
-        "[workspace.frozen]\n"
-        f'path = "{frozen_workspace_root.as_posix()}"\n',
+        f'[workspace.frozen]\npath = "{frozen_workspace_root.as_posix()}"\n',
         encoding="utf-8",
     )
     live_workspace_path = project_root / "meridian.local.toml"
     live_workspace_root = project_root / "live-root"
     live_workspace_root.mkdir()
     live_workspace_path.write_text(
-        "[workspace.live]\n"
-        'path = "./live-root"\n',
+        '[workspace.live]\npath = "./live-root"\n',
         encoding="utf-8",
     )
     frozen_paths = ProjectConfigPaths(

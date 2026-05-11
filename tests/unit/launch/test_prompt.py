@@ -116,8 +116,7 @@ def test_build_agent_inventory_prompt_renders_model_and_fan_out_metadata(
     assert lines[0] == "# Meridian Agents"
     assert lines[4] == "## Subagent"
     assert (
-        "- alpha: Primary reviewer | Model: gpt54 | Fan-out: gpt54, gpt55, unknown_alias"
-        in lines
+        "- alpha: Primary reviewer | Model: gpt54 | Fan-out: gpt54, gpt55, unknown_alias" in lines
     )
     assert "- beta: Fan-out only | Fan-out: opus46" in lines
     assert "- zeta: No model metadata" in lines

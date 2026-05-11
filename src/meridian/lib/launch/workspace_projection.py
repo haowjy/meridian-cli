@@ -76,10 +76,7 @@ def _merge_opencode_workspace_config(
 
     permission_raw = merged.get("permission")
     permission: dict[str, object] = (
-        {
-            str(key): value
-            for key, value in cast("dict[Any, Any]", permission_raw).items()
-        }
+        {str(key): value for key, value in cast("dict[Any, Any]", permission_raw).items()}
         if isinstance(permission_raw, dict)
         else {}
     )

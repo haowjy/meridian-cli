@@ -213,9 +213,7 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
 
     assert "Agent" not in context.resolved_request.allowed_tools
     assert "Agent" in context.resolved_request.disallowed_tools
-    assert CLAUDE_NATIVE_DELEGATION_TOOLS.issubset(
-        set(context.resolved_request.disallowed_tools)
-    )
+    assert CLAUDE_NATIVE_DELEGATION_TOOLS.issubset(set(context.resolved_request.disallowed_tools))
     assert "--allowedTools" not in context.binding.argv
 
 

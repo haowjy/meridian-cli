@@ -34,8 +34,7 @@ from meridian.lib.state.spawn_store import list_spawns
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -124,9 +123,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
         prompt_file_path = Path(command[prompt_flag_index + 1])
         captured["prompt_file_exists"] = prompt_file_path.exists()
         captured["prompt_file_text"] = (
-            prompt_file_path.read_text(encoding="utf-8")
-            if prompt_file_path.exists()
-            else None
+            prompt_file_path.read_text(encoding="utf-8") if prompt_file_path.exists() else None
         )
         captured["log_dir"] = prompt_file_path.parent
         assert callable(on_child_started)

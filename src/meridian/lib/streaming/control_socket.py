@@ -94,8 +94,7 @@ class ControlSocketServer:
             response = {"ok": False, "error": str(exc)}
 
         encoded = (
-            json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8")
-            + b"\n"
+            json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
         )
         writer.write(encoded)
         with suppress(BrokenPipeError, ConnectionResetError):

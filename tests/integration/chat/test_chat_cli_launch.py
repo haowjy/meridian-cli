@@ -13,11 +13,9 @@ import pytest
 from meridian.cli import chat_cmd
 from meridian.cli.chat_cmd import run_chat_server
 from meridian.cli.output import OutputConfig
-from meridian.lib.chat.policy import build_chat_backend_launch_plan, default_chat_policy_snapshot
-from meridian.lib.core.types import HarnessId, ModelId, SpawnId
-from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.chat.policy import default_chat_policy_snapshot
+from meridian.lib.core.types import HarnessId
+from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.service_context import ApplicationContext, ApplicationServices, ChatEntryPoint
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -138,7 +136,6 @@ def test_backend_acquisition_preserves_requested_harness(tmp_path, harness: Harn
 def test_chat_cli_builds_runtime_with_factory_inputs(
     monkeypatch, tmp_path, harness_name: str, expected_harness: HarnessId
 ) -> None:
-    from meridian.lib.catalog.model_aliases import AliasEntry
 
     captured: dict[str, object] = {}
     snapshot = default_chat_policy_snapshot(harness=expected_harness, model="model-x")
@@ -283,9 +280,7 @@ def test_chat_management_subcommands_reject_launch_policy_flags(
     assert exc_info.value.code == 1
     stderr = capsys.readouterr().err
     assert 'Unknown option: "' in stderr
-    assert flag in stderr or (
-        flag == "--agent" and '"-a"' in stderr
-    )
+    assert flag in stderr or (flag == "--agent" and '"-a"' in stderr)
 
 
 @pytest.mark.parametrize(

@@ -4,17 +4,14 @@ class BaseEvent:
     type: str
 
     def __init__(self, **data: Any) -> None: ...
-
     def model_dump_json(
         self,
         *,
         by_alias: bool = ...,
         exclude_none: bool = ...,
     ) -> str: ...
-
     @classmethod
     def model_validate(cls, obj: object) -> Self: ...
-
 
 CustomEvent = BaseEvent
 ReasoningMessageContentEvent = BaseEvent

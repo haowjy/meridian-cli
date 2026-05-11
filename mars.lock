@@ -6,13 +6,13 @@ commit = "f458cee31a7577a47ba0c9a101976fa599385174"
 
 [dependencies.meridian-base]
 url = "https://github.com/meridian-flow/meridian-base"
-version = "v0.3.11"
-commit = "c982e920c6f374c55e2ff1276c698082687d7a1a"
+version = "v0.3.12"
+commit = "6296481d0c8e0fc78874e9f24e10890e8e56d36f"
 
 [dependencies.meridian-dev-workflow]
 url = "https://github.com/meridian-flow/meridian-dev-workflow"
-version = "v0.5.10"
-commit = "b7eb2090fd4e2f753e88a4361f523a74e8afb74e"
+version = "v0.5.11"
+commit = "2ae5b5e81c1a0b16fa36d7eaadff8e07afb2db07"
 
 [dependencies.meridian-prompter]
 url = "https://github.com/meridian-flow/meridian-prompter"
@@ -323,13 +323,13 @@ installed_checksum = "sha256:02f213e27b6f99fb59a774c2b3298f71a2af8a4f639d8fd7781
 [items."agent/qa-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.5.8"
-source_checksum = "sha256:319ec918a99c0451b02ec826737fdcc2552f5a373110753268e3bd9df6a48146"
+version = "v0.5.11"
+source_checksum = "sha256:21a87b8975f676c1beb430756b3c05fd29925ecf3dc660dfff5a99d834fcfc03"
 
 [[items."agent/qa-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/qa-lead.md"
-installed_checksum = "sha256:319ec918a99c0451b02ec826737fdcc2552f5a373110753268e3bd9df6a48146"
+installed_checksum = "sha256:21a87b8975f676c1beb430756b3c05fd29925ecf3dc660dfff5a99d834fcfc03"
 
 [items."agent/reviewer"]
 source = "meridian-dev-workflow"

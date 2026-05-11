@@ -1,4 +1,5 @@
 """Primary-launch input builders."""
+
 from pathlib import Path
 
 from meridian.lib.catalog.model_policy import pattern_fallback_harness
@@ -47,9 +48,7 @@ def _requires_primary_synthetic_prompt(request: LaunchRequest) -> bool:
     if model:
         try:
             inferred_harness_id = pattern_fallback_harness(model)
-            harness = get_default_harness_registry().get_subprocess_harness(
-                inferred_harness_id
-            )
+            harness = get_default_harness_registry().get_subprocess_harness(inferred_harness_id)
             return harness.capabilities.requires_initial_prompt
         except (ValueError, KeyError):
             pass
@@ -68,8 +67,7 @@ def _normalize_primary_session(request: LaunchRequest) -> SessionRequest:
             "continue_harness": (request.session.continue_harness or "").strip() or None,
             "continue_chat_id": (request.session.continue_chat_id or "").strip() or None,
             "continue_fork": (
-                request.session.continue_fork
-                or request.session_mode == SessionMode.FORK
+                request.session.continue_fork or request.session_mode == SessionMode.FORK
             ),
             "primary_session_mode": request.session_mode.value,
         }

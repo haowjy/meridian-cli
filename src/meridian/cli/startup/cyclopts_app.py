@@ -21,8 +21,7 @@ def _path_has_children(
     descriptors: tuple[CommandDescriptor, ...],
 ) -> bool:
     return any(
-        len(descriptor.command_path) > len(path)
-        and descriptor.command_path[: len(path)] == path
+        len(descriptor.command_path) > len(path) and descriptor.command_path[: len(path)] == path
         for descriptor in descriptors
     )
 

@@ -99,14 +99,10 @@ workspace_app = App(
 kg_app = App(
     name="kg",
     help=(
-        "Knowledge graph analysis: document relationships, tree topology,\n"
-        "and broken link health."
+        "Knowledge graph analysis: document relationships, tree topology,\nand broken link health."
     ),
     help_epilogue=(
-        "Examples:\n\n"
-        "  meridian kg graph\n\n"
-        "  meridian kg graph docs/\n\n"
-        "  meridian kg check\n"
+        "Examples:\n\n  meridian kg graph\n\n  meridian kg graph docs/\n\n  meridian kg check\n"
     ),
     help_formatter="plain",
 )

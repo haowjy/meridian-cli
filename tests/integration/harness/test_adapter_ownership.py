@@ -153,8 +153,7 @@ def test_claude_adapter_does_not_resolve_session_from_prefixed_child_project_slu
     adapter = ClaudeAdapter()
     assert adapter.resolve_session_file(project_root=project_root, session_id=session_id) is None
     assert (
-        adapter.owns_untracked_session(project_root=project_root, session_ref=session_id)
-        is False
+        adapter.owns_untracked_session(project_root=project_root, session_ref=session_id) is False
     )
     assert child_session_path.exists()
 

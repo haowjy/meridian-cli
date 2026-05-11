@@ -139,9 +139,7 @@ def project_codex_spec_to_appserver_command(
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
 
     if spec.report_output_path is not None:
-        logger.debug(
-            "Codex streaming ignores report_output_path; reports extracted from artifacts"
-        )
+        logger.debug("Codex streaming ignores report_output_path; reports extracted from artifacts")
 
     writable_roots_config = _build_writable_roots_config(
         tuple(root.as_posix() for root in spec.projected_roots)

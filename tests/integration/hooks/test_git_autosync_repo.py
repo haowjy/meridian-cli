@@ -63,6 +63,8 @@ def _hook(
         exclude=exclude,
         options=options or {},
     )
+
+
 def _init_commit_repo(path: Path, *, env: dict[str, str]) -> None:
     path.mkdir(parents=True, exist_ok=True)
     _git("init", cwd=path, env=env)
@@ -121,10 +123,7 @@ def _configure_clone_override(
     meridian_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("MERIDIAN_HOME", str(meridian_home))
     (meridian_home / "config.toml").write_text(
-        "[git."
-        f"\"{_toml_quote(repo_url)}\""
-        "]\n"
-        f'path = "{_toml_quote(str(clone_path))}"\n',
+        f'[git."{_toml_quote(repo_url)}"]\npath = "{_toml_quote(str(clone_path))}"\n',
         encoding="utf-8",
     )
 

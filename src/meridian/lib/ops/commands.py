@@ -369,8 +369,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         extension_id="meridian.session",
         command_id="log",
         summary=(
-            "Show readable conversation/progress messages for a chat, spawn, "
-            "or harness session."
+            "Show readable conversation/progress messages for a chat, spawn, or harness session."
         ),
         handler=session_log,
         sync_handler=session_log_sync,
@@ -609,7 +608,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         extension_id="meridian.work",
         command_id="list",
         summary=(
-            'List work items. Use --done / --no-done to control whether'
+            "List work items. Use --done / --no-done to control whether"
             ' items with status "done" are shown.'
         ),
         handler=work_list,
@@ -744,7 +743,6 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
     ),
 )
-
 
 
 def get_all_op_specs() -> list[ExtensionCommandSpec]:

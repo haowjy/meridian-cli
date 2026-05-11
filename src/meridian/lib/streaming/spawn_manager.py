@@ -184,9 +184,7 @@ class SpawnManager:
         self._heartbeat_interval_secs = heartbeat_interval_secs
         self._heartbeat_touch = heartbeat_touch
         self._start_connection = start_connection or dispatch_start
-        self._control_server_factory = (
-            control_server_factory or _default_control_server_factory
-        )
+        self._control_server_factory = control_server_factory or _default_control_server_factory
         self._sessions: dict[SpawnId, SpawnSession] = {}
         self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()

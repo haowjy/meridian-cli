@@ -199,9 +199,7 @@ def _init_spawn(
         # I-10: do NOT pre-populate harness_session_id on fork starts.
         # materialize_fork() writes it via update_spawn after the row exists.
         harness_session_id=(
-            None
-            if request.session.continue_fork
-            else request.session.requested_harness_session_id
+            None if request.session.continue_fork else request.session.requested_harness_session_id
         ),
         execution_cwd=execution_cwd,
         launch_mode=launch_mode,

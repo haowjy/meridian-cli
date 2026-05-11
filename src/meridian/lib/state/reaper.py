@@ -185,9 +185,7 @@ def _is_pre_worker_launch_boundary_ghost(
     if not boundary.has_events or boundary.has_worker_takeover:
         return False
     runner_pid = (
-        record.runner_pid
-        if record.runner_pid is not None and record.runner_pid > 0
-        else None
+        record.runner_pid if record.runner_pid is not None and record.runner_pid > 0 else None
     )
     if runner_pid is None:
         return True
@@ -280,9 +278,7 @@ def _log_orphan_primary_diagnostics(
     if managed_snapshot is not None:
         metadata = managed_snapshot.metadata
         launcher_pid = metadata.launcher_pid
-        launcher_alive = (
-            managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
-        )
+        launcher_alive = managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
         backend_alive = (
             is_process_alive(
                 metadata.backend_pid,
@@ -314,15 +310,11 @@ def _log_orphan_primary_diagnostics(
         return
 
     launcher_pid = (
-        record.runner_pid
-        if record.runner_pid is not None and record.runner_pid > 0
-        else None
+        record.runner_pid if record.runner_pid is not None and record.runner_pid > 0 else None
     )
     launcher_alive = snapshot.runner_pid_alive if launcher_pid is not None else None
     logger.warning(
-        (
-            "Managed primary candidate reconciled without readable metadata."
-        ),
+        ("Managed primary candidate reconciled without readable metadata."),
         spawn_id=record.id,
         managed_metadata_readable=False,
         launcher_pid=launcher_pid,
@@ -463,6 +455,7 @@ def reconcile_active_spawn(
     ):
         _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
     from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+
     terminate_spawn_scopes(
         runtime_root,
         record,

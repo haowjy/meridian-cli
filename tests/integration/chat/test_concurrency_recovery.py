@@ -115,8 +115,7 @@ def test_restart_recovery_restores_non_closed_chat_to_idle_and_emits_runtime_err
     with TestClient(app) as client:
         chat_id = client.post("/chat", json={}).json()["chat_id"]
         assert (
-            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"]
-            == "accepted"
+            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"] == "accepted"
         )
         _ingest_turn_started(client, chat_id)
 
@@ -126,9 +125,7 @@ def test_restart_recovery_restores_non_closed_chat_to_idle_and_emits_runtime_err
         events = _replayed_events(client, chat_id)
 
     relevant_events = [
-        event
-        for event in events
-        if event["type"] not in {"user.prompt", "chat.state_changed"}
+        event for event in events if event["type"] not in {"user.prompt", "chat.state_changed"}
     ]
     assert [event["type"] for event in relevant_events] == [
         "chat.started",
@@ -187,9 +184,7 @@ def test_restart_recovery_rebuilds_missing_or_corrupt_index_from_jsonl(
             "SELECT type FROM events WHERE chat_id=? ORDER BY seq",
             (chat_id,),
         ).fetchall()
-        relevant_rows = [
-            row for row in rows if row[0] not in {"user.prompt", "chat.state_changed"}
-        ]
+        relevant_rows = [row for row in rows if row[0] not in {"user.prompt", "chat.state_changed"}]
         assert relevant_rows == [
             ("chat.started",),
             ("turn.started",),
@@ -262,8 +257,7 @@ def test_restart_recovery_is_idempotent_and_does_not_duplicate_runtime_error(
     with TestClient(app) as client:
         chat_id = client.post("/chat", json={}).json()["chat_id"]
         assert (
-            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"]
-            == "accepted"
+            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"] == "accepted"
         )
         _ingest_turn_started(client, chat_id)
 
@@ -284,8 +278,7 @@ def test_restart_recovery_writes_runtime_error_to_sqlite_index(tmp_path: Path) -
     with TestClient(app) as client:
         chat_id = client.post("/chat", json={}).json()["chat_id"]
         assert (
-            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"]
-            == "accepted"
+            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"] == "accepted"
         )
         _ingest_turn_started(client, chat_id)
 

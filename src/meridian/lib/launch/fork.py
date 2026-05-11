@@ -46,9 +46,7 @@ def materialize_fork(
 
     forked_session_id = adapter.fork_session(source_session_id).strip()
     if not forked_session_id:
-        raise RuntimeError(
-            "Harness adapter.fork_session() returned an empty session ID."
-        )
+        raise RuntimeError("Harness adapter.fork_session() returned an empty session ID.")
 
     spawn_store.update_spawn(
         runtime_root,

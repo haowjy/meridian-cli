@@ -69,8 +69,7 @@ def _build_launch_runtime(
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -119,6 +118,7 @@ def test_build_launch_context_behaviors(
     registry = get_default_harness_registry()
 
     if patch_argv_failure:
+
         def fail_build_launch_argv(**_: object) -> tuple[str, ...]:
             raise RuntimeError("argv unavailable")
 

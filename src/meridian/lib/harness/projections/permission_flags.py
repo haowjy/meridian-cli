@@ -89,8 +89,7 @@ def resolve_permission_flags(
         stripped = _strip_claude_tool_flags(resolver_flags)
         if harness_id == HarnessId.CODEX and "--disallowedTools" in resolver_flags:
             logger.warning(
-                "Codex does not support disallowed-tools; "
-                "falling back to sandbox/approval flags."
+                "Codex does not support disallowed-tools; falling back to sandbox/approval flags."
             )
         resolver_flags = stripped
     base_flags.extend(resolver_flags)

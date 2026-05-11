@@ -12,10 +12,7 @@ from meridian.lib.ops.worktree_lifecycle import (
 
 def format_provision_notice(result: WorktreeProvisionResult, *, work_id: str) -> str | None:
     if result.status == "skipped_not_git_repo":
-        return (
-            f"Skipped worktree creation for '{work_id}': "
-            "project is not inside a git repository."
-        )
+        return f"Skipped worktree creation for '{work_id}': project is not inside a git repository."
     return None
 
 

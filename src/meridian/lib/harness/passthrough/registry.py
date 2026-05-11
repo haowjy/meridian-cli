@@ -20,9 +20,7 @@ def get_passthrough(harness_id: HarnessId) -> TuiPassthrough:
     }
     factory = registry.get(harness_id)
     if factory is None:
-        raise PassthroughError(
-            f"Managed primary attach is not supported for {harness_id.value}"
-        )
+        raise PassthroughError(f"Managed primary attach is not supported for {harness_id.value}")
     return factory()
 
 

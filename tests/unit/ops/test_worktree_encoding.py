@@ -49,7 +49,8 @@ def test_run_git_passes_utf8_encoding(tmp_path: Path) -> None:
     """subprocess.run receives encoding='utf-8', not the locale default."""
     with patch("subprocess.run", return_value=_mock_completed(stdout="true")) as mock_run:
         _run_git(
-            tmp_path, ["rev-parse", "--is-inside-work-tree"],
+            tmp_path,
+            ["rev-parse", "--is-inside-work-tree"],
             error_type=WorktreeRepoResolutionError,
         )
 
@@ -67,7 +68,8 @@ def test_run_git_uses_text_mode(tmp_path: Path) -> None:
     """text=True is still set alongside encoding='utf-8'."""
     with patch("subprocess.run", return_value=_mock_completed(stdout="true")) as mock_run:
         _run_git(
-            tmp_path, ["rev-parse", "--is-inside-work-tree"],
+            tmp_path,
+            ["rev-parse", "--is-inside-work-tree"],
             error_type=WorktreeRepoResolutionError,
         )
 
@@ -81,7 +83,8 @@ def test_run_git_captures_output(tmp_path: Path) -> None:
     """capture_output=True is set so stdout/stderr are captured."""
     with patch("subprocess.run", return_value=_mock_completed(stdout="true")) as mock_run:
         _run_git(
-            tmp_path, ["rev-parse", "--is-inside-work-tree"],
+            tmp_path,
+            ["rev-parse", "--is-inside-work-tree"],
             error_type=WorktreeRepoResolutionError,
         )
 
@@ -112,7 +115,8 @@ def test_run_git_propagates_file_not_found(tmp_path: Path) -> None:
         pytest.raises(WorktreeRepoResolutionError, match="git is not installed"),
     ):
         _run_git(
-            tmp_path, ["rev-parse", "--is-inside-work-tree"],
+            tmp_path,
+            ["rev-parse", "--is-inside-work-tree"],
             error_type=WorktreeRepoResolutionError,
         )
 
@@ -125,6 +129,7 @@ def test_run_git_propagates_called_process_error(tmp_path: Path) -> None:
         pytest.raises(WorktreeRepoResolutionError, match="not a git repository"),
     ):
         _run_git(
-            tmp_path, ["rev-parse", "--is-inside-work-tree"],
+            tmp_path,
+            ["rev-parse", "--is-inside-work-tree"],
             error_type=WorktreeRepoResolutionError,
         )

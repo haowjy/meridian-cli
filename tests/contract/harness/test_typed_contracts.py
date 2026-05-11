@@ -431,10 +431,7 @@ def test_leaf_imports_do_not_form_a_cycle() -> None:
         text=True,
     )
 
-    assert completed.returncode == 0, (
-        f"stdout:\n{completed.stdout}\n"
-        f"stderr:\n{completed.stderr}"
-    )
+    assert completed.returncode == 0, f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
 
 
 def test_runtime_hitl_contracts_align_with_default_connection_capabilities() -> None:

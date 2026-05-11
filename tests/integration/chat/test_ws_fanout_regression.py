@@ -103,8 +103,6 @@ def _receive_until(
     raise AssertionError(f"condition not met after {max_messages} messages: {messages!r}")
 
 
-
-
 def _has_ack_and_event(
     messages: list[dict[str, Any]],
     *,
@@ -114,6 +112,7 @@ def _has_ack_and_event(
     return any(payload.get("ack") == command_id for payload in messages) and any(
         payload.get("type") == event_type for payload in messages
     )
+
 
 def _payload_seq(payload: dict[str, object]) -> int:
     raw = payload["seq"]
@@ -158,7 +157,6 @@ def test_reconnect_with_last_seq_replays_missed_events_over_websocket_transport(
 
     assert replayed["type"] == CHAT_EXITED
     assert replayed["seq"] == 1
-
 
 
 def test_backpressure_eviction_drops_slow_client_without_affecting_fast_clients(
@@ -210,7 +208,6 @@ def test_backpressure_eviction_drops_slow_client_without_affecting_fast_clients(
     assert fast_seqs == list(range(7))
 
 
-
 def test_three_websocket_clients_receive_same_close_event(tmp_path: Path) -> None:
     runtime = ChatRuntime(
         runtime_root=tmp_path,
@@ -255,7 +252,6 @@ def test_three_websocket_clients_receive_same_close_event(tmp_path: Path) -> Non
     assert ws_two_message["type"] == CHAT_EXITED
     assert ws_three_message["type"] == CHAT_EXITED
     assert ws_two_message["seq"] == ws_three_message["seq"] == 1
-
 
 
 def test_websocket_command_ack_framing_matches_each_command_id(tmp_path: Path) -> None:
@@ -323,7 +319,6 @@ def test_websocket_command_ack_framing_matches_each_command_id(tmp_path: Path) -
     assert {payload["type"] for payload in close_messages if "type" in payload} == {CHAT_EXITED}
 
 
-
 def test_malformed_websocket_message_rejects_sender_without_crashing_other_clients(
     tmp_path: Path,
 ) -> None:
@@ -374,7 +369,6 @@ def test_malformed_websocket_message_rejects_sender_without_crashing_other_clien
     assert {payload["ack"] for payload in good_messages if "ack" in payload} == {"cmd-good-close"}
     assert {payload["type"] for payload in good_messages if "type" in payload} == {CHAT_EXITED}
     assert bad_close["type"] == CHAT_EXITED
-
 
 
 def test_rapid_connect_disconnect_does_not_leak_fanout_clients(tmp_path: Path) -> None:

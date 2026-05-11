@@ -102,8 +102,7 @@ def apply_finalize(
             ),
             "reasoning_tokens": usage.reasoning_tokens if usage is not None else None,
             "cost_is_estimate": (
-                (usage.cost_is_estimate if usage is not None else False)
-                or record.cost_is_estimate
+                (usage.cost_is_estimate if usage is not None else False) or record.cost_is_estimate
             ),
             "error": error,
             "terminal_origin": origin,

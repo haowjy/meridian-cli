@@ -12,4 +12,3 @@ class SpawnStartMetadata:
     desc: str | None = None
     work_id: str | None = None
     goal: str | None = None
-

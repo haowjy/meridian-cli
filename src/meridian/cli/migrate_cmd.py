@@ -41,9 +41,7 @@ def register_migrate_command(app: App, emit: Emitter) -> None:
             emit("\n".join(lines))
         elif result.status == "not-needed":
             if result.old_id:
-                emit(
-                    f"No migration needed: project ID '{result.old_id}' is already in word format"
-                )
+                emit(f"No migration needed: project ID '{result.old_id}' is already in word format")
             else:
                 reason = result.blocking_reason or "No project ID found"
                 emit(f"No migration needed: {reason}")

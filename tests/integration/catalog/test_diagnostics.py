@@ -78,8 +78,7 @@ def test_build_launch_context_does_not_leak_library_warnings_to_stderr(
         assert not [
             record
             for record in handler.records
-            if record.name.startswith("meridian.lib")
-            and record.levelno == logging.WARNING
+            if record.name.startswith("meridian.lib") and record.levelno == logging.WARNING
         ]
     finally:
         root_logger.removeHandler(handler)

@@ -56,9 +56,7 @@ def test_signal_process_posix_uses_send_signal() -> None:
         asyncio.run(conn._signal_process(signal.SIGINT))
 
     assert not fake.terminate_called, "terminate() must not be called on POSIX"
-    assert fake.send_signal_calls == [signal.SIGINT], (
-        "send_signal(SIGINT) must be called on POSIX"
-    )
+    assert fake.send_signal_calls == [signal.SIGINT], "send_signal(SIGINT) must be called on POSIX"
 
 
 def test_signal_process_no_op_when_process_none() -> None:

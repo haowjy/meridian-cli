@@ -41,8 +41,7 @@ from meridian.lib.state.spawn_store import list_spawns
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -119,9 +118,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             prompt_is_composed=False,
             model="gpt-5.4",
             harness=harness_id.value,
-            extra_args=(
-                f"--append-system-prompt={harness_id.value} passthrough system prompt",
-            ),
+            extra_args=(f"--append-system-prompt={harness_id.value} passthrough system prompt",),
             session=SessionRequest(
                 requested_harness_session_id="existing-codex-session",
                 continue_chat_id="c-codex",
@@ -396,9 +393,7 @@ def test_run_harness_process_fresh_codex_primary_routes_to_managed_path(
         # Call on_running to mark spawn as running
         if callable(on_running):
             on_running(12345)
-        return PrimaryAttachOutcome(
-            exit_code=0, session_id="fresh-thread-id", tui_pid=12345
-        )
+        return PrimaryAttachOutcome(exit_code=0, session_id="fresh-thread-id", tui_pid=12345)
 
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 

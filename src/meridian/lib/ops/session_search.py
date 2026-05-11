@@ -85,8 +85,7 @@ def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> 
     local_start = match_start - window_start
     local_end = local_start + len(query)
     highlighted = (
-        f"{snippet[:local_start]}[[{snippet[local_start:local_end]}]]"
-        f"{snippet[local_end:]}"
+        f"{snippet[:local_start]}[[{snippet[local_start:local_end]}]]{snippet[local_end:]}"
     )
 
     prefix = "..." if window_start > 0 else ""

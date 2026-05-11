@@ -245,8 +245,7 @@ def test_spawn_process_exited_projects_to_telemetry_segment(tmp_path, monkeypatc
 
     wait_for(
         lambda: any(
-            event["event"] == "spawn.process_exited"
-            for event in read_telemetry_events(tmp_path)
+            event["event"] == "spawn.process_exited" for event in read_telemetry_events(tmp_path)
         )
     )
     projected = [
@@ -290,9 +289,9 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
     )
 
     wait_for(
-        lambda: {
-            event["event"] for event in read_telemetry_events(tmp_path)
-        }.issuperset({"spawn.succeeded", "spawn.failed"})
+        lambda: {event["event"] for event in read_telemetry_events(tmp_path)}.issuperset(
+            {"spawn.succeeded", "spawn.failed"}
+        )
     )
     events = read_telemetry_events(tmp_path)
     succeeded = next(event for event in events if event["event"] == "spawn.succeeded")
@@ -317,9 +316,7 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
     assert "category" not in failed["data"]
 
 
-def test_non_terminal_spawn_lifecycle_events_are_not_projected(
-    tmp_path, monkeypatch
-) -> None:
+def test_non_terminal_spawn_lifecycle_events_are_not_projected(tmp_path, monkeypatch) -> None:
     setup_spawn_projection(tmp_path, monkeypatch)
     service = SpawnLifecycleService(tmp_path)
     spawn_id = start_spawn(service, status="queued")

@@ -112,8 +112,7 @@ def _human_command_lines() -> list[str]:
     ordered.extend(sorted(names - set(ordered)))
     width = max(len(name) for name in ordered) if ordered else 0
     return [
-        f"  {name.ljust(width)}  {_HUMAN_COMMAND_SUMMARIES.get(name, name)}"
-        for name in ordered
+        f"  {name.ljust(width)}  {_HUMAN_COMMAND_SUMMARIES.get(name, name)}" for name in ordered
     ]
 
 

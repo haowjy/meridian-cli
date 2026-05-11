@@ -19,9 +19,7 @@ from meridian.lib.harness.projections.project_codex_common import (
         ("yolo", "never"),
     ],
 )
-def test_codex_approval_policy_mapping_contract(
-    approval_mode: str, expected: str | None
-) -> None:
+def test_codex_approval_policy_mapping_contract(approval_mode: str, expected: str | None) -> None:
     assert map_codex_approval_policy(approval_mode) == expected
 
 

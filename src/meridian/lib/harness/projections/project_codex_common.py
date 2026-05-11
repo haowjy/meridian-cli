@@ -67,8 +67,7 @@ def project_codex_mcp_config_flags(mcp_tools: Iterable[str]) -> tuple[str, ...]:
         name, separator, command = entry.partition("=")
         if not separator or not name.strip() or not command.strip():
             raise ValueError(
-                "Codex mcp_tools entries must be '<name>=<command>'; "
-                f"got {raw_entry!r}"
+                f"Codex mcp_tools entries must be '<name>=<command>'; got {raw_entry!r}"
             )
         projected.extend(
             (

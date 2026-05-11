@@ -163,9 +163,7 @@ def _load_context_table(path: Path) -> dict[str, object] | None:
     if context is None:
         return None
     if not isinstance(context, dict):
-        raise ValueError(
-            f"Invalid value for 'context' in '{path.as_posix()}': expected table."
-        )
+        raise ValueError(f"Invalid value for 'context' in '{path.as_posix()}': expected table.")
     return cast("dict[str, object]", context)
 
 
@@ -312,6 +310,7 @@ def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
     root_dir = resolve_project_runtime_root(project_root)
     return ProjectPaths.from_root_dir(root_dir)
 
+
 def resolve_project_runtime_root(project_root: Path) -> Path:
     """Resolve runtime state root for read paths.
 
@@ -355,6 +354,7 @@ def resolve_kb_dir(project_root: Path) -> Path:
     """Return `.meridian/kb/` for a repository root."""
 
     return resolve_project_paths(project_root).kb_dir
+
 
 def resolve_work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
     """Return the runtime-root-local scratch directory for a work item."""

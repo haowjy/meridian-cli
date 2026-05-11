@@ -240,9 +240,7 @@ async def _execute_existing_spawn(
         status=spawn_status,
     )
 
-    resolved_execution_cwd = (
-        (runtime_request.project_paths_execution_cwd or "").strip() or None
-    )
+    resolved_execution_cwd = (runtime_request.project_paths_execution_cwd or "").strip() or None
     if not resolved_execution_cwd:
         resolved_execution_cwd = str(
             resolve_child_execution_cwd(

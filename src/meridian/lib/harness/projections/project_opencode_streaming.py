@@ -65,8 +65,7 @@ def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
         )
     if spec.interactive:
         logger.debug(
-            "OpenCode streaming ignores interactive launch flag; "
-            "HTTP transport remains interactive"
+            "OpenCode streaming ignores interactive launch flag; HTTP transport remains interactive"
         )
     if spec.projected_roots:
         logger.debug(

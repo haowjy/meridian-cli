@@ -75,8 +75,6 @@ def register_doctor_command(
         registry=get_first_party_registry(),
         group="doctor",
         handlers=handlers,
-        command_help_epilogues={
-            "meridian.doctor.doctor": doctor_epilogue or ""
-        },
+        command_help_epilogues={"meridian.doctor.doctor": doctor_epilogue or ""},
         emit=emit,
     )

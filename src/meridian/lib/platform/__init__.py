@@ -25,6 +25,7 @@ def get_home_path() -> Path:
         return Path(home).expanduser()
     return Path.home()
 
+
 __all__ = [
     "IS_POSIX",
     "IS_WINDOWS",

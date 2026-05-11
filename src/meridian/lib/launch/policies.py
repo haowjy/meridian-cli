@@ -83,9 +83,7 @@ class SurfacePolicyInput:
         object.__setattr__(
             self,
             "supported_execution_policy_fields",
-            frozenset(
-                normalize_execution_policy_fields(self.supported_execution_policy_fields)
-            ),
+            frozenset(normalize_execution_policy_fields(self.supported_execution_policy_fields)),
         )
 
     @property
@@ -124,7 +122,6 @@ class ResolvedLaunchPolicy:
     model_selection: ModelSelectionContext | None = None
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
-
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
@@ -408,9 +405,7 @@ def _require_policy_tier(
     tier: RuntimeOverrides | tuple[RuntimeOverrides, ...],
 ) -> RuntimeOverrides:
     if isinstance(tier, tuple):
-        raise TypeError(
-            "resolve_policy_fields() accepts a tier tuple only as its sole argument."
-    )
+        raise TypeError("resolve_policy_fields() accepts a tier tuple only as its sole argument.")
     return tier
 
 
@@ -529,9 +524,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     model_layer_index = _first_set_layer_index(full_layers, "model")
     harness_layer_index = _first_set_layer_index(full_layers, "harness")
     pre_profile_layer_count = len(surface.layers)
-    model_explicit = (
-        model_layer_index is not None and model_layer_index < pre_profile_layer_count
-    )
+    model_explicit = model_layer_index is not None and model_layer_index < pre_profile_layer_count
     user_explicit_same_precedence = (
         model_layer_index is not None
         and harness_layer_index is not None
@@ -539,12 +532,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         and model_layer_index < pre_profile_layer_count
     )
 
-    selected_agent_name = profile.name if profile is not None else (
-        requested_agent or configured_default_agent or ""
+    selected_agent_name = (
+        profile.name if profile is not None else (requested_agent or configured_default_agent or "")
     )
-    agent_overlay = (
-        surface.config.agents.get(selected_agent_name) if selected_agent_name else None
-    )
+    agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
 
     requested_model_token = (
         explicit_user_overrides.model
@@ -573,9 +564,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         agent_overlay=agent_overlay,
         config_defaults=surface.config_overrides.execution_policy_scope(
             surface.supported_execution_policy_fields
-        ).model_copy(
-            update=surface.config_overrides.routing_scope().model_dump(exclude_none=True)
-        ),
+        ).model_copy(update=surface.config_overrides.routing_scope().model_dump(exclude_none=True)),
         profile_routing_model=profile.model if profile is not None else None,
         profile_routing_harness=profile.harness if profile is not None else None,
         profile_policy_defaults=ResolvedExecutionPolicy(
@@ -744,8 +733,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         and profile_policy_defaults.model_dump(exclude_none=True)
     ):
         _LOGGER.debug(
-            "No model-policies rule matched for '%s'; using generic profile "
-            "model-policy defaults.",
+            "No model-policies rule matched for '%s'; using generic profile model-policy defaults.",
             selected_entry.model_id,
         )
     _log_unmatched_profile_policy_defaults(

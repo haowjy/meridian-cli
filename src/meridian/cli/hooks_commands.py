@@ -38,11 +38,7 @@ def _resolved_project_root() -> str:
 
 def _hooks_list(emit: Emitter) -> None:
     with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
-        emit(
-            hooks_list_sync(
-                HookListInput(project_root=_resolved_project_root())
-            )
-        )
+        emit(hooks_list_sync(HookListInput(project_root=_resolved_project_root())))
 
 
 def _hooks_check(emit: Emitter) -> None:

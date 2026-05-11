@@ -129,14 +129,16 @@ class ModelsListOutput(BaseModel):
         header = ["MODEL", "HARNESS", "ALIAS", "PROVIDER", "COST", "RELEASED"]
         rows: list[list[str]] = []
         for model in self.models:
-            rows.append([
-                str(model.model_id),
-                _display_harness(model.harness),
-                ",".join(alias.alias for alias in model.aliases),
-                model.provider or "",
-                model.cost_tier or "",
-                model.release_date or "",
-            ])
+            rows.append(
+                [
+                    str(model.model_id),
+                    _display_harness(model.harness),
+                    ",".join(alias.alias for alias in model.aliases),
+                    model.provider or "",
+                    model.cost_tier or "",
+                    model.release_date or "",
+                ]
+            )
         required_indices = {0, 1}
         keep_indices = [
             index
@@ -370,16 +372,16 @@ def models_list_sync(payload: ModelsListInput) -> ModelsListOutput:
     all_model_ids = {str(model.model_id) for model in catalog_models}
     effective_visibility = DEFAULT_MODEL_VISIBILITY
     if payload.show_superseded:
-        effective_visibility = effective_visibility.model_copy(
-            update={"hide_superseded": False}
-        )
+        effective_visibility = effective_visibility.model_copy(update={"hide_superseded": False})
 
     superseded: frozenset[str] = frozenset()
     if effective_visibility.hide_superseded:
-        superseded = compute_superseded_ids([
-            (str(model.model_id), model.provider or "", model.release_date)
-            for model in catalog_models
-        ])
+        superseded = compute_superseded_ids(
+            [
+                (str(model.model_id), model.provider or "", model.release_date)
+                for model in catalog_models
+            ]
+        )
 
     visible_models = [
         model

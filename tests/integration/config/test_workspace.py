@@ -28,8 +28,7 @@ def _repo(tmp_path: Path) -> Path:
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -91,11 +90,7 @@ def test_workspace_snapshot_loads_named_committed_and_local_entries(tmp_path: Pa
         encoding="utf-8",
     )
     local_path.write_text(
-        "[workspace.frontend]\n"
-        'path = "../frontend-local"\n'
-        "\n"
-        "[workspace.data]\n"
-        'path = "../data"\n',
+        '[workspace.frontend]\npath = "../frontend-local"\n\n[workspace.data]\npath = "../data"\n',
         encoding="utf-8",
     )
 
@@ -130,8 +125,7 @@ def test_workspace_snapshot_reports_local_and_committed_missing_roots(tmp_path: 
         encoding="utf-8",
     )
     (project_root / "meridian.local.toml").write_text(
-        "[workspace.local_missing]\n"
-        'path = "./missing-local"\n',
+        '[workspace.local_missing]\npath = "./missing-local"\n',
         encoding="utf-8",
     )
 
@@ -147,8 +141,7 @@ def test_workspace_snapshot_reports_local_and_committed_missing_roots(tmp_path: 
 def test_workspace_snapshot_invalid_named_schema_marks_invalid(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.toml").write_text(
-        "[workspace.Bad]\n"
-        'path = "./root"\n',
+        '[workspace.Bad]\npath = "./root"\n',
         encoding="utf-8",
     )
 
@@ -163,9 +156,7 @@ def test_workspace_snapshot_unknown_entry_keys_are_findings(tmp_path: Path) -> N
     project_root = _repo(tmp_path)
     (project_root / "root").mkdir()
     (project_root / "meridian.toml").write_text(
-        "[workspace.root]\n"
-        'path = "./root"\n'
-        "enabled = true\n",
+        '[workspace.root]\npath = "./root"\nenabled = true\n',
         encoding="utf-8",
     )
 
@@ -216,8 +207,7 @@ def test_user_global_workspace_config_is_ignored_for_snapshot_and_launch(
     user_workspace_root.mkdir()
     user_config_path = tmp_path / "user-config.toml"
     user_config_path.write_text(
-        "[workspace.user_docs]\n"
-        f'path = "{user_workspace_root.as_posix()}"\n',
+        f'[workspace.user_docs]\npath = "{user_workspace_root.as_posix()}"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config_path.as_posix())
@@ -242,8 +232,7 @@ def test_workspace_entries_do_not_create_context_env_vars(tmp_path: Path) -> Non
     workspace_root = project_root / "workspace-docs"
     workspace_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        "[workspace.docs]\n"
-        'path = "./workspace-docs"\n',
+        '[workspace.docs]\npath = "./workspace-docs"\n',
         encoding="utf-8",
     )
 
@@ -260,8 +249,7 @@ def test_workspace_entries_do_not_enter_system_prompt_context(tmp_path: Path) ->
     workspace_root = project_root / "workspace-docs"
     workspace_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        "[workspace.docs]\n"
-        'path = "./workspace-docs"\n',
+        '[workspace.docs]\npath = "./workspace-docs"\n',
         encoding="utf-8",
     )
 
@@ -290,8 +278,7 @@ def test_workspace_launch_validation_allows_absent_or_valid_workspace(tmp_path: 
 
     (project_root / "existing").mkdir()
     (project_root / "meridian.toml").write_text(
-        "[workspace.existing]\n"
-        'path = "./existing"\n',
+        '[workspace.existing]\npath = "./existing"\n',
         encoding="utf-8",
     )
     ensure_workspace_valid_for_launch(project_root)

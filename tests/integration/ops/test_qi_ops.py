@@ -420,9 +420,7 @@ class TestQiCheckSync:
         if len(result.findings) >= 2:
             severities = [f.severity for f in result.findings]
             # errors should come before warnings
-            first_warn = next(
-                (i for i, s in enumerate(severities) if s == "warning"), None
-            )
+            first_warn = next((i for i, s in enumerate(severities) if s == "warning"), None)
             last_error = next(
                 (
                     len(severities) - 1 - i

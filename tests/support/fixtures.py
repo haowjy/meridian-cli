@@ -67,8 +67,7 @@ def write_minimal_mars_config(project_root: Path) -> Path:
     """
     mars_toml = project_root / "mars.toml"
     mars_toml.write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
     return mars_toml

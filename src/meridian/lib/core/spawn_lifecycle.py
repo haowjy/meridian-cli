@@ -66,21 +66,27 @@ def has_durable_report_completion(report_text: str | None) -> bool:
         return True
 
     payload = cast("dict[str, object]", payload_obj)
-    event_name = str(
-        payload.get("event_type", payload.get("event", payload.get("type", "")))
-    ).strip().lower()
+    event_name = (
+        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+        .strip()
+        .lower()
+    )
     if event_name in {"cancelled", "error"}:
         return False
 
     nested = payload.get("payload")
     if isinstance(nested, dict):
         nested_payload = cast("dict[str, object]", nested)
-        nested_name = str(
-            nested_payload.get(
-                "event_type",
-                nested_payload.get("event", nested_payload.get("type", "")),
+        nested_name = (
+            str(
+                nested_payload.get(
+                    "event_type",
+                    nested_payload.get("event", nested_payload.get("type", "")),
+                )
             )
-        ).strip().lower()
+            .strip()
+            .lower()
+        )
         if nested_name in {"cancelled", "error"}:
             return False
     return True

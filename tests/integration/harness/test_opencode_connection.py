@@ -1,9 +1,9 @@
 # qa-validated: test-suite-redesign
-"""Tests for OpenCodeConnection lifecycle — events, start, message, launch process, type contracts."""
+"""Tests for OpenCodeConnection lifecycle — events, start, message,
+launch process, type contracts."""
 
 from __future__ import annotations
 
-import logging
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -12,6 +12,7 @@ from typing import get_args, get_origin
 import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -19,13 +20,8 @@ from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessEvent,
 )
-from meridian.lib.harness.connections import opencode_http
 from meridian.lib.harness.connections.opencode_http import (
     OpenCodeConnection,
-    _materialize_system_prompt,
-)
-from meridian.lib.harness.projections.project_opencode_streaming import (
-    project_opencode_spec_to_serve_command,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import (

@@ -84,8 +84,7 @@ def resolve_spawn_references(
 ) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
-            resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
-            for ref in refs
+            resolve_spawn_reference(project_root, ref, runtime_root=runtime_root) for ref in refs
         )
     )
 

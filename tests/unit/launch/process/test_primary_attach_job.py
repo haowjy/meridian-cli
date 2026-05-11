@@ -64,7 +64,7 @@ def test_try_assign_backend_job_passes_correct_pid(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr("meridian.lib.launch.process.primary_attach.IS_WINDOWS", True)
     monkeypatch.setattr(
         "meridian.lib.platform.windows_job.assign_to_new_job",
-        lambda pid: (received.append(pid) or ("job", fake_handle)),  # type: ignore[func-returns-value]
+        lambda pid: received.append(pid) or ("job", fake_handle),  # type: ignore[func-returns-value]
     )
     _try_assign_backend_job(5678)
     assert received == [5678]

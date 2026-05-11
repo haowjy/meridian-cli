@@ -438,9 +438,7 @@ def spawn_list_sync(
                 spawn_id=row.id,
                 status=row.status,
                 status_display=(
-                    f"{row.status} ({surfaced_activity})"
-                    if surfaced_activity is not None
-                    else None
+                    f"{row.status} ({surfaced_activity})" if surfaced_activity is not None else None
                 ),
                 model=row.model or "",
                 kind=kind,
@@ -610,10 +608,18 @@ def spawn_stats_sync(
             finalizing += 1
 
         model_key = row.model or ""
-        acc = model_accum.setdefault(model_key, {
-            "total": 0, "succeeded": 0, "failed": 0,
-            "cancelled": 0, "running": 0, "finalizing": 0, "cost_usd": 0.0,
-        })
+        acc = model_accum.setdefault(
+            model_key,
+            {
+                "total": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "cancelled": 0,
+                "running": 0,
+                "finalizing": 0,
+                "cost_usd": 0.0,
+            },
+        )
         acc["total"] = int(acc["total"]) + 1
         if row.status in ("succeeded", "failed", "cancelled", "running", "finalizing"):
             acc[row.status] = int(acc[row.status]) + 1
@@ -810,6 +816,7 @@ def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutp
         harness_id=outcome.harness,
         exit_code=outcome.exit_code,
     )
+
 
 def _normalize_work_filter(work: str | None) -> str | None:
     normalized = (work or "").strip()
@@ -1084,8 +1091,7 @@ def _resolve_wait_targets(
     chat_id = (ctx.chat_id or "").strip()
     if not chat_id:
         raise ValueError(
-            "No-arg wait requires MERIDIAN_CHAT_ID "
-            "(run from inside a meridian session)"
+            "No-arg wait requires MERIDIAN_CHAT_ID (run from inside a meridian session)"
         )
 
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
@@ -1138,8 +1144,6 @@ def _discover_pending_spawns(
     ]
     pending.sort(key=lambda row: row.id)
     return pending
-
-
 
 
 def _emit_wait_set(
@@ -1201,9 +1205,7 @@ def _build_wait_multi_output(results: tuple[SpawnDetailOutput, ...]) -> SpawnWai
     )
 
 
-def _resolve_wait_progress_mode(
-    *, verbose: bool, quiet: bool, config_verbosity: str | None
-) -> str:
+def _resolve_wait_progress_mode(*, verbose: bool, quiet: bool, config_verbosity: str | None) -> str:
     if quiet:
         return "quiet"
     if verbose:
@@ -1299,13 +1301,11 @@ def spawn_wait_sync(
         payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
     )
     timeout_seconds = minutes_to_seconds(timeout_minutes) or 0.0
-    checkpoint_seconds = (
-        _resolve_wait_checkpoint_seconds(
-            payload=payload,
-            spawn_ids=spawn_ids,
-            project_root=project_root,
-            config=config,
-        )
+    checkpoint_seconds = _resolve_wait_checkpoint_seconds(
+        payload=payload,
+        spawn_ids=spawn_ids,
+        project_root=project_root,
+        config=config,
     )
     started = time.monotonic()
     use_checkpoint = not payload.timeout_explicit

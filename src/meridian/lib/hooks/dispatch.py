@@ -36,21 +36,18 @@ if TYPE_CHECKING:
 
 
 class _HookRegistryLike(Protocol):
-    def get_hooks_for_event(self, event: HookEventName) -> list[Hook]:
-        ...
+    def get_hooks_for_event(self, event: HookEventName) -> list[Hook]: ...
 
 
 class _IntervalTrackerLike(Protocol):
-    def should_run(self, hook_name: str, interval: str) -> bool:
-        ...
+    def should_run(self, hook_name: str, interval: str) -> bool: ...
 
-    def mark_run(self, hook_name: str) -> None:
-        ...
+    def mark_run(self, hook_name: str) -> None: ...
 
 
 class _ExternalRunnerLike(Protocol):
-    def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult:
-        ...
+    def run(self, hook: Hook, context: HookContext, *, timeout_secs: int) -> HookResult: ...
+
 
 logger = structlog.get_logger(__name__)
 

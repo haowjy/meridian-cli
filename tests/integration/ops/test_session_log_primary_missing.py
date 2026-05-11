@@ -97,12 +97,18 @@ def test_session_log_chat_missing_harness_session_id_detects_and_persists_primar
     monkeypatch.setenv("HOME", home_root.as_posix())
     session_id = "c13d8c7b-1506-4ef5-9137-c6a677f45c15"
     _write_codex_rollout(
-        home_root=home_root, project_root=project_root,
-        session_id=session_id, assistant_text="native codex transcript",
+        home_root=home_root,
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="native codex transcript",
     )
 
     chat_id = session_store.start_session(
-        runtime_root, harness="codex", harness_session_id="", model="gpt-5.4", chat_id="c42",
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        chat_id="c42",
     )
     try:
         spawn_store.start_spawn(
@@ -148,8 +154,10 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
     monkeypatch.setenv("HOME", home_root.as_posix())
     session_id = "52ea07a8-5fbe-410f-b5f4-f0a9ec4a7315"
     _write_codex_rollout(
-        home_root=home_root, project_root=project_root,
-        session_id=session_id, assistant_text="meta-backed chat transcript",
+        home_root=home_root,
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="meta-backed chat transcript",
     )
     monkeypatch.setattr(
         "meridian.lib.ops.session_target._detect_primary_harness_session_id",
@@ -157,7 +165,11 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
     )
 
     chat_id = session_store.start_session(
-        runtime_root, harness="codex", harness_session_id="", model="gpt-5.4", chat_id="c42",
+        runtime_root,
+        harness="codex",
+        harness_session_id="",
+        model="gpt-5.4",
+        chat_id="c42",
     )
     try:
         spawn_store.start_spawn(
@@ -203,8 +215,10 @@ def test_session_log_primary_spawn_missing_harness_session_id_detects_native_ses
     monkeypatch.setenv("HOME", home_root.as_posix())
     session_id = "4e6a6145-bc68-4317-a00e-03904e03dfe8"
     _write_codex_rollout(
-        home_root=home_root, project_root=project_root,
-        session_id=session_id, assistant_text="native spawn transcript",
+        home_root=home_root,
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="native spawn transcript",
     )
 
     spawn_store.start_spawn(
@@ -247,8 +261,10 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
     monkeypatch.setenv("HOME", home_root.as_posix())
     session_id = "bc5e81d8-f91f-4e37-a728-9e9a24a026cf"
     _write_codex_rollout(
-        home_root=home_root, project_root=project_root,
-        session_id=session_id, assistant_text="meta-backed spawn transcript",
+        home_root=home_root,
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="meta-backed spawn transcript",
     )
     monkeypatch.setattr(
         "meridian.lib.ops.session_target._detect_primary_harness_session_id",
@@ -304,15 +320,15 @@ def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spaw
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}}},
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}},
+        },
     )
 
     with pytest.raises(ValueError) as exc:
-        session_log_sync(
-            SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
-        )
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5))
     assert str(exc.value) == (
-        "Spawn 'p42' has no transcript available yet "
-        "(no harness session id recorded)."
+        "Spawn 'p42' has no transcript available yet (no harness session id recorded)."
     )

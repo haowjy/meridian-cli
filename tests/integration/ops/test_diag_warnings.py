@@ -428,14 +428,11 @@ def test_doctor_surfaces_workspace_unknown_and_missing_root_warnings(
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
     (project_root / "meridian.toml").write_text(
-        "[workspace.docs]\n"
-        'path = "./missing-root"\n'
-        'note = "kept"\n',
+        '[workspace.docs]\npath = "./missing-root"\nnote = "kept"\n',
         encoding="utf-8",
     )
     (project_root / "meridian.local.toml").write_text(
-        "[workspace.local]\n"
-        'path = "./missing-local"\n',
+        '[workspace.local]\npath = "./missing-local"\n',
         encoding="utf-8",
     )
 
@@ -461,8 +458,7 @@ def test_doctor_surfaces_named_workspace_local_missing_warning(
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
     (project_root / "meridian.local.toml").write_text(
-        "[workspace.local_missing]\n"
-        'path = "./missing-local"\n',
+        '[workspace.local_missing]\npath = "./missing-local"\n',
         encoding="utf-8",
     )
 

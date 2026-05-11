@@ -235,9 +235,7 @@ def test_merge_env_overrides_rejects_meridian_keys_from_plan_and_preflight() -> 
     for source in ("plan_overrides", "preflight_overrides"):
         for key in _MERIDIAN_RUNTIME_KEYS:
             plan_overrides = {key: "blocked"} if source == "plan_overrides" else {}
-            preflight_overrides = (
-                {key: "blocked"} if source == "preflight_overrides" else {}
-            )
+            preflight_overrides = {key: "blocked"} if source == "preflight_overrides" else {}
             with pytest.raises(RuntimeError) as exc_info:
                 merge_env_overrides(
                     plan_overrides=plan_overrides,

@@ -102,9 +102,7 @@ def discover_knowledge_points(root: Path) -> list[QiKnowledgePoint]:
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
 
         if "AGENTS.md" in filenames:
-            points.append(
-                QiKnowledgePoint(rel_path=_rel(dirpath / "AGENTS.md"), kind="agents")
-            )
+            points.append(QiKnowledgePoint(rel_path=_rel(dirpath / "AGENTS.md"), kind="agents"))
 
         # .context/CONTEXT.md — only care if the subdir is present.
         if ".context" in dirnames or ".context" in filenames:
@@ -143,9 +141,7 @@ def find_boundary(path: Path) -> Path | None:
 
 def _is_knowledge_boundary(directory: Path) -> bool:
     """Return True if *directory* has AGENTS.md or .context/CONTEXT.md."""
-    return (directory / "AGENTS.md").is_file() or (
-        directory / ".context" / "CONTEXT.md"
-    ).is_file()
+    return (directory / "AGENTS.md").is_file() or (directory / ".context" / "CONTEXT.md").is_file()
 
 
 class QiCheckFinding(BaseModel):

@@ -166,9 +166,7 @@ def format_upgrade_availability(
             f"{prefix}{beyond_count} newer {beyond_noun} available beyond your pinned "
             f"constraint: {beyond_deps}."
         )
-        lines.append(
-            "      Edit mars.toml to bump the version, then run `meridian mars sync`."
-        )
+        lines.append("      Edit mars.toml to bump the version, then run `meridian mars sync`.")
     return tuple(lines)
 
 

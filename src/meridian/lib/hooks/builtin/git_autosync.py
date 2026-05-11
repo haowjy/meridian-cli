@@ -110,9 +110,7 @@ class GitAutosync:
 
         # Lock identity is clone-target based so URL aliases for the same clone path
         # serialize correctly.
-        clone_path_hash = hashlib.sha256(
-            str(clone_path.resolve()).encode("utf-8")
-        ).hexdigest()[:16]
+        clone_path_hash = hashlib.sha256(str(clone_path.resolve()).encode("utf-8")).hexdigest()[:16]
         lock_file_path = get_user_home() / "locks" / f"clone-{clone_path_hash}.lock"
         try:
             with file_lock(lock_file_path, timeout=_LOCK_TIMEOUT_SECS):
@@ -266,9 +264,7 @@ class GitAutosync:
 
         conflict_policy = config.options.get("conflict_policy", "leave")
         try:
-            outcome = self._sync(
-                str(local_path), config.exclude, conflict_policy, local_only=True
-            )
+            outcome = self._sync(str(local_path), config.exclude, conflict_policy, local_only=True)
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning(
                 "git_autosync_runtime_error",
@@ -607,8 +603,7 @@ class GitAutosync:
                         skipped=True,
                         skip_reason="rebase_conflict",
                         error=(
-                            f"Rebase conflict at {clone_path}. "
-                            f"Conflicts left for review. {message}"
+                            f"Rebase conflict at {clone_path}. Conflicts left for review. {message}"
                         ),
                     )
 

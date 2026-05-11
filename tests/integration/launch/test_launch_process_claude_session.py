@@ -34,8 +34,7 @@ from meridian.lib.state.spawn_store import list_spawns
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -236,9 +235,7 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
         on_child_started(666)
         return (0, 666)
 
-    monkeypatch.setattr(
-        claude_adapter, "observe_session_id", lambda **kwargs: observed_id
-    )
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: observed_id)
 
     outcome = run_harness_process(
         launch_context,

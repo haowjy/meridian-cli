@@ -290,9 +290,7 @@ def _extract_turn_id(payload: dict[str, object]) -> str | None:
     if turn is not None and as_str(turn.get("id")) is not None:
         return as_str(turn.get("id"))
     return (
-        as_str(payload.get("turn_id"))
-        or as_str(payload.get("turnId"))
-        or as_str(payload.get("id"))
+        as_str(payload.get("turn_id")) or as_str(payload.get("turnId")) or as_str(payload.get("id"))
     )
 
 
@@ -305,9 +303,7 @@ def _extract_thread_id(payload: dict[str, object]) -> str | None:
 
 def _extract_item_id(payload: dict[str, object]) -> str | None:
     return (
-        as_str(payload.get("item_id"))
-        or as_str(payload.get("itemId"))
-        or as_str(payload.get("id"))
+        as_str(payload.get("item_id")) or as_str(payload.get("itemId")) or as_str(payload.get("id"))
     )
 
 

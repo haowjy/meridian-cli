@@ -362,9 +362,7 @@ def _normalize_harness_table(
         if not normalized:
             values[key] = {"model": normalized}
             continue
-        values[key] = {
-            "model": _normalize_model_identifier(normalized, project_root=project_root)
-        }
+        values[key] = {"model": _normalize_model_identifier(normalized, project_root=project_root)}
 
     return values
 
@@ -646,7 +644,7 @@ def _normalize_hooks_array(raw_value: object, *, source: str) -> tuple[dict[str,
                 "interval",
                 "failure_policy",
                 "repo",
-            "remote",
+                "remote",
             }:
                 if not isinstance(value, str):
                     raise ValueError(
@@ -1215,8 +1213,7 @@ class StateConfig(BaseModel):
     def _validate_retention_days(cls, value: int) -> int:
         if isinstance(value, bool) or value < -1:
             raise ValueError(
-                "Invalid value for 'state.retention_days': expected int >= -1, "
-                f"got {value!r}."
+                f"Invalid value for 'state.retention_days': expected int >= -1, got {value!r}."
             )
         return value
 
@@ -1427,7 +1424,6 @@ class AgentOverlayConfig(BaseModel):
         return _normalize_optional_string(value, source="agents")
 
 
-
 class HarnessProfileConfig(BaseModel):
     """Per-harness model and wait-yield settings."""
 
@@ -1458,8 +1454,7 @@ class HarnessProfileConfig(BaseModel):
             return None
         if isinstance(value, bool):
             raise ValueError(
-                "Invalid value for 'harness.wait_yield_seconds': expected float, "
-                f"got {value!r}."
+                f"Invalid value for 'harness.wait_yield_seconds': expected float, got {value!r}."
             )
         return float(value)
 
@@ -1520,9 +1515,7 @@ class HarnessConfig(BaseModel):
     codex: CodexHarnessProfileConfig = Field(
         default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
-    opencode: OpenCodeHarnessProfileConfig = Field(
-        default_factory=OpenCodeHarnessProfileConfig
-    )
+    opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
 
 
 class MeridianConfig(BaseSettings):
@@ -1672,10 +1665,7 @@ class MeridianConfig(BaseSettings):
     @classmethod
     def _validate_wait_yield_settings(cls, value: float) -> float:
         if isinstance(value, bool) or value <= 0:
-            raise ValueError(
-                "Invalid wait-yield setting: expected float > 0, "
-                f"got {value!r}."
-            )
+            raise ValueError(f"Invalid wait-yield setting: expected float > 0, got {value!r}.")
         return float(value)
 
     def default_model_for_harness(self, harness_id: str) -> str | None:

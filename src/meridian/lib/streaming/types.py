@@ -37,10 +37,7 @@ class UserInputReplyControl(TypedDict):
 
 
 ControlMessage = (
-    UserMessageControl
-    | InterruptControl
-    | PermissionReplyControl
-    | UserInputReplyControl
+    UserMessageControl | InterruptControl | PermissionReplyControl | UserInputReplyControl
 )
 
 

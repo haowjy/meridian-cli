@@ -117,8 +117,7 @@ class _UnconfiguredRuntime:
 
     def __getattr__(self, name: str) -> object:
         raise RuntimeError(
-            f"Chat server runtime is not configured. "
-            f"Call configure() before accessing '{name}'."
+            f"Chat server runtime is not configured. Call configure() before accessing '{name}'."
         )
 
 

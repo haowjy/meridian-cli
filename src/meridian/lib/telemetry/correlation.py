@@ -64,6 +64,7 @@ def bind_lifecycle_correlation(
     finally:
         structlog.contextvars.reset_contextvars(**tokens)
 
+
 def lifecycle_correlation_from_mapping(
     values: Mapping[str, str | None] | None = None,
     **kwargs: str | None,

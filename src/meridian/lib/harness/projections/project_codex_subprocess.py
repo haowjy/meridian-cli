@@ -100,7 +100,7 @@ def project_codex_permission_flags(permission_resolver: PermissionResolver) -> t
 
     approval_policy = map_codex_approval_policy(config.approval)
     if approval_policy is not None:
-        flags.extend(("-c", f'approval_policy={json.dumps(approval_policy)}'))
+        flags.extend(("-c", f"approval_policy={json.dumps(approval_policy)}"))
 
     resolver_flags = _strip_tool_flags_for_codex(
         _coerce_permission_flags(permission_resolver.resolve_flags())

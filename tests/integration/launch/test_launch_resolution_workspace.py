@@ -23,8 +23,7 @@ pytestmark = pytest.mark.slow
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -37,8 +36,7 @@ def test_workspace_roots_append_after_claude_preflight_projection(
     shared_root = tmp_path / "shared"
     shared_root.mkdir()
     (tmp_path / "meridian.local.toml").write_text(
-        "[workspace.shared]\n"
-        'path = "./shared"\n',
+        '[workspace.shared]\npath = "./shared"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("CLAUDECODE", "1")
@@ -211,8 +209,7 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
     docs_root = tmp_path / "docs-root"
     docs_root.mkdir()
     (tmp_path / "meridian.toml").write_text(
-        "[workspace.docs]\n"
-        'path = "./docs-root"\n',
+        '[workspace.docs]\npath = "./docs-root"\n',
         encoding="utf-8",
     )
 
@@ -255,8 +252,7 @@ def test_opencode_workspace_projection_merges_parent_env(
     shared_root = tmp_path / "shared"
     shared_root.mkdir()
     (tmp_path / "meridian.local.toml").write_text(
-        "[workspace.shared]\n"
-        'path = "./shared"\n',
+        '[workspace.shared]\npath = "./shared"\n',
         encoding="utf-8",
     )
     if parent_env_present:

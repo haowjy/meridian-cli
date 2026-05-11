@@ -109,13 +109,7 @@ def _opencode_db_path() -> Path:
 
 
 def _opencode_session_diff_path(session_id: str) -> Path:
-    return (
-        _opencode_data_root()
-        / "opencode"
-        / "storage"
-        / "session_diff"
-        / f"{session_id}.json"
-    )
+    return _opencode_data_root() / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
 
 
 def _directory_matches_project(directory: str, project_root: Path) -> bool:

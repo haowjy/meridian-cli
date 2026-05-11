@@ -79,9 +79,10 @@ def migrate_project_id(project_root: Path) -> MigrationResult:
     new_id: str | None = None
     for _ in range(10):
         candidate = generate_project_id()
-        if not (user_home / "context" / candidate).exists() and not (
-            user_home / "projects" / candidate
-        ).exists():
+        if (
+            not (user_home / "context" / candidate).exists()
+            and not (user_home / "projects" / candidate).exists()
+        ):
             new_id = candidate
             break
 
@@ -135,9 +136,7 @@ def _get_active_spawns(project_id: str) -> list[str]:
         if not runtime_root.exists():
             return []
         return [
-            spawn.id
-            for spawn in list_spawns(runtime_root)
-            if spawn.status in ACTIVE_SPAWN_STATUSES
+            spawn.id for spawn in list_spawns(runtime_root) if spawn.status in ACTIVE_SPAWN_STATUSES
         ]
     except Exception:
         # Spawn store read failed — assume no active spawns and allow migration.

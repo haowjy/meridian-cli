@@ -17,7 +17,6 @@ from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.service_context import ApplicationContext, ApplicationServices, ChatEntryPoint
 from tests.support.fixtures import write_skill
 
 
@@ -285,9 +284,7 @@ def test_chat_policy_snapshot_loads_harness_and_model_skill_variant(monkeypatch,
     assert snapshot.prompt_inputs.skill_documents[0].path == token_variant.resolve().as_posix()
 
 
-def test_chat_policy_snapshot_approval_env_beats_profile_and_config(
-    monkeypatch, tmp_path
-) -> None:
+def test_chat_policy_snapshot_approval_env_beats_profile_and_config(monkeypatch, tmp_path) -> None:
     alias_entry = _mock_alias("gptmini", "gpt-5.4-mini", HarnessId.CODEX)
     monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
     (tmp_path / "meridian.toml").write_text(
@@ -297,11 +294,7 @@ def test_chat_policy_snapshot_approval_env_beats_profile_and_config(
     (tmp_path / "mars.toml").write_text('[settings]\ntargets = [".claude"]\n', encoding="utf-8")
     (tmp_path / ".mars" / "agents").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".mars" / "agents" / "reviewer.md").write_text(
-        "---\n"
-        "name: reviewer\n"
-        "approval: yolo\n"
-        "---\n\n"
-        "Reviewer profile body.\n",
+        "---\nname: reviewer\napproval: yolo\n---\n\nReviewer profile body.\n",
         encoding="utf-8",
     )
 

@@ -243,9 +243,7 @@ class OpenCodeNormalizer:
             if item_id in self._started_tool_items:
                 return events
             self._started_tool_items.add(item_id)
-            events.append(
-                self._event(ITEM_STARTED, event, item_id=item_id, payload=dict(payload))
-            )
+            events.append(self._event(ITEM_STARTED, event, item_id=item_id, payload=dict(payload)))
             return events
 
         if status == "running":
@@ -370,9 +368,7 @@ class OpenCodeNormalizer:
     def _item_event(self, event_type: str, event: HarnessEvent) -> ChatEvent:
         tool = _tool_payload_from_event(event.payload)
         item_id = (
-            as_str(tool.get("id"))
-            or as_str(event.payload.get("item_id"))
-            or f"item-{uuid4()}"
+            as_str(tool.get("id")) or as_str(event.payload.get("item_id")) or f"item-{uuid4()}"
         )
         raw_type = as_str(tool.get("type")) or as_str(event.payload.get("type"))
         name = as_str(tool.get("name")) or as_str(event.payload.get("name"))

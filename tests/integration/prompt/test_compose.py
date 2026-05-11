@@ -1,4 +1,5 @@
 """Prompt assembly tests that guard against context and prompt injection."""
+
 from pathlib import Path
 
 from meridian.lib.core.domain import SkillContent
@@ -114,7 +115,6 @@ def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
     assert "inner.py" in composed
     # Directory content should NOT be inlined
     assert "# Inner" not in composed
-
 
 
 def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> None:

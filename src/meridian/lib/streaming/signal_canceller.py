@@ -120,9 +120,7 @@ class SignalCanceller:
             )
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if latest is not None and _is_terminal(latest.status):
-                return _outcome_from_record(
-                    latest, already_terminal=not outcome.transitioned
-                )
+                return _outcome_from_record(latest, already_terminal=not outcome.transitioned)
             return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
 
         scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
@@ -366,7 +364,7 @@ def _status_from_terminal_detail(detail: str) -> str | None:
     normalized = detail.strip()
     if not normalized.startswith(prefix):
         return None
-    status = normalized[len(prefix):].strip()
+    status = normalized[len(prefix) :].strip()
     if not status:
         return None
     return status

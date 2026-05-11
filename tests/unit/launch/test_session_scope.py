@@ -83,14 +83,17 @@ def test_session_scope_reclaims_on_exception_paths(
         calls.append("reclaim")
         return []
 
-    with pytest.raises(RuntimeError, match=expected_error), session_scope(
-        runtime_root=tmp_path,
-        metadata=_metadata(),
-        request=_request(),
-        harness_session_id="h-2",
-        _start_session=fake_start,
-        _stop_session=fake_stop,
-        _reclaim_session_scopes=fake_reclaim,
+    with (
+        pytest.raises(RuntimeError, match=expected_error),
+        session_scope(
+            runtime_root=tmp_path,
+            metadata=_metadata(),
+            request=_request(),
+            harness_session_id="h-2",
+            _start_session=fake_start,
+            _stop_session=fake_stop,
+            _reclaim_session_scopes=fake_reclaim,
+        ),
     ):
         if body_raises:
             raise RuntimeError("boom")

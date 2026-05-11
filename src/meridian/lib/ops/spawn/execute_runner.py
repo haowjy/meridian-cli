@@ -90,9 +90,7 @@ async def _prepare_execution_handoff(
         resolved_request = request.model_copy(update={"session": resolved_session})
         resolved_agent_name = request.agent
         if spawn_record is not None:
-            resolved_agent_name = (
-                request.agent if request.agent is not None else spawn_record.agent
-            )
+            resolved_agent_name = request.agent if request.agent is not None else spawn_record.agent
 
         session_metadata = PrimarySessionMetadata(
             harness=request.harness or "",

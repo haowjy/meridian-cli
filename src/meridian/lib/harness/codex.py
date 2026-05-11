@@ -81,6 +81,7 @@ from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
 
+
 def _codex_home() -> Path:
     configured_home = os.environ.get("CODEX_HOME", "").strip()
     if configured_home:
@@ -309,9 +310,7 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             approval=ApprovalContract(
                 runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
                 default_runtime_request_policy="auto_accept",
-                primary_session_runtime_request_policy=(
-                    PrimaryRuntimeRequestPolicy.SURFACE_EVENTS
-                ),
+                primary_session_runtime_request_policy=(PrimaryRuntimeRequestPolicy.SURFACE_EVENTS),
                 primary_session_runtime_event_surface=(
                     PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
                 ),

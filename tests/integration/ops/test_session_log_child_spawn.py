@@ -8,12 +8,11 @@ session IDs route correctly.
 """
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_target import spawn_output_path_for_target
 from meridian.lib.state import session_store, spawn_store
@@ -155,13 +154,19 @@ def test_spawn_output_path_legacy_precedence_with_both_files(tmp_path: Path) -> 
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "payload": {"item": {"type": "agentMessage", "text": "live"}}},
+        {
+            "event_type": "item/completed",
+            "payload": {"item": {"type": "agentMessage", "text": "live"}},
+        },
         filename=OUTPUT_FILENAME,
     )
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "payload": {"item": {"type": "agentMessage", "text": "artifact"}}},
+        {
+            "event_type": "item/completed",
+            "payload": {"item": {"type": "agentMessage", "text": "artifact"}},
+        },
         artifact=True,
         filename=OUTPUT_FILENAME,
     )
@@ -194,14 +199,20 @@ def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> N
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "live child progress"}}},
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "live child progress"}},
+        },
     )
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "artifact child progress"}}},
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "artifact child progress"}},
+        },
         artifact=True,
     )
 
@@ -238,8 +249,11 @@ def test_session_log_child_spawn_falls_back_to_artifact_output_when_native_unava
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "artifact child transcript"}}},
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "artifact child transcript"}},
+        },
         artifact=True,
     )
 
@@ -276,8 +290,11 @@ def test_session_log_child_spawn_falls_back_to_legacy_artifact_output_when_nativ
     _write_spawn_output(
         runtime_root,
         "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "legacy artifact transcript"}}},
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "legacy artifact transcript"}},
+        },
         artifact=True,
         filename=OUTPUT_FILENAME,
     )
@@ -323,8 +340,11 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
         _write_spawn_output(
             runtime_root,
             "p42",
-            {"event_type": "item/completed", "harness_id": "codex",
-             "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}}},
+            {
+                "event_type": "item/completed",
+                "harness_id": "codex",
+                "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}},
+            },
         )
 
         with pytest.raises(ValueError) as exc:

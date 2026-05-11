@@ -352,10 +352,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         effective_extra_args = run.extra_args
-        if (
-            continue_session_id is None
-            and not has_session_identity_in_args(run.extra_args)
-        ):
+        if continue_session_id is None and not has_session_identity_in_args(run.extra_args):
             effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
 
         # Prefer the spawn log directory (from report_output_path) for system-prompt.md.
@@ -578,15 +575,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             content.prior_output,
         )
         user_turn = join_content_blocks(task_context, content.user_task_prompt)
-        
+
         return ProjectedContent(
             system_prompt=system_prompt,
             user_turn_content=user_turn,
             reference_routing=reference_routing,
             channels=ProjectionChannels(
-                system_instruction=(
-                    "append-system-prompt" if system_prompt.strip() else "none"
-                ),
+                system_instruction=("append-system-prompt" if system_prompt.strip() else "none"),
                 user_task_prompt="user-turn",
                 task_context="user-turn",
             ),

@@ -184,10 +184,7 @@ class ChildEnvContext:
             ("work_archive", resolved_context_paths.work_archive),
             ("kb", resolved_context_paths.kb_root),
             *tuple(
-                sorted(
-                    (name, path)
-                    for name, (path, _) in resolved_context_paths.extra.items()
-                )
+                sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
             ),
         )
 
@@ -855,9 +852,8 @@ def _resolve_spawn_prepare_projection(
         active_work_dir=active_work_dir,
     )
 
-    resolved_work_id = (
-        (request.work_id_hint or "").strip()
-        or (active_work_dir.name if active_work_dir is not None else "")
+    resolved_work_id = (request.work_id_hint or "").strip() or (
+        active_work_dir.name if active_work_dir is not None else ""
     )
     work_goal: str | None = None
     if resolved_work_id:

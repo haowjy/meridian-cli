@@ -31,10 +31,11 @@ def _resolve_session_continuation(
     harness_adapter: object,
 ) -> SessionRequest:
     from typing import Any
+
     adapter: Any = harness_adapter
     requested_harness_session_id = (
-        (request.session.requested_harness_session_id or "").strip() or None
-    )
+        request.session.requested_harness_session_id or ""
+    ).strip() or None
     requested_continue_fork = request.session.continue_fork
     requested_harness = (request.session.continue_harness or "").strip()
     if request.session.continue_source_tracked and requested_harness_session_id is None:

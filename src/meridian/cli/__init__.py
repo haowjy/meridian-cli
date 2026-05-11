@@ -30,4 +30,5 @@ def main(*args: Any, **kwargs: Any) -> Any:
     cli_main = importlib.import_module("meridian.cli.main")
     return cli_main.main(*args, **kwargs)
 
+
 __all__ = ["app", "main"]

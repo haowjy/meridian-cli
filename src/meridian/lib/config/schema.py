@@ -174,9 +174,7 @@ def parse_cli_scalar(*, canonical_key: str, value_kind: ValueKind, raw_value: st
 
         filtered = [item for item in items if item]
         if not filtered:
-            raise ValueError(
-                f"Invalid value for '{canonical_key}': expected non-empty items."
-            )
+            raise ValueError(f"Invalid value for '{canonical_key}': expected non-empty items.")
         return tuple(filtered)
 
     if not normalized:
@@ -213,9 +211,7 @@ def parse_env_scalar(*, value_kind: ValueKind, raw_value: str, env_name: str) ->
 
     normalized = raw_value.strip()
     if not normalized:
-        raise ValueError(
-            f"Invalid environment override '{env_name}': expected non-empty string."
-        )
+        raise ValueError(f"Invalid environment override '{env_name}': expected non-empty string.")
     return normalized
 
 

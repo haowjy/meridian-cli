@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from pathlib import Path
 
 import pytest
 
@@ -14,7 +13,6 @@ from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.harness.connections.opencode_http import (
     OpenCodeConnection,
-    SessionNotReadyError,
 )
 from meridian.lib.harness.opencode import OpenCodeAdapter
 from meridian.lib.harness.projections.project_opencode_streaming import (

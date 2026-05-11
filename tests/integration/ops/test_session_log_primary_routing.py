@@ -94,8 +94,10 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
     monkeypatch.setenv("HOME", home_root.as_posix())
     session_id = "3e9a0285-2c37-4311-96f5-2ec5c0d7c6c7"
     _write_codex_rollout(
-        home_root=home_root, project_root=project_root,
-        session_id=session_id, assistant_text="native managed primary transcript",
+        home_root=home_root,
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="native managed primary transcript",
     )
 
     spawn_store.start_spawn(
@@ -112,9 +114,13 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
     )
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
-        runtime_root, "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "managed live progress"}}},
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "managed live progress"}},
+        },
     )
 
     output = session_log_sync(
@@ -141,8 +147,10 @@ def test_session_log_completed_managed_primary_prefers_native_transcript(
     monkeypatch.setenv("HOME", home_root.as_posix())
     session_id = "9f7f0edf-1cdf-4701-a9ce-679f58aab0f9"
     _write_codex_rollout(
-        home_root=home_root, project_root=project_root,
-        session_id=session_id, assistant_text="native completed managed transcript",
+        home_root=home_root,
+        project_root=project_root,
+        session_id=session_id,
+        assistant_text="native completed managed transcript",
     )
 
     spawn_store.start_spawn(
@@ -159,9 +167,13 @@ def test_session_log_completed_managed_primary_prefers_native_transcript(
     )
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
-        runtime_root, "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "managed fallback transcript"}}},
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "managed fallback transcript"}},
+        },
         artifact=True,
     )
 
@@ -198,9 +210,13 @@ def test_session_log_completed_managed_primary_falls_back_to_output_when_native_
     )
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
-        runtime_root, "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "managed artifact transcript"}}},
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "managed artifact transcript"}},
+        },
         artifact=True,
     )
 
@@ -235,9 +251,13 @@ def test_managed_primary_fallback_to_legacy_output(tmp_path: Path) -> None:
     )
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
-        runtime_root, "p42",
-        {"event_type": "item/completed", "harness_id": "codex",
-         "payload": {"item": {"type": "agentMessage", "text": "managed legacy transcript"}}},
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "managed legacy transcript"}},
+        },
         artifact=True,
         filename=OUTPUT_FILENAME,
     )
@@ -275,9 +295,13 @@ def test_session_log_completed_managed_opencode_fallback_is_best_effort(
     )
     _write_primary_meta(runtime_root, "p42")
     _write_spawn_output(
-        runtime_root, "p42",
-        {"event_type": "item/completed", "harness_id": "opencode",
-         "payload": {"item": {"type": "agentMessage", "text": "managed opencode fallback"}}},
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "opencode",
+            "payload": {"item": {"type": "agentMessage", "text": "managed opencode fallback"}},
+        },
         artifact=True,
     )
 

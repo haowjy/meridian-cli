@@ -111,7 +111,6 @@ def resolve_project_root_resolution(
     )
 
 
-
 def resolve_user_config_path(user_config: Path | None) -> Path | None:
     from meridian.lib.state.user_paths import get_user_home
 

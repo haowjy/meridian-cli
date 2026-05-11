@@ -238,10 +238,14 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
             metadata=WorktreeMetadata(path=current_path, branch=branch, pending=False),
         )
 
-    expected_path = Path(current_path) if current_path else resolve_worktree_path(
-        main_root,
-        item.name,
-        config.work.worktree_base,
+    expected_path = (
+        Path(current_path)
+        if current_path
+        else resolve_worktree_path(
+            main_root,
+            item.name,
+            config.work.worktree_base,
+        )
     )
     if worktree_exists(expected_path):
         return WorktreeRecoveryResult(

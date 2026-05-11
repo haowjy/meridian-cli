@@ -37,8 +37,7 @@ def _model(
 def _init_repo(project_root: Path) -> None:
     project_root.mkdir()
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
 
@@ -167,9 +166,7 @@ def test_models_list_all_delegates_to_mars_without_meridian_filters(
         ],
     )
 
-    output = models_list_sync(
-        ModelsListInput(project_root=project_root.as_posix(), all=True)
-    )
+    output = models_list_sync(ModelsListInput(project_root=project_root.as_posix(), all=True))
     model_ids = [str(model.model_id) for model in output.models]
     assert model_ids == ["gpt-5.4", "gpt-5.2"]
     assert [alias.alias for alias in output.models[0].aliases] == ["gpt", "latest"]
@@ -195,9 +192,7 @@ def test_models_list_all_preserves_null_harness(
         ],
     )
 
-    output = models_list_sync(
-        ModelsListInput(project_root=project_root.as_posix(), all=True)
-    )
+    output = models_list_sync(ModelsListInput(project_root=project_root.as_posix(), all=True))
     assert len(output.models) == 1
     model = output.models[0]
     assert str(model.model_id) == "gpt-5.4"

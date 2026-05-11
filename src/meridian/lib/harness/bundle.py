@@ -205,16 +205,14 @@ def _require_bundle_spec(
     bundle = get_harness_bundle(harness_id)
     if not isinstance(spec, bundle.spec_cls):
         raise TypeError(
-            f"harness {harness_id} expected {bundle.spec_cls.__name__}, "
-            f"got {type(spec).__name__}"
+            f"harness {harness_id} expected {bundle.spec_cls.__name__}, got {type(spec).__name__}"
         )
     # Validate harness discriminator: catch specs built for another harness.
     # Use getattr to avoid accessing .harness on `object` (pyright can't narrow via hasattr).
     spec_harness = getattr(spec, "harness", None)
     if spec_harness is not None and spec_harness != harness_id:
         raise ValueError(
-            f"spec has harness={spec_harness!r} but was passed to "
-            f"harness {harness_id!r} bundle"
+            f"spec has harness={spec_harness!r} but was passed to harness {harness_id!r} bundle"
         )
     return bundle
 

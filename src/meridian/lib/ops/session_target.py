@@ -386,8 +386,8 @@ def _resolve_from_chat_id(
     normalized_session_id = _latest_harness_session_id(session_record)
     if normalized_session_id is None and primary_spawn is not None:
         normalized_session_id = (
-            (read_primary_harness_session_id(runtime_root, primary_spawn.id) or "").strip() or None
-        )
+            read_primary_harness_session_id(runtime_root, primary_spawn.id) or ""
+        ).strip() or None
 
     if normalized_session_id is None:
         if primary_spawn is None:
@@ -449,22 +449,30 @@ def _resolve_from_spawn_id(
     is_primary_spawn = row.kind == "primary"
     is_managed_backend_primary = is_primary_spawn and is_managed_primary(runtime_root, spawn_id)
 
-    if is_managed_backend_primary and row.status in {"queued", "running"} and (
-        output_target := _target_from_spawn_output(
-            runtime_root,
-            display_id=spawn_id,
-            spawn_id=spawn_id,
-            live_first=True,
+    if (
+        is_managed_backend_primary
+        and row.status in {"queued", "running"}
+        and (
+            output_target := _target_from_spawn_output(
+                runtime_root,
+                display_id=spawn_id,
+                spawn_id=spawn_id,
+                live_first=True,
+            )
         )
     ):
         return output_target
 
-    if (not is_primary_spawn) and row.status in {"queued", "running"} and (
-        output_target := _target_from_spawn_output(
-            runtime_root,
-            display_id=spawn_id,
-            spawn_id=spawn_id,
-            live_first=True,
+    if (
+        (not is_primary_spawn)
+        and row.status in {"queued", "running"}
+        and (
+            output_target := _target_from_spawn_output(
+                runtime_root,
+                display_id=spawn_id,
+                spawn_id=spawn_id,
+                live_first=True,
+            )
         )
     ):
         return output_target
@@ -516,8 +524,7 @@ def _resolve_from_spawn_id(
 
     if not session_id:
         raise ValueError(
-            f"Spawn '{spawn_id}' has no transcript available yet "
-            "(no harness session id recorded)."
+            f"Spawn '{spawn_id}' has no transcript available yet (no harness session id recorded)."
         )
 
     if harness is None:

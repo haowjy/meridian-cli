@@ -122,8 +122,7 @@ class ContextOutput(BaseModel):
         if normalized in self.extra_contexts:
             return self.extra_contexts[normalized].resolved
         raise KeyError(
-            f"Unknown context '{name}'. Expected one of: "
-            f"{', '.join(self._available_names())}."
+            f"Unknown context '{name}'. Expected one of: {', '.join(self._available_names())}."
         )
 
 

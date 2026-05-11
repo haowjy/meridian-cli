@@ -49,9 +49,7 @@ class ConnectionCapabilities:
     structured_reasoning: bool
     supports_primary_observer: bool = False
     supports_runtime_hitl: bool = False
-    supported_startup_phases: frozenset[str] = field(
-        default_factory=_empty_startup_phases
-    )
+    supported_startup_phases: frozenset[str] = field(default_factory=_empty_startup_phases)
     """Startup phases this adapter can observe. Empty = unknown/untyped."""
 
 
@@ -66,6 +64,8 @@ class ObserverEndpoint:
 
 
 ConnectionState = Literal["created", "starting", "connected", "stopping", "stopped", "failed"]
+
+
 class ConnectionNotReady(RuntimeError):
     """Raised when send operations are attempted before connection readiness."""
 
@@ -265,9 +265,7 @@ class HarnessConnection(Generic[SpecT], ABC):
         """
 
         if not self.capabilities.supports_primary_observer:
-            raise RuntimeError(
-                f"{self.harness_id} does not support primary observer mode"
-            )
+            raise RuntimeError(f"{self.harness_id} does not support primary observer mode")
         await self.start(config, spec)
 
     def configure_primary_runtime_requests(
@@ -315,9 +313,7 @@ class HarnessConnection(Generic[SpecT], ABC):
         """Send user-input answers through the harness transport."""
 
         _ = request_id, answers
-        raise NotImplementedError(
-            f"{self.harness_id.value} does not support runtime user input"
-        )
+        raise NotImplementedError(f"{self.harness_id.value} does not support runtime user input")
 
     @abstractmethod
     async def stop(self) -> None: ...

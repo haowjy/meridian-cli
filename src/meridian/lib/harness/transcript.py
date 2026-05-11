@@ -37,11 +37,9 @@ class TranscriptEventParser(Protocol):
 class TranscriptProvider(Protocol):
     """Provider that loads structured event dictionaries from transcript files."""
 
-    def supports(self, path: Path) -> bool:
-        ...
+    def supports(self, path: Path) -> bool: ...
 
-    def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
-        ...
+    def iter_events(self, path: Path) -> Iterator[dict[str, object]]: ...
 
 
 def text_from_value(value: object) -> str:

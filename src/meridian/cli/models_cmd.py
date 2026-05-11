@@ -11,8 +11,7 @@ from meridian.lib.extensions.registry import get_first_party_registry
 Emitter = Callable[[Any], None]
 
 _MODELS_LIST_REDIRECT = (
-    "`meridian models list` has moved to Mars.\n"
-    "Use `meridian mars models list` instead."
+    "`meridian models list` has moved to Mars.\nUse `meridian mars models list` instead."
 )
 
 

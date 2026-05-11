@@ -668,7 +668,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raw_text = _coerce_text(raw_message)
                 if self._tracer is not None:
                     self._tracer.emit(
-                        "wire", "ws_recv", direction="inbound",
+                        "wire",
+                        "ws_recv",
+                        direction="inbound",
                         data={"raw_text": raw_text, "bytes": len(raw_text.encode("utf-8"))},
                     )
                 parsed = _parse_jsonrpc(raw_text)
@@ -687,7 +689,9 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                         continue
                     if self._tracer is not None:
                         self._tracer.emit(
-                            "wire", "ws_recv_response", direction="inbound",
+                            "wire",
+                            "ws_recv_response",
+                            direction="inbound",
                             data={"request_id": response_id, "has_error": "error" in parsed},
                         )
                     future = self._pending_requests.get(response_id)
@@ -700,15 +704,15 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
                 if self._tracer is not None:
                     self._tracer.emit(
-                        "wire", "ws_recv_notification", direction="inbound",
+                        "wire",
+                        "ws_recv_notification",
+                        direction="inbound",
                         data={"method": method},
                     )
 
                 params_obj = parsed.get("params")
                 payload = (
-                    cast("dict[str, object]", params_obj)
-                    if isinstance(params_obj, dict)
-                    else {}
+                    cast("dict[str, object]", params_obj) if isinstance(params_obj, dict) else {}
                 )
                 await self._handle_notification(
                     method=method,
@@ -1036,10 +1040,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 "Codex app-server exited before websocket connect "
                 f"(exit={exit_code}): {stderr_excerpt}"
             )
-        return RuntimeError(
-            "Codex app-server exited before websocket connect "
-            f"(exit={exit_code})"
-        )
+        return RuntimeError(f"Codex app-server exited before websocket connect (exit={exit_code})")
 
     def _read_startup_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle

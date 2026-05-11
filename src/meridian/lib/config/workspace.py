@@ -36,9 +36,7 @@ def _load_workspace_table(path: Path) -> dict[str, object] | None:
     if workspace is None:
         return None
     if not isinstance(workspace, dict):
-        raise ValueError(
-            f"Invalid value for 'workspace' in '{path.as_posix()}': expected table."
-        )
+        raise ValueError(f"Invalid value for 'workspace' in '{path.as_posix()}': expected table.")
     return cast("dict[str, object]", workspace)
 
 
@@ -221,11 +219,7 @@ def _unknown_workspace_key_findings(
     return [
         WorkspaceFinding(
             code="workspace_unknown_key",
-            message=(
-                "Workspace config contains unknown keys: "
-                + ", ".join(unknown_keys)
-                + "."
-            ),
+            message=("Workspace config contains unknown keys: " + ", ".join(unknown_keys) + "."),
             payload={"keys": unknown_keys},
         )
     ]
@@ -242,12 +236,10 @@ def _evaluate_named_workspace_config(
     initial_findings: tuple[WorkspaceFinding, ...] = (),
 ) -> WorkspaceSnapshot:
     committed_raw = {
-        name: entry.model_dump(exclude={"extra_keys"})
-        for name, entry in committed_entries.items()
+        name: entry.model_dump(exclude={"extra_keys"}) for name, entry in committed_entries.items()
     }
     local_raw = {
-        name: entry.model_dump(exclude={"extra_keys"})
-        for name, entry in local_entries.items()
+        name: entry.model_dump(exclude={"extra_keys"}) for name, entry in local_entries.items()
     }
     merged_raw = _merge_nested_dicts(
         cast("dict[str, object]", committed_raw),
@@ -297,8 +289,7 @@ def _evaluate_named_workspace_config(
                 WorkspaceFinding(
                     code="workspace_local_missing_root",
                     message=(
-                        f"Local workspace root '{name}' does not exist: "
-                        f"{resolved_path.as_posix()}."
+                        f"Local workspace root '{name}' does not exist: {resolved_path.as_posix()}."
                     ),
                     payload={"name": name, "path": resolved_path.as_posix()},
                 )
@@ -311,8 +302,7 @@ def _evaluate_named_workspace_config(
             WorkspaceFinding(
                 code="workspace_missing_root",
                 message=(
-                    "Enabled workspace roots are missing: "
-                    + ", ".join(missing_committed_roots)
+                    "Enabled workspace roots are missing: " + ", ".join(missing_committed_roots)
                 ),
                 payload={"roots": missing_committed_roots},
             )

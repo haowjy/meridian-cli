@@ -149,11 +149,7 @@ class ExtensionInvocationContextBuilder:
             caps = self._capabilities
 
         resolved_work_path: Path | None = None
-        if (
-            self._work_id is not None
-            and self._work_path is not None
-            and self._work_path.exists()
-        ):
+        if self._work_id is not None and self._work_path is not None and self._work_path.exists():
             resolved_work_path = self._work_path
 
         return ExtensionInvocationContext(

@@ -91,9 +91,7 @@ def _read_toml(path: Path) -> dict[str, object]:
 def _parse_event(raw: str, *, source: str) -> HookEventName:
     if raw not in EVENT_CLASS:
         valid = ", ".join(sorted(EVENT_CLASS.keys()))
-        raise ValueError(
-            f"Invalid value for '{source}': expected one of [{valid}], got {raw!r}."
-        )
+        raise ValueError(f"Invalid value for '{source}': expected one of [{valid}], got {raw!r}.")
     return raw
 
 
@@ -221,9 +219,7 @@ def _hook_from_row(
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
 
-    default_interval = (
-        BUILTIN_HOOK_REGISTRY[builtin].interval if builtin is not None else None
-    )
+    default_interval = BUILTIN_HOOK_REGISTRY[builtin].interval if builtin is not None else None
     interval = _parse_interval(
         cast("str | None", row.get("interval")) or default_interval,
         source=f"{row_source}.interval",

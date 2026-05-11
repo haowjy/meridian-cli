@@ -42,8 +42,7 @@ def check_bare_end(target: DiagramTarget, diagram_type: str | None) -> list[Styl
                 file=target.rel,
                 line=content_line_to_file_line(target, content_line),
                 message=(
-                    "bare lowercase `end` in flowchart may break parser; "
-                    'use `End` or `["end"]`'
+                    'bare lowercase `end` in flowchart may break parser; use `End` or `["end"]`'
                 ),
                 severity="warning",
                 suppressed=False,
