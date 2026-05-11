@@ -118,11 +118,53 @@ Two policies control terminal event behavior:
 
 `SingleTurnDrainPolicy` is the default. Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for chat sessions where the harness stays alive across turns.
 
+## SignalCanceller
+
+`SignalCanceller` (`signal_canceller.py`) is the two-lane cancel dispatcher: CLI spawns
+and app-managed spawns take different paths, but both converge on a terminal state read.
+
+### Cancel Dispatch
+
+`cancel()` routes by `launch_mode`:
+
+- **CLI spawns** → `_cancel_cli_spawn()` — reads scope sidecars, terminates process groups
+- **App spawns** → `_cancel_app_spawn()` — delegates to `SpawnManager.stop_spawn()` if a
+  manager is present; falls back to an HTTP cancel against the running app socket otherwise
+
+### `_cancel_cli_spawn()` — Scope-Aware Path
+
+The method reads scope sidecars first rather than resolving a PID directly:
+
+1. **Read** scope sidecars via `read_scopes_from_disk()` — written at spawn time, describe
+   the process groups/trees the spawn owns
+2. **If scopes exist**: iterate them, skip already-released scopes via `is_scope_released()`,
+   call `terminate_scope_sync()` per scope (POSIX uses pgid group kill; Windows falls back to
+   tree kill), then call `mark_scope_released()` immediately after to prevent double-kill
+3. **If no scopes (legacy)**: resolve runner PID from `record.runner_pid` /
+   `record.worker_pid`, fall back to `terminate_tree_sync()` directly — preserves
+   compatibility with spawns that predate scope sidecar support
+
+`terminate_scope_sync` is synchronous, so each call runs via `asyncio.to_thread()` to
+avoid blocking the event loop. `ProcessLookupError` is suppressed — the process may
+already be gone by the time the cancel arrives.
+
+After signal delivery, `_wait_for_terminal()` polls the spawn record for up to
+`grace_seconds`. If the record never reaches a terminal status, the outcome carries
+`finalizing=True` — the caller must not treat this as a confirmed stop.
+
+### Dependency Direction
+
+`signal_canceller` depends on `platform/` and `state/` — it does not depend on
+`core.process_cleanup`. The cancel path has a live event loop and manages scope cleanup
+inline. `core.process_cleanup` is the sync-only reclamation path used at startup for
+orphan recovery — the two paths don't share scope management logic.
+
 ## Anti-Patterns
 
 - **Don't call `connection.send_user_message()` directly** — always go through `SpawnManager.inject()` so the action coordinator serializes it.
 - **Don't observe events before they're persisted** — the drain loop ordering is the persistence guarantee. Breaking it means observers may see events that weren't written to disk.
 - **Don't share a manager across concurrent event loops** — the session dict is not thread-safe.
+- **Don't add scope cleanup after `SignalCanceller.cancel()`** — the canceller handles scope termination internally via the scope-sidecar path. Duplicate cleanup causes double-kill races.
 
 ## Related KB
 

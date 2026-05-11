@@ -160,6 +160,31 @@ Extra args remain user-owned passthrough; they are not a workspace projection ch
 the split matters because `capture_library_diagnostics()` (wrapping `build_launch_context()`)
 captures stdlib warnings during spawn; structlog bypasses it and would leak to stderr.
 
+### `session_scope()` Teardown Contract
+
+`session_scope()` in `session_scope.py` is the context manager for session lifetime.
+Its `finally` block has a two-phase teardown — both phases always run:
+
+```
+finally:
+  try:
+    stop_session(runtime_root, resolved_chat_id)      ← marks session record stopped
+  finally:
+    reclaim_session_owned_scopes_for_chat(...)         ← terminates session_owned process scopes
+```
+
+The inner try/finally ensures scope reclamation runs even if `stop_session` raises.
+`reclaim_session_owned_scopes_for_chat` terminates any process scopes the session owns
+(e.g., managed primary backends) that were not released during normal teardown — this
+was the missing step that caused session_owned scopes to persist as orphans.
+
+**Callers must not add manual scope cleanup after `session_scope`** — reclamation is
+guaranteed by the context manager. Adding cleanup outside it creates a race between the
+`finally` block and the caller's explicit cleanup.
+
+The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str], object]` for
+test injection; in production it always points to `reclaim_session_owned_scopes_for_chat`.
+
 ## Patterns
 
 **Never call `fork.materialize_fork()` before the spawn row exists.** Fork writes
@@ -172,6 +197,10 @@ invisible to callers.
 **Background worker trusts the persisted `BackgroundWorkerLaunchRequest`.** It does
 not re-resolve model or harness from the spawn record. The request is already fully
 resolved when persisted. Empty `model` is accepted — model-optional profiles exist.
+
+**Use `session_scope()` when managed backends need cleanup at session end.** The
+context manager guarantees `reclaim_session_owned_scopes_for_chat()` runs even on
+exception paths. Do not replicate this logic inline.
 
 ## Related KB
 
