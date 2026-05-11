@@ -117,13 +117,13 @@ def test_terminate_spawn_scopes_uses_persisted_scopes_and_marks_released(
         lambda root, spawn_id, scope_id: released.append((str(spawn_id), scope_id)),
     )
 
-    def _terminate_tree_sync(
-        *, pid: int, created_at_epoch: float, grace_secs: float, reason: str, scope_id: str
-    ):
-        terminate_calls.append((pid, created_at_epoch, reason, scope_id))
-        return _cleanup_result(scope_id, pid, reason)
+    def _terminate_scope_sync(scope, *, grace_seconds: float, reason: str):
+        terminate_calls.append(
+            (scope.root_pid, scope.root_created_at_epoch, reason, scope.scope_id)
+        )
+        return _cleanup_result(scope.scope_id, scope.root_pid, reason)
 
-    monkeypatch.setattr(process_cleanup, "terminate_tree_sync", _terminate_tree_sync)
+    monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _terminate_scope_sync)
 
     results = terminate_spawn_scopes(tmp_path, _record(), reason="reaper", grace_seconds=4.0)
 
@@ -160,10 +160,10 @@ def test_terminate_spawn_scopes_skips_released_and_session_owned_scopes(
         lambda pid: type("LiveProc", (), {"create_time": lambda self: 10.0})(),
     )
 
-    def _unexpected(**kwargs):
-        raise AssertionError("terminate_tree_sync should not be called for skipped scopes")
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("terminate_scope_sync should not be called for skipped scopes")
 
-    monkeypatch.setattr(process_cleanup, "terminate_tree_sync", _unexpected)
+    monkeypatch.setattr(process_cleanup, "terminate_scope_sync", _unexpected)
 
     results = terminate_spawn_scopes(tmp_path, _record(), reason="reaper", grace_seconds=4.0)
 
@@ -228,8 +228,8 @@ def test_terminate_spawn_scopes_logs_proc_011_fields_for_cleanup(
     )
     monkeypatch.setattr(
         process_cleanup,
-        "terminate_tree_sync",
-        lambda **kwargs: CleanupResult(
+        "terminate_scope_sync",
+        lambda scope, *, grace_seconds, reason: CleanupResult(
             scope_id="backend",
             root_pid=101,
             descendant_count=3,

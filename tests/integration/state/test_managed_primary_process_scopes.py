@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest  # noqa: TC002
 
-from meridian.lib.core.process_cleanup import reclaim_stale_session_scopes
+from meridian.lib.core.process_cleanup import reclaim_session_owned_scopes_for_chat
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
 from meridian.lib.state import spawn_store
@@ -112,30 +112,27 @@ def test_reaper_preserves_session_owned_runtime_scopes_for_orphan_primary_withou
 
     terminated_scope_ids: list[str] = []
 
-    def _fake_terminate_tree_sync(
-        pid: int,
+    def _fake_terminate_scope_sync(
+        scope: ProcessScopeSnapshot,
         *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
+        grace_seconds: float,
+        reason: str,
     ) -> CleanupResult:
-        terminated_scope_ids.append(scope_id)
+        terminated_scope_ids.append(scope.scope_id)
         return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
             descendant_count=0,
             reason=reason,
-            grace_seconds=grace_secs,
+            grace_seconds=grace_seconds,
             kill_escalated=False,
-            degraded_fallback=degraded_fallback,
+            degraded_fallback=False,
             skip_reason=None,
         )
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync,
+        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        _fake_terminate_scope_sync,
     )
 
     reconciled = reconcile_active_spawn(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
@@ -148,7 +145,7 @@ def test_reaper_preserves_session_owned_runtime_scopes_for_orphan_primary_withou
     assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is False
 
 
-def test_reclaim_stale_session_scopes_terminates_preserved_runtime_scopes(
+def test_reclaim_session_owned_scopes_for_chat_terminates_preserved_runtime_scopes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -174,36 +171,32 @@ def test_reclaim_stale_session_scopes_terminates_preserved_runtime_scopes(
 
     terminated_scope_ids: list[str] = []
 
-    def _fake_terminate_tree_sync(
-        pid: int,
+    def _fake_terminate_scope_sync(
+        scope: ProcessScopeSnapshot,
         *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
+        grace_seconds: float,
+        reason: str,
     ) -> CleanupResult:
-        terminated_scope_ids.append(scope_id)
+        terminated_scope_ids.append(scope.scope_id)
         return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
             descendant_count=0,
             reason=reason,
-            grace_seconds=grace_secs,
+            grace_seconds=grace_seconds,
             kill_escalated=False,
-            degraded_fallback=degraded_fallback,
+            degraded_fallback=False,
             skip_reason=None,
         )
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync,
+        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        _fake_terminate_scope_sync,
     )
 
-    results = reclaim_stale_session_scopes(
+    results = reclaim_session_owned_scopes_for_chat(
         runtime_root,
-        session_id,
-        [_get_spawn(runtime_root, spawn_id)],
+        "c1",  # chat_id from _create_primary_spawn
         grace_seconds=2.0,
     )
 
@@ -256,30 +249,27 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
 
     terminated_scope_ids: list[str] = []
 
-    def _fake_terminate_tree_sync(
-        pid: int,
+    def _fake_terminate_scope_sync(
+        scope: ProcessScopeSnapshot,
         *,
-        created_at_epoch: float = 0.0,
-        grace_secs: float = 5.0,
-        reason: str = "stop_called",
-        scope_id: str = "",
-        degraded_fallback: bool = False,
+        grace_seconds: float,
+        reason: str,
     ) -> CleanupResult:
-        terminated_scope_ids.append(scope_id)
+        terminated_scope_ids.append(scope.scope_id)
         return CleanupResult(
-            scope_id=scope_id,
-            root_pid=pid,
+            scope_id=scope.scope_id,
+            root_pid=scope.root_pid,
             descendant_count=0,
             reason=reason,
-            grace_seconds=grace_secs,
+            grace_seconds=grace_seconds,
             kill_escalated=False,
-            degraded_fallback=degraded_fallback,
+            degraded_fallback=False,
             skip_reason=None,
         )
 
     monkeypatch.setattr(
-        "meridian.lib.core.process_cleanup.terminate_tree_sync",
-        _fake_terminate_tree_sync,
+        "meridian.lib.core.process_cleanup.terminate_scope_sync",
+        _fake_terminate_scope_sync,
     )
 
     reconcile_active_spawn(tmp_path, runtime_root, _get_spawn(runtime_root, spawn_id))
@@ -289,10 +279,9 @@ def test_reaper_preserve_then_reclaim_reuses_same_scope_records(
     assert is_scope_released(runtime_root, SpawnId(spawn_id), "tui") is False
 
     terminated_scope_ids.clear()
-    results = reclaim_stale_session_scopes(
+    results = reclaim_session_owned_scopes_for_chat(
         runtime_root,
-        session_id,
-        [_get_spawn(runtime_root, spawn_id)],
+        "c1",  # chat_id from _create_primary_spawn
         grace_seconds=2.0,
     )
 

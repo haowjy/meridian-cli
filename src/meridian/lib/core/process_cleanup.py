@@ -12,8 +12,8 @@ import psutil
 import structlog
 
 from meridian.lib.core.types import SpawnId
+from meridian.lib.platform.process_scope import terminate_scope_sync, terminate_tree_sync
 from meridian.lib.platform.process_scope.base import CleanupResult, ProcessScopeSnapshot
-from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
 from meridian.lib.state.process_scope_projection import (
     is_scope_released,
     mark_scope_released,
@@ -107,13 +107,7 @@ def terminate_spawn_scopes(
             results.append(result)
             continue
 
-        result = terminate_tree_sync(
-            pid=scope.root_pid,
-            created_at_epoch=scope.root_created_at_epoch,
-            grace_secs=grace_seconds,
-            reason=reason,
-            scope_id=scope.scope_id,
-        )
+        result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
         mark_scope_released(runtime_root, spawn_id, scope.scope_id)
         logger.info(
             "Terminated process scope.",
@@ -247,13 +241,7 @@ def cancel_managed_primary(
         if scope.scope_id == "launcher":
             if is_scope_released(runtime_root, spawn_id, scope.scope_id):
                 continue
-            result = terminate_tree_sync(
-                pid=scope.root_pid,
-                created_at_epoch=scope.root_created_at_epoch,
-                grace_secs=grace_seconds,
-                reason="cancel",
-                scope_id=scope.scope_id,
-            )
+            result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
             mark_scope_released(runtime_root, spawn_id, scope.scope_id)
             logger.info(
                 "Terminated managed primary launcher scope.",
@@ -302,13 +290,7 @@ def cancel_managed_primary(
             )
             results.append(result)
             continue
-        result = terminate_tree_sync(
-            pid=scope.root_pid,
-            created_at_epoch=scope.root_created_at_epoch,
-            grace_secs=grace_seconds,
-            reason="cancel",
-            scope_id=scope.scope_id,
-        )
+        result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
         mark_scope_released(runtime_root, spawn_id, scope.scope_id)
         logger.info(
             "Terminated managed primary runtime scope.",
@@ -327,58 +309,39 @@ def cancel_managed_primary(
     return results
 
 
-def reclaim_stale_session_scopes(
+def reclaim_session_owned_scopes_for_chat(
     runtime_root: Path,
-    session_id: str,
-    spawns: list[SpawnRecord],
+    chat_id: str,
     *,
     grace_seconds: float = 5.0,
 ) -> list[CleanupResult]:
-    """Reclaim all session_owned scopes belonging to a stale session.
+    """Reclaim all session_owned scopes on spawns belonging to a chat.
 
-    Called when a session lease expires or a session is cleaned up. Walks all
-    provided spawn records, finds unreleased session_owned scopes keyed to
-    ``session_id``, terminates them, and marks them released.
-
-    Idempotent — already-released scopes are skipped silently.
+    Called at session exit. Terminates all unreleased session_owned scopes
+    on spawns whose chat_id matches, regardless of which specific
+    harness_session_id they reference.
     """
+    from meridian.lib.state.spawn_store import list_spawns
+
+    spawns = list_spawns(runtime_root, filters={"chat_id": chat_id})
     results: list[CleanupResult] = []
     for record in spawns:
         spawn_id = SpawnId(record.id)
         scopes = read_scopes_from_disk(runtime_root, spawn_id)
         for scope in scopes:
-            if scope.owner_policy != "session_owned" or scope.owner_id != session_id:
+            if scope.owner_policy != "session_owned":
                 continue
             if is_scope_released(runtime_root, spawn_id, scope.scope_id):
                 continue
-            result = terminate_tree_sync(
-                pid=scope.root_pid,
-                created_at_epoch=scope.root_created_at_epoch,
-                grace_secs=grace_seconds,
-                reason="stale_session_cleanup",
-                scope_id=scope.scope_id,
-            )
+            result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
             mark_scope_released(runtime_root, spawn_id, scope.scope_id)
-            logger.info(
-                "Reclaimed stale-session scope.",
-                spawn_id=record.id,
-                scope_id=scope.scope_id,
-                root_pid=scope.root_pid,
-                descendant_count=result.descendant_count,
-                reason="stale_session_cleanup",
-                grace_seconds=grace_seconds,
-                kill_escalated=result.kill_escalated,
-                degraded_fallback=result.degraded_fallback,
-                skip_reason=result.skip_reason,
-                session_id=session_id,
-            )
             results.append(result)
     return results
 
 
 __all__ = [
     "cancel_managed_primary",
-    "reclaim_stale_session_scopes",
+    "reclaim_session_owned_scopes_for_chat",
     "should_skip_cleanup",
     "terminate_spawn_scopes",
 ]
