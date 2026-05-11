@@ -18,9 +18,10 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import ForkMaterializationMode
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import command as launch_command
-from meridian.lib.launch import process
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
+from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -101,8 +102,8 @@ def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
-        return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=5150)
+    ) -> PrimaryAttachOutcome:
+        return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=5150)
 
     monkeypatch.setattr(
         codex_adapter,
@@ -115,7 +116,7 @@ def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
         lambda **kwargs: kwargs.get("current_session_id"),
     )
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
@@ -196,9 +197,9 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
-        return process.PrimaryAttachOutcome(
+        return PrimaryAttachOutcome(
             exit_code=0, session_id="forked-session", tui_pid=111,
         )
 
@@ -224,7 +225,7 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
     monkeypatch.setattr(codex_adapter, "fork_session", fake_fork_session)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "forked-session")
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
@@ -322,9 +323,9 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
-        return process.PrimaryAttachOutcome(
+        return PrimaryAttachOutcome(
             exit_code=0,
             session_id="source-session",
             tui_pid=111,
@@ -338,7 +339,7 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
     monkeypatch.setattr(codex_adapter, "fork_session", fail_if_forked)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: "source-session")
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,

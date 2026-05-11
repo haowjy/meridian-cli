@@ -18,9 +18,9 @@ from typing import Any
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import BootstrapMode
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch import process
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as process_runner
+from meridian.lib.launch.process.primary_attach import PrimaryAttachError
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
@@ -157,7 +157,7 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         runtime_root=tmp_path,
         run_primary_process_with_capture_fn=_black_box,
         run_primary_attach_fn=lambda *args, **kwargs: (_ for _ in ()).throw(
-            process.PrimaryAttachError("fallback please")
+            PrimaryAttachError("fallback please")
         ),
         on_running=lambda _pid: None,
     )

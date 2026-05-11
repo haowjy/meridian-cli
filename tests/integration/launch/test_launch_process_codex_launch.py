@@ -19,10 +19,14 @@ import pytest
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch import process
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process import runner as process_runner
 from meridian.lib.launch.process.ports import ProcessLauncher
+from meridian.lib.launch.process.primary_attach import (
+    PrimaryAttachError,
+    PrimaryAttachOutcome,
+)
+from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -96,9 +100,9 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
             spec: Any,
             process_launcher: Any,
             on_running: Any = None,
-        ) -> process.PrimaryAttachOutcome:
+        ) -> PrimaryAttachOutcome:
             captured["log_dir"] = Path(spawn_dir)
-            return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
+            return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
 
         return fake_run_primary_attach
 
@@ -139,7 +143,7 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
     monkeypatch.setattr(adapter, "observe_session_id", lambda **kwargs: None)
 
     captured: dict[str, object] = {}
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_launcher_for(captured),
@@ -205,12 +209,12 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         captured["harness_id"] = harness_id
         spawn_dir = Path(spawn_dir)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         captured["spawn_dir"] = spawn_dir
-        return process.PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5150)
+        return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5150)
 
     def fail_black_box(
         command: Any,
@@ -224,7 +228,7 @@ def test_run_harness_process_codex_primary_routes_to_managed_path(
     monkeypatch.setattr(process_runner, "select_process_launcher", fake_select_process_launcher)
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
@@ -272,14 +276,14 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         assert callable(on_running)
         assert list_spawns(launch_context.runtime_root)[0].status == "queued"
         on_running(5151)
         running_record = list_spawns(launch_context.runtime_root)[0]
         captured["status_seen_before_return"] = running_record.status
         captured["worker_pid_seen_before_return"] = running_record.worker_pid
-        return process.PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5151)
+        return PrimaryAttachOutcome(exit_code=0, session_id="thread-managed", tui_pid=5151)
 
     def fail_black_box(
         command: Any,
@@ -292,7 +296,7 @@ def test_run_harness_process_managed_marks_running_before_attach_returns(
 
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
@@ -337,14 +341,14 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         Path(spawn_dir).mkdir(parents=True, exist_ok=True)
-        raise process.PrimaryAttachError("managed startup error")
+        raise PrimaryAttachError("managed startup error")
 
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 
-    with pytest.raises(process.PrimaryAttachError, match="managed startup error"):
-        process.run_harness_process(
+    with pytest.raises(PrimaryAttachError, match="managed startup error"):
+        run_harness_process(
             launch_context,
             harness_registry,
             run_primary_attach_fn=failing_managed,
@@ -384,7 +388,7 @@ def test_run_harness_process_fresh_codex_primary_routes_to_managed_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         nonlocal managed_calls
         managed_calls += 1
         # Verify this is for Codex
@@ -392,13 +396,13 @@ def test_run_harness_process_fresh_codex_primary_routes_to_managed_path(
         # Call on_running to mark spawn as running
         if callable(on_running):
             on_running(12345)
-        return process.PrimaryAttachOutcome(
+        return PrimaryAttachOutcome(
             exit_code=0, session_id="fresh-thread-id", tui_pid=12345
         )
 
     monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,

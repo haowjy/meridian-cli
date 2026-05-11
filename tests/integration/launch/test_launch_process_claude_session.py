@@ -17,9 +17,9 @@ import pytest
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch import process
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process import runner as process_runner
+from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -111,7 +111,7 @@ def test_run_harness_process_fresh_claude_primary_seeds_session_id(
 
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
@@ -189,7 +189,7 @@ def test_run_harness_process_records_generated_claude_command_session_id(
     monkeypatch.setattr(process_runner, "build_launch_context", fake_build_launch_context)
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
@@ -240,7 +240,7 @@ def test_run_harness_process_repairs_state_when_observed_session_differs(
         claude_adapter, "observe_session_id", lambda **kwargs: observed_id
     )
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,

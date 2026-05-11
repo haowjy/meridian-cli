@@ -17,9 +17,13 @@ import pytest
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch import process
 from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.process.primary_attach import (
+    PrimaryAttachError,
+    PrimaryAttachOutcome,
+)
+from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -91,9 +95,9 @@ def test_run_harness_process_writes_opencode_system_field_primary_projection_man
             spec: Any,
             process_launcher: Any,
             on_running: Any = None,
-        ) -> process.PrimaryAttachOutcome:
+        ) -> PrimaryAttachOutcome:
             captured["log_dir"] = Path(spawn_dir)
-            return process.PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
+            return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
 
         return fake_run_primary_attach
 
@@ -134,7 +138,7 @@ def test_run_harness_process_writes_opencode_system_field_primary_projection_man
     monkeypatch.setattr(adapter, "observe_session_id", lambda **kwargs: None)
 
     captured: dict[str, object] = {}
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_launcher_for(captured),
@@ -195,9 +199,9 @@ def test_run_harness_process_opencode_primary_routes_to_managed_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         captured["harness_id"] = harness_id
-        return process.PrimaryAttachOutcome(exit_code=0, session_id="session-managed", tui_pid=6262)
+        return PrimaryAttachOutcome(exit_code=0, session_id="session-managed", tui_pid=6262)
 
     def fail_black_box(
         command: Any,
@@ -210,7 +214,7 @@ def test_run_harness_process_opencode_primary_routes_to_managed_path(
 
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
@@ -256,16 +260,16 @@ def test_run_harness_process_opencode_fork_uses_managed_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         nonlocal managed_calls
         managed_calls += 1
         if callable(on_running):
             on_running(8383)
-        return process.PrimaryAttachOutcome(exit_code=0, session_id="oc-session", tui_pid=8383)
+        return PrimaryAttachOutcome(exit_code=0, session_id="oc-session", tui_pid=8383)
 
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fake_run_primary_attach,
@@ -310,7 +314,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         nonlocal managed_calls
         nonlocal captured_spawn_dir
         managed_calls += 1
@@ -325,7 +329,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
             encoding="utf-8",
         )
         captured_spawn_dir = spawn_dir
-        raise process.PrimaryAttachError("managed startup error")
+        raise PrimaryAttachError("managed startup error")
 
     def fake_run_primary_process_with_capture(
         command: Any,
@@ -343,7 +347,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
 
     monkeypatch.setattr(opencode_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=failing_managed,

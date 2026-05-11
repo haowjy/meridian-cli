@@ -18,9 +18,10 @@ import pytest
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch import process
 from meridian.lib.launch.constants import OUTPUT_FILENAME
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
+from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -28,7 +29,6 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
-from meridian.lib.launch.types import SessionMode
 from meridian.lib.state.spawn_store import list_spawns
 
 
@@ -135,7 +135,7 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
 
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
@@ -203,7 +203,7 @@ def test_run_harness_process_black_box_primary_uses_no_tui_log_artifact(
 
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
@@ -249,7 +249,7 @@ def test_run_harness_process_claude_primary_print_json_persists_session_id_from_
         on_child_started(445)
         return (0, 445)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
@@ -290,7 +290,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
-    ) -> process.PrimaryAttachOutcome:
+    ) -> PrimaryAttachOutcome:
         raise AssertionError("claude primary must not use managed launcher path")
 
     def fake_run_primary_process_with_capture(
@@ -308,7 +308,7 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
 
     monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
 
-    outcome = process.run_harness_process(
+    outcome = run_harness_process(
         launch_context,
         harness_registry,
         run_primary_attach_fn=fail_managed,
