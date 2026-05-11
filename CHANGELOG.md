@@ -3,6 +3,9 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+### Fixed
+- Process reaper escape — spawned processes (Vite, Codex) no longer persist as orphans after session exit. Sync cleanup paths now use containment-aware dispatch (`terminate_scope_sync()`) instead of PID-tree fallback that missed reparented processes. Session-exit triggers cleanup of session-owned scopes. Dead `reclaim_stale_session_scopes()` deleted.
+
 ### Added
 - Three-word project IDs (`adjective-noun-noun`, e.g. `bright-falcon-harbor`). New projects get word IDs; existing UUID projects keep working. Bundled word lists — no external dependency.
 - `meridian migrate` command converts UUID project IDs to three-word format. Blocks when active spawns exist; moves context and runtime dirs atomically.
