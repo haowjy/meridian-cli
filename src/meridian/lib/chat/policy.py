@@ -30,8 +30,9 @@ from meridian.lib.launch.policies import ResolvedLaunchPolicy
 from meridian.lib.launch.prompt import compose_skill_prompt_documents
 from meridian.lib.launch.resolve import format_missing_skills_warning, resolve_profile_path
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.tools import ToolsField
 
-CHAT_POLICY_SNAPSHOT_VERSION = 2
+CHAT_POLICY_SNAPSHOT_VERSION = 3
 
 
 class ChatPromptDocumentSnapshot(BaseModel):
@@ -85,8 +86,7 @@ class ChatPolicySnapshot(BaseModel):
     skills: tuple[str, ...] = ()
     prompt_inputs: ChatPromptInputsSnapshot
 
-    allowed_tools: tuple[str, ...] = ()
-    disallowed_tools: tuple[str, ...] = ()
+    tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] = ()
 
     warnings: tuple[CompositionWarning, ...] = ()
@@ -192,8 +192,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         agent_profile_path=resolve_profile_path(profile),
         skills=policy.resolved_skills.skill_names,
         prompt_inputs=prompt_inputs,
-        allowed_tools=profile.tools if profile is not None else (),
-        disallowed_tools=profile.disallowed_tools if profile is not None else (),
+        tools=profile.tools if profile is not None else None,
         mcp_tools=profile.mcp_tools if profile is not None else (),
         warnings=tuple(warnings),
         field_provenance={
@@ -283,8 +282,7 @@ def build_chat_backend_launch_plan(
         project_root=project_root.as_posix(),
         mcp_tools=snapshot.mcp_tools,
         sandbox=ep.sandbox,
-        allowed_tools=snapshot.allowed_tools,
-        disallowed_tools=snapshot.disallowed_tools,
+        tools=snapshot.tools,
         approval=ep.approval,
     )
     runtime_env = build_child_runtime_env_overrides(

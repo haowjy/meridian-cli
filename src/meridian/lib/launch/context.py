@@ -54,6 +54,7 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.telemetry import emit_telemetry
+from meridian.lib.tools import ToolsField
 from meridian.plugin_api.git import resolve_clone_path
 
 from .command import (
@@ -259,8 +260,8 @@ class PreparedLaunchSurface:
     composition_warnings: tuple[CompositionWarning, ...]
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
-    profile_tools_for_deny_optout: tuple[str, ...]
-    has_profile_for_deny_optout: bool
+    profile_tools_for_nested_deny: ToolsField | None
+    has_profile_for_nested_deny: bool
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
     # Original launch request preserved for LaunchContext.request compatibility.
@@ -437,8 +438,7 @@ def materialize_launch_artifacts(
     context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
     sandbox: str | None = None,
-    allowed_tools: tuple[str, ...] = (),
-    disallowed_tools: tuple[str, ...] = (),
+    tools: ToolsField | None = None,
     approval: str | None = None,
     unsafe_no_permissions: bool = False,
 ) -> MaterializedLaunchArtifacts:
@@ -466,8 +466,7 @@ def materialize_launch_artifacts(
     )
     permission_config, perms = resolve_permission_pipeline(
         sandbox=sandbox,
-        allowed_tools=allowed_tools,
-        disallowed_tools=disallowed_tools,
+        tools=tools,
         approval=approval or "default",
         unsafe_no_permissions=unsafe_no_permissions,
     )
@@ -1156,7 +1155,7 @@ def prepare_launch_surface(
         agent_inventory_prompt=content.agent_inventory_prompt,
         context_prompt=content.context_prompt,
     )
-    profile_tools_for_deny_optout = profile.tools if profile is not None else ()
+    profile_tools_for_nested_deny = profile.tools if profile is not None else None
 
     resolved_request = request.model_copy(
         update={
@@ -1169,10 +1168,7 @@ def prepare_launch_surface(
             "extra_args": final_passthrough_args,
             "mcp_tools": profile.mcp_tools if profile is not None else request.mcp_tools,
             "execution_policy": execution_policy,
-            "allowed_tools": profile.tools if profile is not None else request.allowed_tools,
-            "disallowed_tools": (
-                profile.disallowed_tools if profile is not None else request.disallowed_tools
-            ),
+            "tools": profile.tools if profile is not None else request.tools,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1197,8 +1193,8 @@ def prepare_launch_surface(
             seed_harness_session_id=seed_harness_session_id,
             seed_session_args=seed_session_args,
         ),
-        profile_tools_for_deny_optout=profile_tools_for_deny_optout,
-        has_profile_for_deny_optout=has_profile,
+        profile_tools_for_nested_deny=profile_tools_for_nested_deny,
+        has_profile_for_nested_deny=has_profile,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1248,8 +1244,8 @@ def _build_direct_surface(
             ),
             seed_session_args=(),
         ),
-        profile_tools_for_deny_optout=(),
-        has_profile_for_deny_optout=False,
+        profile_tools_for_nested_deny=None,
+        has_profile_for_nested_deny=False,
         model_selection=None,
         alias_catalog=None,
         launch_request=request,
@@ -1287,8 +1283,8 @@ def bind_launch_context(
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
-    profile_tools_for_deny_optout = prepared.profile_tools_for_deny_optout
-    has_profile_for_deny_optout = prepared.has_profile_for_deny_optout
+    profile_tools_for_nested_deny = prepared.profile_tools_for_nested_deny
+    has_profile_for_nested_deny = prepared.has_profile_for_nested_deny
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
@@ -1356,20 +1352,15 @@ def bind_launch_context(
         and harness.id == HarnessId.CLAUDE
         and CLAUDE_NATIVE_DELEGATION_TOOLS
     ):
-        allowed_tools, disallowed_tools = resolve_nested_claude_permission_request(
-            allowed_tools=resolved_request.allowed_tools,
-            disallowed_tools=resolved_request.disallowed_tools,
-            profile_allowed_tools=profile_tools_for_deny_optout,
-            has_profile=has_profile_for_deny_optout,
+        tools = resolve_nested_claude_permission_request(
+            tools=resolved_request.tools,
+            profile_tools=profile_tools_for_nested_deny,
+            has_profile=has_profile_for_nested_deny,
         )
-        if (
-            allowed_tools != resolved_request.allowed_tools
-            or disallowed_tools != resolved_request.disallowed_tools
-        ):
+        if tools != resolved_request.tools:
             resolved_request = resolved_request.model_copy(
                 update={
-                    "allowed_tools": allowed_tools,
-                    "disallowed_tools": disallowed_tools,
+                    "tools": tools,
                 }
             )
 
@@ -1397,8 +1388,7 @@ def bind_launch_context(
         context_from_payload=resolved_request.context_from,
         reference_items=loaded_references,
         sandbox=resolved_request.execution_policy.sandbox,
-        allowed_tools=resolved_request.allowed_tools,
-        disallowed_tools=resolved_request.disallowed_tools,
+        tools=resolved_request.tools,
         approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
     )
@@ -1407,18 +1397,6 @@ def bind_launch_context(
     permission_config = materialized.permission_config
     perms = materialized.perms
     spec = materialized.spec
-    # OpenCode+profile: `tools:` entries are Claude-specific permission names.
-    # Translating them to an OPENCODE_PERMISSION deny-all JSON removes every
-    # unlisted tool from the model schema. Clear the override so Bug 1's fix
-    # can inject {"*":"allow"} for child spawns via build_harness_env_overrides.
-    if (
-        harness.id == HarnessId.OPENCODE
-        and has_profile_for_deny_optout
-        and permission_config.opencode_permission_override is not None
-    ):
-        permission_config = permission_config.model_copy(
-            update={"opencode_permission_override": None}
-        )
     argv: tuple[str, ...] = ()
     if runtime.argv_intent != LaunchArgvIntent.SPEC_ONLY:
         argv = build_launch_argv(

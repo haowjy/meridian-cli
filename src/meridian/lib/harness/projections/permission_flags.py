@@ -87,10 +87,8 @@ def resolve_permission_flags(
     resolver_flags = _coerce_permission_flags(permission_resolver.resolve_flags())
     if harness_id != HarnessId.CLAUDE:
         stripped = _strip_claude_tool_flags(resolver_flags)
-        if harness_id == HarnessId.CODEX and "--disallowedTools" in resolver_flags:
-            logger.warning(
-                "Codex does not support disallowed-tools; falling back to sandbox/approval flags."
-            )
+        if harness_id == HarnessId.CODEX and stripped != resolver_flags:
+            logger.debug("Codex projection ignored Claude tool permission flags.")
         resolver_flags = stripped
     base_flags.extend(resolver_flags)
     return tuple(base_flags)

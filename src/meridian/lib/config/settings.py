@@ -422,7 +422,7 @@ def _normalize_agent_policy_overrides(
     if not isinstance(raw_value, dict):
         raise ValueError(f"Invalid value for '{source}': expected table.")
 
-    rejected_list_keys = frozenset({"skills", "tools", "disallowed-tools", "mcp-tools"})
+    rejected_list_keys = frozenset({"skills", "tools", "mcp-tools"})
     allowed_scalar_keys = frozenset(
         {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
     )

@@ -17,6 +17,7 @@ from meridian.lib.core.overrides import (
     RuntimeOverrides,
     normalize_execution_policy_fields,
 )
+from meridian.lib.tools import ToolsField
 
 
 class ProvenanceLevel(Enum):
@@ -104,8 +105,7 @@ class CompilerResult:
 
     # Profile-derived content identifiers
     skill_names: tuple[str, ...]
-    tools: tuple[str, ...] | None = None
-    disallowed_tools: tuple[str, ...] | None = None
+    tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] | None = None
 
     # Selection context

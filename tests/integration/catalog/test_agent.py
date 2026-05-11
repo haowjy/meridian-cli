@@ -53,17 +53,16 @@ def test_load_agent_profile_missing_error_points_to_mars_agents_path(tmp_path: P
         load_agent_profile("reviewer", project_root=project_root)
 
 
-def test_parse_agent_profile_disallowed_tools(tmp_path: Path) -> None:
+def test_parse_agent_profile_tools_field_map(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "coder.md",
         [
             "name: Coder",
             "tools:",
-            "  - Read",
-            "disallowed-tools:",
-            "  - Bash",
-            "  - WebSearch",
+            "  '*': deny",
+            "  read: allow",
+            "  bash(git checkout:*): deny",
             "mcp-tools:",
             "  - mcpA",
         ],
@@ -71,8 +70,11 @@ def test_parse_agent_profile_disallowed_tools(tmp_path: Path) -> None:
 
     profile = parse_agent_profile(profile_path)
 
-    assert profile.tools == ("Read",)
-    assert profile.disallowed_tools == ("Bash", "WebSearch")
+    assert profile.tools == {
+        "*": "deny",
+        "read": "allow",
+        "bash(git checkout:*)": "deny",
+    }
 
 
 def test_parse_agent_profile_models_preserves_supported_overrides(
@@ -254,8 +256,6 @@ def test_parse_agent_profile_accepts_deferred_model_policy_list_override_keys(
             "        - review",
             "      tools:",
             "        - Read",
-            "      disallowed-tools:",
-            "        - Bash",
             "      mcp-tools:",
             "        - github",
         ],
@@ -267,7 +267,6 @@ def test_parse_agent_profile_accepts_deferred_model_policy_list_override_keys(
     assert profile.model_policies[0].overrides == {
         "skills": ["review"],
         "tools": ["Read"],
-        "disallowed-tools": ["Bash"],
         "mcp-tools": ["github"],
     }
     assert "not-yet-supported list override keys" in caplog.text

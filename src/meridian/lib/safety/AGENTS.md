@@ -50,14 +50,11 @@ level creates a circular import at load time.
 | Condition | Resolver |
 |---|---|
 | Neither list provided | `TieredPermissionResolver` — harness derives from sandbox/approval |
-| `allowed_tools` only | `ExplicitToolsResolver` |
-| `disallowed_tools` only | `DisallowedToolsResolver` |
-| Both provided | `CombinedToolsResolver` |
+| `tools` provided | `ToolsPermissionResolver` (abstract ToolsField compiled per harness) |
 | Explicit unsafe opt-out | `UnsafeNoOpPermissionResolver` + warning |
 
-`_normalize_tool_name` strips Claude-style qualifiers (`tool(args)` → `tool`) before
-allow/deny operations. Tool names not normalized before comparison will silently
-fail to match.
+Tools compilation preserves scoped patterns where the target harness supports them
+(notably OpenCode) and projects Claude capability aliases to tool names.
 
 ## Entry Points
 

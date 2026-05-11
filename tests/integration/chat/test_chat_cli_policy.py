@@ -341,9 +341,9 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
         "skills:\n"
         "  - profile-skill\n"
         "tools:\n"
-        "  - Read\n"
-        "disallowed-tools:\n"
-        "  - Bash\n"
+        "  '*': allow\n"
+        "  read: allow\n"
+        "  bash: deny\n"
         "mcp-tools:\n"
         "  - github=gh\n"
         "model-policies:\n"
@@ -387,8 +387,7 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert snapshot.execution_policy.effort == "low"
     assert snapshot.execution_policy.autocompact == 200000
     assert snapshot.skills == ("profile-skill", "cli-skill")
-    assert snapshot.allowed_tools == ("Read",)
-    assert snapshot.disallowed_tools == ("Bash",)
+    assert snapshot.tools == {"*": "allow", "read": "allow", "bash": "deny"}
     assert snapshot.mcp_tools == ("github=gh",)
     assert snapshot.prompt_inputs.agent_profile_body == ""
     assert snapshot.prompt_inputs.adhoc_agent_payload == "Reviewer profile body."

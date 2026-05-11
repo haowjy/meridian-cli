@@ -8,6 +8,7 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.tools import ToolsField
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -84,8 +85,7 @@ class SpawnRequest(BaseModel):
     # Harness shape
     extra_args: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
-    allowed_tools: tuple[str, ...] = ()
-    disallowed_tools: tuple[str, ...] = ()
+    tools: ToolsField | None = None
 
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)

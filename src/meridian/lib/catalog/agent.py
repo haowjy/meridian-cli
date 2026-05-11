@@ -17,6 +17,7 @@ from meridian.lib.core.overrides import (
     validate_autocompact_pct_value,
     validate_autocompact_value,
 )
+from meridian.lib.tools import ToolsField, parse_tools_field
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -28,7 +29,7 @@ _MODEL_POLICY_SCALAR_OVERRIDE_KEYS = frozenset(
     {"harness", "sandbox", "approval", "effort", "autocompact", "autocompact_pct", "timeout"}
 )
 _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS = frozenset(
-    {"skills", "tools", "disallowed-tools", "mcp-tools"}
+    {"skills", "tools", "mcp-tools"}
 )
 _MODEL_POLICY_OVERRIDE_KEYS = (
     _MODEL_POLICY_SCALAR_OVERRIDE_KEYS | _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS
@@ -82,8 +83,7 @@ class AgentProfile(BaseModel):
     model: str | None
     harness: str | None = None
     skills: tuple[str, ...]
-    tools: tuple[str, ...]
-    disallowed_tools: tuple[str, ...]
+    tools: ToolsField | None
     mcp_tools: tuple[str, ...]
     sandbox: str | None
     effort: str | None
@@ -411,8 +411,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         model=str(model_value).strip() if model_value is not None else None,
         harness=str(harness_value).strip() if harness_value is not None else None,
         skills=_normalize_string_list(frontmatter.get("skills")),
-        tools=_normalize_string_list(frontmatter.get("tools")),
-        disallowed_tools=_normalize_string_list(frontmatter.get("disallowed-tools")),
+        tools=parse_tools_field(frontmatter.get("tools"), source=f"{profile_name}.tools"),
         mcp_tools=_normalize_deduplicated(frontmatter.get("mcp-tools")),
         sandbox=sandbox,
         effort=effort,

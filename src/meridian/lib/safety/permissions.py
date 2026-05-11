@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+from meridian.lib.tools import ToolAction, ToolsField, resolve_tool_action, tools_field_to_map
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ class PermissionConfig(BaseModel):
 
     sandbox: SandboxMode = "default"
     approval: ApprovalMode = "default"
-    # Optional OpenCode permission map JSON derived from explicit tool lists.
+    # Optional OpenCode permission map JSON derived from ToolsField.
     opencode_permission_override: str | None = None
 
 
@@ -122,33 +125,152 @@ def build_permission_config(
     )
 
 
-def _normalize_tool_name(raw: str) -> str:
-    """Normalize a tool name: strip Claude-style qualifiers and lowercase."""
-    return raw.split("(", 1)[0].strip().lower()
+type ClaudeToolList = tuple[str, ...]
+
+_ASK_AS_ALLOW: frozenset[ToolAction] = frozenset({"allow", "ask"})
+
+_CAPABILITY_TO_CLAUDE_TOOLS: dict[str, ClaudeToolList] = {
+    "bash": ("Bash",),
+    "edit": ("Edit", "Write"),
+    "write": ("Write",),
+    "read": ("Read",),
+    "glob": ("Glob",),
+    "grep": ("Grep",),
+    "list": ("LS",),
+    "task": (
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+    ),
+    "web": ("WebSearch", "WebFetch"),
+    "agent": ("Agent",),
+    "external_directory": (),
+    "mcp": (),
+}
 
 
-def opencode_permission_json_for_allowed_tools(allowed_tools: tuple[str, ...]) -> str:
-    """Build OpenCode permission JSON from an explicit allowed-tools tuple."""
-
-    permissions: dict[str, str] = {"*": "deny"}
-    for raw_tool in allowed_tools:
-        normalized = _normalize_tool_name(raw_tool)
-        if not normalized:
+def _dedupe(values: Iterable[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values:
+        normalized = raw.strip()
+        if not normalized or normalized in seen:
             continue
-        permissions[normalized] = "allow"
+        seen.add(normalized)
+        out.append(normalized)
+    return tuple(out)
+
+
+def _split_key(raw_key: str) -> tuple[str, str | None]:
+    key = raw_key.strip()
+    scoped_start = key.find("(")
+    if scoped_start <= 0 or not key.endswith(")"):
+        return key.lower(), None
+    return key[:scoped_start].strip().lower(), key[scoped_start + 1 : -1]
+
+
+def _claude_key_for_capability(capability: str) -> ClaudeToolList:
+    mapped = _CAPABILITY_TO_CLAUDE_TOOLS.get(capability.lower())
+    if mapped is not None:
+        return mapped
+    if not capability:
+        return ()
+    return (capability[:1].upper() + capability[1:],)
+
+
+def _expand_web_opencode_key(key: str) -> tuple[str, ...]:
+    capability, scope = _split_key(key)
+    if capability != "web":
+        return (key,)
+    if scope is None:
+        return ("websearch", "webfetch")
+    return (f"websearch({scope})", f"webfetch({scope})")
+
+
+def compile_tools_to_opencode_permission(tools: ToolsField) -> str:
+    """Compile abstract ToolsField to OPENCODE_PERMISSION JSON."""
+
+    rules = tools_field_to_map(tools)
+    permissions: dict[str, str] = {}
+    for raw_key, action in rules.items():
+        for key in _expand_web_opencode_key(raw_key):
+            permissions[key] = action
     return json.dumps(permissions, sort_keys=True, separators=(",", ":"))
 
 
-def opencode_permission_json_for_disallowed_tools(disallowed_tools: tuple[str, ...]) -> str:
-    """Build OpenCode permission JSON from an explicit disallowed-tools tuple."""
+def compile_tools_to_claude_flags(tools: ToolsField | None) -> tuple[str, ...]:
+    """Compile abstract ToolsField to Claude tool flags."""
 
-    permissions: dict[str, str] = {"*": "allow"}
-    for raw_tool in disallowed_tools:
-        normalized = _normalize_tool_name(raw_tool)
-        if not normalized:
-            continue
-        permissions[normalized] = "deny"
-    return json.dumps(permissions, sort_keys=True, separators=(",", ":"))
+    if tools is None:
+        return ()
+
+    rules = tools_field_to_map(tools)
+    default_action = rules.get("*")
+    allowed: list[str] = []
+    disallowed: list[str] = []
+    known_all_tools = _dedupe(
+        tool for tools_ in _CAPABILITY_TO_CLAUDE_TOOLS.values() for tool in tools_
+    )
+
+    if default_action == "deny":
+        for raw_key, action in rules.items():
+            if raw_key == "*" or action not in _ASK_AS_ALLOW:
+                continue
+            capability, scope = _split_key(raw_key)
+            mapped = _claude_key_for_capability(capability)
+            if scope is None:
+                allowed.extend(mapped)
+            else:
+                allowed.extend(f"{tool}({scope})" for tool in mapped)
+        if not allowed:
+            # Best-effort representation for "deny everything".
+            disallowed.extend(known_all_tools)
+    else:
+        for raw_key, action in rules.items():
+            if raw_key == "*" or action != "deny":
+                continue
+            capability, scope = _split_key(raw_key)
+            mapped = _claude_key_for_capability(capability)
+            if scope is None:
+                disallowed.extend(mapped)
+            else:
+                disallowed.extend(f"{tool}({scope})" for tool in mapped)
+
+    deduped_allowed = _dedupe(allowed)
+    deduped_disallowed = _dedupe(disallowed)
+    flags: list[str] = []
+    if deduped_allowed:
+        flags.extend(("--allowedTools", ",".join(deduped_allowed)))
+    if deduped_disallowed:
+        flags.extend(("--disallowedTools", ",".join(deduped_disallowed)))
+    return tuple(flags)
+
+
+def infer_codex_sandbox_from_tools(tools: ToolsField | None) -> SandboxMode | None:
+    """Infer Codex sandbox mode from the tools capability map."""
+
+    if tools is None:
+        return None
+
+    def is_allowish(capability: str) -> bool:
+        return resolve_tool_action(tools=tools, capability=capability) in _ASK_AS_ALLOW
+
+    if is_allowish("external_directory"):
+        return "danger-full-access"
+
+    wildcard = resolve_tool_action(tools=tools, capability="*")
+    if wildcard in _ASK_AS_ALLOW and not is_allowish("edit") and not is_allowish("bash"):
+        # Explicitly denying both write-capable tool classes from an allow-all baseline.
+        return "read-only"
+
+    if wildcard in _ASK_AS_ALLOW and is_allowish("edit") and is_allowish("bash"):
+        return "danger-full-access"
+    if is_allowish("edit") or is_allowish("bash"):
+        return "workspace-write"
+    return "read-only"
 
 
 class TieredPermissionResolver(BaseModel):
@@ -162,12 +284,12 @@ class TieredPermissionResolver(BaseModel):
         return ()
 
 
-class ExplicitToolsResolver(BaseModel):
-    """PermissionResolver backed by an explicit tool allowlist."""
+class ToolsPermissionResolver(BaseModel):
+    """PermissionResolver backed by one abstract ToolsField map."""
 
     model_config = ConfigDict(frozen=True)
 
-    allowed_tools: tuple[str, ...]
+    tools: ToolsField
     fallback_config: PermissionConfig
 
     @property
@@ -175,103 +297,21 @@ class ExplicitToolsResolver(BaseModel):
         return self.fallback_config
 
     def opencode_permission_json(self) -> str:
-        return opencode_permission_json_for_allowed_tools(self.allowed_tools)
+        return compile_tools_to_opencode_permission(self.tools)
 
     def resolve_flags(self) -> tuple[str, ...]:
-        filtered = tuple(tool for tool in self.allowed_tools if tool.strip())
-        if not filtered:
-            return ()
-        return ("--allowedTools", ",".join(filtered))
-
-
-class DisallowedToolsResolver(BaseModel):
-    """PermissionResolver backed by an explicit tool denylist."""
-
-    model_config = ConfigDict(frozen=True)
-
-    disallowed_tools: tuple[str, ...]
-    fallback_config: PermissionConfig
-
-    @property
-    def config(self) -> PermissionConfig:
-        return self.fallback_config
-
-    def opencode_permission_json(self) -> str:
-        return opencode_permission_json_for_disallowed_tools(self.disallowed_tools)
-
-    def resolve_flags(self) -> tuple[str, ...]:
-        filtered = tuple(tool for tool in self.disallowed_tools if tool.strip())
-        if not filtered:
-            return ()
-        return ("--disallowedTools", ",".join(filtered))
-
-
-class CombinedToolsResolver(BaseModel):
-    """PermissionResolver that combines allowlist and denylist controls."""
-
-    model_config = ConfigDict(frozen=True)
-
-    allowlist: ExplicitToolsResolver | None = None
-    denylist: DisallowedToolsResolver | None = None
-
-    @property
-    def config(self) -> PermissionConfig:
-        if self.allowlist is not None:
-            return self.allowlist.config
-        if self.denylist is not None:
-            return self.denylist.config
-        return PermissionConfig()
-
-    def resolve_flags(self) -> tuple[str, ...]:
-        flags: list[str] = []
-        if self.allowlist is not None:
-            flags.extend(self.allowlist.resolve_flags())
-        if self.denylist is not None:
-            flags.extend(self.denylist.resolve_flags())
-        return tuple(flags)
-
-    def opencode_permission_json(self) -> str | None:
-        if self.allowlist is not None:
-            return self.allowlist.opencode_permission_json()
-        if self.denylist is not None:
-            return self.denylist.opencode_permission_json()
-        return None
+        return compile_tools_to_claude_flags(self.tools)
 
 
 def build_permission_resolver(
     *,
-    allowed_tools: tuple[str, ...],
-    disallowed_tools: tuple[str, ...],
+    tools: ToolsField | None,
     permission_config: PermissionConfig,
-) -> (
-    TieredPermissionResolver
-    | ExplicitToolsResolver
-    | DisallowedToolsResolver
-    | CombinedToolsResolver
-):
+) -> TieredPermissionResolver | ToolsPermissionResolver:
     """Pick the right resolver: explicit tools if specified, else config-based."""
-    if disallowed_tools:
-        return CombinedToolsResolver(
-            allowlist=(
-                ExplicitToolsResolver(
-                    allowed_tools=allowed_tools,
-                    fallback_config=permission_config,
-                )
-                if allowed_tools
-                else None
-            ),
-            denylist=(
-                DisallowedToolsResolver(
-                    disallowed_tools=disallowed_tools,
-                    fallback_config=permission_config,
-                )
-                if disallowed_tools
-                else None
-            ),
-        )
-    if allowed_tools:
-        return ExplicitToolsResolver(
-            allowed_tools=allowed_tools,
+    if tools is not None:
+        return ToolsPermissionResolver(
+            tools=tools,
             fallback_config=permission_config,
         )
     return TieredPermissionResolver(config=permission_config)
@@ -280,17 +320,14 @@ def build_permission_resolver(
 def resolve_permission_pipeline(
     *,
     sandbox: str | None,
-    allowed_tools: tuple[str, ...] = (),
-    disallowed_tools: tuple[str, ...] = (),
+    tools: ToolsField | None = None,
     approval: str = "default",
     unsafe_no_permissions: bool = False,
 ) -> tuple[
     PermissionConfig,
     (
         TieredPermissionResolver
-        | ExplicitToolsResolver
-        | DisallowedToolsResolver
-        | CombinedToolsResolver
+        | ToolsPermissionResolver
         | UnsafeNoOpPermissionResolver
     ),
 ]:
@@ -300,8 +337,7 @@ def resolve_permission_pipeline(
 
     return _resolve(
         sandbox=sandbox,
-        allowed_tools=allowed_tools,
-        disallowed_tools=disallowed_tools,
+        tools=tools,
         approval=approval,
         unsafe_no_permissions=unsafe_no_permissions,
     )
