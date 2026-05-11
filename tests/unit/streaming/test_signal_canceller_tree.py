@@ -168,7 +168,7 @@ async def test_cancel_cli_spawn_returns_finalizing_when_terminal_state_never_arr
 async def test_cancel_cli_spawn_scope_aware_path_terminates_unreleased_scopes_only(
     tmp_path: Path,
 ) -> None:
-    """Scope-aware cancellation should use scope termination, mark releases, and skip released scopes."""
+    """Scope-aware cancel terminates unreleased scopes and skips released."""
     spawn_id = SpawnId("s-test")
     running_record = _make_record(runner_pid=12345)
     cancelled_record = _make_record(

@@ -96,7 +96,9 @@ def test_non_native_scope_paths_use_tree_fallback_with_expected_degraded_flag(
         _fake_terminate_tree_sync,
     )
 
-    result = terminate_scope_sync(_scope(containment, pgid=pgid), grace_seconds=5.0, reason="reaper")
+    result = terminate_scope_sync(
+        _scope(containment, pgid=pgid), grace_seconds=5.0, reason="reaper"
+    )
 
     assert calls == [
         {
