@@ -65,8 +65,10 @@ def session_scope(
             record_harness_session_id=_record_harness_session_id,
         )
     finally:
-        _stop_session(runtime_root, resolved_chat_id)
-        _reclaim_session_scopes(runtime_root, resolved_chat_id)
+        try:
+            _stop_session(runtime_root, resolved_chat_id)
+        finally:
+            _reclaim_session_scopes(runtime_root, resolved_chat_id)
 
 
 __all__ = ["ManagedSession", "session_scope"]

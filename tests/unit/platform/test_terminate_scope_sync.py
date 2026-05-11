@@ -127,6 +127,27 @@ def test_pid_tree_fallback_not_degraded(monkeypatch) -> None:
     assert result.degraded_fallback is False
 
 
+def test_exception_in_terminator_returns_degraded_result(monkeypatch) -> None:
+    """When the underlying terminator raises, terminate_scope_sync returns degraded."""
+
+    def _raising_terminate_tree_sync(**_kwargs) -> CleanupResult:
+        raise OSError("kill failed")
+
+    monkeypatch.setattr(
+        "meridian.lib.platform.process_scope.terminate_tree_sync",
+        _raising_terminate_tree_sync,
+    )
+
+    scope = _scope("pid_tree_fallback")
+    result = terminate_scope_sync(scope, grace_seconds=5.0, reason="reaper")
+
+    assert result.degraded_fallback is True
+    assert result.skip_reason == "termination_exception"
+    assert result.scope_id == "test"
+    assert result.root_pid == 100
+    assert result.reason == "reaper"
+
+
 def test_unknown_containment_falls_back_degraded(monkeypatch) -> None:
     """Unknown containment → terminate_tree_sync with degraded_fallback=True."""
     calls: list[dict] = []

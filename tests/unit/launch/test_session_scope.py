@@ -84,6 +84,36 @@ def test_both_called_on_exception(tmp_path: Path) -> None:
     )
 
 
+def test_reclaim_called_even_when_stop_raises(tmp_path: Path) -> None:
+    """_reclaim_session_scopes must run even if _stop_session raises."""
+    reclaim_calls: list[str] = []
+
+    def fake_start(*_args: object, **_kwargs: object) -> str:
+        return "chat-fail"
+
+    def fake_stop(_root: Path, _chat_id: str) -> None:
+        raise RuntimeError("stop failed")
+
+    def fake_reclaim(_root: Path, _chat_id: str) -> object:
+        reclaim_calls.append("reclaim")
+        return []
+
+    with pytest.raises(RuntimeError, match="stop failed"), session_scope(
+        runtime_root=tmp_path,
+        metadata=_metadata(),
+        request=_request(),
+        harness_session_id="h-4",
+        _start_session=fake_start,
+        _stop_session=fake_stop,
+        _reclaim_session_scopes=fake_reclaim,
+    ):
+        pass
+
+    assert reclaim_calls == ["reclaim"], (
+        f"reclaim must be called even when stop raises, got: {reclaim_calls}"
+    )
+
+
 def test_reclaim_receives_resolved_chat_id(tmp_path: Path) -> None:
     """_reclaim_session_scopes is called with the chat_id returned by _start_session."""
     received_chat_ids: list[str] = []
