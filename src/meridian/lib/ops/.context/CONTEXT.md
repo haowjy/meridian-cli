@@ -75,6 +75,30 @@ For the REST path, `SpawnApplicationService.prepare_spawn()` enforces:
 argv — it populates `cli_command` for dry-run display. All actual execution paths
 use `SPEC_ONLY`. Do not set `REQUIRED` on execution paths.
 
+### ops/init_ops.py — Init Orchestration
+
+`init_ops.py` is the single entry point for all `meridian init --add` and
+`meridian init --link` invocations. `run_init_flow()` sequences:
+
+1. `config_init_sync()` — bootstrap `meridian.toml` (idempotent)
+2. `mars init` — create `mars.toml` if absent
+3. `mars add <sources>` — skipped when no sources requested
+4. `mars link <target>` — once per resolved target
+5. `maybe_set_primary_agent()` — write `primary.agent` to `meridian.toml` if the
+   package declares one and the config field is currently unset
+
+**`_run_mars_json()` helper** consolidates all mars subprocess invocations.
+Takes `command: str` and `args: list[str]`, passes `--json`, returns parsed output.
+`run_mars_add_json()` is a typed wrapper on top that also calls `_scan_mars_content()`.
+
+**`_scan_mars_content()` uses filesystem scanning, not JSON model parsing.**
+It discovers content by walking `.mars/` subdirectories — skills are stored as
+directories (containing `SKILL.md`), agents as files, so the scan uses
+`f.is_file() or f.is_dir()`. Returns `dict[str, list[str]]` keyed by content
+type (e.g., `{"agents": [...], "skills": [...]}`). This avoids coupling Python
+to the mars JSON report shape — new content types (hooks, MCP servers, etc.) are
+automatically counted without Python model changes.
+
 ## Contracts
 
 ### OperationRuntime
