@@ -2,7 +2,7 @@
 
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
-## [Unreleased]
+## [0.1.0] - 2026-05-12
 ### Fixed
 - Process reaper escape — spawned processes (Vite, Codex) no longer persist as orphans after session exit. Sync cleanup paths now use containment-aware dispatch (`terminate_scope_sync()`) instead of PID-tree fallback that missed reparented processes. Session-exit triggers cleanup of session-owned scopes. Dead `reclaim_stale_session_scopes()` deleted.
 
