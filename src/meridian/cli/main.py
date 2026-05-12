@@ -458,29 +458,6 @@ def _run_primary_launch(
     )
 
 
-def _run_init_link_flow_json(
-    *,
-    executable: str,
-    mars_mode: str,
-    mars_args: Sequence[str],
-    link: str,
-    config_result: BaseModel,
-) -> None:
-    from meridian.cli import mars_passthrough
-
-    return mars_passthrough.run_init_link_flow_json(
-        executable=executable,
-        mars_mode=mars_mode,
-        mars_args=mars_args,
-        link=link,
-        config_result=config_result,
-        emit=emit,
-        parse_request=mars_passthrough.parse_mars_passthrough,
-        execute_request=_execute_mars_passthrough,
-        decode_values=mars_passthrough.decode_json_values,
-    )
-
-
 @app.command(name="init")
 def init_alias(
     path: Annotated[
@@ -488,43 +465,76 @@ def init_alias(
         Parameter(name="path", help="Optional project path to initialize."),
     ] = None,
     link: Annotated[
-        str | None,
+        list[str] | None,
         Parameter(
             name="--link",
             help="Link .mars/ into tool directory after config bootstrap (for example .claude).",
         ),
     ] = None,
+    add: Annotated[
+        list[str] | None,
+        Parameter(
+            name="--add",
+            help="Package specifier(s) to install (e.g. owner/repo). Repeatable.",
+        ),
+    ] = None,
+    yes: Annotated[
+        bool,
+        Parameter(
+            name=["-y", "--yes"],
+            help="Suppress all confirmation prompts.",
+        ),
+    ] = False,
 ) -> None:
     """Initialize meridian in the current project or provided path."""
 
     from meridian.cli import mars_passthrough
     from meridian.lib.ops.config import ConfigInitInput, config_init_sync
 
-    project_root = mars_passthrough.resolve_init_project_root(path)
-    result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
-    if link is None:
+    if add:
+        from meridian.lib.ops.init_ops import run_init_flow
+
+        project_root = mars_passthrough.resolve_init_project_root(path)
+        output_format = get_global_options().output.format
+        result = run_init_flow(
+            project_root=project_root,
+            add_sources=add,
+            link_targets=link,
+            yes=yes,
+            output_format=output_format,
+        )
         emit(result)
         return
 
-    mars_mode, mars_args = mars_passthrough.resolve_init_link_mars_command(project_root, link)
-    output_format = get_global_options().output.format
-    if output_format == "json":
-        executable = mars_passthrough.resolve_mars_executable()
-        if executable is None:
-            print(
-                "error: Failed to execute 'mars'. Install meridian with dependencies and retry.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        _run_init_link_flow_json(
-            executable=executable,
-            mars_mode=mars_mode,
-            mars_args=mars_args,
-            link=link,
-            config_result=result,
-        )
+    # Bare init (no --add)
+    project_root = mars_passthrough.resolve_init_project_root(path)
+    result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+
+    if not link:
+        emit(result)
         return
-    _run_mars_passthrough(mars_args, output_format=output_format)
+
+    # init + --link (without --add): passthrough to mars per target
+    output_format = get_global_options().output.format
+    executable = mars_passthrough.resolve_mars_executable()
+    if executable is None:
+        print(
+            "error: Failed to execute 'mars'. Install meridian with dependencies and retry.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    for link_target in link:
+        _, mars_args = mars_passthrough.resolve_init_link_mars_command(project_root, link_target)
+        request = mars_passthrough.parse_mars_passthrough(
+            mars_args, output_format=output_format, executable=executable
+        )
+        link_result = _execute_mars_passthrough(request)
+        if request.wants_json and link_result.stdout_text:
+            sys.stdout.write(link_result.stdout_text)
+        if link_result.stderr_text:
+            sys.stderr.write(link_result.stderr_text)
+        if link_result.returncode != 0:
+            raise SystemExit(link_result.returncode)
 
 
 def _first_command_token(argv: Sequence[str]) -> str | None:
