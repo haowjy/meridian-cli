@@ -70,17 +70,13 @@ def test_is_process_alive_returns_true_on_access_denied(monkeypatch) -> None:
     assert liveness.is_process_alive(123) is True
 
 
-def test_is_spawn_genuinely_active_returns_false_when_record_missing(
-    tmp_path, monkeypatch
-) -> None:
+def test_is_spawn_genuinely_active_returns_false_when_record_missing(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("meridian.lib.state.spawn_store.get_spawn", lambda *_args: None)
 
     assert liveness.is_spawn_genuinely_active(tmp_path, "p1") is False
 
 
-def test_is_spawn_genuinely_active_returns_false_for_terminal_status(
-    tmp_path, monkeypatch
-) -> None:
+def test_is_spawn_genuinely_active_returns_false_for_terminal_status(tmp_path, monkeypatch) -> None:
     record = SimpleNamespace(status="failed", runner_pid=os.getpid())
     monkeypatch.setattr("meridian.lib.state.spawn_store.get_spawn", lambda *_args: record)
     monkeypatch.setattr(
@@ -140,9 +136,7 @@ def test_is_spawn_genuinely_active_uses_fresh_heartbeat_when_runner_pid_is_dead(
     assert liveness.is_spawn_genuinely_active(tmp_path, "p1") is True
 
 
-def test_is_spawn_genuinely_active_returns_false_for_stale_heartbeat(
-    tmp_path, monkeypatch
-) -> None:
+def test_is_spawn_genuinely_active_returns_false_for_stale_heartbeat(tmp_path, monkeypatch) -> None:
     record = SimpleNamespace(status="running", runner_pid=None)
     heartbeat = tmp_path / "spawns" / "p1" / "heartbeat"
     heartbeat.parent.mkdir(parents=True, exist_ok=True)

@@ -4,34 +4,114 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
     from meridian.lib.config.settings import AgentOverlayConfig, MeridianConfig
-    from meridian.lib.launch.types import LaunchRequest
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
-_AUTOCOMPACT_MIN = 1
-_AUTOCOMPACT_MAX = 100
+_AUTOCOMPACT_TOKEN_MIN = 1000
+_AUTOCOMPACT_PCT_MIN = 1
+_AUTOCOMPACT_PCT_MAX = 100
 _ROUTING_OVERRIDE_FIELDS = frozenset({"model", "harness", "agent"})
 type ExecutionPolicyField = Literal[
-    "effort", "sandbox", "approval", "autocompact", "timeout"
+    "effort", "sandbox", "approval", "autocompact", "autocompact_pct", "timeout"
 ]
 EXECUTION_POLICY_FIELDS: tuple[ExecutionPolicyField, ...] = (
     "effort",
     "sandbox",
     "approval",
     "autocompact",
+    "autocompact_pct",
     "timeout",
 )
 _EXECUTION_POLICY_FIELD_SET = frozenset(EXECUTION_POLICY_FIELDS)
 
 KNOWN_EFFORT_VALUES = frozenset({"low", "medium", "high", "xhigh"})
+
+
+def _validate_autocompact_value(v: object) -> object:
+    """Shared validator: reject bool, enforce minimum token count."""
+    if isinstance(v, bool):
+        raise ValueError("autocompact must be an integer, not a boolean")
+    if v is None:
+        return None
+    if not isinstance(v, int) or v < _AUTOCOMPACT_TOKEN_MIN:
+        raise ValueError(f"expected int >= {_AUTOCOMPACT_TOKEN_MIN} (token count), got {v!r}.")
+    return v
+
+
+def _validate_autocompact_pct_value(v: object) -> object:
+    """Shared validator: reject bool, enforce 1-100 range."""
+    if isinstance(v, bool):
+        raise ValueError("autocompact_pct must be an integer, not a boolean")
+    if v is None:
+        return None
+    if not isinstance(v, int) or not (_AUTOCOMPACT_PCT_MIN <= v <= _AUTOCOMPACT_PCT_MAX):
+        raise ValueError(
+            f"expected int between {_AUTOCOMPACT_PCT_MIN} and {_AUTOCOMPACT_PCT_MAX}, got {v!r}."
+        )
+    return v
+
+
+AutocompactValue = Annotated[int | None, BeforeValidator(_validate_autocompact_value)]
+AutocompactPctValue = Annotated[int | None, BeforeValidator(_validate_autocompact_pct_value)]
 KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "yolo"})
+
+
+def _validate_effort_value(v: object) -> object:
+    """Shared validator: normalize and check effort against known values."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"effort must be a string, got {type(v).__name__}")
+    normalized = v.strip()
+    if not normalized:
+        return None
+    if normalized not in KNOWN_EFFORT_VALUES:
+        raise ValueError(f"expected one of {sorted(KNOWN_EFFORT_VALUES)}, got {v!r}")
+    return normalized
+
+
+def _validate_approval_value(v: object) -> object:
+    """Shared validator: normalize and check approval against known values."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"approval must be a string, got {type(v).__name__}")
+    normalized = v.strip()
+    if not normalized:
+        return None
+    if normalized not in KNOWN_APPROVAL_VALUES:
+        raise ValueError(f"expected one of {sorted(KNOWN_APPROVAL_VALUES)}, got {v!r}")
+    return normalized
+
+
+EffortValue = Annotated[str | None, BeforeValidator(_validate_effort_value)]
+ApprovalValue = Annotated[str | None, BeforeValidator(_validate_approval_value)]
+
+# Public aliases for external consumers (avoids reportPrivateUsage pyright warnings)
+validate_autocompact_value = _validate_autocompact_value
+validate_autocompact_pct_value = _validate_autocompact_pct_value
+validate_effort_value = _validate_effort_value
+validate_approval_value = _validate_approval_value
+
+
+RUNTIME_OVERRIDE_ENV_BY_FIELD: dict[str, str] = {
+    "model": "MERIDIAN_MODEL",
+    "agent": "MERIDIAN_AGENT",
+    "effort": "MERIDIAN_EFFORT",
+    "sandbox": "MERIDIAN_SANDBOX",
+    "approval": "MERIDIAN_APPROVAL",
+    "autocompact": "MERIDIAN_AUTOCOMPACT",
+    "autocompact_pct": "MERIDIAN_AUTOCOMPACT_PCT",
+    "timeout": "MERIDIAN_TIMEOUT",
+}
+RUNTIME_OVERRIDE_ENV_VARS = frozenset(RUNTIME_OVERRIDE_ENV_BY_FIELD.values())
 
 
 def _parse_env_int(raw_value: str, *, env_name: str) -> int:
@@ -108,10 +188,11 @@ class RuntimeOverrides(BaseModel):
     model: str | None = None
     harness: str | None = None
     agent: str | None = None
-    effort: str | None = None
+    effort: EffortValue = None
     sandbox: str | None = None
-    approval: str | None = None
-    autocompact: int | None = None
+    approval: ApprovalValue = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     timeout: float | None = None
 
     def routing_scope(self) -> RuntimeOverrides:
@@ -149,43 +230,16 @@ class RuntimeOverrides(BaseModel):
 
         return self.execution_policy_scope()
 
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value)
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                "Invalid runtime override 'effort': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        return normalized
+    def to_env(self) -> dict[str, str]:
+        """Render captured runtime overrides back to MERIDIAN_* env vars."""
 
-    @field_validator("approval")
-    @classmethod
-    def _validate_approval(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value)
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                "Invalid runtime override 'approval': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if isinstance(value, bool) or not (_AUTOCOMPACT_MIN <= value <= _AUTOCOMPACT_MAX):
-            raise ValueError(
-                "Invalid runtime override 'autocompact': expected int between "
-                f"{_AUTOCOMPACT_MIN} and {_AUTOCOMPACT_MAX}, got {value!r}."
-            )
-        return value
+        rendered: dict[str, str] = {}
+        for field_name, env_name in RUNTIME_OVERRIDE_ENV_BY_FIELD.items():
+            value = getattr(self, field_name)
+            if value is None:
+                continue
+            rendered[env_name] = str(value)
+        return rendered
 
     @field_validator("timeout")
     @classmethod
@@ -202,6 +256,7 @@ class RuntimeOverrides(BaseModel):
     @classmethod
     def from_env(cls) -> RuntimeOverrides:
         autocompact_raw = _read_env_string("MERIDIAN_AUTOCOMPACT")
+        autocompact_pct_raw = _read_env_string("MERIDIAN_AUTOCOMPACT_PCT")
         timeout_raw = _read_env_string("MERIDIAN_TIMEOUT")
         return cls(
             model=_read_env_string("MERIDIAN_MODEL"),
@@ -213,6 +268,11 @@ class RuntimeOverrides(BaseModel):
             autocompact=(
                 _parse_env_int(autocompact_raw, env_name="MERIDIAN_AUTOCOMPACT")
                 if autocompact_raw is not None
+                else None
+            ),
+            autocompact_pct=(
+                _parse_env_int(autocompact_pct_raw, env_name="MERIDIAN_AUTOCOMPACT_PCT")
+                if autocompact_pct_raw is not None
                 else None
             ),
             timeout=(
@@ -234,6 +294,7 @@ class RuntimeOverrides(BaseModel):
             sandbox=_normalize_optional_string(profile.sandbox),
             approval=_normalize_optional_string(profile.approval),
             autocompact=profile.autocompact,
+            autocompact_pct=getattr(profile, "autocompact_pct", None),
         )
 
     @classmethod
@@ -246,6 +307,7 @@ class RuntimeOverrides(BaseModel):
         return cls(
             effort=normalized_effort,
             autocompact=alias_entry.default_autocompact,
+            autocompact_pct=getattr(alias_entry, "default_autocompact_pct", None),
         )
 
     @classmethod
@@ -261,6 +323,7 @@ class RuntimeOverrides(BaseModel):
             sandbox=primary.sandbox,
             approval=primary.approval,
             autocompact=primary.autocompact,
+            autocompact_pct=primary.autocompact_pct,
             timeout=primary.timeout,
         )
 
@@ -303,6 +366,7 @@ class RuntimeOverrides(BaseModel):
             approval=overlay.approval,
             sandbox=overlay.sandbox,
             autocompact=overlay.autocompact,
+            autocompact_pct=overlay.autocompact_pct,
         )
 
     @classmethod
@@ -315,20 +379,8 @@ class RuntimeOverrides(BaseModel):
             sandbox=_normalize_optional_string(payload.sandbox),
             approval=_normalize_optional_string(payload.approval),
             autocompact=payload.autocompact,
+            autocompact_pct=payload.autocompact_pct,
             timeout=payload.timeout,
-        )
-
-    @classmethod
-    def from_launch_request(cls, request: LaunchRequest) -> RuntimeOverrides:
-        return cls(
-            model=_normalize_optional_string(request.model),
-            harness=_normalize_optional_string(request.harness),
-            agent=_normalize_optional_string(request.agent),
-            effort=_normalize_optional_string(request.effort),
-            sandbox=_normalize_optional_string(request.sandbox),
-            approval=request.approval if request.approval != "default" else None,
-            autocompact=request.autocompact,
-            timeout=request.timeout,
         )
 
 
@@ -349,8 +401,16 @@ __all__ = [
     "EXECUTION_POLICY_FIELDS",
     "KNOWN_APPROVAL_VALUES",
     "KNOWN_EFFORT_VALUES",
+    "ApprovalValue",
+    "AutocompactPctValue",
+    "AutocompactValue",
+    "EffortValue",
     "ExecutionPolicyField",
     "RuntimeOverrides",
     "normalize_execution_policy_fields",
     "resolve",
+    "validate_approval_value",
+    "validate_autocompact_pct_value",
+    "validate_autocompact_value",
+    "validate_effort_value",
 ]

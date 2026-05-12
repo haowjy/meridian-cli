@@ -4,9 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.launch.process.ports import LaunchedProcess
+from meridian.lib.launch.process.ports import (
+    LaunchedProcess,
+    ProcessBackendId,
+    ProcessSurfaceMode,
+)
 from meridian.lib.launch.process.pty_launcher import PtyProcessLauncher
-from meridian.lib.launch.process.runner import select_process_launcher
+from meridian.lib.launch.process.runner import (
+    select_process_backend,
+    select_process_launcher,
+)
 from meridian.lib.launch.process.subprocess_launcher import SubprocessProcessLauncher
 from meridian.lib.launch.process.windows_launcher import WindowsConsoleLauncher
 
@@ -28,6 +35,13 @@ def test_select_process_launcher_uses_windows_console_launcher(
 
     assert isinstance(launcher, WindowsConsoleLauncher)
 
+    selected = select_process_backend(None)
+    assert isinstance(selected.launcher, WindowsConsoleLauncher)
+    assert selected.contract.backend_id is ProcessBackendId.WINDOWS_CONSOLE
+    assert selected.contract.surface_mode is ProcessSurfaceMode.NATIVE_INHERIT
+    assert selected.contract.platform_family == "windows"
+    assert selected.contract.captures_output_to_artifact is False
+
 
 @pytest.mark.unit
 def test_select_process_launcher_with_capture_uses_subprocess_on_windows(
@@ -47,6 +61,12 @@ def test_select_process_launcher_with_capture_uses_subprocess_on_windows(
 
     assert isinstance(launcher, SubprocessProcessLauncher)
 
+    selected = select_process_backend(tmp_path / "output.jsonl")
+    assert isinstance(selected.launcher, SubprocessProcessLauncher)
+    assert selected.contract.backend_id is ProcessBackendId.SUBPROCESS
+    assert selected.contract.surface_mode is ProcessSurfaceMode.PIPE_CAPTURE
+    assert selected.contract.captures_output_to_artifact is True
+
 
 @pytest.mark.unit
 def test_select_process_launcher_non_windows_uses_posix_pty_when_available(
@@ -65,6 +85,12 @@ def test_select_process_launcher_non_windows_uses_posix_pty_when_available(
 
     assert isinstance(launcher, PtyProcessLauncher)
 
+    selected = select_process_backend(None)
+    assert isinstance(selected.launcher, PtyProcessLauncher)
+    assert selected.contract.backend_id is ProcessBackendId.PTY
+    assert selected.contract.surface_mode is ProcessSurfaceMode.PTY_MEDIATED
+    assert selected.contract.platform_family == "posix"
+
 
 @pytest.mark.unit
 def test_select_process_launcher_non_windows_falls_back_to_subprocess(
@@ -82,6 +108,12 @@ def test_select_process_launcher_non_windows_falls_back_to_subprocess(
     launcher = select_process_launcher(None)
 
     assert isinstance(launcher, SubprocessProcessLauncher)
+
+    selected = select_process_backend(None)
+    assert isinstance(selected.launcher, SubprocessProcessLauncher)
+    assert selected.contract.backend_id is ProcessBackendId.SUBPROCESS
+    assert selected.contract.surface_mode is ProcessSurfaceMode.NATIVE_INHERIT
+    assert selected.contract.platform_family == "portable"
 
 
 @pytest.mark.unit
@@ -124,6 +156,6 @@ def test_windows_console_launcher_forces_console_inheritance(
         on_child_started=child_started.append,
     )
 
-    assert captured["output_log_path"] is None
+    assert captured["output_log_path"] == tmp_path / "history.jsonl"
     assert child_started == [456]
     assert result == expected

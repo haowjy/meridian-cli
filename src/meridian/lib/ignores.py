@@ -23,11 +23,7 @@ def load_ignore_patterns(root: Path, filename: str) -> pathspec.PathSpec[Any] | 
         return None
 
     lines = ignore_file.read_text(encoding="utf-8", errors="replace").splitlines()
-    patterns = [
-        line.strip()
-        for line in lines
-        if line.strip() and not line.strip().startswith("#")
-    ]
+    patterns = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
     if not patterns:
         return None
     return cast(

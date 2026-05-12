@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -90,3 +91,15 @@ def test_hook_result_construction_and_asdict_shape() -> None:
         "stderr": None,
     }
 
+
+def test_plugin_hook_context_from_roots_normalizes_paths() -> None:
+    context = HookContext.from_roots(
+        project_root=Path("/repo"),
+        runtime_root=Path("/repo/.meridian"),
+        event_name="work.done",
+        event_id=uuid4(),
+        timestamp="2026-04-20T12:00:00+00:00",
+    )
+
+    assert context.project_root == "/repo"
+    assert context.runtime_root == "/repo/.meridian"

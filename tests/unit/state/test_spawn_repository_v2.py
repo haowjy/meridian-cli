@@ -13,7 +13,11 @@ from meridian.lib.state.spawn.repository import (
 
 
 def _record(
-    spawn_id: str = "p1", *, status: str = "running", prompt: str | None = "hello"
+    spawn_id: str = "p1",
+    *,
+    status: str = "running",
+    prompt: str | None = "hello",
+    goal: str | None = "ship persistence",
 ) -> SpawnRecord:
     return SpawnRecord(
         id=spawn_id,
@@ -28,6 +32,7 @@ def _record(
         kind="child",
         desc="test spawn",
         work_id="work-1",
+        goal=goal,
         harness_session_id="session-1",
         execution_cwd="/tmp/project",
         claude_config_dir=None,

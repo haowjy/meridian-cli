@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Any, cast
 
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.launch.streaming.decision import TerminalEventOutcome
+from meridian.lib.harness.semantics import TerminalEventOutcome
 
 _TERMINAL_EVENT_GRACE_SECONDS = 0.5
 

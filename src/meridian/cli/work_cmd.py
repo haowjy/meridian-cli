@@ -66,13 +66,36 @@ def _work_start(
         str,
         Parameter(name=["--description", "--desc"], help="Optional work item description."),
     ] = "",
+    goal: Annotated[
+        str | None,
+        Parameter(name="--goal", help="Optional overarching work goal."),
+    ] = None,
+    worktree: Annotated[
+        bool | None,
+        Parameter(name="--worktree", help="Create a git worktree for this work item."),
+    ] = None,
+    no_worktree: Annotated[
+        bool,
+        Parameter(name="--no-worktree", help="Skip worktree creation even if default is set."),
+    ] = False,
 ) -> None:
+    # Resolve explicit worktree intent from the two flags.
+    # --no-worktree wins over --worktree if both are passed (degenerate case).
+    worktree_intent: bool | None
+    if no_worktree:
+        worktree_intent = False
+    elif worktree:
+        worktree_intent = True
+    else:
+        worktree_intent = None  # defer to config default
     emit(
         work_start_sync(
             WorkStartInput(
                 label=label,
                 description=description,
+                goal=goal,
                 chat_id=_runtime_chat_id(),
+                worktree=worktree_intent,
             )
         )
     )
@@ -150,6 +173,10 @@ def _work_update(
         str | None,
         Parameter(name=["--description", "--desc"], help="Updated work item description."),
     ] = None,
+    goal: Annotated[
+        str | None,
+        Parameter(name="--goal", help="Updated work item goal."),
+    ] = None,
 ) -> None:
     emit(
         work_update_sync(
@@ -157,6 +184,7 @@ def _work_update(
                 work_id=work_id,
                 status=status,
                 description=description,
+                goal=goal,
             )
         )
     )
@@ -168,8 +196,15 @@ def _work_done(
         str,
         Parameter(help="Work item id."),
     ],
+    force: Annotated[
+        bool,
+        Parameter(
+            name="--force",
+            help="Remove worktree even if the branch has unpushed commits.",
+        ),
+    ] = False,
 ) -> None:
-    emit(work_done_sync(WorkDoneInput(work_id=work_id)))
+    emit(work_done_sync(WorkDoneInput(work_id=work_id, force=force)))
 
 
 def _work_delete(

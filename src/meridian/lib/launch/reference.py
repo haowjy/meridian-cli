@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.state.paths import resolve_fs_dir
+from meridian.lib.state.paths import resolve_kb_dir
 
 _TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
@@ -23,42 +23,44 @@ class TemplateVariableError(ValueError):
 # -----------------------------------------------------------------------------
 
 #: Directories to skip completely during tree traversal.
-BLOCKED_DIRS: frozenset[str] = frozenset({
-    ".git",
-    ".hg",
-    ".svn",
-    "__pycache__",
-    "node_modules",
-    ".venv",
-    "venv",
-    ".tox",
-    ".nox",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".meridian",
-    ".mars",
-    ".agents",
-    ".next",
-    ".nuxt",
-    ".turbo",
-    ".cache",
-    ".gradle",
-    "target",
-    "coverage",
-    ".hypothesis",
-    ".parcel-cache",
-    "out",
-    "bin",
-    "obj",
-    "DerivedData",
-    "Pods",
-    ".idea",
-    ".vscode",
-    "dist",
-    "build",
-    "htmlcov",
-})
+BLOCKED_DIRS: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".meridian",
+        ".mars",
+        ".agents",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        ".cache",
+        ".gradle",
+        "target",
+        "coverage",
+        ".hypothesis",
+        ".parcel-cache",
+        "out",
+        "bin",
+        "obj",
+        "DerivedData",
+        "Pods",
+        ".idea",
+        ".vscode",
+        "dist",
+        "build",
+        "htmlcov",
+    }
+)
 
 #: Suffixes to skip in both tree rendering and file listing.
 BLOCKED_SUFFIXES: tuple[str, ...] = (".egg-info", ".pyc", ".pyo")
@@ -438,7 +440,7 @@ def load_reference_items(
             relative = raw_path[1:]
             if not relative:
                 raise ValueError("Reference path after '@' must not be empty.")
-            resolved = (resolve_fs_dir(root) / relative).resolve()
+            resolved = (resolve_kb_dir(root) / relative).resolve()
         else:
             path_obj = raw_path if isinstance(raw_path, Path) else Path(raw_path)
             expanded = path_obj.expanduser()
@@ -482,7 +484,7 @@ def validate_reference_paths(
             relative = raw_path[1:]
             if not relative:
                 raise ValueError("Reference path after '@' must not be empty.")
-            resolved = (resolve_fs_dir(root) / relative).resolve()
+            resolved = (resolve_kb_dir(root) / relative).resolve()
         else:
             path_obj = raw_path if isinstance(raw_path, Path) else Path(raw_path)
             expanded = path_obj.expanduser()

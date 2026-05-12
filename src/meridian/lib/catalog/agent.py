@@ -8,12 +8,16 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
-    RuntimeOverrides,
+    AutocompactPctValue,
+    AutocompactValue,
+    validate_autocompact_pct_value,
+    validate_autocompact_value,
 )
+from meridian.lib.tools import ToolsField, parse_tools_field
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -22,10 +26,10 @@ logger.addHandler(logging.NullHandler())
 _KNOWN_EFFORT_VALUES = KNOWN_EFFORT_VALUES
 _KNOWN_APPROVAL_VALUES = KNOWN_APPROVAL_VALUES
 _MODEL_POLICY_SCALAR_OVERRIDE_KEYS = frozenset(
-    {"harness", "sandbox", "approval", "effort", "autocompact", "timeout"}
+    {"harness", "sandbox", "approval", "effort", "autocompact", "autocompact_pct", "timeout"}
 )
 _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS = frozenset(
-    {"skills", "tools", "disallowed-tools", "mcp-tools"}
+    {"skills", "tools", "mcp-tools"}
 )
 _MODEL_POLICY_OVERRIDE_KEYS = (
     _MODEL_POLICY_SCALAR_OVERRIDE_KEYS | _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS
@@ -36,7 +40,8 @@ class AgentModelEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
     effort: str | None = None
-    autocompact: int | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
 
     @field_validator("effort")
     @classmethod
@@ -45,24 +50,8 @@ class AgentModelEntry(BaseModel):
             return None
         normalized = value.strip()
         if normalized not in _KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}"
-            )
+            raise ValueError(f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}")
         return normalized
-
-    @field_validator("autocompact", mode="before")
-    @classmethod
-    def _reject_bool_autocompact(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("autocompact must be an integer, not a boolean")
-        return value
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        return RuntimeOverrides(autocompact=value).autocompact
 
 
 class ModelPolicyRule(BaseModel):
@@ -94,13 +83,13 @@ class AgentProfile(BaseModel):
     model: str | None
     harness: str | None = None
     skills: tuple[str, ...]
-    tools: tuple[str, ...]
-    disallowed_tools: tuple[str, ...]
+    tools: ToolsField | None
     mcp_tools: tuple[str, ...]
     sandbox: str | None
     effort: str | None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     mode: Literal["primary", "subagent"] = "subagent"
     model_policies: tuple[ModelPolicyRule, ...] = ()
     models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
@@ -328,6 +317,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     effort_value = frontmatter.get("effort")
     approval_value = frontmatter.get("approval")
     autocompact_value = frontmatter.get("autocompact")
+    autocompact_pct_value = frontmatter.get("autocompact_pct")
     mode_value = frontmatter.get("mode")
     model_policies_value = frontmatter.get("model-policies")
     models_value = frontmatter.get("models")
@@ -355,24 +345,44 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     autocompact: int | None = None
     if autocompact_value is not None:
         try:
-            autocompact = int(str(autocompact_value))
+            raw_autocompact = int(str(autocompact_value))
         except (TypeError, ValueError):
             logger.warning(
                 "Agent profile '%s' has invalid autocompact '%s': expected int.",
                 profile_name,
                 autocompact_value,
             )
-            autocompact = None
-        if autocompact is not None:
+        else:
             try:
-                autocompact = RuntimeOverrides(autocompact=autocompact).autocompact
+                autocompact = cast("int | None", validate_autocompact_value(raw_autocompact))
             except ValueError:
                 logger.warning(
                     "Agent profile '%s' has autocompact %d outside valid range.",
                     profile_name,
-                    autocompact,
+                    raw_autocompact,
                 )
-                autocompact = None
+
+    autocompact_pct: int | None = None
+    if autocompact_pct_value is not None:
+        try:
+            raw_autocompact_pct = int(str(autocompact_pct_value))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Agent profile '%s' has invalid autocompact_pct '%s': expected int.",
+                profile_name,
+                autocompact_pct_value,
+            )
+        else:
+            try:
+                autocompact_pct = cast(
+                    "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
+                )
+            except ValueError:
+                logger.warning(
+                    "Agent profile '%s' has autocompact_pct %d outside valid range (1-100).",
+                    profile_name,
+                    raw_autocompact_pct,
+                )
 
     models = _parse_model_overrides(models_value, profile_name=profile_name)
     model_policies = _parse_model_policies(
@@ -388,11 +398,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
             "expected 'primary' or 'subagent'."
         )
 
-    if (
-        models_value is not None
-        and model_policies_value is None
-        and fanout_value is None
-    ):
+    if models_value is not None and model_policies_value is None and fanout_value is None:
         logger.warning(
             "Agent profile '%s' uses legacy models without model-policies or fanout; "
             "models is deprecated for fan-out display and policy overrides.",
@@ -405,13 +411,13 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         model=str(model_value).strip() if model_value is not None else None,
         harness=str(harness_value).strip() if harness_value is not None else None,
         skills=_normalize_string_list(frontmatter.get("skills")),
-        tools=_normalize_string_list(frontmatter.get("tools")),
-        disallowed_tools=_normalize_string_list(frontmatter.get("disallowed-tools")),
+        tools=parse_tools_field(frontmatter.get("tools"), source=f"{profile_name}.tools"),
         mcp_tools=_normalize_deduplicated(frontmatter.get("mcp-tools")),
         sandbox=sandbox,
         effort=effort,
         approval=approval,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         mode=cast("Literal['primary', 'subagent']", mode),
         model_policies=model_policies,
         models=models,
@@ -434,7 +440,7 @@ def scan_agent_profiles(
 ) -> list[AgentProfile]:
     """Parse all agent profiles from configured search directories."""
 
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
     _ = search_paths
     directories = search_dirs if search_dirs is not None else _agent_search_dirs(root)
     profiles: list[AgentProfile] = []
@@ -475,7 +481,7 @@ def load_agent_profile(
     if not normalized:
         raise ValueError("Agent profile name must not be empty.")
 
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
 
     for profile in scan_agent_profiles(project_root=root, search_paths=search_paths):
         if profile.path.stem == normalized or profile.name == normalized:

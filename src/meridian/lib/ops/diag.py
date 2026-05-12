@@ -6,7 +6,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
@@ -15,16 +14,13 @@ from meridian.lib.ops.config_surface import build_config_surface
 from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.ops.pruning import (
     OrphanProjectDir,
-    StaleClaudeOverlay,
     StaleSpawnArtifact,
     prune_orphan_project_dirs,
-    prune_stale_claude_overlays,
     prune_stale_spawn_artifacts,
     scan_orphan_project_dirs,
-    scan_stale_claude_overlays,
     scan_stale_spawn_artifacts,
 )
-from meridian.lib.ops.runtime import resolve_runtime_root
+from meridian.lib.ops.runtime import resolve_project_authority, resolve_runtime_authority_for_write
 from meridian.lib.state import spawn_store
 from meridian.lib.state.session_store import cleanup_stale_sessions
 from meridian.lib.state.user_paths import get_user_home
@@ -42,6 +38,7 @@ class DoctorInput(BaseModel):
     project_root: str | None = None
     prune: bool = False
     global_: bool = False
+    kill_orphans: bool = False
 
 
 class TelemetryCleanupStats(BaseModel):
@@ -61,18 +58,20 @@ class DoctorOutput(BaseModel):
 
     ok: bool
     project_root: str
+    project_root_source: str
+    runtime_root: str
+    runtime_root_source: str
     runs_checked: int
     agents_dir: str
     skills_dir: str
     orphan_project_dirs: tuple[OrphanProjectDir, ...] = ()
-    stale_claude_overlays: tuple[StaleClaudeOverlay, ...] = ()
     stale_spawn_artifacts: tuple[StaleSpawnArtifact, ...] = ()
     pruned_orphan_dirs: int = 0
-    pruned_claude_overlays: int = 0
     pruned_spawn_artifacts: int = 0
     telemetry_cleanup: TelemetryCleanupStats | None = None
     warnings: tuple["DoctorWarning", ...] = ()
     repaired: tuple[str, ...] = ()
+    killed_orphan_spawns: tuple[str, ...] = ()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         """Key-value health check output for text output mode."""
@@ -82,15 +81,17 @@ class DoctorOutput(BaseModel):
         pairs: list[tuple[str, str | None]] = [
             ("ok", status),
             ("project_root", self.project_root),
+            ("project_root_source", self.project_root_source),
+            ("runtime_root", self.runtime_root),
+            ("runtime_root_source", self.runtime_root_source),
             ("runs_checked", str(self.runs_checked)),
             ("agents_dir", self.agents_dir),
             ("skills_dir", self.skills_dir),
             ("orphan_project_dirs", str(len(self.orphan_project_dirs))),
-            ("stale_claude_overlays", str(len(self.stale_claude_overlays))),
             ("stale_spawn_artifacts", str(len(self.stale_spawn_artifacts))),
             ("pruned_orphan_dirs", str(self.pruned_orphan_dirs)),
-            ("pruned_claude_overlays", str(self.pruned_claude_overlays)),
             ("pruned_spawn_artifacts", str(self.pruned_spawn_artifacts)),
+            ("killed_orphan_spawns", ", ".join(self.killed_orphan_spawns) or "none"),
             ("repaired", ", ".join(self.repaired) if self.repaired else "none"),
         ]
         if self.telemetry_cleanup is not None:
@@ -130,47 +131,128 @@ def _telemetry_cleanup_stats(stats: RetentionStats) -> TelemetryCleanupStats:
     )
 
 
+def _check_worktree_health(
+    project_state_dir: Path,
+    project_root: Path,
+) -> list[DoctorWarning]:
+    """WT-66: Detect orphaned or inconsistent worktree state in active work items.
+
+    Checks:
+    - ``worktree_pending=True`` without a path → interrupted create.
+    - ``worktree_path`` set but directory absent → worktree removed externally.
+    - Worktree directories on disk with no matching work item → orphaned.
+    """
+    from meridian.lib.ops.worktree_ops import resolve_main_repo_root, worktree_exists
+    from meridian.lib.state import work_store
+
+    warnings: list[DoctorWarning] = []
+    items, _ = work_store.list_work_items(project_state_dir)
+
+    for item in items:
+        if item.worktree_pending:
+            warnings.append(
+                DoctorWarning(
+                    code="worktree.pending",
+                    message=(
+                        f"Work item '{item.name}' has worktree_pending=True. "
+                        f"Run `meridian work start {item.name} --worktree` to retry."
+                    ),
+                    payload={"work_id": item.name},
+                )
+            )
+        if item.worktree_path and not Path(item.worktree_path).is_dir():
+            warnings.append(
+                DoctorWarning(
+                    code="worktree.missing",
+                    message=(
+                        f"Work item '{item.name}' references worktree at "
+                        f"'{item.worktree_path}' but the directory does not exist."
+                    ),
+                    payload={"work_id": item.name, "worktree_path": item.worktree_path},
+                )
+            )
+
+    # Check for orphaned worktrees on disk with no matching work item.
+    main_root = resolve_main_repo_root(project_root)
+    if main_root is not None:
+        from meridian.lib.config.settings import load_config  # local to avoid circular import
+
+        cfg = load_config(project_root)
+        if cfg.work.worktree_base is not None:
+            _wt_base = Path(cfg.work.worktree_base)
+            if not _wt_base.is_absolute():
+                _wt_base = main_root / _wt_base
+            worktrees_base = _wt_base.resolve()
+        else:
+            worktrees_base = main_root.parent / f"{main_root.name}.worktrees"
+        if worktrees_base.is_dir():
+            known_paths = {item.worktree_path for item in items if item.worktree_path}
+            for child in worktrees_base.iterdir():
+                if child.is_dir():
+                    resolved_child = str(child.resolve())
+                    if resolved_child not in known_paths and worktree_exists(child):
+                        warnings.append(
+                            DoctorWarning(
+                                code="worktree.orphaned",
+                                message=(
+                                    f"Orphaned worktree at '{resolved_child}' has no matching "
+                                    f"work item. "
+                                    f"Clean up with: git worktree remove {resolved_child}"
+                                ),
+                                payload={"worktree_path": resolved_child},
+                            )
+                        )
+
+    return warnings
+
+
 def _repair_stale_session_locks(project_root: Path) -> int:
-    cleanup = cleanup_stale_sessions(resolve_runtime_root(project_root))
+    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
+    if runtime_root is None:
+        raise ValueError("Doctor lock repair requires a runtime root.")
+    cleanup = cleanup_stale_sessions(runtime_root)
     return len(cleanup.cleaned_ids)
 
 
-def _repair_orphan_runs(project_root: Path) -> int:
+def _repair_orphan_runs(project_root: Path) -> tuple[int, tuple[str, ...]]:
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = resolve_runtime_root(project_root)
+    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
+    if runtime_root is None:
+        raise ValueError("Doctor orphan-run repair requires a runtime root.")
     spawns = spawn_store.list_spawns(runtime_root)
-    running_before = sum(1 for s in spawns if is_active_spawn_status(s.status))
-    reconciled = reconcile_spawns(runtime_root, spawns)
-    running_after = sum(1 for s in reconciled if is_active_spawn_status(s.status))
-    return running_before - running_after
+    running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
+    reconciled = reconcile_spawns(project_root, runtime_root, spawns)
+    running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
+    reconciled_orphans = tuple(sorted(running_before - running_after))
+    return len(reconciled_orphans), reconciled_orphans
 
 
 def doctor_sync(payload: DoctorInput) -> DoctorOutput:
-    explicit_root = (
-        Path(payload.project_root).expanduser().resolve() if payload.project_root else None
-    )
-    surface = build_config_surface(resolve_project_root(explicit_root))
+    authority = resolve_project_authority(payload.project_root)
+    surface = build_config_surface(authority)
     project_root = surface.project_root
     ensure_runtime_state_bootstrap_sync(project_root)
-    runtime_root = resolve_runtime_root(project_root)
+    runtime_authority = resolve_runtime_authority_for_write(project_root)
+    runtime_root = runtime_authority.runtime_root
+    if runtime_root is None:
+        raise ValueError("Doctor runtime authority did not resolve a runtime root.")
     retention_days = surface.resolved_config.state.retention_days
     now = time.time()
 
     repaired: list[str] = []
+    killed_orphan_spawns: tuple[str, ...] = ()
     stale_locks = _repair_stale_session_locks(project_root)
     if stale_locks > 0:
         repaired.append("stale_session_locks")
 
-    if is_root_side_effect_process():
-        orphan_runs = _repair_orphan_runs(project_root)
+    if payload.kill_orphans and is_root_side_effect_process():
+        orphan_runs, killed_orphan_spawns = _repair_orphan_runs(project_root)
         if orphan_runs > 0:
             repaired.append("orphan_runs")
 
     spawns = spawn_store.list_spawns(runtime_root)
-    active_spawn_ids = {
-        spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)
-    }
+    active_spawn_ids = {spawn.id for spawn in spawns if is_active_spawn_status(spawn.status)}
     orphan_project_dirs: list[OrphanProjectDir] = []
     if payload.global_:
         if not is_root_side_effect_process():
@@ -179,12 +261,6 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 "Run 'meridian doctor --global' from a top-level shell, not from a nested spawn."
             )
         orphan_project_dirs = scan_orphan_project_dirs(get_user_home(), retention_days, now)
-    stale_claude_overlays = scan_stale_claude_overlays(
-        runtime_root,
-        retention_days,
-        active_spawn_ids,
-        now,
-    )
     stale_spawn_artifacts = scan_stale_spawn_artifacts(
         runtime_root,
         retention_days,
@@ -193,19 +269,12 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     )
 
     pruned_orphan_dirs = 0
-    pruned_claude_overlays = 0
     pruned_spawn_artifacts = 0
     if payload.prune:
         pruned_orphan_dirs = prune_orphan_project_dirs(orphan_project_dirs)
-        pruned_claude_overlays = prune_stale_claude_overlays(
-            stale_claude_overlays,
-            runtime_root=runtime_root,
-        )
         pruned_spawn_artifacts = prune_stale_spawn_artifacts(stale_spawn_artifacts)
         if pruned_orphan_dirs > 0:
             repaired.append("orphan_project_dirs")
-        if pruned_claude_overlays > 0:
-            repaired.append("claude_overlays")
         if pruned_spawn_artifacts > 0:
             repaired.append("spawn_artifacts")
 
@@ -233,6 +302,7 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     skills_dirs = [skills_dir] if skills_dir.is_dir() else []
 
     warnings: list[DoctorWarning] = []
+    warnings.extend(_check_worktree_health(authority.project_state_dir, project_root))
     if surface.warning is not None:
         warnings.append(
             DoctorWarning(
@@ -265,20 +335,6 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
                 payload={
                     "spawn_ids": [item.spawn_id for item in stale_spawn_artifacts],
                     "paths": [item.path for item in stale_spawn_artifacts],
-                },
-            )
-        )
-    if not payload.prune and stale_claude_overlays:
-        warnings.append(
-            DoctorWarning(
-                code="stale_claude_overlays",
-                message=(
-                    f"{len(stale_claude_overlays)} stale Claude overlay dir(s) would be "
-                    "materialized and pruned with --prune."
-                ),
-                payload={
-                    "spawn_ids": [item.spawn_id for item in stale_claude_overlays],
-                    "paths": [item.path for item in stale_claude_overlays],
                 },
             )
         )
@@ -337,7 +393,10 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
         warnings.append(
             DoctorWarning(
                 code="updates_check_failed",
-                message="Could not check for dependency updates (`mars outdated --json` failed).",
+                message=(
+                    "Could not check for dependency updates "
+                    "(`meridian mars outdated --json` failed)."
+                ),
             )
         )
     elif availability.count > 0:
@@ -355,11 +414,16 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
 
     running = [row.id for row in spawns if is_active_spawn_status(row.status)]
     if running:
+        reconciliation_mode = (
+            "after orphan-kill reconciliation"
+            if payload.kill_orphans
+            else "without orphan-kill reconciliation"
+        )
         warnings.append(
             DoctorWarning(
                 code="live_active_spawns_remain",
                 message=(
-                    "Live active spawns remain after reconciliation and were not pruned: "
+                    f"Live active spawns remain {reconciliation_mode} and were not pruned: "
                     + ", ".join(running)
                 ),
                 payload={"spawn_ids": running},
@@ -369,18 +433,20 @@ def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     return DoctorOutput(
         ok=not warnings,
         project_root=project_root.as_posix(),
+        project_root_source=surface.authority.project_root_source,
+        runtime_root=runtime_root.as_posix(),
+        runtime_root_source=runtime_authority.runtime_root_source or "unresolved",
         runs_checked=len(spawns),
         agents_dir=agents_dir.as_posix(),
         skills_dir=skills_dir.as_posix(),
         orphan_project_dirs=tuple(orphan_project_dirs),
-        stale_claude_overlays=tuple(stale_claude_overlays),
         stale_spawn_artifacts=tuple(stale_spawn_artifacts),
         pruned_orphan_dirs=pruned_orphan_dirs,
-        pruned_claude_overlays=pruned_claude_overlays,
         pruned_spawn_artifacts=pruned_spawn_artifacts,
         telemetry_cleanup=telemetry_cleanup,
         warnings=tuple(warnings),
         repaired=tuple(sorted(set(repaired))),
+        killed_orphan_spawns=killed_orphan_spawns,
     )
 
 

@@ -57,3 +57,17 @@ def write_agent(
     lines.append("---")
     lines.extend(["", body if body is not None else f"# {name}"])
     return _write(project_root / ".mars" / "agents" / f"{name}.md", "\n".join(lines) + "\n")
+
+
+def write_minimal_mars_config(project_root: Path) -> Path:
+    """Write a minimal mars.toml config for tests that need project setup.
+
+    Used in tests that exercise model selection, launch resolution, and similar
+    flows that scan the project root for a mars config.
+    """
+    mars_toml = project_root / "mars.toml"
+    mars_toml.write_text(
+        '[settings]\ntargets = [".claude"]\n',
+        encoding="utf-8",
+    )
+    return mars_toml

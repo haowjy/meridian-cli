@@ -6,28 +6,33 @@ import json
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from meridian.lib.config.project_paths import ProjectConfigPaths
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.connections.base import ConnectionConfig
-from meridian.lib.harness.ids import HarnessId
 from meridian.lib.launch.composition import ComposedLaunchContent, PromptDocument
 from meridian.lib.launch.context import (
     build_child_runtime_env_overrides,
     materialize_launch_artifacts,
     prepare_prompt_payload,
 )
-from meridian.lib.launch.launch_types import CompositionWarning, ResolvedLaunchSpec
+from meridian.lib.launch.launch_types import (
+    CompositionWarning,
+    ResolvedLaunchSpec,
+    TerminalSurfaceMode,
+)
 from meridian.lib.launch.policies import ResolvedLaunchPolicy
 from meridian.lib.launch.prompt import compose_skill_prompt_documents
 from meridian.lib.launch.resolve import format_missing_skills_warning, resolve_profile_path
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.tools import ToolsField
 
-CHAT_POLICY_SNAPSHOT_VERSION = 1
+CHAT_POLICY_SNAPSHOT_VERSION = 3
 
 
 class ChatPromptDocumentSnapshot(BaseModel):
@@ -72,23 +77,38 @@ class ChatPolicySnapshot(BaseModel):
     canonical_model_id: str = ""
     harness: str
     harness_provenance: str = ""
+    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
-    effort: str | None = None
-    sandbox: str | None = None
-    approval: str | None = None
-    autocompact: int | None = None
+    execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
 
     agent_name: str | None = None
     agent_profile_path: str | None = None
     skills: tuple[str, ...] = ()
     prompt_inputs: ChatPromptInputsSnapshot
 
-    allowed_tools: tuple[str, ...] = ()
-    disallowed_tools: tuple[str, ...] = ()
+    tools: ToolsField | None = None
     mcp_tools: tuple[str, ...] = ()
 
     warnings: tuple[CompositionWarning, ...] = ()
     field_provenance: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_flat_policy_fields(cls, value: object) -> object:
+        """Migrate v1 flat policy fields to the execution_policy carrier."""
+
+        if not isinstance(value, dict):
+            return value
+        payload = cast("dict[str, Any]", value).copy()
+        if "execution_policy" in payload:
+            return payload
+        policy_fields: dict[str, Any] = {}
+        for field_name in ("effort", "sandbox", "approval", "autocompact", "autocompact_pct"):
+            if field_name in payload:
+                policy_fields[field_name] = payload.pop(field_name)
+        if policy_fields:
+            payload["execution_policy"] = policy_fields
+        return payload
 
 
 @dataclass(frozen=True)
@@ -166,16 +186,13 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         harness_provenance=(
             model_selection.harness_provenance if model_selection is not None else ""
         ),
-        effort=policy.resolved_overrides.effort,
-        sandbox=policy.resolved_overrides.sandbox,
-        approval=policy.resolved_overrides.approval,
-        autocompact=policy.resolved_overrides.autocompact,
+        terminal_surface_mode=policy.terminal_surface_mode,
+        execution_policy=policy.execution_policy,
         agent_name=profile.name if profile is not None else None,
         agent_profile_path=resolve_profile_path(profile),
         skills=policy.resolved_skills.skill_names,
         prompt_inputs=prompt_inputs,
-        allowed_tools=profile.tools if profile is not None else (),
-        disallowed_tools=profile.disallowed_tools if profile is not None else (),
+        tools=profile.tools if profile is not None else None,
         mcp_tools=profile.mcp_tools if profile is not None else (),
         warnings=tuple(warnings),
         field_provenance={
@@ -187,6 +204,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
                 "approval": policy.field_provenance.approval_source.value,
                 "sandbox": policy.field_provenance.sandbox_source.value,
                 "autocompact": policy.field_provenance.autocompact_source.value,
+                "autocompact_pct": policy.field_provenance.autocompact_pct_source.value,
                 "timeout": policy.field_provenance.timeout_source.value,
             }.items()
             if value and value != "unset"
@@ -214,10 +232,10 @@ def read_chat_policy_snapshot(path: Path) -> ChatPolicySnapshot:
     if not isinstance(payload, dict):
         raise ValueError(f"invalid chat policy snapshot: {path}")
     snapshot = ChatPolicySnapshot.model_validate(payload)
-    if snapshot.schema_version != CHAT_POLICY_SNAPSHOT_VERSION:
+    if snapshot.schema_version > CHAT_POLICY_SNAPSHOT_VERSION:
         raise ValueError(
             f"unsupported chat policy snapshot schema version {snapshot.schema_version}; "
-            f"expected {CHAT_POLICY_SNAPSHOT_VERSION}"
+            f"expected <= {CHAT_POLICY_SNAPSHOT_VERSION}"
         )
     return snapshot
 
@@ -252,20 +270,20 @@ def build_chat_backend_launch_plan(
         adhoc_agent_payload=snapshot.prompt_inputs.adhoc_agent_payload,
         projected_content=projected,
     )
+    ep = snapshot.execution_policy
     materialized = materialize_launch_artifacts(
         harness=adapter,
         prompt=projected.user_turn_content.strip() or initial_prompt,
         model=snapshot.canonical_model_id,
-        effort=snapshot.effort,
+        effort=ep.effort,
         skills=snapshot.skills,
         agent=snapshot.agent_name,
         prompt_payload=prompt_payload,
         project_root=project_root.as_posix(),
         mcp_tools=snapshot.mcp_tools,
-        sandbox=snapshot.sandbox,
-        allowed_tools=snapshot.allowed_tools,
-        disallowed_tools=snapshot.disallowed_tools,
-        approval=snapshot.approval,
+        sandbox=ep.sandbox,
+        tools=snapshot.tools,
+        approval=ep.approval,
     )
     runtime_env = build_child_runtime_env_overrides(
         project_paths=ProjectConfigPaths(
@@ -277,8 +295,8 @@ def build_chat_backend_launch_plan(
     )
     runtime_env["MERIDIAN_HARNESS"] = snapshot.harness
     autocompact_supported = _supports_launch_autocompact(harness_id)
-    if snapshot.autocompact is not None and autocompact_supported:
-        runtime_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(snapshot.autocompact)
+    if ep.autocompact is not None and autocompact_supported:
+        runtime_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(ep.autocompact)
 
     config = ConnectionConfig(
         spawn_id=spawn_id,
@@ -296,8 +314,10 @@ def build_chat_backend_launch_plan(
         "harness_provenance": snapshot.harness_provenance,
         "policy_snapshot_id": snapshot.snapshot_id,
     }
-    if snapshot.autocompact is not None and autocompact_supported:
-        configured_payload["autocompact"] = snapshot.autocompact
+    if ep.autocompact is not None and autocompact_supported:
+        configured_payload["autocompact"] = ep.autocompact
+    if ep.autocompact_pct is not None:
+        configured_payload["autocompact_pct"] = ep.autocompact_pct
     return ChatBackendLaunchPlan(
         harness_id=config.harness_id,
         connection_config=config,

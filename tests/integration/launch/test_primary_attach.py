@@ -9,16 +9,15 @@ from typing import cast
 
 import pytest
 
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
     HarnessEvent,
     ObserverEndpoint,
 )
-from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import primary_attach as primary_attach_module
 from meridian.lib.launch.process.ports import ChildStartedHook, LaunchedProcess, ProcessLauncher
 from meridian.lib.launch.process.primary_attach import (
@@ -40,8 +39,8 @@ def _build_config(*, spawn_id: SpawnId, project_root: Path, ws_port: int = 0) ->
     )
 
 
-def _build_spec() -> CodexLaunchSpec:
-    return CodexLaunchSpec(
+def _build_spec() -> ResolvedLaunchSpec:
+    return ResolvedLaunchSpec(
         prompt="hello",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         interactive=True,
@@ -101,7 +100,7 @@ class FakeManagedConnection:
     async def start(
         self,
         config: ConnectionConfig,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         _ = spec
         self.start_calls += 1
@@ -125,7 +124,7 @@ class FakeManagedConnection:
     async def start_observer(
         self,
         config: ConnectionConfig,
-        spec: CodexLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         self.started_primary_observer_mode = True
         await self.start(config, spec)
@@ -318,11 +317,16 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
 
     rows = _read_history_lines(spawn_dir)
     assert [row["event_type"] for row in rows] == ["turn/started", "turn/completed"]
+    assert [row["turn_id"] for row in rows] == ["t1", "t1"]
     for row in rows:
         assert isinstance(row["payload"], dict)
         assert row["harness_id"] == "codex"
         assert isinstance(row["seq"], int)
         assert isinstance(row["byte_offset"], int)
+        assert row["item_id"] is None
+        assert row["request_id"] is None
+        assert row["interrupt_epoch"] == 0
+        assert row["stale_after_interrupt"] is False
 
 
 @pytest.mark.asyncio

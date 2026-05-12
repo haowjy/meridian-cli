@@ -4,21 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import signal
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
+    ExecutionTerminalOutcome,
+    resolve_execution_terminal_outcome,
+)
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     LifecycleEvent,
     LifecycleObserver,
     LifecycleObserverTier,
     SpawnFailure,
+    SpawnFailureCategory,
     next_spawn_sequence,
     notify_observers,
     register_observer,
@@ -27,6 +32,7 @@ from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.context import LaunchContext, build_launch_context
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.paths import RuntimePaths
@@ -60,8 +66,6 @@ class CancelOutcome:
     harness: str | None = None
 
 
-
-
 @dataclass(frozen=True)
 class CompleteSpawnOutcome:
     """Surface-neutral result of a spawn finalization attempt."""
@@ -77,6 +81,14 @@ class CompleteSpawnOutcome:
     def accepted(self) -> bool:
         """True when finalization was written (first OR replacement)."""
         return self.wrote
+
+
+@dataclass(frozen=True)
+class CompleteExecutionOutcome:
+    """Lifecycle-owned terminal resolution plus persisted completion result."""
+
+    resolved: ExecutionTerminalOutcome
+    completion: CompleteSpawnOutcome
 
 
 @dataclass(frozen=True)
@@ -99,6 +111,24 @@ class PreparedSpawn:
     resolved_agent: str | None
     resolved_harness: str
     work_id: str | None
+
+
+@dataclass(frozen=True)
+class PrepareSpawnRequest:
+    """Typed request for surface-neutral spawn preparation."""
+
+    request: SpawnRequest
+    runtime: LaunchRuntime
+    harness_registry: HarnessRegistry
+    chat_id: str | None = None
+    parent_id: str | None = None
+    kind: str = "child"
+    desc: str | None = None
+    work_id: str | None = None
+    launch_mode: LaunchMode | None = None
+    runner_pid: int | None = None
+    initial_status: SpawnStatus = "queued"
+    debug_tracer: DebugTracer | None = None
 
 
 class KeyedLockRegistry:
@@ -158,6 +188,11 @@ class SpawnApplicationService:
         """Return the runtime root directory."""
         return self._runtime_root
 
+    @property
+    def lifecycle(self) -> SpawnLifecycleService:
+        """Return the lifecycle authority backing this application service."""
+        return self._lifecycle
+
     def register_observer(
         self,
         observer: LifecycleObserver,
@@ -215,11 +250,134 @@ class SpawnApplicationService:
         try:
             data = json.loads(sentinel_path.read_text(encoding="utf-8"))
             data["ts"] = datetime.fromisoformat(data["ts"])
+            category = data.get("category")
+            if isinstance(category, str):
+                data["category"] = SpawnFailureCategory(category)
             return SpawnFailure(**data)
         except Exception:
             return None
 
     # ---- Spawn Preparation (SEAM-1, SEAM-2, SEAM-3) ----
+
+    async def prepare(self, payload: PrepareSpawnRequest) -> PreparedSpawn:
+        """Resolve launch context, create spawn row, and project ConnectionConfig.
+
+        SEAM-1: No spawn row is created until build_launch_context() succeeds.
+        SEAM-2: Row metadata always reflects resolved values (never "unknown").
+        SEAM-3: ConnectionConfig is projected from LaunchContext.
+        SEAM-ID.1: ID allocation happens atomically with row creation.
+
+        Raises on resolution failure. No spawn row exists on failure.
+        On success, row exists with resolved metadata.
+        """
+        # Generate a placeholder spawn_id for the first launch-context build.
+        # Resolution can fail here; no spawn row or lifecycle event is emitted.
+        temp_spawn_id = f"pending-{id(payload.request)}"
+
+        # SEAM-1: Build launch context FIRST. This can fail.
+        # If it fails, no spawn row exists.
+        launch_ctx = await asyncio.to_thread(
+            build_launch_context,
+            spawn_id=temp_spawn_id,
+            request=payload.request,
+            runtime=payload.runtime,
+            harness_registry=payload.harness_registry,
+        )
+
+        # Extract resolved metadata from launch context
+        resolved_request = launch_ctx.resolved_request
+        resolved_model = (resolved_request.model or "").strip()
+        resolved_harness = (resolved_request.harness or "").strip()
+        resolved_agent = (resolved_request.agent or "").strip() or None
+
+        # Validate we have required fields
+        if not resolved_harness:
+            raise ValueError("Harness resolution failed - harness is required")
+
+        # Resolve work_id
+        effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
+
+        # Reserve the final ID and rebuild launch context before lifecycle.start
+        # so MERIDIAN_SPAWN_ID and related env_overrides are final, while a
+        # second-build failure still leaves no row and emits no ghost events.
+        final_spawn_id = await asyncio.to_thread(
+            spawn_store.reserve_spawn_id,
+            self._runtime_root,
+        )
+        launch_ctx = await asyncio.to_thread(
+            build_launch_context,
+            spawn_id=str(final_spawn_id),
+            request=payload.request,
+            runtime=payload.runtime,
+            harness_registry=payload.harness_registry,
+        )
+        resolved_request = launch_ctx.resolved_request
+        resolved_model = (resolved_request.model or "").strip()
+        resolved_harness = (resolved_request.harness or "").strip()
+        resolved_agent = (resolved_request.agent or "").strip() or None
+        if not resolved_harness:
+            raise ValueError("Harness resolution failed - harness is required")
+        effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
+        start_metadata = SpawnStartMetadata(
+            desc=payload.desc,
+            work_id=effective_work_id,
+            goal=getattr(resolved_request, "goal", None),
+        )
+
+        # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
+        # after launch context composition succeeds. Failed composition leaves no
+        # spawn row and emits no spawn.created hook/telemetry.
+        prepare_session_metadata = PrimarySessionMetadata(
+            harness=resolved_harness,
+            model=resolved_model,
+            agent=resolved_agent or "",
+            agent_path=resolved_request.agent_metadata.get("session_agent_path") or "",
+            skills=resolved_request.skills,
+            skill_paths=resolved_request.skill_paths,
+        )
+        persisted_spawn_id = SpawnId(
+            await asyncio.to_thread(
+                self._lifecycle.start,
+                chat_id=payload.chat_id or "",
+                parent_id=payload.parent_id,
+                session_metadata=prepare_session_metadata,
+                kind=payload.kind,
+                prompt=resolved_request.prompt,
+                metadata=start_metadata,
+                spawn_id=str(final_spawn_id),
+                harness_session_id=resolved_request.session.requested_harness_session_id,
+                execution_cwd=str(launch_ctx.binding.child_cwd),
+                launch_mode=payload.launch_mode,
+                runner_pid=payload.runner_pid,
+                status=payload.initial_status,
+            )
+        )
+        if persisted_spawn_id != final_spawn_id:
+            raise RuntimeError(
+                f"Reserved spawn ID {final_spawn_id} but persisted {persisted_spawn_id}"
+            )
+
+        # SEAM-3: Project ConnectionConfig from LaunchContext
+        harness_id = HarnessId(resolved_harness)
+        connection_config = ConnectionConfig(
+            spawn_id=final_spawn_id,
+            harness_id=harness_id,
+            prompt=launch_ctx.resolved_request.prompt,
+            project_root=launch_ctx.binding.child_cwd,
+            env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
+            system=launch_ctx.binding.run_params.appended_system_prompt,
+            debug_tracer=payload.debug_tracer,
+        )
+
+        return PreparedSpawn(
+            spawn_id=final_spawn_id,
+            launch_context=launch_ctx,
+            connection_config=connection_config,
+            resolved_model=resolved_model,
+            resolved_agent=resolved_agent,
+            resolved_harness=resolved_harness,
+            work_id=effective_work_id,
+        )
 
     async def prepare_spawn(
         self,
@@ -237,116 +395,23 @@ class SpawnApplicationService:
         initial_status: SpawnStatus = "queued",
         debug_tracer: DebugTracer | None = None,
     ) -> PreparedSpawn:
-        """Resolve launch context, create spawn row, project ConnectionConfig.
+        """Compatibility wrapper over the typed ``prepare`` request API."""
 
-        SEAM-1: No spawn row is created until build_launch_context() succeeds.
-        SEAM-2: Row metadata always reflects resolved values (never "unknown").
-        SEAM-3: ConnectionConfig is projected from LaunchContext.
-        SEAM-ID.1: ID allocation happens atomically with row creation.
-
-        Raises on resolution failure. No spawn row exists on failure.
-        On success, row exists with resolved metadata.
-        """
-        # Generate a placeholder spawn_id for the first launch-context build.
-        # Resolution can fail here; no spawn row or lifecycle event is emitted.
-        temp_spawn_id = f"pending-{id(request)}"
-
-        # SEAM-1: Build launch context FIRST. This can fail.
-        # If it fails, no spawn row exists.
-        launch_ctx = await asyncio.to_thread(
-            build_launch_context,
-            spawn_id=temp_spawn_id,
-            request=request,
-            runtime=runtime,
-            harness_registry=harness_registry,
-        )
-
-        # Extract resolved metadata from launch context
-        resolved_request = launch_ctx.resolved_request
-        resolved_model = (resolved_request.model or "").strip()
-        resolved_harness = (resolved_request.harness or "").strip()
-        resolved_agent = (resolved_request.agent or "").strip() or None
-
-        # Validate we have required fields
-        if not resolved_harness:
-            raise ValueError("Harness resolution failed - harness is required")
-
-        # Resolve work_id
-        effective_work_id = (work_id or launch_ctx.work_id or "").strip() or None
-
-        # Reserve the final ID and rebuild launch context before lifecycle.start
-        # so MERIDIAN_SPAWN_ID and related env_overrides are final, while a
-        # second-build failure still leaves no row and emits no ghost events.
-        final_spawn_id = await asyncio.to_thread(
-            spawn_store.reserve_spawn_id,
-            self._runtime_root,
-        )
-        launch_ctx = await asyncio.to_thread(
-            build_launch_context,
-            spawn_id=str(final_spawn_id),
-            request=request,
-            runtime=runtime,
-            harness_registry=harness_registry,
-        )
-        resolved_request = launch_ctx.resolved_request
-        resolved_model = (resolved_request.model or "").strip()
-        resolved_harness = (resolved_request.harness or "").strip()
-        resolved_agent = (resolved_request.agent or "").strip() or None
-        if not resolved_harness:
-            raise ValueError("Harness resolution failed - harness is required")
-        effective_work_id = (work_id or launch_ctx.work_id or "").strip() or None
-
-        # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
-        # after launch context composition succeeds. Failed composition leaves no
-        # spawn row and emits no spawn.created hook/telemetry.
-        persisted_spawn_id = SpawnId(
-            await asyncio.to_thread(
-                self._lifecycle.start,
-                chat_id=chat_id or "",
+        return await self.prepare(
+            PrepareSpawnRequest(
+                request=request,
+                runtime=runtime,
+                harness_registry=harness_registry,
+                chat_id=chat_id,
                 parent_id=parent_id,
-                model=resolved_model,
-                agent=resolved_agent or "",
-                agent_path=resolved_request.agent_metadata.get("session_agent_path"),
-                skills=resolved_request.skills,
-                skill_paths=resolved_request.skill_paths,
-                harness=resolved_harness,
                 kind=kind,
-                prompt=resolved_request.prompt,
                 desc=desc,
-                work_id=effective_work_id,
-                spawn_id=str(final_spawn_id),
-                harness_session_id=resolved_request.session.requested_harness_session_id,
-                execution_cwd=str(launch_ctx.child_cwd),
+                work_id=work_id,
                 launch_mode=launch_mode,
                 runner_pid=runner_pid,
-                status=initial_status,
+                initial_status=initial_status,
+                debug_tracer=debug_tracer,
             )
-        )
-        if persisted_spawn_id != final_spawn_id:
-            raise RuntimeError(
-                f"Reserved spawn ID {final_spawn_id} but persisted {persisted_spawn_id}"
-            )
-
-        # SEAM-3: Project ConnectionConfig from LaunchContext
-        harness_id = HarnessId(resolved_harness)
-        connection_config = ConnectionConfig(
-            spawn_id=final_spawn_id,
-            harness_id=harness_id,
-            prompt=launch_ctx.resolved_request.prompt,
-            project_root=launch_ctx.child_cwd,
-            env_overrides=dict(launch_ctx.env_overrides),
-            system=launch_ctx.run_params.appended_system_prompt,
-            debug_tracer=debug_tracer,
-        )
-
-        return PreparedSpawn(
-            spawn_id=final_spawn_id,
-            launch_context=launch_ctx,
-            connection_config=connection_config,
-            resolved_model=resolved_model,
-            resolved_agent=resolved_agent,
-            resolved_harness=resolved_harness,
-            work_id=effective_work_id,
         )
 
     # ---- Spawn Operations ----
@@ -417,10 +482,27 @@ class SpawnApplicationService:
 
         if not _is_managed_primary_candidate(record):
             return
-        _terminate_worker_pid_fallback(
-            record.worker_pid,
-            started_epoch=_started_at_epoch(record.started_at),
-        )
+        from meridian.lib.core.process_cleanup import cancel_managed_primary
+        from meridian.lib.state.process_scope_projection import read_scopes_from_disk
+
+        scopes = read_scopes_from_disk(self._runtime_root, SpawnId(str(spawn_id)))
+        if scopes:
+            # Phase-3 scope records: use sequenced managed-primary teardown.
+            cancel_managed_primary(
+                self._runtime_root,
+                record,
+                grace_seconds=5.0,
+            )
+        else:
+            # Legacy fallback: no scope records, use worker_pid termination.
+            from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+
+            terminate_spawn_scopes(
+                self._runtime_root,
+                record,
+                reason="cancel",
+                grace_seconds=5.0,
+            )
 
     async def _wait_for_terminal(
         self,
@@ -451,9 +533,8 @@ class SpawnApplicationService:
 
         started_epoch = _started_at_epoch(record.started_at)
         launcher_pid = primary_metadata.launcher_pid
-        launcher_alive = (
-            launcher_pid is not None
-            and is_process_alive(launcher_pid, created_after_epoch=started_epoch)
+        launcher_alive = launcher_pid is not None and is_process_alive(
+            launcher_pid, created_after_epoch=started_epoch
         )
         if launcher_alive:
             terminate_managed_primary_processes(
@@ -516,6 +597,18 @@ class SpawnApplicationService:
                 )
                 latest = self.get_spawn(spawn_id) or latest
 
+        # Best-effort: release any Phase-3 scope records so the reaper does not
+        # re-terminate processes that the metadata path already signalled.
+        latest_for_cleanup = self.get_spawn(spawn_id) or latest
+        from meridian.lib.core.process_cleanup import cancel_managed_primary
+
+        await asyncio.to_thread(
+            cancel_managed_primary,
+            self._runtime_root,
+            latest_for_cleanup,
+            grace_seconds=0.0,
+        )
+
         return _cancel_outcome_from_record(
             str(spawn_id),
             latest,
@@ -530,7 +623,8 @@ class SpawnApplicationService:
         *,
         origin: str,
         duration_secs: float | None = None,
-        **metrics: object,
+        usage: TokenUsage | None = None,
+        error: str | None = None,
     ) -> CompleteSpawnOutcome:
         """Finalize a spawn through the shared idempotent terminal seam.
 
@@ -545,8 +639,35 @@ class SpawnApplicationService:
                 exit_code,
                 origin=origin,
                 duration_secs=duration_secs,
-                **metrics,
+                usage=usage,
+                error=error,
             )
+
+    async def complete_execution(
+        self,
+        spawn_id: SpawnId,
+        facts: ExecutionTerminalFacts,
+        *,
+        origin: str,
+        duration_secs: float | None = None,
+        usage: TokenUsage | None = None,
+    ) -> CompleteExecutionOutcome:
+        """Resolve execution facts, then finalize through the lifecycle authority."""
+
+        resolved = resolve_execution_terminal_outcome(facts)
+        completion = await self.complete_spawn(
+            spawn_id,
+            resolved.status,
+            resolved.exit_code,
+            origin=origin,
+            duration_secs=duration_secs,
+            usage=usage,
+            error=resolved.error,
+        )
+        return CompleteExecutionOutcome(
+            resolved=resolved,
+            completion=completion,
+        )
 
     async def _complete_spawn_unlocked(
         self,
@@ -556,7 +677,8 @@ class SpawnApplicationService:
         *,
         origin: str,
         duration_secs: float | None = None,
-        **metrics: object,
+        usage: TokenUsage | None = None,
+        error: str | None = None,
     ) -> CompleteSpawnOutcome:
         record = self.get_spawn(spawn_id)
         if record is None:
@@ -580,8 +702,19 @@ class SpawnApplicationService:
             exit_code,
             origin=cast("SpawnOrigin", origin),
             duration_secs=duration_secs,
-            **cast("dict[str, Any]", metrics),
+            usage=usage,
+            error=error,
         )
+        if outcome.wrote:
+            from meridian.lib.state.process_scope_projection import (
+                mark_scope_released,
+                read_scopes_from_disk,
+            )
+
+            scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
+            for scope in scopes:
+                if scope.owner_policy == "spawn_owned":
+                    mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
         return CompleteSpawnOutcome(
             wrote=outcome.wrote,
             transitioned=outcome.transitioned,
@@ -657,10 +790,7 @@ class SpawnApplicationService:
         so observers (SSE, WS, debug trace) see metadata changes.
         """
         # Only call store if at least one field is provided
-        if all(
-            v is None
-            for v in (execution_cwd, desc, work_id, harness_session_id, error)
-        ):
+        if all(v is None for v in (execution_cwd, desc, work_id, harness_session_id, error)):
             return
 
         spawn_store.update_spawn(
@@ -721,21 +851,6 @@ def _is_managed_primary_candidate(record: SpawnRecord) -> bool:
     return record.kind == "primary" and harness in {"codex", "opencode"}
 
 
-def _terminate_worker_pid_fallback(
-    worker_pid: int | None,
-    *,
-    started_epoch: float | None,
-) -> None:
-    if worker_pid is None or worker_pid <= 0 or worker_pid == os.getpid():
-        return
-    if not is_process_alive(worker_pid, created_after_epoch=started_epoch):
-        return
-    try:
-        os.kill(worker_pid, signal.SIGTERM)
-    except OSError:
-        return
-
-
 def _started_at_epoch(started_at: str | None) -> float | None:
     normalized = (started_at or "").strip()
     if not normalized:
@@ -755,6 +870,7 @@ __all__ = [
     "CancelOutcome",
     "CompleteSpawnOutcome",
     "KeyedLockRegistry",
+    "PrepareSpawnRequest",
     "PreparedSpawn",
     "SpawnApplicationService",
 ]

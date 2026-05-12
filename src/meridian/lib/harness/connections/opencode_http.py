@@ -16,11 +16,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 from urllib.parse import urlparse
 
+import psutil
+
 if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.bundle import (
+    project_managed_primary_backend_command,
+    project_managed_primary_bootstrap,
+)
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -33,21 +39,24 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.harness.connections.errors import PortBindError
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.projections.project_opencode_streaming import (
-    project_opencode_spec_to_serve_command,
-    project_opencode_spec_to_session_payload,
+    project_opencode_spec_to_session_payload as _project_opencode_spec_to_session_payload,
 )
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 from meridian.lib.harness.semantics import clears_signal
-from meridian.lib.harness.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.workspace_projection import OPENCODE_CONFIG_CONTENT_ENV
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
     trace_wire_recv,
     trace_wire_send,
+)
+from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import (
+    ProcessScopeSnapshot,
+    ScopedProcessHandle,
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
@@ -60,7 +69,43 @@ class SessionNotReadyError(RuntimeError):
     """Retryable OpenCode session readiness failure."""
 
 
-class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
+def project_opencode_spec_to_serve_command(
+    spec: ResolvedLaunchSpec,
+    *,
+    host: str,
+    port: int,
+) -> list[str]:
+    """Project OpenCode managed-primary backend command through the contract seam."""
+
+    return project_managed_primary_backend_command(
+        HarnessId.OPENCODE,
+        spec,
+        host=host,
+        port=port,
+    )
+
+
+def project_opencode_spec_to_session_payload(
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, object]:
+    """Project OpenCode managed-primary session payload through the contract seam."""
+
+    if project_root is None:
+        return _project_opencode_spec_to_session_payload(spec)
+
+    projected = project_managed_primary_bootstrap(
+        HarnessId.OPENCODE,
+        spec,
+        project_root=project_root,
+    )
+    if not isinstance(projected, dict):
+        raise TypeError("OpenCode managed-primary bootstrap must be a dict payload")
+    return cast("dict[str, object]", projected)
+
+
+class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional OpenCode connection over the OpenCode HTTP API."""
 
     _CAPABILITIES: ClassVar[ConnectionCapabilities] = ConnectionCapabilities(
@@ -97,9 +142,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         "/global/event",
         "/event",
     )
-    _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = (
-        "/session/{session_id}/abort",
-    )
+    _CANCEL_PATH_TEMPLATES: ClassVar[tuple[str, ...]] = ("/session/{session_id}/abort",)
     _PATH_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((404, 405))
     _PAYLOAD_RETRY_STATUSES: ClassVar[frozenset[int]] = frozenset((400, 415, 422))
     _SUCCESS_STATUSES: ClassVar[frozenset[int]] = frozenset((200, 201, 202, 204))
@@ -128,6 +171,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         self._signal_in_flight = False
         self._primary_observer_mode = False
         self._startup_emitter: StartupPhaseEmitter | None = None
+        self._scope_handle: ScopedProcessHandle | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -159,6 +203,13 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         return process.pid
 
     @property
+    def scope_snapshot(self) -> ProcessScopeSnapshot | None:
+        handle = self._scope_handle
+        if handle is None:
+            return None
+        return handle.snapshot
+
+    @property
     def observer_endpoint(self) -> ObserverEndpoint | None:
         if not self._primary_observer_mode:
             return None
@@ -176,7 +227,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
     async def start(
         self,
         config: ConnectionConfig,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         if self._state not in {"created", "stopped", "failed"}:
             raise RuntimeError(f"Cannot start OpenCode connection from state '{self._state}'")
@@ -223,7 +274,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
     async def start_observer(
         self,
         config: ConnectionConfig,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
     ) -> None:
         """Start connection in primary observer mode."""
 
@@ -347,10 +398,11 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 return
             await asyncio.sleep(self._EVENT_RETRY_DELAY_SECONDS)
 
-    async def _launch_process(self, config: ConnectionConfig, spec: OpenCodeLaunchSpec) -> None:
+    async def _launch_process(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         port = _find_free_port()
         self._base_url = f"http://127.0.0.1:{port}"
-        command = project_opencode_spec_to_serve_command(
+        command = project_managed_primary_backend_command(
+            self.harness_id,
             spec,
             host="127.0.0.1",
             port=port,
@@ -362,6 +414,9 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
         self._stderr_log_path = spawn_dir / "stderr.log"
         self._stderr_handle = self._stderr_log_path.open("ab")
         self._stderr_read_offset = self._stderr_handle.tell()
+        subprocess_kwargs: dict[str, Any] = {}
+        if not IS_WINDOWS:
+            subprocess_kwargs["start_new_session"] = True
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *command,
@@ -369,6 +424,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 env=env,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=self._stderr_handle,
+                **subprocess_kwargs,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise HarnessBinaryNotFound.from_os_error(
@@ -377,9 +433,38 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 binary_name=command[0],
             ) from exc
 
+        process = self._process
+        pid = process.pid
+        containment = "pid_tree_fallback"
+        pgid: int | None = None
+        if not IS_WINDOWS:
+            try:
+                pgid = os.getpgid(pid)
+                containment = "posix_pgid"
+            except OSError:
+                pass
+        try:
+            birth_time = psutil.Process(pid).create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            birth_time = time.time()
+        spawn_id_str = str(config.spawn_id)
+        snapshot = ProcessScopeSnapshot(
+            scope_id="backend",
+            owner_policy="spawn_owned",
+            owner_id=spawn_id_str,
+            role="harness_backend",
+            containment=containment,
+            root_pid=pid,
+            root_created_at_epoch=birth_time,
+            pgid=pgid,
+            job_name=None,
+            degraded_reason=None,
+        )
+        self._scope_handle = ScopedProcessHandle(process=process, snapshot=snapshot)
+
     async def _create_session_with_retry(
         self,
-        spec: OpenCodeLaunchSpec,
+        spec: ResolvedLaunchSpec,
         *,
         timeout_seconds: float,
     ) -> str:
@@ -396,12 +481,11 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 last_error = exc
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    f"OpenCode session endpoint did not become ready within "
-                    f"{timeout_seconds:.1f}s"
+                    f"OpenCode session endpoint did not become ready within {timeout_seconds:.1f}s"
                 ) from last_error
             await asyncio.sleep(0.2)
 
-    async def _create_session(self, spec: OpenCodeLaunchSpec) -> str:
+    async def _create_session(self, spec: ResolvedLaunchSpec) -> str:
         """Create or resume an OpenCode session.
 
         For fresh sessions, POST /session to create a new one.
@@ -450,11 +534,12 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                     f"OpenCode session resume: session {continue_session_id} not yet "
                     f"loaded (status={status})"
                 )
-            raise RuntimeError(
-                f"OpenCode session resume: GET failed with status={status}"
-            )
+            raise RuntimeError(f"OpenCode session resume: GET failed with status={status}")
 
-        payload = project_opencode_spec_to_session_payload(spec)
+        payload = project_opencode_spec_to_session_payload(
+            spec,
+            project_root=self._config.project_root if self._config is not None else None,
+        )
         payload_variants: tuple[dict[str, object], ...] = (payload, {}) if payload else ({},)
 
         last_error: str | None = None
@@ -484,8 +569,12 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                     continue
                 if status in self._PATH_RETRY_STATUSES:
                     trace_wire_recv(
-                        self._tracer, "http_probe", "",
-                        path=path, status=status, outcome="path_unavailable",
+                        self._tracer,
+                        "http_probe",
+                        "",
+                        path=path,
+                        status=status,
+                        outcome="path_unavailable",
                     )
                     last_error = (
                         f"OpenCode session endpoint unavailable on {path}: "
@@ -511,9 +600,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
             content_type = str(response.headers.get("Content-Type", "")).lower()
             text_body = await response.text()
         parsed_body = _parse_response_body(text_body)
-        trace_wire_recv(
-            self._tracer, "http_response", text_body, path=path, status=status
-        )
+        trace_wire_recv(self._tracer, "http_response", text_body, path=path, status=status)
         return status, parsed_body, content_type
 
     async def _post_session_message(self, text: str, *, system: str | None = None) -> None:
@@ -578,7 +665,9 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
     ) -> tuple[int, object | None, str]:
         client = await self._ensure_http_client()
         trace_wire_send(
-            self._tracer, "http_post", json.dumps(dict(payload)),
+            self._tracer,
+            "http_post",
+            json.dumps(dict(payload)),
             path=path,
         )
         async with client.post(self._url(path), json=dict(payload)) as response:
@@ -606,8 +695,11 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 raise
         parsed_body = _parse_response_body(text_body)
         trace_wire_recv(
-            self._tracer, "http_response", text_body,
-            path=path, status=status,
+            self._tracer,
+            "http_response",
+            text_body,
+            path=path,
+            status=status,
         )
         return status, parsed_body, content_type
 
@@ -633,8 +725,11 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
             if status in self._SUCCESS_STATUSES:
                 self._event_path = path
                 trace_wire_recv(
-                    self._tracer, "sse_connect", "",
-                    path=path, status=status,
+                    self._tracer,
+                    "sse_connect",
+                    "",
+                    path=path,
+                    status=status,
                 )
                 return response
 
@@ -643,8 +738,12 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
 
             if status in self._PATH_RETRY_STATUSES:
                 trace_wire_recv(
-                    self._tracer, "http_probe", "",
-                    path=path, status=status, outcome="path_unavailable",
+                    self._tracer,
+                    "http_probe",
+                    "",
+                    path=path,
+                    status=status,
+                    outcome="path_unavailable",
                 )
                 last_error = (
                     f"OpenCode event endpoint unavailable on {path}: "
@@ -765,9 +864,16 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
             except Exception:
                 logger.warning("Failed to close OpenCode HTTP client", exc_info=True)
 
+        scope_handle = self._scope_handle
+        self._scope_handle = None
         process = self._process
         self._process = None
-        if process is not None and process.returncode is None:
+        if scope_handle is not None and process is not None and process.returncode is None:
+            await scope_handle.terminate(
+                grace_seconds=self._STOP_GRACE_SECONDS,
+                reason="stop_called",
+            )
+        elif process is not None and process.returncode is None:
             process.terminate()
             try:
                 await asyncio.wait_for(process.wait(), timeout=self._STOP_GRACE_SECONDS)
@@ -833,10 +939,7 @@ class OpenCodeConnection(HarnessConnection[OpenCodeLaunchSpec]):
                 "OpenCode process exited before becoming healthy "
                 f"(exit={exit_code}): {stderr_excerpt}"
             )
-        return RuntimeError(
-            "OpenCode process exited before becoming healthy "
-            f"(exit={exit_code})"
-        )
+        return RuntimeError(f"OpenCode process exited before becoming healthy (exit={exit_code})")
 
     def _read_startup_stderr_excerpt(self) -> str:
         stderr_handle = self._stderr_handle

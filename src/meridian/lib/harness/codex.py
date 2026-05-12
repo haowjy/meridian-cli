@@ -13,17 +13,34 @@ from typing import ClassVar, cast
 from uuid import uuid4
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
+    ApprovalContract,
     ArtifactStore,
     BaseHarnessAdapter,
+    BootstrapContract,
+    BootstrapMode,
+    ExtractionContract,
+    ForkMaterializationMode,
     HarnessCapabilities,
+    HarnessContract,
     McpConfig,
+    ObserverControllerContract,
     PermissionResolver,
+    ProjectionContract,
+    ProjectionMode,
     RunPromptPolicy,
+    RuntimeHitlMode,
     SpawnParams,
+    TransportContract,
 )
-from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
+from meridian.lib.harness.bundle import (
+    HarnessBundle,
+    HarnessProjectionPorts,
+    ManagedPrimaryProjectionPorts,
+    project_subprocess_spec,
+    register_harness_bundle,
+)
 from meridian.lib.harness.codex_rollout import (
     CODEX_ROLLOUT_FILENAME_RE,
     resolve_rollout_session_id,
@@ -32,10 +49,16 @@ from meridian.lib.harness.common import (
     extract_codex_report,
     extract_session_id_from_artifacts_with_patterns,
 )
+from meridian.lib.harness.connections.base import (
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
+)
 from meridian.lib.harness.connections.codex_ws import CodexConnection
 from meridian.lib.harness.extractors.codex import CODEX_EXTRACTOR
-from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
+from meridian.lib.harness.projections.project_codex_streaming import (
+    project_codex_spec_to_appserver_command,
+    project_codex_spec_to_thread_request,
+)
 from meridian.lib.harness.projections.project_codex_subprocess import (
     project_codex_spec_to_cli_args,
 )
@@ -52,10 +75,12 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_CODEX_SUBPROCESS,
     PRIMARY_BASE_COMMAND_CODEX,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
 logger = logging.getLogger(__name__)
+
 
 def _codex_home() -> Path:
     configured_home = os.environ.get("CODEX_HOME", "").strip()
@@ -129,6 +154,16 @@ def _fork_rollout_path(*, source_path: Path, source_session_id: str, new_session
 
 def _resolve_rollout_session_id(path: Path, resolved_repo: Path) -> str | None:
     return resolve_rollout_session_id(path, resolved_repo)
+
+
+def project_codex_spec_to_thread_request_for_project(
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path,
+) -> tuple[str, dict[str, object]]:
+    """Project Codex managed-primary bootstrap payload for one project root."""
+
+    return project_codex_spec_to_thread_request(spec, cwd=str(project_root))
 
 
 def _detect_primary_session_id(project_root: Path, started_at_epoch: float) -> str | None:
@@ -207,7 +242,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return False
 
 
-class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
+class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `codex`."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CODEX_SUBPROCESS
@@ -244,12 +279,52 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"skills", "agent"}
+        {"skills", "agent", "context_from_payload", "reference_items"}
     )
 
     @property
     def id(self) -> HarnessId:
         return HarnessId.CODEX
+
+    @property
+    def contract(self) -> HarnessContract:
+        observer = ObserverControllerContract()
+        return HarnessContract(
+            capabilities=self.capabilities,
+            transport=TransportContract(
+                transport_ids=(TransportId.STREAMING,),
+                observer_controller_required=True,
+            ),
+            projection=ProjectionContract(
+                launch_spec_cls="ResolvedLaunchSpec",
+                mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
+            ),
+            extraction=ExtractionContract(
+                session_observation_order=(
+                    "connection_session",
+                    "artifacts",
+                    "current_session",
+                    "primary_detection",
+                )
+            ),
+            approval=ApprovalContract(
+                runtime_hitl=RuntimeHitlMode.CONNECTION_REQUESTS,
+                default_runtime_request_policy="auto_accept",
+                primary_session_runtime_request_policy=(PrimaryRuntimeRequestPolicy.SURFACE_EVENTS),
+                primary_session_runtime_event_surface=(
+                    PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM
+                ),
+            ),
+            bootstrap=BootstrapContract(
+                mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+                fork_materialization=ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK,
+                primary_attach_failure_policy="raise",
+                observer_controller=observer,
+            ),
+            capability_limits=(
+                "native_inherit declared as contract capability only; policy remains pty_mediated",
+            ),
+        )
 
     @property
     def consumed_fields(self) -> frozenset[str]:
@@ -269,7 +344,13 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
             supports_native_skills=True,
             supports_native_agents=True,
             supports_primary_launch=True,
+            requires_initial_prompt=True,
             supports_native_file_injection=False,
+            terminal_surface_modes=(
+                TerminalSurfaceMode.PTY_MEDIATED,
+                TerminalSurfaceMode.NATIVE_INHERIT,
+            ),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:
@@ -279,9 +360,12 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
         _ = name, description
         return prompt.strip()
 
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> CodexLaunchSpec:
+    def resolve_launch_spec(
+        self, run: SpawnParams, perms: PermissionResolver
+    ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        return CodexLaunchSpec(
+        return ResolvedLaunchSpec(
+            harness=HarnessId.CODEX,
             model=str(run.model).strip() if run.model else None,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
@@ -301,7 +385,7 @@ class CodexAdapter(BaseHarnessAdapter[CodexLaunchSpec]):
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_codex_spec_to_cli_args(spec, base_command=base_command)
+        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -460,8 +544,15 @@ register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CODEX,
         adapter=CodexAdapter(),
-        spec_cls=CodexLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=CODEX_EXTRACTOR,
         connections={TransportId.STREAMING: CodexConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=project_codex_spec_to_cli_args,
+            managed_primary=ManagedPrimaryProjectionPorts(
+                backend_command=project_codex_spec_to_appserver_command,
+                bootstrap_payload=project_codex_spec_to_thread_request_for_project,
+            ),
+        ),
     )
 )

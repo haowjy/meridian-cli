@@ -12,7 +12,10 @@ from meridian.lib.state.paths import RuntimePaths
 
 
 def _state_root(tmp_path: Path) -> Path:
-    state_dir = tmp_path / ".meridian"
+    # Use a non-.meridian name so _project_paths_for_work_store treats this as a
+    # synthetic test root and returns ProjectPaths.from_root_dir() directly,
+    # bypassing context resolution.
+    state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 

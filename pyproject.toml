@@ -24,7 +24,7 @@ dependencies = [
   "cyclopts>=3.0",
   "fastapi>=0.115",
   "markdown-it-py>=4.0",
-  "mars-agents==0.2.8",
+  "mars-agents==0.4.0",
   "mcp>=1.0",
   "pathspec>=1.1.0",
   "psutil>=7.2.2",
@@ -32,6 +32,7 @@ dependencies = [
   "pydantic-settings>=2.13",
   "python-frontmatter>=1.1",
   "structlog>=25.0",
+  "tomlkit>=0.14.0",
   "uvicorn[standard]>=0.34",
   "websockets>=14.0",
 ]
@@ -43,6 +44,7 @@ Issues = "https://github.com/meridian-flow/meridian-cli/issues"
 
 [project.scripts]
 meridian = "meridian.cli.entrypoint:main"
+pyright = "pyright.cli:entrypoint"
 pytests = "meridian.dev.pytests:main"
 pytest-llm = "meridian.dev.pytests:main"
 

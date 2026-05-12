@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.utils import missing_fork_session_error
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
@@ -27,6 +28,7 @@ class PrimaryLaunchOutput(BaseModel):
     forked_from: str | None = None
     resume_command: str | None = None
     warning: str | None = None
+    terminal_surface_mode: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -38,6 +40,8 @@ class PrimaryLaunchOutput(BaseModel):
                 lines.append(f"{self.message} (from {self.forked_from})")
             else:
                 lines.append(self.message)
+            if self.terminal_surface_mode:
+                lines.append(f"Terminal surface mode: {self.terminal_surface_mode}")
             lines.append(shlex.join(self.command))
             return "\n".join(lines)
         if self.resume_command:
@@ -113,6 +117,7 @@ def run_primary_launch(
     yolo: bool,
     approval: str | None,
     autocompact: int | None,
+    autocompact_pct: int | None = None,
     effort: str | None,
     sandbox: str | None,
     timeout: float | None,
@@ -147,9 +152,7 @@ def run_primary_launch(
             return None
         return "; ".join(parts)
 
-    project_root = (
-        project_root.resolve() if project_root is not None else Path.cwd().resolve()
-    )
+    project_root = project_root.resolve() if project_root is not None else Path.cwd().resolve()
     harness_registry = get_default_harness_registry()
     normalized_continue_ref = continue_ref.strip() if continue_ref is not None else ""
     normalized_fork_ref = fork_ref.strip() if fork_ref is not None else ""
@@ -271,17 +274,20 @@ def run_primary_launch(
             ),
             agent=requested_agent,
             work_id=requested_work_id,
-            autocompact=autocompact,
             passthrough_args=passthrough,
             session_mode=session_mode,
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
             dry_run=dry_run,
-            approval=resolved_approval,
-            effort=effort,
-            sandbox=sandbox,
-            timeout=timeout,
+            execution_policy=ResolvedExecutionPolicy(
+                approval=resolved_approval if resolved_approval != "default" else None,
+                effort=effort,
+                sandbox=sandbox,
+                timeout=timeout,
+                autocompact=autocompact,
+                autocompact_pct=autocompact_pct,
+            ),
             session=SessionRequest(
                 requested_harness_session_id=continue_harness_session_id,
                 continue_harness=continue_harness,
@@ -315,4 +321,5 @@ def run_primary_launch(
             )
         ),
         warning=_merge_warnings(continue_warning, launch_result.warning),
+        terminal_surface_mode=getattr(launch_result, "terminal_surface_mode", None),
     )

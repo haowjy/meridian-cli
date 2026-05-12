@@ -7,12 +7,10 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from meridian.lib.catalog.agent import scan_agent_profiles
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry, MarsResultCache
 from meridian.lib.config.context_config import (
@@ -24,32 +22,39 @@ from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
-from meridian.lib.core.child_env import build_child_env_overrides, validate_child_env_keys
+from meridian.lib.core.child_env import validate_child_env_keys
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.diagnostics import capture_library_diagnostics
-from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.workspace_projection import (
-    OPENCODE_CONFIG_CONTENT_ENV,
-    project_workspace_roots,
-)
+from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     PermissionResolver,
     PreflightResult,
+    PreparedLaunchContent,
+    PreparedLaunchRuntimeSeeds,
+    PreparedPromptPayload,
+    ResolvedLaunchBinding,
+    ResolvedLaunchEnvironment,
     ResolvedLaunchSpec,
     summarize_composition_warnings,
 )
+from meridian.lib.launch.workspace_projection import (
+    OPENCODE_CONFIG_CONTENT_ENV,
+    project_workspace_roots,
+)
 from meridian.lib.safety.permissions import PermissionConfig
+from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
     resolve_project_paths,
     resolve_spawn_log_dir,
-    resolve_work_scratch_dir,
+    resolve_work_scratch_dir_for_project,
 )
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.telemetry import emit_telemetry
+from meridian.lib.tools import ToolsField
 from meridian.plugin_api.git import resolve_clone_path
 
 from .command import (
@@ -73,9 +78,10 @@ from .policies import (
     resolve_launch_policy,
 )
 from .prompt import (
-    build_agent_inventory_prompt,
-    build_context_prompt,
+    build_goal_instruction,
+    build_launch_context_documents,
     build_report_instruction,
+    build_work_goal_instruction,
     compose_skill_injections,
     compose_skill_prompt_documents,
     sanitize_prior_output,
@@ -99,7 +105,6 @@ from .resolve import (
     resolve_profile_path,
     resolve_skill_paths,
 )
-from .run_inputs import ResolvedRunInputs
 from .workspace import resolve_workspace_snapshot_for_launch
 
 if TYPE_CHECKING:
@@ -157,8 +162,16 @@ class ChildEnvContext:
         repo_paths = resolve_project_paths(resolved_project_root)
         work_dir = (
             parent_ctx.work_dir
-            if parent_ctx.work_dir is not None and parent_ctx.work_id == work_id
-            else resolve_work_scratch_dir(repo_paths.root_dir, work_id)
+            if (
+                work_id is not None
+                and parent_ctx.work_dir is not None
+                and parent_ctx.work_id == work_id
+            )
+            else resolve_work_scratch_dir_for_project(
+                resolved_project_root,
+                work_id,
+                project_paths=repo_paths,
+            )
             if work_id is not None
             else None
         )
@@ -172,10 +185,7 @@ class ChildEnvContext:
             ("work_archive", resolved_context_paths.work_archive),
             ("kb", resolved_context_paths.kb_root),
             *tuple(
-                sorted(
-                    (name, path)
-                    for name, (path, _) in resolved_context_paths.extra.items()
-                )
+                sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
             ),
         )
 
@@ -199,17 +209,19 @@ class ChildEnvContext:
         child_spawn_id: str | None = None,
         increment_depth: bool = True,
     ) -> dict[str, str]:
-        overrides = build_child_env_overrides(
-            parent_spawn_id=self.parent_spawn_id,
-            child_spawn_id=child_spawn_id,
+        ctx = ResolvedContext(
+            spawn_id=SpawnId(self.parent_spawn_id) if self.parent_spawn_id else None,
+            depth=self.parent_depth,
             project_root=self.project_root,
             runtime_root=self.runtime_root,
-            parent_chat_id=self.parent_chat_id,
-            parent_depth=self.parent_depth,
+            chat_id=self.parent_chat_id or "",
             work_id=self.work_id,
             work_dir=self.work_dir,
             context_dirs=self.context_dirs,
+        )
+        overrides = ctx.child_env_overrides(
             increment_depth=increment_depth,
+            child_spawn_id=child_spawn_id,
         )
         validate_child_env_keys(overrides)
         return overrides
@@ -223,14 +235,7 @@ class LaunchContext:
     execution_cwd: Path
     runtime_root: Path
     work_id: str | None
-    argv: tuple[str, ...]
-    run_params: ResolvedRunInputs
-    perms: PermissionResolver
-    spec: ResolvedLaunchSpec
-    child_cwd: Path
-    env: Mapping[str, str]
-    env_overrides: Mapping[str, str]
-    report_output_path: Path
+    binding: ResolvedLaunchBinding
     harness: SubprocessHarness
     resolved_request: SpawnRequest
     projected_content: ProjectedContent | None = None
@@ -252,37 +257,51 @@ class PreparedLaunchSurface:
 
     request: SpawnRequest
     harness: SubprocessHarness
-    seed_harness_session_id: str | None
     composition_warnings: tuple[CompositionWarning, ...]
-    prompt_payload: PreparedPromptPayload
-    loaded_references: tuple[ReferenceItem, ...]
-    profile_tools_for_deny_optout: tuple[str, ...]
-    has_profile_for_deny_optout: bool
-    projected_content: ProjectedContent | None
+    content: PreparedLaunchContent
+    runtime_seeds: PreparedLaunchRuntimeSeeds
+    profile_tools_for_nested_deny: ToolsField | None
+    has_profile_for_nested_deny: bool
     model_selection: ModelSelectionContext | None
     alias_catalog: dict[str, AliasEntry] | None = None
-    agent_inventory_prompt: str | None = None
-    context_prompt: str | None = None
-    seed_session_args: tuple[str, ...] = ()
     # Original launch request preserved for LaunchContext.request compatibility.
     # `request` carries the resolved request used by bind.
     launch_request: SpawnRequest | None = None
 
+    @property
+    def prompt_payload(self) -> PreparedPromptPayload:
+        return self.content.prompt_payload
 
-@dataclass(frozen=True)
-class PreparedPromptPayload:
-    """Typed internal prompt payload carried across prepare/bind."""
+    @property
+    def loaded_references(self) -> tuple[ReferenceItem, ...]:
+        return self.content.loaded_references
 
-    adhoc_agent_payload: str = ""
-    appended_system_prompt: str | None = None
-    user_turn_content: str | None = None
+    @property
+    def projected_content(self) -> ProjectedContent | None:
+        return self.content.projected_content
+
+    @property
+    def agent_inventory_prompt(self) -> str | None:
+        return self.content.agent_inventory_prompt
+
+    @property
+    def context_prompt(self) -> str | None:
+        return self.content.context_prompt
+
+    @property
+    def seed_harness_session_id(self) -> str | None:
+        return self.runtime_seeds.seed_harness_session_id
+
+    @property
+    def seed_session_args(self) -> tuple[str, ...]:
+        return self.runtime_seeds.seed_session_args
 
 
 @dataclass(frozen=True)
 class MaterializedLaunchArtifacts:
     """Shared launch materialization below policy resolution."""
 
-    run_params: ResolvedRunInputs
+    run_params: SpawnParams
     permission_config: PermissionConfig
     perms: PermissionResolver
     spec: ResolvedLaunchSpec
@@ -419,14 +438,13 @@ def materialize_launch_artifacts(
     context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
     sandbox: str | None = None,
-    allowed_tools: tuple[str, ...] = (),
-    disallowed_tools: tuple[str, ...] = (),
+    tools: ToolsField | None = None,
     approval: str | None = None,
     unsafe_no_permissions: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
-    run_params = ResolvedRunInputs(
+    run_params = SpawnParams(
         prompt=prompt,
         model=ModelId(model) if model else None,
         effort=effort,
@@ -448,8 +466,7 @@ def materialize_launch_artifacts(
     )
     permission_config, perms = resolve_permission_pipeline(
         sandbox=sandbox,
-        allowed_tools=allowed_tools,
-        disallowed_tools=disallowed_tools,
+        tools=tools,
         approval=approval or "default",
         unsafe_no_permissions=unsafe_no_permissions,
     )
@@ -471,18 +488,6 @@ def _missing_continue_session_error(source_ref: str | None) -> str:
             f"Session '{normalized_source}' has no recorded harness session - cannot continue/fork."
         )
     return "Source reference has no recorded harness session - cannot continue/fork."
-
-
-def _spawn_request_overrides(request: SpawnRequest) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        model=(request.model or "").strip() or None,
-        harness=(request.harness or "").strip() or None,
-        agent=(request.agent or "").strip() or None,
-        effort=(request.effort or "").strip() or None,
-        sandbox=(request.sandbox or "").strip() or None,
-        approval=(request.approval or "").strip() or None,
-        autocompact=request.autocompact,
-    )
 
 
 def _collect_git_context_clone_roots(config: ContextConfig | None) -> tuple[Path, ...]:
@@ -528,10 +533,8 @@ def _collect_context_projection_roots(
     Includes work_root, work_archive, kb_root, and any extra context dirs.
     These are the paths that meridian exports as MERIDIAN_CONTEXT_*_DIR env vars.
     """
-    if config is None:
-        return ()
-
-    resolved = resolve_context_paths(project_root, config)
+    effective = config or ContextConfig()
+    resolved = resolve_context_paths(project_root, effective)
     roots: list[Path] = [
         resolved.work_root,
         resolved.work_archive,
@@ -737,8 +740,22 @@ def compile_prepared_policy_surface(
         if runtime.config_snapshot
         else load_config(project_paths.project_root)
     )
-    cli_overrides = _spawn_request_overrides(request)
-    env_overrides = RuntimeOverrides.from_env()
+    cli_overrides = RuntimeOverrides(
+        model=(request.model or "").strip() or None,
+        harness=(request.harness or "").strip() or None,
+        agent=(request.agent or "").strip() or None,
+        effort=request.execution_policy.effort,
+        sandbox=request.execution_policy.sandbox,
+        approval=request.execution_policy.approval,
+        autocompact=request.execution_policy.autocompact,
+        autocompact_pct=request.execution_policy.autocompact_pct,
+        timeout=request.execution_policy.timeout,
+    )
+    env_overrides = (
+        runtime.resolved_runtime_overrides
+        if runtime.has_runtime_override_snapshot
+        else RuntimeOverrides.from_env()
+    )
     if runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
         config_overrides = RuntimeOverrides.from_config(config)
         configured_default_harness = config.primary.harness or "claude"
@@ -782,16 +799,7 @@ def _resolve_spawn_prepare_projection(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
-) -> tuple[
-    str,
-    tuple[str, ...],
-    tuple[ReferenceItem, ...],
-    ProjectedContent | None,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-]:
+) -> PreparedLaunchContent:
     profile = policy.profile
     harness = policy.adapter
     resolved_skills = policy.resolved_skills
@@ -837,37 +845,36 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    agent_profiles = sorted(
-        scan_agent_profiles(project_root=project_paths.project_root),
-        key=lambda profile: profile.name,
+    agent_inventory_prompt, context_prompt = build_launch_context_documents(
+        project_root=project_paths.project_root,
+        alias_catalog=policy.alias_catalog,
+        active_work_dir=active_work_dir,
     )
-    context_config = load_context_config(project_paths.project_root) or ContextConfig()
-    resolved_context = resolve_context_paths(project_paths.project_root, context_config)
-    agent_inventory_prompt = (
-        build_agent_inventory_prompt(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            agents=agent_profiles,
-        )
-        or ""
+
+    resolved_work_id = (request.work_id_hint or "").strip() or (
+        active_work_dir.name if active_work_dir is not None else ""
     )
-    context_prompt = (
-        build_context_prompt(
-            project_root=project_paths.project_root,
-            active_work_dir=active_work_dir,
-            context_config=context_config,
-            resolved_context=resolved_context,
-        )
-        or ""
-    )
+    work_goal: str | None = None
+    if resolved_work_id:
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
+        if work_item is not None:
+            work_goal = work_item.goal
+    completion_contract = build_goal_instruction(request.goal)
+    work_goal_instruction = build_work_goal_instruction(work_goal)
+    if completion_contract and work_goal_instruction:
+        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
+    elif work_goal_instruction:
+        completion_contract = work_goal_instruction
 
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
             agent_profile_body=agent_profile_body,
             report_instruction=build_report_instruction(),
-            inventory_prompt=agent_inventory_prompt,
-            context_prompt=context_prompt,
+            inventory_prompt=agent_inventory_prompt or "",
+            context_prompt=context_prompt or "",
+            completion_contract=completion_contract,
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
             reference_items=loaded_references,
@@ -879,17 +886,14 @@ def _resolve_spawn_prepare_projection(
         )
     )
 
-    final_prompt = projected.user_turn_content.strip() or cleaned_user_prompt
-    appended_system_prompt = projected.system_prompt.strip() or None
-    return (
-        final_prompt,
-        resolved_context_from,
-        loaded_references,
-        projected,
-        appended_system_prompt,
-        projected.user_turn_content.strip() or None,
-        agent_inventory_prompt,
-        context_prompt,
+    return PreparedLaunchContent(
+        final_prompt=projected.user_turn_content.strip() or cleaned_user_prompt,
+        resolved_context_from=resolved_context_from,
+        loaded_references=loaded_references,
+        prompt_payload=prepare_prompt_payload(projected_content=projected),
+        projected_content=projected,
+        agent_inventory_prompt=agent_inventory_prompt,
+        context_prompt=context_prompt,
     )
 
 
@@ -900,17 +904,7 @@ def _resolve_primary_projection(
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
     resolved_continue_harness_session_id: str | None,
-) -> tuple[
-    str,
-    tuple[str, ...],
-    ProjectedContent,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    tuple[str, ...],
-]:
+) -> tuple[PreparedLaunchContent, tuple[str, ...], str | None, tuple[str, ...]]:
     profile = policy.profile
     harness = policy.adapter
     resolved_skills = policy.resolved_skills
@@ -919,22 +913,10 @@ def _resolve_primary_projection(
     agent_inventory_prompt: str | None = None
     context_prompt: str | None = None
     if session_mode != "resume":
-        agent_profiles = sorted(
-            scan_agent_profiles(project_root=project_paths.project_root),
-            key=lambda profile: profile.name,
-        )
-        context_config = load_context_config(project_paths.project_root) or ContextConfig()
-        resolved_context = resolve_context_paths(project_paths.project_root, context_config)
-        agent_inventory_prompt = build_agent_inventory_prompt(
+        agent_inventory_prompt, context_prompt = build_launch_context_documents(
             project_root=project_paths.project_root,
             alias_catalog=policy.alias_catalog,
-            agents=agent_profiles,
-        )
-        context_prompt = build_context_prompt(
-            project_root=project_paths.project_root,
             active_work_dir=active_work_dir,
-            context_config=context_config,
-            resolved_context=resolved_context,
         )
 
     seed = harness.seed_session(
@@ -969,6 +951,7 @@ def _resolve_primary_projection(
             report_instruction="",
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
+            completion_contract="",
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
             reference_items=(),
@@ -977,14 +960,16 @@ def _resolve_primary_projection(
     )
 
     return (
-        projected.user_turn_content.strip() or request.prompt,
+        PreparedLaunchContent(
+            final_prompt=projected.user_turn_content.strip() or request.prompt,
+            resolved_context_from=request.context_from,
+            prompt_payload=prepare_prompt_payload(projected_content=projected),
+            projected_content=projected,
+            agent_inventory_prompt=agent_inventory_prompt,
+            context_prompt=context_prompt,
+        ),
         passthrough_args,
-        projected,
-        projected.system_prompt.strip() or None,
-        projected.user_turn_content.strip() or None,
         seed.session_id or resolved_continue_harness_session_id,
-        agent_inventory_prompt,
-        context_prompt,
         seed.session_args,
     )
 
@@ -995,59 +980,42 @@ def _prepare_spawn_surface(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
-) -> tuple[
-    str,
-    tuple[str, ...],
-    tuple[ReferenceItem, ...],
-    ProjectedContent | None,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
-    ResolvedContinuation,
-]:
-    projected_content: ProjectedContent | None = None
-    appended_system_prompt: str | None = None
-    user_turn_content: str | None = None
-    loaded_references: tuple[ReferenceItem, ...] = ()
-    agent_inventory_prompt: str | None = None
-    context_prompt: str | None = None
-    resolved_context_from = request.context_from
-    prompt = request.prompt
+) -> tuple[PreparedLaunchContent, ResolvedContinuation]:
+    content = PreparedLaunchContent(
+        final_prompt=request.prompt,
+        resolved_context_from=request.context_from,
+    )
 
     if not request.prompt_is_composed:
-        (
-            prompt,
-            resolved_context_from,
-            loaded_references,
-            projected_content,
-            appended_system_prompt,
-            user_turn_content,
-            agent_inventory_prompt,
-            context_prompt,
-        ) = _resolve_spawn_prepare_projection(
+        content = _resolve_spawn_prepare_projection(
             request=request,
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policy,
         )
 
-    if appended_system_prompt is None:
+    if content.prompt_payload.appended_system_prompt is None:
         prompt_policy = policy.adapter.run_prompt_policy()
         if prompt_policy.skill_injection_mode == "append-system-prompt":
             appended_system_prompt = (
                 compose_skill_injections(policy.resolved_skills.loaded_skills) or None
             )
+            content = PreparedLaunchContent(
+                final_prompt=content.final_prompt,
+                resolved_context_from=content.resolved_context_from,
+                loaded_references=content.loaded_references,
+                prompt_payload=prepare_prompt_payload(
+                    projected_content=content.projected_content,
+                    appended_system_prompt=appended_system_prompt,
+                    user_turn_content=content.prompt_payload.user_turn_content,
+                ),
+                projected_content=content.projected_content,
+                agent_inventory_prompt=content.agent_inventory_prompt,
+                context_prompt=content.context_prompt,
+            )
 
     return (
-        prompt,
-        resolved_context_from,
-        loaded_references,
-        projected_content,
-        appended_system_prompt,
-        user_turn_content,
-        agent_inventory_prompt,
-        context_prompt,
+        content,
         _resolve_session_continuation(request=request, harness=policy.adapter),
     )
 
@@ -1059,27 +1027,17 @@ def _prepare_primary_surface(
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
 ) -> tuple[
-    str,
+    PreparedLaunchContent,
     tuple[str, ...],
-    ProjectedContent,
-    str | None,
-    str | None,
-    str | None,
-    str | None,
     str | None,
     tuple[str, ...],
     ResolvedContinuation,
 ]:
     continuation = _resolve_session_continuation(request=request, harness=policy.adapter)
     (
-        final_prompt,
+        content,
         final_passthrough_args,
-        projected_content,
-        appended_system_prompt,
-        user_turn_content,
         seed_harness_session_id,
-        agent_inventory_prompt,
-        context_prompt,
         seed_session_args,
     ) = _resolve_primary_projection(
         request=request,
@@ -1089,14 +1047,9 @@ def _prepare_primary_surface(
         resolved_continue_harness_session_id=continuation.harness_session_id,
     )
     return (
-        final_prompt,
+        content,
         final_passthrough_args,
-        projected_content,
-        appended_system_prompt,
-        user_turn_content,
         seed_harness_session_id,
-        agent_inventory_prompt,
-        context_prompt,
         seed_session_args,
         continuation,
     )
@@ -1114,58 +1067,33 @@ def prepare_launch_surface(
     policies = prepared_policy.resolved_policy
     profile = policies.profile
     has_profile = profile is not None
-    resolved = policies.resolved_overrides
+    execution_policy = policies.execution_policy
     model_selection = policies.model_selection
     harness = policies.adapter
     resolved_skills = policies.resolved_skills
 
     route_warning = None
-    resolved_context_from = request.context_from
-    final_prompt = request.prompt
+    content = PreparedLaunchContent(
+        final_prompt=request.prompt,
+        resolved_context_from=request.context_from,
+    )
     final_passthrough_args = request.extra_args
-    projected_content: ProjectedContent | None = None
-    appended_system_prompt: str | None = None
-    user_turn_content: str | None = None
-    loaded_references: tuple[ReferenceItem, ...] = ()
-    agent_inventory_prompt: str | None = None
-    context_prompt: str | None = None
     continuation = ResolvedContinuation(harness_session_id=None, continue_fork=False)
     seed_harness_session_id: str | None = None
     seed_session_args: tuple[str, ...] = ()
-    prompt_payload = PreparedPromptPayload()
     if runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE:
-        (
-            final_prompt,
-            resolved_context_from,
-            loaded_references,
-            projected_content,
-            appended_system_prompt,
-            user_turn_content,
-            agent_inventory_prompt,
-            context_prompt,
-            continuation,
-        ) = _prepare_spawn_surface(
+        content, continuation = _prepare_spawn_surface(
             request=request,
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policies,
         )
         seed_harness_session_id = continuation.harness_session_id
-        prompt_payload = prepare_prompt_payload(
-            projected_content=projected_content,
-            appended_system_prompt=appended_system_prompt,
-            user_turn_content=user_turn_content,
-        )
     elif runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
         (
-            final_prompt,
+            content,
             final_passthrough_args,
-            projected_content,
-            appended_system_prompt,
-            user_turn_content,
             seed_harness_session_id,
-            agent_inventory_prompt,
-            context_prompt,
             seed_session_args,
             continuation,
         ) = _prepare_primary_surface(
@@ -1173,11 +1101,6 @@ def prepare_launch_surface(
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policies,
-        )
-        prompt_payload = prepare_prompt_payload(
-            projected_content=projected_content,
-            appended_system_prompt=appended_system_prompt,
-            user_turn_content=user_turn_content,
         )
 
     missing_skills_warning = (
@@ -1219,16 +1142,24 @@ def prepare_launch_surface(
             description=profile.description,
             prompt=profile.body,
         )
-    prompt_payload = PreparedPromptPayload(
-        adhoc_agent_payload=adhoc_agent_payload,
-        appended_system_prompt=prompt_payload.appended_system_prompt,
-        user_turn_content=prompt_payload.user_turn_content,
+    content = PreparedLaunchContent(
+        final_prompt=content.final_prompt,
+        resolved_context_from=content.resolved_context_from,
+        loaded_references=content.loaded_references,
+        prompt_payload=PreparedPromptPayload(
+            adhoc_agent_payload=adhoc_agent_payload,
+            appended_system_prompt=content.prompt_payload.appended_system_prompt,
+            user_turn_content=content.prompt_payload.user_turn_content,
+        ),
+        projected_content=content.projected_content,
+        agent_inventory_prompt=content.agent_inventory_prompt,
+        context_prompt=content.context_prompt,
     )
-    profile_tools_for_deny_optout = profile.tools if profile is not None else ()
+    profile_tools_for_nested_deny = profile.tools if profile is not None else None
 
     resolved_request = request.model_copy(
         update={
-            "prompt": final_prompt,
+            "prompt": content.final_prompt,
             "prompt_is_composed": True,
             "model": policies.model,
             "harness": str(policies.harness),
@@ -1236,43 +1167,36 @@ def prepare_launch_surface(
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
             "mcp_tools": profile.mcp_tools if profile is not None else request.mcp_tools,
-            "sandbox": resolved.sandbox,
-            "approval": resolved.approval,
-            "allowed_tools": profile.tools if profile is not None else request.allowed_tools,
-            "disallowed_tools": (
-                profile.disallowed_tools if profile is not None else request.disallowed_tools
-            ),
-            "autocompact": resolved.autocompact,
-            "effort": resolved.effort,
+            "execution_policy": execution_policy,
+            "tools": profile.tools if profile is not None else request.tools,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
                     "continue_fork": continuation.continue_fork,
                 }
             ),
-            "context_from": resolved_context_from,
+            "context_from": content.resolved_context_from,
             "warning": warning,
             "agent_metadata": agent_metadata,
-            "prompt_payload": _request_prompt_payload(prompt_payload),
+            "prompt_payload": _request_prompt_payload(content.prompt_payload),
             "skill_paths": resolve_skill_paths(resolved_skills.loaded_skills),
+            "terminal_surface_mode": policies.terminal_surface_mode,
             **model_selection_update,
         }
     )
     return PreparedLaunchSurface(
         request=resolved_request,
         harness=harness,
-        seed_harness_session_id=seed_harness_session_id,
         composition_warnings=composition_warnings,
-        prompt_payload=prompt_payload,
-        loaded_references=loaded_references,
-        profile_tools_for_deny_optout=profile_tools_for_deny_optout,
-        has_profile_for_deny_optout=has_profile,
-        projected_content=projected_content,
+        content=content,
+        runtime_seeds=PreparedLaunchRuntimeSeeds(
+            seed_harness_session_id=seed_harness_session_id,
+            seed_session_args=seed_session_args,
+        ),
+        profile_tools_for_nested_deny=profile_tools_for_nested_deny,
+        has_profile_for_nested_deny=has_profile,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
-        agent_inventory_prompt=agent_inventory_prompt,
-        context_prompt=context_prompt,
-        seed_session_args=seed_session_args,
         launch_request=request,
     )
 
@@ -1303,25 +1227,27 @@ def _build_direct_surface(
     return PreparedLaunchSurface(
         request=request,
         harness=harness,
-        seed_harness_session_id=(
-            request.session.requested_harness_session_id or ""
-        ).strip()
-        or None,
         composition_warnings=composition_warnings,
-        prompt_payload=prepare_prompt_payload(
-            adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,
-            appended_system_prompt=request.prompt_payload.appended_system_prompt,
-            user_turn_content=request.prompt_payload.user_turn_content,
+        content=PreparedLaunchContent(
+            final_prompt=request.prompt,
+            resolved_context_from=request.context_from,
+            loaded_references=loaded_references,
+            prompt_payload=prepare_prompt_payload(
+                adhoc_agent_payload=request.prompt_payload.adhoc_agent_payload,
+                appended_system_prompt=request.prompt_payload.appended_system_prompt,
+                user_turn_content=request.prompt_payload.user_turn_content,
+            ),
         ),
-        loaded_references=loaded_references,
-        profile_tools_for_deny_optout=(),
-        has_profile_for_deny_optout=False,
-        projected_content=None,
+        runtime_seeds=PreparedLaunchRuntimeSeeds(
+            seed_harness_session_id=(
+                (request.session.requested_harness_session_id or "").strip() or None
+            ),
+            seed_session_args=(),
+        ),
+        profile_tools_for_nested_deny=None,
+        has_profile_for_nested_deny=False,
         model_selection=None,
         alias_catalog=None,
-        agent_inventory_prompt=None,
-        context_prompt=None,
-        seed_session_args=(),
         launch_request=request,
     )
 
@@ -1357,17 +1283,21 @@ def bind_launch_context(
     composition_warnings = prepared.composition_warnings
     prompt_payload = prepared.prompt_payload
     loaded_references = prepared.loaded_references
-    profile_tools_for_deny_optout = prepared.profile_tools_for_deny_optout
-    has_profile_for_deny_optout = prepared.has_profile_for_deny_optout
+    profile_tools_for_nested_deny = prepared.profile_tools_for_nested_deny
+    has_profile_for_nested_deny = prepared.has_profile_for_nested_deny
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
     report_output_path = bindings.report_output_path
     execution_cwd = project_paths.execution_cwd
+    _bind_work_id = _normalize_explicit_work_id(
+        request_work_id_hint=resolved_request.work_id_hint,
+        runtime_work_id=bindings.runtime_work_id,
+    )
     child_cwd = resolve_child_execution_cwd(
         project_root=execution_cwd,
-        spawn_id=bindings.spawn_id,
-        harness_id=harness.id.value,
+        project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+        work_id=_bind_work_id,
     )
     try:
         preflight = harness.preflight(
@@ -1422,20 +1352,15 @@ def bind_launch_context(
         and harness.id == HarnessId.CLAUDE
         and CLAUDE_NATIVE_DELEGATION_TOOLS
     ):
-        allowed_tools, disallowed_tools = resolve_nested_claude_permission_request(
-            allowed_tools=resolved_request.allowed_tools,
-            disallowed_tools=resolved_request.disallowed_tools,
-            profile_allowed_tools=profile_tools_for_deny_optout,
-            has_profile=has_profile_for_deny_optout,
+        tools = resolve_nested_claude_permission_request(
+            tools=resolved_request.tools,
+            profile_tools=profile_tools_for_nested_deny,
+            has_profile=has_profile_for_nested_deny,
         )
-        if (
-            allowed_tools != resolved_request.allowed_tools
-            or disallowed_tools != resolved_request.disallowed_tools
-        ):
+        if tools != resolved_request.tools:
             resolved_request = resolved_request.model_copy(
                 update={
-                    "allowed_tools": allowed_tools,
-                    "disallowed_tools": disallowed_tools,
+                    "tools": tools,
                 }
             )
 
@@ -1444,7 +1369,7 @@ def bind_launch_context(
         harness=harness,
         prompt=resolved_request.prompt,
         model=model,
-        effort=resolved_request.effort,
+        effort=resolved_request.execution_policy.effort,
         skills=resolved_request.skills,
         agent=resolved_request.agent,
         prompt_payload=prompt_payload,
@@ -1462,10 +1387,9 @@ def bind_launch_context(
         report_output_path=report_output_path.as_posix(),
         context_from_payload=resolved_request.context_from,
         reference_items=loaded_references,
-        sandbox=resolved_request.sandbox,
-        allowed_tools=resolved_request.allowed_tools,
-        disallowed_tools=resolved_request.disallowed_tools,
-        approval=resolved_request.approval,
+        sandbox=resolved_request.execution_policy.sandbox,
+        tools=resolved_request.tools,
+        approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
     )
     run_params = materialized.run_params
@@ -1482,32 +1406,64 @@ def bind_launch_context(
             projected_spec=spec,
         )
 
-    effective_work_id = _normalize_explicit_work_id(
+    is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    requested_work_id = _normalize_explicit_work_id(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
-    runtime_overrides = build_child_runtime_env_overrides(
+    child_context_env = build_child_runtime_env_overrides(
         project_paths=project_paths,
         runtime_root=runtime_root,
         child_spawn_id=bindings.spawn_id,
-        work_id=effective_work_id,
-        increment_depth=runtime.composition_surface != LaunchCompositionSurface.PRIMARY,
+        work_id=requested_work_id,
+        increment_depth=not is_primary_launch,
+    )
+    effective_work_id = (
+        child_context_env.get("MERIDIAN_ACTIVE_WORK_ID", "").strip() or requested_work_id
     )
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
-    runtime_overrides["MERIDIAN_HARNESS"] = harness.id.value
-    merged_overrides = merge_env_overrides(
+    child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    runtime_override_env = (
+        runtime.resolved_runtime_overrides.to_env()
+        if runtime.has_runtime_override_snapshot
+        else RuntimeOverrides.from_env().to_env()
+    )
+    bind_env_overrides = merge_env_overrides(
         plan_overrides=bindings.plan_overrides,
-        runtime_overrides=runtime_overrides,
+        runtime_overrides={**runtime_override_env, **child_context_env},
         preflight_overrides=preflight.extra_env,
     )
-    merged_overrides.update(workspace_projection.env_overrides)
+    bind_env_overrides.update(workspace_projection.env_overrides)
     env = build_env_plan(
         base_env=os.environ,
         adapter=harness,
         run_inputs=run_params,
         permission_config=permission_config,
-        runtime_env_overrides=merged_overrides,
+        runtime_env_overrides=bind_env_overrides,
+    )
+    environment = ResolvedLaunchEnvironment.build(
+        child_context_env=child_context_env,
+        plan_env=dict(bindings.plan_overrides),
+        preflight_env=dict(preflight.extra_env),
+        workspace_env=dict(workspace_projection.env_overrides),
+        runtime_override_env=runtime_override_env,
+        bind_env_overrides=bind_env_overrides,
+        runner_overlay_env={},
+        final_env=env,
+    )
+    binding = ResolvedLaunchBinding(
+        work_id=effective_work_id,
+        child_cwd=child_cwd,
+        report_output_path=report_output_path,
+        run_params=run_params,
+        permission_config=permission_config,
+        perms=perms,
+        spec=spec,
+        argv=argv,
+        environment=environment,
+        effective_harness_session_id=effective_session_id,
+        seed_harness_session_args=seed_harness_session_args,
     )
 
     return LaunchContext(
@@ -1517,14 +1473,7 @@ def bind_launch_context(
         execution_cwd=execution_cwd,
         runtime_root=runtime_root,
         work_id=effective_work_id,
-        argv=argv,
-        run_params=run_params,
-        perms=perms,
-        spec=spec,
-        child_cwd=child_cwd,
-        env=MappingProxyType(env),
-        env_overrides=MappingProxyType(merged_overrides),
-        report_output_path=report_output_path,
+        binding=binding,
         harness=harness,
         resolved_request=resolved_request,
         projected_content=projected_content,
@@ -1630,6 +1579,7 @@ __all__ = [
     "ChildEnvContext",
     "LaunchContext",
     "MaterializedLaunchArtifacts",
+    "PreparedLaunchContent",
     "PreparedLaunchSurface",
     "PreparedPolicySurface",
     "PreparedPromptPayload",

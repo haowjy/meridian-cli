@@ -33,9 +33,11 @@ from uuid import UUID
 
 import structlog
 
+from meridian.lib.core.spawn_start import SpawnStartMetadata
 from meridian.lib.core.telemetry import (
     CORE_EVENTS,
     SpawnFailure,
+    SpawnFailureCategory,
     allocate_spawn_sequence,
     next_spawn_sequence,
     notify_observers,
@@ -43,14 +45,17 @@ from meridian.lib.core.telemetry import (
 from meridian.lib.core.telemetry import (
     LifecycleEvent as TelemetryLifecycleEvent,
 )
+from meridian.lib.telemetry import LifecycleCorrelation, bind_lifecycle_correlation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
     from meridian.lib.core.clock import Clock
-    from meridian.lib.core.domain import SpawnStatus
+    from meridian.lib.core.domain import SpawnStatus, TokenUsage
     from meridian.lib.hooks.dispatch import HookDispatcher
+    from meridian.lib.launch.types import PrimarySessionMetadata
+    from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, SpawnRecord
     from meridian.lib.state.spawn_store import FinalizeOutcome
 
@@ -80,6 +85,10 @@ def _spawn_transitions() -> Any:
 EventType = Literal["spawn.created", "spawn.running", "spawn.finalized"]
 TerminalStatus = Literal["succeeded", "failed", "cancelled"]
 TerminalOrigin = Literal["runner", "launcher", "cancel", "reconciler", "launch_failure"]
+
+
+type TerminalOutcomeCategory = Literal["succeeded"] | SpawnFailureCategory
+
 
 _TERMINAL_STATUS_VALUES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
 
@@ -147,6 +156,8 @@ class LifecycleEvent:
     status: TerminalStatus | None = None
     origin: TerminalOrigin | None = None
 
+    outcome_category: TerminalOutcomeCategory | None = None
+
     # Metrics (may be None even on terminal events — reducer may merge later)
     duration_secs: float | None = None
     total_cost_usd: float | None = None
@@ -209,16 +220,13 @@ class SpawnLifecycleService:
         *,
         chat_id: str,
         parent_id: str | None = None,
-        model: str,
-        agent: str,
-        agent_path: str | None = None,
-        skills: tuple[str, ...] = (),
-        skill_paths: tuple[str, ...] = (),
-        harness: str,
+        session_metadata: PrimarySessionMetadata,
         kind: str = "child",
         prompt: str,
+        metadata: SpawnStartMetadata | None = None,
         desc: str | None = None,
         work_id: str | None = None,
+        goal: str | None = None,
         spawn_id: str | None = None,
         harness_session_id: str | None = None,
         execution_cwd: str | None = None,
@@ -230,40 +238,43 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> str:
         """Start a new spawn and dispatch spawn.created."""
-        # Authoritative transition write still happens in _spawn_store().
-        result_id = _spawn_store().start_spawn(
-            self._runtime_root,
-            chat_id=chat_id,
-            parent_id=parent_id,
-            model=model,
-            agent=agent,
-            agent_path=agent_path,
-            skills=skills,
-            skill_paths=skill_paths,
-            harness=harness,
-            kind=kind,
-            prompt=prompt,
-            desc=desc,
-            work_id=work_id,
-            spawn_id=spawn_id,
-            harness_session_id=harness_session_id,
-            execution_cwd=execution_cwd,
-            launch_mode=launch_mode,
-            worker_pid=worker_pid,
-            runner_pid=runner_pid,
-            status=status,
-            started_at=started_at,
-            clock=clock,
-        )
-        allocate_spawn_sequence(str(result_id))
-        record = _spawn_store().get_spawn(self._runtime_root, result_id)
-        self._record = record
-        event = self._build_event("spawn.created", self._record, spawn_id=str(result_id))
-        self._dispatch(event)
-        self._emit_telemetry_event("spawn.queued", self._record)
-        if status == "running":
-            self._emit_telemetry_event("spawn.running", self._record)
-        return str(result_id)
+        with bind_lifecycle_correlation(self._correlation(operation="start", spawn_id=spawn_id)):
+            # Authoritative transition write still happens in _spawn_store().
+            result_id = _spawn_store().start_spawn(
+                self._runtime_root,
+                chat_id=chat_id,
+                parent_id=parent_id,
+                model=session_metadata.model,
+                agent=session_metadata.agent,
+                agent_path=session_metadata.agent_path or None,
+                skills=session_metadata.skills,
+                skill_paths=session_metadata.skill_paths,
+                harness=session_metadata.harness,
+                kind=kind,
+                prompt=prompt,
+                metadata=metadata,
+                desc=desc,
+                work_id=work_id,
+                goal=goal,
+                spawn_id=spawn_id,
+                harness_session_id=harness_session_id,
+                execution_cwd=execution_cwd,
+                launch_mode=launch_mode,
+                worker_pid=worker_pid,
+                runner_pid=runner_pid,
+                status=status,
+                started_at=started_at,
+                clock=clock,
+            )
+            allocate_spawn_sequence(str(result_id))
+            record = _spawn_store().get_spawn(self._runtime_root, result_id)
+            self._record = record
+            event = self._build_event("spawn.created", self._record, spawn_id=str(result_id))
+            self._dispatch(event)
+            self._emit_telemetry_event("spawn.queued", self._record)
+            if status == "running":
+                self._emit_telemetry_event("spawn.running", self._record)
+            return str(result_id)
 
     def mark_running(
         self,
@@ -272,38 +283,46 @@ class SpawnLifecycleService:
         launch_mode: LaunchMode | None = None,
         worker_pid: int | None = None,
         runner_pid: int | None = None,
+        scope_snapshot: ProcessScopeSnapshot | None = None,
     ) -> None:
-        """Mark a spawn as running and dispatch spawn.running."""
-        if self._owns_record(spawn_id):
-            assert self._record is not None
-            changed = self._record.status != "running"
-            updated = _spawn_transitions().apply_mark_running(
-                self._record,
+        """Mark a spawn as running and dispatch spawn.running.
+
+        ``scope_snapshot`` is accepted here as a threading seam for Phase 2
+        persistence; it is not used in the current phase.
+        """
+        with bind_lifecycle_correlation(
+            self._correlation(operation="mark_running", spawn_id=spawn_id)
+        ):
+            if self._owns_record(spawn_id):
+                assert self._record is not None
+                changed = self._record.status != "running"
+                updated = _spawn_transitions().apply_mark_running(
+                    self._record,
+                    launch_mode=launch_mode,
+                    worker_pid=worker_pid,
+                    runner_pid=runner_pid,
+                    validate_status_transition=False,
+                )
+                if not self._write_owner_record(updated, transition="mark_running"):
+                    return
+                if changed:
+                    event = self._build_event("spawn.running", self._record)
+                    self._dispatch(event)
+                    self._emit_telemetry_event("spawn.running", self._record)
+                return
+
+            # Authoritative transition write still happens in _spawn_store().
+            changed, record = _spawn_store().mark_spawn_running_with_snapshot(
+                self._runtime_root,
+                spawn_id,
                 launch_mode=launch_mode,
                 worker_pid=worker_pid,
                 runner_pid=runner_pid,
-                validate_status_transition=False,
             )
-            if not self._write_owner_record(updated, transition="mark_running"):
-                return
             if changed:
-                event = self._build_event("spawn.running", self._record)
+                event = self._build_event("spawn.running", record, spawn_id=spawn_id)
                 self._dispatch(event)
-                self._emit_telemetry_event("spawn.running", self._record)
-            return
-
-        # Authoritative transition write still happens in _spawn_store().
-        changed, record = _spawn_store().mark_spawn_running_with_snapshot(
-            self._runtime_root,
-            spawn_id,
-            launch_mode=launch_mode,
-            worker_pid=worker_pid,
-            runner_pid=runner_pid,
-        )
-        if changed:
-            event = self._build_event("spawn.running", record, spawn_id=spawn_id)
-            self._dispatch(event)
-            self._emit_telemetry_event("spawn.running", record)
+                self._emit_telemetry_event("spawn.running", record)
 
     def record_exited(
         self,
@@ -314,44 +333,47 @@ class SpawnLifecycleService:
         clock: Clock | None = None,
     ) -> None:
         """Record process exit and emit spawn.process_exited telemetry."""
-        if self._owns_record(spawn_id):
-            assert self._record is not None
-            resolved_exited_at = exited_at or _utc_now_iso(clock)
-            updated = _spawn_transitions().apply_record_exited(
-                self._record,
+        with bind_lifecycle_correlation(
+            self._correlation(operation="record_exited", spawn_id=spawn_id)
+        ):
+            if self._owns_record(spawn_id):
+                assert self._record is not None
+                resolved_exited_at = exited_at or _utc_now_iso(clock)
+                updated = _spawn_transitions().apply_record_exited(
+                    self._record,
+                    spawn_id=spawn_id,
+                    exit_code=exit_code,
+                    exited_at=resolved_exited_at,
+                )
+                if not self._write_owner_record(updated, transition="record_exited"):
+                    return
+                self._emit_telemetry_event(
+                    "spawn.process_exited",
+                    self._record,
+                    payload={"exit_code": exit_code},
+                )
+                return
+
+            previous = _spawn_store().get_spawn(self._runtime_root, spawn_id)
+            # Authoritative transition write still happens in _spawn_store().
+            _spawn_store().record_spawn_exited(
+                self._runtime_root,
+                spawn_id,
+                exit_code=exit_code,
+                exited_at=exited_at,
+                clock=clock,
+            )
+            record = _record_after_exited_update(
+                previous,
                 spawn_id=spawn_id,
                 exit_code=exit_code,
-                exited_at=resolved_exited_at,
+                exited_at=exited_at,
             )
-            if not self._write_owner_record(updated, transition="record_exited"):
-                return
             self._emit_telemetry_event(
                 "spawn.process_exited",
-                self._record,
+                record,
                 payload={"exit_code": exit_code},
             )
-            return
-
-        previous = _spawn_store().get_spawn(self._runtime_root, spawn_id)
-        # Authoritative transition write still happens in _spawn_store().
-        _spawn_store().record_spawn_exited(
-            self._runtime_root,
-            spawn_id,
-            exit_code=exit_code,
-            exited_at=exited_at,
-            clock=clock,
-        )
-        record = _record_after_exited_update(
-            previous,
-            spawn_id=spawn_id,
-            exit_code=exit_code,
-            exited_at=exited_at,
-        )
-        self._emit_telemetry_event(
-            "spawn.process_exited",
-            record,
-            payload={"exit_code": exit_code},
-        )
 
     def finalize(
         self,
@@ -361,125 +383,76 @@ class SpawnLifecycleService:
         *,
         origin: SpawnOrigin,
         duration_secs: float | None = None,
-        total_cost_usd: float | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_read_input_tokens: int | None = None,
-        cache_creation_input_tokens: int | None = None,
-        reasoning_tokens: int | None = None,
-        cost_is_estimate: bool = False,
+        usage: TokenUsage | None = None,
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
     ) -> FinalizeOutcome:
         """Finalize a spawn and dispatch spawn.finalized for persisted terminal writes."""
-        if self._owns_record(spawn_id):
-            assert self._record is not None
-            was_active = self._record.status not in _TERMINAL_STATUS_VALUES
-            updated = _spawn_transitions().apply_finalize(
-                self._record,
+        requested_category = self._terminal_outcome_category(
+            status=status,
+            origin=origin,
+            error=error,
+        )
+        with bind_lifecycle_correlation(
+            self._correlation(
+                operation="finalize",
+                spawn_id=spawn_id,
+                outcome_category=requested_category,
+                terminal_status=status,
+                terminal_origin=origin,
+            )
+        ):
+            outcome = _spawn_store().finalize_spawn(
+                self._runtime_root,
+                spawn_id,
                 status,
                 exit_code,
                 origin=origin,
-                finished_at=finished_at or _utc_now_iso(clock),
                 duration_secs=duration_secs,
-                total_cost_usd=total_cost_usd,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_input_tokens=cache_read_input_tokens,
-                cache_creation_input_tokens=cache_creation_input_tokens,
-                reasoning_tokens=reasoning_tokens,
-                cost_is_estimate=cost_is_estimate,
+                usage=usage,
+                finished_at=finished_at,
                 error=error,
-                validate_status_transition=False,
+                clock=clock,
             )
-            if not self._write_finalized_owner_record(updated):
-                return _spawn_store().FinalizeOutcome(
-                    transitioned=False,
-                    wrote=False,
-                    snapshot=self._read_owner_record_from_disk(spawn_id),
+            if outcome.wrote and outcome.snapshot is not None:
+                if self._owns_record(spawn_id):
+                    self._record = outcome.snapshot
+                self._reconcile_failure_sentinel(
+                    outcome.snapshot,
+                    origin=origin,
+                    error=error,
                 )
-            outcome = _spawn_store().FinalizeOutcome(
-                transitioned=was_active,
-                wrote=True,
-                snapshot=self._record,
-            )
-            if self._record.status == "failed":
-                _write_failure_sentinel(
-                    self._runtime_root,
-                    spawn_id,
-                    SpawnFailure(
-                        spawn_id=spawn_id,
-                        ts=datetime.now(tz=UTC),
-                        exit_code=self._record.exit_code,
-                        reason=self._record.error or self._record.terminal_origin or origin,
-                        metadata={"origin": self._record.terminal_origin or origin},
-                    ),
+                event = self._build_event("spawn.finalized", outcome.snapshot)
+                self._dispatch(event)
+                self._emit_telemetry_event_for_record(
+                    f"spawn.{outcome.snapshot.status}", outcome.snapshot
                 )
-            event = self._build_event("spawn.finalized", self._record)
-            self._dispatch(event)
-            self._emit_telemetry_event_for_record(f"spawn.{self._record.status}", self._record)
             return outcome
-
-        # Authoritative transition write still happens in _spawn_store().
-        outcome = _spawn_store().finalize_spawn(
-            self._runtime_root,
-            spawn_id,
-            status,
-            exit_code,
-            origin=origin,
-            duration_secs=duration_secs,
-            total_cost_usd=total_cost_usd,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_input_tokens=cache_read_input_tokens,
-            cache_creation_input_tokens=cache_creation_input_tokens,
-            reasoning_tokens=reasoning_tokens,
-            cost_is_estimate=cost_is_estimate,
-            finished_at=finished_at,
-            error=error,
-            clock=clock,
-        )
-        if outcome.wrote and outcome.snapshot is not None:
-            if outcome.snapshot.status == "failed":
-                _write_failure_sentinel(
-                    self._runtime_root,
-                    spawn_id,
-                    SpawnFailure(
-                        spawn_id=spawn_id,
-                        ts=datetime.now(tz=UTC),
-                        exit_code=outcome.snapshot.exit_code,
-                        reason=outcome.snapshot.error or outcome.snapshot.terminal_origin or origin,
-                        metadata={"origin": outcome.snapshot.terminal_origin or origin},
-                    ),
-                )
-            event = self._build_event("spawn.finalized", outcome.snapshot)
-            self._dispatch(event)
-            self._emit_telemetry_event_for_record(
-                f"spawn.{outcome.snapshot.status}", outcome.snapshot
-            )
-        return outcome
 
     def mark_finalizing(self, spawn_id: str) -> bool:
         """CAS transition running -> finalizing.  No lifecycle event dispatched."""
-        if self._owns_record(spawn_id):
-            assert self._record is not None
-            if self._record.status != "running":
-                return False
-            updated = _spawn_transitions().apply_mark_finalizing(self._record)
-            if not self._write_owner_record(updated, transition="mark_finalizing"):
-                return False
-            self._emit_telemetry_event("spawn.finalizing", self._record)
-            return True
+        with bind_lifecycle_correlation(
+            self._correlation(operation="mark_finalizing", spawn_id=spawn_id)
+        ):
+            if self._owns_record(spawn_id):
+                assert self._record is not None
+                if self._record.status != "running":
+                    return False
+                updated = _spawn_transitions().apply_mark_finalizing(self._record)
+                if not self._write_owner_record(updated, transition="mark_finalizing"):
+                    return False
+                self._emit_telemetry_event("spawn.finalizing", self._record)
+                return True
 
-        # Authoritative transition write still happens in _spawn_store().
-        transitioned, record = _spawn_store().mark_finalizing_with_snapshot(
-            self._runtime_root,
-            spawn_id,
-        )
-        if transitioned:
-            self._emit_telemetry_event("spawn.finalizing", record)
-        return transitioned
+            # Authoritative transition write still happens in _spawn_store().
+            transitioned, record = _spawn_store().mark_finalizing_with_snapshot(
+                self._runtime_root,
+                spawn_id,
+            )
+            if transitioned:
+                self._emit_telemetry_event("spawn.finalizing", record)
+            return transitioned
 
     def cancel(
         self,
@@ -487,40 +460,112 @@ class SpawnLifecycleService:
         exit_code: int = 130,
         *,
         duration_secs: float | None = None,
-        total_cost_usd: float | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        cache_read_input_tokens: int | None = None,
-        cache_creation_input_tokens: int | None = None,
-        reasoning_tokens: int | None = None,
-        cost_is_estimate: bool = False,
+        usage: TokenUsage | None = None,
         finished_at: str | None = None,
         error: str | None = None,
         clock: Clock | None = None,
     ) -> bool:
         """Cancel a spawn — convenience for finalize(status='cancelled', origin='cancel')."""
-        outcome = self.finalize(
-            spawn_id,
-            "cancelled",
-            exit_code,
-            origin="cancel",
-            duration_secs=duration_secs,
-            total_cost_usd=total_cost_usd,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_input_tokens=cache_read_input_tokens,
-            cache_creation_input_tokens=cache_creation_input_tokens,
-            reasoning_tokens=reasoning_tokens,
-            cost_is_estimate=cost_is_estimate,
-            finished_at=finished_at,
-            error=error,
-            clock=clock,
-        )
-        return outcome.transitioned
+        with bind_lifecycle_correlation(
+            self._correlation(
+                operation="cancel",
+                spawn_id=spawn_id,
+                outcome_category=SpawnFailureCategory.CANCELLATION,
+                terminal_status="cancelled",
+                terminal_origin="cancel",
+            )
+        ):
+            outcome = self.finalize(
+                spawn_id,
+                "cancelled",
+                exit_code,
+                origin="cancel",
+                duration_secs=duration_secs,
+                usage=usage,
+                finished_at=finished_at,
+                error=error,
+                clock=clock,
+            )
+            return outcome.transitioned
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _correlation(
+        self,
+        *,
+        operation: str,
+        record: SpawnRecord | None = None,
+        spawn_id: str | None = None,
+        event_type: str | None = None,
+        outcome_category: TerminalOutcomeCategory | None = None,
+        terminal_status: str | None = None,
+        terminal_origin: str | None = None,
+    ) -> LifecycleCorrelation:
+        resolved_spawn_id = spawn_id or (record.id if record is not None else None)
+        resolved_status = terminal_status
+        if (
+            resolved_status is None
+            and record is not None
+            and record.status in _TERMINAL_STATUS_VALUES
+        ):
+            resolved_status = record.status
+        resolved_origin = terminal_origin
+        if resolved_origin is None and record is not None:
+            resolved_origin = record.terminal_origin
+        return LifecycleCorrelation(
+            spawn_id=resolved_spawn_id,
+            parent_id=record.parent_id if record is not None else None,
+            chat_id=record.chat_id if record is not None else None,
+            work_id=record.work_id if record is not None else None,
+            agent=record.agent if record is not None else None,
+            model=record.model if record is not None else None,
+            harness=record.harness if record is not None else None,
+            lifecycle_operation=operation,
+            lifecycle_event=event_type,
+            terminal_status=resolved_status,
+            terminal_origin=resolved_origin,
+            failure_category=(str(outcome_category) if outcome_category is not None else None),
+        )
+
+    def _terminal_outcome_category(
+        self,
+        *,
+        status: str,
+        origin: str | None,
+        error: str | None = None,
+    ) -> TerminalOutcomeCategory:
+        return _terminal_outcome_category(status=status, origin=origin, error=error)
+
+    def _build_terminal_failure_diagnostic(
+        self,
+        record: SpawnRecord,
+        *,
+        origin: TerminalOrigin | None = None,
+        error: str | None = None,
+    ) -> SpawnFailure:
+        outcome_category = _terminal_failure_category(
+            status=record.status,
+            origin=origin or record.terminal_origin,
+        )
+        correlation = self._correlation(
+            operation="finalize",
+            record=record,
+            event_type="spawn.finalized",
+            outcome_category=outcome_category,
+        )
+        return SpawnFailure(
+            spawn_id=record.id,
+            ts=datetime.now(tz=UTC),
+            exit_code=record.exit_code,
+            reason=record.error or error or record.terminal_origin or origin or "spawn failed",
+            category=outcome_category or SpawnFailureCategory.UNKNOWN_FAILURE,
+            status=record.status,
+            origin=record.terminal_origin or origin,
+            correlation=correlation.to_context(),
+            metadata={"origin": record.terminal_origin or origin},
+        )
 
     def bootstrap_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         """Load owner state once for workers that did not call start()."""
@@ -550,48 +595,60 @@ class SpawnLifecycleService:
         self._record = record
         return True
 
-    def _write_finalized_owner_record(self, record: SpawnRecord) -> bool:
-        """Write owner final state, preserving stale-rejection visibility.
-
-        The owner hot path keeps an in-memory record for fast lifecycle updates.
-        If another writer has already persisted terminal state, the repository
-        guard rejects this write.  Callers then need the on-disk snapshot, not
-        the stale owner record, so finalization catches the guard separately
-        from other owner writes.
-        """
-
-        try:
-            from meridian.lib.state.paths import RuntimePaths
-            from meridian.lib.state.spawn.repository import write_state
-
-            write_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, record)
-        except ValueError:
-            logger.debug(
-                "Owner lifecycle write dropped by terminal monotonicity guard.",
-                spawn_id=record.id,
-                transition="finalize",
-            )
-            return False
-        self._record = record
-        return True
-
     def _read_owner_record_from_disk(self, spawn_id: str) -> SpawnRecord | None:
         from meridian.lib.state.paths import RuntimePaths
         from meridian.lib.state.spawn.repository import read_state
 
         return read_state(RuntimePaths.from_root_dir(self._runtime_root).spawns_dir, spawn_id)
 
+    def _reconcile_failure_sentinel(
+        self,
+        record: SpawnRecord,
+        *,
+        origin: TerminalOrigin | None = None,
+        error: str | None = None,
+    ) -> None:
+        if record.status == "failed":
+            _write_failure_sentinel(
+                self._runtime_root,
+                record.id,
+                self._build_terminal_failure_diagnostic(
+                    record,
+                    origin=origin,
+                    error=error,
+                ),
+            )
+            return
+        _delete_failure_sentinel(self._runtime_root, record.id)
+
     def _dispatch(self, event: LifecycleEvent) -> None:
-        for hook in self._hooks:
-            try:
-                hook.on_event(event)
-            except Exception:
-                logger.exception(
-                    "Lifecycle hook raised exception; transition continues",
-                    event_id=str(event.event_id),
-                    event_type=event.event_type,
-                    spawn_id=event.spawn_id,
-                )
+        correlation = LifecycleCorrelation(
+            spawn_id=event.spawn_id,
+            parent_id=event.parent_id,
+            chat_id=event.chat_id,
+            work_id=event.work_id,
+            agent=event.agent,
+            model=event.model,
+            harness=event.harness,
+            lifecycle_operation="dispatch",
+            lifecycle_event=event.event_type,
+            terminal_status=event.status,
+            terminal_origin=event.origin,
+            failure_category=(
+                str(event.outcome_category) if event.outcome_category is not None else None
+            ),
+        )
+        with bind_lifecycle_correlation(correlation):
+            for hook in self._hooks:
+                try:
+                    hook.on_event(event)
+                except Exception:
+                    logger.exception(
+                        "Lifecycle hook raised exception; transition continues",
+                        event_id=str(event.event_id),
+                        event_type=event.event_type,
+                        spawn_id=event.spawn_id,
+                    )
 
     def _emit_telemetry_event(
         self,
@@ -645,6 +702,7 @@ class SpawnLifecycleService:
         cache_creation_input_tokens: int | None = None
         reasoning_tokens: int | None = None
         cost_is_estimate = False
+        outcome_category: TerminalOutcomeCategory | None = None
 
         if event_type == "spawn.finalized" and record is not None:
             rec_status = record.status
@@ -659,6 +717,11 @@ class SpawnLifecycleService:
             cache_creation_input_tokens = record.cache_creation_input_tokens
             reasoning_tokens = record.reasoning_tokens
             cost_is_estimate = record.cost_is_estimate
+            outcome_category = self._terminal_outcome_category(
+                status=record.status,
+                origin=record.terminal_origin,
+                error=record.error,
+            )
 
         return LifecycleEvent(
             event_id=generate_event_id(resolved_spawn_id, event_type, 0),
@@ -673,6 +736,7 @@ class SpawnLifecycleService:
             harness=record.harness if record is not None else None,
             status=status,
             origin=origin,
+            outcome_category=outcome_category,
             duration_secs=duration_secs,
             total_cost_usd=total_cost_usd,
             input_tokens=input_tokens,
@@ -728,13 +792,70 @@ def _emit_lifecycle_event(
     notify_observers(event)
 
 
+def _terminal_failure_category(
+    *,
+    status: str,
+    origin: str | None,
+    error: str | None = None,
+) -> SpawnFailureCategory | None:
+    _ = error
+    if status == "succeeded":
+        return None
+    if status == "cancelled" or origin == "cancel":
+        return SpawnFailureCategory.CANCELLATION
+    if origin == "launch_failure":
+        return SpawnFailureCategory.LAUNCH_FAILURE
+    if origin == "reconciler":
+        return SpawnFailureCategory.RECONCILER_ORPHAN
+    if status != "failed":
+        return SpawnFailureCategory.UNKNOWN_FAILURE
+    if origin == "runner":
+        return SpawnFailureCategory.HARNESS_FAILURE
+    return SpawnFailureCategory.UNKNOWN_FAILURE
+
+
+def _terminal_outcome_category(
+    *,
+    status: str,
+    origin: str | None,
+    error: str | None,
+) -> TerminalOutcomeCategory:
+    failure_category = _terminal_failure_category(status=status, origin=origin, error=error)
+    if failure_category is not None:
+        return failure_category
+    return "succeeded"
+
+
 def _terminal_telemetry_payload(spawn: SpawnRecord) -> dict[str, Any]:
     """Build sparse terminal lifecycle payload for observer projections."""
-    payload: dict[str, Any] = {"status": spawn.status}
+    payload: dict[str, Any] = {
+        "status": spawn.status,
+    }
+    failure_category = _terminal_failure_category(
+        status=spawn.status,
+        origin=spawn.terminal_origin,
+        error=spawn.error,
+    )
+    if failure_category is not None:
+        payload["category"] = str(failure_category)
     if spawn.exit_code is not None:
         payload["exit_code"] = spawn.exit_code
     if spawn.duration_secs is not None:
         payload["duration_secs"] = spawn.duration_secs
+    if spawn.total_cost_usd is not None:
+        payload["total_cost_usd"] = spawn.total_cost_usd
+    if spawn.input_tokens is not None:
+        payload["input_tokens"] = spawn.input_tokens
+    if spawn.output_tokens is not None:
+        payload["output_tokens"] = spawn.output_tokens
+    if spawn.cache_read_input_tokens is not None:
+        payload["cache_read_input_tokens"] = spawn.cache_read_input_tokens
+    if spawn.cache_creation_input_tokens is not None:
+        payload["cache_creation_input_tokens"] = spawn.cache_creation_input_tokens
+    if spawn.reasoning_tokens is not None:
+        payload["reasoning_tokens"] = spawn.reasoning_tokens
+    if spawn.cost_is_estimate:
+        payload["cost_is_estimate"] = True
     if spawn.error:
         payload["reason"] = spawn.error
     return payload
@@ -761,6 +882,19 @@ def _write_failure_sentinel(
         sentinel_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
         logger.exception("Failed to write failure sentinel for %s", spawn_id)
+
+
+def _delete_failure_sentinel(runtime_root: Path, spawn_id: str) -> None:
+    """Best-effort removal of stale failure sentinel after non-failed replacement."""
+    try:
+        from meridian.lib.state.paths import RuntimePaths
+
+        sentinel_path = (
+            RuntimePaths.from_root_dir(runtime_root).spawns_dir / spawn_id / "failure.json"
+        )
+        sentinel_path.unlink(missing_ok=True)
+    except Exception:
+        logger.exception("Failed to remove failure sentinel for %s", spawn_id)
 
 
 # ---------------------------------------------------------------------------

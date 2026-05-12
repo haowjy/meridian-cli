@@ -6,10 +6,12 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.logging import configure_logging
 from meridian.lib.extensions.context import (
-    ExtensionCommandServices,
     ExtensionInvocationContextBuilder,
+    build_extension_command_services,
 )
 from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
 from meridian.lib.extensions.registry import (
@@ -137,7 +139,12 @@ async def extension_invoke(
         # In-process dispatch for local-only commands. Rootless observability
         # stays process-scoped via stderr telemetry rather than segment storage.
         dispatcher = ExtensionCommandDispatcher(registry)
-        context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP)
+        prepared = prepare_for_runtime_read(resolve_project_root_resolution().project_root)
+        application = build_extension_entrypoint(prepared)
+        services = build_extension_command_services(application=application)
+        context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.MCP).with_authority(
+            prepared.authority
+        )
         if request_id is not None:
             context_builder = context_builder.with_request_id(request_id)
         if work_id is not None:
@@ -148,7 +155,7 @@ async def extension_invoke(
             fqid=fqid,
             args=resolved_args,
             context=context_builder.build(),
-            services=ExtensionCommandServices(),
+            services=services,
         )
         if isinstance(result, ExtensionErrorResult):
             emit_invoked("error", code=result.code)
@@ -170,10 +177,12 @@ async def extension_invoke(
         ),
     }
 
+
 def run_server() -> None:
     """Start the FastMCP stdio server."""
 
     mcp.run(transport="stdio")
+
 
 if __name__ == "__main__":
     run_server()

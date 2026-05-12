@@ -25,9 +25,11 @@ class ExtractedReport(BaseModel):
 
 
 def _event_name(payload: dict[str, object]) -> str:
-    return str(
-        payload.get("event_type", payload.get("event", payload.get("type", "")))
-    ).strip().lower()
+    return (
+        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+        .strip()
+        .lower()
+    )
 
 
 def _is_terminal_control_frame(text: str) -> bool:

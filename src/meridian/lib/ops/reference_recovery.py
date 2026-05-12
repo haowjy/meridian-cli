@@ -51,13 +51,13 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
     return _normalize(record.harness_session_id)
 
 
-def _primary_spawn_for_chat(runtime_root: Path, chat_id: str) -> SpawnRecord | None:
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    spawns = reconcile_spawns(
-        runtime_root,
-        spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
-    )
+def _primary_spawn_for_chat(
+    project_root: Path,
+    runtime_root: Path,
+    chat_id: str,
+) -> SpawnRecord | None:
+    _ = project_root
+    spawns = spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id})
     primary_spawns = [row for row in spawns if row.kind == "primary"]
     if not primary_spawns:
         return None
@@ -117,9 +117,7 @@ def _detect_primary_harness_session_id(
     return detected_harness_session_id
 
 
-def _recover_from_session_store(
-    runtime_root: Path, chat_id: str
-) -> RecoveryResult | None:
+def _recover_from_session_store(runtime_root: Path, chat_id: str) -> RecoveryResult | None:
     records = session_store.get_session_records(runtime_root, {chat_id})
     if not records:
         return None
@@ -134,9 +132,7 @@ def _recover_from_session_store(
     return None
 
 
-def _recover_from_spawn_row(
-    runtime_root: Path, spawn_id: str
-) -> RecoveryResult | None:
+def _recover_from_spawn_row(runtime_root: Path, spawn_id: str) -> RecoveryResult | None:
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     if row is None:
         return None
@@ -171,7 +167,7 @@ def _recover_from_detection(
 ) -> RecoveryResult | None:
     if chat_id is None:
         return None
-    primary_spawn = _primary_spawn_for_chat(runtime_root, chat_id)
+    primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, chat_id)
     if primary_spawn is None:
         return None
     detected = _detect_primary_harness_session_id(
@@ -230,11 +226,9 @@ def recover_harness_session_id(
         if result is not None:
             return result
 
-        primary_spawn = _primary_spawn_for_chat(runtime_root, normalized_ref)
+        primary_spawn = _primary_spawn_for_chat(project_root, runtime_root, normalized_ref)
         if primary_spawn is not None:
-            result = _recover_from_primary_meta(
-                runtime_root, primary_spawn.id, normalized_ref
-            )
+            result = _recover_from_primary_meta(runtime_root, primary_spawn.id, normalized_ref)
             if result is not None:
                 return result
 
@@ -257,9 +251,7 @@ def recover_harness_session_id(
             if result is not None:
                 return result
 
-            result = _recover_from_primary_meta(
-                runtime_root, normalized_ref, row.chat_id
-            )
+            result = _recover_from_primary_meta(runtime_root, normalized_ref, row.chat_id)
             if result is not None:
                 return result
 

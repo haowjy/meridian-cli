@@ -7,8 +7,10 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+import structlog
 from structlog.testing import capture_logs
 
+import meridian.lib.hooks.dispatch as _dispatch_mod
 from meridian.lib.hooks.config import HooksConfig
 from meridian.lib.hooks.dispatch import BUILTIN_HOOKS, HookDispatcher
 from meridian.lib.hooks.registry import HookRegistry
@@ -371,8 +373,15 @@ def test_dispatch_pipeline_logs_fail_open_failures_and_completion_metadata(
     registry = HookRegistry(project_root, hooks_config=hooks)
     dispatcher = HookDispatcher(project_root, runtime_root, registry=registry)
 
+    # Rebind module-level logger so capture_logs intercepts it even when an
+    # earlier test triggered structlog's cache_logger_on_first_use caching.
+    _saved_logger = _dispatch_mod.logger
     with capture_logs() as logs:
-        results = dispatcher.fire(_context())
+        _dispatch_mod.logger = structlog.get_logger(_dispatch_mod.__name__)
+        try:
+            results = dispatcher.fire(_context())
+        finally:
+            _dispatch_mod.logger = _saved_logger
 
     assert [result.outcome for result in results] == ["failure", "success"]
     assert success_marker.read_text(encoding="utf-8") == "ok"
@@ -433,8 +442,13 @@ def test_dispatch_pipeline_logs_exit_code_on_completion(tmp_path: Path) -> None:
     registry = HookRegistry(project_root, hooks_config=hooks)
     dispatcher = HookDispatcher(project_root, runtime_root, registry=registry)
 
+    _saved_logger = _dispatch_mod.logger
     with capture_logs() as logs:
-        results = dispatcher.fire(_context())
+        _dispatch_mod.logger = structlog.get_logger(_dispatch_mod.__name__)
+        try:
+            results = dispatcher.fire(_context())
+        finally:
+            _dispatch_mod.logger = _saved_logger
 
     assert [result.outcome for result in results] == ["success"]
     assert success_marker.read_text(encoding="utf-8") == "ok"

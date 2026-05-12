@@ -9,27 +9,46 @@ from pathlib import Path
 from typing import ClassVar
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
+    ApprovalContract,
     ArtifactStore,
     BaseHarnessAdapter,
+    BootstrapContract,
+    BootstrapMode,
+    ExtractionContract,
+    ForkMaterializationMode,
     HarnessCapabilities,
+    HarnessContract,
     McpConfig,
+    ObserverControllerContract,
     PermissionResolver,
+    ProjectionContract,
+    ProjectionMode,
     RunPromptPolicy,
+    RuntimeHitlMode,
     SpawnParams,
+    TransportContract,
 )
-from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
+from meridian.lib.harness.bundle import (
+    HarnessBundle,
+    HarnessProjectionPorts,
+    ManagedPrimaryProjectionPorts,
+    project_subprocess_spec,
+    register_harness_bundle,
+)
 from meridian.lib.harness.common import (
     extract_opencode_report,
     extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.opencode_http import OpenCodeConnection
 from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
-from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
+from meridian.lib.harness.projections.project_opencode_streaming import (
+    project_opencode_spec_to_serve_command,
+    project_opencode_spec_to_session_payload,
+)
 from meridian.lib.harness.projections.project_opencode_subprocess import (
     project_opencode_spec_to_cli_args,
 )
@@ -46,6 +65,7 @@ from meridian.lib.launch.constants import (
     BASE_COMMAND_OPENCODE_SUBPROCESS,
     PRIMARY_BASE_COMMAND_OPENCODE,
 )
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -89,13 +109,7 @@ def _opencode_db_path() -> Path:
 
 
 def _opencode_session_diff_path(session_id: str) -> Path:
-    return (
-        _opencode_data_root()
-        / "opencode"
-        / "storage"
-        / "session_diff"
-        / f"{session_id}.json"
-    )
+    return _opencode_data_root() / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
 
 
 def _directory_matches_project(directory: str, project_root: Path) -> bool:
@@ -236,6 +250,17 @@ def _detect_primary_session_id(
     return _legacy_detect_primary_session_id(project_root, started_at_epoch, started_at_local_iso)
 
 
+def project_opencode_spec_to_session_payload_for_project(
+    spec: ResolvedLaunchSpec,
+    *,
+    project_root: Path,
+) -> dict[str, object]:
+    """Project OpenCode managed-primary bootstrap payload for one project root."""
+
+    _ = project_root
+    return project_opencode_spec_to_session_payload(spec)
+
+
 def _legacy_owns_session(project_root: Path, session_ref: str) -> bool:
     opencode_logs = _opencode_data_root() / "opencode" / "log"
     if not opencode_logs.is_dir():
@@ -283,7 +308,7 @@ def _owns_session(project_root: Path, session_ref: str) -> bool:
     return _legacy_owns_session(project_root, normalized)
 
 
-class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
+class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `opencode`."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_OPENCODE_SUBPROCESS
@@ -318,11 +343,52 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
             "user_turn_content",
         }
     )
-    _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset({"report_output_path"})
+    _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"report_output_path", "context_from_payload", "reference_items"}
+    )
 
     @property
     def id(self) -> HarnessId:
         return HarnessId.OPENCODE
+
+    @property
+    def contract(self) -> HarnessContract:
+        observer = ObserverControllerContract(
+            supports_input_injection=False,
+        )
+        return HarnessContract(
+            capabilities=self.capabilities,
+            transport=TransportContract(
+                transport_ids=(TransportId.STREAMING,),
+                observer_controller_required=True,
+            ),
+            projection=ProjectionContract(
+                launch_spec_cls="ResolvedLaunchSpec",
+                mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
+            ),
+            extraction=ExtractionContract(
+                session_observation_order=(
+                    "connection_session",
+                    "artifacts",
+                    "current_session",
+                    "primary_detection",
+                )
+            ),
+            approval=ApprovalContract(
+                runtime_hitl=RuntimeHitlMode.NONE,
+                subprocess_permission_flags_projected_by_shared_policy=False,
+                default_runtime_request_policy="none",
+            ),
+            bootstrap=BootstrapContract(
+                mode=BootstrapMode.MANAGED_PRIMARY_ATTACH,
+                fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+                primary_attach_failure_policy="fallback_to_blackbox",
+                observer_controller=observer,
+            ),
+            capability_limits=(
+                "native_inherit declared as contract capability only; policy remains pty_mediated",
+            ),
+        )
 
     @property
     def consumed_fields(self) -> frozenset[str]:
@@ -342,6 +408,11 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
             supports_native_skills=True,
             supports_primary_launch=True,
             supports_native_file_injection=False,
+            terminal_surface_modes=(
+                TerminalSurfaceMode.PTY_MEDIATED,
+                TerminalSurfaceMode.NATIVE_INHERIT,
+            ),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:
@@ -351,12 +422,13 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
         self,
         run: SpawnParams,
         perms: PermissionResolver,
-    ) -> OpenCodeLaunchSpec:
+    ) -> ResolvedLaunchSpec:
         normalized_model: str | None = None
         if run.model:
             normalized_model = _normalize_opencode_model(str(run.model))
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        return OpenCodeLaunchSpec(
+        return ResolvedLaunchSpec(
+            harness=HarnessId.OPENCODE,
             model=normalized_model,
             effort=run.effort,
             prompt=run.user_turn_content or run.prompt,
@@ -377,7 +449,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[OpenCodeLaunchSpec]):
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_opencode_spec_to_cli_args(spec, base_command=base_command)
+        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -467,8 +539,15 @@ register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.OPENCODE,
         adapter=OpenCodeAdapter(),
-        spec_cls=OpenCodeLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=OPENCODE_EXTRACTOR,
         connections={TransportId.STREAMING: OpenCodeConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=project_opencode_spec_to_cli_args,
+            managed_primary=ManagedPrimaryProjectionPorts(
+                backend_command=project_opencode_spec_to_serve_command,
+                bootstrap_payload=project_opencode_spec_to_session_payload_for_project,
+            ),
+        ),
     )
 )

@@ -177,9 +177,7 @@ def validate_harness_compatibility(
     supported_primary_set = set(supported_primary_harnesses)
     if harness_id not in supported_primary_set:
         supported_text = ", ".join(str(harness) for harness in supported_primary_harnesses)
-        raise ValueError(
-            f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}."
-        )
+        raise ValueError(f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}.")
 
     if is_policy_reroute or model_entry is None:
         return
@@ -218,6 +216,7 @@ def resolve_harness(
         is_policy_reroute=is_policy_reroute,
     )
     return override_harness
+
 
 __all__ = [
     "ResolvedSkills",

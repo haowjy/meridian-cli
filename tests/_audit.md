@@ -1,7 +1,7 @@
 # Test Audit
 
 ## Summary
-- GOOD: 59 files
+- GOOD: 58 files
 - MISCLASSIFIED: 2 files
 - REWRITE: 14 files (by lane: A=2, B=2, C=0, D=2, E=3, F=1, G=4)
 - DUPLICATE: 0 files
@@ -93,7 +93,6 @@
 | harness/test_launch_spec_parity.py | REWRITE | F | Monkeypatches private `_APPROVAL_POLICY_BY_MODE`; couples tests to adapter internals. |
 | harness/test_spec_field_guards.py | GOOD | — | Behavior-focused test with scope matching directory intent. |
 | harness/test_typed_contracts.py | GOOD | — | Behavior-focused test with scope matching directory intent. |
-| launch/test_launch_factory.py | GOOD | — | Behavior-focused test with scope matching directory intent. |
 
 ### tests/platform/
 
@@ -102,4 +101,3 @@
 | test_atomic.py | GOOD | — | Behavior-focused test with scope matching directory intent. |
 | test_locking.py | GOOD | — | Behavior-focused test with scope matching directory intent. |
 | test_terminate.py | GOOD | — | Behavior-focused test with scope matching directory intent. |
-

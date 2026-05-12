@@ -27,13 +27,25 @@ def _spawn_id_sort_key(spawn_id: str) -> tuple[int, str]:
     return (10**9, spawn_id)
 
 
-def _spawn_desc(spawn: SpawnRecord) -> str:
-    desc = (spawn.desc or "").strip()
-    if desc:
-        return " ".join(desc.split())
+def _spawn_label(spawn: SpawnRecord) -> str:
+    """Prefer goal over desc for display — goal is the completion contract."""
+    label = (spawn.goal or spawn.desc or "").strip()
+    if label:
+        return " ".join(label.split())
     if spawn.kind == "primary":
         return "(primary)"
     return ""
+
+
+def _truncated_goal(goal: str | None, *, max_len: int = 80) -> str:
+    if goal is None:
+        return ""
+    normalized = " ".join(goal.split())
+    if len(normalized) <= max_len:
+        return normalized
+    if max_len <= 1:
+        return "…"
+    return normalized[: max_len - 1].rstrip() + "…"
 
 
 class WorkDashboardSpawn(BaseModel):
@@ -50,7 +62,7 @@ def _dashboard_spawn(spawn: SpawnRecord) -> WorkDashboardSpawn:
         id=spawn.id,
         model=(spawn.model or "").strip() or "-",
         status=spawn.status,
-        desc=_spawn_desc(spawn),
+        desc=_spawn_label(spawn),
     )
 
 
@@ -140,12 +152,26 @@ def work_dir_display(project_root: Path, project_state_dir: Path, work_id: str) 
     return _display_path(project_root, work_store.work_scratch_dir(project_state_dir, work_id))
 
 
+def _display_worktree_path(worktree_path: str, project_root: Path) -> str:
+    """Display-friendly worktree path, relative to project root parent when possible."""
+    try:
+        wt = Path(worktree_path)
+        rel = wt.relative_to(project_root.parent)
+        return f"../{rel.as_posix()}"
+    except ValueError:
+        return worktree_path
+
+
 class WorkDashboardItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
     status: str
+    goal: str | None = None
     spawns: tuple[WorkDashboardSpawn, ...] = ()
+    worktree_display: str | None = None  # display-friendly path, pre-computed; None = no worktree
+    worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
+    worktree_pending: bool = False  # creation interrupted
 
 
 class WorkDashboardInput(BaseModel):
@@ -175,7 +201,16 @@ class WorkDashboardOutput(BaseModel):
         has_spawns = False
 
         for item in self.items:
-            lines.append(f"  {item.name}  {item.status}")
+            row = f"  {item.name}  {item.status}"
+            goal = _truncated_goal(item.goal)
+            if goal:
+                row = f"{row}  {goal}"
+            lines.append(row)
+            if item.worktree_pending:
+                lines.append("    \U0001f333 (creation interrupted)")
+            elif item.worktree_display is not None:
+                suffix = "" if item.worktree_exists else " (missing)"
+                lines.append(f"    \U0001f333 {item.worktree_display}{suffix}")
             lines.extend(_format_spawn_rows(item.spawns, indent="    "))
             if item.spawns:
                 has_spawns = True
@@ -204,6 +239,7 @@ class WorkListItem(BaseModel):
 
     name: str
     status: str
+    goal: str | None = None
     description: str
     created_at: str
 
@@ -253,28 +289,36 @@ class WorkShowOutput(BaseModel):
 
     name: str
     status: str
+    goal: str | None = None
     description: str
     created_at: str
     work_dir: str
     spawns: tuple[WorkDashboardSpawn, ...] = ()
     sessions: tuple[WorkSessionItem, ...] = ()
+    worktree_path: str | None = None  # full absolute path; None = no worktree
+    worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
+    worktree_pending: bool = False  # creation interrupted
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
 
         from meridian.lib.core.formatting import kv_block
 
-        lines = [
-            kv_block(
-                [
-                    ("Work", self.name),
-                    ("Status", self.status),
-                    ("Description", self.description or "(none)"),
-                    ("Created", self.created_at),
-                    ("Dir", self.work_dir),
-                ]
-            )
+        kv_rows: list[tuple[str, str | None]] = [
+            ("Work", self.name),
+            ("Status", self.status),
+            ("Goal", self.goal or "(none)"),
+            ("Description", self.description or "(none)"),
+            ("Created", self.created_at),
+            ("Dir", self.work_dir),
         ]
+        if self.worktree_pending:
+            kv_rows.append(("Worktree", "(creation interrupted)"))
+        elif self.worktree_path is not None:
+            suffix = "" if self.worktree_exists else " (missing)"
+            kv_rows.append(("Worktree", f"{self.worktree_path}{suffix}"))
+
+        lines = [kv_block(kv_rows)]
         if self.spawns:
             lines.append("")
             lines.append("Spawns:")
@@ -336,6 +380,7 @@ def _resolve_work_id(
 
 
 def _work_session_chat_ids(
+    project_root: Path,
     runtime_root: Path,
     work_id: str,
     *,
@@ -352,7 +397,11 @@ def _work_session_chat_ids(
         chat_ids.update(
             session_store.chat_ids_ever_attached_to_work(runtime_root, normalized_work_id)
         )
-        for spawn in reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root)):
+        for spawn in reconcile_spawns(
+            project_root,
+            runtime_root,
+            spawn_store.list_spawns(runtime_root),
+        ):
             if (spawn.work_id or "").strip() != normalized_work_id:
                 continue
             chat_id = (spawn.chat_id or "").strip()
@@ -363,7 +412,11 @@ def _work_session_chat_ids(
     for record in session_store.list_active_session_records(runtime_root):
         if record.active_work_id == normalized_work_id:
             chat_ids.add(record.chat_id)
-    for spawn in reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root)):
+    for spawn in reconcile_spawns(
+        project_root,
+        runtime_root,
+        spawn_store.list_spawns(runtime_root),
+    ):
         if spawn.kind == "primary":
             continue
         if not is_active_spawn_status(spawn.status):
@@ -377,13 +430,19 @@ def _work_session_chat_ids(
 
 
 def _work_sessions_for_work_id(
+    project_root: Path,
     runtime_root: Path,
     work_id: str,
     *,
     include_all: bool,
 ) -> tuple[WorkSessionItem, ...]:
     active_chat_ids = set(session_store.list_active_sessions(runtime_root))
-    chat_ids = _work_session_chat_ids(runtime_root, work_id, include_all=include_all)
+    chat_ids = _work_session_chat_ids(
+        project_root,
+        runtime_root,
+        work_id,
+        include_all=include_all,
+    )
     records = session_store.get_session_records(runtime_root, chat_ids)
     records.sort(key=lambda record: (record.started_at, record.chat_id))
     return tuple(
@@ -405,6 +464,7 @@ def work_dashboard_sync(
 ) -> WorkDashboardOutput:
     _ = ctx
     roots = resolve_roots_for_read(payload.project_root)
+    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     work_items, work_warnings = work_store.list_work_items(project_state_dir)
@@ -416,7 +476,9 @@ def work_dashboard_sync(
     from meridian.lib.state.reaper import reconcile_spawns
 
     for spawn in reconcile_spawns(
-        runtime_state_root, spawn_store.list_spawns(runtime_state_root)
+        project_root,
+        runtime_state_root,
+        spawn_store.list_spawns(runtime_state_root),
     ):
         if not is_active_spawn_status(spawn.status):
             continue
@@ -436,13 +498,24 @@ def work_dashboard_sync(
         ),
     ):
         item = items_by_name.get(work_id)
+        wt_path = item.worktree_path if item is not None else None
+        wt_pending = item.worktree_pending if item is not None else False
+        wt_display: str | None = None
+        wt_exists: bool | None = None
+        if wt_path is not None:
+            wt_display = _display_worktree_path(wt_path, project_root)
+            wt_exists = Path(wt_path).is_dir()
         items.append(
             WorkDashboardItem(
                 name=work_id,
                 status=item.status if item is not None else "missing",
+                goal=item.goal if item is not None else None,
                 spawns=tuple(
                     sorted(grouped[work_id], key=lambda spawn: _spawn_id_sort_key(spawn.id))
                 ),
+                worktree_display=wt_display,
+                worktree_exists=wt_exists,
+                worktree_pending=wt_pending,
             )
         )
 
@@ -472,6 +545,7 @@ def work_list_sync(
             WorkListItem(
                 name=item.name,
                 status=item.status,
+                goal=item.goal,
                 description=item.description,
                 created_at=item.created_at,
             )
@@ -501,7 +575,9 @@ def work_show_sync(
     associated_spawns = [
         _dashboard_spawn(spawn)
         for spawn in reconcile_spawns(
-            runtime_state_root, spawn_store.list_spawns(runtime_state_root)
+            project_root,
+            runtime_state_root,
+            spawn_store.list_spawns(runtime_state_root),
         )
         if _associated_with_work_item(
             spawn,
@@ -511,14 +587,28 @@ def work_show_sync(
     ]
     associated_spawns.sort(key=lambda spawn: _spawn_id_sort_key(spawn.id))
 
+    wt_path = item.worktree_path
+    wt_exists: bool | None = None
+    if wt_path is not None:
+        wt_exists = Path(wt_path).is_dir()
+
     return WorkShowOutput(
         name=item.name,
         status=item.status,
+        goal=item.goal,
         description=item.description,
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         spawns=tuple(associated_spawns),
-        sessions=_work_sessions_for_work_id(runtime_state_root, item.name, include_all=False),
+        sessions=_work_sessions_for_work_id(
+            project_root,
+            runtime_state_root,
+            item.name,
+            include_all=False,
+        ),
+        worktree_path=wt_path,
+        worktree_exists=wt_exists,
+        worktree_pending=item.worktree_pending,
     )
 
 
@@ -527,6 +617,7 @@ def work_sessions_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkSessionsOutput:
     roots = resolve_roots_for_read(payload.project_root)
+    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     resolved_work_id = _resolve_work_id(
@@ -542,6 +633,7 @@ def work_sessions_sync(
     return WorkSessionsOutput(
         work_id=item.name,
         sessions=_work_sessions_for_work_id(
+            project_root,
             runtime_state_root,
             item.name,
             include_all=payload.all,

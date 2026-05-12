@@ -13,12 +13,10 @@ from meridian.lib.launch.env import (
     sanitize_child_env,
 )
 from meridian.lib.safety.permissions import (
-    CombinedToolsResolver,
-    ExplicitToolsResolver,
     PermissionConfig,
+    ToolsPermissionResolver,
     build_permission_config,
-    opencode_permission_json_for_allowed_tools,
-    opencode_permission_json_for_disallowed_tools,
+    compile_tools_to_opencode_permission,
     resolve_permission_pipeline,
 )
 
@@ -40,10 +38,17 @@ def test_invalid_approval_raises() -> None:
         build_permission_config("danger-full-access", approval="sometimes")
 
 
-def test_opencode_allowlist_normalizes_and_sets_explicit_override() -> None:
+def test_opencode_tools_map_normalizes_and_sets_explicit_override() -> None:
     normalized = json.loads(
-        opencode_permission_json_for_allowed_tools(
-            ("Read", "Glob", "Grep", "Bash(git status)", "WebSearch")
+        compile_tools_to_opencode_permission(
+            {
+                "*": "deny",
+                "read": "allow",
+                "glob": "allow",
+                "grep": "allow",
+                "bash(git status)": "allow",
+                "web": "allow",
+            }
         )
     )
     assert normalized == {
@@ -51,16 +56,17 @@ def test_opencode_allowlist_normalizes_and_sets_explicit_override() -> None:
         "read": "allow",
         "glob": "allow",
         "grep": "allow",
-        "bash": "allow",
+        "bash(git status)": "allow",
+        "webfetch": "allow",
         "websearch": "allow",
     }
 
     config, resolver = resolve_permission_pipeline(
         sandbox="workspace-write",
-        allowed_tools=("Read", "Write"),
+        tools={"*": "deny", "read": "allow", "write": "allow"},
         approval="confirm",
     )
-    assert isinstance(resolver, ExplicitToolsResolver)
+    assert isinstance(resolver, ToolsPermissionResolver)
     assert config.sandbox == "workspace-write"
     assert json.loads(config.opencode_permission_override or "{}") == {
         "*": "deny",
@@ -69,10 +75,17 @@ def test_opencode_allowlist_normalizes_and_sets_explicit_override() -> None:
     }
 
 
-def test_opencode_disallow_normalization_and_combined_precedence() -> None:
+def test_opencode_deny_defaults_and_claude_tool_projection() -> None:
     normalized = json.loads(
-        opencode_permission_json_for_disallowed_tools(
-            ("Read", "Glob", "Grep", "Bash(git status)", "WebSearch")
+        compile_tools_to_opencode_permission(
+            {
+                "*": "allow",
+                "read": "deny",
+                "glob": "deny",
+                "grep": "deny",
+                "bash(git status)": "deny",
+                "web": "deny",
+            }
         )
     )
     assert normalized == {
@@ -80,17 +93,18 @@ def test_opencode_disallow_normalization_and_combined_precedence() -> None:
         "read": "deny",
         "glob": "deny",
         "grep": "deny",
-        "bash": "deny",
+        "bash(git status)": "deny",
+        "webfetch": "deny",
         "websearch": "deny",
     }
 
-    disallowed_only_config, disallowed_only_resolver = resolve_permission_pipeline(
+    deny_only_config, deny_only_resolver = resolve_permission_pipeline(
         sandbox="workspace-write",
-        disallowed_tools=("Read", "Write"),
+        tools={"*": "allow", "read": "deny", "write": "deny"},
         approval="confirm",
     )
-    assert isinstance(disallowed_only_resolver, CombinedToolsResolver)
-    assert json.loads(disallowed_only_config.opencode_permission_override or "{}") == {
+    assert isinstance(deny_only_resolver, ToolsPermissionResolver)
+    assert json.loads(deny_only_config.opencode_permission_override or "{}") == {
         "*": "allow",
         "read": "deny",
         "write": "deny",
@@ -98,39 +112,32 @@ def test_opencode_disallow_normalization_and_combined_precedence() -> None:
 
     combined_config, combined_resolver = resolve_permission_pipeline(
         sandbox="workspace-write",
-        allowed_tools=("Bash",),
-        disallowed_tools=("Agent",),
+        tools={"*": "deny", "bash": "allow", "agent": "deny"},
     )
-    assert isinstance(combined_resolver, CombinedToolsResolver)
+    assert isinstance(combined_resolver, ToolsPermissionResolver)
     assert resolve_permission_flags(combined_resolver, HarnessId.CLAUDE) == (
         "--allowedTools",
         "Bash",
-        "--disallowedTools",
-        "Agent",
     )
-    # OpenCode applies allowlist precedence when both lists are supplied.
     assert json.loads(combined_config.opencode_permission_override or "{}") == {
         "*": "deny",
         "bash": "allow",
+        "agent": "deny",
     }
 
 
-def test_disallowed_tools_resolver_codex_warns_and_falls_back(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_tools_resolver_codex_ignores_claude_tool_flags() -> None:
     config, resolver = resolve_permission_pipeline(
         sandbox="workspace-write",
-        disallowed_tools=("Bash",),
+        tools={"*": "allow", "bash": "deny"},
     )
 
     assert config.sandbox == "workspace-write"
-    assert isinstance(resolver, CombinedToolsResolver)
-    with caplog.at_level("WARNING"):
-        assert resolve_permission_flags(resolver, HarnessId.CODEX) == (
-            "--sandbox",
-            "workspace-write",
-        )
-    assert "Codex does not support disallowed-tools" in caplog.text
+    assert isinstance(resolver, ToolsPermissionResolver)
+    assert resolve_permission_flags(resolver, HarnessId.CODEX) == (
+        "--sandbox",
+        "workspace-write",
+    )
 
 
 @pytest.mark.parametrize(
@@ -235,9 +242,7 @@ def test_merge_env_overrides_rejects_meridian_keys_from_plan_and_preflight() -> 
     for source in ("plan_overrides", "preflight_overrides"):
         for key in _MERIDIAN_RUNTIME_KEYS:
             plan_overrides = {key: "blocked"} if source == "plan_overrides" else {}
-            preflight_overrides = (
-                {key: "blocked"} if source == "preflight_overrides" else {}
-            )
+            preflight_overrides = {key: "blocked"} if source == "preflight_overrides" else {}
             with pytest.raises(RuntimeError) as exc_info:
                 merge_env_overrides(
                     plan_overrides=plan_overrides,

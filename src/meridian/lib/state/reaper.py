@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import signal
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,15 +10,14 @@ from pathlib import Path
 
 import structlog
 
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.domain import SpawnStatus
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.spawn_lifecycle import (
     has_durable_report_completion,
     is_active_spawn_status,
     resolve_reconciled_terminal_state,
 )
-from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
@@ -30,6 +27,7 @@ from meridian.lib.state.managed_primary import (
     ManagedPrimarySnapshot,
     ReconciliationContext,
     read_managed_primary_snapshot,
+    terminate_managed_primary_processes,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
 
@@ -155,21 +153,6 @@ def _collect_artifact_snapshot(
     )
 
 
-def _terminate_worker_pid(worker_pid: int, started_epoch: float | None) -> None:
-    """Terminate a leaked harness subprocess during orphan reconciliation.
-
-    Uses PID-reuse guard to avoid killing unrelated processes.
-    Suppresses all errors -- best-effort cleanup in a crash-recovery path.
-    """
-    try:
-        created_after = started_epoch if started_epoch is not None else 0.0
-        if not is_process_alive(worker_pid, created_after_epoch=created_after):
-            return
-        os.kill(worker_pid, signal.SIGTERM)
-    except OSError:
-        pass
-
-
 def _has_recent_activity(snapshot: ArtifactSnapshot) -> bool:
     """Return whether any tracked runner artifact is recent."""
     return snapshot.recent_activity_artifact is not None
@@ -202,9 +185,7 @@ def _is_pre_worker_launch_boundary_ghost(
     if not boundary.has_events or boundary.has_worker_takeover:
         return False
     runner_pid = (
-        record.runner_pid
-        if record.runner_pid is not None and record.runner_pid > 0
-        else None
+        record.runner_pid if record.runner_pid is not None and record.runner_pid > 0 else None
     )
     if runner_pid is None:
         return True
@@ -297,9 +278,7 @@ def _log_orphan_primary_diagnostics(
     if managed_snapshot is not None:
         metadata = managed_snapshot.metadata
         launcher_pid = metadata.launcher_pid
-        launcher_alive = (
-            managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
-        )
+        launcher_alive = managed_snapshot.launcher_pid_alive if launcher_pid is not None else None
         backend_alive = (
             is_process_alive(
                 metadata.backend_pid,
@@ -317,7 +296,7 @@ def _log_orphan_primary_diagnostics(
             else None
         )
         logger.warning(
-            "Managed primary launcher dead; reconciler did not terminate tracked children.",
+            "Managed primary launcher dead during orphan reconciliation.",
             spawn_id=record.id,
             managed_metadata_readable=True,
             launcher_pid=launcher_pid,
@@ -331,16 +310,11 @@ def _log_orphan_primary_diagnostics(
         return
 
     launcher_pid = (
-        record.runner_pid
-        if record.runner_pid is not None and record.runner_pid > 0
-        else None
+        record.runner_pid if record.runner_pid is not None and record.runner_pid > 0 else None
     )
     launcher_alive = snapshot.runner_pid_alive if launcher_pid is not None else None
     logger.warning(
-        (
-            "Managed primary candidate reconciled without readable metadata; "
-            "skipped worker termination."
-        ),
+        ("Managed primary candidate reconciled without readable metadata."),
         spawn_id=record.id,
         managed_metadata_readable=False,
         launcher_pid=launcher_pid,
@@ -354,12 +328,20 @@ def _log_orphan_primary_diagnostics(
 
 
 def _finalize_and_log(
-    runtime_root: Path, record: SpawnRecord, *, status: SpawnStatus, exit_code: int,
-    error: str | None, reason: str, snapshot: ArtifactSnapshot, now: float
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    *,
+    status: SpawnStatus,
+    exit_code: int,
+    error: str | None,
+    reason: str,
+    snapshot: ArtifactSnapshot,
+    now: float,
 ) -> SpawnRecord:
-    lifecycle_service = create_lifecycle_service(runtime_root.parent, runtime_root)
+    service = build_spawn_application_service_from_roots(project_root, runtime_root)
     outcome = asyncio.run(
-        SpawnApplicationService(runtime_root, lifecycle_service).complete_spawn(
+        service.complete_spawn(
             SpawnId(record.id),
             status,
             exit_code,
@@ -367,7 +349,10 @@ def _finalize_and_log(
             error=error,
         )
     )
+    resolved_record = outcome.snapshot or record
     if not outcome.wrote:
+        return resolved_record
+    if outcome.snapshot is None:
         return record
     inactivity_secs = (
         max(0.0, now - snapshot.last_activity_epoch)
@@ -384,13 +369,19 @@ def _finalize_and_log(
         recent_activity_artifact=snapshot.recent_activity_artifact,
         inactivity_secs=inactivity_secs,
     )
-    return record.model_copy(update={"status": status, "exit_code": exit_code, "error": error})
+    return resolved_record
 
 
 def _finalize_failed(
-    runtime_root: Path, record: SpawnRecord, error: str, snapshot: ArtifactSnapshot, now: float
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    error: str,
+    snapshot: ArtifactSnapshot,
+    now: float,
 ) -> SpawnRecord:
     return _finalize_and_log(
+        project_root,
         runtime_root,
         record,
         status="failed",
@@ -403,13 +394,18 @@ def _finalize_failed(
 
 
 def _finalize_completed_report(
-    runtime_root: Path, record: SpawnRecord, snapshot: ArtifactSnapshot, now: float
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    snapshot: ArtifactSnapshot,
+    now: float,
 ) -> SpawnRecord:
     status, exit_code, error = resolve_reconciled_terminal_state(
         durable_report_completion=True,
         fallback_error="harness_completed",
     )
     return _finalize_and_log(
+        project_root,
         runtime_root,
         record,
         status=status,
@@ -425,7 +421,11 @@ def _in_startup_grace(started_epoch: float | None, now: float) -> bool:
     return started_epoch is not None and now - started_epoch < _STARTUP_GRACE_SECS
 
 
-def reconcile_active_spawn(runtime_root: Path, record: SpawnRecord) -> SpawnRecord:
+def reconcile_active_spawn(
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+) -> SpawnRecord:
     """Reconcile one active spawn. Is the responsible process alive?"""
     if not is_root_side_effect_process():
         return record
@@ -443,26 +443,80 @@ def reconcile_active_spawn(runtime_root: Path, record: SpawnRecord) -> SpawnReco
     if isinstance(decision, Skip):
         return record
     if isinstance(decision, FinalizeSucceededFromReport):
-        return _finalize_completed_report(runtime_root, record, generic_snapshot, now)
+        return _finalize_completed_report(
+            project_root,
+            runtime_root,
+            record,
+            generic_snapshot,
+            now,
+        )
     if decision.error == "orphan_primary" and (
         managed_snapshot is not None or _is_potential_managed_primary(record)
     ):
         _log_orphan_primary_diagnostics(record, generic_snapshot, managed_snapshot)
-    if (
-        managed_snapshot is None
-        and record.worker_pid is not None
-        and record.worker_pid > 0
-        and not _is_potential_managed_primary(record)
-    ):
-        _terminate_worker_pid(record.worker_pid, generic_snapshot.started_epoch)
-    return _finalize_failed(runtime_root, record, decision.error, generic_snapshot, now)
+    from meridian.lib.core.process_cleanup import terminate_spawn_scopes
+
+    terminate_spawn_scopes(
+        runtime_root,
+        record,
+        reason="reaper",
+        grace_seconds=5.0,
+    )
+    if managed_snapshot is not None:
+        signaled = terminate_managed_primary_processes(
+            managed_snapshot.metadata,
+            started_epoch=managed_snapshot.started_epoch,
+            include_launcher=True,
+            include_runtime_children=True,
+        )
+        if signaled:
+            logger.warning(
+                "Terminated managed primary tracked processes during orphan reconciliation.",
+                spawn_id=record.id,
+                signaled_pids=signaled,
+            )
+    elif _is_potential_managed_primary(record):
+        from meridian.lib.state.primary_meta import read_primary_metadata
+
+        metadata = read_primary_metadata(runtime_root, record.id)
+        if metadata is not None:
+            signaled = terminate_managed_primary_processes(
+                metadata,
+                started_epoch=generic_snapshot.started_epoch,
+                include_launcher=True,
+                include_runtime_children=True,
+            )
+            if signaled:
+                logger.warning(
+                    "Terminated managed primary processes during orphan reconciliation.",
+                    spawn_id=record.id,
+                    signaled_pids=signaled,
+                    metadata_source="late_read",
+                )
+        else:
+            logger.warning(
+                "Managed primary orphaned; metadata unreadable, zombie processes may remain.",
+                spawn_id=record.id,
+            )
+    return _finalize_failed(
+        project_root,
+        runtime_root,
+        record,
+        decision.error,
+        generic_snapshot,
+        now,
+    )
 
 
-def reconcile_spawns(runtime_root: Path, spawns: list[SpawnRecord]) -> list[SpawnRecord]:
+def reconcile_spawns(
+    project_root: Path,
+    runtime_root: Path,
+    spawns: list[SpawnRecord],
+) -> list[SpawnRecord]:
     """Batch reconciliation. Only touches active spawns."""
     return [
         (
-            reconcile_active_spawn(runtime_root, spawn)
+            reconcile_active_spawn(project_root, runtime_root, spawn)
             if is_active_spawn_status(spawn.status)
             else spawn
         )

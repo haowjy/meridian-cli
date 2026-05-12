@@ -93,6 +93,11 @@ def test_strip_seq_envelope_removes_seq_metadata() -> None:
     raw = {
         "seq": 4,
         "byte_offset": 120,
+        "turn_id": "turn-4",
+        "item_id": "item-4",
+        "request_id": "request-4",
+        "interrupt_epoch": 1,
+        "stale_after_interrupt": False,
         "event_type": "assistant_message",
         "harness_id": "codex",
         "payload": {"x": 1},
@@ -140,6 +145,11 @@ def test_raw_text_is_preserved_through_write_read_cycle(tmp_path: Path) -> None:
         {
             "seq": 0,
             "byte_offset": 0,
+            "turn_id": None,
+            "item_id": None,
+            "request_id": None,
+            "interrupt_epoch": 0,
+            "stale_after_interrupt": False,
             "event_type": "assistant_message",
             "harness_id": "codex",
             "payload": {"index": 1},
@@ -173,3 +183,103 @@ def test_write_failure_returns_error_result(
     assert "disk full" in result.error
     assert writer.last_seq == -1
     assert history_path.exists() is False
+
+
+def test_writer_adds_causal_fields_and_marks_stale_after_interrupt(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    writer = HarnessHistoryWriter(history_path)
+
+    writer.write(
+        HarnessEvent(
+            event_type="turn/started",
+            payload={"turnId": "turn-old"},
+            harness_id="codex",
+        )
+    )
+    writer.write(
+        HarnessEvent(
+            event_type="item/started",
+            payload={"item_id": "item-1"},
+            harness_id="codex",
+        )
+    )
+    writer.write(
+        HarnessEvent(
+            event_type="control/interrupt/requested",
+            payload={"kind": "interrupt", "status": "requested", "turn_id": "turn-old"},
+            harness_id="codex",
+        )
+    )
+    writer.write(
+        HarnessEvent(
+            event_type="turn/started",
+            payload={"turnId": "turn-new"},
+            harness_id="codex",
+        )
+    )
+    result = writer.write(
+        HarnessEvent(
+            event_type="item/completed",
+            payload={"item_id": "item-1", "text": "late"},
+            harness_id="codex",
+        )
+    )
+
+    assert result.success is True
+    events = read_history_range(history_path)
+    assert events[-1]["seq"] == 4
+    assert events[-1]["turn_id"] == "turn-old"
+    assert events[-1]["item_id"] == "item-1"
+    assert events[-1]["request_id"] is None
+    assert events[-1]["interrupt_epoch"] == 1
+    assert events[-1]["stale_after_interrupt"] is True
+
+
+def test_writer_rehydrates_causal_tracker_from_existing_history(tmp_path: Path) -> None:
+    history_path = tmp_path / "history.jsonl"
+    writer = HarnessHistoryWriter(history_path)
+
+    writer.write(
+        HarnessEvent(
+            event_type="turn/started",
+            payload={"turnId": "turn-old"},
+            harness_id="codex",
+        )
+    )
+    writer.write(
+        HarnessEvent(
+            event_type="item/started",
+            payload={"item_id": "item-1"},
+            harness_id="codex",
+        )
+    )
+    writer.write(
+        HarnessEvent(
+            event_type="control/interrupt/requested",
+            payload={"kind": "interrupt", "status": "requested", "turn_id": "turn-old"},
+            harness_id="codex",
+        )
+    )
+    writer.write(
+        HarnessEvent(
+            event_type="turn/started",
+            payload={"turnId": "turn-new"},
+            harness_id="codex",
+        )
+    )
+
+    resumed = HarnessHistoryWriter(history_path)
+    late = resumed.write(
+        HarnessEvent(
+            event_type="item/completed",
+            payload={"item_id": "item-1"},
+            harness_id="codex",
+        )
+    )
+    assert late.success is True
+
+    events = read_history_range(history_path)
+    assert events[-1]["seq"] == 4
+    assert events[-1]["turn_id"] == "turn-old"
+    assert events[-1]["interrupt_epoch"] == 1
+    assert events[-1]["stale_after_interrupt"] is True

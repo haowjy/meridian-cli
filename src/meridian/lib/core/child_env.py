@@ -6,9 +6,6 @@ propagate into child processes.
 
 import re
 from collections.abc import Mapping
-from pathlib import Path
-
-from meridian.lib.core.types import SpawnId
 
 # Authoritative ``MERIDIAN_*`` key allowlist for child-process propagation.
 # Must stay aligned with ResolvedContext.child_env_overrides().
@@ -44,75 +41,7 @@ def validate_child_env_keys(overrides: Mapping[str, str]) -> None:
         raise RuntimeError(f"Unexpected MERIDIAN_* key in child env: {key}")
 
 
-def build_child_env_overrides(
-    *,
-    parent_spawn_id: str | None,
-    project_root: Path | None,
-    runtime_root: Path | None,
-    parent_chat_id: str | None,
-    parent_depth: int,
-    child_spawn_id: str | None = None,
-    work_id: str | None = None,
-    work_dir: Path | None = None,
-    context_dirs: tuple[tuple[str, Path], ...] = (),
-    increment_depth: bool = True,
-) -> dict[str, str]:
-    """Build ``MERIDIAN_*`` child env overrides from resolved context fields.
-
-    Delegates to :meth:`~meridian.lib.core.resolved_context.ResolvedContext.child_env_overrides`
-    so that key naming and omission rules are owned by one authoritative seam.
-
-    Parameters
-    ----------
-    parent_spawn_id:
-        Parent spawn ID string, or ``None`` to omit ``MERIDIAN_SPAWN_ID``.
-    project_root:
-        Repo root path, or ``None`` to omit ``MERIDIAN_PROJECT_DIR``.
-    runtime_root:
-        Runtime root path, or ``None`` to omit ``MERIDIAN_RUNTIME_DIR``.
-    parent_chat_id:
-        Parent chat ID string, or ``None``/empty to omit ``MERIDIAN_CHAT_ID``.
-    parent_depth:
-        The *current* process's depth value.  When ``increment_depth=True``
-        (the default) the child gets ``parent_depth + 1``; pass
-        ``increment_depth=False`` to keep the depth unchanged (needed for
-        background workers that run at the same depth as their launcher).
-    child_spawn_id:
-        Spawn ID to assign to the child via ``MERIDIAN_SPAWN_ID``. When
-        omitted, ``parent_spawn_id`` is reused for compatibility.
-    work_id:
-        Work item ID, or ``None`` to omit ``MERIDIAN_ACTIVE_WORK_ID``.
-    work_dir:
-        Active work item directory, or ``None`` to omit ``MERIDIAN_ACTIVE_WORK_DIR``.
-    context_dirs:
-        Resolved named context root directories to expose as
-        ``MERIDIAN_CONTEXT_{NAME}_DIR``.
-    increment_depth:
-        Whether to increment ``MERIDIAN_DEPTH`` for the child.  Defaults to
-        ``True`` for standard child-process launches; use ``False`` for the
-        detached background-worker process that inherits the caller's depth.
-    """
-    from meridian.lib.core.resolved_context import ResolvedContext
-
-    # Route through ResolvedContext so all launch paths share one contract.
-    ctx = ResolvedContext(
-        spawn_id=SpawnId(parent_spawn_id) if parent_spawn_id else None,
-        depth=parent_depth,
-        project_root=project_root,
-        runtime_root=runtime_root,
-        chat_id=parent_chat_id or "",
-        work_id=work_id,
-        work_dir=work_dir,
-        context_dirs=context_dirs,
-    )
-    return ctx.child_env_overrides(
-        increment_depth=increment_depth,
-        child_spawn_id=child_spawn_id,
-    )
-
-
 __all__ = [
     "ALLOWED_CHILD_ENV_KEYS",
-    "build_child_env_overrides",
     "validate_child_env_keys",
 ]

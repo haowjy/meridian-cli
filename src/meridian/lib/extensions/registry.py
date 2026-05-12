@@ -66,11 +66,7 @@ class ExtensionCommandRegistry:
     def list_for_surface(self, surface: ExtensionSurface) -> list[ExtensionCommandSpec]:
         """Return commands available on a specific surface."""
 
-        return [
-            spec
-            for spec in self._commands.values()
-            if surface in spec.surfaces
-        ]
+        return [spec for spec in self._commands.values() if surface in spec.surfaces]
 
     def __len__(self) -> int:
         return len(self._commands)

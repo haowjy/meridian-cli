@@ -48,6 +48,10 @@ from meridian.cli.bootstrap import (
 from meridian.cli.bootstrap import (
     validate_top_level_command as _bootstrap_validate_top_level_command,
 )
+from meridian.cli.hooks_authority import (
+    manual_hook_authority_scope,
+    should_suppress_manual_hook_authority,
+)
 from meridian.cli.output import (
     CLIOutputProtocol,
     OutputConfig,
@@ -63,7 +67,6 @@ from meridian.cli.startup.policy import StartupClass
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_effect_process
 from meridian.lib.core.sink import OutputSink
-from meridian.lib.ops.mars import check_upgrade_availability, format_upgrade_availability
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -283,7 +286,14 @@ def root(
         int | None,
         Parameter(
             name="--autocompact",
-            help="Autocompact threshold percentage (1-100). Overrides agent profile.",
+            help="Autocompact token threshold (minimum 1000). Overrides agent profile.",
+        ),
+    ] = None,
+    autocompact_pct: Annotated[
+        int | None,
+        Parameter(
+            name="--autocompact-pct",
+            help="Percentage of context window for autocompact (1-100). Overrides agent profile.",
         ),
     ] = None,
     effort: Annotated[
@@ -348,6 +358,7 @@ def root(
         yolo=yolo,
         approval=approval,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         effort=effort,
         sandbox=sandbox,
         timeout=timeout,
@@ -373,23 +384,6 @@ def _execute_mars_passthrough(
     return mars_passthrough.execute_mars_passthrough(request, run=subprocess.run, stderr=sys.stderr)
 
 
-def _augment_sync_result(
-    result: "MarsPassthroughResult",
-    *,
-    output_format: str | None = None,
-) -> None:
-    from meridian.cli import mars_passthrough
-
-    return mars_passthrough.augment_sync_result(
-        result,
-        output_format=output_format,
-        check_upgrades=check_upgrade_availability,
-        format_upgrades=lambda upgrades: format_upgrade_availability(upgrades, style="hint"),
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-
-
 def _run_mars_passthrough(
     args: Sequence[str],
     *,
@@ -403,7 +397,6 @@ def _run_mars_passthrough(
         resolve_executable=mars_passthrough.resolve_mars_executable,
         parse_request=mars_passthrough.parse_mars_passthrough,
         execute_request=_execute_mars_passthrough,
-        augment_result=lambda result: _augment_sync_result(result, output_format=output_format),
         stdout=sys.stdout,
         stderr=sys.stderr,
     )
@@ -435,6 +428,7 @@ def _run_primary_launch(
     yolo: bool,
     approval: str | None,
     autocompact: int | None,
+    autocompact_pct: int | None,
     effort: str | None,
     sandbox: str | None,
     timeout: float | None,
@@ -454,6 +448,7 @@ def _run_primary_launch(
             yolo=yolo,
             approval=approval,
             autocompact=autocompact,
+            autocompact_pct=autocompact_pct,
             effort=effort,
             sandbox=sandbox,
             timeout=timeout,
@@ -461,6 +456,7 @@ def _run_primary_launch(
             passthrough=passthrough,
         )
     )
+
 
 def _run_init_link_flow_json(
     *,
@@ -666,10 +662,20 @@ def _register_commands_for_invocation(
 
         _ = _mermaid_cmd
 
+    def _register_qi() -> None:
+        import meridian.cli.qi_cmd as _qi_cmd
+
+        _ = _qi_cmd
+
     def _register_report() -> None:
         from meridian.cli.report_cmd import register_report_commands
 
         register_report_commands(report_app, emit)
+
+    def _register_migrate() -> None:
+        from meridian.cli.migrate_cmd import register_migrate_command
+
+        register_migrate_command(app, emit)
 
     registrations: dict[str, tuple[str, Callable[[], None]]] = {
         "spawn": ("spawn", _register_spawn),
@@ -690,7 +696,9 @@ def _register_commands_for_invocation(
         "chat": ("chat", _register_chat),
         "kg": ("kg", _register_kg),
         "mermaid": ("mermaid", _register_mermaid),
+        "qi": ("qi", _register_qi),
         "report": ("report", _register_report),
+        "migrate": ("migrate", _register_migrate),
     }
 
     registration = registrations.get(first_token or "")
@@ -742,6 +750,34 @@ def _validate_top_level_command(argv: Sequence[str], *, global_harness: str | No
         known_commands=_top_level_command_names(),
         global_harness=global_harness,
     )
+
+
+def _workspace_subcommand(argv: Sequence[str]) -> str | None:
+    if not argv or argv[0] != "workspace":
+        return None
+    for token in argv[1:]:
+        if token.startswith("-"):
+            continue
+        return token
+    return None
+
+
+def _known_child_commands(parent: str) -> set[str]:
+    return {
+        descriptor.command_path[1]
+        for descriptor in COMMAND_CATALOG.all_descriptors()
+        if len(descriptor.command_path) >= 2 and descriptor.command_path[0] == parent
+    }
+
+
+def _validate_workspace_subcommand(argv: Sequence[str]) -> None:
+    subcommand = _workspace_subcommand(argv)
+    if subcommand is None:
+        return
+    if subcommand in _known_child_commands("workspace"):
+        return
+    print(f"error: Unknown command: workspace {subcommand}", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _is_root_help_request(argv: Sequence[str]) -> bool:
@@ -800,7 +836,8 @@ def _install_cli_telemetry(
 
         schedule_maintenance = (
             mode == TelemetryMode.SEGMENT
-            and startup_class in {
+            and startup_class
+            in {
                 StartupClass.WRITE_RUNTIME,
                 StartupClass.PRIMARY_LAUNCH,
             }
@@ -898,10 +935,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         explicit_format=options.explicit_format,
         agent_mode=effective_agent_mode,
     )
-    suppress_events = (
-        effective_agent_mode
-        and options.explicit_format is None
-    )
+    suppress_events = effective_agent_mode and options.explicit_format is None
     options = options.model_copy(
         update={
             "output": OutputConfig(
@@ -920,30 +954,31 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
 
     _validate_top_level_command(cleaned_args, global_harness=options.harness)
+    _validate_workspace_subcommand(cleaned_args)
 
     # Handle descriptor-owned redirects before bootstrap work or lazy command registration.
     if descriptor is not None and descriptor.redirect is not None:
         print(
-            "`meridian models list` has moved to Mars.\n"
-            "Use `meridian mars models list` instead.",
+            "`meridian models list` has moved to Mars.\nUse `meridian mars models list` instead.",
             file=sys.stderr,
         )
         raise SystemExit(1)
 
     startup_class = (
-        descriptor.startup_class
-        if descriptor is not None
-        else StartupClass.PRIMARY_LAUNCH
+        descriptor.startup_class if descriptor is not None else StartupClass.PRIMARY_LAUNCH
     )
     bootstrap_skipped = any(arg in {"--help", "-h"} for arg in cleaned_args)
     state_requirement = descriptor.state_requirement if descriptor is not None else None
     project_root = None
-    if not bootstrap_skipped:
-        project_root = maybe_bootstrap_runtime_state(
-            cleaned_args,
-            agent_mode=agent_mode_enabled(),
-            state_requirement=state_requirement,
-        )
+    with manual_hook_authority_scope(
+        suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
+    ):
+        if not bootstrap_skipped:
+            project_root = maybe_bootstrap_runtime_state(
+                cleaned_args,
+                agent_mode=agent_mode_enabled(),
+                state_requirement=state_requirement,
+            )
     _install_cli_telemetry(
         telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
         startup_class=startup_class,
@@ -968,7 +1003,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise
             except TimeoutError as exc:
                 _emit_error(_operation_error_message(exc), exit_code=124)
-            except (KeyError, ValueError, FileNotFoundError, OSError) as exc:
+            except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
                 _emit_error(_operation_error_message(exc))
     finally:
         flush_sink(active_sink)

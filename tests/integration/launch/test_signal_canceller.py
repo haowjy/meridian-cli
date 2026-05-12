@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import signal
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -13,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
@@ -43,6 +42,13 @@ def _start_spawn(
     )
 
 
+def _complete_spawn_for_runtime(runtime_root: Path) -> Callable[..., Any]:
+    return SpawnApplicationService(
+        runtime_root,
+        SpawnLifecycleService(runtime_root),
+    ).complete_spawn
+
+
 @pytest.mark.asyncio
 async def test_signal_canceller_returns_idempotent_outcome_for_terminal_spawn(
     tmp_path: Path,
@@ -58,7 +64,10 @@ async def test_signal_canceller_returns_idempotent_outcome_for_terminal_spawn(
         error="boom",
     )
 
-    outcome = await SignalCanceller(runtime_root=runtime_root).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(
+        runtime_root=runtime_root,
+        complete_spawn=_complete_spawn_for_runtime(runtime_root),
+    ).cancel(SpawnId(spawn_id))
 
     assert outcome.already_terminal is True
     assert outcome.status == "failed"
@@ -75,13 +84,18 @@ async def test_signal_canceller_finalizing_gate_skips_sigterm(
     spawn_id = _start_spawn(runtime_root, spawn_id="p1", launch_mode="foreground", runner_pid=4321)
     assert spawn_store.mark_finalizing(runtime_root, spawn_id) is True
 
-    def _unexpected_kill(pid: int, sig: int) -> None:
-        raise AssertionError(f"os.kill must not run for finalizing rows: pid={pid}, sig={sig}")
+    def _unexpected_terminate(pid: int, **_kwargs: object) -> None:
+        raise AssertionError(f"terminate_tree_sync must not run for finalizing rows: pid={pid}")
 
-    monkeypatch.setattr(os, "kill", _unexpected_kill)
-    outcome = await SignalCanceller(runtime_root=runtime_root, grace_seconds=0.01).cancel(
-        SpawnId(spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.streaming.signal_canceller.terminate_tree_sync",
+        _unexpected_terminate,
     )
+    outcome = await SignalCanceller(
+        runtime_root=runtime_root,
+        grace_seconds=0.01,
+        complete_spawn=_complete_spawn_for_runtime(runtime_root),
+    ).cancel(SpawnId(spawn_id))
 
     assert outcome.status == "finalizing"
     assert outcome.finalizing is True
@@ -103,10 +117,18 @@ async def test_signal_canceller_cli_lane_sends_sigterm_and_returns_terminal_row(
         "meridian.lib.streaming.signal_canceller.is_process_alive",
         fake_is_process_alive,
     )
-    sent_signals: list[tuple[int, int]] = []
+    terminated_pids: list[int] = []
 
-    def _fake_kill(pid: int, sig: int) -> None:
-        sent_signals.append((pid, sig))
+    def _fake_terminate_tree_sync(
+        pid: int,
+        *,
+        created_at_epoch: float = 0.0,
+        grace_secs: float = 5.0,
+        reason: str = "cancel",
+        scope_id: str = "",
+        degraded_fallback: bool = False,
+    ) -> None:
+        terminated_pids.append(pid)
         spawn_store.finalize_spawn(
             runtime_root,
             spawn_id,
@@ -116,10 +138,16 @@ async def test_signal_canceller_cli_lane_sends_sigterm_and_returns_terminal_row(
             error="cancelled",
         )
 
-    monkeypatch.setattr(os, "kill", _fake_kill)
-    outcome = await SignalCanceller(runtime_root=runtime_root).cancel(SpawnId(spawn_id))
+    monkeypatch.setattr(
+        "meridian.lib.streaming.signal_canceller.terminate_tree_sync",
+        _fake_terminate_tree_sync,
+    )
+    outcome = await SignalCanceller(
+        runtime_root=runtime_root,
+        complete_spawn=_complete_spawn_for_runtime(runtime_root),
+    ).cancel(SpawnId(spawn_id))
 
-    assert sent_signals == [(7654, signal.SIGTERM)]
+    assert terminated_pids == [7654]
     assert outcome.status == "cancelled"
     assert outcome.origin == "runner"
     assert outcome.exit_code == 143
@@ -179,7 +207,10 @@ async def test_signal_canceller_cli_lane_finalizes_when_runner_pid_missing(
         "meridian.lib.streaming.signal_canceller.is_process_alive",
         fake_is_process_alive,
     )
-    outcome = await SignalCanceller(runtime_root=runtime_root).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(
+        runtime_root=runtime_root,
+        complete_spawn=_complete_spawn_for_runtime(runtime_root),
+    ).cancel(SpawnId(spawn_id))
 
     assert outcome.status == "cancelled"
     assert outcome.origin == "cancel"
@@ -261,7 +292,10 @@ async def test_signal_canceller_runnerless_cancel_returns_authoritative_winner_s
 
     monkeypatch.setattr(SpawnLifecycleService, "mark_finalizing", race_mark_finalizing)
 
-    outcome = await SignalCanceller(runtime_root=runtime_root).cancel(SpawnId(spawn_id))
+    outcome = await SignalCanceller(
+        runtime_root=runtime_root,
+        complete_spawn=_complete_spawn_for_runtime(runtime_root),
+    ).cancel(SpawnId(spawn_id))
 
     row = spawn_store.get_spawn(runtime_root, spawn_id)
     assert outcome.already_terminal is True

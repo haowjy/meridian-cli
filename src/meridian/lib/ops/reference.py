@@ -69,6 +69,7 @@ class ResolvedSessionReference:
         if self.recovery is None:
             return None
         from meridian.lib.ops.reference_recovery import RecoveryProvenance
+
         if self.recovery.provenance == RecoveryProvenance.DETECTED_UNVERIFIED:
             return None
         return self.recovery.harness_session_id
@@ -121,8 +122,7 @@ def _resolve_untracked_reference(project_root: Path, ref: str) -> ResolvedSessio
         source_work_id=None,
         tracked=False,
         warning=(
-            f"Session '{ref}' is not tracked yet; "
-            "resuming with the provided harness session id."
+            f"Session '{ref}' is not tracked yet; resuming with the provided harness session id."
         ),
     )
 

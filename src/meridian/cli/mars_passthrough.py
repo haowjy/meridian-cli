@@ -11,12 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
-from meridian.lib.ops.mars import (
-    UpgradeAvailability,
-    check_upgrade_availability,
-    format_upgrade_availability,
-    resolve_mars_executable,
-)
+from meridian.lib.ops.mars import resolve_mars_executable
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -78,31 +73,6 @@ def mars_subcommand(args: Sequence[str]) -> str | None:
             continue
         return token
     return None
-
-
-def inject_upgrade_hint_into_sync_json(
-    raw_stdout: str,
-    *,
-    within_constraint: tuple[str, ...],
-    beyond_constraint: tuple[str, ...],
-) -> str:
-    stripped = raw_stdout.strip()
-    if not stripped:
-        return raw_stdout
-    try:
-        parsed = json.loads(stripped)
-    except (json.JSONDecodeError, ValueError):
-        return raw_stdout
-    if not isinstance(parsed, dict):
-        return raw_stdout
-    parsed["upgrade_hint"] = {
-        "within_constraint": list(within_constraint),
-        "beyond_constraint": list(beyond_constraint),
-    }
-    rendered = json.dumps(parsed)
-    if raw_stdout.endswith("\n"):
-        rendered += "\n"
-    return rendered
 
 
 def decode_json_values(raw_stdout: str) -> list[object] | None:
@@ -182,54 +152,6 @@ def execute_mars_passthrough(
         raise SystemExit(1) from None
 
 
-def augment_sync_result(
-    result: MarsPassthroughResult,
-    *,
-    output_format: str | None = None,
-    check_upgrades: Callable[[Path | None], UpgradeAvailability | None] = (
-        check_upgrade_availability
-    ),
-    format_upgrades: Callable[[UpgradeAvailability], Sequence[str]] | None = None,
-    stdout: TextIO | None = None,
-    stderr: TextIO | None = None,
-) -> None:
-    """Add sync-specific upgrade availability output to passthrough results."""
-
-    _ = output_format
-    if not result.request.is_sync:
-        return
-
-    stdout_stream = sys.stdout if stdout is None else stdout
-    stderr_stream = sys.stderr if stderr is None else stderr
-    formatter: Callable[[UpgradeAvailability], Sequence[str]] = (
-        format_upgrade_availability
-        if format_upgrades is None
-        else (lambda fn: lambda u: fn(u))(format_upgrades)
-    )
-
-    upgrades: UpgradeAvailability | None = None
-    if result.returncode in {0, 1}:
-        upgrades = check_upgrades(result.request.root_override)
-
-    if result.request.wants_json:
-        stdout_text = result.stdout_text
-        if upgrades is not None and upgrades.count > 0 and stdout_text.strip():
-            stdout_text = inject_upgrade_hint_into_sync_json(
-                stdout_text,
-                within_constraint=upgrades.within_constraint,
-                beyond_constraint=upgrades.beyond_constraint,
-            )
-        if stdout_text:
-            stdout_stream.write(stdout_text)
-        if result.stderr_text:
-            stderr_stream.write(result.stderr_text)
-        return
-
-    if upgrades is not None and upgrades.count > 0:
-        for line in formatter(upgrades):
-            print(line, file=stdout_stream)
-
-
 def run_mars_passthrough(
     args: Sequence[str],
     *,
@@ -239,7 +161,6 @@ def run_mars_passthrough(
     execute_request: Callable[[MarsPassthroughRequest], MarsPassthroughResult] = (
         execute_mars_passthrough
     ),
-    augment_result: Callable[[MarsPassthroughResult], None] = augment_sync_result,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> None:
@@ -259,15 +180,11 @@ def run_mars_passthrough(
         executable=executable,
     )
     result = execute_request(request)
-    if not request.is_sync:
-        if request.wants_json:
-            if result.stdout_text:
-                stdout_stream.write(result.stdout_text)
-            if result.stderr_text:
-                stderr_stream.write(result.stderr_text)
-        raise SystemExit(result.returncode)
-
-    augment_result(result)
+    if request.wants_json:
+        if result.stdout_text:
+            stdout_stream.write(result.stdout_text)
+        if result.stderr_text:
+            stderr_stream.write(result.stderr_text)
     raise SystemExit(result.returncode)
 
 

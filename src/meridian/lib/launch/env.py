@@ -4,11 +4,12 @@ from collections.abc import Callable, Collection, Mapping
 from typing import cast
 
 from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
+from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
 from meridian.lib.safety.permissions import PermissionConfig
 
 from .constants import BLOCKED_CHILD_ENV_VARS
-from .run_inputs import ResolvedRunInputs, to_spawn_params
 
 _CHILD_ENV_ALLOWLIST = frozenset(
     {
@@ -114,6 +115,14 @@ def build_harness_env_overrides(
     mcp_config = adapter.mcp_config(run_params)
     if mcp_config is not None:
         merged.update(mcp_config.env_overrides)
+    if adapter.id == HarnessId.OPENCODE:
+        if run_params.interactive:
+            # Primary launch: let the OpenCode TUI handle permissions natively.
+            merged.pop("OPENCODE_PERMISSION", None)
+        elif "OPENCODE_PERMISSION" not in merged:
+            # Child spawn with no explicit restriction: allow everything so
+            # `opencode run` (subprocess mode) doesn't auto-reject all tool calls.
+            merged["OPENCODE_PERMISSION"] = '{"*":"allow"}'
     return merged
 
 
@@ -177,7 +186,7 @@ def build_harness_child_env(
     return inherit_child_env(
         base_env=base_env,
         env_overrides=merged_env,
-        blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked,
+        blocked=BLOCKED_CHILD_ENV_VARS | adapter_blocked | RUNTIME_OVERRIDE_ENV_VARS,
     )
 
 
@@ -185,7 +194,7 @@ def build_env_plan(
     *,
     base_env: Mapping[str, str],
     adapter: SubprocessHarness,
-    run_inputs: ResolvedRunInputs | SpawnParams,
+    run_inputs: SpawnParams,
     permission_config: PermissionConfig,
     runtime_env_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
@@ -194,7 +203,7 @@ def build_env_plan(
     return build_harness_child_env(
         base_env=base_env,
         adapter=adapter,
-        run_params=to_spawn_params(run_inputs),
+        run_params=run_inputs,
         permission_config=permission_config,
         runtime_env_overrides=runtime_env_overrides,
     )

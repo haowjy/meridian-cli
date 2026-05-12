@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
+from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.launch.artifact_io import read_artifact_text
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
@@ -100,11 +101,17 @@ def enrich_finalize(
     extractor: SpawnExtractor,
     spawn_id: SpawnId,
     log_dir: Path,
+    model_id: str | None = None,
+    project_root: Path | None = None,
     secrets: tuple[SecretSpec, ...] = (),
 ) -> FinalizeExtraction:
     """Spawn all extraction steps and return one enriched finalization payload."""
 
-    usage = extractor.extract_usage(artifacts, spawn_id)
+    usage = estimate_usage_cost(
+        model_id=(model_id or "").strip() or None,
+        usage=extractor.extract_usage(artifacts, spawn_id),
+        project_root=project_root,
+    )
     harness_session_id = extractor.extract_session_id(artifacts, spawn_id)
     report = extract_or_fallback_report(artifacts, spawn_id, extractor=extractor)
     report_path = _persist_report(

@@ -8,7 +8,7 @@ import asyncio
 import os
 import signal
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from threading import Lock, RLock
 from types import FrameType
@@ -165,7 +165,7 @@ class SignalCoordinator:
             self._maybe_uninstall_handlers_locked()
 
     @contextmanager
-    def mask_sigterm(self) -> Iterator[None]:
+    def mask_sigterm(self) -> Generator[None, None, None]:
         """Ignore SIGTERM while executing a critical section."""
 
         mask_installed = False

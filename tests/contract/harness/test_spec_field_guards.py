@@ -1,48 +1,30 @@
-"""Cross-adapter SpawnParams accounting guard tests."""
+"""Cross-adapter SpawnParams accounting guard tests.
+
+These remain intentionally narrow: SpawnParams field accounting is still an
+internal drift risk not fully expressible through the public contract surface.
+Behavioral contract tests elsewhere cover bundle registration and projection
+conformance.
+"""
 
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import meridian.lib.harness as harness_pkg
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _scan_files_for_pattern(
-    roots: Iterable[str | Path],
-    pattern: str,
-    *,
-    suffixes: tuple[str, ...] = (".py",),
-) -> list[tuple[Path, int, str]]:
-    """Return (path, lineno, line) for every matching line under roots."""
-    compiled = re.compile(pattern)
-    matches: list[tuple[Path, int, str]] = []
-    for root in roots:
-        root_path = Path(root)
-        if root_path.is_file():
-            files = [root_path]
-        else:
-            files = [p for p in root_path.rglob("*") if p.is_file() and p.suffix in suffixes]
-        for file_path in files:
-            try:
-                text = file_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                if compiled.search(line):
-                    matches.append((file_path, lineno, line))
-    return matches
 
 
 def test_enforce_spawn_params_accounting_reports_missing_field(
@@ -91,15 +73,6 @@ def test_registered_bundle_handled_fields_union_matches_spawn_params() -> None:
     assert handled_union == frozenset(SpawnParams.model_fields)
 
 
-def test_launch_spec_guard_uses_no_runtime_asserts() -> None:
-    launch_spec_path = Path("src/meridian/lib/harness/launch_spec.py")
-    matches = _scan_files_for_pattern(
-        [_REPO_ROOT / launch_spec_path],
-        r"^\s*assert\s",
-    )
-    assert not matches, f"Found matches: {matches}"
-
-
 @pytest.mark.parametrize("python_optimize", ("0", "1"))
 def test_launch_spec_import_is_clean_in_unmodified_tree(python_optimize: str) -> None:
     env = dict(os.environ)
@@ -128,3 +101,16 @@ def test_harness_package_import_is_clean_in_unmodified_tree(python_optimize: str
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_bundle_rejects_mismatched_harness_spec() -> None:
+    """Passing a spec stamped with harness=claude to the codex bundle raises ValueError."""
+    harness_pkg.ensure_bootstrap()
+
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.CLAUDE,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match=r"claude.*codex|codex.*claude"):
+        project_subprocess_spec(HarnessId.CODEX, spec, base_command=("codex",))

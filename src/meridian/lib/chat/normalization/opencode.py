@@ -35,6 +35,7 @@ class OpenCodeNormalizer:
         self._chat_id = chat_id
         self._execution_id = execution_id
         self._turn_id: str | None = None
+        self._turn_usage: dict[str, object] = {}
         self._started_for_turn = False
         self._completed_for_turn = False
         self._part_type_by_id: dict[str, str] = {}
@@ -47,6 +48,7 @@ class OpenCodeNormalizer:
 
     def reset(self) -> None:
         self._turn_id = None
+        self._turn_usage.clear()
         self._started_for_turn = False
         self._completed_for_turn = False
         self._part_type_by_id.clear()
@@ -149,6 +151,14 @@ class OpenCodeNormalizer:
         return self._events_from_part_snapshot(event, part)
 
     def _message_updated(self, event: HarnessEvent) -> list[ChatEvent]:
+        properties = as_dict(event.payload.get("properties")) or event.payload
+        info = as_dict(properties.get("info"))
+        if info is None:
+            info = as_dict(event.payload.get("info"))
+        if info is not None:
+            usage = _usage_from_info(info)
+            if usage:
+                self._turn_usage = usage
         self._record_message_role(event.payload)
         parts = _extract_message_parts(event.payload)
         if not parts:
@@ -233,9 +243,7 @@ class OpenCodeNormalizer:
             if item_id in self._started_tool_items:
                 return events
             self._started_tool_items.add(item_id)
-            events.append(
-                self._event(ITEM_STARTED, event, item_id=item_id, payload=dict(payload))
-            )
+            events.append(self._event(ITEM_STARTED, event, item_id=item_id, payload=dict(payload)))
             return events
 
         if status == "running":
@@ -312,14 +320,14 @@ class OpenCodeNormalizer:
         if self._turn_id is None:
             self._turn_id = _extract_turn_id(event.payload) or f"turn-{uuid4()}"
         payload: dict[str, Any] = {"status": "succeeded"}
+        properties = as_dict(event.payload.get("properties")) or event.payload
         for key in ("usage", "duration_ms"):
             if key in event.payload:
                 payload[key] = event.payload[key]
-        info = as_dict(event.payload.get("info"))
-        if "usage" not in payload and info is not None:
-            usage = _usage_from_info(info)
-            if usage:
-                payload["usage"] = usage
+            elif key in properties:
+                payload[key] = properties[key]
+        if "usage" not in payload and self._turn_usage:
+            payload["usage"] = dict(self._turn_usage)
         self._completed_for_turn = True
         chat_event = self._event(TURN_COMPLETED, event, payload=payload)
         self._reset_turn_state()
@@ -360,9 +368,7 @@ class OpenCodeNormalizer:
     def _item_event(self, event_type: str, event: HarnessEvent) -> ChatEvent:
         tool = _tool_payload_from_event(event.payload)
         item_id = (
-            as_str(tool.get("id"))
-            or as_str(event.payload.get("item_id"))
-            or f"item-{uuid4()}"
+            as_str(tool.get("id")) or as_str(event.payload.get("item_id")) or f"item-{uuid4()}"
         )
         raw_type = as_str(tool.get("type")) or as_str(event.payload.get("type"))
         name = as_str(tool.get("name")) or as_str(event.payload.get("name"))
@@ -382,6 +388,7 @@ class OpenCodeNormalizer:
 
     def _reset_turn_state(self) -> None:
         self._turn_id = None
+        self._turn_usage.clear()
         self._started_for_turn = False
         self._part_type_by_id.clear()
         self._part_message_id_by_id.clear()
@@ -509,6 +516,19 @@ def _extract_session_id(payload: dict[str, object]) -> str | None:
 
 def _usage_from_info(info: dict[str, object]) -> dict[str, object]:
     usage: dict[str, object] = {}
+    tokens = as_dict(info.get("tokens")) or {}
+    cache = as_dict(tokens.get("cache")) or {}
+    token_pairs: tuple[tuple[str, object], ...] = (
+        ("input_tokens", tokens.get("input")),
+        ("output_tokens", tokens.get("output")),
+        ("cache_read_input_tokens", cache.get("read")),
+        ("cache_creation_input_tokens", cache.get("write")),
+        ("reasoning_tokens", tokens.get("reasoning")),
+    )
+    for target, value in token_pairs:
+        if value is not None:
+            usage[target] = value
+
     for source, target in (
         ("input_tokens", "input_tokens"),
         ("output_tokens", "output_tokens"),
@@ -516,8 +536,13 @@ def _usage_from_info(info: dict[str, object]) -> dict[str, object]:
         ("cache_creation_input_tokens", "cache_creation_input_tokens"),
         ("reasoning_tokens", "reasoning_tokens"),
     ):
-        if source in info:
+        if source in info and target not in usage:
             usage[target] = info[source]
+
+    if "total_cost_usd" in info:
+        usage["total_cost_usd"] = info["total_cost_usd"]
+    elif "cost" in info:
+        usage["total_cost_usd"] = info["cost"]
     return usage
 
 

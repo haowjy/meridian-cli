@@ -15,11 +15,15 @@ from meridian.lib.state.work_store import (
     reopen_work_item,
     slugify,
     update_work_item,
+    update_work_item_worktree,
 )
 
 
 def _state_root(tmp_path: Path) -> Path:
-    state_dir = tmp_path / ".meridian"
+    # Use a non-.meridian name so _project_paths_for_work_store treats this as a
+    # synthetic test root and returns ProjectPaths.from_root_dir() directly,
+    # bypassing context resolution.
+    state_dir = tmp_path / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir
 
@@ -72,6 +76,65 @@ def test_work_item_archive_and_reopen_preserves_metadata(tmp_path: Path) -> None
     assert not archived_dir.exists()
     assert active_status.exists()
     assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+
+def test_work_item_worktree_metadata_uses_nested_schema_and_preserves_branch_on_rename(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = create_work_item(runtime_root, "rename-me")
+
+    update_work_item_worktree(
+        runtime_root,
+        item.name,
+        path="/tmp/repo.worktrees/rename-me",
+        branch="feature/original-branch",
+        pending=True,
+    )
+    renamed = rename_work_item(runtime_root, item.name, "renamed-item")
+
+    assert renamed.worktree_path == "/tmp/repo.worktrees/rename-me"
+    assert renamed.worktree_branch == "feature/original-branch"
+    assert renamed.worktree_pending is True
+
+    status_payload = json.loads(
+        (runtime_root / "work" / renamed.name / "__status.json").read_text(encoding="utf-8")
+    )
+    assert "worktree_path" not in status_payload
+    assert "worktree_pending" not in status_payload
+    assert status_payload["worktree"] == {
+        "path": "/tmp/repo.worktrees/rename-me",
+        "branch": "feature/original-branch",
+        "pending": True,
+    }
+
+
+def test_get_work_item_migrates_legacy_worktree_fields_to_nested_schema(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = create_work_item(runtime_root, "legacy-worktree")
+    status_path = runtime_root / "work" / item.name / "__status.json"
+    status_payload = json.loads(status_path.read_text(encoding="utf-8"))
+    status_payload["worktree_path"] = "/tmp/repo.worktrees/legacy-worktree"
+    status_payload["worktree_branch"] = "feature/legacy-branch"
+    status_payload["worktree_pending"] = True
+    status_payload.pop("worktree", None)
+    status_path.write_text(json.dumps(status_payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = get_work_item(runtime_root, item.name)
+
+    assert loaded is not None
+    assert loaded.worktree_path == "/tmp/repo.worktrees/legacy-worktree"
+    assert loaded.worktree_branch == "feature/legacy-branch"
+    assert loaded.worktree_pending is True
+
+    migrated_payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert migrated_payload["worktree"] == {
+        "path": "/tmp/repo.worktrees/legacy-worktree",
+        "branch": "feature/legacy-branch",
+        "pending": True,
+    }
+    assert "worktree_path" not in migrated_payload
+    assert "worktree_pending" not in migrated_payload
 
 
 def test_list_archived_work_items_repairs_interrupted_archive_status(
@@ -156,6 +219,62 @@ def test_archive_and_reopen_use_context_archive_path(
     assert (archived_dir / "notes.md").read_text(encoding="utf-8") == "hello"
 
     reopen_work_item(runtime_root, item.name)
+    assert not archived_dir.exists()
+    assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+
+def test_create_archive_and_reopen_use_project_templated_context_work_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_root = tmp_path / "repo"
+    runtime_root = project_root / ".meridian"
+    user_state_root = tmp_path / "user-state"
+    project_root.mkdir()
+    user_state_root.mkdir()
+    monkeypatch.setenv("MERIDIAN_HOME", user_state_root.as_posix())
+    monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
+    (project_root / ".git").write_text("gitdir: .git/worktrees/repo\n", encoding="utf-8")
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "meridian.toml").write_text(
+        "\n".join(
+            [
+                "[context.work]",
+                'path = "contexts/{project}/work"',
+                'archive = "contexts/{project}/archive/work"',
+                "",
+                "[context.kb]",
+                'path = "contexts/{project}/kb"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert not (runtime_root / "id").exists()
+
+    item = create_work_item(runtime_root, "My feature")
+    project_uuid = (runtime_root / "id").read_text(encoding="utf-8").strip()
+    active_dir = project_root / "contexts" / project_uuid / "work" / item.name
+    archived_dir = project_root / "contexts" / project_uuid / "archive" / "work" / item.name
+
+    assert project_uuid
+    assert active_dir.is_dir()
+    assert not (runtime_root / "work" / item.name).exists()
+
+    listed, warnings = list_work_items(runtime_root)
+    assert warnings == []
+    assert [work.name for work in listed] == [item.name]
+
+    (active_dir / "notes.md").write_text("hello", encoding="utf-8")
+
+    archived = archive_work_item(runtime_root, item.name)
+    assert archived.status == "done"
+    assert not active_dir.exists()
+    assert (archived_dir / "notes.md").read_text(encoding="utf-8") == "hello"
+
+    reopened = reopen_work_item(runtime_root, item.name)
+    assert reopened.status == "open"
+    assert reopened.archived_at is None
     assert not archived_dir.exists()
     assert (active_dir / "notes.md").read_text(encoding="utf-8") == "hello"
 

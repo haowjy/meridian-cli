@@ -6,7 +6,7 @@ import errno
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any, cast
@@ -26,7 +26,7 @@ def _held_locks() -> dict[Path, tuple[IO[bytes], int]]:
 
 
 @contextmanager
-def lock_file(lock_path: Path) -> Iterator[IO[bytes]]:
+def lock_file(lock_path: Path) -> Generator[IO[bytes], None, None]:
     """Acquire an exclusive file lock with thread-local reentrancy support."""
     key = lock_path.resolve()
     held = _held_locks()
@@ -62,7 +62,7 @@ def lock_file(lock_path: Path) -> Iterator[IO[bytes]]:
 
 
 @contextmanager
-def try_lock_file(lock_path: Path) -> Iterator[IO[bytes] | None]:
+def try_lock_file(lock_path: Path) -> Generator[IO[bytes] | None, None, None]:
     """Attempt exclusive file lock, non-blocking. Yields None if already held."""
     key = lock_path.resolve()
     held = _held_locks()

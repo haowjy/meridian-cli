@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import (
@@ -126,7 +126,7 @@ def report_show_sync(
     explicit_project_root = (
         Path(payload.project_root).expanduser().resolve() if payload.project_root else None
     )
-    project_root = resolve_project_root(explicit_project_root)
+    project_root = resolve_project_root_resolution(explicit_project_root).project_root
     spawn_id = _resolve_spawn(project_root=project_root, spawn_id=payload.spawn_id, ctx=ctx)
     report_path = _report_path(project_root, spawn_id=spawn_id)
     if not report_path.is_file():
@@ -147,7 +147,7 @@ def report_search_sync(
     explicit_project_root = (
         Path(payload.project_root).expanduser().resolve() if payload.project_root else None
     )
-    project_root = resolve_project_root(explicit_project_root)
+    project_root = resolve_project_root_resolution(explicit_project_root).project_root
     limit = payload.limit if payload.limit > 0 else 20
     query = payload.query.strip()
 

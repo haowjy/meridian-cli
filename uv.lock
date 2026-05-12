@@ -666,15 +666,15 @@ wheels = [
 
 [[package]]
 name = "mars-agents"
-version = "0.2.8"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a4/1f/bca902647ea5b5aae7ac78b212184f7be6c4875ca0e7dae6c50b4847d19f/mars_agents-0.2.8.tar.gz", hash = "sha256:d40e0fe0c70e6d991ddb821fa2071c18b94f7b7539ca6fb1ffe0e6e91e869c2c", size = 397174, upload-time = "2026-05-07T02:32:56.847Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/76/30aa5f2898bc7d6399d73d9da40a6efd83c0e8a133c74dd445aa8feb7a05/mars_agents-0.4.0.tar.gz", hash = "sha256:c3b5062314804dedfa7afecd03f86606d6d3a3bc67faf0f323c1dfdb9514a87b", size = 433819, upload-time = "2026-05-11T22:41:11.585Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/50/ecf190fb16dfb30446c2b31289010cc3d71eed00e36084432463a04b51e6/mars_agents-0.2.8-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:de3d442b298a3fcc7454f39ba614389064d81c07187491e5695f483c68865c5e", size = 2867983, upload-time = "2026-05-07T02:32:47.256Z" },
-    { url = "https://files.pythonhosted.org/packages/72/81/02d64c18b2c2031cd69ad280c7d7ec9fec86d501954c62ecc6762debdc7b/mars_agents-0.2.8-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1493387ec056492d3ef492b3cb285d1a18438c6b5ea5aba1797d7168ffbbb557", size = 2741842, upload-time = "2026-05-07T02:32:49.963Z" },
-    { url = "https://files.pythonhosted.org/packages/02/6f/e0643990e997d13d7b60675c5d66d23ec995bc53e9f2b15c7e3e99408441/mars_agents-0.2.8-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bd536e55e63967a51f709ad2492f49f278321f6e46cf1f5cf6cbd9e382964358", size = 2787478, upload-time = "2026-05-07T02:32:51.722Z" },
-    { url = "https://files.pythonhosted.org/packages/d4/c1/6561eb7d6f164e31d570631410fb0c36a327d7812ce6f24a22912f477601/mars_agents-0.2.8-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3079dbebac1bdd7247adeb88bb9426585f4de8031828128c1a858f140ffa1299", size = 2972417, upload-time = "2026-05-07T02:32:53.518Z" },
-    { url = "https://files.pythonhosted.org/packages/6a/07/bd44c8df03b18c722c5126a15ce20cb5f499e2eacd92b1898988e0dd19bc/mars_agents-0.2.8-py3-none-win_amd64.whl", hash = "sha256:c05c0e6e8a9a5f332596356bcd72eb21b3b340fdf6a4fbce956377df8fa1212a", size = 2861913, upload-time = "2026-05-07T02:32:55.362Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/10/344ccddc5cf8edf4041b142ffe0d8264a8b5dcf421bf8d5de5ff9ac31101/mars_agents-0.4.0-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:8f77c9bbe2e0a29848ae0ebf914e2718fa8bf73ef4eca75df8110aa27b10ddb9", size = 2938870, upload-time = "2026-05-11T22:41:02.099Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/f8/d5179d1c8032cafd055ec65abcf20ffe03456a2d5a42a0d3a7c1bb052c4b/mars_agents-0.4.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:dff2e0491502d902353d26af38fe7ceac08eaee7e1df0b4b22265c535e132fe3", size = 2809868, upload-time = "2026-05-11T22:41:04.164Z" },
+    { url = "https://files.pythonhosted.org/packages/93/22/a9d45e6a7a662af4a8b45f45d61b900e6c89273e4cba9422b2e82f7fe3c2/mars_agents-0.4.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:257a86190e56f837e4b5a332bead13188a794db3e3bfe6b056434cf06c7e9d09", size = 2850735, upload-time = "2026-05-11T22:41:05.948Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/67/271de6030c24d215072902ca5c8373629dbaeeca924781fb4d758e60c734/mars_agents-0.4.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e844b51cb058cc93d9b36c0a7ce165d163bbbfb4b2173496963fc628f53cc89e", size = 3041168, upload-time = "2026-05-11T22:41:07.664Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/df/7933a303221c6a60d90c1b796b1179c0e3a5c7b7f268932dfae96c42b39a/mars_agents-0.4.0-py3-none-win_amd64.whl", hash = "sha256:defe2832b84d7dcdaf195fb73df85f49e20502b6c0178fc5ba2ae4917dbc735a", size = 2953668, upload-time = "2026-05-11T22:41:09.707Z" },
 ]
 
 [[package]]
@@ -729,6 +729,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-frontmatter" },
     { name = "structlog" },
+    { name = "tomlkit" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
@@ -762,7 +763,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'app'", specifier = ">=0.28" },
     { name = "jinja2", marker = "extra == 'templates'", specifier = ">=3.1" },
     { name = "markdown-it-py", specifier = ">=4.0" },
-    { name = "mars-agents", specifier = "==0.2.8" },
+    { name = "mars-agents", specifier = "==0.4.0" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "pathspec", specifier = ">=1.1.0" },
     { name = "psutil", specifier = ">=7.2.2" },
@@ -774,6 +775,7 @@ requires-dist = [
     { name = "python-frontmatter", specifier = ">=1.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },
     { name = "structlog", specifier = ">=25.0" },
+    { name = "tomlkit", specifier = ">=0.14.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
     { name = "websockets", specifier = ">=14.0" },
 ]
@@ -1167,15 +1169,15 @@ crypto = [
 
 [[package]]
 name = "pyright"
-version = "1.1.408"
+version = "1.1.409"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nodeenv" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/b2/5db700e52554b8f025faa9c3c624c59f1f6c8841ba81ab97641b54322f16/pyright-1.1.408.tar.gz", hash = "sha256:f28f2321f96852fa50b5829ea492f6adb0e6954568d1caa3f3af3a5f555eb684", size = 4400578, upload-time = "2026-01-08T08:07:38.795Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/4e/3aa27f74211522dba7e9cbc3e74de779c6d4b654c54e50a4840623be8014/pyright-1.1.409.tar.gz", hash = "sha256:986ee05beca9e077c165758ad123667c679e050059a2546aa02473930394bc93", size = 4430434, upload-time = "2026-04-23T11:02:03.799Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/82/a2c93e32800940d9573fb28c346772a14778b84ba7524e691b324620ab89/pyright-1.1.408-py3-none-any.whl", hash = "sha256:090b32865f4fdb1e0e6cd82bf5618480d48eecd2eb2e70f960982a3d9a4c17c1", size = 6399144, upload-time = "2026-01-08T08:07:37.082Z" },
+    { url = "https://files.pythonhosted.org/packages/16/6b/330d8ebae582b30c2959a1ef4c3bc344ebde48c2ff0c3f113c4710735e11/pyright-1.1.409-py3-none-any.whl", hash = "sha256:aa3ea228cab90c845c7a60d28db7a844c04315356392aa09fafcee98c8c22fb3", size = 6438161, upload-time = "2026-04-23T11:02:01.309Z" },
 ]
 
 [[package]]
@@ -1491,6 +1493,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
+]
+
+[[package]]
+name = "tomlkit"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/af/14b24e41977adb296d6bd1fb59402cf7d60ce364f90c890bd2ec65c43b5a/tomlkit-0.14.0.tar.gz", hash = "sha256:cf00efca415dbd57575befb1f6634c4f42d2d87dbba376128adb42c121b87064", size = 187167, upload-time = "2026-01-13T01:14:53.304Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/11/87d6d29fb5d237229d67973a6c9e06e048f01cf4994dee194ab0ea841814/tomlkit-0.14.0-py3-none-any.whl", hash = "sha256:592064ed85b40fa213469f81ac584f67a4f2992509a7c3ea2d632208623a3680", size = 39310, upload-time = "2026-01-13T01:14:51.965Z" },
 ]
 
 [[package]]

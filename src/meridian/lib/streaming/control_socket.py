@@ -27,6 +27,26 @@ class ControlSocketServer:
         self._server: asyncio.AbstractServer | None = None
         self._port: int | None = None
 
+    @property
+    def discovery_path(self) -> Path:
+        """Return the platform-specific discovery artifact path."""
+
+        return self._port_file if IS_WINDOWS else self._socket_path
+
+    @property
+    def endpoint(self) -> str:
+        """Return the platform-aware control endpoint for operator display."""
+
+        if IS_WINDOWS:
+            port = self._port
+            if port is None:
+                with suppress(OSError, ValueError):
+                    port = int(self._port_file.read_text(encoding="utf-8").strip())
+            if isinstance(port, int):
+                return f"tcp://127.0.0.1:{port}"
+            return f"tcp://127.0.0.1:<pending> (port file: {self._port_file})"
+        return f"unix://{self._socket_path}"
+
     async def start(self) -> None:
         """Create and bind the per-spawn control endpoint."""
 
@@ -74,8 +94,7 @@ class ControlSocketServer:
             response = {"ok": False, "error": str(exc)}
 
         encoded = (
-            json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8")
-            + b"\n"
+            json.dumps(response, separators=(",", ":"), sort_keys=True).encode("utf-8") + b"\n"
         )
         writer.write(encoded)
         with suppress(BrokenPipeError, ConnectionResetError):
@@ -121,6 +140,47 @@ class ControlSocketServer:
                 on_result=_on_result,
             )
             return response or self._result_to_response(result)
+        if message_type == "interrupt":
+            await self._manager.interrupt(self._spawn_id, source="control_socket")
+            return {"ok": True}
+        if message_type == "permission_reply":
+            request_id = payload.get("request_id")
+            decision = payload.get("decision")
+            reply_payload = payload.get("payload")
+            if not isinstance(request_id, str) or not request_id:
+                return {"ok": False, "error": "permission_reply requires request_id"}
+            if not isinstance(decision, str) or not decision:
+                return {"ok": False, "error": "permission_reply requires decision"}
+            if reply_payload is not None and not isinstance(reply_payload, dict):
+                return {"ok": False, "error": "permission_reply payload must be an object"}
+            typed_payload = (
+                cast("dict[str, object]", reply_payload)
+                if isinstance(reply_payload, dict)
+                else None
+            )
+            await self._manager.respond_request(
+                self._spawn_id,
+                request_id=request_id,
+                decision=decision,
+                payload=typed_payload,
+                source="control_socket",
+            )
+            return {"ok": True}
+        if message_type == "user_input_reply":
+            request_id = payload.get("request_id")
+            answers = payload.get("answers")
+            if not isinstance(request_id, str) or not request_id:
+                return {"ok": False, "error": "user_input_reply requires request_id"}
+            if not isinstance(answers, dict):
+                return {"ok": False, "error": "user_input_reply requires answers object"}
+            typed_answers = cast("dict[str, object]", answers)
+            await self._manager.respond_user_input(
+                self._spawn_id,
+                request_id=request_id,
+                answers=typed_answers,
+                source="control_socket",
+            )
+            return {"ok": True}
         else:
             return {"ok": False, "error": f"unsupported request type: {message_type}"}
 

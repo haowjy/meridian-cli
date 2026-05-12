@@ -22,13 +22,23 @@ class BuiltinHookMeta:
 
 
 def _validate_git_autosync_options(options: Mapping[str, object]) -> None:
-    """Validate git-autosync options."""
+    """Validate git-autosync options.
 
-    if "remote" not in options:
-        raise ValueError("'remote' is required for git-autosync")
-    repo = options["remote"]
-    if not isinstance(repo, str) or not repo.strip():
-        raise ValueError("'remote' must be a non-empty string")
+    Either 'remote' (remote-clone mode) or 'path' (local-only mode) must be
+    present. Both are optional individually, but at least one is required.
+    """
+
+    remote = options.get("remote")
+    path = options.get("path")
+
+    if remote is not None:
+        if not isinstance(remote, str) or not remote.strip():
+            raise ValueError("'remote' must be a non-empty string")
+    elif path is not None:
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("'path' must be a non-empty string")
+    else:
+        raise ValueError("git-autosync requires either 'remote' or 'path'")
 
 
 BUILTIN_HOOK_REGISTRY: dict[str, BuiltinHookMeta] = {
@@ -36,7 +46,7 @@ BUILTIN_HOOK_REGISTRY: dict[str, BuiltinHookMeta] = {
         name="git-autosync",
         default_events=("spawn.start", "spawn.finalized", "work.started", "work.done"),
         interval=None,
-        required_options=("remote",),
+        required_options=(),
         validate=_validate_git_autosync_options,
     ),
 }

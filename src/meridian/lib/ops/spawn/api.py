@@ -5,14 +5,18 @@ import os
 import time
 from pathlib import Path
 
-from meridian.lib.bootstrap.services import RuntimeReadContext, RuntimeWriteContext
-from meridian.lib.config.settings import load_config
+from meridian.lib.bootstrap.services import (
+    RuntimeReadContext,
+    RuntimeWriteContext,
+    build_spawn_application_service,
+    build_spawn_application_service_from_roots,
+)
+from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import max_depth_reached
-from meridian.lib.core.lifecycle import create_lifecycle_service
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_spawn_status
-from meridian.lib.core.spawn_service import CancelOutcome, SpawnApplicationService
+from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import SessionRequest
@@ -20,6 +24,9 @@ from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session
 from meridian.lib.ops.runtime import (
     OperationRuntime,
     build_runtime_from_root_and_config,
+    resolve_project_authority,
+    resolve_runtime_authority_for_read,
+    resolve_runtime_authority_for_write,
     resolve_runtime_root,
     resolve_runtime_root_and_config,
     resolve_runtime_root_and_config_for_read,
@@ -50,9 +57,11 @@ from .models import (
     SpawnCancelAllInput,
     SpawnCancelAllOutput,
     SpawnCancelInput,
+    SpawnChildrenInput,
     SpawnContinueInput,
     SpawnCreateInput,
     SpawnDetailOutput,
+    SpawnForkInput,
     SpawnListEntry,
     SpawnListInput,
     SpawnListOutput,
@@ -74,8 +83,12 @@ from .query import (
     resolve_spawn_references,
 )
 
-# Phase 0B: SpawnApplicationService will be wired into CLI/MCP operations in a later subphase.
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
+
+
+def _looks_like_spawn_ref(ref: str) -> bool:
+    normalized = ref.strip()
+    return len(normalized) > 1 and normalized[0] == "p" and normalized[1:].isdigit()
 
 
 def _emit_usage_spawn_launched(*, harness: str | None, spawn_id: str | None = None) -> None:
@@ -120,12 +133,45 @@ def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float
 
 
 def _resolve_project_root_input(project_root: str | None) -> Path:
-    resolved_root, _ = resolve_runtime_root_and_config_for_read(project_root)
-    return resolved_root
+    return resolve_project_authority(project_root).project_root
 
 
-def _runtime_root_from_read_prepared(prepared: RuntimeReadContext) -> Path:
-    return prepared.runtime_root or resolve_runtime_root_for_read(prepared.project_root)
+def _project_root_from_prepared(prepared: RuntimeReadContext | RuntimeWriteContext) -> Path:
+    return prepared.project_root
+
+
+def _config_from_prepared(prepared: RuntimeReadContext | RuntimeWriteContext) -> MeridianConfig:
+    config = prepared.config
+    if config is None:
+        raise ValueError("Prepared runtime context is missing config.")
+    return config
+
+
+def _runtime_root_from_prepared_for_read(
+    prepared: RuntimeReadContext | RuntimeWriteContext,
+    *,
+    project_root: Path,
+) -> Path:
+    runtime_root = prepared.runtime_root
+    return runtime_root or resolve_runtime_root_for_read(project_root)
+
+
+def _resolve_spawn_read_authority(
+    *,
+    project_root: str | None,
+    prepared: RuntimeReadContext | RuntimeWriteContext | None = None,
+) -> tuple[Path, Path]:
+    if prepared is not None:
+        resolved_project_root = _project_root_from_prepared(prepared)
+        resolved_runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
+            project_root=resolved_project_root,
+        )
+        return resolved_project_root, resolved_runtime_root
+
+    resolved_project_root = _resolve_project_root_input(project_root)
+    resolved_runtime_root = resolve_runtime_root_for_read(resolved_project_root)
+    return resolved_project_root, resolved_runtime_root
 
 
 def _surface_primary_activity(status: str, activity: str | None) -> str | None:
@@ -135,6 +181,22 @@ def _surface_primary_activity(status: str, activity: str | None) -> str | None:
     if not is_active_spawn_status(status):
         return None
     return normalized
+
+
+def _spawn_label_or_prompt_summary(
+    goal: str | None, desc: str | None, prompt: str | None
+) -> str | None:
+    """Prefer goal over desc for display — goal is the completion contract."""
+    label = (goal or desc or "").strip()
+    if label:
+        return label
+    normalized_prompt = (prompt or "").strip()
+    if not normalized_prompt:
+        return None
+    compact_prompt = " ".join(normalized_prompt.split()).strip()
+    if len(compact_prompt) <= 50:
+        return compact_prompt
+    return f"{compact_prompt[:47].rstrip()}..."
 
 
 def _forked_from_output(payload: SpawnCreateInput) -> str | None:
@@ -150,6 +212,13 @@ def _forked_from_output(payload: SpawnCreateInput) -> str | None:
     return None
 
 
+def _missing_follow_up_session_error(source_ref: str) -> str:
+    normalized = source_ref.strip()
+    if normalized.startswith("p") and normalized[1:].isdigit():
+        return f"Spawn '{normalized}' has no recorded session — cannot continue/fork."
+    return f"Session '{normalized}' has no recorded harness session — cannot continue/fork."
+
+
 def spawn_create_sync(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
@@ -162,21 +231,24 @@ def spawn_create_sync(
     resolved_context = runtime_context(ctx)
     spawn_env_id = os.environ.get("MERIDIAN_SPAWN_ID")
     logical_owner = spawn_env_id if spawn_env_id else "cli"
+    authority = None
     if prepared_context is not None:
-        resolved_root = prepared_context.project_root
-        if prepared_context.config is None:
-            raise ValueError("Prepared runtime write context is missing config.")
-        config = prepared_context.config
+        resolved_root = _project_root_from_prepared(prepared_context)
+        config = _config_from_prepared(prepared_context)
+        authority = prepared_context.authority
         register_spawn_telemetry_observer()
     elif payload.dry_run:
-        resolved_root = _resolve_project_root_input(payload.project_root)
-        config = load_config(resolved_root)
+        authority = resolve_runtime_authority_for_read(payload.project_root)
+        resolved_root = authority.project_root
+        config = load_config(resolved_root, authority=authority)
         setup_telemetry(runtime_root=None, logical_owner=logical_owner)
         register_spawn_telemetry_observer()
     else:
-        resolved_root, config = resolve_runtime_root_and_config(payload.project_root)
+        authority = resolve_runtime_authority_for_write(payload.project_root)
+        resolved_root = authority.project_root
+        config = load_config(resolved_root, authority=authority)
         setup_telemetry(
-            runtime_root=resolve_runtime_root(resolved_root),
+            runtime_root=authority.runtime_root,
             logical_owner=logical_owner,
         )
         register_spawn_telemetry_observer()
@@ -201,7 +273,12 @@ def spawn_create_sync(
             sink=sink,
         )
     elif not payload.dry_run:
-        runtime = build_runtime_from_root_and_config(resolved_root, config, sink=sink)
+        runtime = build_runtime_from_root_and_config(
+            resolved_root,
+            config,
+            authority=authority,
+            sink=sink,
+        )
 
     prepared_request = build_create_payload(
         payload,
@@ -211,6 +288,7 @@ def spawn_create_sync(
     )
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
+        prepared_goal = getattr(prepared_request, "goal", payload.goal)
         _emit_usage_spawn_launched(harness=prepared_request.harness)
         return SpawnActionOutput(
             command="spawn.create",
@@ -226,11 +304,23 @@ def spawn_create_sync(
             template_vars=prepared_request.template_vars,
             context_from_resolved=tuple(prepared_request.context_from or ()),
             composed_prompt=prepared_request.prompt,
+            goal=prepared_goal,
             model_selection_requested_token=prepared_request.model_selection_requested_token,
             model_selection_canonical_id=prepared_request.model_selection_canonical_id,
             model_selection_harness_provenance=(
                 prepared_request.model_selection_harness_provenance
             ),
+            terminal_surface_mode=(
+                prepared_request.terminal_surface_mode.value
+                if prepared_request.terminal_surface_mode is not None
+                else None
+            ),
+            project_root=authority.project_root.as_posix(),
+            project_root_source=authority.project_root_source,
+            runtime_root=authority.runtime_root.as_posix()
+            if authority.runtime_root is not None
+            else None,
+            runtime_root_source=authority.runtime_root_source,
             cli_command=prepared_request.cli_command,
             message="Dry run complete.",
             forked_from=forked_from,
@@ -285,19 +375,17 @@ def spawn_list_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnListOutput:
     _ = (ctx, sink)
-    project_root = (
-        prepared.project_root
-        if prepared is not None
-        else _resolve_project_root_input(payload.project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = (
-        _runtime_root_from_read_prepared(prepared)
-        if prepared is not None
-        else resolve_runtime_root_for_read(project_root)
+    spawns = list(
+        reversed(
+            reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
+        )
     )
-    spawns = list(reversed(reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))))
 
     # When statuses is empty tuple, show all statuses but cap intelligently:
     # always include all active spawns, pad with recent non-active up to limit.
@@ -350,9 +438,7 @@ def spawn_list_sync(
                 spawn_id=row.id,
                 status=row.status,
                 status_display=(
-                    f"{row.status} ({surfaced_activity})"
-                    if surfaced_activity is not None
-                    else None
+                    f"{row.status} ({surfaced_activity})" if surfaced_activity is not None else None
                 ),
                 model=row.model or "",
                 kind=kind,
@@ -378,6 +464,72 @@ async def spawn_list(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnListOutput:
     return await asyncio.to_thread(spawn_list_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
+
+
+def spawn_children_sync(
+    payload: SpawnChildrenInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnListOutput:
+    _ = (ctx, sink)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    normalized_ref = payload.spawn_id.strip()
+    if not normalized_ref:
+        raise ValueError("spawn_id is required")
+    spawn_id = resolve_spawn_reference(
+        project_root,
+        normalized_ref,
+        runtime_root=runtime_root,
+    )
+
+    from meridian.lib.state.reaper import reconcile_spawns
+
+    children = list(
+        reversed(
+            reconcile_spawns(
+                project_root,
+                runtime_root,
+                spawn_store.list_spawns(
+                    runtime_root,
+                    filters={"parent_id": spawn_id},
+                ),
+            )
+        )
+    )
+    entries = tuple(
+        SpawnListEntry(
+            spawn_id=row.id,
+            status=row.status,
+            model=row.model or "",
+            agent=row.agent or None,
+            desc=_spawn_label_or_prompt_summary(row.goal, row.desc, row.prompt),
+            duration_secs=row.duration_secs,
+            cost_usd=row.total_cost_usd,
+        )
+        for row in children
+    )
+    return SpawnListOutput(spawns=entries, text_view="children")
+
+
+async def spawn_children(
+    payload: SpawnChildrenInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnListOutput:
+    return await asyncio.to_thread(
+        spawn_children_sync,
+        payload,
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
 
 
 def _collect_descendants(
@@ -413,19 +565,13 @@ def spawn_stats_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnStatsOutput:
     _ = (ctx, sink)
-    project_root = (
-        prepared.project_root
-        if prepared is not None
-        else _resolve_project_root_input(payload.project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = (
-        _runtime_root_from_read_prepared(prepared)
-        if prepared is not None
-        else resolve_runtime_root_for_read(project_root)
-    )
-    all_spawns = reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))
+    all_spawns = reconcile_spawns(project_root, runtime_root, spawn_store.list_spawns(runtime_root))
 
     if payload.session is not None and payload.session.strip():
         wanted_session = payload.session.strip()
@@ -462,10 +608,18 @@ def spawn_stats_sync(
             finalizing += 1
 
         model_key = row.model or ""
-        acc = model_accum.setdefault(model_key, {
-            "total": 0, "succeeded": 0, "failed": 0,
-            "cancelled": 0, "running": 0, "finalizing": 0, "cost_usd": 0.0,
-        })
+        acc = model_accum.setdefault(
+            model_key,
+            {
+                "total": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "cancelled": 0,
+                "running": 0,
+                "finalizing": 0,
+                "cost_usd": 0.0,
+            },
+        )
         acc["total"] = int(acc["total"]) + 1
         if row.status in ("succeeded", "failed", "cancelled", "running", "finalizing"):
             acc[row.status] = int(acc[row.status]) + 1
@@ -538,15 +692,9 @@ def spawn_show_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnDetailOutput:
     _ = (ctx, sink)
-    project_root = (
-        prepared.project_root
-        if prepared is not None
-        else _resolve_project_root_input(payload.project_root)
-    )
-    runtime_root = (
-        _runtime_root_from_read_prepared(prepared)
-        if prepared is not None
-        else resolve_runtime_root_for_read(project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
@@ -613,15 +761,9 @@ def spawn_files_sync(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnWrittenFilesOutput:
     _ = (ctx, sink)
-    project_root = (
-        prepared.project_root
-        if prepared is not None
-        else _resolve_project_root_input(payload.project_root)
-    )
-    runtime_root = (
-        _runtime_root_from_read_prepared(prepared)
-        if prepared is not None
-        else resolve_runtime_root_for_read(project_root)
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
     )
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
@@ -675,6 +817,7 @@ def _spawn_cancel_output_from_outcome(outcome: CancelOutcome) -> SpawnActionOutp
         exit_code=outcome.exit_code,
     )
 
+
 def _normalize_work_filter(work: str | None) -> str | None:
     normalized = (work or "").strip()
     return normalized or None
@@ -706,6 +849,26 @@ def _spawn_matches_work_item(
     return (spawn.work_id or "").strip() == normalized_work_id
 
 
+def _row_in_cancel_scope(
+    row: SpawnRecord,
+    *,
+    include_others: bool,
+    descendant_ids: set[str] | None,
+    caller_chat_id: str | None,
+) -> bool:
+    """Return whether a row falls within the caller's cancel scope.
+
+    include_others=True: unrestricted (all non-primary running spawns).
+    descendant_ids set:  nested-spawn caller — only this subtree.
+    descendant_ids None: primary/root caller — same chat session.
+    """
+    if include_others:
+        return True
+    if descendant_ids is not None:
+        return row.id in descendant_ids
+    return (row.chat_id or "").strip() == (caller_chat_id or "")
+
+
 async def _spawn_cancel_impl(
     payload: SpawnCancelInput,
     *,
@@ -714,13 +877,19 @@ async def _spawn_cancel_impl(
 ) -> SpawnActionOutput:
     _ = sink
     if prepared is not None:
-        project_root = prepared.project_root
-        if prepared.runtime_root is None:
-            raise ValueError("Prepared runtime write context is missing runtime root.")
-        runtime_root = prepared.runtime_root
+        project_root = _project_root_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
+            project_root=project_root,
+        )
+        spawn_service = build_spawn_application_service(prepared)
     else:
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
+        spawn_service = build_spawn_application_service_from_roots(
+            project_root,
+            runtime_root,
+        )
     if prepared is not None:
         spawn_id = resolve_spawn_reference(
             project_root,
@@ -729,8 +898,6 @@ async def _spawn_cancel_impl(
         )
     else:
         spawn_id = resolve_spawn_reference(project_root, payload.spawn_id)
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-    spawn_service = SpawnApplicationService(runtime_root, lifecycle_service)
     register_debug_trace_observer()
     cancel_owner = os.environ.get("MERIDIAN_SPAWN_ID") or "cli"
     if prepared is None:
@@ -757,20 +924,33 @@ def spawn_cancel_all_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnCancelAllOutput:
-    _ = ctx
+    resolved_context = runtime_context(ctx)
     if prepared is not None:
-        project_root = prepared.project_root
-        if prepared.runtime_root is None:
-            raise ValueError("Prepared runtime write context is missing runtime root.")
-        runtime_root = prepared.runtime_root
+        project_root = _project_root_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(
+            prepared,
+            project_root=project_root,
+        )
     else:
         project_root, _ = resolve_runtime_root_and_config(payload.project_root)
         runtime_root = resolve_runtime_root(project_root)
     work_id = _normalize_work_filter(payload.work)
+    caller_chat_id = (resolved_context.chat_id or "").strip() or None
+    caller_spawn_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
+    # Descendant-scope doesn't need chat_id; only raise when we have neither anchor.
+    if caller_chat_id is None and caller_spawn_id is None and not payload.include_others:
+        raise ValueError(
+            "No session context (MERIDIAN_CHAT_ID not set). "
+            "Use --include-others to cancel all non-primary running spawns."
+        )
 
     from meridian.lib.state.reaper import reconcile_spawns
 
-    active_rows = reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))
+    active_rows = reconcile_spawns(
+        project_root,
+        runtime_root,
+        spawn_store.list_spawns(runtime_root),
+    )
     if work_id is not None:
         active_session_work_ids = {
             record.chat_id: record.active_work_id
@@ -779,6 +959,14 @@ def spawn_cancel_all_sync(
         }
     else:
         active_session_work_ids = None
+
+    # When called from a nested spawn, scope to that spawn's descendants only.
+    # When called from a primary/root context, scope to the full chat.
+    if caller_spawn_id is not None and not payload.include_others:
+        desc_records = _collect_descendants(caller_spawn_id, active_rows)
+        descendant_ids: set[str] | None = {r.id for r in desc_records} - {caller_spawn_id}
+    else:
+        descendant_ids = None
 
     target_rows = [
         row
@@ -792,6 +980,13 @@ def spawn_cancel_all_sync(
                 work_id=work_id,
                 active_session_work_ids=active_session_work_ids,
             )
+        )
+        and (payload.include_primaries or (row.kind or "").strip() != "primary")
+        and _row_in_cancel_scope(
+            row,
+            include_others=payload.include_others,
+            descendant_ids=descendant_ids,
+            caller_chat_id=caller_chat_id,
         )
     ]
 
@@ -819,12 +1014,14 @@ def spawn_cancel_all_sync(
             )
         results.append(result)
 
-    cancelled_count = sum(1 for result in results if result.status == "cancelled")
+    finalizing_count = sum(1 for result in results if result.status == "finalizing")
     failed_count = sum(1 for result in results if result.status == "failed")
+    cancelled_count = len(results) - failed_count
     return SpawnCancelAllOutput(
         work=work_id,
         total_running=len(target_rows),
         cancelled_count=cancelled_count,
+        finalizing_count=finalizing_count,
         failed_count=failed_count,
         results=tuple(results),
     )
@@ -837,7 +1034,6 @@ async def spawn_cancel_all(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnCancelAllOutput:
-    _ = ctx
     return await asyncio.to_thread(
         spawn_cancel_all_sync,
         payload,
@@ -875,6 +1071,7 @@ def _spawn_is_terminal(status: str) -> bool:
 
 def _resolve_wait_targets(
     payload: SpawnWaitInput,
+    project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext,
 ) -> tuple[str, ...]:
@@ -894,31 +1091,56 @@ def _resolve_wait_targets(
     chat_id = (ctx.chat_id or "").strip()
     if not chat_id:
         raise ValueError(
-            "No-arg wait requires MERIDIAN_CHAT_ID "
-            "(run from inside a meridian session)"
+            "No-arg wait requires MERIDIAN_CHAT_ID (run from inside a meridian session)"
         )
 
     self_spawn_id = str(ctx.spawn_id) if ctx.spawn_id else None
-    pending = _discover_pending_spawns(runtime_root, chat_id, exclude_spawn_id=self_spawn_id)
+    pending = _discover_pending_spawns(
+        project_root,
+        runtime_root,
+        chat_id,
+        exclude_spawn_id=self_spawn_id,
+        only_descendants_of=self_spawn_id,
+    )
     return tuple(row.id for row in pending)
 
 
 def _discover_pending_spawns(
+    project_root: Path,
     runtime_root: Path,
     chat_id: str,
     *,
     exclude_spawn_id: str | None = None,
+    only_descendants_of: str | None = None,
 ) -> list[SpawnRecord]:
-    """Discover all active spawns for a given chat ID."""
+    """Discover active spawns for a given chat ID.
+
+    When *only_descendants_of* is set (i.e. called from a nested spawn),
+    returns only spawns that are descendants of that spawn — not siblings,
+    ancestors, or the primary session. This prevents no-arg ``spawn wait``
+    from blocking on the entire chat tree.
+    """
     from meridian.lib.state.reaper import reconcile_spawns
 
-    all_spawns = reconcile_spawns(runtime_root, spawn_store.list_spawns(runtime_root))
+    all_spawns = reconcile_spawns(
+        project_root,
+        runtime_root,
+        spawn_store.list_spawns(runtime_root),
+    )
+
+    # Build descendant set if scoping to a parent
+    descendant_ids: set[str] | None = None
+    if only_descendants_of is not None:
+        desc_records = _collect_descendants(only_descendants_of, all_spawns)
+        descendant_ids = {r.id for r in desc_records} - {only_descendants_of}
+
     pending = [
         row
         for row in all_spawns
         if (row.chat_id or "").strip() == chat_id
         and row.status in ACTIVE_SPAWN_STATUSES
         and row.id != exclude_spawn_id
+        and (descendant_ids is None or row.id in descendant_ids)
     ]
     pending.sort(key=lambda row: row.id)
     return pending
@@ -983,9 +1205,7 @@ def _build_wait_multi_output(results: tuple[SpawnDetailOutput, ...]) -> SpawnWai
     )
 
 
-def _resolve_wait_progress_mode(
-    *, verbose: bool, quiet: bool, config_verbosity: str | None
-) -> str:
+def _resolve_wait_progress_mode(*, verbose: bool, quiet: bool, config_verbosity: str | None) -> str:
     if quiet:
         return "quiet"
     if verbose:
@@ -1013,25 +1233,21 @@ def _emit_wait_progress(message: str, *, sink: OutputSink) -> None:
     sink.status(message)
 
 
-def _resolve_wait_yield_after_seconds(
+def _resolve_wait_checkpoint_seconds(
     *,
     payload: SpawnWaitInput,
     spawn_ids: tuple[str, ...],
     project_root: Path,
-    config: object,
+    config: MeridianConfig,
 ) -> float:
     """Resolve per-invocation or harness-aware wait-yield interval."""
 
     if payload.yield_after_secs is not None:
         return payload.yield_after_secs
 
-    resolver = getattr(config, "wait_yield_seconds_for_harness", None)
-    if resolver is None:
-        return float(getattr(config, "wait_yield_after_seconds", 240.0))
-
     _ = (spawn_ids, project_root)
     parent_harness = os.getenv("MERIDIAN_HARNESS")
-    return float(resolver(parent_harness))
+    return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 
 def spawn_wait_sync(
@@ -1044,18 +1260,16 @@ def spawn_wait_sync(
     active_sink = sink or NullSink()
     resolved_context = runtime_context(ctx)
     if prepared is not None:
-        project_root = prepared.project_root
-        if prepared.config is None:
-            raise ValueError("Prepared runtime read context is missing config.")
-        config = prepared.config
-        runtime_root = _runtime_root_from_read_prepared(prepared)
+        project_root = _project_root_from_prepared(prepared)
+        config = _config_from_prepared(prepared)
+        runtime_root = _runtime_root_from_prepared_for_read(prepared, project_root=project_root)
     else:
         project_root, config = resolve_runtime_root_and_config_for_read(payload.project_root)
         runtime_root = resolve_runtime_root_for_read(project_root)
     has_explicit_ids = bool(payload.spawn_ids) or bool(
         payload.spawn_id is not None and payload.spawn_id.strip()
     )
-    spawn_ids = _resolve_wait_targets(payload, runtime_root, resolved_context)
+    spawn_ids = _resolve_wait_targets(payload, project_root, runtime_root, resolved_context)
     wait_chat_id: str | None = None
     if not has_explicit_ids:
         wait_chat_id = (resolved_context.chat_id or "").strip() or None
@@ -1087,13 +1301,11 @@ def spawn_wait_sync(
         payload.timeout if payload.timeout is not None else config.wait_timeout_minutes
     )
     timeout_seconds = minutes_to_seconds(timeout_minutes) or 0.0
-    checkpoint_seconds = (
-        _resolve_wait_yield_after_seconds(
-            payload=payload,
-            spawn_ids=spawn_ids,
-            project_root=project_root,
-            config=config,
-        )
+    checkpoint_seconds = _resolve_wait_checkpoint_seconds(
+        payload=payload,
+        spawn_ids=spawn_ids,
+        project_root=project_root,
+        config=config,
     )
     started = time.monotonic()
     use_checkpoint = not payload.timeout_explicit
@@ -1257,6 +1469,155 @@ def _with_command(result: SpawnActionOutput, command: str) -> SpawnActionOutput:
     return result.model_copy(update={"command": command})
 
 
+def _build_fork_create_input(
+    *,
+    payload: SpawnForkInput,
+    normalized_source_ref: str,
+    resolved_reference: ResolvedSessionReference,
+    requested_model: str,
+    requested_agent: str | None,
+    inherited_skills: tuple[str, ...],
+    requested_work: str,
+    requested_goal: str | None,
+    harness: str | None,
+) -> SpawnCreateInput:
+    launch_options = payload.launch_option_updates()
+    launch_options["harness"] = harness
+    return SpawnCreateInput(
+        prompt=payload.prompt,
+        model=requested_model or (resolved_reference.source_model or ""),
+        files=payload.files,
+        template_vars=payload.template_vars,
+        agent=requested_agent or resolved_reference.source_agent,
+        skills=inherited_skills,
+        desc=payload.desc,
+        work=requested_work or (resolved_reference.source_work_id or ""),
+        goal=requested_goal,
+        session=SessionRequest(
+            requested_harness_session_id=resolved_reference.harness_session_id,
+            continue_harness=resolved_reference.harness,
+            continue_source_tracked=resolved_reference.tracked,
+            continue_source_ref=normalized_source_ref,
+            continue_fork=True,
+            forked_from_chat_id=resolved_reference.source_chat_id,
+            source_execution_cwd=resolved_reference.source_execution_cwd,
+            source_claude_config_dir=resolved_reference.source_claude_config_dir,
+        ),
+        **launch_options,
+    )
+
+
+def _resolve_effective_fork_target_harness(
+    create_input: SpawnCreateInput,
+    *,
+    resolved_project_root: Path | None = None,
+) -> str:
+    preview_input = create_input
+    if resolved_project_root is not None:
+        preview_input = create_input.model_copy(
+            update={"project_root": resolved_project_root.as_posix()},
+        )
+
+    validated_payload, preflight_warning = validate_create_input(preview_input)
+    preview_request = build_create_payload(
+        validated_payload,
+        preflight_warning=preflight_warning,
+    )
+    resolved_harness = (preview_request.harness or "").strip()
+    if not resolved_harness:
+        raise ValueError("Fork target harness could not be resolved.")
+    return resolved_harness
+
+
+def spawn_fork_sync(
+    payload: SpawnForkInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
+    normalized_source_ref = payload.source_ref.strip()
+    if not normalized_source_ref:
+        raise ValueError("Session reference is required.")
+
+    resolved_reference = resolve_session_reference(
+        project_root,
+        normalized_source_ref,
+        runtime_root=runtime_root,
+    )
+    if resolved_reference.missing_harness_session_id:
+        raise ValueError(_missing_follow_up_session_error(normalized_source_ref))
+
+    requested_model = payload.model.strip()
+    requested_agent = (payload.agent or "").strip() or None
+    requested_work = payload.work.strip()
+    requested_goal = payload.goal
+    if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
+        source_row = read_spawn_row(
+            project_root,
+            normalized_source_ref,
+            runtime_root=runtime_root,
+        )
+        if source_row is not None:
+            requested_goal = source_row.goal
+    requested_harness = (payload.harness or "").strip() or None
+    source_harness = (resolved_reference.harness or "").strip() or None
+
+    inherited_skills = (
+        resolved_reference.source_skills
+        if payload.inherit_source_skills and requested_agent is None
+        else payload.skills
+    )
+
+    unresolved_create_input = _build_fork_create_input(
+        payload=payload,
+        normalized_source_ref=normalized_source_ref,
+        resolved_reference=resolved_reference,
+        requested_model=requested_model,
+        requested_agent=requested_agent,
+        inherited_skills=inherited_skills,
+        requested_work=requested_work,
+        requested_goal=requested_goal,
+        harness=requested_harness,
+    )
+    target_harness = _resolve_effective_fork_target_harness(
+        unresolved_create_input,
+        resolved_project_root=project_root,
+    )
+    if source_harness is not None and source_harness != target_harness:
+        raise ValueError(
+            "Cannot fork across harnesses: "
+            f"source is '{source_harness}', target is '{target_harness}'."
+        )
+
+    create_input = unresolved_create_input.model_copy(
+        update={"harness": target_harness},
+    )
+    if prepared is not None:
+        return spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
+    return spawn_create_sync(create_input, ctx=ctx, sink=sink)
+
+
+async def spawn_fork(
+    payload: SpawnForkInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeWriteContext | None = None,
+) -> SpawnActionOutput:
+    return await asyncio.to_thread(
+        spawn_fork_sync,
+        payload,
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
+
+
 def spawn_continue_sync(
     payload: SpawnContinueInput,
     ctx: RuntimeContext | None = None,
@@ -1264,14 +1625,10 @@ def spawn_continue_sync(
     sink: OutputSink | None = None,
     prepared: RuntimeWriteContext | None = None,
 ) -> SpawnActionOutput:
-    if prepared is not None:
-        project_root = prepared.project_root
-        if prepared.runtime_root is None:
-            raise ValueError("Prepared runtime write context is missing runtime root.")
-        runtime_root = prepared.runtime_root
-    else:
-        project_root, _ = resolve_runtime_root_and_config(payload.project_root)
-        runtime_root = None
+    project_root, runtime_root = _resolve_spawn_read_authority(
+        project_root=payload.project_root,
+        prepared=prepared,
+    )
     resolved_spawn_id, source_spawn, resolved_reference = _source_spawn_for_follow_up(
         payload.spawn_id,
         project_root,
@@ -1295,16 +1652,19 @@ def spawn_continue_sync(
         )
 
     derived_prompt = _prompt_for_follow_up(source_spawn, resolved_spawn_id, payload.prompt)
+    resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
+    launch_options = payload.launch_option_updates()
+    launch_options["harness"] = requested_harness
     create_input = SpawnCreateInput(
         prompt=derived_prompt,
         model=_model_for_follow_up(source_spawn, payload.model),
-        harness=requested_harness,
+        files=payload.files,
+        template_vars=payload.template_vars,
         agent=payload.agent,
         skills=payload.skills,
-        project_root=payload.project_root,
-        dry_run=payload.dry_run,
-        timeout=payload.timeout,
-        background=payload.background,
+        goal=resolved_goal,
+        desc=payload.desc,
+        work=payload.work,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
             continue_harness=resolved_reference.harness,
@@ -1316,9 +1676,19 @@ def spawn_continue_sync(
             source_execution_cwd=resolved_reference.source_execution_cwd,
             source_claude_config_dir=resolved_reference.source_claude_config_dir,
         ),
-        passthrough_args=payload.passthrough_args,
-        approval=payload.approval,
+        **launch_options,
     )
+    target_harness = _resolve_effective_fork_target_harness(
+        create_input,
+        resolved_project_root=project_root,
+    )
+    if source_harness is not None and source_harness != target_harness:
+        raise ValueError(
+            "Cannot continue across harnesses: "
+            f"source is '{source_harness}', target is '{target_harness}'."
+        )
+
+    create_input = create_input.model_copy(update={"harness": target_harness})
     if prepared is not None:
         result = spawn_create_sync(create_input, ctx=ctx, sink=sink, prepared=prepared)
     else:

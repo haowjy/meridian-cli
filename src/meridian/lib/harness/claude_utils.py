@@ -3,11 +3,13 @@
 Kept separate from claude.py and extractors/claude.py to avoid circular imports.
 """
 
-_SESSION_IDENTITY_LONG_FLAGS = frozenset({
-    "--session-id",
-    "--resume",
-    "--continue",
-})
+_SESSION_IDENTITY_LONG_FLAGS = frozenset(
+    {
+        "--session-id",
+        "--resume",
+        "--continue",
+    }
+)
 _SESSION_IDENTITY_SHORT_FLAGS = frozenset({"-r", "-c"})
 
 

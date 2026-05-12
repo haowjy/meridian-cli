@@ -7,8 +7,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,
@@ -36,7 +35,7 @@ def _resolve_reference_routing(launch_context: LaunchContext) -> tuple[Reference
     if projected is not None:
         return projected.reference_routing
 
-    reference_items = launch_context.run_params.reference_items
+    reference_items = launch_context.binding.run_params.reference_items
     if not reference_items:
         return ()
     return build_reference_routing(reference_items)
@@ -49,7 +48,7 @@ def _fallback_projection_channels(
 ) -> ProjectionChannels:
     harness_id = launch_context.harness.id
     has_append_system_prompt = bool(
-        (launch_context.run_params.appended_system_prompt or "").strip()
+        (launch_context.binding.run_params.appended_system_prompt or "").strip()
     )
     has_native_injection = any(route.routing == "native-injection" for route in reference_routing)
 
@@ -100,8 +99,8 @@ def write_projection_artifacts(
         system_prompt = projected.system_prompt.strip()
         starting_prompt = projected.user_turn_content.strip()
     else:
-        system_prompt = (launch_context.run_params.appended_system_prompt or "").strip()
-        user_turn = (launch_context.run_params.user_turn_content or "").strip()
+        system_prompt = (launch_context.binding.run_params.appended_system_prompt or "").strip()
+        user_turn = (launch_context.binding.run_params.user_turn_content or "").strip()
         starting_prompt = user_turn or launch_context.request.prompt.strip()
 
     if system_prompt:

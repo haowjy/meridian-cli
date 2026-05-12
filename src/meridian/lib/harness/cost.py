@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import cast
 
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import TokenUsage
 
 
@@ -46,7 +46,7 @@ def _pricing_value(model: dict[str, object], *keys: str) -> float | None:
 
 
 def _load_model(model_id: str, project_root: Path | None = None) -> dict[str, object] | None:
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
     path = root / ".mars" / "models-cache.json"
     try:
         raw_obj: object = json.loads(path.read_text(encoding="utf-8"))

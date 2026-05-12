@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.request import SessionRequest
 
@@ -48,44 +48,15 @@ class LaunchRequest(BaseModel):
     harness: str | None = None
     agent: str | None = None
     work_id: str | None = None
-    # Deprecated: use `session_mode` for new code.
-    fresh: bool = True
     session_mode: SessionMode = SessionMode.FRESH
-    autocompact: int | None = None
     passthrough_args: tuple[str, ...] = ()
     pinned_context: str = ""
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()
     include_bootstrap_documents: bool = False
     dry_run: bool = False
-    approval: str = "default"
-    effort: str | None = None
-    sandbox: str | None = None
-    timeout: float | None = None
+    # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/etc.)
+    execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     session: SessionRequest = Field(default_factory=SessionRequest)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _sync_session_mode_fields(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-
-        payload = cast("dict[str, Any]", value).copy()
-        has_session_mode = payload.get("session_mode") is not None
-        has_fresh = payload.get("fresh") is not None
-
-        if has_session_mode:
-            mode_raw = payload["session_mode"]
-            mode = mode_raw if isinstance(mode_raw, SessionMode) else SessionMode(str(mode_raw))
-            payload["fresh"] = mode == SessionMode.FRESH
-            return payload
-
-        if has_fresh:
-            payload["session_mode"] = (
-                SessionMode.FRESH if bool(payload["fresh"]) else SessionMode.RESUME
-            )
-            return payload
-
-        return payload
 
 
 class LaunchResult(BaseModel):
@@ -98,6 +69,7 @@ class LaunchResult(BaseModel):
     continue_ref: str | None = None
     continue_chat_id: str | None = None
     warning: str | None = None
+    terminal_surface_mode: str | None = None
 
 
 class PrimarySessionMetadata(BaseModel):

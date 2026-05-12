@@ -20,11 +20,13 @@ from meridian.lib.launch.reference import render_reference_blocks
 
 # Named canonical orders for SYSTEM_INSTRUCTION composition.
 SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
-    "supplemental_documents",
     "agent_profile_body",
-    "report_instruction",
+    "completion_contract",
+    "supplemental_documents",
     "inventory_prompt",
     "context_prompt",
+    "report_instruction",
+    "principle_bookend",
     # passthrough_system_fragments appended last
 )
 
@@ -44,6 +46,7 @@ class PromptDocument:
     logical_name: str
     path: str
     content: str
+    skill_type: str = "reference"
 
 
 @dataclass(frozen=True)
@@ -132,6 +135,9 @@ class ComposedLaunchContent:
     prior_output: str
     """Sanitized prior-run output."""
 
+    completion_contract: str = ""
+    """Deterministic bounded completion contract text (spawn goal)."""
+
 
 @dataclass(frozen=True)
 class ProjectedContent:
@@ -189,19 +195,35 @@ def join_content_blocks(*blocks: str) -> str:
 def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     """Render SYSTEM_INSTRUCTION blocks in canonical order.
 
-    Order: skill supplemental documents, bootstrap supplemental documents,
-    agent_profile_body, report_instruction, inventory_prompt, context_prompt,
-    then passthrough_system_fragments last.
+    Order: agent_profile_body, completion_contract, supplemental documents
+    (skill type sorted then bootstrap), inventory_prompt, context_prompt,
+    report_instruction, principle skill bookend, then passthrough fragments.
     """
+    skill_type_priority = {"principle": 0, "guardrail": 1, "reference": 2}
+    skill_documents = tuple(
+        document for document in content.supplemental_documents if document.kind == "skill"
+    )
+    ordered_skill_documents = tuple(
+        sorted(
+            skill_documents,
+            key=lambda document: skill_type_priority.get(document.skill_type, 2),
+        )
+    )
+    bootstrap_documents = tuple(
+        document for document in content.supplemental_documents if document.kind == "bootstrap"
+    )
+    principle_documents = tuple(
+        document for document in ordered_skill_documents if document.skill_type == "principle"
+    )
+
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:
         if field_name == "supplemental_documents":
-            ordered_blocks.extend(
-                document.content
-                for kind in ("skill", "bootstrap")
-                for document in content.supplemental_documents
-                if document.kind == kind
-            )
+            ordered_blocks.extend(document.content for document in ordered_skill_documents)
+            ordered_blocks.extend(document.content for document in bootstrap_documents)
+            continue
+        if field_name == "principle_bookend":
+            ordered_blocks.extend(document.content for document in principle_documents)
             continue
         ordered_blocks.append(getattr(content, field_name))
     return join_content_blocks(*ordered_blocks, *content.passthrough_system_fragments)

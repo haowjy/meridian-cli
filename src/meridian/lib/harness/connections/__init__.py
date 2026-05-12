@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from meridian.lib.core.types import HarnessId, TransportId
 from meridian.lib.harness.connections.base import HarnessConnection
-from meridian.lib.harness.ids import HarnessId, TransportId
 
 
 def get_connection_class(

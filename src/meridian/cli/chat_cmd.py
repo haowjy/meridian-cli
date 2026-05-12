@@ -17,8 +17,12 @@ from uuid import uuid4
 
 from cyclopts import App, Parameter
 
-from meridian.cli.utils import parse_csv_list
-from meridian.lib.bootstrap.services import prepare_for_runtime_read, prepare_for_runtime_write
+from meridian.cli.utils import parse_csv_list, require_established_project_root
+from meridian.lib.bootstrap.services import (
+    build_chat_entrypoint,
+    prepare_for_runtime_read,
+    prepare_for_runtime_write,
+)
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.chat.backend_acquisition import ColdSpawnAcquisition
 from meridian.lib.chat.frontend import FrontendAssets, resolve_frontend_assets
@@ -30,16 +34,15 @@ from meridian.lib.chat.policy import (
     build_chat_backend_launch_plan,
     snapshot_from_resolved_policy,
 )
-from meridian.lib.chat.runtime import ChatRuntime, PipelineLookup
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.chat.runtime import PipelineLookup, build_chat_runtime_from_entrypoint
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.overrides import RuntimeOverrides
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.launch_types import CompositionWarning
 from meridian.lib.launch.policies import SurfacePolicyInput, resolve_launch_policy
 from meridian.lib.launch.request import LaunchCompositionSurface
+from meridian.lib.service_context import ChatEntryPoint
 from meridian.lib.state.user_paths import get_user_home
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
@@ -97,7 +100,14 @@ def _chat(
     ] = None,
     autocompact: Annotated[
         int | None,
-        Parameter(name="--autocompact", help="Autocompact threshold percentage (1-100)."),
+        Parameter(name="--autocompact", help="Autocompact token threshold (minimum 1000)."),
+    ] = None,
+    autocompact_pct: Annotated[
+        int | None,
+        Parameter(
+            name="--autocompact-pct",
+            help="Percentage of context window for autocompact (1-100).",
+        ),
     ] = None,
     yolo: Annotated[
         bool,
@@ -173,6 +183,7 @@ def _chat(
         sandbox=sandbox,
         effort=effort,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
         port=port,
         host=host,
         headless=headless,
@@ -190,8 +201,8 @@ def _chat(
 def _chat_ls(
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
-    response = _request_json("GET", "/chat", url=url)
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    response = _request_json("GET", "/chat", url=url, runtime_root=entrypoint.context.runtime_root)
     rows = response.get("chats", [])
     if not isinstance(rows, list):
         raise ValueError("invalid chat server response: chats must be a list")
@@ -202,9 +213,15 @@ def _chat_show(
     chat_id: Annotated[str, Parameter(help="Chat id to inspect.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
-    state = _request_json("GET", f"/chat/{chat_id}/state", url=url)
-    events = _request_json("GET", f"/chat/{chat_id}/events?last=5", url=url)
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    runtime_root = entrypoint.context.runtime_root
+    state = _request_json("GET", f"/chat/{chat_id}/state", url=url, runtime_root=runtime_root)
+    events = _request_json(
+        "GET",
+        f"/chat/{chat_id}/events?last=5",
+        url=url,
+        runtime_root=runtime_root,
+    )
     print(f"chat_id: {state.get('chat_id', chat_id)}")
     print(f"state: {state.get('state', 'unknown')}")
     print("events:")
@@ -224,23 +241,36 @@ def _chat_log(
         Parameter(name="--follow", help="Follow live events over WebSocket."),
     ] = False,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    runtime_root = entrypoint.context.runtime_root
     query = f"?last={last}" if last is not None else ""
-    response = _request_json("GET", f"/chat/{chat_id}/events{query}", url=url)
+    response = _request_json(
+        "GET",
+        f"/chat/{chat_id}/events{query}",
+        url=url,
+        runtime_root=runtime_root,
+    )
     events = _events_from_response(response)
     for event in events:
         print(json.dumps(event, sort_keys=True))
     if follow:
         last_seq = _last_seq(events)
-        asyncio.run(_follow_chat_log(chat_id, url=url, last_seq=last_seq))
+        asyncio.run(
+            _follow_chat_log(chat_id, url=url, last_seq=last_seq, runtime_root=runtime_root)
+        )
 
 
 def _chat_close(
     chat_id: Annotated[str, Parameter(help="Chat id to close.")],
     url: Annotated[str | None, Parameter(name="--url", help="Chat server base URL.")] = None,
 ) -> None:
-    prepare_for_runtime_read(resolve_project_root())
-    response = _request_json("POST", f"/chat/{chat_id}/close", url=url)
+    entrypoint = _prepare_chat_runtime_read_entrypoint()
+    response = _request_json(
+        "POST",
+        f"/chat/{chat_id}/close",
+        url=url,
+        runtime_root=entrypoint.context.runtime_root,
+    )
     status = response.get("status", "unknown")
     if status != "accepted":
         error = response.get("error", "unknown")
@@ -258,6 +288,7 @@ def run_chat_server(
     sandbox: str | None = None,
     effort: str | None = None,
     autocompact: int | None = None,
+    autocompact_pct: int | None = None,
     port: int = 0,
     host: str = "127.0.0.1",
     headless: bool = False,
@@ -269,6 +300,7 @@ def run_chat_server(
     no_portless: bool = False,
     funnel: bool = False,
     portless_force: bool = False,
+    entrypoint: ChatEntryPoint | None = None,
     uvicorn_run: Callable[..., Any] | None = None,
     stdout: Any | None = None,
 ) -> int:
@@ -314,7 +346,7 @@ def run_chat_server(
         )
         sys.exit(1)
 
-    project_root = resolve_project_root()
+    project_root = _resolve_chat_project_root(entrypoint)
     policy_snapshot = _resolve_chat_policy_snapshot(
         project_root=project_root,
         model=model,
@@ -325,19 +357,21 @@ def run_chat_server(
         sandbox=sandbox,
         effort=effort,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
     )
     _emit_chat_policy_warnings(policy_snapshot.warnings, output)
-    prepared = prepare_for_runtime_write(project_root)
-    project_root = prepared.project_root
-    runtime_root = get_user_home()  # kept for ChatRuntime — not telemetry
-    runtime = ChatRuntime(
-        runtime_root=runtime_root,
-        project_root=project_root,
+    if entrypoint is None:
+        prepared = prepare_for_runtime_write(project_root)
+        entrypoint = build_chat_entrypoint(prepared)
+    project_root = _chat_project_root(entrypoint)
+    runtime = build_chat_runtime_from_entrypoint(
+        entrypoint=entrypoint,
         default_policy_snapshot=policy_snapshot,
         acquisition_factory=_ChatBackendAcquisitionFactory(
             policy_snapshot=policy_snapshot,
         ),
     )
+    discovery_runtime_root = entrypoint.context.runtime_root
     configure(runtime=runtime)
     env_port = int(os.environ.get("PORT", "0") or "0")
     actual_port = port if port != 0 else (env_port or _find_free_port(host))
@@ -366,7 +400,9 @@ def run_chat_server(
             print(f"Error: {exc}", file=output, flush=True)
             sys.exit(1)
 
-        resolved_frontend_root = resolve_dev_frontend_root(explicit=frontend_root)
+        resolved_frontend_root = resolve_dev_frontend_root(
+            explicit=frontend_root, project_root=project_root
+        )
         if resolved_frontend_root is None:
             print(
                 "Error: Dev frontend checkout not found.\n"
@@ -393,7 +429,11 @@ def run_chat_server(
                 flush=True,
             )
 
-        _write_server_discovery(host=display_host, port=actual_port, runtime_root=runtime_root)
+        _write_server_discovery(
+            host=display_host,
+            port=actual_port,
+            runtime_root=discovery_runtime_root,
+        )
         supervisor = DevSupervisor(
             backend_host=host,
             backend_port=actual_port,
@@ -414,6 +454,7 @@ def run_chat_server(
     if not headless:
         assets = resolve_frontend_assets(
             explicit_dist=Path(frontend_dist) if frontend_dist else None,
+            project_root=project_root,
         )
         if assets is None:
             if frontend_dist is not None:
@@ -445,7 +486,11 @@ def run_chat_server(
     if headless:
         print(f"Chat backend: {url}", file=output, flush=True)
 
-    _write_server_discovery(host=display_host, port=actual_port, runtime_root=runtime_root)
+    _write_server_discovery(
+        host=display_host,
+        port=actual_port,
+        runtime_root=discovery_runtime_root,
+    )
     if not headless and open_browser:
         webbrowser.open(url)
 
@@ -454,11 +499,35 @@ def run_chat_server(
     return actual_port
 
 
+def _prepare_chat_runtime_read_entrypoint() -> ChatEntryPoint:
+    """Prepare the minimal chat entrypoint seam for read-only chat clients."""
+
+    prepared = prepare_for_runtime_read(require_established_project_root())
+    return build_chat_entrypoint(prepared)
+
+
+def _resolve_chat_project_root(entrypoint: ChatEntryPoint | None) -> Path:
+    """Resolve project root from a prebuilt seam or project discovery."""
+
+    if entrypoint is not None:
+        return _chat_project_root(entrypoint)
+    return require_established_project_root()
+
+
+def _chat_project_root(entrypoint: ChatEntryPoint) -> Path:
+    """Extract the required project root from a chat entrypoint."""
+
+    project_root = entrypoint.context.project_root
+    if project_root is None:
+        raise ValueError("Chat entrypoint is missing project root.")
+    return project_root
+
+
 def _check_stale_assets(assets: FrontendAssets, output: Any) -> None:
     """Warn if checkout-local frontend source appears newer than built assets."""
 
     try:
-        source_dir = resolve_project_root().parent / "meridian-web" / "src"
+        source_dir = require_established_project_root().parent / "meridian-web" / "src"
         if not source_dir.is_dir():
             return
 
@@ -473,7 +542,7 @@ def _check_stale_assets(assets: FrontendAssets, output: Any) -> None:
                         flush=True,
                     )
                     return
-    except Exception:
+    except BaseException:
         return
 
 
@@ -497,6 +566,7 @@ def _resolve_chat_policy_snapshot(
     sandbox: str | None,
     effort: str | None,
     autocompact: int | None,
+    autocompact_pct: int | None = None,
 ) -> ChatPolicySnapshot:
     normalized_harness: str | None = None
     if (harness or "").strip():
@@ -512,6 +582,7 @@ def _resolve_chat_policy_snapshot(
         sandbox=(sandbox or "").strip() or None,
         effort=(effort or "").strip() or None,
         autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
     )
     policy = resolve_launch_policy(
         SurfacePolicyInput(
@@ -546,8 +617,8 @@ def _find_free_port(host: str) -> int:
         return int(sock.getsockname()[1])
 
 
-def _write_server_discovery(*, host: str, port: int, runtime_root: Path) -> None:
-    path = runtime_root / CHAT_SERVER_FILE
+def _write_server_discovery(*, host: str, port: int, runtime_root: Path | None = None) -> None:
+    path = _server_discovery_path(runtime_root=runtime_root)
     display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     payload = {"host": host, "port": port, "url": f"http://{display_host}:{port}"}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -556,14 +627,16 @@ def _write_server_discovery(*, host: str, port: int, runtime_root: Path) -> None
     tmp.replace(path)
 
 
-def _server_discovery_path() -> Path:
+def _server_discovery_path(*, runtime_root: Path | None = None) -> Path:
+    if runtime_root is not None:
+        return runtime_root / CHAT_SERVER_FILE
     return get_user_home() / CHAT_SERVER_FILE
 
 
-def _resolve_server_url(url: str | None) -> str:
+def _resolve_server_url(url: str | None, *, runtime_root: Path | None = None) -> str:
     if url is not None and url.strip():
         return url.rstrip("/")
-    path = _server_discovery_path()
+    path = _server_discovery_path(runtime_root=runtime_root)
     if not path.exists():
         raise ValueError("chat server URL not found; start `meridian chat` or pass --url")
     try:
@@ -576,10 +649,16 @@ def _resolve_server_url(url: str | None) -> str:
     return discovered.rstrip("/")
 
 
-def _request_json(method: str, path: str, *, url: str | None) -> dict[str, object]:
+def _request_json(
+    method: str,
+    path: str,
+    *,
+    url: str | None,
+    runtime_root: Path | None = None,
+) -> dict[str, object]:
     import httpx
 
-    base_url = _resolve_server_url(url)
+    base_url = _resolve_server_url(url, runtime_root=runtime_root)
     try:
         response = httpx.request(method, f"{base_url}{path}", timeout=5.0)
     except httpx.HTTPError as exc:
@@ -637,10 +716,16 @@ def _last_seq(events: list[dict[str, object]]) -> int | None:
     return None
 
 
-async def _follow_chat_log(chat_id: str, *, url: str | None, last_seq: int | None) -> None:
+async def _follow_chat_log(
+    chat_id: str,
+    *,
+    url: str | None,
+    last_seq: int | None,
+    runtime_root: Path | None = None,
+) -> None:
     import websockets
 
-    base_url = _resolve_server_url(url)
+    base_url = _resolve_server_url(url, runtime_root=runtime_root)
     parsed = urlparse(base_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     netloc = parsed.netloc

@@ -2,9 +2,13 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.tools import ToolsField
 
 
 def _empty_template_vars() -> dict[str, str]:
@@ -81,12 +85,10 @@ class SpawnRequest(BaseModel):
     # Harness shape
     extra_args: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
-    sandbox: str | None = None
-    approval: str | None = None
-    allowed_tools: tuple[str, ...] = ()
-    disallowed_tools: tuple[str, ...] = ()
-    autocompact: int | None = None
-    effort: str | None = None
+    tools: ToolsField | None = None
+
+    # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
+    execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
 
     # Execution policy (nested)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
@@ -102,6 +104,7 @@ class SpawnRequest(BaseModel):
 
     # Routing & metadata
     work_id_hint: str | None = None
+    goal: str | None = None
     warning: str | None = None
     agent_metadata: dict[str, str] = Field(default_factory=_empty_agent_metadata)
     prompt_payload: RequestPromptPayload = Field(default_factory=RequestPromptPayload)
@@ -111,15 +114,9 @@ class SpawnRequest(BaseModel):
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
-
-    @field_validator("autocompact", mode="before")
-    @classmethod
-    def _reject_bool_autocompact(cls, value: object) -> object:
-        if isinstance(value, bool):
-            raise ValueError("autocompact must be an integer percentage, not bool")
-        return value
 
 
 class LaunchArgvIntent(StrEnum):
@@ -146,12 +143,23 @@ class LaunchRuntime(BaseModel):
     argv_intent: LaunchArgvIntent = LaunchArgvIntent.REQUIRED
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
+    runtime_override_snapshot: dict[str, object] | None = None
     unsafe_no_permissions: bool = False
     debug: bool = False
     report_output_path: str | None = None
     runtime_root: str
     project_paths_project_root: str
     project_paths_execution_cwd: str
+
+    @property
+    def has_runtime_override_snapshot(self) -> bool:
+        return self.runtime_override_snapshot is not None
+
+    @property
+    def resolved_runtime_overrides(self) -> RuntimeOverrides:
+        if self.runtime_override_snapshot is not None:
+            return RuntimeOverrides.model_validate(self.runtime_override_snapshot)
+        return RuntimeOverrides()
 
 
 __all__ = [

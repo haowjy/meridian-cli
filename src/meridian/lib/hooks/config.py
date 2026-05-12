@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 import tomllib
-import warnings
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast, get_args
+from typing import TYPE_CHECKING, cast, get_args
 
 from meridian.lib.config.project_config_state import resolve_project_config_state
+from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.config.settings import normalize_hooks_array
 from meridian.lib.hooks.builtin_registry import (
@@ -26,6 +26,9 @@ from meridian.lib.hooks.types import (
     HookWhen,
     SpawnStatus,
 )
+
+if TYPE_CHECKING:
+    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("builtin", "context", "user", "project", "local")
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
@@ -44,6 +47,42 @@ class HooksConfig:
     hooks: tuple[Hook, ...]
 
 
+@dataclass(frozen=True)
+class HookConfigPaths:
+    """Shared authority paths for hook config source layering."""
+
+    project_root: Path
+    user_config: Path | None
+    project_config: Path | None
+    local_config: Path
+
+
+def _resolve_hook_config_paths(
+    project_root: Path,
+    *,
+    user_config: Path | None = None,
+    authority: RuntimeAuthoritySnapshot | None = None,
+) -> HookConfigPaths:
+    if authority is not None:
+        resolved_project_root = authority.project_root.expanduser().resolve()
+        project_paths = authority.project_config_paths
+    else:
+        resolved_project_root = project_root.expanduser().resolve()
+        project_paths = resolve_project_config_paths(resolved_project_root)
+
+    resolved_user_config = resolve_user_config_path(user_config)
+    project_config = resolve_project_config_state(
+        resolved_project_root,
+        project_paths=project_paths,
+    ).path
+    return HookConfigPaths(
+        project_root=resolved_project_root,
+        user_config=resolved_user_config,
+        project_config=project_config,
+        local_config=resolved_project_root / _LOCAL_CONFIG_FILENAME,
+    )
+
+
 def _read_toml(path: Path) -> dict[str, object]:
     payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
     return cast("dict[str, object]", payload_obj)
@@ -52,9 +91,7 @@ def _read_toml(path: Path) -> dict[str, object]:
 def _parse_event(raw: str, *, source: str) -> HookEventName:
     if raw not in EVENT_CLASS:
         valid = ", ".join(sorted(EVENT_CLASS.keys()))
-        raise ValueError(
-            f"Invalid value for '{source}': expected one of [{valid}], got {raw!r}."
-        )
+        raise ValueError(f"Invalid value for '{source}': expected one of [{valid}], got {raw!r}.")
     return raw
 
 
@@ -129,18 +166,7 @@ def _hook_from_row(
 
     # Parse remote URL - primary field
     remote = cast("str | None", row.get("remote"))
-    
-    # Support deprecated 'repo' as alias for 'remote'
-    repo = cast("str | None", row.get("repo"))
-    if repo is not None:
-        warnings.warn(
-            f"Hook config '{row_source}': 'repo' is deprecated, use 'remote' instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        if remote is None:
-            remote = repo
-    
+
     # Also check options.remote for plugin-style config
     if remote is not None:
         options.setdefault("remote", remote)
@@ -193,9 +219,7 @@ def _hook_from_row(
     else:
         raise ValueError(f"Invalid hook config '{row_source}': 'event' is required.")
 
-    default_interval = (
-        BUILTIN_HOOK_REGISTRY[builtin].interval if builtin is not None else None
-    )
+    default_interval = BUILTIN_HOOK_REGISTRY[builtin].interval if builtin is not None else None
     interval = _parse_interval(
         cast("str | None", row.get("interval")) or default_interval,
         source=f"{row_source}.interval",
@@ -293,24 +317,30 @@ def _apply_name_overrides(hooks: tuple[Hook, ...]) -> tuple[Hook, ...]:
     return tuple(effective.values())
 
 
-def load_hooks_config(project_root: Path, *, user_config: Path | None = None) -> HooksConfig:
+def load_hooks_config(
+    project_root: Path,
+    *,
+    user_config: Path | None = None,
+    authority: RuntimeAuthoritySnapshot | None = None,
+) -> HooksConfig:
     """Load hook config with precedence: builtin < context < user < project < local."""
 
-    resolved_project_root = project_root.expanduser().resolve()
-    resolved_user_config = resolve_user_config_path(user_config)
-    project_config = resolve_project_config_state(resolved_project_root).path
-    local_config = resolved_project_root / _LOCAL_CONFIG_FILENAME
+    paths = _resolve_hook_config_paths(
+        project_root,
+        user_config=user_config,
+        authority=authority,
+    )
 
     hooks: list[Hook] = []
     hooks.extend(_hooks_from_payload({}, source="builtin"))
 
-    if resolved_user_config is not None:
-        hooks.extend(_hooks_from_payload(_read_toml(resolved_user_config), source="user"))
+    if paths.user_config is not None:
+        hooks.extend(_hooks_from_payload(_read_toml(paths.user_config), source="user"))
 
-    if project_config is not None:
-        hooks.extend(_hooks_from_payload(_read_toml(project_config), source="project"))
+    if paths.project_config is not None:
+        hooks.extend(_hooks_from_payload(_read_toml(paths.project_config), source="project"))
 
-    if local_config.is_file():
-        hooks.extend(_hooks_from_payload(_read_toml(local_config), source="local"))
+    if paths.local_config.is_file():
+        hooks.extend(_hooks_from_payload(_read_toml(paths.local_config), source="local"))
 
     return HooksConfig(hooks=_apply_name_overrides(tuple(hooks)))

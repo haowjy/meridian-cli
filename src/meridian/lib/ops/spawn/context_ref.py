@@ -63,6 +63,7 @@ def _select_primary_spawn_for_session(project_root: Path, chat_id: str) -> Spawn
 
     runtime_root = resolve_runtime_root_for_read(project_root)
     spawns = reconcile_spawns(
+        project_root,
         runtime_root,
         spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id}),
     )

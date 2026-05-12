@@ -1,3 +1,4 @@
+# qa-validated: test-suite-redesign
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,15 +33,19 @@ def _fake_launch_context(
                 "session_agent_path": str(child_cwd / "agent.md"),
             },
         ),
-        child_cwd=child_cwd,
         work_id=None,
-        env_overrides={
-            "MERIDIAN_SPAWN_ID": spawn_id,
-            "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
-            "EXTRA_ENV": "present",
-        },
-        spec=SimpleNamespace(name="fake-spec"),
-        run_params=SimpleNamespace(appended_system_prompt=system or ""),
+        binding=SimpleNamespace(
+            child_cwd=child_cwd,
+            environment=SimpleNamespace(
+                bind_env_overrides={
+                    "MERIDIAN_SPAWN_ID": spawn_id,
+                    "MERIDIAN_PARENT_SPAWN_ID": "p-parent",
+                    "EXTRA_ENV": "present",
+                },
+            ),
+            spec=SimpleNamespace(name="fake-spec"),
+            run_params=SimpleNamespace(appended_system_prompt=system or ""),
+        ),
     )
 
 
@@ -57,7 +62,6 @@ async def test_streaming_serve_shutdown_finalizes_once_as_cancelled(
         return DrainOutcome(status="cancelled", exit_code=1)
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "resolve_project_root", lambda: tmp_path)
 
     await streaming_serve_module.streaming_serve("codex", "hello")
 
@@ -80,7 +84,6 @@ async def test_streaming_serve_start_failure_finalizes_failed_once(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "resolve_project_root", lambda: tmp_path)
 
     with pytest.raises(RuntimeError, match="boom"):
         await streaming_serve_module.streaming_serve("codex", "hello")
@@ -119,7 +122,6 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
         _build_launch_context,
     )
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
-    monkeypatch.setattr(streaming_serve_module, "resolve_project_root", lambda: tmp_path)
 
     await streaming_serve_module.streaming_serve("codex", "hello", debug=True)
 
@@ -143,3 +145,31 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     assert row is not None
     assert row.execution_cwd == str(child_cwd)
     assert row.status == "succeeded"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reported_endpoint",
+    [
+        "unix:///tmp/.meridian/spawns/p1/control.sock",
+        "tcp://127.0.0.1:43125",
+    ],
+)
+async def test_streaming_serve_reports_platform_control_endpoint(
+    reported_endpoint: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def _run_streaming_spawn(**kwargs: object) -> DrainOutcome:
+        callback = kwargs.get("on_control_endpoint_ready")
+        assert callable(callback)
+        callback(reported_endpoint)
+        return DrainOutcome(status="succeeded", exit_code=0)
+
+    monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
+
+    await streaming_serve_module.streaming_serve("codex", "hello")
+
+    output = capsys.readouterr().out
+    assert f"Control endpoint: {reported_endpoint}" in output

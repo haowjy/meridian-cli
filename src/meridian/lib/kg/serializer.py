@@ -33,12 +33,8 @@ def serialize_analysis(result: AnalysisResult, root: Path) -> dict[str, Any]:
             for edge in result.broken_links
         ],
         "orphans": [_rel(p, root) for p in result.orphans],
-        "missing_backlinks": [
-            [_rel(a, root), _rel(b, root)] for a, b in result.missing_backlinks
-        ],
-        "clusters": [
-            [_rel(p, root) for p in cluster] for cluster in result.clusters
-        ],
+        "missing_backlinks": [[_rel(a, root), _rel(b, root)] for a, b in result.missing_backlinks],
+        "clusters": [[_rel(p, root) for p in cluster] for cluster in result.clusters],
         "summary": {
             "total_files": len(result.nodes),
             "total_links": len(result.edges),
@@ -81,9 +77,7 @@ def serialize_check_findings(result: CheckResult, path: Path) -> dict[str, Any]:
     category_counts = {
         "broken_links": sum(1 for f in result.findings if f.category == "broken_link"),
         "flag_blocks": sum(1 for f in result.findings if f.category == "flag_block"),
-        "conflict_markers": sum(
-            1 for f in result.findings if f.category == "conflict_marker"
-        ),
+        "conflict_markers": sum(1 for f in result.findings if f.category == "conflict_marker"),
     }
 
     return {

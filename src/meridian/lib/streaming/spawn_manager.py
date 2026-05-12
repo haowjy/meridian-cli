@@ -6,22 +6,30 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import psutil
+
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.control_action import (
+    ControlActionCoordinator,
+    ControlActionType,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
@@ -36,7 +44,6 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.inject_lock import drop_lock, get_lock
 from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
@@ -44,11 +51,17 @@ if TYPE_CHECKING:
         ConnectionConfig,
         HarnessConnection,
     )
-    from meridian.lib.launch.streaming_runner import TerminalEventOutcome
+    from meridian.lib.harness.semantics import TerminalEventOutcome
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
+
+StartConnectionPort = Callable[
+    ["ConnectionConfig", ResolvedLaunchSpec],
+    Awaitable["HarnessConnection[Any]"],
+]
+ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketServer]
 
 
 @dataclass(frozen=True)
@@ -74,6 +87,7 @@ class SpawnSession:
     debug_tracer: DebugTracer | None = None
     cancel_sent: bool = False
     cancel_event_emitted: bool = False
+    control_actions: ControlActionCoordinator | None = None
 
 
 def _ensure_harness_bootstrap() -> None:
@@ -100,8 +114,34 @@ async def dispatch_start(
         )
 
     connection_class = get_connection_class(config.harness_id)
-    connection_factory = cast("Callable[[], HarnessConnection[Any]]", connection_class)
-    connection = connection_factory()
+    request_handler: PermissionBroker | None = None
+    connection_ref: dict[str, HarnessConnection[Any]] = {}
+
+    async def _runtime_event_sink(event: HarnessEvent) -> None:
+        await connection_ref["connection"].inject_runtime_event(event)
+
+    if config.harness_id is HarnessId.CODEX:
+        request_handler = PermissionBroker(
+            spawn_dir=resolve_spawn_log_dir(config.project_root, config.spawn_id),
+            event_sink=_runtime_event_sink,
+            auto_reject_runtime_requests=True,
+        )
+
+    connection: HarnessConnection[Any]
+    if request_handler is not None:
+        connection_factory = cast(
+            "Callable[..., HarnessConnection[Any]]",
+            connection_class,
+        )
+        try:
+            connection = connection_factory(request_handler=request_handler)
+        except TypeError:
+            connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
+    else:
+        connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
+
+    connection_ref["connection"] = connection
+
     try:
         await connection.start(config, spec)
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -110,6 +150,18 @@ async def dispatch_start(
             error=exc,
         ) from exc
     return connection
+
+
+def _default_control_server_factory(
+    spawn_id: SpawnId,
+    socket_path: Path,
+    manager: SpawnManager,
+) -> ControlSocketServer:
+    return ControlSocketServer(
+        spawn_id=spawn_id,
+        socket_path=socket_path,
+        manager=manager,
+    )
 
 
 class SpawnManager:
@@ -123,12 +175,16 @@ class SpawnManager:
         debug: bool = False,
         heartbeat_interval_secs: float = 30.0,
         heartbeat_touch: Callable[[Path, SpawnId], None] | None = None,
+        start_connection: StartConnectionPort | None = None,
+        control_server_factory: ControlServerFactory | None = None,
     ):
         self._runtime_root = runtime_root
         self._project_root = project_root
         self._debug = debug
         self._heartbeat_interval_secs = heartbeat_interval_secs
         self._heartbeat_touch = heartbeat_touch
+        self._start_connection = start_connection or dispatch_start
+        self._control_server_factory = control_server_factory or _default_control_server_factory
         self._sessions: dict[SpawnId, SpawnSession] = {}
         self._completion_futures: dict[SpawnId, asyncio.Future[DrainOutcome]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
@@ -223,7 +279,7 @@ class SpawnManager:
             )
 
         try:
-            connection = await dispatch_start(config, spec)
+            connection = await self._start_connection(config, spec)
         except Exception:
             if tracer is not None:
                 tracer.close()
@@ -241,10 +297,10 @@ class SpawnManager:
                 drain_policy=resolved_policy,
             )
         )
-        control_server = ControlSocketServer(
-            spawn_id=spawn_id,
-            socket_path=self._spawn_dir(spawn_id) / "control.sock",
-            manager=self,
+        control_server = self._control_server_factory(
+            spawn_id,
+            self._spawn_dir(spawn_id) / "control.sock",
+            self,
         )
 
         try:
@@ -268,6 +324,10 @@ class SpawnManager:
             started_monotonic=started_monotonic,
             completion_future=completion_future,
             debug_tracer=tracer,
+            control_actions=ControlActionCoordinator(
+                spawn_id=spawn_id,
+                spawn_dir=self._spawn_dir(spawn_id),
+            ),
         )
         self._completion_futures[spawn_id] = completion_future
         return connection
@@ -281,6 +341,14 @@ class SpawnManager:
         """Remove a previously registered event observer for one spawn."""
 
         self._observers.unregister(spawn_id, observer)
+
+    def control_endpoint(self, spawn_id: SpawnId) -> str | None:
+        """Return the current platform-aware control endpoint for one active spawn."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            return None
+        return session.control_server.endpoint
 
     async def _drain_loop(
         self,
@@ -296,7 +364,7 @@ class SpawnManager:
         """
 
         # Import at runtime to avoid circular import during module initialization.
-        from meridian.lib.launch.streaming_runner import terminal_event_outcome
+        from meridian.lib.harness.semantics import terminal_outcome
 
         consecutive_write_failures = 0
         max_consecutive_failures = 10
@@ -355,15 +423,15 @@ class SpawnManager:
                         )
                         self._fan_out_event(spawn_id, event)
                         break
-                terminal_outcome = terminal_event_outcome(event)
+                event_outcome = terminal_outcome(event)
                 self._fan_out_event(spawn_id, event)
-                if terminal_outcome is not None:
-                    action: DrainAction = policy.classify(terminal_outcome)
+                if event_outcome is not None:
+                    action: DrainAction = policy.classify(event_outcome)
                     if action.terminate:
-                        recorded_terminal_outcome = terminal_outcome
+                        recorded_terminal_outcome = event_outcome
                         break
                     if action.emit_turn_boundary:
-                        await self._fan_out_turn_boundary(spawn_id, terminal_outcome)
+                        await self._fan_out_turn_boundary(spawn_id, event_outcome)
         except asyncio.CancelledError:
             drain_cancelled = True
             raise
@@ -457,35 +525,205 @@ class SpawnManager:
                 on_result(result)
             return result
 
-        async with get_lock(spawn_id):
-            session = self._sessions.get(spawn_id)
-            if session is None:
-                result = InjectResult(
-                    success=False,
-                    error=f"Spawn {spawn_id} is not active",
-                )
-                if on_result is not None:
-                    on_result(result)
-                return result
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            result = InjectResult(
+                success=False,
+                error=f"Spawn {spawn_id} is not active",
+            )
+            if on_result is not None:
+                on_result(result)
+            return result
 
+        async def _send_message() -> int:
+            inbound_seq = await self._record_inbound(
+                spawn_id,
+                action="user_message",
+                data={"text": message},
+                source=source,
+            )
+            await session.connection.send_user_message(message)
+            return inbound_seq
+
+        coordinator = session.control_actions
+        if coordinator is None:
             try:
-                inbound_seq = await self._record_inbound(
-                    spawn_id,
-                    action="user_message",
-                    data={"text": message},
-                    source=source,
-                )
-                await session.connection.send_user_message(message)
+                inbound_seq = await _send_message()
             except Exception as exc:
                 result = InjectResult(success=False, error=str(exc))
                 if on_result is not None:
                     on_result(result)
                 return result
-
             result = InjectResult(success=True, inbound_seq=inbound_seq)
             if on_result is not None:
                 on_result(result)
             return result
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.INJECT,
+            payload={"text": message},
+            source=source,
+            send=_send_message,
+        )
+        if not outcome.success:
+            result = InjectResult(success=False, error=outcome.error or "inject_failed")
+            if on_result is not None:
+                on_result(result)
+            return result
+
+        inbound_seq = outcome.value
+        result = InjectResult(
+            success=True,
+            inbound_seq=inbound_seq if isinstance(inbound_seq, int) else None,
+        )
+        if on_result is not None:
+            on_result(result)
+        return result
+
+    async def interrupt(
+        self,
+        spawn_id: SpawnId,
+        *,
+        source: str = "runtime",
+    ) -> None:
+        """Send one serialized interrupt to an active spawn connection."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            raise RuntimeError(f"Spawn {spawn_id} is not active")
+
+        coordinator = session.control_actions
+        if coordinator is None:
+            await session.connection.send_cancel()
+            return
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.INTERRUPT,
+            payload={},
+            source=source,
+            send=session.connection.send_cancel,
+        )
+        if not outcome.success:
+            raise RuntimeError(outcome.error or "interrupt_failed")
+
+    async def respond_request(
+        self,
+        spawn_id: SpawnId,
+        *,
+        request_id: str,
+        decision: str,
+        payload: dict[str, object] | None = None,
+        source: str = "chat",
+    ) -> None:
+        """Send one serialized permission decision for a pending harness request."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            raise RuntimeError(f"Spawn {spawn_id} is not active")
+
+        async def _respond() -> None:
+            await session.connection.respond_request(request_id, decision, payload)
+
+        coordinator = session.control_actions
+        if coordinator is None:
+            try:
+                await _respond()
+            except Exception as exc:
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=str(exc),
+                )
+                raise
+            return
+
+        response_payload: dict[str, object] = {
+            "request_id": request_id,
+            "decision": decision,
+        }
+        if payload is not None:
+            response_payload["payload"] = payload
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.PERMISSION_REPLY,
+            payload=response_payload,
+            source=source,
+            send=_respond,
+        )
+        if not outcome.success:
+            error = outcome.error or "permission_reply_failed"
+            if error != "stale_after_interrupt":
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=error,
+                )
+            raise RuntimeError(error)
+
+    async def respond_user_input(
+        self,
+        spawn_id: SpawnId,
+        *,
+        request_id: str,
+        answers: dict[str, object],
+        source: str = "chat",
+    ) -> None:
+        """Send one serialized user-input response for a pending harness request."""
+
+        session = self._sessions.get(spawn_id)
+        if session is None:
+            raise RuntimeError(f"Spawn {spawn_id} is not active")
+
+        async def _respond() -> None:
+            await session.connection.respond_user_input(request_id, answers)
+
+        coordinator = session.control_actions
+        if coordinator is None:
+            try:
+                await _respond()
+            except Exception as exc:
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=str(exc),
+                )
+                raise
+            return
+
+        outcome = await coordinator.run_action(
+            action=ControlActionType.USER_INPUT_REPLY,
+            payload={"request_id": request_id, "answers": answers},
+            source=source,
+            send=_respond,
+        )
+        if not outcome.success:
+            error = outcome.error or "user_input_reply_failed"
+            if error != "stale_after_interrupt":
+                await self._notify_runtime_request_failed(
+                    session.connection,
+                    request_id=request_id,
+                    error=error,
+                )
+            raise RuntimeError(error)
+
+    async def _notify_runtime_request_failed(
+        self,
+        connection: HarnessConnection[Any],
+        *,
+        request_id: str,
+        error: str,
+    ) -> None:
+        callback = getattr(connection, "_notify_request_failed", None)
+        if callback is None:
+            return
+        try:
+            await cast("Callable[..., Awaitable[None]]", callback)(request_id, error=error)
+        except Exception:
+            logger.debug(
+                "Runtime request failure callback raised for request %s",
+                request_id,
+                exc_info=True,
+            )
 
     async def _record_inbound(
         self,
@@ -543,13 +781,12 @@ class SpawnManager:
         if session is None:
             await self._stop_heartbeat(spawn_id)
             await self._observers.shutdown(spawn_id)
-            drop_lock(spawn_id)
             return None
 
         if status == "cancelled" and not session.cancel_sent:
             session.cancel_sent = True
             with suppress(Exception):
-                await session.connection.send_cancel()
+                await self.interrupt(spawn_id, source="spawn_manager.stop_spawn")
             if not session.cancel_event_emitted:
                 session.cancel_event_emitted = True
                 await self._emit_cancelled_terminal_event(
@@ -572,8 +809,40 @@ class SpawnManager:
         if session.debug_tracer is not None:
             session.debug_tracer.close()
 
+        # Capture scope state BEFORE connection.stop() — both connections clear
+        # subprocess_pid and scope_snapshot inside stop(), so reading them after
+        # would always yield None and make the safety pass a no-op.
+        _pre_stop_pid = session.connection.subprocess_pid
+        _pre_stop_scope = getattr(session.connection, "scope_snapshot", None)
+
         with suppress(Exception):
             await session.connection.stop()
+
+        # Safety pass: if the process survived connection.stop() (e.g. the connection
+        # was already dead before stop was called), force-terminate via the scope handle.
+        with suppress(Exception):
+            if _pre_stop_pid is not None and _pre_stop_scope is not None:
+                try:
+                    proc = psutil.Process(_pre_stop_pid)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    proc = None
+                if proc is not None and proc.is_running():
+                    logger.warning(
+                        "Process %d still alive after connection.stop(); "
+                        "scope safety cleanup for spawn %s",
+                        _pre_stop_pid,
+                        spawn_id,
+                    )
+                    from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
+
+                    await asyncio.to_thread(
+                        terminate_tree_sync,
+                        pid=_pre_stop_pid,
+                        created_at_epoch=_pre_stop_scope.root_created_at_epoch,
+                        grace_secs=5.0,
+                        reason="stop_safety_pass",
+                        scope_id=_pre_stop_scope.scope_id,
+                    )
 
         # Give drain loop time to persist remaining events after connection closes.
         # The drain loop exits naturally once events() terminates, but enforce a
@@ -597,7 +866,6 @@ class SpawnManager:
         self._sessions.pop(spawn_id, None)
         self._completion_futures.pop(spawn_id, None)
         self._history_writers.pop(spawn_id, None)
-        drop_lock(spawn_id)
         return outcome
 
     async def _emit_cancelled_terminal_event(
@@ -756,7 +1024,6 @@ class SpawnManager:
         session = self._sessions.pop(spawn_id, None)
         if session is None:
             await self._observers.shutdown(spawn_id)
-            drop_lock(spawn_id)
             return
         if session.debug_tracer is not None:
             session.debug_tracer.close()
@@ -772,7 +1039,6 @@ class SpawnManager:
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)
         self._history_writers.pop(spawn_id, None)
-        drop_lock(spawn_id)
 
     def _resolve_completion_future(
         self,

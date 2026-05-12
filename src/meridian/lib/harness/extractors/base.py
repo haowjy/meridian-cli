@@ -63,4 +63,23 @@ def session_from_mapping_with_keys(
     return None
 
 
-__all__ = ["HarnessExtractor", "session_from_mapping_with_keys"]
+def normalize_harness_event_type(
+    payload: Mapping[str, object],
+    *,
+    keys: tuple[str, ...] = ("event_type", "event", "type"),
+) -> str:
+    """Normalize event type fields to a stable dot-separated lowercase value."""
+
+    raw_type: object = ""
+    for key in keys:
+        if key in payload:
+            raw_type = payload.get(key, "")
+            break
+    return str(raw_type).strip().lower().replace("/", ".")
+
+
+__all__ = [
+    "HarnessExtractor",
+    "normalize_harness_event_type",
+    "session_from_mapping_with_keys",
+]

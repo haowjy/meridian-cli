@@ -9,7 +9,6 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.config.context_config import ArbitraryContextConfig, ContextConfig
-from meridian.lib.config.project_root import resolve_project_root
 from meridian.lib.context.resolver import (
     ResolvedContextPaths,
     render_context_lines,
@@ -17,7 +16,7 @@ from meridian.lib.context.resolver import (
 )
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.paths import load_context_config
 
 
@@ -123,8 +122,7 @@ class ContextOutput(BaseModel):
         if normalized in self.extra_contexts:
             return self.extra_contexts[normalized].resolved
         raise KeyError(
-            f"Unknown context '{name}'. Expected one of: "
-            f"{', '.join(self._available_names())}."
+            f"Unknown context '{name}'. Expected one of: {', '.join(self._available_names())}."
         )
 
 
@@ -191,11 +189,11 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
 def context_sync(input: ContextInput) -> ContextOutput:
     """Synchronous handler for context query."""
 
-    project_root = resolve_project_root()
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    resolved_runtime_context = _resolve_runtime_context(project_root, runtime_root)
-    context_config = load_context_config(project_root) or ContextConfig()
-    resolved_paths = resolve_context_paths(project_root, context_config)
+    authority = resolve_runtime_authority_for_read()
+    runtime_root = authority.runtime_root or authority.project_state_dir
+    resolved_runtime_context = _resolve_runtime_context(authority.project_root, runtime_root)
+    context_config = load_context_config(authority.project_root) or ContextConfig()
+    resolved_paths = resolve_context_paths(authority.project_root, context_config)
     extra_config = _extra_context_config(context_config)
     extra_contexts: dict[str, ContextEntryOutput] = {}
     for name, (path, source) in resolved_paths.extra.items():
@@ -238,9 +236,9 @@ def work_current_sync(input: WorkCurrentInput) -> WorkCurrentOutput:
     """Synchronous handler for work current query."""
 
     _ = input
-    project_root = resolve_project_root()
-    runtime_root = resolve_runtime_root_for_read(project_root)
-    resolved = _resolve_runtime_context(project_root, runtime_root)
+    authority = resolve_runtime_authority_for_read()
+    runtime_root = authority.runtime_root or authority.project_state_dir
+    resolved = _resolve_runtime_context(authority.project_root, runtime_root)
 
     return WorkCurrentOutput(
         work_dir=resolved.work_dir.as_posix() if resolved.work_dir is not None else None
@@ -257,9 +255,9 @@ def work_root_sync(input: WorkRootInput) -> WorkRootOutput:
     if env_work_root:
         return WorkRootOutput(work_root=env_work_root)
 
-    project_root = resolve_project_root()
-    context_config = load_context_config(project_root) or ContextConfig()
-    resolved_paths = resolve_context_paths(project_root, context_config)
+    authority = resolve_runtime_authority_for_read()
+    context_config = load_context_config(authority.project_root) or ContextConfig()
+    resolved_paths = resolve_context_paths(authority.project_root, context_config)
     return WorkRootOutput(work_root=resolved_paths.work_root.as_posix())
 
 

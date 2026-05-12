@@ -28,6 +28,7 @@ TURN_STARTED: Final = "turn.started"
 TURN_COMPLETED: Final = "turn.completed"
 CONTENT_DELTA: Final = "content.delta"
 RUNTIME_WARNING: Final = "runtime.warning"
+RUNTIME_ERROR: Final = "runtime.error"
 
 EVENT_FAMILIES: Final = frozenset(
     {
@@ -88,6 +89,7 @@ __all__ = [
     "EVENT_FAMILY_SPAWN",
     "EVENT_FAMILY_TURN",
     "EVENT_FAMILY_WORK",
+    "RUNTIME_ERROR",
     "RUNTIME_WARNING",
     "TURN_COMPLETED",
     "TURN_STARTED",

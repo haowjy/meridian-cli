@@ -10,7 +10,14 @@ from pathlib import Path
 from meridian.lib.chat.backend_acquisition import BackendAcquisition
 from meridian.lib.chat.event_index import ChatEventIndex
 from meridian.lib.chat.event_log import ChatEventLog
-from meridian.lib.chat.protocol import CHAT_EXITED, ChatEvent, utc_now_iso
+from meridian.lib.chat.protocol import (
+    CHAT_EXITED,
+    RUNTIME_ERROR,
+    TURN_COMPLETED,
+    TURN_STARTED,
+    ChatEvent,
+    utc_now_iso,
+)
 from meridian.lib.chat.runtime import LiveChatEntry, PersistedChatRecord, build_live_entry
 from meridian.lib.state.paths import RuntimePaths
 
@@ -69,7 +76,7 @@ def recover_all(
         if last_state == "active":
             persisted = event_log.append(
                 ChatEvent(
-                    type="runtime.error",
+                    type=RUNTIME_ERROR,
                     seq=0,
                     chat_id=chat_id,
                     execution_id=_last_execution_id(events),
@@ -85,13 +92,13 @@ def recover_all(
 def _state_from_events(events: list[ChatEvent]) -> str:
     state = "idle"
     for event in events:
-        if event.type == "turn.started":
+        if event.type == TURN_STARTED:
             state = "active"
-        elif event.type == "turn.completed":
+        elif event.type == TURN_COMPLETED:
             state = "idle"
         elif event.type == CHAT_EXITED:
             state = "closed"
-        elif event.type == "runtime.error":
+        elif event.type == RUNTIME_ERROR:
             reason = event.payload.get("reason")
             if reason == "backend_lost_after_restart" and state == "active":
                 state = "idle"

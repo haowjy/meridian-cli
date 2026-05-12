@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.telemetry.query import query_events
 from meridian.lib.telemetry.reader import discover_segments, read_events, tail_events
@@ -154,7 +155,7 @@ def test_status_dict_is_json_serializable(tmp_path: Path) -> None:
     result = status_to_dict(status)
 
     json.dumps(result)
-    assert result["telemetry_dir"] == str(tmp_path / "telemetry")
+    assert Path(result["telemetry_dir"]) == tmp_path / "telemetry"
     assert result["total_size_human"] == status.total_size_human
 
 
@@ -259,9 +260,14 @@ def test_status_aggregates_active_writers_across_project_directories_and_legacy(
     service_a = SpawnLifecycleService(project_a_root)
     spawn_a = service_a.start(
         chat_id="chat-a",
-        model="test-model",
-        agent="coder",
-        harness="test-harness",
+        session_metadata=PrimarySessionMetadata(
+            harness="test-harness",
+            model="test-model",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
         prompt="do the thing",
         status="running",
     )

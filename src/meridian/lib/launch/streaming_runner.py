@@ -1,4 +1,4 @@
-"""Bidirectional spawn execution with runner-owned finalization and retries."""
+"""Bidirectional spawn execution with lifecycle-owned terminal finalization."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import os
 import signal
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,22 +15,24 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from meridian.lib.bootstrap.services import (
+    build_spawn_application_service_from_roots,
+    build_spawn_lifecycle_service_from_roots,
+)
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.clock import Clock, RealClock
-from meridian.lib.core.domain import Spawn, SpawnStatus
-from meridian.lib.core.lifecycle import create_lifecycle_service
+from meridian.lib.core.domain import Spawn
 from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
     has_durable_report_completion,
-    resolve_execution_terminal_state,
 )
-from meridian.lib.core.spawn_service import SpawnApplicationService
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
 from meridian.lib.harness.extractor import StreamingExtractor
+from meridian.lib.harness.semantics import TerminalEventOutcome, terminal_outcome
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
@@ -68,10 +70,6 @@ from meridian.lib.launch.runner_helpers import (
     write_structured_failure_artifact as _write_structured_failure_artifact,
 )
 from meridian.lib.launch.signals import signal_coordinator, signal_to_exit_code
-from meridian.lib.launch.streaming.decision import (
-    TerminalEventOutcome,
-    terminal_event_outcome,
-)
 from meridian.lib.launch.streaming.heartbeat import FileHeartbeat, HeartbeatTouch
 from meridian.lib.launch.streaming.terminal_arbitrator import TriggerKind, arbitrate_terminal
 from meridian.lib.safety.budget import Budget, BudgetBreach, LiveBudgetTracker
@@ -82,6 +80,7 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import ArtifactStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_bytes
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.process_scope_projection import record_scope
 from meridian.lib.state.spawn.model import (
     BACKGROUND_LAUNCH_MODE,
     FOREGROUND_LAUNCH_MODE,
@@ -132,26 +131,25 @@ class StreamingRunConclusion:
         )
         self.final_attempt_terminal_observed = attempt.terminal_observed
 
-    def resolve_terminal_state(
+    def terminal_facts(
         self,
         *,
         received_signal: signal.Signals | None,
-    ) -> tuple[SpawnStatus, int, str | None]:
-        """Compute the persisted terminal state from accumulated execution evidence."""
+    ) -> ExecutionTerminalFacts:
+        """Project accumulated runner evidence into lifecycle terminal facts."""
 
-        cancelled = not self.final_attempt_terminal_observed and (
+        cancellation_observed = not self.final_attempt_terminal_observed and (
             self.failure_reason in {"cancelled", "terminated"}
             or received_signal in {signal.SIGINT, signal.SIGTERM}
         )
-        durable_report_completion = (
-            self.extracted is not None
-            and has_durable_report_completion(self.extracted.report.content)
-        )
-        return resolve_execution_terminal_state(
+        return ExecutionTerminalFacts(
             exit_code=self.exit_code,
             failure_reason=self.failure_reason,
-            cancelled=cancelled,
-            durable_report_completion=durable_report_completion,
+            cancellation_observed=cancellation_observed,
+            durable_report_completion=(
+                self.extracted is not None
+                and has_durable_report_completion(self.extracted.report.content)
+            ),
             terminated_after_completion=self.terminated_after_completion,
         )
 
@@ -172,30 +170,40 @@ def _install_signal_handlers(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
     received_signal: list[signal.Signals | None],
-) -> list[signal.Signals]:
-    installed: list[signal.Signals] = []
+) -> Callable[[], None] | None:
+    """Install portable signal handlers that set the shutdown event.
 
-    def _handle_signal(signum: signal.Signals) -> None:
+    Uses signal.signal() instead of loop.add_signal_handler() for Windows
+    compatibility (ProactorEventLoop does not support add_signal_handler).
+
+    Returns a cleanup callable that restores previous handlers, or None if
+    installation failed (non-main thread).
+    """
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return None
+
+    previous_handlers: dict[int, Any] = {}
+
+    def _handle(signum: int, frame: object) -> None:
         if received_signal[0] is None:
-            received_signal[0] = signum
-        shutdown_event.set()
+            received_signal[0] = signal.Signals(signum)
+        loop.call_soon_threadsafe(shutdown_event.set)
 
     for signum in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(signum, _handle_signal, signum)
-            installed.append(signum)
-        except (NotImplementedError, RuntimeError):
+            previous_handlers[int(signum)] = signal.getsignal(signum)
+            signal.signal(signum, _handle)
+        except (ValueError, OSError):
             continue
-    return installed
 
+    def _cleanup() -> None:
+        for signum_int, prev in previous_handlers.items():
+            with suppress(Exception):
+                signal.signal(signal.Signals(signum_int), prev)
 
-def _remove_signal_handlers(
-    loop: asyncio.AbstractEventLoop,
-    installed: Iterable[signal.Signals],
-) -> None:
-    for signum in installed:
-        with suppress(Exception):
-            loop.remove_signal_handler(signum)
+    return _cleanup
 
 
 def _truncate_attempt_logs(log_dir: Path) -> None:
@@ -302,9 +310,9 @@ async def _consume_subscriber_events(
                 budget_signal.set()
 
         if terminal_event_future is not None and not terminal_event_future.done():
-            terminal_outcome = terminal_event_outcome(event)
-            if terminal_outcome is not None:
-                terminal_event_future.set_result(terminal_outcome)
+            event_outcome = terminal_outcome(event)
+            if event_outcome is not None:
+                terminal_event_future.set_result(event_outcome)
 
         if event_observer is not None or stream_stdout_to_terminal:
             line = _line_from_harness_event(event)
@@ -356,6 +364,8 @@ async def run_streaming_spawn(
     stream_to_terminal: bool = False,
     heartbeat_touch: HeartbeatTouch | None = None,
     heartbeat_interval_secs: float = _HEARTBEAT_INTERVAL_SECS,
+    lifecycle_service: SpawnLifecycleService | None = None,
+    on_control_endpoint_ready: Callable[[str], None] | None = None,
 ) -> DrainOutcome:
     """Run one streaming spawn to completion without spawn-store finalization.
 
@@ -377,7 +387,7 @@ async def run_streaming_spawn(
     loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
     received_signal: list[signal.Signals | None] = [None]
-    installed_signals = _install_signal_handlers(loop, shutdown_event, received_signal)
+    signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
 
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     signal_task: asyncio.Task[bool] | None = None
@@ -391,10 +401,24 @@ async def run_streaming_spawn(
         spawn_id,
         runner_pid=os.getpid(),
     )
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+    resolved_lifecycle = lifecycle_service or build_spawn_lifecycle_service_from_roots(
+        project_root,
+        runtime_root,
+    )
     try:
         await manager.start_spawn(config, run_spec)
-        await manager._start_heartbeat(spawn_id)  # pyright: ignore[reportPrivateUsage]
+        if on_control_endpoint_ready is not None:
+            endpoint = manager.control_endpoint(spawn_id)
+            if endpoint is not None:
+                try:
+                    on_control_endpoint_ready(endpoint)
+                except Exception:
+                    logger.warning(
+                        "Control endpoint callback failed.",
+                        spawn_id=str(spawn_id),
+                        exc_info=True,
+                    )
+        await manager.start_heartbeat(spawn_id)
         subscriber = manager.subscribe(spawn_id)
         if subscriber is None:
             raise RuntimeError("failed to subscribe to spawn stream")
@@ -446,7 +470,7 @@ async def run_streaming_spawn(
         else:
             resolved_outcome = outcome
         with suppress(Exception):
-            lifecycle_service.record_exited(
+            resolved_lifecycle.record_exited(
                 str(spawn_id),
                 exit_code=resolved_outcome.exit_code,
             )
@@ -460,7 +484,8 @@ async def run_streaming_spawn(
                     task.cancel()
                     with suppress(asyncio.CancelledError):
                         await task
-            _remove_signal_handlers(loop, installed_signals)
+            if signal_cleanup is not None:
+                signal_cleanup()
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
 
@@ -480,6 +505,7 @@ async def _run_streaming_attempt(
     timeout_seconds: float | None,
     event_observer: Callable[[StreamEvent], None] | None,
     stream_stdout_to_terminal: bool,
+    lifecycle_service: SpawnLifecycleService,
 ) -> _AttemptRuntime:
     completion_task: asyncio.Task[DrainOutcome | None] | None = None
     timeout_task: asyncio.Task[None] | None = None
@@ -500,16 +526,18 @@ async def _run_streaming_attempt(
     timed_out = False
     terminated_by_report_watchdog = False
     terminal_outcome: TerminalEventOutcome | None = None
-    lifecycle_service = create_lifecycle_service(manager.project_root, runtime_root)
-
     try:
         connection = await manager.start_spawn(config, run_spec)
-        await manager._start_heartbeat(run.spawn_id)  # pyright: ignore[reportPrivateUsage]
+        await manager.start_heartbeat(run.spawn_id)
+        scope_snap = getattr(connection, "scope_snapshot", None)
         lifecycle_service.mark_running(
             run.spawn_id,
             launch_mode=launch_mode,
             worker_pid=connection.subprocess_pid,
+            scope_snapshot=scope_snap,
         )
+        if scope_snap is not None:
+            record_scope(runtime_root, SpawnId(run.spawn_id), scope_snap)
 
         subscriber = manager.subscribe(run.spawn_id)
         if subscriber is None:
@@ -686,14 +714,14 @@ async def execute_with_streaming(
     conclusion = StreamingRunConclusion()
     lifecycle_service: SpawnLifecycleService | None = None
     manager: SpawnManager | None = None
-    installed_signals: list[signal.Signals] = []
+    signal_cleanup: Callable[[], None] | None = None
     loop: asyncio.AbstractEventLoop | None = None
     received_signal: list[signal.Signals | None] = [None]
 
     try:
         log_dir = resolve_spawn_log_dir(project_root, run.spawn_id)
         output_log_path = log_dir / HISTORY_FILENAME
-        report_path = launch_context.report_output_path
+        report_path = launch_context.binding.report_output_path
 
         timeout_seconds = (
             float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None
@@ -702,9 +730,9 @@ async def execute_with_streaming(
         retry_backoff_seconds = request.retry.backoff_secs
 
         resolved_harness_id = launch_context.harness.id
-        child_cwd = launch_context.child_cwd
-        spec = launch_context.spec
-        child_env = dict(launch_context.env)
+        child_cwd = launch_context.binding.child_cwd
+        spec = launch_context.binding.spec
+        child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
 
@@ -757,8 +785,8 @@ async def execute_with_streaming(
 
         materialized_session_id = (spec.continue_session_id or "").strip()
         observed_harness_session_id: str | None = None
-        if resolved_harness_id == HarnessId.CLAUDE and not materialized_session_id:
-            seeded_session_id = extract_session_id_from_args(spec.extra_args)
+        if not materialized_session_id:
+            seeded_session_id = harness.derive_streaming_seeded_session_id(spec=spec)
             if seeded_session_id:
                 spawn_store.update_spawn(
                     runtime_root,
@@ -792,11 +820,14 @@ async def execute_with_streaming(
             heartbeat_interval_secs=heartbeat_interval_secs,
             heartbeat_touch=lambda _runtime_root, _spawn_id: resolved_heartbeat_touch(),
         )
-        lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+        lifecycle_service = build_spawn_lifecycle_service_from_roots(
+            project_root,
+            runtime_root,
+        )
 
         loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
-        installed_signals = _install_signal_handlers(loop, shutdown_event, received_signal)
+        signal_cleanup = _install_signal_handlers(loop, shutdown_event, received_signal)
 
         try:
             while True:
@@ -827,6 +858,7 @@ async def execute_with_streaming(
                     timeout_seconds=timeout_seconds,
                     event_observer=event_observer,
                     stream_stdout_to_terminal=stream_stdout_to_terminal,
+                    lifecycle_service=lifecycle_service,
                 )
                 conclusion.absorb_attempt(attempt)
                 if attempt.start_error is not None:
@@ -884,6 +916,8 @@ async def execute_with_streaming(
                     extractor=streaming_extractor,
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
+                    model_id=run.model,
+                    project_root=project_root,
                     secrets=secrets,
                 )
                 conclusion.extracted = extraction
@@ -1029,9 +1063,7 @@ async def execute_with_streaming(
                         ],
                     )
                     if retry_backoff_seconds > 0:
-                        await asyncio.sleep(
-                            retry_backoff_seconds * conclusion.retries_attempted
-                        )
+                        await asyncio.sleep(retry_backoff_seconds * conclusion.retries_attempted)
                     continue
 
                 stderr_key = make_artifact_key(run.spawn_id, STDERR_FILENAME)
@@ -1091,8 +1123,8 @@ async def execute_with_streaming(
             harness_id=str(launch_context.harness.id),
         )
     finally:
-        if loop is not None and installed_signals:
-            _remove_signal_handlers(loop, installed_signals)
+        if signal_cleanup is not None:
+            signal_cleanup()
         if manager is not None:
             with suppress(Exception):
                 await manager.shutdown(status="cancelled", exit_code=1, error="shutdown")
@@ -1101,50 +1133,29 @@ async def execute_with_streaming(
         except Exception:
             duration_seconds = 0.0
         if lifecycle_service is None:
-            lifecycle_service = create_lifecycle_service(project_root, runtime_root)
-        finalized_usage = (
-            conclusion.extracted.usage if conclusion.extracted is not None else None
-        )
-        status, resolved_exit_code, resolved_failure_reason = conclusion.resolve_terminal_state(
-            received_signal=received_signal[0],
-        )
-        conclusion.exit_code = resolved_exit_code
-        conclusion.failure_reason = resolved_failure_reason
-        with signal_coordinator().mask_sigterm():
-            spawn_service = SpawnApplicationService(
+            lifecycle_service = build_spawn_lifecycle_service_from_roots(
+                project_root,
                 runtime_root,
-                lifecycle_service,
+            )
+        finalized_usage = conclusion.extracted.usage if conclusion.extracted is not None else None
+        terminal_facts = conclusion.terminal_facts(received_signal=received_signal[0])
+        with signal_coordinator().mask_sigterm():
+            spawn_service = build_spawn_application_service_from_roots(
+                project_root,
+                runtime_root,
+                lifecycle=lifecycle_service,
                 spawn_manager=manager,
             )
-            outcome = await spawn_service.complete_spawn(
+            execution_outcome = await spawn_service.complete_execution(
                 run.spawn_id,
-                status,
-                conclusion.exit_code,
+                terminal_facts,
                 origin="runner",
                 duration_secs=duration_seconds,
-                total_cost_usd=(
-                    finalized_usage.total_cost_usd if finalized_usage is not None else None
-                ),
-                input_tokens=finalized_usage.input_tokens if finalized_usage is not None else None,
-                output_tokens=(
-                    finalized_usage.output_tokens if finalized_usage is not None else None
-                ),
-                cache_read_input_tokens=(
-                    finalized_usage.cache_read_input_tokens if finalized_usage is not None else None
-                ),
-                cache_creation_input_tokens=(
-                    finalized_usage.cache_creation_input_tokens
-                    if finalized_usage is not None
-                    else None
-                ),
-                reasoning_tokens=(
-                    finalized_usage.reasoning_tokens if finalized_usage is not None else None
-                ),
-                cost_is_estimate=(
-                    finalized_usage.cost_is_estimate if finalized_usage is not None else False
-                ),
-                error=conclusion.failure_reason,
+                usage=finalized_usage,
             )
+            conclusion.exit_code = execution_outcome.resolved.exit_code
+            conclusion.failure_reason = execution_outcome.resolved.error
+            outcome = execution_outcome.completion
             if outcome.entered_finalizing:
                 try:
                     resolved_heartbeat_touch()
@@ -1172,5 +1183,4 @@ __all__ = [
     "TerminalEventOutcome",
     "execute_with_streaming",
     "run_streaming_spawn",
-    "terminal_event_outcome",
 ]

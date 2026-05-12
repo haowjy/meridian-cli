@@ -127,7 +127,6 @@ def _drain_pipeline(client: TestClient, chat_id: str) -> None:
     client.portal.call(entry.pipeline.drain)
 
 
-
 def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> None:
     handle = Handle(pending_requests={"r1"})
     configure(
@@ -156,10 +155,9 @@ def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> 
     assert approved == {"status": "accepted", "error": None}
     assert handle.requests == [("r1", "accept", {"x": 1})]
     relevant_events = [
-        event for event in events
-        if event["type"] in {
-            "chat.started", "request.opened", "request.resolved"
-        }
+        event
+        for event in events
+        if event["type"] in {"chat.started", "request.opened", "request.resolved"}
     ]
     assert [event["type"] for event in relevant_events] == [
         "chat.started",
@@ -168,7 +166,6 @@ def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> 
     ]
     assert relevant_events[-1]["request_id"] == "r1"
     assert relevant_events[-1]["payload"]["decision"] == "accept"
-
 
 
 def test_answer_input_rest_forwards_text_response_to_backend_handle(tmp_path: Path) -> None:
@@ -188,7 +185,6 @@ def test_answer_input_rest_forwards_text_response_to_backend_handle(tmp_path: Pa
 
     assert answered == {"status": "accepted", "error": None}
     assert handle.inputs == [("i-text", {"text": "Ada"})]
-
 
 
 def test_approve_for_stale_execution_generation_is_rejected_as_stale(tmp_path: Path) -> None:
@@ -215,7 +211,6 @@ def test_approve_for_stale_execution_generation_is_rejected_as_stale(tmp_path: P
     assert rejected["status"] == "rejected"
     assert "stale" in (rejected["error"] or "")
     assert second.requests == []
-
 
 
 def test_multiple_pending_requests_each_emit_their_own_resolution(tmp_path: Path) -> None:
@@ -281,7 +276,6 @@ def test_hitl_commands_after_close_are_rejected_as_chat_closed(
     assert rejected == {"status": "rejected", "error": "chat_closed"}
 
 
-
 def test_cancel_during_pending_hitl_request_cleans_up_request(tmp_path: Path) -> None:
     handle = Handle(pending_requests={"r-cancel"}, pending_inputs={"i-cancel"})
     configure(
@@ -305,7 +299,6 @@ def test_cancel_during_pending_hitl_request_cleans_up_request(tmp_path: Path) ->
     assert handle.pending_requests == set()
     assert handle.pending_inputs == set()
     assert stale == {"status": "rejected", "error": "stale_hitl_request:r-cancel"}
-
 
 
 def test_hitl_events_appear_in_replay_after_persistence(tmp_path: Path) -> None:

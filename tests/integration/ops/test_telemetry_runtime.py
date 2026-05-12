@@ -11,6 +11,7 @@ import meridian.lib.telemetry.observer as spawn_observer
 import meridian.lib.telemetry.observers as lifecycle_observers
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.telemetry import SpawnEventCounter
+from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.retention import run_retention_cleanup
@@ -56,9 +57,14 @@ def write_segment(
 def start_spawn(service: SpawnLifecycleService, *, status: str = "running") -> str:
     return service.start(
         chat_id="chat-1",
-        model="test-model",
-        agent="coder",
-        harness="test-harness",
+        session_metadata=PrimarySessionMetadata(
+            harness="test-harness",
+            model="test-model",
+            agent="coder",
+            agent_path="",
+            skills=(),
+            skill_paths=(),
+        ),
         prompt="do the thing",
         status=status,  # type: ignore[arg-type]
     )
@@ -239,8 +245,7 @@ def test_spawn_process_exited_projects_to_telemetry_segment(tmp_path, monkeypatc
 
     wait_for(
         lambda: any(
-            event["event"] == "spawn.process_exited"
-            for event in read_telemetry_events(tmp_path)
+            event["event"] == "spawn.process_exited" for event in read_telemetry_events(tmp_path)
         )
     )
     projected = [
@@ -284,9 +289,9 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
     )
 
     wait_for(
-        lambda: {
-            event["event"] for event in read_telemetry_events(tmp_path)
-        }.issuperset({"spawn.succeeded", "spawn.failed"})
+        lambda: {event["event"] for event in read_telemetry_events(tmp_path)}.issuperset(
+            {"spawn.succeeded", "spawn.failed"}
+        )
     )
     events = read_telemetry_events(tmp_path)
     succeeded = next(event for event in events if event["event"] == "spawn.succeeded")
@@ -299,6 +304,7 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
         "exit_code": 0,
         "duration_secs": 1.5,
     }
+    assert "category" not in succeeded["data"]
     assert failed["severity"] == "error"
     assert failed["ids"] == {"spawn_id": failed_id}
     assert failed["data"] == {
@@ -307,11 +313,10 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
         "reason": "boom",
         "error": {"type": "SpawnFailed", "message": "boom"},
     }
+    assert "category" not in failed["data"]
 
 
-def test_non_terminal_spawn_lifecycle_events_are_not_projected(
-    tmp_path, monkeypatch
-) -> None:
+def test_non_terminal_spawn_lifecycle_events_are_not_projected(tmp_path, monkeypatch) -> None:
     setup_spawn_projection(tmp_path, monkeypatch)
     service = SpawnLifecycleService(tmp_path)
     spawn_id = start_spawn(service, status="queued")

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.config.context_config import ContextConfig, ContextSourceType
-from meridian.lib.context import auto_migrate_contexts
 from meridian.lib.state.paths import (
     ProjectPaths,
     ensure_gitignore,
@@ -17,8 +15,6 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.paths import (
     load_context_config as _load_context_config,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -67,12 +63,6 @@ def resolve_layout(project_root: Path) -> ProjectLayoutSnapshot:
     )
 
 
-def migrate_legacy_paths(project_root: Path) -> None:
-    """Run project-local legacy context migration for write bootstrap paths."""
-
-    auto_migrate_contexts(resolve_project_paths(project_root).root_dir)
-
-
 def _has_non_empty_remote(remote: str | None) -> bool:
     return isinstance(remote, str) and bool(remote.strip())
 
@@ -88,33 +78,21 @@ def ensure_project_dirs(project_root: Path) -> None:
         project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
         project_paths.work_dir.mkdir(parents=True, exist_ok=True)
         project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
-        return
-
-    kb_git_with_remote = (
-        context_config.kb.source == ContextSourceType.GIT
-        and _has_non_empty_remote(context_config.kb.remote)
-    )
-    work_git_with_remote = (
-        context_config.work.source == ContextSourceType.GIT
-        and _has_non_empty_remote(context_config.work.remote)
-    )
-
-    if context_config.kb.source == ContextSourceType.GIT and not kb_git_with_remote:
-        logger.warning(
-            "context_source_git_missing_remote_fallback_local",
-            extra={"context": "kb", "configured_remote": context_config.kb.remote},
+    else:
+        kb_git_with_remote = (
+            context_config.kb.source == ContextSourceType.GIT
+            and _has_non_empty_remote(context_config.kb.remote)
         )
-    if context_config.work.source == ContextSourceType.GIT and not work_git_with_remote:
-        logger.warning(
-            "context_source_git_missing_remote_fallback_local",
-            extra={"context": "work", "configured_remote": context_config.work.remote},
+        work_git_with_remote = (
+            context_config.work.source == ContextSourceType.GIT
+            and _has_non_empty_remote(context_config.work.remote)
         )
 
-    if not kb_git_with_remote:
-        project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
-    if not work_git_with_remote:
-        project_paths.work_dir.mkdir(parents=True, exist_ok=True)
-        project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
+        if not kb_git_with_remote:
+            project_paths.kb_dir.mkdir(parents=True, exist_ok=True)
+        if not work_git_with_remote:
+            project_paths.work_dir.mkdir(parents=True, exist_ok=True)
+            project_paths.work_archive_dir.mkdir(parents=True, exist_ok=True)
 
 
 def ensure_project_gitignore(project_root: Path) -> None:

@@ -35,4 +35,3 @@ def materialize_harness(
             f"Unknown or unsupported harness '{harness_id}'. Available harnesses: {supported}"
         ) from exc
     return MaterializedLaunch(result=result, harness_id=harness_id, adapter=adapter)
-

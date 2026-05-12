@@ -1,18 +1,25 @@
-"""Shared CWD resolution for child spawn processes."""
+"""Shared child-process CWD policy for spawn launches."""
+
+from __future__ import annotations
 
 from pathlib import Path
+
+from meridian.lib.state import work_store
 
 
 def resolve_child_execution_cwd(
     project_root: Path,
-    spawn_id: str,
-    harness_id: str,
+    *,
+    project_state_dir: Path | None = None,
+    work_id: str | None = None,
+    worktree_path: Path | None = None,
 ) -> Path:
-    """Determine the actual CWD for a child spawn process.
-
-    Always returns project_root. The former CLAUDECODE-based redirect to the
-    spawn log directory has been removed; nested Claude delegation boundaries
-    are enforced via disallowed tool resolution in launch/permissions.py.
-    """
-    _ = spawn_id, harness_id
+    """Determine the child spawn CWD, preferring an active worktree when present."""
+    candidate = worktree_path
+    if candidate is None and project_state_dir is not None and work_id:
+        item = work_store.get_work_item(project_state_dir, work_id)
+        if item is not None and item.worktree_path is not None:
+            candidate = Path(item.worktree_path)
+    if candidate is not None and candidate.is_dir():
+        return candidate
     return project_root

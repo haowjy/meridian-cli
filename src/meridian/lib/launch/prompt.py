@@ -1,5 +1,6 @@
 """Prompt composition helpers for launch flows."""
 
+import html
 import importlib
 import re
 from collections.abc import Mapping, Sequence
@@ -117,6 +118,40 @@ def build_report_instruction() -> str:
     )
 
 
+def build_goal_instruction(goal: str | None) -> str:
+    """Render the deterministic spawn-goal completion contract block."""
+
+    if goal is None:
+        return ""
+    if goal == "" or goal != goal.strip():
+        raise ValueError("goal must be normalized before prompt rendering")
+    escaped_goal = html.escape(goal, quote=False)
+    return (
+        "# Spawn Goal\n\n"
+        "You have a completion contract for this spawn:\n\n"
+        f"<goal>\n{escaped_goal}\n</goal>\n\n"
+        "Work until the goal is complete. If the goal is impossible, unsafe, "
+        "blocked by missing information or permissions, or disproportionate "
+        "to continue, stop and report the blocker instead.\n\n"
+        "When blocked, report what is blocked, the evidence observed, and the "
+        "smallest next action or decision needed. Do not run forever or retry indefinitely."
+    )
+
+
+def build_work_goal_instruction(work_goal: str | None) -> str:
+    if work_goal is None:
+        return ""
+    if work_goal == "" or work_goal != work_goal.strip():
+        raise ValueError("work goal must be normalized before prompt rendering")
+    escaped = html.escape(work_goal, quote=False)
+    return (
+        "# Goal of Your Work\n\n"
+        f"<work-goal>\n{escaped}\n</work-goal>\n\n"
+        "This is the overarching goal of the work item you are contributing to. "
+        "Your specific task may be narrower, but keep this broader goal in mind."
+    )
+
+
 def _render_skill_blocks(skills: Sequence[SkillContent]) -> tuple[str, ...]:
     blocks: list[str] = []
     for skill in skills:
@@ -139,7 +174,6 @@ def _render_templated_section(
     return substitute_template_variables(section_text, variables)
 
 
-
 def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[PromptDocument, ...]:
     """Format loaded skills as typed supplemental prompt documents."""
 
@@ -155,9 +189,11 @@ def compose_skill_prompt_documents(skills: Sequence[SkillContent]) -> tuple[Prom
                 logical_name=skill.name,
                 path=path,
                 content=f"# Skill: {path}\n\n{content}",
+                skill_type=skill.skill_type,
             )
         )
     return tuple(documents)
+
 
 def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
     """Format skill content for --append-system-prompt injection.
@@ -275,6 +311,39 @@ def build_context_prompt(
     )
 
     return "\n".join([*header, *context_lines]).strip()
+
+
+def build_launch_context_documents(
+    *,
+    project_root: Path,
+    alias_catalog: Mapping[str, AliasEntry] | None = None,
+    active_work_dir: Path | None = None,
+    include_inventory: bool = True,
+    include_context: bool = True,
+) -> tuple[str | None, str | None]:
+    """Resolve inventory/context prompt documents for launch composition."""
+
+    agent_inventory_prompt: str | None = None
+    context_prompt: str | None = None
+
+    if include_inventory:
+        agent_profiles = sorted(
+            scan_agent_profiles(project_root=project_root),
+            key=lambda profile: profile.name,
+        )
+        agent_inventory_prompt = build_agent_inventory_prompt(
+            project_root=project_root,
+            alias_catalog=dict(alias_catalog) if alias_catalog is not None else None,
+            agents=agent_profiles,
+        )
+
+    if include_context:
+        context_prompt = build_context_prompt(
+            project_root=project_root,
+            active_work_dir=active_work_dir,
+        )
+
+    return agent_inventory_prompt, context_prompt
 
 
 def build_agent_inventory_prompt(
@@ -475,7 +544,10 @@ def render_file_template(
 __all__ = [
     "ReferenceItem",
     "build_context_prompt",
+    "build_goal_instruction",
+    "build_launch_context_documents",
     "build_report_instruction",
+    "build_work_goal_instruction",
     "compose_run_prompt",
     "compose_run_prompt_text",
     "compose_skill_injections",

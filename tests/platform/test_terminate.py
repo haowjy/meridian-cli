@@ -7,7 +7,8 @@ import textwrap
 import psutil
 import pytest
 
-from meridian.lib.platform.terminate import _snapshot_tree, terminate_tree
+from meridian.lib.platform.process_scope.fallback import _snapshot_tree
+from meridian.lib.platform.terminate import terminate_tree
 from tests.conftest import windows_only
 
 _PARENT_WITH_CHILD = textwrap.dedent(

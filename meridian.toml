@@ -37,7 +37,7 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # -- Primary agent defaults -------------------------------------------------
 [primary]
 # Context compaction threshold for the primary agent (int 1-100).
-# autocompact_pct = 65
+# autocompact = 65
 # Model override for the primary agent (str model id; unset = use defaults.model).
 # model = ""
 # Harness override for the primary agent (str; unset = use defaults.harness).
@@ -45,13 +45,13 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # Agent profile name for the primary session (str; unset = no profile).
 agent = "product-lead"
 
-[agents.tech-lead]
-model = "gpt55"
-effort = "medium"
+# [agents.tech-lead]
+# model = "gpt55"
+# effort = "medium"
 
-[agents.design-lead]
-model = "gpt55"
-effort = "high"
+# [agents.design-lead]
+# model = "gpt55"
+# effort = "high"
 
 # -- Output streaming -------------------------------------------------------
 [output]
@@ -85,26 +85,7 @@ builtin = "git-autosync"
 remote = "git@github.com:meridian-flow/docs.git"
 
 # -- Workspace roots ---------------------------------------------------------
-# Prompt repos for agent profile editing
-[workspace.prompts-base]
-path = "../prompts/meridian-base"
-
-[workspace.prompts-dev-workflow]
-path = "../prompts/meridian-dev-workflow"
-
-[workspace.prompts-prompter]
-path = "../prompts/meridian-prompter"
-
-[workspace.prompts-creative-writing]
-path = "../prompts/creative-writing-skills"
-
-[workspace.prompts-jupyter]
-path = "../prompts/jupyter-workbench"
-
-[workspace.prompts-microct]
-path = "../prompts/microct-analysis"
-
-[workspace.prompts-mouse-ct]
-path = "../prompts/mouse-ct"
-
-
+# Use parent directory to avoid Claude Code skill leakage from individual repos.
+# See docs/configuration.md "Claude Code Skill Leakage" for details.
+[workspace.sibling-repos]
+path = ".."

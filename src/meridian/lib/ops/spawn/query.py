@@ -33,6 +33,7 @@ def _select_latest_spawn_id(
 
     resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
     spawns = reconcile_spawns(
+        project_root,
         resolved_runtime_root,
         spawn_store.list_spawns(resolved_runtime_root),
     )
@@ -83,8 +84,7 @@ def resolve_spawn_references(
 ) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
-            resolve_spawn_reference(project_root, ref, runtime_root=runtime_root)
-            for ref in refs
+            resolve_spawn_reference(project_root, ref, runtime_root=runtime_root) for ref in refs
         )
     )
 
@@ -100,8 +100,36 @@ def read_spawn_row(
     if record is not None and is_active_spawn_status(record.status):
         from meridian.lib.state.reaper import reconcile_active_spawn
 
-        record = reconcile_active_spawn(resolved_runtime_root, record)
+        record = reconcile_active_spawn(project_root, resolved_runtime_root, record)
     return record
+
+
+def read_spawn_row_read_only(
+    project_root: Path,
+    spawn_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> SpawnRecord | None:
+    """Return one spawn row without lifecycle reconciliation side effects."""
+
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    return spawn_store.get_spawn(resolved_runtime_root, spawn_id)
+
+
+def read_latest_primary_spawn_for_chat_read_only(
+    project_root: Path,
+    chat_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> SpawnRecord | None:
+    """Return the latest primary spawn row for a chat without reconciliation."""
+
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    spawns = spawn_store.list_spawns(resolved_runtime_root, filters={"chat_id": chat_id})
+    primary_spawns = [row for row in spawns if row.kind == "primary"]
+    if not primary_spawns:
+        return None
+    return primary_spawns[-1]
 
 
 def read_report(
@@ -280,6 +308,7 @@ def detail_from_row(
         harness=row.harness or "",
         parent_id=row.parent_id,
         work_id=row.work_id,
+        goal=row.goal,
         desc=row.desc,
         started_at=row.started_at or "",
         finished_at=row.finished_at,
@@ -301,6 +330,7 @@ def detail_from_row(
         log_path=log_path,
         exited_at=row.exited_at,
         process_exit_code=row.process_exit_code,
+        session_config_dir=row.claude_config_dir,
     )
 
 

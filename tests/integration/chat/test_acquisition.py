@@ -4,10 +4,9 @@ import pytest
 
 from meridian.lib.chat.backend_acquisition import ColdSpawnAcquisition
 from meridian.lib.chat.policy import ChatBackendLaunchPlan, default_chat_policy_snapshot
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionCapabilities, ConnectionConfig
-from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.drain_policy import PersistentDrainPolicy
 
@@ -118,7 +117,7 @@ def _launch_plan_factory(
             project_root=project_root,
             env_overrides=env_overrides or {},
         )
-        spec = ClaudeLaunchSpec(
+        spec = ResolvedLaunchSpec(
             prompt=prompt,
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )

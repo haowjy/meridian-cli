@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
-from typing import Generic, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, ModelId, SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
+from meridian.lib.harness.connections.base import (
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
+)
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
@@ -22,7 +27,9 @@ from meridian.lib.launch.launch_types import (
     PreflightResult,
     ResolvedLaunchSpec,
     SpecT,
+    TerminalSurfaceMode,
 )
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig
 
 AdapterSpecT = TypeVar("AdapterSpecT", bound=ResolvedLaunchSpec, covariant=True)
@@ -34,6 +41,48 @@ def _empty_metadata() -> dict[str, object]:
 
 def _empty_env_overrides() -> dict[str, str]:
     return {}
+
+
+class ProjectionMode(StrEnum):
+    """How one adapter projects semantic launch content onto harness channels."""
+
+    PROMPT_FILE_APPEND_SYSTEM = "prompt_file_append_system"
+    SYSTEM_FIELD_WITH_USER_TURN = "system_field_with_user_turn"
+
+
+class RuntimeHitlMode(StrEnum):
+    """How one harness exposes runtime approval/user-input requests."""
+
+    NONE = "none"
+    CONNECTION_REQUESTS = "connection_requests"
+
+
+class BootstrapMode(StrEnum):
+    """How one harness boots or materializes interactive primary runs."""
+
+    SUBPROCESS_ONLY = "subprocess_only"
+    MANAGED_PRIMARY_ATTACH = "managed_primary_attach"
+
+
+class ForkMaterializationMode(StrEnum):
+    """How continue-fork requests are materialized for one harness."""
+
+    NATIVE_CONTINUE_FORK = "native_continue_fork"
+    MERIDIAN_MATERIALIZED_FORK = "meridian_materialized_fork"
+
+
+class SessionSeedMode(StrEnum):
+    """How one harness derives a seeded session id before runtime events begin."""
+
+    NONE = "none"
+    PROJECTED_ARGS = "projected_args"
+
+
+class PrelaunchBootstrapMode(StrEnum):
+    """How one harness performs prelaunch environment/bootstrap work."""
+
+    NONE = "none"
+    ENV_OVERLAY_AND_SESSION_ACCESS = "env_overlay_and_session_access"
 
 
 class HarnessCapabilities(BaseModel):
@@ -48,9 +97,104 @@ class HarnessCapabilities(BaseModel):
     supports_native_skills: bool = False
     supports_native_agents: bool = False
     supports_primary_launch: bool = False
+    # Whether primary launch needs a synthetic first user prompt to bootstrap
+    # one session. Harnesses that can attach without a first-turn prompt keep
+    # this disabled.
+    requires_initial_prompt: bool = False
 
     # Whether native file injection is available (e.g., OpenCode --file)
     supports_native_file_injection: bool = False
+    terminal_surface_modes: tuple[TerminalSurfaceMode, ...] = (TerminalSurfaceMode.PTY_MEDIATED,)
+    default_terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
+
+
+class TransportContract(BaseModel):
+    """Explicit transport responsibility declaration for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    transport_ids: tuple[TransportId, ...]
+    observer_controller_required: bool = False
+
+
+class ProjectionContract(BaseModel):
+    """Explicit projection responsibility declaration for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    launch_spec_cls: str
+    mode: ProjectionMode
+    owns_prompt_policy: bool = True
+    owns_mcp_projection: bool = True
+    owns_env_overrides: bool = True
+
+
+class ExtractionContract(BaseModel):
+    """Explicit extraction responsibility declaration for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    extracts_usage: bool = True
+    extracts_session_id: bool = True
+    extracts_report: bool = True
+    session_observation_order: tuple[str, ...] = ()
+
+
+class ApprovalContract(BaseModel):
+    """Explicit approval/HITL contract for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    runtime_hitl: RuntimeHitlMode = RuntimeHitlMode.NONE
+    subprocess_permission_flags_projected_by_shared_policy: bool = True
+    default_runtime_request_policy: Literal["none", "auto_accept"] = "none"
+    primary_session_runtime_request_policy: PrimaryRuntimeRequestPolicy = (
+        PrimaryRuntimeRequestPolicy.NONE
+    )
+    primary_session_runtime_event_surface: PrimaryRuntimeEventSurface = (
+        PrimaryRuntimeEventSurface.NONE
+    )
+
+
+class ObserverControllerContract(BaseModel):
+    """Managed primary observer/controller backend contract."""
+
+    model_config = ConfigDict(frozen=True)
+
+    starts_sidecar_backend: bool = True
+    exposes_ordered_event_stream: bool = True
+    supports_cancel: bool = True
+    supports_input_injection: bool = True
+    obtains_session_id_during_startup: bool = True
+
+
+class BootstrapContract(BaseModel):
+    """Explicit bootstrap/materialization contract for one harness."""
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: BootstrapMode
+    fork_materialization: ForkMaterializationMode = ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    primary_attach_failure_policy: Literal["raise", "fallback_to_blackbox"] = "raise"
+    seeds_resume_metadata: bool = True
+    primary_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
+    streaming_session_seed_mode: SessionSeedMode = SessionSeedMode.NONE
+    prelaunch_bootstrap_mode: PrelaunchBootstrapMode = PrelaunchBootstrapMode.NONE
+    observer_controller: ObserverControllerContract | None = None
+
+
+class HarnessContract(BaseModel):
+    """Inspectable contract surface for one harness adapter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    capabilities: HarnessCapabilities
+    transport: TransportContract
+    projection: ProjectionContract
+    extraction: ExtractionContract
+    approval: ApprovalContract
+    bootstrap: BootstrapContract
+    capability_limits: tuple[str, ...] = ()
 
 
 class RunPromptPolicy(BaseModel):
@@ -83,6 +227,8 @@ class SpawnParams(BaseModel):
     appended_system_prompt: str | None = None
     report_output_path: str | None = None
     user_turn_content: str | None = None
+    context_from_payload: tuple[str, ...] = ()
+    reference_items: tuple[Any, ...] = ()
 
 
 class McpConfig(BaseModel):
@@ -119,6 +265,22 @@ class SpawnResult(BaseModel):
     raw_response: dict[str, object] | None = None
 
 
+def _empty_prelaunch_metadata() -> dict[str, str]:
+    return {}
+
+
+class HarnessPrelaunchState(BaseModel):
+    """Adapter-owned prelaunch result consumed by launch orchestrators."""
+
+    model_config = ConfigDict(frozen=True)
+
+    env_overrides: dict[str, str] = Field(default_factory=_empty_env_overrides)
+    metadata: dict[str, str] = Field(default_factory=_empty_prelaunch_metadata)
+
+
+RecordConfigDirFn = Callable[[str], None]
+
+
 @runtime_checkable
 class ArtifactStore(Protocol):
     """Artifact access used for usage/session extraction."""
@@ -147,6 +309,9 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     def id(self) -> HarnessId: ...
 
     @property
+    def contract(self) -> HarnessContract: ...
+
+    @property
     def consumed_fields(self) -> frozenset[str]: ...
 
     @property
@@ -155,9 +320,7 @@ class HarnessAdapter(Protocol, Generic[AdapterSpecT]):
     @property
     def handled_fields(self) -> frozenset[str]: ...
 
-    def resolve_launch_spec(
-        self, run: SpawnParams, perms: PermissionResolver
-    ) -> AdapterSpecT: ...
+    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> AdapterSpecT: ...
 
     def preflight(
         self,
@@ -186,6 +349,40 @@ class SubprocessHarness(HarnessAdapter[ResolvedLaunchSpec], Protocol):
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]: ...
 
     def blocked_child_env_vars(self) -> frozenset[str]: ...
+
+    def derive_primary_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        command: tuple[str, ...],
+    ) -> str | None: ...
+
+    def derive_streaming_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+    ) -> str | None: ...
+
+    def prepare_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        session: SessionRequest,
+        child_cwd: Path,
+        child_env: dict[str, str],
+        resolved_harness_session_id: str,
+        record_effective_config_dir: RecordConfigDirFn | None = None,
+    ) -> HarnessPrelaunchState: ...
+
+    def cleanup_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        chat_id: str | None,
+        state: HarnessPrelaunchState,
+    ) -> None: ...
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage: ...
 
@@ -268,6 +465,12 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     @property
     @abstractmethod
+    def contract(self) -> HarnessContract:
+        """Explicit inspectable contract for this adapter."""
+        ...
+
+    @property
+    @abstractmethod
     def consumed_fields(self) -> frozenset[str]:
         """SpawnParams fields actively consumed by this adapter."""
         ...
@@ -316,6 +519,56 @@ class BaseHarnessAdapter(Generic[SpecT], ABC):
 
     def blocked_child_env_vars(self) -> frozenset[str]:
         return frozenset()
+
+    def derive_primary_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        command: tuple[str, ...],
+    ) -> str | None:
+        _ = spec, command
+        return None
+
+    def derive_streaming_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+    ) -> str | None:
+        _ = spec
+        return None
+
+    def prepare_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        session: SessionRequest,
+        child_cwd: Path,
+        child_env: dict[str, str],
+        resolved_harness_session_id: str,
+        record_effective_config_dir: RecordConfigDirFn | None = None,
+    ) -> HarnessPrelaunchState:
+        _ = (
+            runtime_root,
+            spawn_id,
+            session,
+            child_cwd,
+            child_env,
+            resolved_harness_session_id,
+            record_effective_config_dir,
+        )
+        return HarnessPrelaunchState()
+
+    def cleanup_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        chat_id: str | None,
+        state: HarnessPrelaunchState,
+    ) -> None:
+        _ = runtime_root, spawn_id, chat_id, state
+        return None
 
     def seed_session(
         self,

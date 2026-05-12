@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meridian.lib.hooks.config import HOOK_SOURCE_PRECEDENCE, HooksConfig, load_hooks_config
 from meridian.lib.hooks.types import Hook, HookEventName
+
+if TYPE_CHECKING:
+    from meridian.lib.ops.runtime import RuntimeAuthoritySnapshot
 
 _SOURCE_RANK = {source: rank for rank, source in enumerate(HOOK_SOURCE_PRECEDENCE)}
 
@@ -18,11 +22,14 @@ class HookRegistry:
         project_root: Path,
         *,
         user_config: Path | None = None,
+        authority: RuntimeAuthoritySnapshot | None = None,
         hooks_config: HooksConfig | None = None,
     ) -> None:
         self._project_root = project_root.expanduser().resolve()
         self._config = hooks_config or load_hooks_config(
-            self._project_root, user_config=user_config
+            self._project_root,
+            user_config=user_config,
+            authority=authority,
         )
         self._hooks = {hook.name: hook for hook in self._config.hooks}
         self._by_event: dict[HookEventName, list[Hook]] = {}

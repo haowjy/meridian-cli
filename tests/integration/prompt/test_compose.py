@@ -1,4 +1,5 @@
 """Prompt assembly tests that guard against context and prompt injection."""
+
 from pathlib import Path
 
 from meridian.lib.core.domain import SkillContent
@@ -116,17 +117,38 @@ def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
     assert "# Inner" not in composed
 
 
-
-def test_system_instruction_renders_skill_docs_then_bootstrap_docs() -> None:
+def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> None:
     content = ComposedLaunchContent(
         supplemental_documents=(
+            PromptDocument(kind="skill", logical_name="ref", path="/ref", content="REF"),
+            PromptDocument(
+                kind="skill",
+                logical_name="principle-a",
+                path="/principle-a",
+                content="PRINCIPLE-A",
+                skill_type="principle",
+            ),
             PromptDocument(kind="bootstrap", logical_name="b", path="/b", content="BOOTSTRAP"),
-            PromptDocument(kind="skill", logical_name="s", path="/s", content="SKILL"),
+            PromptDocument(
+                kind="skill",
+                logical_name="guardrail",
+                path="/guardrail",
+                content="GUARDRAIL",
+                skill_type="guardrail",
+            ),
+            PromptDocument(
+                kind="skill",
+                logical_name="principle-b",
+                path="/principle-b",
+                content="PRINCIPLE-B",
+                skill_type="principle",
+            ),
         ),
         agent_profile_body="PROFILE",
         report_instruction="REPORT",
         inventory_prompt="INVENTORY",
         context_prompt="CONTEXT",
+        completion_contract="GOAL",
         passthrough_system_fragments=("PASSTHROUGH",),
         user_task_prompt="USER",
         reference_items=(),
@@ -134,8 +156,22 @@ def test_system_instruction_renders_skill_docs_then_bootstrap_docs() -> None:
     )
 
     rendered = render_system_instruction_blocks(content)
-    assert [rendered.index(part) for part in (
-        "SKILL", "BOOTSTRAP", "PROFILE", "REPORT", "INVENTORY", "CONTEXT", "PASSTHROUGH"
-    )] == sorted(rendered.index(part) for part in (
-        "SKILL", "BOOTSTRAP", "PROFILE", "REPORT", "INVENTORY", "CONTEXT", "PASSTHROUGH"
-    ))
+    expected_sequence = (
+        "PROFILE",
+        "GOAL",
+        "PRINCIPLE-A",
+        "PRINCIPLE-B",
+        "GUARDRAIL",
+        "REF",
+        "BOOTSTRAP",
+        "INVENTORY",
+        "CONTEXT",
+        "REPORT",
+        "PRINCIPLE-A",
+        "PRINCIPLE-B",
+        "PASSTHROUGH",
+    )
+    cursor = -1
+    for part in expected_sequence:
+        cursor = rendered.find(part, cursor + 1)
+        assert cursor != -1

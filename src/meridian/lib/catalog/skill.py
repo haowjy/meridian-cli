@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import IndexReport, SkillContent, SkillManifest
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ class SkillDocument(BaseModel):
     name: str
     description: str
     path: Path
+    skill_type: str = "reference"
     content: str
     body: str
     frontmatter: dict[str, object]
@@ -74,6 +75,7 @@ def parse_skill_file(path: Path) -> SkillDocument:
 
     name_value = frontmatter.get("name")
     description_value = frontmatter.get("description")
+    skill_type = str(frontmatter.get("type", "reference")).strip()
     name = str(name_value).strip() if name_value is not None else path.parent.name
     description = str(description_value).strip() if description_value is not None else ""
 
@@ -81,6 +83,7 @@ def parse_skill_file(path: Path) -> SkillDocument:
         name=name or path.parent.name,
         description=description,
         path=path.resolve(),
+        skill_type=skill_type or "reference",
         content=content,
         body=body,
         frontmatter=frontmatter,
@@ -100,9 +103,7 @@ def discover_skill_files(skills_dir: Path) -> list[Path]:
         return []
     return sorted(
         skill_file
-        for skill_file in (
-            child / "SKILL.md" for child in skills_dir.iterdir() if child.is_dir()
-        )
+        for skill_file in (child / "SKILL.md" for child in skills_dir.iterdir() if child.is_dir())
         if skill_file.is_file()
     )
 
@@ -177,7 +178,7 @@ def scan_skills(
 ) -> list[SkillDocument]:
     """Scan configured skill directories and parse all discovered skills."""
 
-    root = resolve_project_root(project_root)
+    root = resolve_project_root_resolution(project_root).project_root
     directories = skills_dirs if skills_dirs is not None else _skill_search_dirs(root)
     documents: list[SkillDocument] = []
     selected_by_name: dict[str, SkillDocument] = {}
@@ -217,7 +218,7 @@ class SkillRegistry:
         *,
         readonly: bool = False,
     ) -> None:
-        self._project_root = resolve_project_root(project_root)
+        self._project_root = resolve_project_root_resolution(project_root).project_root
         self._skills_dirs = tuple(_skill_search_dirs(self._project_root))
         self._readonly = readonly
         self._filesystem_documents: tuple[SkillDocument, ...] | None = None
@@ -237,9 +238,7 @@ class SkillRegistry:
 
     def _scan_documents(self, *, refresh: bool = False) -> tuple[SkillDocument, ...]:
         if self._filesystem_records is None or refresh:
-            documents = tuple(
-                scan_skills(self._project_root, skills_dirs=list(self._skills_dirs))
-            )
+            documents = tuple(scan_skills(self._project_root, skills_dirs=list(self._skills_dirs)))
             self._filesystem_documents = documents
             self._filesystem_records = tuple(SkillRecord(base=document) for document in documents)
         elif self._filesystem_documents is None:
@@ -327,6 +326,7 @@ class SkillRegistry:
                     name=record.base.name,
                     description=record.base.description,
                     path=variant.path,
+                    skill_type=record.base.skill_type,
                     content=content,
                     body=variant.body,
                     frontmatter=record.base.frontmatter,
@@ -366,6 +366,7 @@ class SkillRegistry:
                     description=document.description,
                     content=document.content,
                     path=str(document.path),
+                    skill_type=document.skill_type,
                 )
             )
         return loaded

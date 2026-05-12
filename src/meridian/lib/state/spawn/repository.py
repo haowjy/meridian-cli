@@ -47,6 +47,7 @@ class StoredSpawnState(BaseModel):
     kind: str = "child"
     desc: str | None = None
     work_id: str | None = None
+    goal: str | None = None
     harness_session_id: str | None = None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
@@ -109,6 +110,7 @@ def record_to_stored_state(
         kind=record.kind,
         desc=record.desc,
         work_id=record.work_id,
+        goal=record.goal,
         harness_session_id=record.harness_session_id,
         execution_cwd=record.execution_cwd,
         claude_config_dir=record.claude_config_dir,
@@ -154,6 +156,7 @@ def stored_state_to_record(
         kind=stored.kind,
         desc=stored.desc,
         work_id=stored.work_id,
+        goal=stored.goal,
         harness_session_id=stored.harness_session_id,
         execution_cwd=stored.execution_cwd,
         claude_config_dir=stored.claude_config_dir,

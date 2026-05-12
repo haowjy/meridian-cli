@@ -67,9 +67,9 @@ High-churn runtime state lives outside the repo, keyed by project UUID so the re
       .migrations.json
 ```
 
-The UUID is stored in `.meridian/id` (gitignored). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
+The UUID is stored in `.meridian/id` (committed project identity — tracked in version control). Because state is keyed by UUID rather than path, renaming or moving the repo does not orphan runtime state.
 
-`work/` and `work-archive/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
+By default, `work/` and `archive/work/` stay repo-side so work-item scratch files are visible to all collaborators and survive across machines.
 
 ## `meridian.toml` Keys
 
@@ -90,12 +90,11 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |
 | `state.retention_days` | int | TTL for stale state pruning (`-1` = never, `0` = immediate, default `30`) |
+| `spawn.default_wait_yield_seconds` | float | Default yield interval for `spawn wait` (seconds) |
+| `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
+| `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
 
 Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile.
-
-Scaffolded but not exposed via `config set` shorthand keys:
-
-- `[primary] autocompact_pct`
 
 ## Config Precedence
 
@@ -179,7 +178,7 @@ show = ["lifecycle", "error"]
 verbosity = "verbose"
 
 [primary]
-autocompact_pct = 70
+autocompact = 70
 
 [state]
 retention_days = 30   # -1 = never prune, 0 = prune immediately
@@ -229,7 +228,7 @@ Unknown keys inside entries produce `workspace_unknown_key` findings and are ign
 
 ### Committed conventions and local overrides
 
-Committed entries in `meridian.toml` describe the expected repository layout. They are conventions, not enforcement. If a committed path does not exist on a developer's machine, Meridian silently skips it during projection; this supports partial checkouts.
+Committed entries in `meridian.toml` describe the expected repository layout. They are conventions, not enforcement. If a committed path does not exist on a developer's machine, Meridian skips it during projection and reports a `workspace_missing_root` finding; this supports partial checkouts while still surfacing drift.
 
 Local entries in `meridian.local.toml` are explicit machine-specific instructions. A local entry with the same name as a committed entry replaces that entry's path. Local-only entries are appended after committed entries. If a local path does not exist, Meridian skips it and emits `workspace_local_missing_root` because the local override is likely stale or mistyped.
 
@@ -253,6 +252,22 @@ Each existing root is projected at launch time in deterministic order: committed
 | Codex (managed primary) | `-c sandbox_workspace_write.writable_roots=[...]` on app-server launch **and** `--add-dir <path>` on `codex resume --remote` TUI attach |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env with `permission.external_directory` entries; merged into any pre-existing parent config |
 | Other harnesses | `unsupported:requires_config_generation` |
+
+### Claude Code Skill Leakage
+
+Claude Code scans every `--add-dir` path for `.claude/skills/` and loads all skills it finds. There is no way to suppress this. Workspace roots that point to repos with their own skills will pollute the session's skill namespace with irrelevant skills from those repos.
+
+**Affected harness:** Claude Code only. Codex and OpenCode do not scan for skills.
+
+**Mitigations:**
+
+- **Point to parent directories** instead of individual repos. Claude Code scans `.claude/skills/` at the root of each `--add-dir` path only, not recursively. For example, `path = "../prompts"` avoids loading skills from `../prompts/some-repo/.claude/skills/`.
+- **Avoid adding worktree directories.** Each worktree is a full checkout with its own `.claude/skills/`, causing duplicate skill loading.
+
+**Known Claude Code issues:**
+
+- [`--add-dir` loads skills but `additionalDirectories` in settings does not](https://github.com/anthropics/claude-code/issues/30064) — the two mechanisms are documented as equivalent but behave differently for skill discovery.
+- [No way to disable individual skills](https://github.com/anthropics/claude-code/issues/43928) — a `disabledSkills` setting has been requested but is not implemented.
 
 ### `config show` Workspace Output
 
@@ -293,14 +308,11 @@ workspace.roots[2].status = projected
 
 Status values: `none` (no workspace entries), `present` (parsed OK), `invalid` (parse or schema error). Workspace findings, when present, render as separate `warning:` lines.
 
-### Setup and migration
+### Setup
 
 ```bash
 meridian workspace init      # creates or updates meridian.local.toml with [workspace] examples
-meridian workspace migrate   # converts legacy workspace.local.toml to [workspace] entries
 ```
-
-`workspace.local.toml` is deprecated. During the migration period Meridian can read it as a fallback when no `[workspace]` entries exist in `meridian.toml` or `meridian.local.toml`, but new setup should use `[workspace]` in `meridian.local.toml`.
 
 ## Hooks
 
@@ -320,23 +332,9 @@ event   = "spawn.finalized"
 failure_policy = "warn"
 ```
 
-See [hooks.md](hooks.md) for the full hook schema, event names, and builtin reference.
+Hook `command` strings run via the platform default shell — `sh -c` on POSIX, `cmd.exe /c` on Windows. Bash syntax in inline commands will not work on Windows; use a `.sh` / `.ps1` / `.bat` script file instead for cross-platform hooks.
 
-### `repo` → `remote`
-
-`repo` is a deprecated alias for `remote`. Meridian accepts it with a warning. Replace `repo` with `remote` in your config:
-
-```toml
-# deprecated
-[[hooks]]
-builtin = "git-autosync"
-repo = "git@github.com:team/docs.git"
-
-# correct
-[[hooks]]
-builtin = "git-autosync"
-remote = "git@github.com:team/docs.git"
-```
+See [hooks.md](hooks.md) for the full hook schema, event names, builtin reference, and cross-platform guidance.
 
 ## Context
 
@@ -415,7 +413,7 @@ Use `meridian models refresh` to force a cache refresh from the models.dev catal
 | `MERIDIAN_PROJECT_DIR` | Force repo root resolution |
 | `MERIDIAN_CONFIG` | User config overlay path |
 | `MERIDIAN_HOME` | Override user state root (default `~/.meridian/` on Unix/macOS, `%LOCALAPPDATA%\meridian\` on Windows) |
-| `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned paths (`fs/`, `work/`, `work-archive/`) always stay in `.meridian/` regardless of this setting. |
+| `MERIDIAN_RUNTIME_DIR` | Override the runtime state root. Absolute path = use as-is; relative path = resolve relative to repo root. Repo-owned default paths (`kb/`, `work/`, `archive/work/`) always stay in `.meridian/` regardless of this setting. |
 | `MERIDIAN_FS_DIR` | Resolved shared filesystem path for the current repo state root |
 | `MERIDIAN_ACTIVE_WORK_ID` | Active attached work item slug, when one exists |
 | `MERIDIAN_ACTIVE_WORK_DIR` | Scratch/docs directory for the active work item, when one exists |

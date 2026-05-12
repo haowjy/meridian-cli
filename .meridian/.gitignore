@@ -6,16 +6,3 @@
 
 # Track project identity
 !id
-
-# Track project config
-!models.toml
-
-# Track shared repo state
-!kb/
-!kb/**
-!work/
-!work/**
-!archive/
-!archive/**
-!invariants/
-!invariants/**

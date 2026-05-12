@@ -2,11 +2,17 @@
 
 from collections.abc import Callable
 from functools import partial
+from pathlib import Path
 from typing import Annotated, Any
 
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.hooks_authority import (
+    manual_hook_authority_scope,
+    should_suppress_manual_hook_authority,
+)
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.hooks.types import HookEventName
 from meridian.lib.ops.hooks import (
@@ -21,8 +27,18 @@ from meridian.lib.ops.hooks import (
 Emitter = Callable[[Any], None]
 
 
+def _resolved_project_root() -> str:
+    # ignore_env=True: hooks commands resolve from actual CWD, not the
+    # inherited MERIDIAN_PROJECT_DIR of the calling session.
+    return resolve_project_root_resolution(
+        execution_cwd=Path.cwd().resolve(),
+        ignore_env=True,
+    ).project_root.as_posix()
+
+
 def _hooks_list(emit: Emitter) -> None:
-    emit(hooks_list_sync(HookListInput()))
+    with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
+        emit(hooks_list_sync(HookListInput(project_root=_resolved_project_root())))
 
 
 def _hooks_check(emit: Emitter) -> None:
@@ -46,7 +62,16 @@ def _hooks_run(
         ),
     ] = None,
 ) -> None:
-    emit(hooks_run_sync(HookRunInput(name=name, event=event)))
+    with manual_hook_authority_scope(suppress=should_suppress_manual_hook_authority()):
+        emit(
+            hooks_run_sync(
+                HookRunInput(
+                    name=name,
+                    event=event,
+                    project_root=_resolved_project_root(),
+                )
+            )
+        )
 
 
 def register_hooks_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str, str]]:

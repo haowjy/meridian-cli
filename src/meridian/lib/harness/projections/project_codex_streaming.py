@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 
-from meridian.lib.harness.launch_spec import CodexLaunchSpec
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
@@ -16,6 +15,7 @@ from meridian.lib.harness.projections.project_codex_common import (
     project_codex_mcp_config_flags,
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CODEX_STREAMING
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,17 @@ _ACCOUNTED_FIELDS: frozenset[str] = (
     | _LIFECYCLE_FIELDS
 )
 _PROJECTED_FIELDS: frozenset[str] = _ACCOUNTED_FIELDS
-_DELEGATED_FIELDS: frozenset[str] = frozenset()
+_DELEGATED_FIELDS: frozenset[str] = frozenset(
+    {
+        "agent_name",
+        "agents_payload",
+        "appended_system_prompt",
+        "harness",
+        "prompt_file_path",
+        "reference_items",
+        "skills",
+    }
+)
 
 
 def _build_writable_roots_config(paths: tuple[str, ...]) -> tuple[str, ...]:
@@ -82,7 +92,7 @@ def _build_writable_roots_config(paths: tuple[str, ...]) -> tuple[str, ...]:
     return ("-c", f"sandbox_workspace_write.writable_roots={paths_json}")
 
 
-def _select_thread_method(spec: CodexLaunchSpec) -> str:
+def _select_thread_method(spec: ResolvedLaunchSpec) -> str:
     resume_thread_id = (spec.continue_session_id or "").strip()
     if not resume_thread_id:
         return "thread/start"
@@ -91,7 +101,7 @@ def _select_thread_method(spec: CodexLaunchSpec) -> str:
     return "thread/resume"
 
 
-def _consume_streaming_lifecycle_fields(spec: CodexLaunchSpec) -> None:
+def _consume_streaming_lifecycle_fields(spec: ResolvedLaunchSpec) -> None:
     # Prompt is sent in codex_ws after thread bootstrap, but we still account
     # for the field in this projection module to keep drift checks complete.
     _ = spec.prompt
@@ -103,12 +113,12 @@ def _consume_streaming_lifecycle_fields(spec: CodexLaunchSpec) -> None:
 
 
 def project_codex_spec_to_appserver_command(
-    spec: CodexLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     host: str,
     port: int,
 ) -> list[str]:
-    """Build one ``codex app-server`` command from ``CodexLaunchSpec``."""
+    """Build one ``codex app-server`` command from ``ResolvedLaunchSpec``."""
 
     _consume_streaming_lifecycle_fields(spec)
 
@@ -129,9 +139,7 @@ def project_codex_spec_to_appserver_command(
     command.extend(project_codex_mcp_config_flags(spec.mcp_tools))
 
     if spec.report_output_path is not None:
-        logger.debug(
-            "Codex streaming ignores report_output_path; reports extracted from artifacts"
-        )
+        logger.debug("Codex streaming ignores report_output_path; reports extracted from artifacts")
 
     writable_roots_config = _build_writable_roots_config(
         tuple(root.as_posix() for root in spec.projected_roots)
@@ -154,7 +162,7 @@ def project_codex_spec_to_appserver_command(
 
 
 def project_codex_spec_to_thread_request(
-    spec: CodexLaunchSpec,
+    spec: ResolvedLaunchSpec,
     *,
     cwd: str,
 ) -> tuple[str, dict[str, object]]:
@@ -199,7 +207,7 @@ def project_codex_spec_to_thread_request(
 
 
 _check_projection_drift(
-    CodexLaunchSpec,
+    ResolvedLaunchSpec,
     projected=_ACCOUNTED_FIELDS,
     delegated=_DELEGATED_FIELDS,
 )

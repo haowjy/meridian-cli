@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from meridian.lib.launch.streaming.decision import TerminalEventOutcome
+    from meridian.lib.harness.semantics import TerminalEventOutcome
 
 TURN_BOUNDARY_EVENT_TYPE = "meridian/turn_completed"
 

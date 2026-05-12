@@ -27,7 +27,7 @@ codex resume <session-id> --remote ws://127.0.0.1:<port> \
 
 This matters because Codex's remote-TUI mode sends per-turn sandbox policy constructed from the TUI's local permission profile. Without the `--add-dir` flags the remote TUI's per-turn overrides would narrow writable scope below what the app-server was originally configured with, causing approval prompts or write failures for paths that should be freely writable.
 
-Roots are deduplicated and resolved to absolute paths before projection. Paths that do not exist on disk are silently skipped for committed entries; a warning is emitted for missing local-only entries (see `workspace_local_missing_root`).
+Roots are deduplicated and resolved to absolute paths before projection. Paths that do not exist on disk are skipped and surfaced as findings: committed entries emit `workspace_missing_root`, and missing local-only entries emit `workspace_local_missing_root`.
 
 ## Approval Routing
 
@@ -106,6 +106,26 @@ OpenCode behavior is different:
 
 - primary resume uses managed attach
 - other primary modes may still use black-box paths
+
+## Cancellation and Process Cleanup
+
+`meridian spawn cancel ID` on a managed primary uses sequenced teardown:
+
+1. **Terminate launcher** — the Meridian launcher/wrapper process tree is terminated first.
+2. **Pause** — a brief pause gives any harness-driven session shutdown time to propagate.
+3. **Terminate backend and TUI** — if the `app-server` or TUI processes are still running after the pause, they are terminated too.
+
+This sequence gives Codex a chance to exit cleanly from the launcher side before Meridian reaches in to terminate the backend directly.
+
+### Session lease preservation
+
+The `app-server` backend for a managed primary is associated with a **session lease**. While the lease is active — meaning a session is still live — the backend scope is skipped during passive spawn cleanup (e.g., the orphan reaper). This prevents Meridian from killing a backend that is still in use.
+
+When the session lease expires, or when `meridian spawn cancel` is called explicitly, the backend scope is reclaimed and the process is terminated.
+
+### Process tree termination
+
+Cleanup terminates full process trees, not just the root PID. If the launcher or backend spawned child processes (tool subprocesses, workers), those are also terminated as part of the same cleanup operation.
 
 ## Related Files
 

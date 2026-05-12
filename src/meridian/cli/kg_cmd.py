@@ -8,6 +8,7 @@ from typing import Annotated
 
 from cyclopts import Parameter
 
+from meridian.cli._cmd_utils import resolve_context_alias, resolve_fmt
 from meridian.cli.app_tree import kg_app
 
 
@@ -22,7 +23,7 @@ def cmd_kg_root(
     from meridian.lib.kg.graph import build_analysis
     from meridian.lib.kg.report import format_root_summary
 
-    resolved = _require_dir(path)
+    resolved = _require_dir(resolve_context_alias(path))
     result = build_analysis(
         root=resolved,
         include_backlinks=False,
@@ -57,12 +58,11 @@ def cmd_kg_graph(
     ] = "text",
 ) -> None:
     """Show document link topology as an indented tree."""
-    from meridian.cli.main import get_global_options
     from meridian.lib.kg.graph import build_analysis
     from meridian.lib.kg.report import format_tree
     from meridian.lib.kg.serializer import serialize_analysis
 
-    resolved = root.resolve()
+    resolved = resolve_context_alias(root).resolve()
     if not resolved.exists():
         print(f"Error: path not found: {root}", file=sys.stderr)
         raise SystemExit(2)
@@ -71,7 +71,6 @@ def cmd_kg_graph(
         scan_root = resolved
         targeted_path = None
     else:
-        # Single file: scan parent dir, use file as sole tree root.
         scan_root = resolved.parent
         targeted_path = resolved
 
@@ -83,9 +82,7 @@ def cmd_kg_graph(
         exclude=exclude or None,
     )
 
-    effective_fmt = "json" if get_global_options().output.format == "json" else fmt
-
-    if effective_fmt == "json":
+    if resolve_fmt(fmt) == "json":
         import json
 
         print(json.dumps(serialize_analysis(result, scan_root), indent=2))
@@ -123,12 +120,11 @@ def cmd_kg_check(
     ] = False,
 ) -> None:
     """Check for KG findings. Exit 1 if errors found."""
-    from meridian.cli.main import get_global_options
     from meridian.lib.kg.graph import build_check
     from meridian.lib.kg.report import format_check_findings
     from meridian.lib.kg.serializer import serialize_check_findings
 
-    resolved = path.resolve()
+    resolved = resolve_context_alias(path).resolve()
     if not resolved.exists():
         print(f"Error: path not found: {path}", file=sys.stderr)
         raise SystemExit(2)
@@ -147,9 +143,7 @@ def cmd_kg_check(
         strict=strict,
     )
 
-    effective_fmt = "json" if get_global_options().output.format == "json" else fmt
-
-    if effective_fmt == "json":
+    if resolve_fmt(fmt) == "json":
         import json
 
         print(json.dumps(serialize_check_findings(result, resolved), indent=2))

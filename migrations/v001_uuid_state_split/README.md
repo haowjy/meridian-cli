@@ -13,7 +13,7 @@ Moves runtime state from repo-local `.meridian/` to user-level `~/.meridian/proj
 ## Why
 
 The UUID-based workspace config (commit `9d3442a`) separates:
-- **Repo state** (`.meridian/work/`, `.meridian/fs/`) — committed, shareable
+- **Repo state** (`.meridian/work/`, `.meridian/fs/` — pre-refactor layout, now replaced by user-level paths) — committed, shareable
 - **Runtime state** (spawns, sessions, cache) — per-user, not committed
 
 Existing repos have runtime state in the repo root. This migration moves it to the correct location.

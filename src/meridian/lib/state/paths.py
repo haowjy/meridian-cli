@@ -1,22 +1,17 @@
 """Filesystem path helpers for file-authoritative Meridian state."""
 
-import os
 import tomllib
-import warnings
 from pathlib import Path
 from typing import Self, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from meridian.lib.config.context_config import ContextConfig
+from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.config.project_root import resolve_user_config_path
 from meridian.lib.core.types import SpawnId
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.user_paths import (
-    get_or_create_project_uuid,
-    get_project_home,
-    get_project_uuid,
-)
+from meridian.lib.state.user_paths import get_or_create_project_id, get_project_id
 
 _MERIDIAN_DIR = ".meridian"
 _GITIGNORE_CONTENT = (
@@ -28,42 +23,11 @@ _GITIGNORE_CONTENT = (
     "\n"
     "# Track project identity\n"
     "!id\n"
-    "\n"
-    "# Track shared repo state\n"
-    "!kb/\n"
-    "!kb/**\n"
-    "!work/\n"
-    "!work/**\n"
-    "!archive/\n"
-    "!archive/**\n"
 )
 _REQUIRED_GITIGNORE_LINES = (
     "!.gitignore",
     "!id",
-    "!kb/",
-    "!kb/**",
-    "!work/",
-    "!work/**",
-    "!archive/",
-    "!archive/**",
 )
-_DEPRECATED_GITIGNORE_LINES = (
-    "id",
-    "# Ignore the project UUID",
-    "!fs/",
-    "!fs/**",
-    "!work-archive/",
-    "!work-archive/**",
-    "!agents.toml",
-    "!agents.lock",
-    "!config.toml",
-)
-
-
-def _is_project_local_root(root_dir: Path) -> bool:
-    """Return True when a `.meridian` root belongs to a git repo parent."""
-
-    return root_dir.name == _MERIDIAN_DIR and (root_dir.parent / ".git").exists()
 
 
 class RuntimePaths(BaseModel):
@@ -83,8 +47,6 @@ class RuntimePaths(BaseModel):
     hook_state_json: Path
     session_id_counter: Path
     session_id_counter_flock: Path
-    current_work_json: Path
-    current_work_flock: Path
     sessions_dir: Path
     kb_dir: Path
     work_dir: Path
@@ -121,10 +83,6 @@ class RuntimePaths(BaseModel):
     def from_root_dir(cls, root_dir: Path) -> Self:
         """Build state-root-relative paths from an absolute state directory."""
 
-        resolved_project_paths: ProjectPaths | None = None
-        if _is_project_local_root(root_dir):
-            resolved_project_paths = resolve_project_paths(root_dir.parent)
-
         return cls(
             root_dir=root_dir,
             spawns_jsonl=root_dir / "spawns.jsonl",
@@ -134,24 +92,10 @@ class RuntimePaths(BaseModel):
             hook_state_json=root_dir / "hook-state.json",
             session_id_counter=root_dir / "session-id-counter",
             session_id_counter_flock=root_dir / "session-id-counter.flock",
-            current_work_json=root_dir / "current-work.json",
-            current_work_flock=root_dir / "current-work.json.flock",
             sessions_dir=root_dir / "sessions",
-            kb_dir=(
-                resolved_project_paths.kb_dir
-                if resolved_project_paths is not None
-                else root_dir / "kb"
-            ),
-            work_dir=(
-                resolved_project_paths.work_dir
-                if resolved_project_paths is not None
-                else root_dir / "work"
-            ),
-            work_archive_dir=(
-                resolved_project_paths.work_archive_dir
-                if resolved_project_paths is not None
-                else root_dir / "archive" / "work"
-            ),
+            kb_dir=root_dir / "kb",
+            work_dir=root_dir / "work",
+            work_archive_dir=root_dir / "archive" / "work",
             spawns_dir=root_dir / "spawns",
         )
 
@@ -180,54 +124,29 @@ class ProjectPaths(BaseModel):
         )
 
 
-def _runtime_root_override_value() -> str:
-    return os.getenv("MERIDIAN_RUNTIME_DIR", "").strip()
-
-
-def _resolve_project_runtime_root(project_root: Path) -> Path:
-    """Resolve runtime root from env override or default `.meridian` location."""
-
-    override = _runtime_root_override_value()
-    if not override:
-        return project_root / _MERIDIAN_DIR
-
-    candidate = Path(override).expanduser()
-    if candidate.is_absolute():
-        return candidate
-    return project_root / candidate
-
-
-def _resolve_runtime_state_override(project_root: Path) -> Path | None:
-    override = _runtime_root_override_value()
-    if not override:
-        return None
-    candidate = Path(override).expanduser()
-    return candidate if candidate.is_absolute() else project_root / candidate
-
-
 def _context_config_paths(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     user_config: Path | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
 ) -> tuple[Path | None, Path, Path]:
+    resolved_paths = project_config_paths
     return (
         resolve_user_config_path(user_config),
-        project_config or (project_root / "meridian.toml"),
-        local_config or (project_root / "meridian.local.toml"),
-    )
-
-
-def _workspace_config_paths(
-    project_root: Path,
-    *,
-    project_config: Path | None = None,
-    local_config: Path | None = None,
-) -> tuple[Path, Path]:
-    return (
-        project_config or (project_root / "meridian.toml"),
-        local_config or (project_root / "meridian.local.toml"),
+        project_config
+        or (
+            resolved_paths.meridian_toml
+            if resolved_paths is not None
+            else project_root / "meridian.toml"
+        ),
+        local_config
+        or (
+            resolved_paths.meridian_local_toml
+            if resolved_paths is not None
+            else project_root / "meridian.local.toml"
+        ),
     )
 
 
@@ -244,29 +163,8 @@ def _load_context_table(path: Path) -> dict[str, object] | None:
     if context is None:
         return None
     if not isinstance(context, dict):
-        raise ValueError(
-            f"Invalid value for 'context' in '{path.as_posix()}': expected table."
-        )
+        raise ValueError(f"Invalid value for 'context' in '{path.as_posix()}': expected table.")
     return cast("dict[str, object]", context)
-
-
-def _load_workspace_table(path: Path) -> dict[str, object] | None:
-    if not path.is_file():
-        return None
-    try:
-        payload_obj = tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        raise ValueError(f"Invalid TOML in Meridian config '{path.as_posix()}': {exc}") from exc
-
-    payload = cast("dict[str, object]", payload_obj)
-    workspace = payload.get("workspace")
-    if workspace is None:
-        return None
-    if not isinstance(workspace, dict):
-        raise ValueError(
-            f"Invalid value for 'workspace' in '{path.as_posix()}': expected table."
-        )
-    return cast("dict[str, object]", workspace)
 
 
 def _merge_nested_dicts(base: dict[str, object], overrides: dict[str, object]) -> dict[str, object]:
@@ -303,6 +201,7 @@ def resolve_project_paths_for_write(project_root: Path) -> ProjectPaths:
 def _try_load_context_config(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     user_config: Path | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
@@ -313,6 +212,7 @@ def _try_load_context_config(
     found_context = False
     for config_path in _context_config_paths(
         project_root,
+        project_config_paths=project_config_paths,
         user_config=user_config,
         project_config=project_config,
         local_config=local_config,
@@ -337,6 +237,7 @@ def _try_load_context_config(
 def load_context_config(
     project_root: Path,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     user_config: Path | None = None,
     project_config: Path | None = None,
     local_config: Path | None = None,
@@ -345,48 +246,8 @@ def load_context_config(
 
     return _try_load_context_config(
         project_root,
+        project_config_paths=project_config_paths,
         user_config=user_config,
-        project_config=project_config,
-        local_config=local_config,
-    )
-
-
-def _try_load_workspace_config(
-    project_root: Path,
-    *,
-    project_config: Path | None = None,
-    local_config: Path | None = None,
-) -> dict[str, object] | None:
-    """Try loading merged workspace config from project/local Meridian config files."""
-
-    merged_workspace: dict[str, object] = {}
-    found_workspace = False
-    for config_path in _workspace_config_paths(
-        project_root,
-        project_config=project_config,
-        local_config=local_config,
-    ):
-        workspace_table = _load_workspace_table(config_path)
-        if workspace_table is None:
-            continue
-        found_workspace = True
-        merged_workspace = _merge_nested_dicts(merged_workspace, workspace_table)
-
-    if not found_workspace:
-        return None
-    return merged_workspace
-
-
-def load_workspace_config(
-    project_root: Path,
-    *,
-    project_config: Path | None = None,
-    local_config: Path | None = None,
-) -> dict[str, object] | None:
-    """Load merged workspace config for one repo, or ``None`` when no [workspace] exists."""
-
-    return _try_load_workspace_config(
-        project_root,
         project_config=project_config,
         local_config=local_config,
     )
@@ -396,15 +257,23 @@ def resolve_project_paths_from_context(
     project_root: Path,
     context_config: ContextConfig | None = None,
     *,
+    project_config_paths: ProjectConfigPaths | None = None,
     create_project_uuid: bool = False,
 ) -> ProjectPaths:
-    """Resolve project paths with optional context config, falling back to defaults."""
+    """Resolve project paths with optional context config, falling back to defaults.
+
+    When no explicit config is provided and no file-level config exists, the
+    ``ContextConfig()`` defaults (user-level placeholder paths) are used.
+    """
 
     if context_config is None:
-        context_config = _try_load_context_config(project_root)
+        context_config = _try_load_context_config(
+            project_root,
+            project_config_paths=project_config_paths,
+        )
 
-    if context_config is None:
-        return ProjectPaths.from_root_dir(project_root / _MERIDIAN_DIR)
+    # Default to ContextConfig() which has user-level placeholder defaults
+    effective_config = context_config or ContextConfig()
 
     from meridian.lib.context.resolver import (
         context_uses_project_placeholder,
@@ -412,19 +281,19 @@ def resolve_project_paths_from_context(
     )
 
     project_state_dir = project_root / _MERIDIAN_DIR
-    project_uuid: str | None = None
-    if context_uses_project_placeholder(context_config):
+    project_id: str | None = None
+    if context_uses_project_placeholder(effective_config):
         if create_project_uuid:
-            project_uuid = get_or_create_project_uuid(project_state_dir)
+            project_id = get_or_create_project_id(project_state_dir)
         else:
-            project_uuid = get_project_uuid(project_state_dir)
-        if project_uuid is None:
+            project_id = get_project_id(project_state_dir)
+        if project_id is None:
             return ProjectPaths.from_root_dir(project_state_dir)
 
     resolved = resolve_context_paths(
         project_root,
-        context_config,
-        project_uuid=project_uuid,
+        effective_config,
+        project_id=project_id,
     )
     return ProjectPaths(
         root_dir=project_state_dir,
@@ -438,8 +307,9 @@ def resolve_project_paths_from_context(
 def resolve_runtime_paths(project_root: Path) -> ProjectPaths:
     """Resolve all state paths rooted under `.meridian/`."""
 
-    root_dir = _resolve_project_runtime_root(project_root)
+    root_dir = resolve_project_runtime_root(project_root)
     return ProjectPaths.from_root_dir(root_dir)
+
 
 def resolve_project_runtime_root(project_root: Path) -> Path:
     """Resolve runtime state root for read paths.
@@ -459,26 +329,19 @@ def resolve_project_runtime_root_or_none(project_root: Path) -> Path | None:
 
     Returns None when no project UUID has been initialized yet.
     """
+    from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 
-    override = _resolve_runtime_state_override(project_root)
-    if override is not None:
-        return override
-
-    project_uuid = get_project_uuid(resolve_project_paths(project_root).root_dir)
-    if project_uuid is None:
-        return None
-    return get_project_home(project_uuid)
+    return resolve_runtime_authority_for_read(project_root).runtime_root
 
 
 def resolve_project_runtime_root_for_write(project_root: Path) -> Path:
     """Resolve runtime state root for write paths, creating project UUID if needed."""
+    from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
 
-    override = _resolve_runtime_state_override(project_root)
-    if override is not None:
-        return override
-
-    project_uuid = get_or_create_project_uuid(resolve_project_paths(project_root).root_dir)
-    return get_project_home(project_uuid)
+    authority = resolve_runtime_authority_for_write(project_root)
+    if authority.runtime_root is None:
+        raise ValueError("Runtime write authority did not resolve a runtime root.")
+    return authority.runtime_root
 
 
 def resolve_cache_dir(project_root: Path) -> Path:
@@ -493,21 +356,22 @@ def resolve_kb_dir(project_root: Path) -> Path:
     return resolve_project_paths(project_root).kb_dir
 
 
-def resolve_fs_dir(project_root: Path) -> Path:
-    """Deprecated alias for :func:`resolve_kb_dir`."""
-
-    warnings.warn(
-        "resolve_fs_dir() is deprecated; use resolve_kb_dir() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_kb_dir(project_root)
-
-
 def resolve_work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
-    """Return the work-scoped scratch directory for a work item."""
+    """Return the runtime-root-local scratch directory for a work item."""
 
     return RuntimePaths.from_root_dir(runtime_root).work_dir / work_id
+
+
+def resolve_work_scratch_dir_for_project(
+    project_root: Path,
+    work_id: str,
+    *,
+    project_paths: ProjectPaths | None = None,
+) -> Path:
+    """Return the authority-resolved work directory for a work item."""
+
+    resolved_project_paths = project_paths or resolve_project_paths(project_root)
+    return resolved_project_paths.work_dir / work_id
 
 
 def spawn_log_subpath(spawn_id: SpawnId | str) -> Path:
@@ -555,16 +419,12 @@ def ensure_gitignore(project_root: Path) -> Path:
 
 
 def _merge_required_gitignore_lines(existing_text: str) -> str:
-    filtered_lines = [
-        line
-        for line in existing_text.splitlines()
-        if line.strip() not in _DEPRECATED_GITIGNORE_LINES
-    ]
-    normalized_existing = "\n".join(filtered_lines)
+    existing_lines = existing_text.splitlines()
+    normalized_existing = "\n".join(existing_lines)
     if existing_text.endswith("\n"):
         normalized_existing += "\n"
 
-    present_lines = {line.strip() for line in filtered_lines}
+    present_lines = {line.strip() for line in existing_lines}
     missing_lines = [line for line in _REQUIRED_GITIGNORE_LINES if line not in present_lines]
     if not missing_lines:
         return normalized_existing

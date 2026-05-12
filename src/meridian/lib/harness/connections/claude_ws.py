@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from meridian.lib.observability.debug_tracer import DebugTracer
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness.bundle import project_subprocess_spec
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -27,21 +28,20 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.ids import HarnessId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
-from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
 from meridian.lib.harness.semantics import clears_signal
 from meridian.lib.launch.constants import (
     BASE_COMMAND_CLAUDE_STREAMING,
     BLOCKED_CHILD_ENV_VARS,
 )
 from meridian.lib.launch.env import inherit_child_env
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.observability.trace_helpers import (
     trace_parse_error,
     trace_state_change,
     trace_wire_recv,
     trace_wire_send,
 )
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
 )
 
 
-class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
+class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Bidirectional Claude harness connection via stdin/stdout stream-json.
 
     Launches ``claude -p --input-format stream-json --output-format stream-json``
@@ -136,7 +136,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
             return None
         return process.pid
 
-    async def start(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> None:
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         """Launch Claude subprocess and send the initial user prompt via stdin."""
 
         if self._state != "created":
@@ -284,8 +284,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
         allowed = self._ALLOWED_TRANSITIONS[self._state]
         if next_state not in allowed:
             raise RuntimeError(
-                "Invalid connection state transition: "
-                f"{self._state} -> {next_state}"
+                f"Invalid connection state transition: {self._state} -> {next_state}"
             )
         trace_state_change(self._tracer, "claude", self._state, next_state)
         self._state = next_state
@@ -338,7 +337,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
                 return token.strip()
         return None
 
-    async def _start_subprocess(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> None:
+    async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         spawn_dir = resolve_spawn_log_dir(config.project_root, config.spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
 
@@ -370,9 +369,10 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
                 binary_name=command[0],
             ) from exc
 
-    def _build_command(self, config: ConnectionConfig, spec: ClaudeLaunchSpec) -> list[str]:
+    def _build_command(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> list[str]:
         _ = config
-        return project_claude_spec_to_cli_args(
+        return project_subprocess_spec(
+            self.harness_id,
             spec,
             base_command=BASE_COMMAND_CLAUDE_STREAMING,
         )
@@ -384,9 +384,7 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
 
             {"type":"user","message":{"role":"user","content":"<text>"}}
         """
-        await self._send_json(
-            {"type": "user", "message": {"role": "user", "content": text}}
-        )
+        await self._send_json({"type": "user", "message": {"role": "user", "content": text}})
 
     async def _send_json(self, payload: dict[str, object]) -> None:
         process = self._process
@@ -404,7 +402,12 @@ class ClaudeConnection(HarnessConnection[ClaudeLaunchSpec]):
         if process is None or process.returncode is not None:
             return
         trace_wire_send(self._tracer, "signal_sent", "", signal=sig.name)
-        process.send_signal(sig)
+        if IS_WINDOWS:
+            # GenerateConsoleCtrlEvent(CTRL_C_EVENT) is unreliable for
+            # non-console-sharing processes; use TerminateProcess instead.
+            process.terminate()
+        else:
+            process.send_signal(sig)
 
     async def _cleanup_resources(self, *, terminate_process: bool) -> None:
         if terminate_process:

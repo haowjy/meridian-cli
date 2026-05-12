@@ -1,6 +1,31 @@
 """Shared CLI-local parsing and validation helpers."""
 
+import sys
+from pathlib import Path
 from typing import Literal, overload
+
+
+def require_established_project_root() -> Path:
+    """Resolve project root from GlobalOptions or CWD walk, erroring if none found.
+
+    Reads opts.project_root first (set from --project-root flag), then falls
+    back to env/CWD discovery via resolve_project_root_resolution. Raises
+    SystemExit(1) when the discovery falls back to bare CWD with no project marker.
+    """
+    from meridian.cli.main import get_global_options
+    from meridian.lib.config.project_root import resolve_project_root_resolution
+
+    opts = get_global_options()
+    if opts.project_root is not None:
+        return opts.project_root
+    resolution = resolve_project_root_resolution(execution_cwd=Path.cwd())
+    if resolution.source == "cwd":
+        print(
+            "No Meridian project found. Run from a project directory or pass --project-root.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return resolution.project_root
 
 
 @overload

@@ -92,22 +92,17 @@ workspace_app = App(
     help=(
         "Workspace topology commands.\n\n"
         "Shared conventions live in meridian.toml [workspace.NAME] entries; "
-        "local overrides and additions live in meridian.local.toml. "
-        "Use `meridian workspace migrate` for legacy workspace.local.toml files."
+        "local overrides and additions live in meridian.local.toml."
     ),
     help_formatter="plain",
 )
 kg_app = App(
     name="kg",
     help=(
-        "Knowledge graph analysis: document relationships, tree topology,\n"
-        "and broken link health."
+        "Knowledge graph analysis: document relationships, tree topology,\nand broken link health."
     ),
     help_epilogue=(
-        "Examples:\n\n"
-        "  meridian kg graph\n\n"
-        "  meridian kg graph docs/\n\n"
-        "  meridian kg check\n"
+        "Examples:\n\n  meridian kg graph\n\n  meridian kg graph docs/\n\n  meridian kg check\n"
     ),
     help_formatter="plain",
 )
@@ -123,6 +118,11 @@ mermaid_app = App(
         "  meridian mermaid check docs/\n\n"
         "  meridian mermaid check diagram.mmd\n"
     ),
+    help_formatter="plain",
+)
+qi_app = App(
+    name="qi",
+    help="Inline knowledge navigation: AGENTS.md and .context/ locations.",
     help_formatter="plain",
 )
 telemetry_app = App(
@@ -153,6 +153,7 @@ app.command(config_app, name="config")
 app.command(workspace_app, name="workspace")
 app.command(kg_app, name="kg")
 app.command(mermaid_app, name="mermaid")
+app.command(qi_app, name="qi")
 app.command(telemetry_app, name="telemetry")
 app.command(completion_app, name="completion")
 
@@ -166,6 +167,7 @@ __all__ = [
     "kg_app",
     "mermaid_app",
     "models_app",
+    "qi_app",
     "report_app",
     "session_app",
     "spawn_app",

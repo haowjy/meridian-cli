@@ -4,6 +4,18 @@ Orchestrate AI coding agents across Claude Code, Codex, and OpenCode. Each model
 
 > **Early development.** Meridian is not stable. Expect breaking changes in any release. If you need a stable workflow, this project is not ready for you yet.
 
+## v0.1.0 Migration
+
+v0.1.0 removes all legacy state format support in the state layer.
+
+If you are upgrading from any pre-0.1.0 build, run:
+
+```bash
+rm -rf ~/.meridian
+```
+
+This is a clean break. There is no automatic migration.
+
 ## Why
 
 Claude Code is the best way to run Claude. Codex CLI is the best way to run GPT. Each provider's harness is optimized for their models — sandboxing, tool use, context handling, everything.

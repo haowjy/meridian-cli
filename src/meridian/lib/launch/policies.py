@@ -28,7 +28,12 @@ from .compiler import (
     compile_launch_params,
     match_model_policy,
 )
-from .launch_types import CompositionWarning
+from .launch_types import (
+    CompositionWarning,
+    ResolvedExecutionPolicy,
+    ResolvedLaunchRouting,
+    TerminalSurfaceMode,
+)
 from .materialize import materialize_harness
 from .request import LaunchCompositionSurface
 from .resolve import (
@@ -78,9 +83,7 @@ class SurfacePolicyInput:
         object.__setattr__(
             self,
             "supported_execution_policy_fields",
-            frozenset(
-                normalize_execution_policy_fields(self.supported_execution_policy_fields)
-            ),
+            frozenset(normalize_execution_policy_fields(self.supported_execution_policy_fields)),
         )
 
     @property
@@ -112,9 +115,9 @@ class ResolvedLaunchPolicy:
     harness: HarnessId
     adapter: SubprocessHarness
     resolved_skills: ResolvedSkills
-    resolved_routing: RuntimeOverrides
-    resolved_execution_policy: RuntimeOverrides
-    resolved_overrides: RuntimeOverrides
+    routing: ResolvedLaunchRouting
+    execution_policy: ResolvedExecutionPolicy
+    terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None
     warnings: tuple[CompositionWarning, ...] = ()
@@ -122,6 +125,19 @@ class ResolvedLaunchPolicy:
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
+
+
+def _resolve_terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceMode:
+    """Resolve the interactive terminal surface mode at the policy boundary.
+
+    Stage 3.4 lands the typed policy field without changing interactive launch
+    behavior. The compatibility default remains PTY-mediated for every harness.
+    Claude is permanently pinned to PTY-mediated; Codex/OpenCode also remain on
+    PTY-mediated until later rollout gates enable native inherit.
+    """
+
+    _ = harness_id
+    return TerminalSurfaceMode.PTY_MEDIATED
 
 
 def _resolve_final_model(
@@ -160,6 +176,14 @@ def _first_set_layer_index(
     return None
 
 
+def _is_pre_profile_explicit_layer(
+    *,
+    layer_index: int | None,
+    pre_profile_layer_count: int,
+) -> bool:
+    return layer_index is not None and layer_index < pre_profile_layer_count
+
+
 def _policy_warnings(
     *,
     profile_warning: str | None,
@@ -196,6 +220,7 @@ def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
     return RuntimeOverrides(
         effort=entry.effort,
         autocompact=entry.autocompact,
+        autocompact_pct=entry.autocompact_pct,
     )
 
 
@@ -283,45 +308,30 @@ def _compiler_request_for_base_candidate(
     )
 
 
-def _supported_policy_scope(
-    overrides: RuntimeOverrides,
-    supported_fields: frozenset[ExecutionPolicyField],
-) -> RuntimeOverrides:
-    return overrides.execution_policy_scope(supported_fields)
-
-
-def _compiler_execution_policy_overrides(
-    compiler_result: CompilerResult,
-) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        effort=compiler_result.effort,
-        approval=compiler_result.approval,
-        sandbox=compiler_result.sandbox,
-        autocompact=compiler_result.autocompact,
-        timeout=compiler_result.timeout,
-    )
-
-
 def _build_final_resolved_views(
     *,
     base_resolved: RuntimeOverrides,
     compiler_result: CompilerResult,
     harness_id: HarnessId,
     supported_execution_policy_fields: frozenset[ExecutionPolicyField],
-) -> tuple[RuntimeOverrides, RuntimeOverrides, RuntimeOverrides]:
-    resolved_routing = RuntimeOverrides(
+) -> tuple[ResolvedLaunchRouting, ResolvedExecutionPolicy]:
+    resolved_routing = ResolvedLaunchRouting(
         model=compiler_result.model_token or None,
-        harness=str(harness_id),
+        harness=harness_id,
         agent=base_resolved.agent,
     )
-    resolved_execution_policy = _supported_policy_scope(
-        _compiler_execution_policy_overrides(compiler_result),
-        supported_execution_policy_fields,
+    scoped_overrides = compiler_result.execution_policy.as_overrides(
+        supported_fields=supported_execution_policy_fields,
     )
-    resolved_overrides = resolved_routing.model_copy(
-        update=resolved_execution_policy.model_dump(exclude_none=True)
+    resolved_execution_policy = ResolvedExecutionPolicy(
+        effort=scoped_overrides.effort,
+        sandbox=scoped_overrides.sandbox,
+        approval=scoped_overrides.approval,
+        autocompact=scoped_overrides.autocompact,
+        autocompact_pct=scoped_overrides.autocompact_pct,
+        timeout=scoped_overrides.timeout,
     )
-    return resolved_routing, resolved_execution_policy, resolved_overrides
+    return resolved_routing, resolved_execution_policy
 
 
 def _demoted_base_candidate(
@@ -395,29 +405,8 @@ def _require_policy_tier(
     tier: RuntimeOverrides | tuple[RuntimeOverrides, ...],
 ) -> RuntimeOverrides:
     if isinstance(tier, tuple):
-        raise TypeError(
-            "resolve_policy_fields() accepts a tier tuple only as its sole argument."
-        )
+        raise TypeError("resolve_policy_fields() accepts a tier tuple only as its sole argument.")
     return tier
-
-
-def _resolve_model_policy_overrides(
-    *,
-    explicit_user_overrides: RuntimeOverrides,
-    profile_model_overrides: RuntimeOverrides,
-    profile_defaults: RuntimeOverrides,
-    config_overrides: RuntimeOverrides,
-    alias_defaults: RuntimeOverrides,
-) -> RuntimeOverrides:
-    """Deprecated compatibility wrapper for the legacy five-tier policy helper."""
-
-    return resolve_policy_fields(
-        explicit_user_overrides,
-        profile_model_overrides,
-        profile_defaults,
-        config_overrides,
-        alias_defaults,
-    )
 
 
 def _log_unmatched_profile_policy_defaults(
@@ -463,7 +452,10 @@ def resolve_harness_routing(
 
     explicit_harness = (
         resolved.harness
-        if harness_layer_index is not None and harness_layer_index < pre_profile_layer_count
+        if _is_pre_profile_explicit_layer(
+            layer_index=harness_layer_index,
+            pre_profile_layer_count=pre_profile_layer_count,
+        )
         else None
     )
 
@@ -486,8 +478,9 @@ def resolve_harness_routing(
         harness_id = HarnessId(configured_default_harness or "claude")
         provenance_note = "configured-default"
 
-    model_set_in_pre_profile_layers = (
-        model_layer_index is not None and model_layer_index < pre_profile_layer_count
+    model_set_in_pre_profile_layers = _is_pre_profile_explicit_layer(
+        layer_index=model_layer_index,
+        pre_profile_layer_count=pre_profile_layer_count,
     )
     harness_from_profile_or_config = (
         harness_layer_index is not None and harness_layer_index >= pre_profile_layer_count
@@ -531,9 +524,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     model_layer_index = _first_set_layer_index(full_layers, "model")
     harness_layer_index = _first_set_layer_index(full_layers, "harness")
     pre_profile_layer_count = len(surface.layers)
-    model_explicit = (
-        model_layer_index is not None and model_layer_index < pre_profile_layer_count
-    )
+    model_explicit = model_layer_index is not None and model_layer_index < pre_profile_layer_count
     user_explicit_same_precedence = (
         model_layer_index is not None
         and harness_layer_index is not None
@@ -541,12 +532,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         and model_layer_index < pre_profile_layer_count
     )
 
-    selected_agent_name = profile.name if profile is not None else (
-        requested_agent or configured_default_agent or ""
+    selected_agent_name = (
+        profile.name if profile is not None else (requested_agent or configured_default_agent or "")
     )
-    agent_overlay = (
-        surface.config.agents.get(selected_agent_name) if selected_agent_name else None
-    )
+    agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
 
     requested_model_token = (
         explicit_user_overrides.model
@@ -575,15 +564,16 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         agent_overlay=agent_overlay,
         config_defaults=surface.config_overrides.execution_policy_scope(
             surface.supported_execution_policy_fields
-        ).model_copy(
-            update=surface.config_overrides.routing_scope().model_dump(exclude_none=True)
-        ),
+        ).model_copy(update=surface.config_overrides.routing_scope().model_dump(exclude_none=True)),
         profile_routing_model=profile.model if profile is not None else None,
         profile_routing_harness=profile.harness if profile is not None else None,
-        profile_policy_effort=profile.effort if profile is not None else None,
-        profile_policy_approval=profile.approval if profile is not None else None,
-        profile_policy_sandbox=profile.sandbox if profile is not None else None,
-        profile_policy_autocompact=profile.autocompact if profile is not None else None,
+        profile_policy_defaults=ResolvedExecutionPolicy(
+            effort=profile.effort if profile is not None else None,
+            approval=profile.approval if profile is not None else None,
+            sandbox=profile.sandbox if profile is not None else None,
+            autocompact=profile.autocompact if profile is not None else None,
+            autocompact_pct=profile.autocompact_pct if profile is not None else None,
+        ),
         profile_model_policies=profile.model_policies if profile is not None else None,
         profile_legacy_models=dict(profile.models) if profile is not None else None,
         profile_fanout=profile.fanout if profile is not None else None,
@@ -668,19 +658,20 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
 
     # If model resolution failed but harness is explicit, bind the raw
     # model string to the explicit harness instead of failing.
-    if (
-        base_resolved.harness
-        and not user_explicit_same_precedence
-        and model_resolution_error is not None
-        and resolved_entry is None
-        and model_token
-    ):
-        resolved_entry = AliasEntry(
-            alias="",
-            model_id=ModelId(model_token),
-            resolved_harness=harness_id,
-        )
-        model_resolution_error = None
+    explicit_request_harness = _is_pre_profile_explicit_layer(
+        layer_index=harness_layer_index,
+        pre_profile_layer_count=pre_profile_layer_count,
+    )
+    if model_resolution_error is not None and resolved_entry is None and model_token:
+        if explicit_request_harness and not user_explicit_same_precedence:
+            resolved_entry = AliasEntry(
+                alias="",
+                model_id=ModelId(model_token),
+                resolved_harness=harness_id,
+            )
+            model_resolution_error = None
+        else:
+            raise model_resolution_error
 
     final_model, resolved_model_entry = _resolve_final_model(
         layer_model=model_token,
@@ -742,8 +733,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         and profile_policy_defaults.model_dump(exclude_none=True)
     ):
         _LOGGER.debug(
-            "No model-policies rule matched for '%s'; using generic profile "
-            "model-policy defaults.",
+            "No model-policies rule matched for '%s'; using generic profile model-policy defaults.",
             selected_entry.model_id,
         )
     _log_unmatched_profile_policy_defaults(
@@ -753,7 +743,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile_defaults=profile_policy_defaults,
     )
 
-    resolved_routing, resolved_execution_policy, resolved = _build_final_resolved_views(
+    resolved_routing, resolved_execution_policy = _build_final_resolved_views(
         base_resolved=base_resolved,
         compiler_result=compiler_result,
         harness_id=harness_id,
@@ -784,9 +774,9 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         harness=harness_id,
         adapter=materialized.adapter,
         resolved_skills=resolved_skills,
-        resolved_routing=resolved_routing,
-        resolved_execution_policy=resolved_execution_policy,
-        resolved_overrides=resolved,
+        routing=resolved_routing,
+        execution_policy=resolved_execution_policy,
+        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=harness_id),
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
         warnings=_policy_warnings(
@@ -828,7 +818,6 @@ __all__ = [
     "ResolvedLaunchPolicy",
     "ResolvedPolicies",
     "SurfacePolicyInput",
-    "_resolve_model_policy_overrides",
     "match_model_policy",
     "resolve_harness_routing",
     "resolve_launch_policy",

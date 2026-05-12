@@ -16,6 +16,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class SpawnFailureCategory(StrEnum):
+    """Canonical lifecycle failure taxonomy for user-facing diagnostics."""
+
+    LAUNCH_FAILURE = "launch_failure"
+    HARNESS_FAILURE = "harness_failure"
+    TEARDOWN_FAILURE = "teardown_failure"
+    CANCELLATION = "cancellation"
+    RECONCILER_ORPHAN = "reconciler_orphan"
+    UNKNOWN_FAILURE = "unknown_failure"
+
+
 class StartupPhase(StrEnum):
     """Canonical startup phase vocabulary per HCP spec."""
 
@@ -51,12 +62,16 @@ class LifecycleEvent:
 
 @dataclass(frozen=True)
 class SpawnFailure:
-    """Structured failure record written alongside terminal failure state."""
+    """Structured terminal diagnostic written alongside failed lifecycle state."""
 
     spawn_id: str
     ts: datetime
     exit_code: int | None
     reason: str
+    category: SpawnFailureCategory = SpawnFailureCategory.UNKNOWN_FAILURE
+    status: str | None = None
+    origin: str | None = None
+    correlation: dict[str, str] = field(default_factory=dict[str, str])
     traceback: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -222,6 +237,7 @@ __all__ = [
     "LifecycleObserverTier",
     "SpawnEventCounter",
     "SpawnFailure",
+    "SpawnFailureCategory",
     "StartupPhase",
     "StartupPhaseEmitter",
     "StartupPhaseSignal",

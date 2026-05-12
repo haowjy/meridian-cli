@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.harness.extractors.opencode import OpenCodeHarnessExtractor
-from meridian.lib.harness.launch_spec import OpenCodeLaunchSpec
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
@@ -31,7 +31,7 @@ def test_opencode_extractor_falls_back_to_xdg_session_storage(
 
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
     extractor = OpenCodeHarnessExtractor()
-    spec = OpenCodeLaunchSpec(
+    spec = ResolvedLaunchSpec(
         prompt="hello",
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )

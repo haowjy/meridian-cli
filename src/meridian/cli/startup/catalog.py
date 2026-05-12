@@ -208,7 +208,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "text",
         "List available models.",
         redirect=RedirectPolicy(
-            target="mars models list", message="Redirecting to mars models list"
+            target="meridian mars models list", message="Redirecting to meridian mars models list"
         ),
         extension_ref="meridian.models.list",
     ),
@@ -360,6 +360,11 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(
         ("session", "search"), "Search session logs.", extension_ref="meridian.session.search"
     ),
+    _write_runtime(
+        ("session", "repair"),
+        "Repair stored session metadata from explicit harness-session detection.",
+        extension_ref="meridian.session.repair",
+    ),
     _read_runtime(("work",), "Show work dashboard."),
     _read_runtime(("work", "list"), "List work items.", extension_ref="meridian.work.list"),
     _read_runtime(("work", "show"), "Show work item.", extension_ref="meridian.work.show"),
@@ -393,6 +398,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(("telemetry", "tail"), "Tail telemetry events."),
     _read_runtime(("telemetry", "query"), "Query telemetry events."),
     _write_project(("init",), "Initialize meridian in a project.", root_source=RootSource.ARGV),
+    _write_project(("migrate",), "Migrate project ID from UUID to three-word format."),
     _read_runtime(("ext",), "List extension commands."),
     _read_runtime(("ext", "list"), "List extensions."),
     _read_runtime(("ext", "show"), "Show extension."),
@@ -409,14 +415,12 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         "Initialize workspace config.",
         extension_ref="meridian.workspace.init",
     ),
-    _write_project(
-        ("workspace", "migrate"),
-        "Migrate workspace config.",
-        extension_ref="meridian.workspace.migrate",
-    ),
     _read_project(("kg", "graph"), "Render knowledge graph."),
     _read_project(("kg", "check"), "Check knowledge graph links."),
     _read_project(("mermaid", "check"), "Check Mermaid diagrams."),
+    _read_project(("qi",), "Show inline knowledge for current path."),
+    _read_project(("qi", "list"), "List all inline knowledge locations."),
+    _read_project(("qi", "check"), "Check inline knowledge health."),
     _write_runtime(("streaming", "test"), "Run streaming test."),
     _descriptor(
         ("streaming", "serve"),

@@ -5,11 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol
 
-from meridian.lib.core.types import SpawnId
-from meridian.lib.harness.ids import HarnessId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.launch.launch_types import SpecT
 
 if TYPE_CHECKING:
@@ -49,9 +49,7 @@ class ConnectionCapabilities:
     structured_reasoning: bool
     supports_primary_observer: bool = False
     supports_runtime_hitl: bool = False
-    supported_startup_phases: frozenset[str] = field(
-        default_factory=_empty_startup_phases
-    )
+    supported_startup_phases: frozenset[str] = field(default_factory=_empty_startup_phases)
     """Startup phases this adapter can observe. Empty = unknown/untyped."""
 
 
@@ -66,6 +64,8 @@ class ObserverEndpoint:
 
 
 ConnectionState = Literal["created", "starting", "connected", "stopping", "stopped", "failed"]
+
+
 class ConnectionNotReady(RuntimeError):
     """Raised when send operations are attempted before connection readiness."""
 
@@ -112,6 +112,21 @@ class HarnessRequest:
     payload: dict[str, object]
 
 
+class PrimaryRuntimeRequestPolicy(StrEnum):
+    """Runner policy for runtime requests during primary-session launches."""
+
+    NONE = "none"
+    AUTO_ACCEPT = "auto_accept"
+    SURFACE_EVENTS = "surface_events"
+
+
+class PrimaryRuntimeEventSurface(StrEnum):
+    """Where primary-session runtime requests should be surfaced."""
+
+    NONE = "none"
+    CONNECTION_EVENT_STREAM = "connection_event_stream"
+
+
 class ServerRequestHandler(Protocol):
     """Policy boundary for inbound harness server requests."""
 
@@ -143,13 +158,12 @@ class AutoAcceptHandler:
 
 
 class InteractiveHandler:
-    """Future HITL request policy seam for externally resolved decisions.
+    """HITL request policy seam for externally resolved decisions.
 
     This handler surfaces harness requests as events instead of auto-answering
     them, then expects external code to respond later through the connection.
-    It is intentionally kept as a policy boundary for future chat/HITL
-    integration; the current production codebase has no instantiation path for
-    it.
+    It remains the policy boundary used by managed-primary flows that surface
+    runtime requests (`request/opened`) to launch observers.
     """
 
     no_runtime_hitl: bool = False
@@ -251,10 +265,32 @@ class HarnessConnection(Generic[SpecT], ABC):
         """
 
         if not self.capabilities.supports_primary_observer:
-            raise RuntimeError(
-                f"{self.harness_id} does not support primary observer mode"
-            )
+            raise RuntimeError(f"{self.harness_id} does not support primary observer mode")
         await self.start(config, spec)
+
+    def configure_primary_runtime_requests(
+        self,
+        *,
+        policy: PrimaryRuntimeRequestPolicy,
+        event_sink: Callable[[HarnessEvent], Awaitable[None]] | None = None,
+        request_handler: ServerRequestHandler | None = None,
+    ) -> None:
+        """Configure runtime-request handling for one primary-session launch."""
+
+        _ = event_sink, request_handler
+        if policy is PrimaryRuntimeRequestPolicy.NONE:
+            return
+        raise NotImplementedError(
+            f"{self.harness_id.value} does not support primary runtime request policy overrides"
+        )
+
+    async def inject_runtime_event(self, event: HarnessEvent) -> None:
+        """Inject one synthesized runtime event into the connection event stream."""
+
+        _ = event
+        raise NotImplementedError(
+            f"{self.harness_id.value} does not support runtime event injection"
+        )
 
     async def respond_request(
         self,
@@ -277,9 +313,7 @@ class HarnessConnection(Generic[SpecT], ABC):
         """Send user-input answers through the harness transport."""
 
         _ = request_id, answers
-        raise NotImplementedError(
-            f"{self.harness_id.value} does not support runtime user input"
-        )
+        raise NotImplementedError(f"{self.harness_id.value} does not support runtime user input")
 
     @abstractmethod
     async def stop(self) -> None: ...
@@ -310,6 +344,8 @@ __all__ = [
     "HarnessRequest",
     "InteractiveHandler",
     "ObserverEndpoint",
+    "PrimaryRuntimeEventSurface",
+    "PrimaryRuntimeRequestPolicy",
     "PromptTooLargeError",
     "ServerRequestHandler",
     "validate_prompt_size",

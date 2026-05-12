@@ -5,15 +5,30 @@ import os
 import tomllib
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
+from meridian.lib.config.catalog import build_option_catalog, file_alias
 from meridian.lib.config.project_config_state import resolve_project_config_state
+from meridian.lib.config.project_paths import (
+    ProjectConfigPaths,
+    resolve_project_config_paths,
+)
+from meridian.lib.config.schema import (
+    DynamicSectionDescriptor,
+    config_field,
+    parse_env_scalar,
+    parse_toml_scalar,
+)
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
+    ApprovalValue,
+    AutocompactPctValue,
+    AutocompactValue,
+    EffortValue,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,6 +36,7 @@ logger = logging.getLogger(__name__)
 _OUTPUT_VERBOSITY_PRESETS = frozenset({"quiet", "normal", "verbose", "debug"})
 _PRIMARY_AUTOCOMPACT_PCT_MIN = 1
 _PRIMARY_AUTOCOMPACT_PCT_MAX = 100
+_PRIMARY_AUTOCOMPACT_TOKEN_MIN = 1000
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 
 
@@ -28,8 +44,14 @@ class _SettingsLoadContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     project_root: Path
+    project_config_paths: ProjectConfigPaths
     user_config: Path | None
     resolve_models: bool = True
+
+
+class _ProjectAuthorityLike(Protocol):
+    project_root: Path
+    project_config_paths: ProjectConfigPaths
 
 
 _SETTINGS_CONTEXT: ContextVar[_SettingsLoadContext | None] = ContextVar(
@@ -79,68 +101,6 @@ def _normalize_string_tuple(
             raise ValueError(f"Invalid value for '{source}': expected non-empty entries.")
         normalized.append(compact)
     return tuple(normalized)
-
-
-def _parse_env_int(raw_value: str, *, env_name: str) -> int:
-    try:
-        return int(raw_value.strip())
-    except ValueError as error:
-        raise ValueError(
-            f"Invalid environment override '{env_name}': expected int, got {raw_value!r}."
-        ) from error
-
-
-def _parse_env_float(raw_value: str, *, env_name: str) -> float:
-    try:
-        return float(raw_value.strip())
-    except ValueError as error:
-        raise ValueError(
-            f"Invalid environment override '{env_name}': expected float, got {raw_value!r}."
-        ) from error
-
-
-def _parse_env_string(raw_value: str, *, env_name: str) -> str:
-    normalized = raw_value.strip()
-    if not normalized:
-        raise ValueError(f"Invalid environment override '{env_name}': expected non-empty string.")
-    return normalized
-
-
-def _parse_file_scalar(*, field_name: str, raw_value: object, source: str) -> object:
-    int_fields = {"max_depth", "max_retries"}
-    float_fields = {
-        "retry_backoff_seconds",
-        "kill_grace_minutes",
-        "guardrail_timeout_minutes",
-        "wait_timeout_minutes",
-        "default_wait_yield_seconds",
-        "min_wait_yield_seconds",
-    }
-
-    if field_name in int_fields:
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
-            raise ValueError(
-                f"Invalid value for '{source}': expected int, got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        return raw_value
-
-    if field_name in float_fields:
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
-            raise ValueError(
-                f"Invalid value for '{source}': expected float, got "
-                f"{type(raw_value).__name__} ({raw_value!r})."
-            )
-        return float(raw_value)
-
-    if not isinstance(raw_value, str):
-        raise ValueError(
-            f"Invalid value for '{source}': expected str, got "
-            f"{type(raw_value).__name__} ({raw_value!r})."
-        )
-    if field_name == "default_model":
-        return raw_value.strip()
-    return _normalize_required_string(raw_value, source=source)
 
 
 def _parse_toml_list(*, raw_value: object, source: str) -> tuple[str, ...]:
@@ -196,12 +156,18 @@ def _read_toml(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", payload_obj)
 
 
-def _resolve_project_toml(project_root: Path) -> Path | None:
-    return resolve_project_config_state(project_root).path
+def _resolve_project_toml(
+    project_root: Path,
+    project_config_paths: ProjectConfigPaths,
+) -> Path | None:
+    _ = project_root
+    if project_config_paths.meridian_toml.is_file():
+        return project_config_paths.meridian_toml
+    return resolve_project_config_state(project_config_paths.project_root).path
 
 
-def _resolve_local_toml(project_root: Path) -> Path | None:
-    local_config = project_root / _LOCAL_CONFIG_FILENAME
+def _resolve_local_toml(project_config_paths: ProjectConfigPaths) -> Path | None:
+    local_config = project_config_paths.meridian_local_toml
     if not local_config.is_file():
         return None
     return local_config
@@ -279,21 +245,6 @@ def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, obj
 
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
-        if key == "autocompact_pct":
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact_pct': expected int, got "
-                    f"{type(value).__name__} ({value!r})."
-                )
-            if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-                raise ValueError(
-                    f"Invalid value for '{source}.autocompact_pct': expected int between "
-                    f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                    f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-                )
-            values[key] = value
-            continue
-
         if key in {"model", "harness", "agent", "effort", "sandbox", "approval"}:
             if not isinstance(value, str):
                 raise ValueError(
@@ -309,9 +260,23 @@ def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, obj
                     f"Invalid value for '{source}.autocompact': expected int, got "
                     f"{type(value).__name__} ({value!r})."
                 )
+            if value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
+                raise ValueError(
+                    f"Invalid value for '{source}.autocompact': expected int >= "
+                    f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {value!r}."
+                )
+            values[key] = value
+            continue
+
+        if key == "autocompact_pct":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"Invalid value for '{source}.autocompact_pct': expected int, got "
+                    f"{type(value).__name__} ({value!r})."
+                )
             if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
                 raise ValueError(
-                    f"Invalid value for '{source}.autocompact': expected int between "
+                    f"Invalid value for '{source}.autocompact_pct': expected int between "
                     f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
                     f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
                 )
@@ -332,10 +297,6 @@ def _normalize_primary_table(raw_value: object, *, source: str) -> dict[str, obj
             continue
 
         logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
-
-    # Copy autocompact_pct → autocompact if autocompact is not explicitly set.
-    if values.get("autocompact_pct") is not None and values.get("autocompact") is None:
-        values["autocompact"] = values["autocompact_pct"]
 
     return values
 
@@ -401,9 +362,7 @@ def _normalize_harness_table(
         if not normalized:
             values[key] = {"model": normalized}
             continue
-        values[key] = {
-            "model": _normalize_model_identifier(normalized, project_root=project_root)
-        }
+        values[key] = {"model": _normalize_model_identifier(normalized, project_root=project_root)}
 
     return values
 
@@ -432,6 +391,20 @@ def _normalize_agent_autocompact(raw_value: object, *, source: str) -> int:
             f"Invalid value for '{source}': expected int, got "
             f"{type(raw_value).__name__} ({raw_value!r})."
         )
+    if raw_value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
+        raise ValueError(
+            f"Invalid value for '{source}': expected int >= "
+            f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {raw_value!r}."
+        )
+    return raw_value
+
+
+def _normalize_agent_autocompact_pct(raw_value: object, *, source: str) -> int:
+    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+        raise ValueError(
+            f"Invalid value for '{source}': expected int, got "
+            f"{type(raw_value).__name__} ({raw_value!r})."
+        )
     if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= raw_value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
         raise ValueError(
             f"Invalid value for '{source}': expected int between "
@@ -449,8 +422,10 @@ def _normalize_agent_policy_overrides(
     if not isinstance(raw_value, dict):
         raise ValueError(f"Invalid value for '{source}': expected table.")
 
-    rejected_list_keys = frozenset({"skills", "tools", "disallowed-tools", "mcp-tools"})
-    allowed_scalar_keys = frozenset({"harness", "effort", "approval", "sandbox", "autocompact"})
+    rejected_list_keys = frozenset({"skills", "tools", "mcp-tools"})
+    allowed_scalar_keys = frozenset(
+        {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
+    )
     overrides: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
         field_source = f"{source}.{key}"
@@ -466,6 +441,9 @@ def _normalize_agent_policy_overrides(
             continue
         if key == "autocompact":
             overrides[key] = _normalize_agent_autocompact(value, source=field_source)
+            continue
+        if key == "autocompact_pct":
+            overrides[key] = _normalize_agent_autocompact_pct(value, source=field_source)
             continue
         if not isinstance(value, str):
             raise ValueError(
@@ -594,6 +572,9 @@ def _normalize_agents_table(raw_value: object, *, source: str) -> dict[str, obje
             if key == "autocompact":
                 overlay[key] = _normalize_agent_autocompact(value, source=field_source)
                 continue
+            if key == "autocompact_pct":
+                overlay[key] = _normalize_agent_autocompact_pct(value, source=field_source)
+                continue
             if key == "model-policies":
                 overlay["model_policies"] = _normalize_agent_model_policies(
                     value,
@@ -663,7 +644,7 @@ def _normalize_hooks_array(raw_value: object, *, source: str) -> tuple[dict[str,
                 "interval",
                 "failure_policy",
                 "repo",
-            "remote",
+                "remote",
             }:
                 if not isinstance(value, str):
                     raise ValueError(
@@ -752,38 +733,61 @@ def _normalize_work_table(raw_value: object, *, source: str) -> dict[str, object
 
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
-        if key != "artifacts":
-            logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
+        if key == "artifacts":
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"Invalid value for '{source}.artifacts': expected table, "
+                    f"got {type(value).__name__} ({value!r})."
+                )
+
+            artifacts: dict[str, object] = {}
+            for artifacts_key, artifacts_value in cast("dict[str, object]", value).items():
+                artifacts_source = f"{source}.artifacts.{artifacts_key}"
+                if artifacts_key == "sync":
+                    if not isinstance(artifacts_value, str):
+                        raise ValueError(
+                            f"Invalid value for '{artifacts_source}': expected str, got "
+                            f"{type(artifacts_value).__name__} ({artifacts_value!r})."
+                        )
+                    artifacts["sync"] = _normalize_required_string(
+                        artifacts_value,
+                        source=artifacts_source,
+                    )
+                    continue
+                logger.warning(
+                    "Ignoring unknown Meridian config key '%s.%s'.",
+                    f"{source}.artifacts",
+                    artifacts_key,
+                )
+
+            if artifacts:
+                values["artifacts"] = artifacts
             continue
 
-        if not isinstance(value, dict):
-            raise ValueError(
-                f"Invalid value for '{source}.artifacts': expected table, "
-                f"got {type(value).__name__} ({value!r})."
-            )
-
-        artifacts: dict[str, object] = {}
-        for artifacts_key, artifacts_value in cast("dict[str, object]", value).items():
-            artifacts_source = f"{source}.artifacts.{artifacts_key}"
-            if artifacts_key == "sync":
-                if not isinstance(artifacts_value, str):
-                    raise ValueError(
-                        f"Invalid value for '{artifacts_source}': expected str, got "
-                        f"{type(artifacts_value).__name__} ({artifacts_value!r})."
-                    )
-                artifacts["sync"] = _normalize_required_string(
-                    artifacts_value,
-                    source=artifacts_source,
+        if key == "default_worktree":
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"Invalid value for '{source}.default_worktree': expected bool, "
+                    f"got {type(value).__name__} ({value!r})."
                 )
-                continue
-            logger.warning(
-                "Ignoring unknown Meridian config key '%s.%s'.",
-                f"{source}.artifacts",
-                artifacts_key,
-            )
+            values["default_worktree"] = value
+            continue
 
-        if artifacts:
-            values["artifacts"] = artifacts
+        if key == "worktree_base":
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"Invalid value for '{source}.worktree_base': expected str, "
+                    f"got {type(value).__name__} ({value!r})."
+                )
+            normalized = value.strip()
+            if not normalized:
+                raise ValueError(
+                    f"Invalid value for '{source}.worktree_base': expected non-empty string."
+                )
+            values["worktree_base"] = normalized
+            continue
+
+        logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
 
     return values
 
@@ -829,45 +833,159 @@ def normalize_context_table(raw_value: object, *, source: str) -> dict[str, obje
     return _normalize_context_table(raw_value, source=source)
 
 
+def _normalize_workspace_section(
+    raw_value: object,
+    *,
+    source: str,
+    project_root: Path,
+) -> None:
+    _ = raw_value
+    _ = source
+    _ = project_root
+    return None
+
+
+DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
+    "agents": DynamicSectionDescriptor(
+        section_key="agents",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Agent runtime overrides ------------------------------------------------",
+            "# Override default model/policy for specific agent profiles without editing",
+            "# generated .mars/agents/ sources.",
+            "# See docs/configuration.md for full semantics.",
+            "",
+            "# [agents.tech-lead]",
+            '# model = "gpt55"',
+            '# effort = "medium"',
+            '# approval = "auto"',
+            "",
+            "# [[agents.tech-lead.model-policies]]",
+            '# match = { model-glob = "gpt*" }',
+            '# override = { effort = "medium", autocompact = 200000 }',
+            "# # Or use percentage-based threshold (1-100):",
+            '# # override = { effort = "medium", autocompact_pct = 80 }',
+            "",
+        ),
+    ),
+    "hooks": DynamicSectionDescriptor(
+        section_key="hooks",
+        merge_kind="replace",
+        scaffold_lines=(
+            "# -- Hook examples -----------------------------------------------------------",
+            "# Hooks are dynamic arrays of tables. Keep examples commented until needed.",
+            "",
+            "# [[hooks]]",
+            '# name = "notify-on-failure"',
+            '# event = "spawn"',
+            '# command = "echo spawn-hook"',
+            "# timeout_secs = 30",
+            "",
+        ),
+    ),
+    "work": DynamicSectionDescriptor(
+        section_key="work",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Work behavior -----------------------------------------------------------",
+            "# [work]",
+            "# default_worktree = false",
+            '# worktree_base = "../my-worktrees"',
+            "",
+            "# [work.artifacts]",
+            '# sync = "project"',
+            "",
+        ),
+    ),
+    "context": DynamicSectionDescriptor(
+        section_key="context",
+        merge_kind="nested_dict",
+        scaffold_lines=(
+            "# -- Context source examples -------------------------------------------------",
+            "# [context.work]",
+            '# source = "git"',
+            '# remote = "https://example.com/work.git"',
+            '# path = ".meridian/work"',
+            '# archive = ".meridian/archive/work"',
+            "",
+        ),
+    ),
+    "workspace": DynamicSectionDescriptor(
+        section_key="workspace",
+        merge_kind="external",
+        scaffold_lines=(
+            "# -- Workspace root examples -------------------------------------------------",
+            "# Named workspace entries live in meridian.toml / meridian.local.toml.",
+            "",
+            "# [workspace.docs]",
+            '# path = "./docs"',
+            "",
+        ),
+    ),
+}
+
+
+def normalize_dynamic_sections(
+    *,
+    payload: dict[str, object],
+    project_root: Path,
+) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for section_key, descriptor in DYNAMIC_SECTION_DESCRIPTORS.items():
+        if section_key not in payload:
+            continue
+        raw_value = payload[section_key]
+        if section_key == "agents":
+            value = _normalize_agents_table(raw_value, source=section_key)
+        elif section_key == "hooks":
+            value = _normalize_hooks_array(raw_value, source=section_key)
+        elif section_key == "work":
+            value = _normalize_work_table(raw_value, source=section_key)
+        elif section_key == "context":
+            value = _normalize_context_table(raw_value, source=section_key)
+        elif section_key == "workspace":
+            value = _normalize_workspace_section(
+                raw_value,
+                source=section_key,
+                project_root=project_root,
+            )
+        else:
+            continue
+        if descriptor.merge_kind != "external" and value is not None:
+            normalized[section_key] = value
+    return normalized
+
+
+def merge_dynamic_sections(
+    base: dict[str, object],
+    overrides: dict[str, object],
+) -> dict[str, object]:
+    merged = dict(base)
+    for section_key, value in overrides.items():
+        descriptor = DYNAMIC_SECTION_DESCRIPTORS.get(section_key)
+        if descriptor is None or descriptor.merge_kind == "external":
+            continue
+        current = merged.get(section_key)
+        if (
+            descriptor.merge_kind == "nested_dict"
+            and isinstance(current, dict)
+            and isinstance(value, dict)
+        ):
+            merged[section_key] = _merge_nested_dicts(
+                cast("dict[str, object]", current),
+                cast("dict[str, object]", value),
+            )
+            continue
+        merged[section_key] = value
+    return merged
+
+
 def _normalize_toml_payload(
     *,
     payload: dict[str, object],
     path: Path,
     project_root: Path,
 ) -> dict[str, object]:
-    section_aliases: dict[str, dict[str, str]] = {
-        "defaults": {
-            "max_depth": "max_depth",
-            "max_retries": "max_retries",
-            "retry_backoff_seconds": "retry_backoff_seconds",
-            "model": "default_model",
-            "harness": "default_harness",
-        },
-        "timeouts": {
-            "kill_grace_minutes": "kill_grace_minutes",
-            "guardrail_minutes": "guardrail_timeout_minutes",
-            "guardrail_timeout_minutes": "guardrail_timeout_minutes",
-            "wait_minutes": "wait_timeout_minutes",
-            "wait_timeout_minutes": "wait_timeout_minutes",
-            "wait_yield_after_seconds": "default_wait_yield_seconds",
-            "default_wait_yield_seconds": "default_wait_yield_seconds",
-            "min_wait_yield_seconds": "min_wait_yield_seconds",
-        },
-    }
-    top_level_aliases: dict[str, str] = {
-        "max_depth": "max_depth",
-        "max_retries": "max_retries",
-        "retry_backoff_seconds": "retry_backoff_seconds",
-        "kill_grace_minutes": "kill_grace_minutes",
-        "guardrail_timeout_minutes": "guardrail_timeout_minutes",
-        "wait_timeout_minutes": "wait_timeout_minutes",
-        "wait_yield_after_seconds": "default_wait_yield_seconds",
-        "default_wait_yield_seconds": "default_wait_yield_seconds",
-        "min_wait_yield_seconds": "min_wait_yield_seconds",
-        "model": "default_model",
-        "default_harness": "default_harness",
-    }
-
     normalized: dict[str, object] = {}
     for key, raw_value in payload.items():
         if key == "output":
@@ -889,9 +1007,12 @@ def _normalize_toml_payload(
             )
             continue
         if key == "agents":
-            normalized["agents"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("agents", {})),
-                _normalize_agents_table(raw_value, source="agents"),
+            normalized = merge_dynamic_sections(
+                normalized,
+                normalize_dynamic_sections(
+                    payload={key: raw_value},
+                    project_root=project_root,
+                ),
             )
             continue
         if key == "harness":
@@ -906,88 +1027,83 @@ def _normalize_toml_payload(
                 _normalize_spawn_table(raw_value, source="spawn"),
             )
             continue
-        if key == "hooks":
-            normalized["hooks"] = _normalize_hooks_array(raw_value, source="hooks")
-            continue
-        if key == "work":
-            normalized["work"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("work", {})),
-                _normalize_work_table(raw_value, source="work"),
+        if key in DYNAMIC_SECTION_DESCRIPTORS:
+            normalized = merge_dynamic_sections(
+                normalized,
+                normalize_dynamic_sections(
+                    payload={key: raw_value},
+                    project_root=project_root,
+                ),
             )
-            continue
-        if key == "context":
-            normalized["context"] = _merge_nested_dicts(
-                cast("dict[str, object]", normalized.get("context", {})),
-                _normalize_context_table(raw_value, source="context"),
-            )
-            continue
-        if key == "workspace":
             continue
 
-        section_map = section_aliases.get(key)
-        if section_map is not None:
+        if key in {"defaults", "timeouts"}:
             if not isinstance(raw_value, dict):
                 raise ValueError(f"Invalid value for '{key}' in '{path}': expected table.")
             for section_key, section_value in cast("dict[str, object]", raw_value).items():
-                field_name = section_map.get(section_key)
-                if field_name is None:
+                option = OPTION_CATALOG.find_file_alias(table_path=(key,), key=section_key)
+                if option is None:
                     logger.warning(
                         "Ignoring unknown Meridian config key '%s.%s'.",
                         key,
                         section_key,
                     )
                     continue
-                coerced = _parse_file_scalar(
-                    field_name=field_name,
+                coerced = parse_toml_scalar(
+                    value_kind=option.value_kind,
                     raw_value=section_value,
                     source=f"{key}.{section_key}",
                 )
-                if field_name == "default_model":
+                if option.field_path in {("default_model",)}:
                     coerced = _normalize_model_identifier(
                         cast("str", coerced),
                         project_root=project_root,
                     )
-                normalized[field_name] = coerced
+                _assign_nested_value(normalized, option.field_path, coerced)
             continue
 
-        field_name = top_level_aliases.get(key)
-        if field_name is None:
+        option = OPTION_CATALOG.find_file_alias(table_path=(), key=key)
+        if option is None:
             logger.warning("Ignoring unknown Meridian config key '%s'.", key)
             continue
 
-        coerced = _parse_file_scalar(
-            field_name=field_name,
+        coerced = parse_toml_scalar(
+            value_kind=option.value_kind,
             raw_value=raw_value,
             source=key,
         )
-        if field_name == "default_model":
+        if option.field_path in {("default_model",)}:
             coerced = _normalize_model_identifier(cast("str", coerced), project_root=project_root)
-        normalized[field_name] = coerced
+        _assign_nested_value(normalized, option.field_path, coerced)
 
     return normalized
 
 
 def _env_alias_overrides(project_root: Path) -> dict[str, object]:
     values: dict[str, object] = {}
-    env_specs: tuple[tuple[str, tuple[str, ...], Literal["int", "float", "str"]], ...] = (
-        ("MERIDIAN_MAX_DEPTH", ("max_depth",), "int"),
-        ("MERIDIAN_MAX_RETRIES", ("max_retries",), "int"),
-        ("MERIDIAN_RETRY_BACKOFF_SECONDS", ("retry_backoff_seconds",), "float"),
-        ("MERIDIAN_KILL_GRACE_MINUTES", ("kill_grace_minutes",), "float"),
-        (
-            "MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES",
-            ("guardrail_timeout_minutes",),
-            "float",
-        ),
-        ("MERIDIAN_WAIT_TIMEOUT_MINUTES", ("wait_timeout_minutes",), "float"),
-        ("MERIDIAN_WAIT_YIELD_AFTER_SECONDS", ("default_wait_yield_seconds",), "float"),
-        ("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS", ("default_wait_yield_seconds",), "float"),
-        ("MERIDIAN_MIN_WAIT_YIELD_SECONDS", ("min_wait_yield_seconds",), "float"),
-        ("MERIDIAN_DEFAULT_MODEL", ("default_model",), "str"),
-        ("MERIDIAN_DEFAULT_HARNESS", ("default_harness",), "str"),
-        ("MERIDIAN_HARNESS_MODEL_CLAUDE", ("harness", "claude", "model"), "str"),
-        ("MERIDIAN_HARNESS_MODEL_CODEX", ("harness", "codex", "model"), "str"),
-        ("MERIDIAN_HARNESS_MODEL_OPENCODE", ("harness", "opencode", "model"), "str"),
+    for env_name, option in OPTION_CATALOG.env_options():
+        raw_value = os.getenv(env_name)
+        if raw_value is None:
+            continue
+
+        parsed = parse_env_scalar(
+            value_kind=option.value_kind,
+            raw_value=raw_value,
+            env_name=env_name,
+        )
+
+        if option.field_path in {
+            ("default_model",),
+            ("harness", "claude", "model"),
+            ("harness", "codex", "model"),
+            ("harness", "opencode", "model"),
+            ("primary", "model"),
+        }:
+            parsed = _normalize_model_identifier(cast("str", parsed), project_root=project_root)
+
+        _assign_nested_value(values, option.field_path, parsed)
+
+    hidden_env_specs: tuple[tuple[str, tuple[str, ...], Literal["float", "str"]], ...] = (
         (
             "MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE",
             ("harness", "claude", "wait_yield_seconds"),
@@ -1003,33 +1119,16 @@ def _env_alias_overrides(project_root: Path) -> dict[str, object]:
             ("harness", "opencode", "wait_yield_seconds"),
             "float",
         ),
-        ("MERIDIAN_STATE_RETENTION_DAYS", ("state", "retention_days"), "int"),
-        ("MERIDIAN_AGENT", ("primary", "agent"), "str"),
-        ("MERIDIAN_FORMAT", ("output", "format"), "str"),
     )
-
-    for env_name, field_path, value_kind in env_specs:
+    for env_name, field_path, value_kind in hidden_env_specs:
         raw_value = os.getenv(env_name)
         if raw_value is None:
             continue
-
-        parsed: object
-        if value_kind == "int":
-            parsed = _parse_env_int(raw_value, env_name=env_name)
-        elif value_kind == "float":
-            parsed = _parse_env_float(raw_value, env_name=env_name)
-        else:
-            parsed = _parse_env_string(raw_value, env_name=env_name)
-
-        if field_path in {
-            ("default_model",),
-            ("harness", "claude", "model"),
-            ("harness", "codex", "model"),
-            ("harness", "opencode", "model"),
-            ("primary", "model"),
-        }:
-            parsed = _normalize_model_identifier(cast("str", parsed), project_root=project_root)
-
+        parsed = parse_env_scalar(
+            value_kind=value_kind,
+            raw_value=raw_value,
+            env_name=env_name,
+        )
         _assign_nested_value(values, field_path, parsed)
 
     return values
@@ -1040,9 +1139,32 @@ class OutputConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    show: tuple[str, ...] = ("lifecycle", "sub-run", "error", "system")
-    verbosity: str | None = None
-    format: str = "text"
+    show: Annotated[
+        tuple[str, ...],
+        config_field(
+            "output.show",
+            value_kind="str_list",
+            file_aliases=(file_alias("output", "show"),),
+        ),
+    ] = ("lifecycle", "sub-run", "error", "system")
+    verbosity: Annotated[
+        str | None,
+        config_field(
+            "output.verbosity",
+            value_kind="verbosity",
+            file_aliases=(file_alias("output", "verbosity"),),
+        ),
+    ] = None
+    format: Annotated[
+        str,
+        config_field(
+            "output.format",
+            value_kind="str",
+            file_aliases=(file_alias("output", "format"),),
+            env_vars=("MERIDIAN_FORMAT",),
+            command_visible=False,
+        ),
+    ] = "text"
 
     @field_validator("show")
     @classmethod
@@ -1073,17 +1195,36 @@ class StateConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    retention_days: int = 30
+    retention_days: Annotated[
+        int,
+        config_field(
+            "state.retention_days",
+            value_kind="int",
+            file_aliases=(
+                file_alias("state", "retention_days"),
+                file_alias(None, "retention_days"),
+            ),
+            env_vars=("MERIDIAN_STATE_RETENTION_DAYS",),
+        ),
+    ] = 30
 
     @field_validator("retention_days")
     @classmethod
     def _validate_retention_days(cls, value: int) -> int:
         if isinstance(value, bool) or value < -1:
             raise ValueError(
-                "Invalid value for 'state.retention_days': expected int >= -1, "
-                f"got {value!r}."
+                f"Invalid value for 'state.retention_days': expected int >= -1, got {value!r}."
             )
         return value
+
+
+class WorkConfig(BaseModel):
+    """Work-item behavior settings."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    default_worktree: bool = False
+    worktree_base: str | None = None
 
 
 class PrimaryConfig(BaseModel):
@@ -1091,52 +1232,77 @@ class PrimaryConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    autocompact_pct: int | None = None
-    model: str | None = None
-    harness: str | None = None
-    agent: str | None = None
-    effort: str | None = None
-    sandbox: str | None = None
-    approval: str | None = None
+    autocompact: Annotated[
+        AutocompactValue,
+        config_field(
+            "primary.autocompact",
+            value_kind="int",
+            file_aliases=(file_alias("primary", "autocompact"),),
+        ),
+    ] = None
+    autocompact_pct: Annotated[
+        AutocompactPctValue,
+        config_field(
+            "primary.autocompact_pct",
+            value_kind="int",
+            file_aliases=(file_alias("primary", "autocompact_pct"),),
+        ),
+    ] = None
+    model: Annotated[
+        str | None,
+        config_field(
+            "primary.model",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "model"),),
+            env_vars=("MERIDIAN_MODEL",),
+        ),
+    ] = None
+    harness: Annotated[
+        str | None,
+        config_field(
+            "primary.harness",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "harness"),),
+            env_vars=("MERIDIAN_HARNESS",),
+        ),
+    ] = None
+    agent: Annotated[
+        str | None,
+        config_field(
+            "primary.agent",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "agent"),),
+            env_vars=("MERIDIAN_AGENT",),
+        ),
+    ] = None
+    effort: Annotated[
+        EffortValue,
+        config_field(
+            "primary.effort",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "effort"),),
+            command_visible=False,
+        ),
+    ] = None
+    sandbox: Annotated[
+        str | None,
+        config_field(
+            "primary.sandbox",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "sandbox"),),
+            command_visible=False,
+        ),
+    ] = None
+    approval: Annotated[
+        ApprovalValue,
+        config_field(
+            "primary.approval",
+            value_kind="str",
+            file_aliases=(file_alias("primary", "approval"),),
+            command_visible=False,
+        ),
+    ] = None
     timeout: float | None = None
-    autocompact: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _copy_autocompact_pct_to_autocompact(cls, values: Any) -> Any:
-        if not isinstance(values, dict):
-            return values
-        d: dict[str, Any] = cast("dict[str, Any]", values)
-        if d.get("autocompact") is None and d.get("autocompact_pct") is not None:
-            d = dict(d)
-            d["autocompact"] = d["autocompact_pct"]
-        return d
-
-    @field_validator("autocompact_pct")
-    @classmethod
-    def _validate_autocompact_pct(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-            raise ValueError(
-                "Invalid value for 'primary.autocompact_pct': expected int between "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-            )
-        return value
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-            raise ValueError(
-                "Invalid value for 'primary.autocompact': expected int between "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and "
-                f"{_PRIMARY_AUTOCOMPACT_PCT_MAX}, got {value!r}."
-            )
-        return value
 
     @field_validator("model")
     @classmethod
@@ -1150,32 +1316,6 @@ class PrimaryConfig(BaseModel):
     @classmethod
     def _validate_optional_string_fields(cls, value: str | None) -> str | None:
         return _normalize_optional_string(value, source="primary")
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="primary.effort")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                "Invalid value for 'primary.effort': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("approval")
-    @classmethod
-    def _validate_approval(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="primary.approval")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                "Invalid value for 'primary.approval': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        return normalized
 
     @field_validator("timeout")
     @classmethod
@@ -1218,7 +1358,9 @@ class AgentOverlayModelPolicy(BaseModel):
     @field_validator("overrides")
     @classmethod
     def _validate_overrides(cls, value: dict[str, object]) -> dict[str, object]:
-        allowed = frozenset({"harness", "effort", "approval", "sandbox", "autocompact"})
+        allowed = frozenset(
+            {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
+        )
         normalized: dict[str, object] = {}
         for key, raw_value in value.items():
             if key not in allowed:
@@ -1229,6 +1371,9 @@ class AgentOverlayModelPolicy(BaseModel):
             source = f"agents.model-policies.override.{key}"
             if key == "autocompact":
                 normalized[key] = _normalize_agent_autocompact(raw_value, source=source)
+                continue
+            if key == "autocompact_pct":
+                normalized[key] = _normalize_agent_autocompact_pct(raw_value, source=source)
                 continue
             if not isinstance(raw_value, str):
                 raise ValueError(
@@ -1257,10 +1402,11 @@ class AgentOverlayConfig(BaseModel):
 
     model: str | None = None
     harness: str | None = None
-    effort: str | None = None
-    approval: str | None = None
+    effort: EffortValue = None
+    approval: ApprovalValue = None
     sandbox: str | None = None
-    autocompact: int | None = None
+    autocompact: AutocompactValue = None
+    autocompact_pct: AutocompactPctValue = None
     # Three-state: None = inherit, () = suppress, non-empty = replace
     model_policies: tuple[AgentOverlayModelPolicy, ...] | None = None
 
@@ -1276,39 +1422,6 @@ class AgentOverlayConfig(BaseModel):
     @classmethod
     def _validate_optional_string_fields(cls, value: str | None) -> str | None:
         return _normalize_optional_string(value, source="agents")
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="agents.effort")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                "Invalid value for 'agents.effort': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("approval")
-    @classmethod
-    def _validate_approval(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="agents.approval")
-        if normalized is None:
-            return None
-        if normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                "Invalid value for 'agents.approval': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        return normalized
-
-    @field_validator("autocompact")
-    @classmethod
-    def _validate_autocompact(cls, value: int | None) -> int | None:
-        if value is None:
-            return None
-        return _normalize_agent_autocompact(value, source="agents.autocompact")
 
 
 class HarnessProfileConfig(BaseModel):
@@ -1341,10 +1454,54 @@ class HarnessProfileConfig(BaseModel):
             return None
         if isinstance(value, bool):
             raise ValueError(
-                "Invalid value for 'harness.wait_yield_seconds': expected float, "
-                f"got {value!r}."
+                f"Invalid value for 'harness.wait_yield_seconds': expected float, got {value!r}."
             )
         return float(value)
+
+
+class ClaudeHarnessProfileConfig(HarnessProfileConfig):
+    model: Annotated[
+        str,
+        config_field(
+            "harness.claude",
+            value_kind="str",
+            file_aliases=(
+                file_alias("harness", "claude"),
+                file_alias(("harness", "claude"), "model"),
+            ),
+            env_vars=("MERIDIAN_HARNESS_MODEL_CLAUDE",),
+        ),
+    ] = ""
+
+
+class CodexHarnessProfileConfig(HarnessProfileConfig):
+    model: Annotated[
+        str,
+        config_field(
+            "harness.codex",
+            value_kind="str",
+            file_aliases=(
+                file_alias("harness", "codex"),
+                file_alias(("harness", "codex"), "model"),
+            ),
+            env_vars=("MERIDIAN_HARNESS_MODEL_CODEX",),
+        ),
+    ] = ""
+
+
+class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
+    model: Annotated[
+        str,
+        config_field(
+            "harness.opencode",
+            value_kind="str",
+            file_aliases=(
+                file_alias("harness", "opencode"),
+                file_alias(("harness", "opencode"), "model"),
+            ),
+            env_vars=("MERIDIAN_HARNESS_MODEL_OPENCODE",),
+        ),
+    ] = "opencode-go/kimi-k2.6"
 
 
 class HarnessConfig(BaseModel):
@@ -1352,15 +1509,13 @@ class HarnessConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    claude: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=3000.0)
+    claude: ClaudeHarnessProfileConfig = Field(
+        default_factory=lambda: ClaudeHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
-    codex: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(wait_yield_seconds=3000.0)
+    codex: CodexHarnessProfileConfig = Field(
+        default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
-    opencode: HarnessProfileConfig = Field(
-        default_factory=lambda: HarnessProfileConfig(model="opencode-go/kimi-k2.6")
-    )
+    opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
 
 
 class MeridianConfig(BaseSettings):
@@ -1373,22 +1528,125 @@ class MeridianConfig(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    max_depth: int = 3
-    max_retries: int = 3
-    retry_backoff_seconds: float = 0.25
-    kill_grace_minutes: float = 2.0 / 60.0
-    guardrail_timeout_minutes: float = 0.5
-    wait_timeout_minutes: float = 30.0
-    default_wait_yield_seconds: float = 3000.0
-    min_wait_yield_seconds: float = 30.0
-    default_model: str = ""
-    default_harness: str = "codex"
+    max_depth: Annotated[
+        int,
+        config_field(
+            "defaults.max_depth",
+            value_kind="int",
+            file_aliases=(file_alias("defaults", "max_depth"), file_alias(None, "max_depth")),
+            env_vars=("MERIDIAN_MAX_DEPTH",),
+        ),
+    ] = 3
+    max_retries: Annotated[
+        int,
+        config_field(
+            "defaults.max_retries",
+            value_kind="int",
+            file_aliases=(file_alias("defaults", "max_retries"), file_alias(None, "max_retries")),
+            env_vars=("MERIDIAN_MAX_RETRIES",),
+        ),
+    ] = 3
+    retry_backoff_seconds: Annotated[
+        float,
+        config_field(
+            "defaults.retry_backoff_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("defaults", "retry_backoff_seconds"),
+                file_alias(None, "retry_backoff_seconds"),
+            ),
+            env_vars=("MERIDIAN_RETRY_BACKOFF_SECONDS",),
+        ),
+    ] = 0.25
+    kill_grace_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.kill_grace_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "kill_grace_minutes"),
+                file_alias(None, "kill_grace_minutes"),
+            ),
+            env_vars=("MERIDIAN_KILL_GRACE_MINUTES",),
+        ),
+    ] = 2.0 / 60.0
+    guardrail_timeout_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.guardrail_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "guardrail_minutes"),
+                file_alias("timeouts", "guardrail_timeout_minutes"),
+                file_alias(None, "guardrail_timeout_minutes"),
+            ),
+            env_vars=("MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES",),
+        ),
+    ] = 0.5
+    wait_timeout_minutes: Annotated[
+        float,
+        config_field(
+            "timeouts.wait_minutes",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "wait_minutes"),
+                file_alias("timeouts", "wait_timeout_minutes"),
+                file_alias(None, "wait_timeout_minutes"),
+            ),
+            env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
+        ),
+    ] = 30.0
+    default_wait_yield_seconds: Annotated[
+        float,
+        config_field(
+            "spawn.default_wait_yield_seconds",
+            value_kind="float",
+            file_aliases=(file_alias("spawn", "default_wait_yield_seconds"),),
+            env_vars=("MERIDIAN_DEFAULT_WAIT_YIELD_SECONDS",),
+        ),
+    ] = 3000.0
+    min_wait_yield_seconds: Annotated[
+        float,
+        config_field(
+            "spawn.min_wait_yield_seconds",
+            value_kind="float",
+            file_aliases=(file_alias("spawn", "min_wait_yield_seconds"),),
+            env_vars=("MERIDIAN_MIN_WAIT_YIELD_SECONDS",),
+        ),
+    ] = 30.0
+    default_model: Annotated[
+        str,
+        config_field(
+            "defaults.model",
+            value_kind="str",
+            file_aliases=(
+                file_alias("defaults", "model"),
+                file_alias("defaults", "default_model"),
+                file_alias(None, "model"),
+                file_alias(None, "default_model"),
+            ),
+            env_vars=("MERIDIAN_DEFAULT_MODEL",),
+        ),
+    ] = ""
+    default_harness: Annotated[
+        str,
+        config_field(
+            "defaults.harness",
+            value_kind="str",
+            file_aliases=(
+                file_alias("defaults", "harness"),
+                file_alias(None, "default_harness"),
+            ),
+            env_vars=("MERIDIAN_DEFAULT_HARNESS",),
+        ),
+    ] = "codex"
 
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     agents: dict[str, AgentOverlayConfig] = Field(default_factory=dict)
     output: OutputConfig = Field(default_factory=OutputConfig)
     state: StateConfig = Field(default_factory=StateConfig)
+    work: WorkConfig = Field(default_factory=WorkConfig)
 
     @field_validator("default_model")
     @classmethod
@@ -1407,10 +1665,7 @@ class MeridianConfig(BaseSettings):
     @classmethod
     def _validate_wait_yield_settings(cls, value: float) -> float:
         if isinstance(value, bool) or value <= 0:
-            raise ValueError(
-                "Invalid wait-yield setting: expected float > 0, "
-                f"got {value!r}."
-            )
+            raise ValueError(f"Invalid wait-yield setting: expected float > 0, got {value!r}.")
         return float(value)
 
     def default_model_for_harness(self, harness_id: str) -> str | None:
@@ -1424,12 +1679,6 @@ class MeridianConfig(BaseSettings):
         }
         profile = mapping.get(normalized)
         return None if profile is None else profile.model
-
-    @property
-    def wait_yield_after_seconds(self) -> float:
-        """Compatibility alias for the unknown/default wait-yield interval."""
-
-        return self.default_wait_yield_seconds
 
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
         """Return clamped wait-yield seconds for a harness or the unknown default."""
@@ -1465,7 +1714,10 @@ class MeridianConfig(BaseSettings):
             context = _SETTINGS_CONTEXT.get()
             if context is None:
                 return {}
-            project_config = _resolve_project_toml(context.project_root)
+            project_config = _resolve_project_toml(
+                context.project_root,
+                context.project_config_paths,
+            )
             if project_config is None:
                 return {}
             payload = _read_toml(project_config)
@@ -1479,7 +1731,7 @@ class MeridianConfig(BaseSettings):
             context = _SETTINGS_CONTEXT.get()
             if context is None:
                 return {}
-            local_config = _resolve_local_toml(context.project_root)
+            local_config = _resolve_local_toml(context.project_config_paths)
             if local_config is None:
                 return {}
             payload = _read_toml(local_config)
@@ -1516,9 +1768,13 @@ class MeridianConfig(BaseSettings):
         )
 
 
+OPTION_CATALOG = build_option_catalog(MeridianConfig)
+
+
 def load_config(
     project_root: Path,
     *,
+    authority: _ProjectAuthorityLike | None = None,
     user_config: Path | None = None,
     resolve_models: bool = True,
 ) -> MeridianConfig:
@@ -1530,12 +1786,18 @@ def load_config(
 
     from meridian.lib.config.project_root import resolve_user_config_path
 
-    resolved_project_root = project_root.expanduser().resolve()
+    if authority is not None:
+        resolved_project_root = authority.project_root.expanduser().resolve()
+        project_config_paths = authority.project_config_paths
+    else:
+        resolved_project_root = project_root.expanduser().resolve()
+        project_config_paths = resolve_project_config_paths(resolved_project_root)
     resolved_user_config = resolve_user_config_path(user_config)
 
     token = _SETTINGS_CONTEXT.set(
         _SettingsLoadContext(
             project_root=resolved_project_root,
+            project_config_paths=project_config_paths,
             user_config=resolved_user_config,
             resolve_models=resolve_models,
         )

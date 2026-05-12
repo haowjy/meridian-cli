@@ -3,23 +3,20 @@
 from __future__ import annotations
 
 from meridian.lib.safety.permissions import (
-    CombinedToolsResolver,
-    DisallowedToolsResolver,
-    ExplicitToolsResolver,
     PermissionConfig,
     TieredPermissionResolver,
+    ToolsPermissionResolver,
     UnsafeNoOpPermissionResolver,
     build_permission_config,
     build_permission_resolver,
-    opencode_permission_json_for_allowed_tools,
-    opencode_permission_json_for_disallowed_tools,
+    compile_tools_to_opencode_permission,
+    infer_codex_sandbox_from_tools,
 )
+from meridian.lib.tools import ToolsField, resolve_tool_action, tools_field_to_map
 
 PermissionResolverImpl = (
     TieredPermissionResolver
-    | ExplicitToolsResolver
-    | DisallowedToolsResolver
-    | CombinedToolsResolver
+    | ToolsPermissionResolver
     | UnsafeNoOpPermissionResolver
 )
 
@@ -41,87 +38,86 @@ and policy enforcement. Profiles can opt out per tool via `tools:`.
 """
 
 
-def _resolve_opencode_override(
-    *,
-    allowed_tools: tuple[str, ...],
-    disallowed_tools: tuple[str, ...],
-) -> str | None:
-    if allowed_tools:
-        return opencode_permission_json_for_allowed_tools(allowed_tools)
-    if disallowed_tools:
-        return opencode_permission_json_for_disallowed_tools(disallowed_tools)
-    return None
+_NESTED_CLAUDE_DELEGATION_CAPABILITIES: frozenset[str] = frozenset({"agent", "task"})
 
 
-def _normalize_tool_name(raw: str) -> str:
-    """Normalize a tool name: strip Claude-style qualifiers and lowercase."""
-    return raw.split("(", 1)[0].strip().lower()
+def _resolve_opencode_override(*, tools: ToolsField | None) -> str | None:
+    if tools is None:
+        return None
+    return compile_tools_to_opencode_permission(tools)
 
 
 def compute_nested_claude_deny_additions(
     *,
-    profile_allowed_tools: tuple[str, ...],
-    existing_disallowed_tools: tuple[str, ...],
+    profile_tools: ToolsField | None,
+    existing_tools: ToolsField | None,
 ) -> tuple[str, ...]:
     """Return implicit deny entries for nested Claude managed spawns.
 
-    Excludes tools already present in `existing_disallowed_tools` and tools
-    explicitly opted out through `profile_allowed_tools`.
+    Excludes tools already denied in `existing_tools` and tools explicitly
+    opted out through `profile_tools`.
     """
 
-    opted_out = {_normalize_tool_name(tool) for tool in profile_allowed_tools}
-    already_denied = {_normalize_tool_name(tool) for tool in existing_disallowed_tools}
+    opted_out: set[str] = set()
+    if profile_tools is not None:
+        profile_rules = tools_field_to_map(profile_tools)
+        for capability in _NESTED_CLAUDE_DELEGATION_CAPABILITIES:
+            action = resolve_tool_action(tools=profile_tools, capability=capability)
+            if action in {"allow", "ask"}:
+                opted_out.add(capability)
+        if "agent" in profile_rules and profile_rules["agent"] == "deny":
+            opted_out.discard("agent")
+        if "task" in profile_rules and profile_rules["task"] == "deny":
+            opted_out.discard("task")
+
+    already_denied = {
+        capability
+        for capability in _NESTED_CLAUDE_DELEGATION_CAPABILITIES
+        if resolve_tool_action(tools=existing_tools, capability=capability) == "deny"
+    }
     return tuple(
-        tool
-        for tool in sorted(CLAUDE_NATIVE_DELEGATION_TOOLS)
-        if _normalize_tool_name(tool) not in opted_out
-        and _normalize_tool_name(tool) not in already_denied
+        capability
+        for capability in sorted(_NESTED_CLAUDE_DELEGATION_CAPABILITIES)
+        if capability not in opted_out and capability not in already_denied
     )
 
 
-def remove_disallowed_tools_from_allowlist(
+def _apply_nested_claude_denies(
     *,
-    allowed_tools: tuple[str, ...],
-    disallowed_tools: tuple[str, ...],
-) -> tuple[str, ...]:
-    """Return allowed tools after explicit denies take precedence."""
-
-    denied = {_normalize_tool_name(tool) for tool in disallowed_tools}
-    return tuple(
-        tool
-        for tool in allowed_tools
-        if _normalize_tool_name(tool) not in denied
-    )
+    tools: ToolsField | None,
+    denied_capabilities: tuple[str, ...],
+) -> ToolsField:
+    if not denied_capabilities:
+        return tools if tools is not None else {"*": "allow"}
+    rules = tools_field_to_map(tools)
+    if not rules:
+        rules["*"] = "allow"
+    for capability in denied_capabilities:
+        rules[capability] = "deny"
+    return rules
 
 
 def resolve_nested_claude_permission_request(
     *,
-    allowed_tools: tuple[str, ...],
-    disallowed_tools: tuple[str, ...],
-    profile_allowed_tools: tuple[str, ...],
+    tools: ToolsField | None,
+    profile_tools: ToolsField | None,
     has_profile: bool,
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
+) -> ToolsField | None:
     """Apply Meridian's managed-spawn boundary for nested Claude launches."""
 
+    _ = has_profile
     deny_additions = compute_nested_claude_deny_additions(
-        profile_allowed_tools=profile_allowed_tools,
-        existing_disallowed_tools=disallowed_tools,
+        profile_tools=profile_tools,
+        existing_tools=tools,
     )
-    resolved_disallowed_tools = (*disallowed_tools, *deny_additions)
-    resolved_allowed_tools = allowed_tools
-    if not has_profile:
-        resolved_allowed_tools = remove_disallowed_tools_from_allowlist(
-            allowed_tools=allowed_tools,
-            disallowed_tools=resolved_disallowed_tools,
-        )
-    return resolved_allowed_tools, resolved_disallowed_tools
+    resolved_tools = _apply_nested_claude_denies(tools=tools, denied_capabilities=deny_additions)
+    return resolved_tools
 
 
 def resolve_permission_pipeline(
     *,
     sandbox: str | None,
-    allowed_tools: tuple[str, ...] = (),
-    disallowed_tools: tuple[str, ...] = (),
+    tools: ToolsField | None = None,
     approval: str = "default",
     unsafe_no_permissions: bool = False,
 ) -> tuple[PermissionConfig, PermissionResolverImpl]:
@@ -131,16 +127,16 @@ def resolve_permission_pipeline(
         return PermissionConfig(), UnsafeNoOpPermissionResolver()
 
     config = build_permission_config(sandbox, approval=approval)
-    opencode_override = _resolve_opencode_override(
-        allowed_tools=allowed_tools,
-        disallowed_tools=disallowed_tools,
-    )
+    opencode_override = _resolve_opencode_override(tools=tools)
     if opencode_override is not None:
         config = config.model_copy(update={"opencode_permission_override": opencode_override})
+    if config.sandbox == "default":
+        inferred = infer_codex_sandbox_from_tools(tools)
+        if inferred is not None:
+            config = config.model_copy(update={"sandbox": inferred})
 
     resolver = build_permission_resolver(
-        allowed_tools=allowed_tools,
-        disallowed_tools=disallowed_tools,
+        tools=tools,
         permission_config=config,
     )
     return config, resolver
@@ -150,7 +146,6 @@ __all__ = [
     "CLAUDE_NATIVE_DELEGATION_TOOLS",
     "PermissionResolverImpl",
     "compute_nested_claude_deny_additions",
-    "remove_disallowed_tools_from_allowlist",
     "resolve_nested_claude_permission_request",
     "resolve_permission_pipeline",
 ]

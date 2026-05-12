@@ -34,7 +34,7 @@ class BackendHandle:
         await self._manager.inject(self.spawn_id, text)
 
     async def send_cancel(self) -> None:
-        await self._connection.send_cancel()
+        await self._manager.interrupt(self.spawn_id, source="chat.backend_handle.cancel")
 
     async def respond_request(
         self,
@@ -42,14 +42,25 @@ class BackendHandle:
         decision: str,
         payload: dict[str, object] | None = None,
     ) -> None:
-        await self._connection.respond_request(request_id, decision, payload)
+        await self._manager.respond_request(
+            self.spawn_id,
+            request_id=request_id,
+            decision=decision,
+            payload=payload,
+            source="chat.backend_handle.approval",
+        )
 
     async def respond_user_input(
         self,
         request_id: str,
         answers: dict[str, object],
     ) -> None:
-        await self._connection.respond_user_input(request_id, answers)
+        await self._manager.respond_user_input(
+            self.spawn_id,
+            request_id=request_id,
+            answers=answers,
+            source="chat.backend_handle.user_input",
+        )
 
     def health(self) -> bool:
         return self._connection.health()

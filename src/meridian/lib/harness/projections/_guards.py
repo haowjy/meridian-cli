@@ -21,8 +21,7 @@ def check_projection_drift(
         missing = expected - accounted
         stale = accounted - expected
         raise ImportError(
-            f"{spec_cls.__name__} projection drift. "
-            f"missing={sorted(missing)} stale={sorted(stale)}"
+            f"{spec_cls.__name__} projection drift. missing={sorted(missing)} stale={sorted(stale)}"
         )
 
 

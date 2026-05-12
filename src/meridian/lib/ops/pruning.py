@@ -9,23 +9,13 @@ from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TypeVar
 
-import structlog
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
-from meridian.lib.harness.claude_preflight import (
-    cleanup_claude_overlay,
-)
 from meridian.lib.state import spawn_store
-from meridian.lib.state.claude_config_metadata import (
-    persist_durable_claude_config_metadata,
-)
-from meridian.lib.state.session_store import update_session_claude_config_dir
 
 _SECONDS_PER_DAY = 24 * 60 * 60
-logger = structlog.get_logger(__name__)
 
 
 class OrphanProjectDir(BaseModel):
@@ -46,19 +36,6 @@ class StaleSpawnArtifact(BaseModel):
     path: str
     size_bytes: int
     last_activity: str
-
-
-class StaleClaudeOverlay(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    spawn_id: str
-    project_uuid: str
-    path: str
-    size_bytes: int
-    last_activity: str
-
-
-_StaleDirT = TypeVar("_StaleDirT", StaleSpawnArtifact, StaleClaudeOverlay)
 
 
 def _iso_from_mtime(mtime: float) -> str:
@@ -168,84 +145,32 @@ def scan_stale_spawn_artifacts(
 ) -> list[StaleSpawnArtifact]:
     """Find stale per-spawn artifact directories for the current project only."""
 
-    def build_result(
-        spawn_id: str,
-        project_uuid: str,
-        path: str,
-        size_bytes: int,
-        last_activity: str,
-    ) -> StaleSpawnArtifact:
-        return StaleSpawnArtifact(
-            spawn_id=spawn_id,
-            project_uuid=project_uuid,
-            path=path,
-            size_bytes=size_bytes,
-            last_activity=last_activity,
-        )
-
-    return _scan_stale_per_spawn_dirs(
+    return _scan_stale_spawn_artifacts(
         runtime_root=runtime_root,
-        root_name="spawns",
         retention_days=retention_days,
         active_spawn_ids=active_spawn_ids,
         now=now,
-        build_result=build_result,
     )
 
 
-def scan_stale_claude_overlays(
-    runtime_root: Path,
-    retention_days: int,
-    active_spawn_ids: set[str],
-    now: float,
-) -> list[StaleClaudeOverlay]:
-    """Find stale Claude overlay directories for the current project only."""
-
-    def build_result(
-        spawn_id: str,
-        project_uuid: str,
-        path: str,
-        size_bytes: int,
-        last_activity: str,
-    ) -> StaleClaudeOverlay:
-        return StaleClaudeOverlay(
-            spawn_id=spawn_id,
-            project_uuid=project_uuid,
-            path=path,
-            size_bytes=size_bytes,
-            last_activity=last_activity,
-        )
-
-    return _scan_stale_per_spawn_dirs(
-        runtime_root=runtime_root,
-        root_name="claude-config",
-        retention_days=retention_days,
-        active_spawn_ids=active_spawn_ids,
-        now=now,
-        build_result=build_result,
-    )
-
-
-def _scan_stale_per_spawn_dirs(
+def _scan_stale_spawn_artifacts(
     *,
     runtime_root: Path,
-    root_name: str,
     retention_days: int,
     active_spawn_ids: set[str],
     now: float,
-    build_result: Callable[[str, str, str, int, str], _StaleDirT],
-) -> list[_StaleDirT]:
-    """Find stale per-spawn directories under one runtime root subtree."""
+) -> list[StaleSpawnArtifact]:
+    """Find stale per-spawn artifact directories under runtime_root/spawns."""
 
     if retention_days < 0:
         return []
 
-    per_spawn_root = runtime_root / root_name
+    per_spawn_root = runtime_root / "spawns"
     if not per_spawn_root.is_dir():
         return []
 
     project_uuid = runtime_root.name
-    results: list[_StaleDirT] = []
+    results: list[StaleSpawnArtifact] = []
     for spawn_dir in sorted(per_spawn_root.iterdir(), key=lambda path: path.name):
         if not spawn_dir.is_dir():
             continue
@@ -256,12 +181,12 @@ def _scan_stale_per_spawn_dirs(
         size_bytes, latest_mtime = _tree_activity(spawn_dir)
         if _is_stale(latest_mtime, retention_days=retention_days, now=now):
             results.append(
-                build_result(
-                    spawn_id,
-                    project_uuid,
-                    spawn_dir.as_posix(),
-                    size_bytes,
-                    _iso_from_mtime(latest_mtime),
+                StaleSpawnArtifact(
+                    spawn_id=spawn_id,
+                    project_uuid=project_uuid,
+                    path=spawn_dir.as_posix(),
+                    size_bytes=size_bytes,
+                    last_activity=_iso_from_mtime(latest_mtime),
                 )
             )
 
@@ -317,54 +242,11 @@ def prune_stale_spawn_artifacts(stale: list[StaleSpawnArtifact]) -> int:
     return removed
 
 
-def prune_stale_claude_overlays(
-    stale: list[StaleClaudeOverlay],
-    *,
-    runtime_root: Path | None = None,
-) -> int:
-    """Delete stale Claude overlay directories after transcript materialization."""
-
-    removed = 0
-    for overlay in stale:
-        overlay_path = Path(overlay.path)
-        cleanup_result = cleanup_claude_overlay(
-            overlay_path,
-            remove_overlay=_prune_dir,
-        )
-        if cleanup_result.removed:
-            removed += 1
-            if (
-                cleanup_result.materialized
-                and cleanup_result.materialization_root is not None
-                and runtime_root is not None
-            ):
-                try:
-                    persist_durable_claude_config_metadata(
-                        runtime_root=runtime_root,
-                        spawn_id=overlay.spawn_id,
-                        materialization_root=cleanup_result.materialization_root,
-                        update_spawn=spawn_store.update_spawn,
-                        update_session_claude_config_dir=update_session_claude_config_dir,
-                        get_spawn=spawn_store.get_spawn,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to repair Claude metadata during doctor prune",
-                        overlay_path=str(overlay_path),
-                        spawn_id=overlay.spawn_id,
-                        exc_info=True,
-                    )
-    return removed
-
-
 __all__ = [
     "OrphanProjectDir",
-    "StaleClaudeOverlay",
     "StaleSpawnArtifact",
     "prune_orphan_project_dirs",
-    "prune_stale_claude_overlays",
     "prune_stale_spawn_artifacts",
     "scan_orphan_project_dirs",
-    "scan_stale_claude_overlays",
     "scan_stale_spawn_artifacts",
 ]

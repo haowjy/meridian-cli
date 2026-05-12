@@ -12,10 +12,10 @@ _bootstrap_imports: tuple[object, ...] = ()
 # harness-specific seams below. Generic dispatch helpers such as
 # `harness/connections/__init__.py` are intentionally omitted.
 HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
-    "src/meridian/lib/harness/ids.py (HarnessId registration)",
+    "src/meridian/lib/core/types.py (HarnessId/TransportId registration)",
     (
         "src/meridian/lib/harness/<new_harness>.py "
-        "(adapter + bundle registration + transport map side effect)"
+        "(adapter + explicit HarnessContract + bundle registration + transport map side effect)"
     ),
     "src/meridian/lib/harness/__init__.py::_run_bootstrap() (bootstrap import wiring)",
     (
@@ -43,7 +43,7 @@ HARNESS_EXTENSION_TOUCHPOINTS: tuple[str, ...] = (
         "(approval/sandbox CLI flag projection)"
     ),
     (
-        "src/meridian/lib/launch/streaming/decision.py::terminal_event_outcome() "
+        "src/meridian/lib/harness/semantics.py::terminal_outcome() "
         "(streaming terminal-event classification)"
     ),
 )
@@ -113,31 +113,6 @@ def ensure_bootstrap() -> None:
     _run_bootstrap()
 
 
-def _is_expected_partial_init(exc: ImportError) -> bool:
-    message = str(exc)
-    return (
-        "partially initialized module 'meridian.lib.core.domain'" in message
-        or "partially initialized module 'meridian.lib.core.types'" in message
-    )
-
-
-try:
-    _run_bootstrap()
-except ImportError as exc:
-    if not _is_expected_partial_init(exc):
-        raise
-    import importlib
-
-    for module_name in ("meridian.lib.core.types", "meridian.lib.core.domain"):
-        try:
-            importlib.import_module(module_name)
-        except Exception:
-            continue
-    try:
-        _run_bootstrap()
-    except ImportError as retry_exc:
-        if not _is_expected_partial_init(retry_exc):
-            raise
-
+_run_bootstrap()
 
 __all__ = ["HARNESS_EXTENSION_TOUCHPOINTS", "ensure_bootstrap"]

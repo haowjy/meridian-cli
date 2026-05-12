@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
 from meridian.lib.state import work_store
-from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir
+from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
 
 if TYPE_CHECKING:
     from meridian.lib.harness.registry import HarnessRegistry
@@ -112,8 +112,8 @@ def launch_primary(
     resolved_project_root = Path(runtime.project_paths_project_root).expanduser().resolve()
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     active_work_dir = (
-        resolve_work_scratch_dir(
-            resolve_project_paths(resolved_project_root).root_dir,
+        resolve_work_scratch_dir_for_project(
+            resolved_project_root,
             resolved_work_id,
         )
         if resolved_work_id is not None
@@ -153,11 +153,16 @@ def launch_primary(
 
     if request.dry_run:
         return LaunchResult(
-            command=preview_context.argv,
+            command=preview_context.binding.argv,
             exit_code=0,
             continue_ref=None,
             continue_chat_id=None,
             warning=warning,
+            terminal_surface_mode=(
+                preview_context.resolved_request.terminal_surface_mode.value
+                if preview_context.resolved_request.terminal_surface_mode is not None
+                else None
+            ),
         )
 
     outcome = run_harness_process(preview_context, harness_registry, prepared=prepared)

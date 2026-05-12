@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES, validate_transition
 
 if TYPE_CHECKING:
-    from meridian.lib.core.domain import SpawnStatus
+    from meridian.lib.core.domain import SpawnStatus, TokenUsage
     from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, SpawnRecord
 
 
@@ -72,13 +72,7 @@ def apply_finalize(
     origin: SpawnOrigin,
     finished_at: str,
     duration_secs: float | None = None,
-    total_cost_usd: float | None = None,
-    input_tokens: int | None = None,
-    output_tokens: int | None = None,
-    cache_read_input_tokens: int | None = None,
-    cache_creation_input_tokens: int | None = None,
-    reasoning_tokens: int | None = None,
-    cost_is_estimate: bool = False,
+    usage: TokenUsage | None = None,
     error: str | None = None,
     validate_status_transition: bool = True,
 ) -> SpawnRecord:
@@ -97,13 +91,19 @@ def apply_finalize(
             "exit_code": exit_code,
             "finished_at": finished_at,
             "duration_secs": duration_secs,
-            "total_cost_usd": total_cost_usd,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cache_read_input_tokens": cache_read_input_tokens,
-            "cache_creation_input_tokens": cache_creation_input_tokens,
-            "reasoning_tokens": reasoning_tokens,
-            "cost_is_estimate": cost_is_estimate or record.cost_is_estimate,
+            "total_cost_usd": usage.total_cost_usd if usage is not None else None,
+            "input_tokens": usage.input_tokens if usage is not None else None,
+            "output_tokens": usage.output_tokens if usage is not None else None,
+            "cache_read_input_tokens": (
+                usage.cache_read_input_tokens if usage is not None else None
+            ),
+            "cache_creation_input_tokens": (
+                usage.cache_creation_input_tokens if usage is not None else None
+            ),
+            "reasoning_tokens": usage.reasoning_tokens if usage is not None else None,
+            "cost_is_estimate": (
+                (usage.cost_is_estimate if usage is not None else False) or record.cost_is_estimate
+            ),
             "error": error,
             "terminal_origin": origin,
         }

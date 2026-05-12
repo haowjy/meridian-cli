@@ -31,8 +31,7 @@ def _write_minimal_subagent(project_root: Path) -> None:
 def _prepare_codex_runtime(project_root: Path):
     _write_minimal_subagent(project_root)
     (project_root / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
     harness_registry = get_default_harness_registry()
@@ -131,8 +130,7 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
@@ -165,25 +163,20 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.toml").write_text(
-        "[agents.meridian-subagent]\n"
-        'model = "claude-sonnet-4.5"\n'
-        'effort = "medium"\n',
+        '[agents.meridian-subagent]\nmodel = "claude-sonnet-4.5"\neffort = "medium"\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.local.toml").write_text(
-        "[agents.meridian-subagent]\n"
-        'effort = "high"\n',
+        '[agents.meridian-subagent]\neffort = "high"\n',
         encoding="utf-8",
     )
     user_config = tmp_path / "user-config.toml"
     user_config.write_text(
-        "[agents.meridian-subagent]\n"
-        'effort = "low"\n',
+        '[agents.meridian-subagent]\neffort = "low"\n',
         encoding="utf-8",
     )
     _patch_catalog_models(monkeypatch)
@@ -214,11 +207,11 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
 
     assert overlay_routed.model == "claude-sonnet-4.5"
     assert overlay_routed.harness == "claude"
-    assert overlay_routed.effort == "high"
+    assert overlay_routed.execution_policy.effort == "high"
 
     assert cli_model_overridden.model == "gpt-5.5"
     assert cli_model_overridden.harness == "codex"
-    assert cli_model_overridden.effort == "high"
+    assert cli_model_overridden.execution_policy.effort == "high"
     assert cli_model_overridden.model_selection_requested_token == "gpt-5.5"
     assert cli_model_overridden.model_selection_canonical_id == "gpt-5.5"
     assert cli_model_overridden.model_selection_harness_provenance == "mars-provided"
@@ -230,14 +223,11 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        "[settings]\n"
-        'targets = [".claude"]\n',
+        '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.toml").write_text(
-        "[agents.meridian-subagent]\n"
-        'model = "claude-sonnet-4.5"\n'
-        'effort = "high"\n',
+        '[agents.meridian-subagent]\nmodel = "claude-sonnet-4.5"\neffort = "high"\n',
         encoding="utf-8",
     )
     _patch_catalog_models(monkeypatch)
@@ -256,4 +246,25 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
     assert prepared.agent is None
     assert prepared.model == "gpt-5.5"
     assert prepared.harness == "codex"
-    assert prepared.effort is None
+    assert prepared.execution_policy.effort is None
+
+
+def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Path) -> None:
+    _write_minimal_subagent(tmp_path)
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude"]\n',
+        encoding="utf-8",
+    )
+    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="compose with completion contract",
+            goal="ship phase-2 gate fixes",
+            project_root=tmp_path.as_posix(),
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert prepared.goal == "ship phase-2 gate fixes"

@@ -66,12 +66,16 @@ def atomic_write_bytes(path: Path, data: bytes) -> None:
 
 
 def append_text_line(path: Path, line: str) -> None:
-    """Append one line and fsync before returning."""
+    """Append one line and fsync before returning.
+
+    Opens in binary mode so ``\\n`` is never translated to ``\\r\\n`` on Windows.
+    JSONL byte offsets must be stable across platforms.
+    """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     file_existed = path.exists()
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line)
+    with path.open("ab") as handle:
+        handle.write(line.encode("utf-8"))
         handle.flush()
         os.fsync(handle.fileno())
     if not file_existed:

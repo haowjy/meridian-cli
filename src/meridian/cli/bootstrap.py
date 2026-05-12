@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -250,8 +250,7 @@ def extract_global_options(
         if shortcut_value in HARNESS_SHORTCUT_NAMES:
             if harness is not None and harness != shortcut_value:
                 raise SystemExit(
-                    "Conflicting harness selections: "
-                    f"'{harness}' and '{shortcut_value}'."
+                    f"Conflicting harness selections: '{harness}' and '{shortcut_value}'."
                 )
             harness = shortcut_value
             harness_source = shortcut_value
@@ -313,21 +312,6 @@ def _state_requirement_for_argv(argv: Sequence[str]) -> StateRequirement | None:
     return descriptor.state_requirement
 
 
-def should_startup_bootstrap(argv: Sequence[str]) -> bool:
-    """Return whether legacy startup callers should prepare write runtime state.
-
-    Kept for compatibility with older callers. New startup flow should use the
-    catalog descriptor's ``state_requirement`` directly so read/write bootstrap
-    policy stays in one place.
-    """
-
-    state_requirement = _state_requirement_for_argv(argv)
-    return state_requirement in {
-        StateRequirement.PROJECT_WRITE,
-        StateRequirement.RUNTIME_WRITE,
-    }
-
-
 def maybe_bootstrap_runtime_state(
     argv: Sequence[str],
     *,
@@ -343,19 +327,19 @@ def maybe_bootstrap_runtime_state(
     if agent_mode:
         return None
     try:
+        from meridian.cli.utils import require_established_project_root
         from meridian.lib.bootstrap.services import (
             prepare_for_project_read,
             prepare_for_project_write,
             prepare_for_runtime_read,
             prepare_for_runtime_write,
         )
-        from meridian.lib.config.project_root import resolve_project_root
 
         requirement = state_requirement or _state_requirement_for_argv(argv)
         if requirement in {None, StateRequirement.NONE}:
             return None
 
-        project_root = resolve_project_root()
+        project_root = require_established_project_root()
 
         if requirement == StateRequirement.PROJECT_READ:
             prepare_for_project_read(project_root)
@@ -372,7 +356,7 @@ def maybe_bootstrap_runtime_state(
 
 
 @contextmanager
-def temporary_config_env(config_file: str | None) -> Iterator[None]:
+def temporary_config_env(config_file: str | None) -> Generator[None, None, None]:
     if config_file is None:
         yield
         return

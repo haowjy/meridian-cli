@@ -14,45 +14,42 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.bootstrap.services import build_spawn_application_service_from_roots
 from meridian.lib.catalog.model_aliases import MarsResultCache
-from meridian.lib.core.lifecycle import create_lifecycle_service
+from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.spawn_lifecycle import (
+    ExecutionTerminalFacts,
     has_durable_report_completion,
-    resolve_execution_terminal_state,
 )
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
-from meridian.lib.harness.claude_preflight import (
-    MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV,
-    cleanup_claude_overlay,
-    ensure_claude_session_accessible,
-    prepare_isolated_claude_config,
-    resolve_claude_overlay_roots,
+from meridian.lib.harness.adapter import (
+    ForkMaterializationMode,
+    HarnessContract,
+    HarnessPrelaunchState,
 )
-from meridian.lib.harness.claude_utils import extract_session_id_from_args
+from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessEvent,
-    InteractiveHandler,
+    PrimaryRuntimeEventSurface,
+    PrimaryRuntimeRequestPolicy,
 )
+from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
+from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
-from meridian.lib.launch.claude_session_access import (
-    resolve_claude_session_access_source,
-)
 from meridian.lib.launch.constants import (
+    HISTORY_FILENAME,
     OUTPUT_FILENAME,
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
-from meridian.lib.state.artifact_store import LocalStore, make_artifact_key
-from meridian.lib.state.claude_config_metadata import (
-    persist_durable_claude_config_metadata,
-)
+from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
@@ -75,7 +72,14 @@ from ..fork import materialize_fork
 from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
-from .ports import ProcessLauncher, ProcessLauncherSelector
+from .ports import (
+    ProcessBackendId,
+    ProcessLauncher,
+    ProcessLauncherSelector,
+    ProcessPlatformContract,
+    ProcessSurfaceMode,
+    SelectedProcessLauncher,
+)
 from .primary_attach import PrimaryAttachError, PrimaryAttachLauncher, PrimaryAttachOutcome
 from .pty_launcher import PtyProcessLauncher, can_use_pty
 from .session import (
@@ -126,15 +130,61 @@ RunPrimaryAttach = Callable[
 def select_process_launcher(output_log_path: Path | None) -> ProcessLauncher:
     """Choose the launch backend for one primary process invocation."""
 
+    return select_process_backend(output_log_path).launcher
+
+
+def select_process_backend(output_log_path: Path | None) -> SelectedProcessLauncher:
+    """Choose the launch backend plus explicit process/platform contract."""
+
     if output_log_path is not None:
         if can_use_pty():
-            return PtyProcessLauncher()
-        return SubprocessProcessLauncher()
+            return SelectedProcessLauncher(
+                launcher=PtyProcessLauncher(),
+                contract=ProcessPlatformContract(
+                    backend_id=ProcessBackendId.PTY,
+                    surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
+                    captures_output_to_artifact=True,
+                    platform_family="posix",
+                ),
+            )
+        return SelectedProcessLauncher(
+            launcher=SubprocessProcessLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.SUBPROCESS,
+                surface_mode=ProcessSurfaceMode.PIPE_CAPTURE,
+                captures_output_to_artifact=True,
+                platform_family="portable",
+            ),
+        )
     if can_use_windows_console_launcher():
-        return WindowsConsoleLauncher()
+        return SelectedProcessLauncher(
+            launcher=WindowsConsoleLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.WINDOWS_CONSOLE,
+                surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
+                captures_output_to_artifact=False,
+                platform_family="windows",
+            ),
+        )
     if can_use_pty():
-        return PtyProcessLauncher()
-    return SubprocessProcessLauncher()
+        return SelectedProcessLauncher(
+            launcher=PtyProcessLauncher(),
+            contract=ProcessPlatformContract(
+                backend_id=ProcessBackendId.PTY,
+                surface_mode=ProcessSurfaceMode.PTY_MEDIATED,
+                captures_output_to_artifact=False,
+                platform_family="posix",
+            ),
+        )
+    return SelectedProcessLauncher(
+        launcher=SubprocessProcessLauncher(),
+        contract=ProcessPlatformContract(
+            backend_id=ProcessBackendId.SUBPROCESS,
+            surface_mode=ProcessSurfaceMode.NATIVE_INHERIT,
+            captures_output_to_artifact=False,
+            platform_family="portable",
+        ),
+    )
 
 
 def run_primary_process_with_capture(
@@ -264,6 +314,7 @@ def _execute_primary_process(
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
     command: tuple[str, ...],
+    harness_contract: HarnessContract,
     managed: Any,
     runtime_root: Path,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
@@ -272,7 +323,7 @@ def _execute_primary_process(
 ) -> tuple[int, str | None]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
 
-    use_managed_backend = harness_id in {HarnessId.CODEX, HarnessId.OPENCODE}
+    use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
         try:
             exit_code, managed_session_id = _execute_via_managed_attach(
@@ -289,9 +340,7 @@ def _execute_primary_process(
             )
             return exit_code, managed_session_id
         except PrimaryAttachError as exc:
-            # Codex primary must use managed backend; fail loudly on startup error.
-            # OpenCode can fall back to black-box subprocess for compatibility.
-            if harness_id == HarnessId.CODEX:
+            if harness_contract.bootstrap.primary_attach_failure_policy == "raise":
                 raise
             logger.warning(
                 "Managed backend failed, falling back to black-box TUI: %s",
@@ -300,7 +349,7 @@ def _execute_primary_process(
             _cleanup_managed_primary_sidecars(log_dir)
             use_managed_backend = False
 
-    if harness_id == HarnessId.CLAUDE or not use_managed_backend:
+    if not use_managed_backend:
         output_log_path = (
             log_dir / OUTPUT_FILENAME
             if _should_capture_blackbox_output(
@@ -333,46 +382,50 @@ def _finalize_lifecycle_and_observe_session(
     harness_adapter: Any,
     artifacts: LocalStore,
     project_root: Path,
+    model_id: str | None,
     runtime_root: Path,
     primary_started: float,
     primary_started_epoch: float,
     primary_started_local_iso: str | None,
     managed: Any,
-    lifecycle_service: Any,
+    spawn_service: SpawnApplicationService,
 ) -> tuple[int, str]:
     """Finalize lifecycle state and persist best-effort observed session ids."""
 
-    durable_report = False
-    terminated_after_completion = False
+    resolved_exit_code = exit_code
     if primary_spawn_id is not None:
-        report_path = resolve_spawn_log_dir(project_root, primary_spawn_id) / "report.md"
+        log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id)
+        report_path = log_dir / "report.md"
         try:
             report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else None
         except OSError:
             report_text = None
-        durable_report = has_durable_report_completion(report_text)
-        terminated_after_completion = durable_report and exit_code in (143, -15)
-    status, resolved_exit_code, _failure_reason = resolve_execution_terminal_state(
-        exit_code=exit_code,
-        failure_reason=None,
-        cancelled=False,
-        durable_report_completion=durable_report,
-        terminated_after_completion=terminated_after_completion,
-    )
-    if primary_spawn_id is not None:
         duration = max(0.0, time.monotonic() - primary_started) if primary_started > 0.0 else None
-        outcome = asyncio.run(
-            SpawnApplicationService(
-                runtime_root,
-                lifecycle_service,
-            ).complete_spawn(
+        durable_report_completion = has_durable_report_completion(report_text)
+        usage = _extract_primary_usage(
+            harness_adapter=harness_adapter,
+            primary_spawn_id=primary_spawn_id,
+            project_root=project_root,
+            model_id=model_id,
+            log_dir=log_dir,
+        )
+        execution_outcome = asyncio.run(
+            spawn_service.complete_execution(
                 primary_spawn_id,
-                status,
-                resolved_exit_code,
+                ExecutionTerminalFacts(
+                    exit_code=exit_code,
+                    durable_report_completion=durable_report_completion,
+                    terminated_after_completion=(
+                        durable_report_completion and exit_code in (143, -15)
+                    ),
+                ),
                 origin="launcher",
                 duration_secs=duration,
+                usage=usage,
             )
         )
+        resolved_exit_code = execution_outcome.resolved.exit_code
+        outcome = execution_outcome.completion
         if not outcome.wrote:
             logger.info(
                 "Launcher finalize skipped; spawn already terminal or missing: %s",
@@ -392,8 +445,7 @@ def _finalize_lifecycle_and_observe_session(
         if (
             observed_harness_session_id is not None
             and observed_harness_session_id.strip()
-            and observed_harness_session_id.strip()
-            != initial_persisted_harness_session_id.strip()
+            and observed_harness_session_id.strip() != initial_persisted_harness_session_id.strip()
         ):
             if not initial_persisted_harness_session_id.strip():
                 logger.debug(
@@ -422,26 +474,96 @@ def _finalize_lifecycle_and_observe_session(
     return resolved_exit_code, resolved_harness_session_id
 
 
+def _extract_primary_usage(
+    *,
+    harness_adapter: Any,
+    primary_spawn_id: SpawnId,
+    project_root: Path,
+    model_id: str | None,
+    log_dir: Path,
+) -> TokenUsage | None:
+    """Best-effort usage extraction for primary-session finalization."""
+
+    try:
+        usage_artifacts = InMemoryStore()
+        for filename in (HISTORY_FILENAME, OUTPUT_FILENAME):
+            source = log_dir / filename
+            if not source.is_file():
+                continue
+            try:
+                usage_artifacts.put(
+                    make_artifact_key(primary_spawn_id, filename),
+                    source.read_bytes(),
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to mirror primary artifact for usage extraction",
+                    exc_info=True,
+                )
+        raw_usage = harness_adapter.extract_usage(usage_artifacts, primary_spawn_id)
+        usage = estimate_usage_cost(
+            model_id=(model_id or "").strip() or None,
+            usage=raw_usage,
+            project_root=project_root,
+        )
+        if all(
+            value is None
+            for value in (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.reasoning_tokens,
+                usage.total_cost_usd,
+            )
+        ):
+            return None
+        return usage
+    except Exception:
+        logger.debug("Best-effort primary usage extraction failed", exc_info=True)
+        return None
+
+
 def _create_managed_primary_connection(
     *,
-    harness_id: HarnessId,
     connection_factory: Callable[..., HarnessConnection[Any]],
+    harness_contract: HarnessContract,
+    spawn_dir: Path,
 ) -> HarnessConnection[Any]:
-    """Build one managed-primary connection with harness-specific request policy."""
-
-    if harness_id != HarnessId.CODEX:
-        return connection_factory()
+    """Build one managed-primary connection configured from harness contract data."""
 
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
-    async def _event_sink(event: HarnessEvent) -> None:
-        connection = connection_ref["connection"]
-        await cast("Any", connection)._event_queue.put(event)
+    policy = harness_contract.approval.primary_session_runtime_request_policy
+    event_surface = harness_contract.approval.primary_session_runtime_event_surface
 
-    connection = connection_factory(
-        request_handler=InteractiveHandler(event_sink=_event_sink)
-    )
+    connection = connection_factory()
     connection_ref["connection"] = connection
+    if policy is PrimaryRuntimeRequestPolicy.SURFACE_EVENTS:
+        if event_surface is not PrimaryRuntimeEventSurface.CONNECTION_EVENT_STREAM:
+            raise PrimaryAttachError(
+                "Managed primary runtime request surfacing requires connection event stream"
+            )
+
+        async def _event_sink(event: HarnessEvent) -> None:
+            await connection_ref["connection"].inject_runtime_event(event)
+
+        request_handler = None
+        if connection.harness_id is HarnessId.CODEX:
+            request_handler = PermissionBroker(
+                spawn_dir=spawn_dir,
+                event_sink=_event_sink,
+                auto_reject_runtime_requests=False,
+            )
+
+        connection.configure_primary_runtime_requests(
+            policy=policy,
+            event_sink=_event_sink,
+            request_handler=request_handler,
+        )
+        return connection
+
+    connection.configure_primary_runtime_requests(policy=policy)
     return connection
 
 
@@ -460,13 +582,15 @@ async def _run_primary_attach(
 
     try:
         passthrough = get_passthrough(harness_id)
+        harness_contract = get_harness_bundle(harness_id).adapter.contract
         connection_factory = cast(
             "Callable[..., HarnessConnection[Any]]",
             get_connection_class(harness_id),
         )
         connection = _create_managed_primary_connection(
-            harness_id=harness_id,
             connection_factory=connection_factory,
+            harness_contract=harness_contract,
+            spawn_dir=spawn_dir,
         )
         config = passthrough.build_config(
             spawn_id=spawn_id,
@@ -548,12 +672,12 @@ def run_harness_process(
     execution_cwd = launch_context.execution_cwd
     runtime_root = launch_context.runtime_root
     preview_context = launch_context
-    command = preview_context.argv
+    command = preview_context.binding.argv
     spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
-    resolved_harness_session_id = preview_context.seed_harness_session_id or ""
+    resolved_harness_session_id = preview_context.binding.effective_harness_session_id or ""
     initial_persisted_harness_session_id = resolved_harness_session_id
     session_scope_harness_session_id = resolved_harness_session_id
     if session_mode == SessionMode.FORK:
@@ -567,11 +691,10 @@ def run_harness_process(
     primary_started = 0.0
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
-    isolated_config_root: Path | None = None
-    effective_config_root: Path | None = None
-    claude_materialization_root: Path | None = None
+    prelaunch_state = HarnessPrelaunchState()
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
-    lifecycle_service = create_lifecycle_service(project_root, runtime_root)
+    spawn_service = build_spawn_application_service_from_roots(project_root, runtime_root)
+    lifecycle_service = spawn_service.lifecycle
 
     resume_chat_id = (
         preview_request.session.continue_chat_id if session_mode == SessionMode.RESUME else None
@@ -580,15 +703,10 @@ def run_harness_process(
     try:
         with session_scope(
             runtime_root=runtime_root,
-            harness=session_metadata.harness,
+            metadata=session_metadata,
+            request=preview_request.session,
             harness_session_id=session_scope_harness_session_id,
-            model=session_metadata.model,
             chat_id=resume_chat_id,
-            forked_from_chat_id=preview_request.session.forked_from_chat_id,
-            agent=session_metadata.agent,
-            agent_path=session_metadata.agent_path,
-            skills=session_metadata.skills,
-            skill_paths=session_metadata.skill_paths,
             execution_cwd=str(execution_cwd),
             kind="primary",
             _start_session=start_session_fn,
@@ -607,18 +725,14 @@ def run_harness_process(
             try:
                 should_fork = (
                     session_mode == SessionMode.FORK
-                    and harness_id == HarnessId.CODEX
+                    and harness_adapter.contract.bootstrap.fork_materialization
+                    is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
                     and bool((preview_request.session.requested_harness_session_id or "").strip())
                 )
                 primary_spawn_id = SpawnId(
                     lifecycle_service.start(
                         chat_id=chat_id,
-                        model=session_metadata.model,
-                        agent=session_metadata.agent,
-                        agent_path=session_metadata.agent_path or None,
-                        skills=session_metadata.skills,
-                        skill_paths=session_metadata.skill_paths,
-                        harness=session_metadata.harness,
+                        session_metadata=session_metadata,
                         kind="primary",
                         prompt=preview_request.prompt,
                         harness_session_id=None if should_fork else resolved_harness_session_id,
@@ -657,7 +771,7 @@ def run_harness_process(
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                preview_seed_args = preview_context.seed_harness_session_args
+                preview_seed_args = preview_context.binding.seed_harness_session_args
                 runtime_request = spawn_request.model_copy(
                     update={
                         "extra_args": (*spawn_request.extra_args, *preview_seed_args),
@@ -674,9 +788,9 @@ def run_harness_process(
                     }
                 )
                 plan_overrides: dict[str, str] = {}
-                if runtime_request.autocompact is not None:
+                if runtime_request.execution_policy.autocompact is not None:
                     plan_overrides["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(
-                        runtime_request.autocompact
+                        runtime_request.execution_policy.autocompact
                     )
                 if prepared is not None:
                     runtime_context = bind_launch_context(
@@ -709,10 +823,20 @@ def run_harness_process(
                     launch_context=runtime_context,
                     surface="primary",
                 )
-                command = runtime_context.argv
-                resolved_harness_session_id = runtime_context.seed_harness_session_id or ""
-                if harness_id == HarnessId.CLAUDE and not resolved_harness_session_id:
-                    generated_session_id = extract_session_id_from_args(command)
+                command = runtime_context.binding.argv
+                resolved_harness_session_id = (
+                    runtime_context.binding.effective_harness_session_id or ""
+                )
+                child_env = dict(runtime_context.binding.environment.final_env)
+                if managed.chat_id:
+                    child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
+                child_cwd = runtime_context.binding.child_cwd
+                launch_spec = runtime_context.binding.spec
+                if not resolved_harness_session_id:
+                    generated_session_id = harness_adapter.derive_primary_seeded_session_id(
+                        spec=launch_spec,
+                        command=command,
+                    )
                     if generated_session_id:
                         resolved_harness_session_id = generated_session_id
                         initial_persisted_harness_session_id = generated_session_id
@@ -723,60 +847,31 @@ def run_harness_process(
                             harness_session_id=generated_session_id,
                         )
                         lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
-                child_env = dict(runtime_context.env)
-                if managed.chat_id:
-                    child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
-                child_cwd = runtime_context.child_cwd
-                launch_spec = runtime_context.spec
 
-                if harness_id == HarnessId.CLAUDE:
-                    isolated_config_root, original_claude_config_dir = (
-                        prepare_isolated_claude_config(
-                            runtime_root=runtime_root,
-                            spawn_id=str(primary_spawn_id),
-                        )
+                def _record_effective_config_dir(config_dir: str) -> None:
+                    spawn_store.update_spawn(
+                        runtime_root,
+                        primary_spawn_id,
+                        claude_config_dir=config_dir,
                     )
-                    child_env[MERIDIAN_ORIGINAL_CLAUDE_CONFIG_DIR_ENV] = (
-                        original_claude_config_dir
-                    )
-                    overlay_roots = resolve_claude_overlay_roots(
-                        isolated_config_root=isolated_config_root,
-                        original_config_env=original_claude_config_dir,
-                    )
-                    effective_config_root = overlay_roots.effective_config_root
-                    claude_materialization_root = overlay_roots.materialization_root
-                    effective_config_dir = str(effective_config_root)
-
-                    if effective_config_dir:
-                        child_env["CLAUDE_CONFIG_DIR"] = effective_config_dir
-                        spawn_store.update_spawn(
+                    if managed.chat_id:
+                        update_session_claude_config_dir(
                             runtime_root,
-                            primary_spawn_id,
-                            claude_config_dir=effective_config_dir,
+                            managed.chat_id,
+                            claude_config_dir=config_dir,
                         )
-                        if managed.chat_id:
-                            update_session_claude_config_dir(
-                                runtime_root,
-                                managed.chat_id,
-                                claude_config_dir=effective_config_dir,
-                            )
 
-                if harness_adapter.id == HarnessId.CLAUDE and resolved_harness_session_id:
-                    session_access = resolve_claude_session_access_source(
-                        preview_request.session,
-                        child_cwd=child_cwd,
-                        materialization_root=claude_materialization_root,
-                        target_config_root=effective_config_root,
-                    )
-                    if session_access.should_seed:
-                        ensure_claude_session_accessible(
-                            source_session_id=session_access.source_session_id
-                            or resolved_harness_session_id,
-                            source_cwd=session_access.source_cwd,
-                            child_cwd=child_cwd,
-                            source_config_root=session_access.source_config_root,
-                            target_config_root=session_access.target_config_root,
-                        )
+                prelaunch_state = harness_adapter.prepare_prelaunch(
+                    runtime_root=runtime_root,
+                    spawn_id=primary_spawn_id,
+                    session=preview_request.session,
+                    child_cwd=child_cwd,
+                    child_env=child_env,
+                    resolved_harness_session_id=resolved_harness_session_id,
+                    record_effective_config_dir=_record_effective_config_dir,
+                )
+                if prelaunch_state.env_overrides:
+                    child_env.update(prelaunch_state.env_overrides)
 
                 def _record_primary_started(child_pid: int) -> None:
                     lifecycle_service.mark_running(
@@ -796,6 +891,7 @@ def run_harness_process(
                     child_env=child_env,
                     launch_spec=launch_spec,
                     command=command,
+                    harness_contract=harness_adapter.contract,
                     managed=managed,
                     runtime_root=runtime_root,
                     run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
@@ -826,37 +922,25 @@ def run_harness_process(
                     harness_adapter=harness_adapter,
                     artifacts=artifacts,
                     project_root=project_root,
+                    model_id=session_metadata.model,
                     runtime_root=runtime_root,
                     primary_started=primary_started,
                     primary_started_epoch=primary_started_epoch,
                     primary_started_local_iso=primary_started_local_iso,
                     managed=managed,
-                    lifecycle_service=lifecycle_service,
+                    spawn_service=spawn_service,
                 )
-                cleanup_result = cleanup_claude_overlay(
-                    isolated_config_root,
-                    canonical_root=claude_materialization_root,
-                )
-                if (
-                    primary_spawn_id is not None
-                    and cleanup_result.removed
-                    and cleanup_result.materialized
-                ):
+                if primary_spawn_id is not None:
                     try:
-                        persist_durable_claude_config_metadata(
+                        harness_adapter.cleanup_prelaunch(
                             runtime_root=runtime_root,
                             spawn_id=primary_spawn_id,
                             chat_id=managed.chat_id,
-                            materialization_root=cleanup_result.materialization_root,
-                            update_spawn=spawn_store.update_spawn,
-                            update_session_claude_config_dir=update_session_claude_config_dir,
+                            state=prelaunch_state,
                         )
                     except Exception:
                         logger.warning(
-                            (
-                                "Failed to persist post-cleanup Claude config metadata "
-                                "for primary spawn"
-                            ),
+                            "Failed to clean up adapter prelaunch state for primary spawn",
                             exc_info=True,
                         )
     except FileNotFoundError:
@@ -880,5 +964,6 @@ __all__ = [
     "run_harness_process",
     "run_primary_attach",
     "run_primary_process_with_capture",
+    "select_process_backend",
     "select_process_launcher",
 ]

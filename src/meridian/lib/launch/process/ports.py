@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
@@ -17,6 +18,40 @@ class LaunchedProcess:
 
 
 ChildStartedHook = Callable[[int], None]
+
+
+class ProcessBackendId(StrEnum):
+    """Named launch backends used for local harness process execution."""
+
+    PTY = "pty"
+    SUBPROCESS = "subprocess"
+    WINDOWS_CONSOLE = "windows_console"
+
+
+class ProcessSurfaceMode(StrEnum):
+    """How the local launcher surfaces child terminal IO."""
+
+    PTY_MEDIATED = "pty_mediated"
+    PIPE_CAPTURE = "pipe_capture"
+    NATIVE_INHERIT = "native_inherit"
+
+
+@dataclass(frozen=True)
+class ProcessPlatformContract:
+    """Explicit process/platform contract for one launcher backend."""
+
+    backend_id: ProcessBackendId
+    surface_mode: ProcessSurfaceMode
+    captures_output_to_artifact: bool
+    platform_family: str
+
+
+@dataclass(frozen=True)
+class SelectedProcessLauncher:
+    """Launcher instance paired with its explicit process/platform contract."""
+
+    launcher: ProcessLauncher
+    contract: ProcessPlatformContract
 
 
 class ProcessLauncher(Protocol):
@@ -39,6 +74,10 @@ ProcessLauncherSelector = Callable[[Path | None], ProcessLauncher]
 __all__ = [
     "ChildStartedHook",
     "LaunchedProcess",
+    "ProcessBackendId",
     "ProcessLauncher",
     "ProcessLauncherSelector",
+    "ProcessPlatformContract",
+    "ProcessSurfaceMode",
+    "SelectedProcessLauncher",
 ]

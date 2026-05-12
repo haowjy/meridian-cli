@@ -55,7 +55,7 @@ def test_absorb_attempt_preserves_prior_watchdog_completion() -> None:
     assert conclusion.final_attempt_terminal_observed is True
 
 
-def test_resolve_terminal_state_treats_durable_report_watchdog_as_success() -> None:
+def test_terminal_facts_treat_durable_report_watchdog_as_success() -> None:
     conclusion = StreamingRunConclusion(
         exit_code=1,
         failure_reason="report_watchdog",
@@ -63,17 +63,21 @@ def test_resolve_terminal_state_treats_durable_report_watchdog_as_success() -> N
         terminated_after_completion=True,
     )
 
-    assert conclusion.resolve_terminal_state(received_signal=None) == ("succeeded", 0, None)
+    facts = conclusion.terminal_facts(received_signal=None)
+    assert facts.exit_code == 1
+    assert facts.failure_reason == "report_watchdog"
+    assert facts.durable_report_completion is True
+    assert facts.terminated_after_completion is True
+    assert facts.cancellation_observed is False
 
 
-def test_resolve_terminal_state_treats_signal_without_terminal_as_cancelled() -> None:
+def test_terminal_facts_treat_signal_without_terminal_as_cancelled() -> None:
     conclusion = StreamingRunConclusion(exit_code=0, failure_reason=None)
 
-    assert conclusion.resolve_terminal_state(received_signal=signal.SIGINT) == (
-        "cancelled",
-        130,
-        None,
-    )
+    facts = conclusion.terminal_facts(received_signal=signal.SIGINT)
+    assert facts.exit_code == 0
+    assert facts.failure_reason is None
+    assert facts.cancellation_observed is True
 
 
 def test_retry_count_tracks_attempts() -> None:

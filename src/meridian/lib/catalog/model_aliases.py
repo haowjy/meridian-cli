@@ -37,6 +37,7 @@ class AliasEntry(BaseModel):
     description: str | None = Field(default=None, exclude=True)
     default_effort: str | None = Field(default=None, exclude=True)
     default_autocompact: int | None = Field(default=None, exclude=True)
+    default_autocompact_pct: int | None = Field(default=None, exclude=True)
 
     @property
     def harness(self) -> HarnessId:
@@ -68,6 +69,7 @@ def entry(
     description: str | None = None,
     default_effort: str | None = None,
     default_autocompact: int | None = None,
+    default_autocompact_pct: int | None = None,
 ) -> AliasEntry:
     resolved_harness: HarnessId | None = None
     if harness:
@@ -80,6 +82,7 @@ def entry(
         description=description,
         default_effort=default_effort,
         default_autocompact=default_autocompact,
+        default_autocompact_pct=default_autocompact_pct,
     )
 
 
@@ -206,6 +209,7 @@ class MarsResultCache:
 # ---------------------------------------------------------------------------
 # Mars integration
 # ---------------------------------------------------------------------------
+
 
 def _resolve_mars_binary() -> str | None:
     """Find the mars binary, preferring the one from the same install environment."""
@@ -481,19 +485,23 @@ def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEn
         description = item.get("description")
         default_effort = item.get("default_effort")
         default_autocompact = item.get("autocompact")
+        default_autocompact_pct = item.get("autocompact_pct")
 
         # Skip aliases that didn't resolve to a concrete model ID
         if not isinstance(resolved_model, str) or not resolved_model.strip():
             continue
 
-        entries.append(entry(
-            alias=name.strip(),
-            model_id=resolved_model.strip(),
-            harness=str(harness) if isinstance(harness, str) else None,
-            description=str(description) if isinstance(description, str) else None,
-            default_effort=_coerce_optional_string(default_effort),
-            default_autocompact=_coerce_optional_int(default_autocompact),
-        ))
+        entries.append(
+            entry(
+                alias=name.strip(),
+                model_id=resolved_model.strip(),
+                harness=str(harness) if isinstance(harness, str) else None,
+                description=str(description) if isinstance(description, str) else None,
+                default_effort=_coerce_optional_string(default_effort),
+                default_autocompact=_coerce_optional_int(default_autocompact),
+                default_autocompact_pct=_coerce_optional_int(default_autocompact_pct),
+            )
+        )
 
     return entries
 
@@ -518,14 +526,18 @@ def _mars_merged_to_entries(merged: dict[str, object]) -> list[AliasEntry]:
             description = typed_data.get("description")
             default_effort = typed_data.get("default_effort")
             default_autocompact = typed_data.get("autocompact")
-            entries.append(entry(
-                alias=alias_name,
-                model_id=model_id.strip(),
-                harness=str(harness) if isinstance(harness, str) else None,
-                description=str(description) if isinstance(description, str) else None,
-                default_effort=_coerce_optional_string(default_effort),
-                default_autocompact=_coerce_optional_int(default_autocompact),
-            ))
+            default_autocompact_pct = typed_data.get("autocompact_pct")
+            entries.append(
+                entry(
+                    alias=alias_name,
+                    model_id=model_id.strip(),
+                    harness=str(harness) if isinstance(harness, str) else None,
+                    description=str(description) if isinstance(description, str) else None,
+                    default_effort=_coerce_optional_string(default_effort),
+                    default_autocompact=_coerce_optional_int(default_autocompact),
+                    default_autocompact_pct=_coerce_optional_int(default_autocompact_pct),
+                )
+            )
         # Auto-resolve aliases without the cache can't be resolved here
         # — they need mars models list which runs auto-resolve against the cache
 

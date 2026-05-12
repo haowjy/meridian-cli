@@ -12,9 +12,12 @@ from cyclopts import App, Parameter
 
 from meridian.cli.app_tree import ext_app
 from meridian.cli.output import OutputFormat
+from meridian.cli.utils import require_established_project_root
+from meridian.lib.bootstrap.services import build_extension_entrypoint, prepare_for_runtime_read
 from meridian.lib.extensions.context import (
     ExtensionCommandServices,
     ExtensionInvocationContextBuilder,
+    build_extension_command_services,
 )
 from meridian.lib.extensions.dispatcher import ExtensionCommandDispatcher
 from meridian.lib.extensions.registry import build_first_party_registry, compute_manifest_hash
@@ -33,6 +36,20 @@ EXIT_SERVER_STALE = 3
 EXIT_SERVER_WRONG_PROJECT = 4
 EXIT_SERVER_UNREACHABLE = 5
 EXIT_ARGS_ERROR = 7
+
+
+def _prepare_extension_runtime_read() -> tuple[
+    object,
+    ExtensionCommandServices,
+    ExtensionInvocationContextBuilder,
+]:
+    prepared = prepare_for_runtime_read(require_established_project_root())
+    application = build_extension_entrypoint(prepared)
+    services = build_extension_command_services(application=application)
+    context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.CLI).with_authority(
+        prepared.authority
+    )
+    return prepared, services, context_builder
 
 
 def _print_run_error(
@@ -106,8 +123,7 @@ def ext_list(
         extensions.setdefault(spec.extension_id, []).append(spec.command_id)
 
     sorted_extensions: dict[str, list[str]] = {
-        ext_id: sorted(command_ids)
-        for ext_id, command_ids in sorted(extensions.items())
+        ext_id: sorted(command_ids) for ext_id, command_ids in sorted(extensions.items())
     }
 
     json_payload = {
@@ -303,7 +319,7 @@ def ext_run(
 
     if not spec.requires_app_server:
         dispatcher = ExtensionCommandDispatcher(registry)
-        context_builder = ExtensionInvocationContextBuilder(ExtensionSurface.CLI)
+        _, services, context_builder = _prepare_extension_runtime_read()
         if request_id is not None:
             context_builder = context_builder.with_request_id(request_id)
         if work_id is not None:
@@ -315,7 +331,7 @@ def ext_run(
                 fqid=fqid,
                 args=parsed_args,
                 context=context_builder.build(),
-                services=ExtensionCommandServices(),
+                services=services,
             )
         )
         if isinstance(result, ExtensionErrorResult):

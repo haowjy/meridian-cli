@@ -84,6 +84,12 @@ from meridian.lib.ops.session_log import (
     session_log,
     session_log_sync,
 )
+from meridian.lib.ops.session_repair import (
+    SessionRepairInput,
+    SessionRepairOutput,
+    repair_session_reference_sync,
+    session_repair,
+)
 from meridian.lib.ops.session_search import (
     SessionSearchInput,
     SessionSearchOutput,
@@ -176,12 +182,8 @@ from meridian.lib.ops.work_lifecycle import (
 from meridian.lib.ops.workspace import (
     WorkspaceInitInput,
     WorkspaceInitOutput,
-    WorkspaceMigrateInput,
-    WorkspaceMigrateOutput,
     workspace_init,
     workspace_init_sync,
-    workspace_migrate,
-    workspace_migrate_sync,
 )
 
 _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
@@ -260,19 +262,6 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=WorkspaceInitOutput,
         cli_group="workspace",
         cli_name="init",
-        agent_default_format="text",
-        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
-    ),
-    ExtensionCommandSpec.from_op(
-        extension_id="meridian.workspace",
-        command_id="migrate",
-        summary="Migrate legacy workspace.local.toml roots into meridian.local.toml.",
-        handler=workspace_migrate,
-        sync_handler=workspace_migrate_sync,
-        input_type=WorkspaceMigrateInput,
-        output_type=WorkspaceMigrateOutput,
-        cli_group="workspace",
-        cli_name="migrate",
         agent_default_format="text",
         surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
     ),
@@ -380,8 +369,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         extension_id="meridian.session",
         command_id="log",
         summary=(
-            "Show readable conversation/progress messages for a chat, spawn, "
-            "or harness session."
+            "Show readable conversation/progress messages for a chat, spawn, or harness session."
         ),
         handler=session_log,
         sync_handler=session_log_sync,
@@ -415,6 +403,19 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         output_type=SessionSearchOutput,
         cli_group="session",
         cli_name="search",
+        agent_default_format="text",
+        surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.session",
+        command_id="repair",
+        summary="Repair stored session metadata with an explicitly detected harness session id.",
+        handler=session_repair,
+        sync_handler=repair_session_reference_sync,
+        input_type=SessionRepairInput,
+        output_type=SessionRepairOutput,
+        cli_group="session",
+        cli_name="repair",
         agent_default_format="text",
         surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
     ),
@@ -607,7 +608,7 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         extension_id="meridian.work",
         command_id="list",
         summary=(
-            'List work items. Use --done / --no-done to control whether'
+            "List work items. Use --done / --no-done to control whether"
             ' items with status "done" are shown.'
         ),
         handler=work_list,
@@ -742,7 +743,6 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         surfaces=frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP}),
     ),
 )
-
 
 
 def get_all_op_specs() -> list[ExtensionCommandSpec]:

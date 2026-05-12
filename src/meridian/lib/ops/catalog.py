@@ -13,7 +13,7 @@ from meridian.lib.catalog.model_policy import (
     is_default_visible_model,
 )
 from meridian.lib.catalog.models import AliasEntry
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync
@@ -129,14 +129,16 @@ class ModelsListOutput(BaseModel):
         header = ["MODEL", "HARNESS", "ALIAS", "PROVIDER", "COST", "RELEASED"]
         rows: list[list[str]] = []
         for model in self.models:
-            rows.append([
-                str(model.model_id),
-                _display_harness(model.harness),
-                ",".join(alias.alias for alias in model.aliases),
-                model.provider or "",
-                model.cost_tier or "",
-                model.release_date or "",
-            ])
+            rows.append(
+                [
+                    str(model.model_id),
+                    _display_harness(model.harness),
+                    ",".join(alias.alias for alias in model.aliases),
+                    model.provider or "",
+                    model.cost_tier or "",
+                    model.release_date or "",
+                ]
+            )
         required_indices = {0, 1}
         keep_indices = [
             index
@@ -166,7 +168,7 @@ class ModelsListOutput(BaseModel):
 
 def _project_root(project_root: str | None) -> Path | None:
     explicit = Path(project_root).expanduser().resolve() if project_root is not None else None
-    return resolve_project_root(explicit)
+    return resolve_project_root_resolution(explicit).project_root
 
 
 def _format_float(value: float | None) -> str | None:
@@ -370,16 +372,16 @@ def models_list_sync(payload: ModelsListInput) -> ModelsListOutput:
     all_model_ids = {str(model.model_id) for model in catalog_models}
     effective_visibility = DEFAULT_MODEL_VISIBILITY
     if payload.show_superseded:
-        effective_visibility = effective_visibility.model_copy(
-            update={"hide_superseded": False}
-        )
+        effective_visibility = effective_visibility.model_copy(update={"hide_superseded": False})
 
     superseded: frozenset[str] = frozenset()
     if effective_visibility.hide_superseded:
-        superseded = compute_superseded_ids([
-            (str(model.model_id), model.provider or "", model.release_date)
-            for model in catalog_models
-        ])
+        superseded = compute_superseded_ids(
+            [
+                (str(model.model_id), model.provider or "", model.release_date)
+                for model in catalog_models
+            ]
+        )
 
     visible_models = [
         model

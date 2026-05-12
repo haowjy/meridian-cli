@@ -10,29 +10,52 @@ from uuid import uuid4
 
 from meridian.lib.core.conversation import Conversation, ConversationTurn, ToolCall
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
+    ApprovalContract,
     ArtifactStore,
     BaseHarnessAdapter,
+    BootstrapContract,
+    BootstrapMode,
+    ExtractionContract,
+    ForkMaterializationMode,
     HarnessCapabilities,
+    HarnessContract,
+    HarnessPrelaunchState,
     McpConfig,
     PermissionResolver,
+    PrelaunchBootstrapMode,
+    ProjectionContract,
+    ProjectionMode,
+    RecordConfigDirFn,
     RunPromptPolicy,
+    SessionSeedMode,
     SpawnParams,
+    TransportContract,
 )
-from meridian.lib.harness.bundle import HarnessBundle, register_harness_bundle
-from meridian.lib.harness.claude_preflight import build_claude_preflight_result
-from meridian.lib.harness.claude_utils import has_session_identity_in_args
+from meridian.lib.harness.bundle import (
+    HarnessBundle,
+    HarnessProjectionPorts,
+    project_subprocess_spec,
+    register_harness_bundle,
+)
+from meridian.lib.harness.claude_preflight import (
+    build_claude_preflight_result,
+    ensure_claude_session_accessible,
+)
+from meridian.lib.harness.claude_utils import (
+    extract_session_id_from_args,
+    has_session_identity_in_args,
+)
 from meridian.lib.harness.common import (
     extract_claude_report,
     extract_session_id_from_artifacts_with_patterns,
 )
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.extractors.claude import CLAUDE_EXTRACTOR
-from meridian.lib.harness.ids import HarnessId, TransportId
-from meridian.lib.harness.launch_spec import ClaudeLaunchSpec
 from meridian.lib.harness.launch_types import SessionSeed
 from meridian.lib.harness.projections.project_claude import project_claude_spec_to_cli_args
+from meridian.lib.launch.claude_session_access import resolve_claude_session_access_source
 from meridian.lib.launch.composition import (
     ComposedLaunchContent,
     ProjectedContent,
@@ -47,7 +70,12 @@ from meridian.lib.launch.constants import (
     OUTPUT_FILENAME,
     PRIMARY_BASE_COMMAND_CLAUDE,
 )
-from meridian.lib.launch.launch_types import PreflightResult
+from meridian.lib.launch.launch_types import (
+    PreflightResult,
+    ResolvedLaunchSpec,
+    TerminalSurfaceMode,
+)
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.platform import get_home_path
 from meridian.lib.safety.permissions import PermissionConfig
 
@@ -82,7 +110,7 @@ def project_slug(project_root: Path) -> str:
 def _claude_config_root() -> Path:
     configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
     if configured_root:
-        return Path(configured_root).expanduser()
+        return Path(configured_root).expanduser().resolve()
     return get_home_path() / ".claude"
 
 
@@ -215,7 +243,7 @@ def _tool_call_from_payload(payload: dict[str, object]) -> ToolCall | None:
     return ToolCall(tool_name=tool_name, input=tool_input, output=output_text)
 
 
-class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
+class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """SubprocessHarness implementation for `claude`."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_CLAUDE_SUBPROCESS
@@ -239,11 +267,46 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             "user_turn_content",
         }
     )
-    _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset({"report_output_path"})
+    _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {"report_output_path", "context_from_payload", "reference_items"}
+    )
 
     @property
     def id(self) -> HarnessId:
         return HarnessId.CLAUDE
+
+    @property
+    def contract(self) -> HarnessContract:
+        return HarnessContract(
+            capabilities=self.capabilities,
+            transport=TransportContract(
+                transport_ids=(TransportId.STREAMING,),
+                observer_controller_required=False,
+            ),
+            projection=ProjectionContract(
+                launch_spec_cls="ResolvedLaunchSpec",
+                mode=ProjectionMode.PROMPT_FILE_APPEND_SYSTEM,
+            ),
+            extraction=ExtractionContract(
+                session_observation_order=(
+                    "artifacts",
+                    "current_session",
+                    "primary_detection",
+                )
+            ),
+            approval=ApprovalContract(),
+            bootstrap=BootstrapContract(
+                mode=BootstrapMode.SUBPROCESS_ONLY,
+                fork_materialization=ForkMaterializationMode.NATIVE_CONTINUE_FORK,
+                primary_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
+                streaming_session_seed_mode=SessionSeedMode.PROJECTED_ARGS,
+                prelaunch_bootstrap_mode=PrelaunchBootstrapMode.ENV_OVERLAY_AND_SESSION_ACCESS,
+            ),
+            capability_limits=(
+                "terminal_surface_mode limited to pty_mediated",
+                "no observer/controller backend contract",
+            ),
+        )
 
     @property
     def consumed_fields(self) -> frozenset[str]:
@@ -264,6 +327,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             supports_native_agents=True,
             supports_primary_launch=True,
             supports_native_file_injection=False,
+            terminal_surface_modes=(TerminalSurfaceMode.PTY_MEDIATED,),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def run_prompt_policy(self) -> RunPromptPolicy:
@@ -272,7 +337,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
     def build_adhoc_agent_payload(self, *, name: str, description: str, prompt: str) -> str:
         return build_claude_adhoc_agent_json(name=name, description=description, prompt=prompt)
 
-    def resolve_launch_spec(self, run: SpawnParams, perms: PermissionResolver) -> ClaudeLaunchSpec:
+    def resolve_launch_spec(
+        self, run: SpawnParams, perms: PermissionResolver
+    ) -> ResolvedLaunchSpec:
         effort = run.effort
         normalized_effort = None
         if effort is not None:
@@ -285,11 +352,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             }.get(normalized_value, normalized_value)
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
         effective_extra_args = run.extra_args
-        if (
-            not run.interactive
-            and continue_session_id is None
-            and not has_session_identity_in_args(run.extra_args)
-        ):
+        if continue_session_id is None and not has_session_identity_in_args(run.extra_args):
             effective_extra_args = (*run.extra_args, "--session-id", str(uuid4()))
 
         # Prefer the spawn log directory (from report_output_path) for system-prompt.md.
@@ -305,7 +368,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             prompt_file_path = str(Path(run.project_root) / "system-prompt.md")
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
-        return ClaudeLaunchSpec(
+        return ResolvedLaunchSpec(
+            harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
             effort=normalized_effort,
             prompt=run.prompt,
@@ -338,10 +402,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
 
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
-        base_command = self.PRIMARY_BASE_COMMAND
-        if not spec.interactive:
-            base_command = (*self.BASE_COMMAND, "-")
-        return project_claude_spec_to_cli_args(spec, base_command=base_command)
+        base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
+        return project_subprocess_spec(self.id, spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         # MCP injection is off by default — agents use the CLI instead.
@@ -355,7 +417,73 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
     def blocked_child_env_vars(self) -> frozenset[str]:
         # Meridian manages nesting limits itself; suppress Claude's parent-session
         # sentinel so child Claude spawns can run under Meridian control.
-        return frozenset({"CLAUDECODE", "CLAUDE_CONFIG_DIR"})
+        return frozenset({"CLAUDECODE"})
+
+    def derive_primary_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+        command: tuple[str, ...],
+    ) -> str | None:
+        return extract_session_id_from_args(command)
+
+    def derive_streaming_seeded_session_id(
+        self,
+        *,
+        spec: ResolvedLaunchSpec,
+    ) -> str | None:
+        return extract_session_id_from_args(spec.extra_args)
+
+    def prepare_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        session: SessionRequest,
+        child_cwd: Path,
+        child_env: dict[str, str],
+        resolved_harness_session_id: str,
+        record_effective_config_dir: RecordConfigDirFn | None = None,
+    ) -> HarnessPrelaunchState:
+        _ = runtime_root, spawn_id, child_env
+
+        configured_root = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+        effective_config_root = (
+            Path(configured_root).expanduser().resolve() if configured_root else None
+        )
+        env_overrides: dict[str, str] = {}
+        if effective_config_root is not None:
+            effective_config_dir = str(effective_config_root)
+            env_overrides["CLAUDE_CONFIG_DIR"] = effective_config_dir
+            if record_effective_config_dir is not None:
+                record_effective_config_dir(effective_config_dir)
+
+        session_access = resolve_claude_session_access_source(
+            session,
+            child_cwd=child_cwd,
+            materialization_root=effective_config_root,
+            target_config_root=effective_config_root,
+        )
+        if session_access.should_seed:
+            ensure_claude_session_accessible(
+                source_session_id=session_access.source_session_id or resolved_harness_session_id,
+                source_cwd=session_access.source_cwd,
+                child_cwd=child_cwd,
+                source_config_root=session_access.source_config_root,
+                target_config_root=session_access.target_config_root,
+            )
+
+        return HarnessPrelaunchState(env_overrides=env_overrides)
+
+    def cleanup_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        chat_id: str | None,
+        state: HarnessPrelaunchState,
+    ) -> None:
+        _ = runtime_root, spawn_id, chat_id, state
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         return CLAUDE_EXTRACTOR.extract_usage(artifacts, spawn_id)
@@ -428,8 +556,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
         if passthrough_session_id:
             return SessionSeed(session_id=passthrough_session_id)
 
-        # Claude rejects --session-id for fresh interactive primary launches.
-        # Child/non-interactive runs still get explicit IDs via resolve_launch_spec().
+        # resolve_launch_spec() seeds --session-id for all launches (interactive
+        # and non-interactive).  No seed needed from the session-access layer.
         return SessionSeed()
 
     def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
@@ -447,15 +575,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ClaudeLaunchSpec]):
             content.prior_output,
         )
         user_turn = join_content_blocks(task_context, content.user_task_prompt)
-        
+
         return ProjectedContent(
             system_prompt=system_prompt,
             user_turn_content=user_turn,
             reference_routing=reference_routing,
             channels=ProjectionChannels(
-                system_instruction=(
-                    "append-system-prompt" if system_prompt.strip() else "none"
-                ),
+                system_instruction=("append-system-prompt" if system_prompt.strip() else "none"),
                 user_task_prompt="user-turn",
                 task_context="user-turn",
             ),
@@ -501,8 +627,11 @@ register_harness_bundle(
     HarnessBundle(
         harness_id=HarnessId.CLAUDE,
         adapter=ClaudeAdapter(),
-        spec_cls=ClaudeLaunchSpec,
+        spec_cls=ResolvedLaunchSpec,
         extractor=CLAUDE_EXTRACTOR,
         connections={TransportId.STREAMING: ClaudeConnection},
+        projections=HarnessProjectionPorts(
+            subprocess_cli_args=project_claude_spec_to_cli_args,
+        ),
     )
 )

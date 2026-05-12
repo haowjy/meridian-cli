@@ -122,10 +122,10 @@ def tail_events(
                 if size <= offset:
                     continue
                 try:
-                    with segment.open("r", encoding="utf-8") as file:
+                    with segment.open("rb") as file:
                         file.seek(offset)
-                        for line in file:
-                            line = line.strip()
+                        for raw_line in file:
+                            line = raw_line.decode("utf-8", errors="replace").strip()
                             if not line:
                                 continue
                             try:

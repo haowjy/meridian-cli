@@ -37,9 +37,7 @@ class ExtensionCommandDispatcher:
         observability_log: Path | None = None,
     ) -> None:
         self._registry = registry
-        self._obs_writer = (
-            ObservabilityWriter(observability_log) if observability_log else None
-        )
+        self._obs_writer = ObservabilityWriter(observability_log) if observability_log else None
 
     async def dispatch(
         self,

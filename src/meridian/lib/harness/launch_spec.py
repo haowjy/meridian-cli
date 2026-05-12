@@ -1,44 +1,14 @@
-"""Resolved launch spec models for harness adapters."""
+"""Harness launch spec — re-exports ResolvedLaunchSpec and enforcement utilities."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.bundle import HarnessBundle, get_bundle_registry
-from meridian.lib.harness.ids import HarnessId
-from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-
-
-class ClaudeLaunchSpec(ResolvedLaunchSpec):
-    """Claude-specific resolved launch spec."""
-
-    agent_name: str | None = None
-    agents_payload: str | None = None
-    appended_system_prompt: str | None = None
-    prompt_file_path: str | None = None
-    user_turn_content: str | None = None
-
-
-class CodexLaunchSpec(ResolvedLaunchSpec):
-    """Codex-specific resolved launch spec."""
-
-    report_output_path: str | None = None
-    base_instructions: str | None = None
-    developer_instructions: str | None = None
-    user_turn_content: str | None = None
-
-
-class OpenCodeLaunchSpec(ResolvedLaunchSpec):
-    """OpenCode-specific resolved launch spec."""
-
-    agent_name: str | None = None
-    appended_system_prompt: str | None = None
-    skills: tuple[str, ...] = ()
-    # Using Any for reference_items to avoid circular import with ReferenceItem.
-    # The actual type is tuple[ReferenceItem, ...] but we use Any at runtime.
-    reference_items: tuple[Any, ...] = ()
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec as ResolvedLaunchSpec
 
 
 def _enforce_spawn_params_accounting(
@@ -70,10 +40,6 @@ def _enforce_spawn_params_accounting(
 
 
 __all__ = [
-    "ClaudeLaunchSpec",
-    "CodexLaunchSpec",
-    "HarnessBundle",
-    "OpenCodeLaunchSpec",
     "ResolvedLaunchSpec",
     "_enforce_spawn_params_accounting",
 ]

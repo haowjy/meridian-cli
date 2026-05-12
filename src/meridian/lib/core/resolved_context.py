@@ -31,10 +31,6 @@ class ContextBackend(Protocol):
         """Resolve the scratch directory for a work item."""
         ...
 
-    def get_persisted_active_work_id(self, runtime_root: Path) -> str | None:
-        """Look up persisted active work ID outside session-scoped attachment."""
-        ...
-
 
 class LocalFilesystemBackend:
     """Default context backend backed by local state modules."""
@@ -44,11 +40,6 @@ class LocalFilesystemBackend:
 
     def resolve_work_scratch_dir(self, runtime_root: Path, work_id: str) -> Path:
         return state_paths.resolve_work_scratch_dir(runtime_root, work_id)
-
-    def get_persisted_active_work_id(self, runtime_root: Path) -> str | None:
-        from meridian.lib.state.current_work import get_current_work_id
-
-        return get_current_work_id(runtime_root)
 
 
 @dataclass(frozen=True)
@@ -103,17 +94,20 @@ class ResolvedContext:
         project_root = (
             explicit_project_root
             if explicit_project_root is not None
-            else Path(project_root_raw) if project_root_raw else None
+            else Path(project_root_raw)
+            if project_root_raw
+            else None
         )
         runtime_root = (
             explicit_runtime_root
             if explicit_runtime_root is not None
-            else Path(runtime_root_raw) if runtime_root_raw else None
+            else Path(runtime_root_raw)
+            if runtime_root_raw
+            else None
         )
 
         # Authoritative work-ID precedence:
-        # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment
-        # > persisted active-work state.
+        # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
         work_id: str | None = None
         if explicit_work_id_raw:
             work_id = explicit_work_id_raw
@@ -121,8 +115,6 @@ class ResolvedContext:
             work_id = work_id_raw
         elif runtime_root is not None and chat_id_raw:
             work_id = backend_impl.get_session_active_work_id(runtime_root, chat_id_raw)
-        if work_id is None and runtime_root is not None:
-            work_id = backend_impl.get_persisted_active_work_id(runtime_root)
 
         project_paths = (
             state_paths.resolve_project_paths_from_context(
@@ -150,17 +142,15 @@ class ResolvedContext:
             resolved_config = state_paths.load_context_config(project_root)
 
         context_dirs: tuple[tuple[str, Path], ...] = ()
-        if project_root is not None and resolved_config is not None:
-            resolved_context_paths = resolve_context_paths(project_root, resolved_config)
+        if project_root is not None:
+            effective_config = resolved_config or ContextConfig()
+            resolved_context_paths = resolve_context_paths(project_root, effective_config)
             context_dirs = (
                 ("work", resolved_context_paths.work_root),
                 ("work_archive", resolved_context_paths.work_archive),
                 ("kb", resolved_context_paths.kb_root),
                 *tuple(
-                    sorted(
-                        (name, path)
-                        for name, (path, _) in resolved_context_paths.extra.items()
-                    )
+                    sorted((name, path) for name, (path, _) in resolved_context_paths.extra.items())
                 ),
             )
 

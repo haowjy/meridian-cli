@@ -11,45 +11,43 @@ from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
-from meridian.cli.utils import missing_fork_session_error, parse_csv_list
+from meridian.cli.utils import parse_csv_list, require_established_project_root
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
     prepare_for_runtime_read,
     prepare_for_runtime_write,
 )
-from meridian.lib.config.project_root import resolve_project_root
+from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
 from meridian.lib.extensions.registry import get_first_party_registry
-from meridian.lib.launch.request import SessionRequest
-from meridian.lib.ops.reference import resolve_session_reference
-from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
     SpawnCancelAllInput,
     SpawnCancelInput,
+    SpawnChildrenInput,
     SpawnContinueInput,
     SpawnCreateInput,
-    SpawnListEntry,
+    SpawnForkInput,
     SpawnListInput,
-    SpawnListOutput,
     SpawnShowInput,
     SpawnStatsInput,
     SpawnWaitInput,
     SpawnWrittenFilesInput,
     spawn_cancel_all_sync,
     spawn_cancel_sync,
+    spawn_children_sync,
     spawn_continue_sync,
     spawn_create_sync,
     spawn_files_sync,
+    spawn_fork_sync,
     spawn_list_sync,
     spawn_show_sync,
     spawn_stats_sync,
     spawn_wait_sync,
 )
-from meridian.lib.ops.spawn.query import resolve_spawn_reference
-from meridian.lib.state import spawn_store
+from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
 
 Emitter = Callable[[Any], None]
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
@@ -73,17 +71,11 @@ def _current_output_sink() -> Any:
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
-    opts = _get_global_options()
-    if opts.project_root is not None:
-        return prepare_for_runtime_read(opts.project_root)
-    return prepare_for_runtime_read(resolve_project_root())
+    return prepare_for_runtime_read(require_established_project_root())
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
-    opts = _get_global_options()
-    if opts.project_root is not None:
-        return prepare_for_runtime_write(opts.project_root)
-    return prepare_for_runtime_write(resolve_project_root())
+    return prepare_for_runtime_write(require_established_project_root())
 
 
 def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
@@ -92,19 +84,6 @@ def _spawn_create_exit_code(result: SpawnActionOutput) -> int:
     if result.status in {"succeeded", "running", "finalizing", "dry-run"}:
         return 0
     return 1
-
-
-def _desc_or_prompt_summary(desc: str | None, prompt: str | None) -> str | None:
-    normalized_desc = (desc or "").strip()
-    if normalized_desc:
-        return normalized_desc
-    normalized_prompt = (prompt or "").strip()
-    if not normalized_prompt:
-        return None
-    compact_prompt = " ".join(normalized_prompt.split()).strip()
-    if len(compact_prompt) <= 50:
-        return compact_prompt
-    return f"{compact_prompt[:47].rstrip()}..."
 
 
 def _read_prompt_from_stdin(*, explicit_prompt_file_stdin: bool, allow_empty: bool = False) -> str:
@@ -161,6 +140,43 @@ def _resolve_spawn_prompt(
     if has_files or is_continue:
         return ""
     raise ValueError("prompt required: pass --prompt-file, -p, or pipe stdin")
+
+
+def _shared_launch_input_kwargs(
+    *,
+    dry_run: bool,
+    verbose: bool,
+    quiet: bool,
+    stream: bool,
+    background: bool,
+    project_root: str | None,
+    timeout: float | None,
+    approval: str | None,
+    autocompact: int | None,
+    autocompact_pct: int | None,
+    effort: str | None,
+    sandbox: str | None,
+    harness: str | None,
+    passthrough_args: tuple[str, ...],
+    debug: bool,
+) -> SpawnLaunchOptionUpdates:
+    return {
+        "dry_run": dry_run,
+        "verbose": verbose,
+        "quiet": quiet,
+        "stream": stream,
+        "background": background,
+        "project_root": project_root,
+        "timeout": timeout,
+        "approval": approval,
+        "autocompact": autocompact,
+        "autocompact_pct": autocompact_pct,
+        "effort": effort,
+        "sandbox": sandbox,
+        "harness": harness,
+        "passthrough_args": passthrough_args,
+        "debug": debug,
+    }
 
 
 def _spawn_create(
@@ -239,6 +255,16 @@ def _spawn_create(
         str,
         Parameter(name=["--desc", "--description"], help="Short description for the spawn."),
     ] = "",
+    goal: Annotated[
+        str | None,
+        Parameter(
+            name="--goal",
+            help=(
+                "Completion goal for this spawn. Injected as a bounded "
+                "completion contract and persisted as spawn metadata."
+            ),
+        ),
+    ] = None,
     work: Annotated[
         str,
         Parameter(name="--work", help="Associate the spawn with a work item id."),
@@ -286,7 +312,14 @@ def _spawn_create(
         int | None,
         Parameter(
             name="--autocompact",
-            help="Autocompact threshold percentage (1-100). Overrides agent profile.",
+            help="Autocompact token threshold (minimum 1000). Overrides agent profile.",
+        ),
+    ] = None,
+    autocompact_pct: Annotated[
+        int | None,
+        Parameter(
+            name="--autocompact-pct",
+            help="Percentage of context window for autocompact (1-100). Overrides agent profile.",
         ),
     ] = None,
     effort: Annotated[
@@ -349,7 +382,25 @@ def _spawn_create(
         )
     resolved_approval = approval if approval is not None else ("yolo" if yolo else None)
     parsed_skills = parse_csv_list(skills, field_name="skills")
+    resolved_goal = normalize_goal(goal)
     resolved_fork_from = (fork_from or "").strip() or None
+    shared_launch_kwargs = _shared_launch_input_kwargs(
+        dry_run=dry_run,
+        verbose=verbose,
+        quiet=quiet,
+        stream=stream,
+        background=background,
+        project_root=None,
+        timeout=timeout,
+        approval=resolved_approval,
+        autocompact=autocompact,
+        autocompact_pct=autocompact_pct,
+        effort=effort,
+        sandbox=sandbox,
+        harness=global_harness,
+        passthrough_args=passthrough,
+        debug=debug,
+    )
     resolved_prompt = _resolve_spawn_prompt(
         prompt,
         prompt_file,
@@ -363,59 +414,23 @@ def _spawn_create(
     if resolved_fork_from is not None:
         if context_from:
             raise ValueError("Cannot combine --fork with --from (MVP limitation).")
-
-        prepared = _prepare_spawn_runtime_write()
-        resolved_reference = resolve_session_reference(prepared.project_root, resolved_fork_from)
-        if resolved_reference.missing_harness_session_id:
-            raise ValueError(missing_fork_session_error(resolved_fork_from))
-
-        requested_model = model.strip()
-        requested_agent = (agent or "").strip() or None
-        requested_work = work.strip()
-
-        inherited_skills = (
-            resolved_reference.source_skills
-            if skills is None and requested_agent is None
-            else parsed_skills
-        )
-
-        result = spawn_create_sync(
-            SpawnCreateInput(
+        result = spawn_fork_sync(
+            SpawnForkInput(
+                source_ref=resolved_fork_from,
                 prompt=resolved_prompt,
-                model=requested_model or (resolved_reference.source_model or ""),
+                model=model,
                 files=references,
                 template_vars=template_vars,
-                agent=requested_agent or resolved_reference.source_agent,
-                skills=inherited_skills,
+                agent=agent,
+                skills=parsed_skills,
+                goal=resolved_goal,
+                inherit_source_skills=skills is None,
                 desc=desc,
-                work=requested_work or (resolved_reference.source_work_id or ""),
-                dry_run=dry_run,
-                verbose=verbose,
-                quiet=quiet,
-                stream=stream,
-                background=background,
-                timeout=timeout,
-                approval=resolved_approval,
-                autocompact=autocompact,
-                effort=effort,
-                sandbox=sandbox,
-                harness=global_harness
-                or (resolved_reference.harness if not requested_model else None),
-                passthrough_args=passthrough,
-                debug=debug,
-                session=SessionRequest(
-                    requested_harness_session_id=resolved_reference.harness_session_id,
-                    continue_harness=resolved_reference.harness,
-                    continue_source_tracked=resolved_reference.tracked,
-                    continue_source_ref=resolved_fork_from,
-                    continue_fork=True,
-                    forked_from_chat_id=resolved_reference.source_chat_id,
-                    source_execution_cwd=resolved_reference.source_execution_cwd,
-                    source_claude_config_dir=resolved_reference.source_claude_config_dir,
-                ),
+                work=work,
+                **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
-            prepared=prepared,
+            prepared=_prepare_spawn_runtime_write(),
         )
     elif resolved_continue_from is not None:
         if context_from:
@@ -425,14 +440,14 @@ def _spawn_create(
                 spawn_id=resolved_continue_from,
                 prompt=resolved_prompt,
                 model=model,
-                harness=global_harness,
+                files=references,
+                template_vars=template_vars,
                 agent=agent,
                 skills=parsed_skills,
-                dry_run=dry_run,
-                timeout=timeout,
-                background=background,
-                passthrough_args=passthrough,
-                approval=resolved_approval,
+                goal=resolved_goal,
+                desc=desc,
+                work=work,
+                **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
@@ -448,20 +463,9 @@ def _spawn_create(
                 agent=agent,
                 skills=parsed_skills,
                 desc=desc,
+                goal=resolved_goal,
                 work=work,
-                dry_run=dry_run,
-                verbose=verbose,
-                quiet=quiet,
-                stream=stream,
-                background=background,
-                timeout=timeout,
-                approval=resolved_approval,
-                autocompact=autocompact,
-                effort=effort,
-                sandbox=sandbox,
-                harness=global_harness,
-                passthrough_args=passthrough,
-                debug=debug,
+                **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
@@ -564,42 +568,13 @@ def _spawn_children(
         Parameter(name="spawn_id", help="Parent spawn ID."),
     ],
 ) -> None:
-    normalized_ref = spawn_id.strip()
-    if not normalized_ref:
-        raise ValueError("spawn_id is required")
-    prepared = _prepare_spawn_runtime_read()
-    normalized_spawn_id = resolve_spawn_reference(
-        prepared.project_root,
-        normalized_ref,
-        runtime_root=prepared.runtime_root,
-    )
-    runtime_root = prepared.runtime_root or resolve_runtime_root_for_read(prepared.project_root)
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    children = list(
-        reversed(
-            reconcile_spawns(
-                runtime_root,
-                spawn_store.list_spawns(
-                    runtime_root,
-                    filters={"parent_id": normalized_spawn_id},
-                ),
-            )
+    emit(
+        spawn_children_sync(
+            SpawnChildrenInput(spawn_id=spawn_id),
+            sink=_current_output_sink(),
+            prepared=_prepare_spawn_runtime_read(),
         )
     )
-    entries = tuple(
-        SpawnListEntry(
-            spawn_id=row.id,
-            status=row.status,
-            model=row.model or "",
-            agent=row.agent or None,
-            desc=_desc_or_prompt_summary(row.desc, row.prompt),
-            duration_secs=row.duration_secs,
-            cost_usd=row.total_cost_usd,
-        )
-        for row in children
-    )
-    emit(SpawnListOutput(spawns=entries, text_view="children"))
 
 
 def _spawn_show(
@@ -675,18 +650,12 @@ def _spawn_cancel(
     emit: Any,
     spawn_id: str,
 ) -> None:
-    prepared = _prepare_spawn_runtime_write()
-    resolved_spawn_id = resolve_spawn_reference(
-        prepared.project_root,
-        spawn_id,
-        runtime_root=prepared.runtime_root,
-    )
     result = spawn_cancel_sync(
         SpawnCancelInput(
-            spawn_id=resolved_spawn_id,
+            spawn_id=spawn_id,
         ),
         sink=_current_output_sink(),
-        prepared=prepared,
+        prepared=_prepare_spawn_runtime_write(),
     )
     emit(result)
     if result.status == "failed":
@@ -780,9 +749,25 @@ def _spawn_cancel_all(
         str | None,
         Parameter(name="--work", help="Only cancel running spawns for this work item."),
     ] = None,
+    include_primaries: Annotated[
+        bool,
+        Parameter(name="--include-primaries", help="Also cancel primary sessions."),
+    ] = False,
+    include_others: Annotated[
+        bool,
+        Parameter(
+            name="--include-others",
+            help="Also cancel spawns from other sessions (or when no session context exists).",
+        ),
+    ] = False,
 ) -> None:
     result = spawn_cancel_all_sync(
-        SpawnCancelAllInput(work=work),
+        SpawnCancelAllInput(
+            work=work,
+            include_primaries=include_primaries,
+            include_others=include_others,
+        ),
+        ctx=RuntimeContext.from_environment(),
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_write(),
     )
@@ -848,9 +833,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         help="Inject a message into a running streaming spawn.",
     )
     registered.add("spawn.inject")
-    descriptions["meridian.spawn.inject"] = (
-        "Inject a message into a running streaming spawn."
-    )
+    descriptions["meridian.spawn.inject"] = "Inject a message into a running streaming spawn."
     app.command(
         _spawn_log_removed,
         name="log",

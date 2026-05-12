@@ -34,20 +34,19 @@ def _write_agent_profile(
     *,
     tmp_path: Path,
     name: str,
-    tools: tuple[str, ...] = (),
-    disallowed_tools: tuple[str, ...] = (),
+    tools: str | dict[str, str] | None = None,
 ) -> None:
     profile_lines = [
         "---",
         f"name: {name}",
         f"harness: {HarnessId.CLAUDE.value}",
     ]
-    if tools:
+    if isinstance(tools, str):
+        profile_lines.append(f"tools: {tools}")
+    elif isinstance(tools, dict):
         profile_lines.append("tools:")
-        profile_lines.extend(f"  - {tool}" for tool in tools)
-    if disallowed_tools:
-        profile_lines.append("disallowed-tools:")
-        profile_lines.extend(f"  - {tool}" for tool in disallowed_tools)
+        for key, action in tools.items():
+            profile_lines.append(f"  {key}: {action}")
     profile_lines.extend(("---", "", "# Agent", "", "Test profile body."))
 
     profile_path = tmp_path / ".mars" / "agents" / f"{name}.md"
@@ -62,13 +61,14 @@ def _build_context(
     composition_surface: LaunchCompositionSurface,
     harness: HarnessId,
     agent: str | None = None,
-    disallowed_tools: tuple[str, ...] = (),
+    tools: str | dict[str, str] | None = None,
 ) -> SpawnRequest:
+    _ = monkeypatch
     request = SpawnRequest(
         prompt="test",
         harness=harness.value,
         agent=agent,
-        disallowed_tools=disallowed_tools,
+        tools=tools,
     )
 
     context = build_launch_context(
@@ -95,16 +95,16 @@ def test_spawn_prepare_claude_adds_full_implicit_deny_set(
         harness=HarnessId.CLAUDE,
     )
 
-    assert set(resolved_request.disallowed_tools) == CLAUDE_NATIVE_DELEGATION_TOOLS
+    assert resolved_request.tools == {"*": "allow", "agent": "deny", "task": "deny"}
 
 
 def test_compute_nested_deny_excludes_opted_out_agent_tool() -> None:
     deny_additions = compute_nested_claude_deny_additions(
-        profile_allowed_tools=("Agent",),
-        existing_disallowed_tools=(),
+        profile_tools={"agent": "allow"},
+        existing_tools=None,
     )
 
-    assert set(deny_additions) == (CLAUDE_NATIVE_DELEGATION_TOOLS - {"Agent"})
+    assert set(deny_additions) == {"task"}
 
 
 def test_primary_surface_claude_does_not_add_implicit_deny(
@@ -116,10 +116,10 @@ def test_primary_surface_claude_does_not_add_implicit_deny(
         monkeypatch=monkeypatch,
         composition_surface=LaunchCompositionSurface.PRIMARY,
         harness=HarnessId.CLAUDE,
-        disallowed_tools=("Bash",),
+        tools={"*": "allow", "bash": "deny"},
     )
 
-    assert resolved_request.disallowed_tools == ("Bash",)
+    assert resolved_request.tools == {"*": "allow", "bash": "deny"}
 
 
 def test_spawn_prepare_non_claude_does_not_add_implicit_deny(
@@ -131,10 +131,10 @@ def test_spawn_prepare_non_claude_does_not_add_implicit_deny(
         monkeypatch=monkeypatch,
         composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
         harness=HarnessId.CODEX,
-        disallowed_tools=("Bash",),
+        tools={"*": "allow", "bash": "deny"},
     )
 
-    assert resolved_request.disallowed_tools == ("Bash",)
+    assert resolved_request.tools == {"*": "allow", "bash": "deny"}
 
 
 def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
@@ -144,7 +144,7 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
     _write_agent_profile(
         tmp_path=tmp_path,
         name="allowlist-agent",
-        tools=("Agent",),
+        tools={"agent": "allow"},
     )
     resolved_request = _build_context(
         tmp_path=tmp_path,
@@ -154,9 +154,7 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
         agent="allowlist-agent",
     )
 
-    assert resolved_request.allowed_tools == ("Agent",)
-    expected_implicit_deny = CLAUDE_NATIVE_DELEGATION_TOOLS - {"Agent"}
-    assert set(resolved_request.disallowed_tools) == expected_implicit_deny
+    assert resolved_request.tools == {"agent": "allow", "task": "deny"}
 
 
 def test_spawn_prepare_claude_with_profile_tools_partial_optout(
@@ -166,7 +164,7 @@ def test_spawn_prepare_claude_with_profile_tools_partial_optout(
     _write_agent_profile(
         tmp_path=tmp_path,
         name="partial-optout-agent",
-        tools=("Agent",),
+        tools={"agent": "allow"},
     )
     resolved_request = _build_context(
         tmp_path=tmp_path,
@@ -176,17 +174,7 @@ def test_spawn_prepare_claude_with_profile_tools_partial_optout(
         agent="partial-optout-agent",
     )
 
-    expected_implicit_deny = {
-        "TaskCreate",
-        "TaskGet",
-        "TaskList",
-        "TaskOutput",
-        "TaskStop",
-        "TaskUpdate",
-    }
-    assert resolved_request.allowed_tools == ("Agent",)
-    assert expected_implicit_deny.issubset(set(resolved_request.disallowed_tools))
-    assert "Agent" not in set(resolved_request.disallowed_tools)
+    assert resolved_request.tools == {"agent": "allow", "task": "deny"}
 
 
 def test_adhoc_allowed_tools_without_profile_still_denies_agent(
@@ -194,10 +182,11 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """S-9: Missing profile means no opt-outs."""
+    _ = monkeypatch
     request = SpawnRequest(
         prompt="test",
         harness=HarnessId.CLAUDE.value,
-        allowed_tools=("Agent",),
+        tools={"*": "deny", "agent": "allow"},
     )
 
     context = build_launch_context(
@@ -211,23 +200,19 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
         dry_run=True,
     )
 
-    assert "Agent" not in context.resolved_request.allowed_tools
-    assert "Agent" in context.resolved_request.disallowed_tools
-    assert CLAUDE_NATIVE_DELEGATION_TOOLS.issubset(
-        set(context.resolved_request.disallowed_tools)
-    )
-    assert "--allowedTools" not in context.argv
+    assert context.resolved_request.tools == {"*": "deny", "agent": "deny"}
+    assert "--allowedTools" not in context.binding.argv
 
 
 def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
+    _ = monkeypatch
     request = SpawnRequest(
         prompt="test",
         harness=HarnessId.CLAUDE.value,
-        allowed_tools=("Agent", "Bash"),
-        disallowed_tools=tuple(sorted(CLAUDE_NATIVE_DELEGATION_TOOLS)),
+        tools={"*": "deny", "agent": "allow", "bash": "allow", "task": "deny"},
     )
 
     context = build_launch_context(
@@ -241,13 +226,21 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
         dry_run=True,
     )
 
-    assert context.resolved_request.allowed_tools == ("Bash",)
-    assert "Agent" in context.resolved_request.disallowed_tools
-    allowed_flag_index = context.argv.index("--allowedTools")
-    assert context.argv[allowed_flag_index + 1] == "Bash"
+    assert context.resolved_request.tools == {
+        "*": "deny",
+        "agent": "deny",
+        "bash": "allow",
+        "task": "deny",
+    }
+    allowed_flag_index = context.binding.argv.index("--allowedTools")
+    assert context.binding.argv[allowed_flag_index + 1] == "Bash"
 
 
-def test_claude_blocks_config_dir_from_child_env() -> None:
+def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
     adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE)
 
-    assert "CLAUDE_CONFIG_DIR" in adapter.blocked_child_env_vars()
+    assert adapter.blocked_child_env_vars() == {"CLAUDECODE"}
+
+
+def test_claude_native_delegation_constant_contains_agent_tool() -> None:
+    assert "Agent" in CLAUDE_NATIVE_DELEGATION_TOOLS

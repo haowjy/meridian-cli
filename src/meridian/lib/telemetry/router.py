@@ -75,11 +75,11 @@ class TelemetryRouter:
                 ids=ids,
                 data=data,
             )
-            self.enqueue(envelope, priority_flush=severity == "error")
+            self.enqueue(envelope)
         except Exception:
             logger.debug("Telemetry emit failed", exc_info=True)
 
-    def enqueue(self, envelope: TelemetryEnvelope, *, priority_flush: bool = False) -> None:
+    def enqueue(self, envelope: TelemetryEnvelope) -> None:
         """Enqueue an already-constructed envelope without blocking."""
         with self._lock:
             if self._closed:
@@ -88,9 +88,6 @@ class TelemetryRouter:
                 self._dropped += 1
                 return
             self._queue.append(envelope)
-        # Error-class events wake the writer immediately. The background thread
-        # owns the actual sink flush so producers never block on I/O.
-        _ = priority_flush
         self._wake.set()
 
     def close(self) -> None:

@@ -1,8 +1,9 @@
 """Spawn operation input/output models and shared lightweight helpers."""
 
 import shlex
+from typing import NotRequired, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
@@ -12,6 +13,24 @@ from meridian.lib.launch.request import SessionRequest
 
 def _empty_template_vars() -> dict[str, str]:
     return {}
+
+
+def normalize_goal(goal: str | None) -> str | None:
+    if goal is None:
+        return None
+    normalized = goal.strip()
+    if not normalized:
+        raise ValueError("--goal cannot be empty")
+    return normalized
+
+
+def build_goal_contract_preview(goal: str | None) -> str | None:
+    normalized_goal = normalize_goal(goal)
+    if normalized_goal is None:
+        return None
+    from meridian.lib.launch.prompt import build_goal_instruction
+
+    return build_goal_instruction(normalized_goal)
 
 
 def _truncate_cell(value: str, *, max_chars: int) -> str:
@@ -35,18 +54,27 @@ def _background_wait_note(spawn_id: str) -> str:
     )
 
 
-class SpawnCreateInput(BaseModel):
+class SpawnLaunchOptionUpdates(TypedDict):
+    dry_run: bool
+    verbose: bool
+    quiet: bool
+    stream: bool
+    background: bool
+    project_root: str | None
+    timeout: float | None
+    approval: str | None
+    autocompact: int | None
+    autocompact_pct: NotRequired[int | None]
+    effort: str | None
+    sandbox: str | None
+    harness: str | None
+    passthrough_args: tuple[str, ...]
+    debug: bool
+
+
+class SpawnLaunchOptions(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    prompt: str = ""
-    model: str = ""
-    files: tuple[str, ...] = ()
-    context_from: tuple[str, ...] = ()
-    template_vars: tuple[str, ...] = ()
-    agent: str | None = None
-    skills: tuple[str, ...] = ()
-    desc: str = ""
-    work: str = ""
     dry_run: bool = False
     verbose: bool = False
     quiet: bool = False
@@ -56,12 +84,52 @@ class SpawnCreateInput(BaseModel):
     timeout: float | None = None
     approval: str | None = None
     autocompact: int | None = None
+    autocompact_pct: int | None = None
     effort: str | None = None
     sandbox: str | None = None
     harness: str | None = None
     passthrough_args: tuple[str, ...] = ()
-    session: SessionRequest = SessionRequest()
     debug: bool = False
+
+    def launch_option_updates(self) -> SpawnLaunchOptionUpdates:
+        return {
+            "dry_run": self.dry_run,
+            "verbose": self.verbose,
+            "quiet": self.quiet,
+            "stream": self.stream,
+            "background": self.background,
+            "project_root": self.project_root,
+            "timeout": self.timeout,
+            "approval": self.approval,
+            "autocompact": self.autocompact,
+            "autocompact_pct": self.autocompact_pct,
+            "effort": self.effort,
+            "sandbox": self.sandbox,
+            "harness": self.harness,
+            "passthrough_args": self.passthrough_args,
+            "debug": self.debug,
+        }
+
+
+class SpawnCreateInput(SpawnLaunchOptions):
+    prompt: str = ""
+    goal: str | None = None
+    model: str = ""
+    files: tuple[str, ...] = ()
+    context_from: tuple[str, ...] = ()
+    template_vars: tuple[str, ...] = ()
+    agent: str | None = None
+    skills: tuple[str, ...] = ()
+    desc: str = ""
+    work: str = ""
+    session: SessionRequest = SessionRequest()
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_goal(value)
 
 
 class SpawnActionOutput(BaseModel):
@@ -86,14 +154,25 @@ class SpawnActionOutput(BaseModel):
     context_from_resolved: tuple[str, ...] = ()
     report: str | None = None
     composed_prompt: str | None = None
+    goal: str | None = None
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    terminal_surface_mode: str | None = None
+    project_root: str | None = None
+    project_root_source: str | None = None
+    runtime_root: str | None = None
+    runtime_root_source: str | None = None
     cli_command: tuple[str, ...] = ()
     exit_code: int | None = None
     duration_secs: float | None = None
     background: bool = False
     forked_from: str | None = None
+
+    @computed_field
+    @property
+    def goal_contract_preview(self) -> str | None:
+        return build_goal_contract_preview(self.goal)
 
     def to_wire(self) -> dict[str, object]:
         """Project minimal external JSON shape. Omit nulls and input echo."""
@@ -120,6 +199,17 @@ class SpawnActionOutput(BaseModel):
         if self.context_from_resolved:
             wire["context_from_resolved"] = list(self.context_from_resolved)
         if self.status == "dry-run":
+            if self.project_root is not None or self.runtime_root is not None:
+                wire["resolved_authority"] = {
+                    key: value
+                    for key, value in {
+                        "project_root": self.project_root,
+                        "project_root_source": self.project_root_source,
+                        "runtime_root": self.runtime_root,
+                        "runtime_root_source": self.runtime_root_source,
+                    }.items()
+                    if value is not None
+                }
             if self.model is not None:
                 wire["model"] = self.model
             if self.harness_id is not None:
@@ -138,12 +228,19 @@ class SpawnActionOutput(BaseModel):
                 wire["template_vars"] = dict(self.template_vars)
             if self.composed_prompt is not None:
                 wire["composed_prompt"] = self.composed_prompt
+            if self.goal is not None:
+                wire["goal"] = self.goal
+            goal_contract_preview = self.goal_contract_preview
+            if goal_contract_preview is not None:
+                wire["goal_contract_preview"] = goal_contract_preview
             if self.model_selection_requested_token is not None:
                 wire["model_selection"] = {
                     "requested_token": self.model_selection_requested_token,
                     "canonical_model_id": self.model_selection_canonical_id,
                     "harness_provenance": self.model_selection_harness_provenance,
                 }
+            if self.terminal_surface_mode is not None:
+                wire["terminal_surface_mode"] = self.terminal_surface_mode
             if self.cli_command:
                 wire["cli_command"] = list(self.cli_command)
         return wire
@@ -204,6 +301,22 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Model: {self.model}")
         if self.status == "dry-run" and self.model_selection_harness_provenance:
             lines.append(f"Routing: {self.model_selection_harness_provenance}")
+        if self.status == "dry-run" and self.project_root:
+            lines.append(f"Project root: {self.project_root}")
+            if self.project_root_source:
+                lines.append(f"Project root source: {self.project_root_source}")
+        if self.status == "dry-run" and self.runtime_root:
+            lines.append(f"Write root: {self.runtime_root}")
+            if self.runtime_root_source:
+                lines.append(f"Write root source: {self.runtime_root_source}")
+        if self.status == "dry-run" and self.goal is not None:
+            lines.append(f"Goal: {self.goal}")
+            goal_contract_preview = self.goal_contract_preview
+            if goal_contract_preview is not None:
+                lines.append("")
+                lines.append("Completion contract preview:")
+                lines.append("")
+                lines.append(goal_contract_preview)
         if self.error:
             lines.append(f"Error: {self.error}")
         if self.warning:
@@ -224,6 +337,13 @@ class SpawnListInput(BaseModel):
     primary: bool = False
     limit: int = 20
     failed: bool = False
+    project_root: str | None = None
+
+
+class SpawnChildrenInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    spawn_id: str
     project_root: str | None = None
 
 
@@ -454,6 +574,8 @@ class SpawnCancelAllInput(BaseModel):
 
     work: str | None = None
     project_root: str | None = None
+    include_primaries: bool = False
+    include_others: bool = False
 
 
 class SpawnCancelAllOutput(BaseModel):
@@ -462,6 +584,7 @@ class SpawnCancelAllOutput(BaseModel):
     work: str | None = None
     total_running: int
     cancelled_count: int
+    finalizing_count: int = 0
     failed_count: int = 0
     results: tuple["SpawnActionOutput", ...] = ()
 
@@ -471,7 +594,9 @@ class SpawnCancelAllOutput(BaseModel):
         if self.total_running == 0:
             return f"No running spawns to cancel{scope}."
 
-        lines = [f"Cancelled {self.cancelled_count} running spawn(s){scope}."]
+        lines = [f"Requested cancellation for {self.cancelled_count} running spawn(s){scope}."]
+        if self.finalizing_count:
+            lines.append(f"{self.finalizing_count} cancellation(s) still finalizing.")
         if self.failed_count:
             lines.append(f"{self.failed_count} cancellation(s) failed.")
             for result in self.results:
@@ -495,6 +620,7 @@ class SpawnDetailOutput(BaseModel):
     backend_port: int | None = None
     parent_id: str | None = None
     work_id: str | None = None
+    goal: str | None = None
     desc: str | None = None
     started_at: str
     finished_at: str | None
@@ -516,6 +642,7 @@ class SpawnDetailOutput(BaseModel):
     log_path: str | None = None
     exited_at: str | None = None
     process_exit_code: int | None = None
+    session_config_dir: str | None = None
 
     def _normalized_report_body(self) -> str | None:
         report_text = (self.report_body or "").strip()
@@ -566,6 +693,8 @@ class SpawnDetailOutput(BaseModel):
             wire["work_id"] = self.work_id
         if self.desc is not None:
             wire["desc"] = self.desc
+        if self.goal is not None:
+            wire["goal"] = self.goal
         if self.duration_secs is not None:
             wire["duration_secs"] = round(self.duration_secs, 2)
         if self.exit_code is not None:
@@ -592,6 +721,8 @@ class SpawnDetailOutput(BaseModel):
             wire["report_summary"] = self.report_summary
         if self.report_body is not None:
             wire["report_body"] = self.report_body
+        if self.session_config_dir is not None:
+            wire["session_config_dir"] = self.session_config_dir
         return wire
 
     def to_cli_output(
@@ -669,6 +800,7 @@ class SpawnDetailOutput(BaseModel):
             ("Duration", duration_value),
             ("Parent", parent_value),
             ("Work", work_value),
+            ("Goal", self.goal),
             ("Desc", desc_value),
             (failure_label or "Failure", failure_value),
             ("Input tokens", None if self.input_tokens is None else str(self.input_tokens)),
@@ -724,22 +856,46 @@ class SpawnWrittenFilesOutput(BaseModel):
         return "\n".join(self.written_files)
 
 
-class SpawnContinueInput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
+class SpawnContinueInput(SpawnLaunchOptions):
     spawn_id: str
     prompt: str
     model: str = ""
-    harness: str | None = None
+    files: tuple[str, ...] = ()
+    template_vars: tuple[str, ...] = ()
     agent: str | None = None
     skills: tuple[str, ...] = ()
+    goal: str | None = None
+    desc: str = ""
+    work: str = ""
     fork: bool = False
-    dry_run: bool = False
-    timeout: float | None = None
-    background: bool = False
-    project_root: str | None = None
-    passthrough_args: tuple[str, ...] = ()
-    approval: str | None = None
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_goal(value)
+
+
+class SpawnForkInput(SpawnLaunchOptions):
+    source_ref: str
+    prompt: str
+    model: str = ""
+    files: tuple[str, ...] = ()
+    template_vars: tuple[str, ...] = ()
+    agent: str | None = None
+    skills: tuple[str, ...] = ()
+    inherit_source_skills: bool = False
+    goal: str | None = None
+    desc: str = ""
+    work: str = ""
+
+    @field_validator("goal", mode="before")
+    @classmethod
+    def _normalize_goal(cls, value: object) -> object:
+        if value is None or not isinstance(value, str):
+            return value
+        return normalize_goal(value)
 
 
 class SpawnWaitInput(BaseModel):
@@ -883,6 +1039,8 @@ __all__ = [
     "SpawnContinueInput",
     "SpawnCreateInput",
     "SpawnDetailOutput",
+    "SpawnLaunchOptionUpdates",
+    "SpawnLaunchOptions",
     "SpawnListEntry",
     "SpawnListInput",
     "SpawnListOutput",
@@ -893,4 +1051,6 @@ __all__ = [
     "SpawnWaitMultiOutput",
     "SpawnWrittenFilesInput",
     "SpawnWrittenFilesOutput",
+    "build_goal_contract_preview",
+    "normalize_goal",
 ]

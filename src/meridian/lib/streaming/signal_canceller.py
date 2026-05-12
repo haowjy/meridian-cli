@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import signal
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -21,8 +19,15 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
 from meridian.lib.platform import IS_WINDOWS
+from meridian.lib.platform.process_scope import terminate_scope_sync
+from meridian.lib.platform.terminate import terminate_tree_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.process_scope_projection import (
+    is_scope_released,
+    mark_scope_released,
+    read_scopes_from_disk,
+)
 from meridian.lib.state.spawn.model import APP_LAUNCH_MODE, SpawnOrigin
 
 if TYPE_CHECKING:
@@ -92,13 +97,9 @@ class SignalCanceller:
         if runner_pid is None:
             complete_spawn = self._complete_spawn
             if complete_spawn is None:
-                from meridian.lib.core.lifecycle import SpawnLifecycleService
-                from meridian.lib.core.spawn_service import SpawnApplicationService
-
-                complete_spawn = SpawnApplicationService(
-                    self._runtime_root,
-                    SpawnLifecycleService(self._runtime_root),
-                ).complete_spawn
+                raise RuntimeError(
+                    "SignalCanceller requires lifecycle authority when runner_pid is missing."
+                )
             outcome = await complete_spawn(
                 spawn_id,
                 "cancelled",
@@ -119,13 +120,34 @@ class SignalCanceller:
             )
             latest = spawn_store.get_spawn(self._runtime_root, spawn_id)
             if latest is not None and _is_terminal(latest.status):
-                return _outcome_from_record(
-                    latest, already_terminal=not outcome.transitioned
-                )
+                return _outcome_from_record(latest, already_terminal=not outcome.transitioned)
             return CancelOutcome(status="cancelled", origin="cancel", exit_code=130)
 
-        with suppress(ProcessLookupError):
-            os.kill(runner_pid, signal.SIGTERM)
+        scopes = read_scopes_from_disk(self._runtime_root, spawn_id)
+        if scopes:
+            for scope in scopes:
+                if is_scope_released(self._runtime_root, spawn_id, scope.scope_id):
+                    continue
+                with suppress(ProcessLookupError):
+                    await asyncio.to_thread(
+                        terminate_scope_sync,
+                        scope,
+                        grace_seconds=self._grace_seconds,
+                        reason="cancel",
+                    )
+                mark_scope_released(self._runtime_root, spawn_id, scope.scope_id)
+        else:
+            # Legacy fallback: no scope metadata, use runner PID directly.
+            started_epoch = _started_at_epoch(record.started_at)
+            with suppress(ProcessLookupError):
+                await asyncio.to_thread(
+                    terminate_tree_sync,
+                    runner_pid,
+                    created_at_epoch=started_epoch if started_epoch is not None else 0.0,
+                    grace_secs=self._grace_seconds,
+                    reason="cancel",
+                    scope_id=str(spawn_id),
+                )
 
         terminal = await self._wait_for_terminal(spawn_id)
         if terminal is not None:
@@ -342,7 +364,7 @@ def _status_from_terminal_detail(detail: str) -> str | None:
     normalized = detail.strip()
     if not normalized.startswith(prefix):
         return None
-    status = normalized[len(prefix):].strip()
+    status = normalized[len(prefix) :].strip()
     if not status:
         return None
     return status
