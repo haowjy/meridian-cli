@@ -31,11 +31,13 @@ def _mock_alias(
     alias: str,
     model_id: str,
     harness: HarnessId = HarnessId.CODEX,
+    default_effort: str | None = None,
 ) -> AliasEntry:
     return AliasEntry(
         alias=alias,
         model_id=ModelId(model_id),
         resolved_harness=harness,
+        default_effort=default_effort,
     )
 
 
@@ -480,3 +482,189 @@ def test_resolve_launch_policy_policy_fallback_precedes_fanout(
 
     assert policy.model == "gpt-5.3-codex"
     assert policy.harness == HarnessId.CODEX
+
+
+def test_resolve_launch_policy_fallback_preserves_policy_harness_override_for_gpt55(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: gpt55}\n"
+            "    fallback-order: 1\n"
+            "    override: {harness: opencode, effort: medium}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    gpt55 = _mock_alias(
+        alias="gpt55",
+        model_id="gpt-5.5",
+        harness=HarnessId.CODEX,
+        default_effort="low",
+    )
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "gpt55": gpt55,
+            "gpt-5.5": gpt55,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.model == "gpt-5.5"
+    assert policy.harness == HarnessId.OPENCODE
+
+
+def test_resolve_launch_policy_fallback_preserves_policy_effort_override_for_gpt55(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: gpt55}\n"
+            "    fallback-order: 1\n"
+            "    override: {harness: opencode, effort: medium}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    gpt55 = _mock_alias(
+        alias="gpt55",
+        model_id="gpt-5.5",
+        harness=HarnessId.CODEX,
+        default_effort="low",
+    )
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "gpt55": gpt55,
+            "gpt-5.5": gpt55,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.execution_policy.effort == "medium"
+
+
+def test_resolve_launch_policy_fallback_does_not_recursively_reapply_model_policies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: opencode}\n"
+            "    fallback-order: 1\n"
+            "    override: {harness: opencode, effort: medium}\n"
+            "  - match: {model: kimi-k2.6}\n"
+            "    override: {harness: codex, effort: low}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "opencode": opencode,
+            "kimi-k2.6": opencode,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.model == "kimi-k2.6"
+    assert policy.harness == HarnessId.OPENCODE
+    assert policy.execution_policy.effort == "medium"
+
+
+def test_resolve_launch_policy_demoted_candidate_remains_policy_stripped(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: gpt55\n"
+            "model-policies:\n"
+            "  - match: {alias: gpt55}\n"
+            "    override: {harness: claude, effort: medium}\n"
+        ),
+    )
+    gpt55 = _mock_alias(
+        alias="gpt55",
+        model_id="gpt-5.5",
+        harness=HarnessId.CODEX,
+        default_effort="low",
+    )
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "gpt55": gpt55,
+            "gpt-5.5": gpt55,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX),
+        )
+    )
+
+    assert policy.model == "gpt-5.5"
+    assert policy.harness == HarnessId.CODEX
+    assert policy.execution_policy.effort == "low"

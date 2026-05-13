@@ -301,6 +301,38 @@ def _compiler_request_for_base_candidate(
     )
 
 
+def _compiler_request_for_fallback_candidate(
+    request: CompilerRequest,
+    matched_rule: ModelPolicyRule,
+) -> CompilerRequest:
+    """Return fallback-candidate request while preserving matched-rule overrides.
+
+    Fallback candidates must not recursively re-run model-policies against the
+    fallback token, but they must carry the selected matched rule's policy
+    overrides so the compiled fallback keeps its intended execution policy and
+    harness routing.
+    """
+
+    policy_overrides = RuntimeOverrides.model_validate(dict(matched_rule.overrides))
+    preserved_fields: tuple[str, ...] = ("harness", *EXECUTION_POLICY_FIELDS)
+    merged_cli = request.cli_overrides.model_copy(
+        update={
+            field_name: value
+            for field_name in preserved_fields
+            if (value := getattr(policy_overrides, field_name)) is not None
+        }
+    )
+    overlay = request.agent_overlay
+    if overlay is not None:
+        overlay = overlay.model_copy(update={"model_policies": ()})
+    return replace(
+        request,
+        cli_overrides=merged_cli,
+        agent_overlay=overlay,
+        profile_model_policies=(),
+    )
+
+
 def _build_final_resolved_views(
     *,
     base_resolved: RuntimeOverrides,
@@ -356,7 +388,7 @@ def _try_harness_availability_fallback(
     profile: AgentProfile | None,
     model_explicit: bool,
     catalog: CatalogSession,
-) -> tuple[str, HarnessId, AliasEntry | None] | None:
+) -> tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule | None] | None:
     """Attempt fallback when harness is unavailable. Returns None if no fallback found."""
 
     if model_explicit or _harness_is_available(harness_id, harness_registry) or profile is None:
@@ -369,7 +401,7 @@ def _try_harness_availability_fallback(
             harness_registry=harness_registry,
         )
     ):
-        return fallback_token, fallback_harness, fallback_entry
+        return fallback_token, fallback_harness, fallback_entry, _matched_rule
 
     for fanout_entry in profile.fanout:
         fallback_token = fanout_entry.value
@@ -379,7 +411,8 @@ def _try_harness_availability_fallback(
             harness_registry=harness_registry,
         )
         if fallback is not None:
-            return fallback
+            token, fallback_harness, fallback_entry = fallback
+            return token, fallback_harness, fallback_entry, None
 
     return None
 
@@ -652,7 +685,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             )
             if fallback is None:
                 raise primary_error
-            fallback_model, harness_id, resolved_entry = fallback
+            fallback_model, harness_id, resolved_entry, matched_rule = fallback
             compiler_request = replace(
                 compiler_request,
                 cli_overrides=compiler_request.cli_overrides.model_copy(
@@ -660,15 +693,19 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 ),
                 resolved_alias_entry=resolved_entry,
             )
-            # Fanout entries are explicit availability-chain candidates.
-            # Compile the selected fanout token as a base candidate so
-            # the chain does not recursively re-apply model-policy
-            # transformations to fallback entries.
-            compiler_result = compile_launch_params(
-                _compiler_request_for_base_candidate(compiler_request)
+            fallback_request = (
+                _compiler_request_for_fallback_candidate(compiler_request, matched_rule)
+                if matched_rule is not None
+                else _compiler_request_for_base_candidate(compiler_request)
             )
-            if compiler_result.harness != str(harness_id):
+            # Fanout entries are explicit availability-chain candidates and
+            # should compile as base candidates. Policy-derived fallbacks keep
+            # the matched rule's overrides at CLI-equivalent precedence while
+            # still stripping policy lists to avoid recursive re-matching.
+            compiler_result = compile_launch_params(fallback_request)
+            if matched_rule is None and compiler_result.harness != str(harness_id):
                 compiler_result = replace(compiler_result, harness=str(harness_id))
+            harness_id = HarnessId(compiler_result.harness)
             model_resolution_error = None
             harness_provenance = "availability-fallback"
             materialized = materialize_harness(
