@@ -230,6 +230,22 @@ def _validate_exact_work_id(work_id: str) -> str:
     return normalized
 
 
+def _lookup_explicit_work_item(
+    *,
+    project_state_dir: Path,
+    work_id: str,
+) -> tuple[str, bool]:
+    resolved_work_id = _validate_exact_work_id(work_id)
+    return resolved_work_id, work_store.get_work_item(project_state_dir, resolved_work_id) is not None
+
+
+def _merge_warnings(*warnings: str | None) -> str | None:
+    merged = [warning.strip() for warning in warnings if warning and warning.strip()]
+    if not merged:
+        return None
+    return " ".join(merged)
+
+
 def _provision_worktree(
     *,
     project_root: Path,
@@ -240,10 +256,13 @@ def _provision_worktree(
 
     roots = resolve_roots(str(project_root))
     project_state_dir = roots.project_state_dir
-    resolved_work_id = _validate_exact_work_id(work_id)
+    resolved_work_id, work_exists = _lookup_explicit_work_item(
+        project_state_dir=project_state_dir,
+        work_id=work_id,
+    )
     item = work_store.get_work_item(project_state_dir, resolved_work_id)
     created = False
-    if item is None:
+    if not work_exists:
         resolved_work_id = ensure_explicit_work_item(project_state_dir, resolved_work_id)
         created = True
     item = work_store.get_work_item(project_state_dir, resolved_work_id)
@@ -336,10 +355,19 @@ def spawn_create_sync(
         register_spawn_telemetry_observer()
     payload = payload.model_copy(update={"project_root": resolved_root.as_posix()})
     payload, preflight_warning = validate_create_input(payload)
+    dry_run_work_warning: str | None = None
     if payload.dry_run and payload.work.strip():
         project_local_root = resolve_project_paths(resolved_root).root_dir
-        resolved_work_id = ensure_explicit_work_item(project_local_root, payload.work)
+        resolved_work_id, work_exists = _lookup_explicit_work_item(
+            project_state_dir=project_local_root,
+            work_id=payload.work,
+        )
         payload = payload.model_copy(update={"work": resolved_work_id})
+        if not work_exists:
+            dry_run_work_warning = (
+                f"Work item '{resolved_work_id}' does not exist. "
+                "Dry-run leaves state unchanged; it would be created on launch."
+            )
 
     runtime = None
     if not payload.dry_run:
@@ -377,7 +405,7 @@ def spawn_create_sync(
             status="dry-run",
             model=prepared_request.model or "",
             harness_id=prepared_request.harness or "",
-            warning=prepared_request.warning,
+            warning=_merge_warnings(prepared_request.warning, dry_run_work_warning),
             agent=prepared_request.agent,
             agent_path=prepared_request.agent_metadata.get("session_agent_path") or None,
             skills=prepared_request.skills,

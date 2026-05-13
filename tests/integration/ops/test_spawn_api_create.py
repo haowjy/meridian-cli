@@ -13,6 +13,8 @@ import pytest
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.state import work_store
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 
@@ -177,3 +179,29 @@ def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
     assert goal_contract_preview is not None
     assert "# Spawn Goal" in goal_contract_preview
     assert "ship phase 3" in goal_contract_preview
+
+
+def test_spawn_create_dry_run_with_work_is_non_mutating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.chdir(project_root)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            work="new-work-item",
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+    assert result.warning is not None
+    assert "would be created on launch" in result.warning
