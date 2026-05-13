@@ -109,8 +109,21 @@ jobs:
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "Computed next version ${next_version} from base ${base_version}."
 
-      - name: Update version and changelog
+      - name: Skip when computed tag already exists
         if: steps.release_label.outputs.bump != 'skip'
+        id: tag_guard
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Tag v${NEXT_VERSION} already exists. Skipping release actions."
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update version and changelog
+        if: steps.release_label.outputs.bump != 'skip' && steps.tag_guard.outputs.tag_exists != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
         run: |
@@ -138,7 +151,7 @@ jobs:
           fi
 
       - name: Commit and tag release
-        if: steps.release_label.outputs.bump != 'skip'
+        if: steps.release_label.outputs.bump != 'skip' && steps.tag_guard.outputs.tag_exists != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
         run: |
