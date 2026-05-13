@@ -59,27 +59,22 @@ See `DEVELOPMENT.md` for the human-facing setup and release workflow.
 Hook policy:
 - Pre-commit is not installed by default; optional fast ruff helper lives at `.githooks/optional/pre-commit` for humans who opt in locally.
 - Pre-push is strict: full `scripts/preflight.sh` plus direct `v*` tag push guard.
-- Release tags must go through `scripts/release.sh`, not manual tag pushes.
+- Stable `v*` tags are CI-owned (`.github/workflows/release-on-merge.yml`).
 
 **NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
 
-**NEVER manually create or push git tags matching `v*`.** Use `scripts/release.sh` for all releases.
+**NEVER manually create or push git tags matching `v*`.** Tags come from CI on PR merge to main.
 
 ### Release workflow
 
 ```bash
-# Stable release: prepare, wait for CI, then resume
-scripts/release.sh prepare patch --push        # runs checks, bumps, commits, pushes branch, waits for CI, tags
+# Open a PR from a worktree branch, set one release:* label, merge to main.
+# CI bumps version, promotes changelog, commits Release X.Y.Z, and tags vX.Y.Z.
+# release:patch is the default when no release:* label is set.
+# Agents write notes under CHANGELOG.md [Unreleased], but must not edit __version__ or create tags.
 
-# If CI fails — fix forward, then resume manually:
-scripts/release.sh resume --push
-
-# RC release (no CI gate):
-scripts/release.sh prepare rc --push
-
-# Check state / abandon:
-scripts/release.sh status
-scripts/release.sh abort
+# Post-merge cleanup:
+scripts/prune-worktrees.sh
 ```
 
 ### Logging Convention
@@ -162,21 +157,12 @@ In a git worktree, URLs auto-prefix with the branch name (e.g. `https://new-ui.a
 
 ### Versioning
 
-The package version lives in `src/meridian/__init__.py` as `__version__`. Use the release helper for normal cuts. Short release guide: `docs/releasing.md`.
+`src/meridian/__init__.py` contains `__version__`, but stable release version bumps are CI-owned (`release-on-merge.yml`). Agents/humans should not edit `__version__` in normal stable flow. Short release guide: `docs/releasing.md`.
 
 Prefer `patch` by default, especially while the project is still on `0.0.x`.
 Omit `minor` and `major` in normal release flow. Use an explicit version only when the user explicitly asks for a larger version jump.
 
-Usually just bump patch:
-
-```bash
-scripts/release.sh patch          # 0.0.2 → 0.0.3 (pushes, waits for CI, then tags)
-scripts/release.sh rc             # 0.0.3 → 0.0.4-rc.1 (no CI gate)
-scripts/release.sh 0.2.0          # explicit version
-scripts/release.sh patch --skip-ci  # bypass CI gate for stable release
-```
-
-Stable releases push the commit first, wait for GitHub CI to pass, then tag. RCs tag immediately without a CI gate. Use `--skip-ci` to bypass the gate when needed.
+Stable releases happen by PR merge to `main` with a `release:*` label. `release:patch` is the default when no label is set.
 
 ### Releasing Prompt Packages
 
@@ -193,13 +179,10 @@ Update CHANGELOG.md entries under `[Unreleased]` as you work — `meridian mars 
 
 ### Releasing mars-agents and meridian-cli
 
-Both repos use their own `scripts/release.sh`. Do not use `meridian mars version` for these — that's for prompt packages only. Stable releases are CI-gated (push → wait for green → tag); RCs are not.
+- `meridian-cli`: stable releases are merge-to-main auto-release (`release-on-merge.yml`).
+- `mars-agents`: continue using its repo `scripts/release.sh` flow.
 
-```bash
-scripts/release.sh patch          # stable: push, CI gate, tag
-scripts/release.sh rc             # RC: commit + tag, no CI gate
-scripts/release.sh rc --push      # RC: commit + tag + push
-```
+Do not use `meridian mars version` for these repos — that's for prompt packages only.
 
 ### Changelogs
 

@@ -1,61 +1,39 @@
 # Releasing
 
-Use the repo release helper:
+meridian-cli stable releases are automatic on PR merge to `main`.
+
+## What you do
+
+1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
+2. Add changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
+3. Open a PR using the PR template
+4. Set one release label:
+   - `release:patch` (default when unlabeled)
+   - `release:minor`
+   - `release:major`
+   - `release:skip`
+5. Merge the PR to `main`
+
+## What CI does
+
+On merge to `main`, `.github/workflows/release-on-merge.yml`:
+
+- Computes the next version from git tags
+- Updates `src/meridian/__init__.py`
+- Promotes `CHANGELOG.md` `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
+- Creates commit `Release X.Y.Z`
+- Creates and pushes tag `vX.Y.Z`
+- `publish-pypi.yml` fires on tag push
+
+## Post-merge cleanup
 
 ```bash
-scripts/release.sh prepare patch --push   # 0.0.33 → 0.0.34, push branch, wait for CI, tag on success
-scripts/release.sh resume --push          # resume after fixing a failed prepared release
-scripts/release.sh prepare rc --push      # 0.0.33 → 0.0.34-rc.1, no CI gate
-scripts/release.sh prepare 0.2.0 --push   # explicit version
-scripts/release.sh status                 # inspect prepared release state
-scripts/release.sh abort                  # abandon prepared release state
+scripts/prune-worktrees.sh --dry-run    # preview
+scripts/prune-worktrees.sh --yes        # execute
 ```
 
-Default to `patch`, especially while Meridian is still in `0.0.x`.
-Omit `minor` and `major` in normal release flow. Use an explicit version only when the user asks for a larger version jump.
+## Boundaries
 
-## Release Candidates
-
-Use `rc` when you want to test a release before cutting the final version:
-
-```bash
-scripts/release.sh prepare rc --push      # 0.0.33 → 0.0.34-rc.1
-scripts/release.sh prepare rc --push      # 0.0.34-rc.1 → 0.0.34-rc.2
-scripts/release.sh prepare 0.0.34 --push  # graduate RC to final release
-```
-
-RCs are tagged and can be published to PyPI for testing. The commit message says "Release candidate X.Y.Z-rc.N" to distinguish from final releases.
-
-## What the Script Does
-
-`prepare`:
-
-- Runs pre-release checks: `uv run ruff check .`, `uv run pyright`, `uv run python -m pytest -x -q`
-- Bumps `src/meridian/__init__.py`
-- Creates release commit `Release X.Y.Z` (or `Release candidate X.Y.Z-rc.N`)
-- Optionally pushes the branch with `--push --remote <name>`
-- For stable releases, waits for CI before tagging
-- For RC releases, tags immediately without a CI gate
-
-`resume`:
-
-- Re-checks prepared release state after fix-forward work
-- Waits for CI when needed
-- Creates and optionally pushes annotated tag `vX.Y.Z` (or `vX.Y.Z-rc.N`)
-
-`status` shows prepared release state. `abort` abandons it.
-
-## Recommended Flow
-
-1. Update `CHANGELOG.md`: move the release notes out of `[Unreleased]` into `## [X.Y.Z] - YYYY-MM-DD`, then open a fresh empty `[Unreleased]` above it.
-2. Stage the exact release content you want included before running the script. The script explicitly adds the version file, then commits the current index.
-3. Run `scripts/release.sh prepare patch --push` for normal releases, or `scripts/release.sh prepare rc --push` for release candidates.
-4. If stable-release CI fails, fix forward, push the fix, then run `scripts/release.sh resume --push`.
-5. Verify the result with `git show --stat HEAD` and `git rev-parse --verify vX.Y.Z`.
-
-Example:
-
-```bash
-git add CHANGELOG.md path/to/release-fix.py path/to/release-test.py
-scripts/release.sh prepare patch --push
-```
+- Do not edit `__version__` — CI owns version bumps
+- Do not create or push `v*` tags manually — CI owns tags
+- The pre-push hook blocks direct `v*` tag pushes

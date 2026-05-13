@@ -17,7 +17,8 @@ Hook policy:
 - Pre-commit is not installed by default, so checkpoint commits stay fast. Humans who want a local fast `ruff` guardrail can opt in by copying or symlinking `.githooks/optional/pre-commit` into their active hooks path.
 - Pre-push is strict: it runs `scripts/preflight.sh`, which currently runs
   `uv run ruff check .`, `uv run pytest-llm`, and `uv run pyright`, then blocks
-  direct `v*` tag pushes. Use `scripts/release.sh` for release tags.
+  direct `v*` tag pushes. `v*` tags are CI-owned; they are created automatically
+  on PR merge to `main`.
 - Humans may bypass hooks with Git's standard `--no-verify` only when they are
   doing so intentionally. LLM agents must not use `--no-verify` unless the user
   explicitly instructs them to.
@@ -97,27 +98,45 @@ uv run pyright
 
 ## Release
 
-Use the release helper to run preflight, bump the package version, create the
-release commit, wait for CI on stable releases, and create the matching
-`v<version>` tag. Do not create or push `v*` tags manually.
+Stable meridian-cli releases happen automatically when you merge a PR to `main`.
 
-The package version currently lives in `src/meridian/__init__.py` as
-`__version__`.
+### What you do
+
+1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
+2. Write changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
+3. Open a PR with the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
+4. Set one release label:
+   - `release:patch` (default if unlabeled)
+   - `release:minor`
+   - `release:major`
+   - `release:skip`
+5. Merge the PR to `main`
+
+### What CI does on merge
+
+`.github/workflows/release-on-merge.yml` runs on every merged PR. It:
+
+1. Computes the next version from existing git tags
+2. Bumps `src/meridian/__init__.py`
+3. Promotes `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`
+4. Creates commit `Release X.Y.Z`
+5. Creates and pushes tag `vX.Y.Z`
+6. PyPI publish fires on the tag push (`publish-pypi.yml`)
+
+### Post-merge
+
+Clean up merged worktrees:
 
 ```bash
-# Stable release: prepare, push, wait for CI, then tag
-scripts/release.sh prepare patch --push
-
-# If CI fails after prepare, fix forward, then resume without rerunning local preflight
-scripts/release.sh resume --push
-
-# RC release: no CI gate
-scripts/release.sh prepare rc --push
-
-# Inspect or abandon prepared release state
-scripts/release.sh status
-scripts/release.sh abort
+scripts/prune-worktrees.sh --dry-run    # preview
+scripts/prune-worktrees.sh --yes        # execute
 ```
+
+### Boundaries
+
+- Do not edit `src/meridian/__init__.py` for stable releases — CI owns it
+- Do not create or push `v*` tags manually — CI owns them
+- The pre-push hook blocks direct `v*` tag pushes; CI bypasses this via `GITHUB_TOKEN`
 
 ## Run from source
 
@@ -143,14 +162,12 @@ PowerShell mirrors exist for the standard developer workflow:
 | Pre-push gate | `scripts/check.sh` | `scripts\check.ps1` |
 | Full preflight | `scripts/preflight.sh` | `scripts\preflight.ps1` |
 
-`scripts/release.sh` does not have a PowerShell mirror. Windows developers who need to cut releases should use WSL.
-
 ### Deferred items
 
 The following are explicitly out of scope and not implemented:
 
 - **ConPTY / terminal passthrough**: Primary-session TUI capture for Claude Code and Codex session-ID extraction relies on PTY semantics. Windows ConPTY support is not implemented — harness features that depend on PTY capture may not work correctly natively on Windows. WSL is the supported path for primary-session use on Windows.
-- **Full bash script parity**: Only the three scripts above have PowerShell mirrors. `scripts/release.sh`, `scripts/quality-issues.sh`, and other helpers remain POSIX-only.
+- **Full bash script parity**: Only the three scripts above have PowerShell mirrors. `scripts/quality-issues.sh` and other helpers remain POSIX-only.
 
 ## Workspace conventions
 
