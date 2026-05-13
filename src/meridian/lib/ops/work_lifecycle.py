@@ -682,27 +682,27 @@ def work_switch_sync(
     recovered_message: str | None = None
     worktree_warning: str | None = None
 
-    if worktree_path is not None:
+    if worktree_pending:
+        recovered = recover_pending(project_root, item)
+        work_store.update_work_item_worktree(
+            project_state_dir,
+            item.name,
+            path=recovered.metadata.path,
+            branch=recovered.metadata.branch,
+            pending=recovered.metadata.pending,
+        )
+        item = work_store.get_work_item(project_state_dir, item.name) or item
+        worktree_path = item.worktree_path
+        worktree_branch = item.worktree_branch
+        worktree_pending = item.worktree_pending
+        worktree_exists = Path(worktree_path).is_dir() if worktree_path is not None else None
+        if recovered.status == "healed":
+            recovered_message = f"Recovered worktree at {recovered.metadata.path}"
+        else:
+            worktree_warning = "Worktree creation was interrupted; no worktree available."
+    elif worktree_path is not None:
         worktree_exists = Path(worktree_path).is_dir()
-        if worktree_pending:
-            recovered = recover_pending(project_root, item)
-            work_store.update_work_item_worktree(
-                project_state_dir,
-                item.name,
-                path=recovered.metadata.path,
-                branch=recovered.metadata.branch,
-                pending=recovered.metadata.pending,
-            )
-            item = work_store.get_work_item(project_state_dir, item.name) or item
-            worktree_path = item.worktree_path
-            worktree_branch = item.worktree_branch
-            worktree_pending = item.worktree_pending
-            worktree_exists = Path(worktree_path).is_dir() if worktree_path is not None else None
-            if recovered.status == "healed":
-                recovered_message = f"Recovered worktree at {recovered.metadata.path}"
-            else:
-                worktree_warning = "Worktree creation was interrupted; no worktree available."
-        elif worktree_exists is False:
+        if worktree_exists is False:
             worktree_warning = f"Worktree path recorded but directory missing: {worktree_path}"
 
     return WorkSwitchOutput(
@@ -761,7 +761,12 @@ def work_rename_sync(
         worktree_branch = wt_result.metadata.branch
 
     item = work_store.rename_work_item(project_state_dir, old_name, new_slug)
-    if payload.rename_worktree and new_slug != old_name and worktree_path is not None:
+    if (
+        payload.rename_worktree
+        and new_slug != old_name
+        and worktree_moved
+        and worktree_path is not None
+    ):
         item = work_store.update_work_item_worktree(
             project_state_dir,
             item.name,

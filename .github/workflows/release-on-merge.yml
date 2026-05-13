@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     concurrency:
       group: release-on-merge-main
       cancel-in-progress: false

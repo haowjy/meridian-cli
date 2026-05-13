@@ -259,7 +259,8 @@ def rename_worktree(
     if not old_path.is_dir():
         return WorktreeRenameResult(
             status="missing",
-            metadata=WorktreeMetadata(path=str(new_path), branch=new_branch, pending=False),
+            metadata=item.worktree,
+            error=f"Worktree directory not found at {old_path}",
         )
 
     if item.worktree_branch:

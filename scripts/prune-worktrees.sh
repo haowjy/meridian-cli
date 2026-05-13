@@ -236,7 +236,8 @@ for i in "${!candidate_paths[@]}"; do
 
   # Step 3: Only mark work done after both git operations succeed.
   if ! meridian work done "$slug" >/dev/null 2>&1; then
-    warn "meridian work done failed for slug '$slug' (git cleanup succeeded)"
+    warn "meridian work done failed for slug '$slug' (git cleanup succeeded; run 'meridian work done $slug' manually)"
+    failures=$((failures + 1))
   fi
 done
 

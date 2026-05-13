@@ -59,10 +59,7 @@ def format_rename_notice(result: WorktreeRenameResult) -> str | None:
     if result.status == "not_configured":
         return "No worktree configured; nothing to move."
     if result.status == "missing":
-        return (
-            "Worktree directory missing; updated metadata to "
-            f"{result.metadata.path} ({result.metadata.branch})."
-        )
+        return f"Worktree directory missing at {result.metadata.path}; metadata unchanged."
     if result.status == "renamed":
         return f"🌳 Moved worktree to {result.metadata.path} ({result.metadata.branch})"
     if result.status == "failed":

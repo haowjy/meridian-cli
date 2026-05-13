@@ -263,7 +263,8 @@ for ($i = 0; $i -lt $candidatePaths.Count; $i++) {
 
     & meridian work done $slug *> $null
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "meridian work done failed for slug '$slug' (git cleanup succeeded)"
+        Write-Warning "meridian work done failed for slug '$slug' (git cleanup succeeded; run 'meridian work done $slug' manually)"
+        $failures++
     }
 }
 
