@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -260,42 +261,31 @@ def test_build_launch_context_primary_exports_configured_context_dirs(
     assert bind_env["MERIDIAN_CONTEXT_STRATEGY_DIR"] == (tmp_path / "ctx/strategy").as_posix()
 
 
-def test_build_launch_context_env_keeps_project_root_when_execution_cwd_differs(
+@pytest.mark.parametrize(
+    ("execution_cwd_factory", "expect_task_cwd"),
+    [
+        pytest.param(
+            lambda root: root / ".meridian" / "spawns" / "p-parent",
+            True,
+            id="distinct-task-cwd",
+        ),
+        pytest.param(lambda root: root, False, id="task-cwd-matches-control-root"),
+    ],
+)
+def test_build_launch_context_split_root_task_cwd_contract(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
+    execution_cwd_factory: Callable[[Path], Path],
+    expect_task_cwd: bool,
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    execution_cwd = tmp_path / ".meridian" / "spawns" / "p-parent"
-    execution_cwd.mkdir(parents=True)
+    execution_cwd = execution_cwd_factory(tmp_path)
+    execution_cwd.mkdir(parents=True, exist_ok=True)
     request = _build_spawn_request()
     runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=execution_cwd)
 
     runtime_ctx = build_launch_context(
-        spawn_id="p-child-env",
-        request=request,
-        runtime=runtime,
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    bind_env = runtime_ctx.binding.environment.bind_env_overrides
-    assert runtime_ctx.execution_cwd == execution_cwd
-    assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
-    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
-
-
-def test_build_launch_context_exposes_task_cwd_and_guidance_when_execution_cwd_differs(
-    monkeypatch: MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    execution_cwd = tmp_path / ".meridian" / "spawns" / "p-parent"
-    execution_cwd.mkdir(parents=True)
-    request = _build_spawn_request()
-    runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=execution_cwd)
-
-    runtime_ctx = build_launch_context(
-        spawn_id="p-task-cwd",
+        spawn_id="p-task-cwd-contract",
         request=request,
         runtime=runtime,
         harness_registry=get_default_harness_registry(),
@@ -304,15 +294,23 @@ def test_build_launch_context_exposes_task_cwd_and_guidance_when_execution_cwd_d
 
     bind_env = runtime_ctx.binding.environment.bind_env_overrides
     final_env = runtime_ctx.binding.environment.final_env
+    assert runtime_ctx.execution_cwd == execution_cwd
+    assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
-    assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
-    assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
-    assert final_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
-    assert runtime_ctx.binding.run_params.appended_system_prompt is not None
-    assert "MERIDIAN_TASK_CWD" in runtime_ctx.binding.run_params.appended_system_prompt
-    assert execution_cwd.as_posix() in runtime_ctx.binding.run_params.appended_system_prompt
-    projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
-    assert execution_cwd.resolve() not in projected_roots
+    if expect_task_cwd:
+        assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
+        assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
+        assert final_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
+        assert runtime_ctx.binding.run_params.appended_system_prompt is not None
+        assert "MERIDIAN_TASK_CWD" in runtime_ctx.binding.run_params.appended_system_prompt
+        assert execution_cwd.as_posix() in runtime_ctx.binding.run_params.appended_system_prompt
+        projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
+        assert execution_cwd.resolve() not in projected_roots
+    else:
+        assert runtime_ctx.binding.run_params.task_cwd is None
+        assert "MERIDIAN_TASK_CWD" not in bind_env
+        assert "MERIDIAN_TASK_CWD" not in final_env
 
 
 def test_build_launch_context_warns_when_task_cwd_is_outside_control_and_projection(
@@ -402,30 +400,9 @@ def test_build_launch_context_claude_preflight_uses_control_root_when_task_cwd_d
         dry_run=True,
     )
 
-    assert runtime_ctx.binding.run_params.extra_args == ("--user-tail", "1")
-
-
-def test_build_launch_context_omits_task_cwd_env_when_execution_cwd_matches_project_root(
-    monkeypatch: MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    request = _build_spawn_request()
-    runtime = _build_launch_runtime(tmp_path=tmp_path)
-
-    runtime_ctx = build_launch_context(
-        spawn_id="p-no-task-cwd",
-        request=request,
-        runtime=runtime,
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    bind_env = runtime_ctx.binding.environment.bind_env_overrides
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
-    assert runtime_ctx.binding.run_params.task_cwd is None
-    assert "MERIDIAN_TASK_CWD" not in bind_env
-    assert "MERIDIAN_TASK_CWD" not in runtime_ctx.binding.environment.final_env
+    assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
+    assert runtime_ctx.binding.run_params.extra_args == ("--user-tail", "1")
 
 
 def test_build_launch_context_emits_child_spawn_id(

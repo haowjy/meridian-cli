@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import pytest
 
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.spawn import api as spawn_api
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import start_spawn
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def _runtime_root(tmp_path: Path) -> Path:
@@ -25,6 +24,7 @@ def _start_spawn_row(
     control_root: Path | None,
     task_cwd: Path | None,
     execution_cwd: Path | None,
+    harness_session_id: str = "thread-1",
 ) -> str:
     return str(
         start_spawn(
@@ -34,7 +34,7 @@ def _start_spawn_row(
             agent="coder",
             harness="codex",
             prompt="hello",
-            harness_session_id="thread-1",
+            harness_session_id=harness_session_id,
             control_root=control_root.as_posix() if control_root is not None else None,
             task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
             execution_cwd=execution_cwd.as_posix() if execution_cwd is not None else None,
@@ -42,7 +42,11 @@ def _start_spawn_row(
     )
 
 
-def test_resolve_spawn_reference_prefers_persisted_control_root(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reference_mode", ["spawn", "chat"])
+def test_resolve_tracked_references_prefer_persisted_control_root(
+    tmp_path: Path,
+    reference_mode: str,
+) -> None:
     runtime_root = _runtime_root(tmp_path)
     current_control_root = tmp_path / "current-control"
     persisted_control_root = tmp_path / "persisted-control"
@@ -51,24 +55,43 @@ def test_resolve_spawn_reference_prefers_persisted_control_root(tmp_path: Path) 
     persisted_control_root.mkdir(parents=True, exist_ok=True)
     task_cwd.mkdir(parents=True, exist_ok=True)
 
-    spawn_id = _start_spawn_row(
-        runtime_root=runtime_root,
-        control_root=persisted_control_root,
-        task_cwd=task_cwd,
-        execution_cwd=task_cwd,
-    )
-
-    resolved = resolve_session_reference(
-        current_control_root,
-        spawn_id,
-        runtime_root=runtime_root,
-    )
+    if reference_mode == "spawn":
+        reference = _start_spawn_row(
+            runtime_root=runtime_root,
+            control_root=persisted_control_root,
+            task_cwd=task_cwd,
+            execution_cwd=task_cwd,
+        )
+        resolved = resolve_session_reference(
+            current_control_root,
+            reference,
+            runtime_root=runtime_root,
+        )
+    else:
+        chat_id = session_store.start_session(
+            runtime_root,
+            harness="codex",
+            harness_session_id="thread-1",
+            model="gpt-5.4",
+            chat_id="c1",
+            control_root=persisted_control_root.as_posix(),
+            task_cwd=task_cwd.as_posix(),
+            execution_cwd=task_cwd.as_posix(),
+        )
+        try:
+            resolved = resolve_session_reference(
+                current_control_root,
+                chat_id,
+                runtime_root=runtime_root,
+            )
+        finally:
+            session_store.stop_session(runtime_root, chat_id)
 
     assert resolved.source_control_root == persisted_control_root.as_posix()
     assert resolved.source_execution_cwd == task_cwd.as_posix()
 
 
-def test_resolve_chat_reference_prefers_persisted_control_root(tmp_path: Path) -> None:
+def test_resolve_harness_session_reference_prefers_persisted_control_root(tmp_path: Path) -> None:
     runtime_root = _runtime_root(tmp_path)
     current_control_root = tmp_path / "current-control"
     persisted_control_root = tmp_path / "persisted-control"
@@ -80,7 +103,7 @@ def test_resolve_chat_reference_prefers_persisted_control_root(tmp_path: Path) -
     chat_id = session_store.start_session(
         runtime_root,
         harness="codex",
-        harness_session_id="thread-1",
+        harness_session_id="thread-raw-ref",
         model="gpt-5.4",
         chat_id="c1",
         control_root=persisted_control_root.as_posix(),
@@ -90,12 +113,14 @@ def test_resolve_chat_reference_prefers_persisted_control_root(tmp_path: Path) -
     try:
         resolved = resolve_session_reference(
             current_control_root,
-            chat_id,
+            "thread-raw-ref",
             runtime_root=runtime_root,
         )
     finally:
         session_store.stop_session(runtime_root, chat_id)
 
+    assert resolved.tracked is True
+    assert resolved.source_chat_id == chat_id
     assert resolved.source_control_root == persisted_control_root.as_posix()
     assert resolved.source_execution_cwd == task_cwd.as_posix()
 
