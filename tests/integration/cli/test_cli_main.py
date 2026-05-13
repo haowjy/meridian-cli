@@ -6,9 +6,8 @@ from typing import Any
 import pytest
 
 cli_main = importlib.import_module("meridian.cli.main")
-mars_passthrough = importlib.import_module("meridian.cli.mars_passthrough")
 primary_launch = importlib.import_module("meridian.cli.primary_launch")
-config_ops = importlib.import_module("meridian.lib.ops.config")
+init_ops = importlib.import_module("meridian.lib.ops.init_ops")
 
 
 def test_main_harness_shortcut_routes_into_primary_launch(
@@ -31,62 +30,81 @@ def test_main_harness_shortcut_routes_into_primary_launch(
     assert captured["dry_run"] is True
 
 
-def test_init_alias_link_uses_mars_init_when_mars_toml_missing(
+def test_init_alias_link_uses_mars_flow_with_full_link_target_when_called_directly(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    captured_project_root: dict[str, str] = {}
-    captured_mars: list[tuple[tuple[str, ...], str | None]] = []
+    captured: dict[str, Any] = {}
 
-    def _fake_config_init(payload: Any) -> object:
-        captured_project_root["value"] = payload.project_root
+    def _fake_run_init_flow(
+        *,
+        project_root: Path,
+        add_sources: list[str],
+        link_targets: list[str] | None = None,
+        output_format: str = "text",
+    ) -> object:
+        captured.update(
+            {
+                "project_root": project_root.as_posix(),
+                "add_sources": add_sources,
+                "link_targets": link_targets,
+                "output_format": output_format,
+            }
+        )
         return object()
 
-    def _fake_run_mars_passthrough(
-        args: list[str] | tuple[str, ...],
-        *,
-        output_format: str | None = None,
-        **_kwargs: object,
-    ) -> None:
-        captured_mars.append((tuple(args), output_format))
+    monkeypatch.setattr(init_ops, "run_init_flow", _fake_run_init_flow)
+    monkeypatch.setattr(cli_main, "emit", lambda _payload: None)
 
-    monkeypatch.setattr(config_ops, "config_init_sync", _fake_config_init)
-    monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
-
-    cli_main.init_alias(path=tmp_path.as_posix(), link=".claude")
+    cli_main.init_alias(path=tmp_path.as_posix(), link=[".claude"])
 
     expected_root = tmp_path.resolve().as_posix()
-    assert captured_project_root["value"] == expected_root
-    assert captured_mars == [
-        (("--root", expected_root, "init", "--link", ".claude"), "text"),
-    ]
+    assert captured == {
+        "project_root": expected_root,
+        "add_sources": [],
+        "link_targets": [".claude"],
+        "output_format": "text",
+    }
 
 
-def test_init_alias_link_uses_mars_link_when_mars_toml_exists(
+def test_init_alias_link_uses_mars_flow_with_cli_parsed_single_target_not_characters(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    captured_mars: list[tuple[tuple[str, ...], str | None]] = []
-    (tmp_path / "mars.toml").write_text("", encoding="utf-8")
+    captured: dict[str, Any] = {}
 
-    monkeypatch.setattr(config_ops, "config_init_sync", lambda _payload: object())
-
-    def _fake_run_mars_passthrough(
-        args: list[str] | tuple[str, ...],
+    def _fake_run_init_flow(
         *,
-        output_format: str | None = None,
-        **_kwargs: object,
-    ) -> None:
-        captured_mars.append((tuple(args), output_format))
+        project_root: Path,
+        add_sources: list[str],
+        link_targets: list[str] | None = None,
+        output_format: str = "text",
+    ) -> object:
+        captured.update(
+            {
+                "project_root": project_root.as_posix(),
+                "add_sources": add_sources,
+                "link_targets": link_targets,
+                "output_format": output_format,
+            }
+        )
+        return object()
 
-    monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
+    monkeypatch.setattr(init_ops, "run_init_flow", _fake_run_init_flow)
+    monkeypatch.setattr(cli_main, "maybe_bootstrap_runtime_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli_main, "emit", lambda _payload: None)
 
-    cli_main.init_alias(path=tmp_path.as_posix(), link=".claude")
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["init", "--link", ".claude", tmp_path.as_posix()])
+    assert exc_info.value.code == 0
 
     expected_root = tmp_path.resolve().as_posix()
-    assert captured_mars == [
-        (("--root", expected_root, "link", ".claude"), "text"),
-    ]
+    assert captured == {
+        "project_root": expected_root,
+        "add_sources": [],
+        "link_targets": [".claude"],
+        "output_format": "text",
+    }
 
 
 def test_bootstrap_command_enables_bootstrap_documents(

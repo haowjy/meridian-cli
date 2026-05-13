@@ -9,12 +9,9 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TextIO
 
 from meridian.lib.ops.mars import resolve_mars_executable
-
-if TYPE_CHECKING:
-    from pydantic import BaseModel
 
 
 @dataclass(frozen=True)
@@ -194,52 +191,3 @@ def resolve_init_project_root(path: str | None) -> Path:
     env_root = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
     return Path(env_root).expanduser().resolve() if env_root else Path.cwd().resolve()
 
-
-def resolve_init_link_mars_command(project_root: Path, link: str) -> tuple[str, list[str]]:
-    root_arg = project_root.as_posix()
-    if (project_root / "mars.toml").is_file():
-        return "link", ["--root", root_arg, "link", link]
-    return "init", ["--root", root_arg, "init", "--link", link]
-
-
-def run_init_link_flow_json(
-    *,
-    executable: str,
-    mars_mode: str,
-    mars_args: Sequence[str],
-    link: str,
-    config_result: BaseModel,
-    emit: Callable[[object], None],
-    parse_request: Callable[..., MarsPassthroughRequest] = parse_mars_passthrough,
-    execute_request: Callable[[MarsPassthroughRequest], MarsPassthroughResult] = (
-        execute_mars_passthrough
-    ),
-    decode_values: Callable[[str], list[object] | None] = decode_json_values,
-) -> None:
-    request = parse_request(mars_args, output_format="json", executable=executable)
-    result = execute_request(request)
-    parsed_events = decode_values(result.stdout_text)
-    if parsed_events is None:
-        mars_output: object = result.stdout_text
-    elif len(parsed_events) == 1:
-        mars_output = parsed_events[0]
-    else:
-        mars_output = parsed_events
-
-    mars_payload: dict[str, object] = {
-        "mode": mars_mode,
-        "target": link,
-        "exit_code": result.returncode,
-        "output": mars_output,
-    }
-    if result.stderr_text:
-        mars_payload["stderr"] = result.stderr_text
-    emit(
-        {
-            "ok": result.returncode == 0,
-            "config": config_result.model_dump(),
-            "mars": mars_payload,
-        }
-    )
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)

@@ -91,6 +91,21 @@ than `isinstance` branches in `main.py`. This keeps the root CLI module
 free of spawn-op and output-model imports. Each result type implements
 the small protocol to produce its wire-shaped output.
 
+## `init` Command Routing
+
+`init_alias` in `main.py` has two branches:
+
+- **With `--add` or `--link`** → routes through `init_ops.run_init_flow`, which
+  handles package installation, config bootstrap, and tool directory linking in
+  one call. Mars is invoked internally by `init_ops`, not via `mars_passthrough`.
+- **Bare `meridian init`** (no flags) → calls `config_init_sync` directly to
+  bootstrap the project config only.
+
+There is no passthrough path in this command. `resolve_init_link_mars_command`
+was deleted when `init_ops` took over the `--link` case — do not recreate it.
+Auto-link is the default behavior; there are no confirmation prompts in the init
+flow, so `--yes` has no meaning here and was removed.
+
 ## Related KB
 
 → [KB: architecture/startup-pipeline.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/startup-pipeline.md)

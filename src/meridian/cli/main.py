@@ -458,29 +458,6 @@ def _run_primary_launch(
     )
 
 
-def _run_init_link_flow_json(
-    *,
-    executable: str,
-    mars_mode: str,
-    mars_args: Sequence[str],
-    link: str,
-    config_result: BaseModel,
-) -> None:
-    from meridian.cli import mars_passthrough
-
-    return mars_passthrough.run_init_link_flow_json(
-        executable=executable,
-        mars_mode=mars_mode,
-        mars_args=mars_args,
-        link=link,
-        config_result=config_result,
-        emit=emit,
-        parse_request=mars_passthrough.parse_mars_passthrough,
-        execute_request=_execute_mars_passthrough,
-        decode_values=mars_passthrough.decode_json_values,
-    )
-
-
 @app.command(name="init")
 def init_alias(
     path: Annotated[
@@ -488,10 +465,17 @@ def init_alias(
         Parameter(name="path", help="Optional project path to initialize."),
     ] = None,
     link: Annotated[
-        str | None,
+        list[str] | None,
         Parameter(
             name="--link",
             help="Link .mars/ into tool directory after config bootstrap (for example .claude).",
+        ),
+    ] = None,
+    add: Annotated[
+        list[str] | None,
+        Parameter(
+            name="--add",
+            help="Package specifier(s) to install (e.g. owner/repo). Repeatable.",
         ),
     ] = None,
 ) -> None:
@@ -501,30 +485,21 @@ def init_alias(
     from meridian.lib.ops.config import ConfigInitInput, config_init_sync
 
     project_root = mars_passthrough.resolve_init_project_root(path)
-    result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
-    if link is None:
+
+    if add or link:
+        from meridian.lib.ops.init_ops import run_init_flow
+
+        result = run_init_flow(
+            project_root=project_root,
+            add_sources=add or [],
+            link_targets=link,
+            output_format=get_global_options().output.format,
+        )
         emit(result)
         return
 
-    mars_mode, mars_args = mars_passthrough.resolve_init_link_mars_command(project_root, link)
-    output_format = get_global_options().output.format
-    if output_format == "json":
-        executable = mars_passthrough.resolve_mars_executable()
-        if executable is None:
-            print(
-                "error: Failed to execute 'mars'. Install meridian with dependencies and retry.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        _run_init_link_flow_json(
-            executable=executable,
-            mars_mode=mars_mode,
-            mars_args=mars_args,
-            link=link,
-            config_result=result,
-        )
-        return
-    _run_mars_passthrough(mars_args, output_format=output_format)
+    # Truly bare init (no --add, no --link): bootstrap config only
+    emit(config_init_sync(ConfigInitInput(project_root=project_root.as_posix())))
 
 
 def _first_command_token(argv: Sequence[str]) -> str | None:
