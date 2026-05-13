@@ -195,6 +195,9 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     # The argv uses --append-system-prompt-file, so skill content is in the
     # system prompt file content, not directly in argv.
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
+    # Verify skill content is actually in the appended payload, not just the flag.
+    assert preview.binding.run_params.appended_system_prompt is not None
+    assert "Use verification checklist." in preview.binding.run_params.appended_system_prompt
 
     assert "complete the task" in projected.user_turn_content
     assert f"# Reference: {file_ref.as_posix()}" in projected.user_turn_content
@@ -263,6 +266,8 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert "# Report" in projected.system_prompt
     # Skills still delivered via --append-system-prompt-file
     assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
+    assert preview.binding.run_params.appended_system_prompt is not None
+    assert "Use verification checklist." in preview.binding.run_params.appended_system_prompt
 
     assert "continue the task" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content
