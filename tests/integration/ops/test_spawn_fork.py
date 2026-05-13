@@ -6,10 +6,11 @@ test_spawn_fork_harness.py.
 # qa-validated: test-suite-redesign
 """
 
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCreateInput,
@@ -51,6 +52,25 @@ def _seed_spawn(
     )
 
 
+def _resolved_reference(**overrides: object) -> ResolvedSessionReference:
+    reference = ResolvedSessionReference(
+        harness_session_id="session-seed",
+        harness="codex",
+        source_chat_id="c-source",
+        source_model="",
+        source_agent=None,
+        source_skills=(),
+        source_work_id="w-source",
+        source_control_root="/tmp/source-root",
+        source_execution_cwd="/tmp/source-cwd",
+        source_claude_config_dir=None,
+        tracked=True,
+    )
+    if not overrides:
+        return reference
+    return replace(reference, **overrides)
+
+
 def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     tmp_path: Path,
     monkeypatch,
@@ -68,18 +88,9 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     captured_input: SpawnCreateInput | None = None
 
     def _fake_resolve_session_reference(*_args, **_kwargs):
-        return SimpleNamespace(
-            missing_harness_session_id=False,
-            harness_session_id="session-seed",
-            harness="codex",
-            source_model="",
-            source_agent=None,
+        return _resolved_reference(
             source_skills=("skill-a", "skill-b"),
-            source_work_id="w-source",
-            source_chat_id="c-source",
-            source_execution_cwd="/tmp/source-cwd",
             source_claude_config_dir="/tmp/source-claude",
-            tracked=True,
         )
 
     def _fake_spawn_create_sync(
@@ -120,6 +131,7 @@ def test_spawn_fork_inherits_policy_fields_from_resolved_reference(
     assert captured_input.session.continue_source_ref == "c-source"
     assert captured_input.session.continue_fork is True
     assert captured_input.session.forked_from_chat_id == "c-source"
+    assert captured_input.session.source_control_root == "/tmp/source-root"
     assert captured_input.session.source_execution_cwd == "/tmp/source-cwd"
     assert captured_input.session.source_claude_config_dir == "/tmp/source-claude"
 
@@ -143,18 +155,10 @@ def test_spawn_fork_inherits_goal_for_concrete_spawn_ref_only(
     monkeypatch.setattr(
         spawn_api,
         "resolve_session_reference",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            missing_harness_session_id=False,
+        lambda *_args, **_kwargs: _resolved_reference(
             harness_session_id="session-31",
-            harness="codex",
             source_model="gpt-5.4",
             source_agent="coder",
-            source_skills=(),
-            source_work_id="w-source",
-            source_chat_id="c-source",
-            source_execution_cwd="/tmp/source-cwd",
-            source_claude_config_dir=None,
-            tracked=True,
         ),
     )
 
@@ -198,18 +202,11 @@ def test_spawn_fork_does_not_inherit_goal_for_chat_ref(
     monkeypatch.setattr(
         spawn_api,
         "resolve_session_reference",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            missing_harness_session_id=False,
+        lambda *_args, **_kwargs: _resolved_reference(
             harness_session_id="session-c7",
-            harness="codex",
             source_model="gpt-5.4",
             source_agent="coder",
-            source_skills=(),
-            source_work_id="w-source",
             source_chat_id="c7",
-            source_execution_cwd="/tmp/source-cwd",
-            source_claude_config_dir=None,
-            tracked=True,
         ),
     )
 
@@ -254,18 +251,10 @@ def test_spawn_fork_goal_override_wins_over_inherited_goal(
     monkeypatch.setattr(
         spawn_api,
         "resolve_session_reference",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            missing_harness_session_id=False,
+        lambda *_args, **_kwargs: _resolved_reference(
             harness_session_id="session-32",
-            harness="codex",
             source_model="gpt-5.4",
             source_agent="coder",
-            source_skills=(),
-            source_work_id="w-source",
-            source_chat_id="c-source",
-            source_execution_cwd="/tmp/source-cwd",
-            source_claude_config_dir=None,
-            tracked=True,
         ),
     )
 
@@ -314,18 +303,9 @@ def test_spawn_fork_uses_requested_model_agent_and_resolves_harness_from_policy(
     monkeypatch.setattr(
         spawn_api,
         "resolve_session_reference",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            missing_harness_session_id=False,
-            harness_session_id="session-seed",
-            harness="codex",
+        lambda *_args, **_kwargs: _resolved_reference(
             source_model="gpt-5.4",
-            source_agent=None,
             source_skills=("skill-a",),
-            source_work_id="w-source",
-            source_chat_id="c-source",
-            source_execution_cwd="/tmp/source-cwd",
-            source_claude_config_dir=None,
-            tracked=True,
         ),
     )
 

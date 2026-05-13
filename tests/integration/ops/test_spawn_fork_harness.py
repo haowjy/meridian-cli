@@ -5,13 +5,14 @@ Policy/goal/model inheritance tests live in test_spawn_fork.py.
 # qa-validated: test-suite-redesign
 """
 
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCreateInput,
@@ -33,19 +34,26 @@ def _state_root(project_root: Path) -> Path:
 
 
 def _fake_codex_session_reference(*_args, **_kwargs):
-    return SimpleNamespace(
-        missing_harness_session_id=False,
+    return _resolved_reference()
+
+
+def _resolved_reference(**overrides: object) -> ResolvedSessionReference:
+    reference = ResolvedSessionReference(
         harness_session_id="session-seed",
         harness="codex",
+        source_chat_id="c-source",
         source_model="",
         source_agent=None,
         source_skills=(),
         source_work_id="w-source",
-        source_chat_id="c-source",
+        source_control_root="/tmp/source-root",
         source_execution_cwd=None,
         source_claude_config_dir=None,
         tracked=True,
     )
+    if not overrides:
+        return reference
+    return replace(reference, **overrides)
 
 
 def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
@@ -159,7 +167,7 @@ def test_spawn_fork_errors_when_reference_has_no_recorded_session(
     monkeypatch.setattr(
         spawn_api,
         "resolve_session_reference",
-        lambda *_args, **_kwargs: SimpleNamespace(missing_harness_session_id=True),
+        lambda *_args, **_kwargs: _resolved_reference(harness_session_id=None),
     )
 
     with pytest.raises(ValueError) as exc_info:
