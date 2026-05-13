@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.34] - 2026-05-13
+
 ## [0.1.2] - 2026-05-13
 ### Added
 - `meridian spawn --worktree`/`--no-worktree` flag auto-provisions an isolated git worktree per spawn with rollback on failure.
