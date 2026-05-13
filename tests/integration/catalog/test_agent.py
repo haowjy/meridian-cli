@@ -237,6 +237,52 @@ def test_parse_agent_profile_model_policies_parse_fallback_order(tmp_path: Path)
     assert [rule.fallback_order for rule in profile.model_policies] == [2, 1, None]
 
 
+def test_parse_agent_profile_model_policies_accepts_empty_override_with_fallback_order(
+    tmp_path: Path,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "reviewer.md",
+        [
+            "name: Reviewer",
+            "model-policies:",
+            "  - match: {alias: claude-opus-4-6}",
+            "    fallback-order: 2",
+            "    override: {}",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == (
+        ModelPolicyRule(
+            match_type="alias",
+            match_value="claude-opus-4-6",
+            fallback_order=2,
+            overrides={},
+        ),
+    )
+
+
+def test_parse_agent_profile_rejects_empty_override_without_fallback_order(
+    tmp_path: Path,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "bad.md",
+        [
+            "name: Bad",
+            "model-policies:",
+            "  - match:",
+            "      model: gpt-5.5",
+            "    override: {}",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="at least one override"):
+        parse_agent_profile(profile_path)
+
+
 @pytest.mark.parametrize(
     ("ordinal", "match"),
     [
@@ -333,15 +379,6 @@ def test_parse_agent_profile_rejects_invalid_mode(tmp_path: Path) -> None:
                 "      effort: high",
             ],
             "exactly one match key",
-        ),
-        (
-            [
-                "model-policies:",
-                "  - match:",
-                "      model: gpt-5.5",
-                "    override: {}",
-            ],
-            "at least one override",
         ),
     ],
 )

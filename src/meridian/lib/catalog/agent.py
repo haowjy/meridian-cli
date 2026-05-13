@@ -220,7 +220,7 @@ def _parse_model_policies(
             for key, value in cast("Mapping[object, object]", raw_override).items()
             if str(key).strip()
         }
-        if not overrides:
+        if not overrides and fallback_order is None:
             raise ValueError(
                 f"Agent profile '{profile_name}' model-policies[{index}] must set at least "
                 "one override field."
