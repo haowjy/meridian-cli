@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +15,11 @@ from meridian.lib.core.util import FormatContext
 
 @dataclass(frozen=True)
 class InitAddResult:
-    """Parsed result from mars add --json."""
+    """What we extracted from mars add --json + post-sync filesystem."""
 
     declared_targets: list[str]
     declared_primary_agent: str | None
-    add_report: dict[str, Any]
+    content: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,21 +39,23 @@ class InitResult(BaseModel):
     project_root: str
     config_created: bool
     packages_added: list[str]
-    packages_resolved: list[str]
+    packages_requested: list[str]
     targets_linked: list[str]
-    content_count: int
+    content: dict[str, list[str]]
     primary_agent: PrimaryAgentAction | None = None
     next_step: str = "Run `meridian` to start."
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         lines = [f"Initialized {self.project_root}", ""]
-        if self.packages_resolved:
-            pkg_str = ", ".join(self.packages_resolved)
-            lines.append(f"  Packages:   {pkg_str} ({len(self.packages_resolved)} packages)")
+        if self.packages_requested:
+            pkg_str = ", ".join(self.packages_requested)
+            lines.append(f"  Packages:   {pkg_str} ({len(self.packages_requested)} packages)")
         if self.targets_linked:
             lines.append(f"  Targets:    {', '.join(self.targets_linked)}")
-        lines.append(f"  Content:    {self.content_count} items")
+        if self.content:
+            parts = [f"{len(items)} {kind}" for kind, items in self.content.items()]
+            lines.append(f"  Content:    {', '.join(parts)}")
         if self.primary_agent and self.primary_agent.action == "set":
             lines.append(f"  Primary:    {self.primary_agent.agent} (set in meridian.toml)")
         elif self.primary_agent and self.primary_agent.action == "differs":
@@ -63,79 +65,72 @@ class InitResult(BaseModel):
         return "\n".join(lines)
 
 
+def _run_mars_json(
+    project_root: Path,
+    command: str,
+    args: list[str],
+    *,
+    executable: str,
+) -> dict[str, Any]:
+    """Run a mars command with --json and return parsed output."""
+
+    from meridian.cli.mars_passthrough import (
+        execute_mars_passthrough,
+        parse_mars_passthrough,
+    )
+
+    full_args = ["--root", project_root.as_posix(), "--json", command, *args]
+    request = parse_mars_passthrough(full_args, executable=executable, output_format="json")
+    result = execute_mars_passthrough(request)
+    if result.returncode != 0:
+        if result.stderr_text:
+            sys.stderr.write(result.stderr_text)
+        raise SystemExit(result.returncode)
+    return json.loads(result.stdout_text) if result.stdout_text else {}
+
+
+def _scan_mars_content(project_root: Path) -> dict[str, list[str]]:
+    """Scan .mars/ for materialized content by type.
+
+    Returns a dict like {"agents": ["coder", "reviewer"], "skills": ["spawn", ...]}.
+    Discovers content types dynamically from subdirectory names.
+    """
+    mars_dir = project_root / ".mars"
+    if not mars_dir.is_dir():
+        return {}
+    # Dirs that are internal implementation state, not user-visible content.
+    _SKIP_DIRS = {"cache"}
+    content: dict[str, list[str]] = {}
+    for subdir in sorted(mars_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        if subdir.name in _SKIP_DIRS:
+            continue
+        # Skills and bootstrap are stored as directories; agents are stored as files.
+        # Include both so all content types are counted correctly.
+        items = sorted(f.stem for f in subdir.iterdir() if f.is_file() or f.is_dir())
+        if items:
+            content[subdir.name] = items
+    return content
+
+
 def run_mars_add_json(
     project_root: Path,
     sources: list[str],
     *,
     executable: str,
 ) -> InitAddResult:
-    """Run mars add with JSON output and parse declared_targets."""
+    """Run mars add with JSON output and scan materialized content."""
 
-    from meridian.cli.mars_passthrough import (
-        execute_mars_passthrough,
-        parse_mars_passthrough,
-    )
-
-    args = ["--root", project_root.as_posix(), "--json", "add", *sources]
-    request = parse_mars_passthrough(args, executable=executable, output_format="json")
-    result = execute_mars_passthrough(request)
-    if result.returncode != 0:
-        if result.stderr_text:
-            sys.stderr.write(result.stderr_text)
-        raise SystemExit(result.returncode)
-    parsed: dict[str, Any] = json.loads(result.stdout_text)
+    parsed = _run_mars_json(project_root, "add", sources, executable=executable)
+    content = _scan_mars_content(project_root)
+    declared_targets: list[str] = parsed.get("declared_targets", [])
+    declared_primary_agent: str | None = parsed.get("declared_primary_agent")
     return InitAddResult(
-        declared_targets=parsed.get("declared_targets", []),
-        declared_primary_agent=parsed.get("declared_primary_agent"),
-        add_report=parsed,
+        declared_targets=declared_targets,
+        declared_primary_agent=declared_primary_agent,
+        content=content,
     )
-
-
-def run_mars_link_json(
-    project_root: Path,
-    target: str,
-    *,
-    executable: str,
-) -> dict[str, Any]:
-    """Run mars link for a single target with JSON output."""
-
-    from meridian.cli.mars_passthrough import (
-        execute_mars_passthrough,
-        parse_mars_passthrough,
-    )
-
-    args = ["--root", project_root.as_posix(), "--json", "link", target]
-    request = parse_mars_passthrough(args, executable=executable, output_format="json")
-    result = execute_mars_passthrough(request)
-    if result.returncode != 0:
-        if result.stderr_text:
-            sys.stderr.write(result.stderr_text)
-        raise SystemExit(result.returncode)
-    result_data: dict[str, Any] = json.loads(result.stdout_text) if result.stdout_text else {}
-    return result_data
-
-
-def run_mars_init_json(
-    project_root: Path,
-    *,
-    executable: str,
-) -> dict[str, Any]:
-    """Run mars init with JSON output. Idempotent."""
-
-    from meridian.cli.mars_passthrough import (
-        execute_mars_passthrough,
-        parse_mars_passthrough,
-    )
-
-    args = ["--root", project_root.as_posix(), "--json", "init"]
-    request = parse_mars_passthrough(args, executable=executable, output_format="json")
-    result = execute_mars_passthrough(request)
-    if result.returncode != 0:
-        if result.stderr_text:
-            sys.stderr.write(result.stderr_text)
-        raise SystemExit(result.returncode)
-    result_data: dict[str, Any] = json.loads(result.stdout_text) if result.stdout_text else {}
-    return result_data
 
 
 def maybe_set_primary_agent(
@@ -170,7 +165,8 @@ def maybe_set_primary_agent(
                     f"Package recommends '{declared_primary_agent}' as primary agent. "
                     f"Current primary is '{current_agent}'. "
                     f"Run `meridian -a {declared_primary_agent}` to try it, "
-                    f"or update `meridian.toml` to change your default."
+                    f"or `meridian config set primary.agent {declared_primary_agent}` "
+                    f"to change your default."
                 ),
             )
 
@@ -189,7 +185,6 @@ def run_init_flow(
     project_root: Path,
     add_sources: list[str],
     link_targets: list[str] | None = None,
-    yes: bool = False,
     output_format: str = "text",
 ) -> InitResult | dict[str, Any]:
     """Full init-with-add orchestration.
@@ -197,7 +192,7 @@ def run_init_flow(
     Sequence:
     1. Bootstrap meridian.toml (config_init_sync)
     2. mars init if no mars.toml
-    3. mars add <sources>
+    3. mars add <sources>  (skipped when add_sources is empty)
     4. Determine targets (--link overrides, else declared)
     5. mars link for each target
     6. Set primary agent if applicable
@@ -206,8 +201,6 @@ def run_init_flow(
 
     from meridian.cli.mars_passthrough import resolve_mars_executable
     from meridian.lib.ops.config import ConfigInitInput, config_init_sync
-
-    _ = yes  # reserved for future interactive prompts
 
     # 1. Bootstrap meridian.toml
     config_result = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
@@ -223,40 +216,35 @@ def run_init_flow(
     # 2. mars init if no mars.toml
     mars_toml = project_root / "mars.toml"
     if not mars_toml.is_file():
-        run_mars_init_json(project_root, executable=executable)
+        _run_mars_json(project_root, "init", [], executable=executable)
 
-    # 3. mars add
-    add_result = run_mars_add_json(project_root, add_sources, executable=executable)
+    # 3. mars add (skipped when no sources requested)
+    add_result: InitAddResult | None = None
+    if add_sources:
+        add_result = run_mars_add_json(project_root, add_sources, executable=executable)
 
     # 4. Determine targets
-    targets: list[str] = link_targets or add_result.declared_targets
+    declared_targets = add_result.declared_targets if add_result else []
+    targets: list[str] = link_targets if link_targets is not None else declared_targets
 
     # 5. mars link for each target
     for target in targets:
-        run_mars_link_json(project_root, target, executable=executable)
+        _run_mars_json(project_root, "link", [target], executable=executable)
 
     # 6. Primary agent
-    primary_action = maybe_set_primary_agent(project_root, add_result.declared_primary_agent)
+    declared_primary_agent = add_result.declared_primary_agent if add_result else None
+    primary_action = maybe_set_primary_agent(project_root, declared_primary_agent)
 
     # 7. Build result
-    report = add_result.add_report
-    targets_data = report.get("targets", {})
-    if isinstance(targets_data, dict) and targets_data:
-        content_count = sum(
-            int(t.get("synced", 0))
-            for t in targets_data.values()
-            if isinstance(t, dict)
-        )
-    else:
-        content_count = int(report.get("installed", 0)) + int(report.get("updated", 0))
+    content = add_result.content if add_result else {}
 
     result = InitResult(
         project_root=project_root.as_posix(),
         config_created=config_result.created,
         packages_added=add_sources,
-        packages_resolved=add_sources,
+        packages_requested=add_sources,
         targets_linked=targets,
-        content_count=content_count,
+        content=content,
         primary_agent=primary_action,
     )
 

@@ -191,9 +191,3 @@ def resolve_init_project_root(path: str | None) -> Path:
     env_root = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
     return Path(env_root).expanduser().resolve() if env_root else Path.cwd().resolve()
 
-
-def resolve_init_link_mars_command(project_root: Path, link: str) -> tuple[str, list[str]]:
-    root_arg = project_root.as_posix()
-    if (project_root / "mars.toml").is_file():
-        return "link", ["--root", root_arg, "link", link]
-    return "init", ["--root", root_arg, "init", "--link", link]
