@@ -192,11 +192,9 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
   esac
 fi
 
-has_meridian=0
-if command -v meridian >/dev/null 2>&1; then
-  has_meridian=1
-else
-  warn "meridian CLI not found; skipping optional 'meridian work done <slug>'"
+if ! command -v meridian >/dev/null 2>&1; then
+  warn "meridian CLI not found; refusing to prune without work-item reconciliation"
+  exit 1
 fi
 
 failures=0
@@ -208,26 +206,36 @@ for i in "${!candidate_paths[@]}"; do
   log ""
   log "Pruning: $path ($branch)"
 
-  if ! git worktree remove "$path"; then
-    warn "failed to remove worktree: $path"
+  if [[ -z "$slug" ]]; then
+    warn "no work-item slug derived from branch '$branch'; refusing to prune"
     failures=$((failures + 1))
     continue
   fi
 
-  if ! git branch -d "$branch"; then
-    warn "failed to delete branch safely: $branch"
+  if ! meridian work done "$slug" >/dev/null 2>&1; then
+    warn "meridian work done failed for slug '$slug'; refusing to prune this worktree"
     failures=$((failures + 1))
     continue
   fi
 
-  if [[ "$has_meridian" -eq 1 ]]; then
-    if [[ -n "$slug" ]]; then
-      if ! meridian work done "$slug" >/dev/null 2>&1; then
-        warn "meridian work done failed for slug '$slug' (continuing)"
-      fi
-    else
-      warn "no work-item slug derived from branch '$branch'; skipping meridian work done"
+  if [[ -d "$path" ]]; then
+    if ! git worktree remove "$path"; then
+      warn "failed to remove worktree: $path"
+      failures=$((failures + 1))
+      continue
     fi
+  else
+    log "Worktree already removed: $path"
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    if ! git branch -d "$branch"; then
+      warn "failed to delete branch safely: $branch"
+      failures=$((failures + 1))
+      continue
+    fi
+  else
+    log "Branch already deleted: $branch"
   fi
 done
 
