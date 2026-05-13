@@ -132,15 +132,18 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
 
     profile = policy.profile
     adapter = policy.adapter
-    skill_docs = tuple(
-        ChatPromptDocumentSnapshot(
-            kind=document.kind,
-            logical_name=document.logical_name,
-            path=document.path,
-            content=document.content,
+    if adapter.capabilities.supports_native_skills:
+        skill_docs: tuple[ChatPromptDocumentSnapshot, ...] = ()
+    else:
+        skill_docs = tuple(
+            ChatPromptDocumentSnapshot(
+                kind=document.kind,
+                logical_name=document.logical_name,
+                path=document.path,
+                content=document.content,
+            )
+            for document in compose_skill_prompt_documents(policy.resolved_skills.loaded_skills)
         )
-        for document in compose_skill_prompt_documents(policy.resolved_skills.loaded_skills)
-    )
 
     agent_profile_body = ""
     adhoc_agent_payload = ""

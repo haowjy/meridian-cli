@@ -94,6 +94,7 @@ class AgentProfile(BaseModel):
     model_policies: tuple[ModelPolicyRule, ...] = ()
     models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
     fanout: tuple[FanoutEntry, ...] = ()
+    model_invocable: bool = True
     body: str
     path: Path
     raw_content: str
@@ -322,8 +323,19 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     model_policies_value = frontmatter.get("model-policies")
     models_value = frontmatter.get("models")
     fanout_value = frontmatter.get("fanout")
+    model_invocable_value = frontmatter.get("model-invocable")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
+    model_invocable = True
+    if model_invocable_value is not None:
+        if isinstance(model_invocable_value, bool):
+            model_invocable = model_invocable_value
+        else:
+            logger.warning(
+                "Agent profile '%s' has non-boolean model-invocable '%s'; treating as visible.",
+                profile_name,
+                model_invocable_value,
+            )
     sandbox = str(sandbox_value).strip() if sandbox_value is not None else None
     effort = str(effort_value).strip() if effort_value is not None else None
     if effort is not None and effort and effort not in _KNOWN_EFFORT_VALUES:
@@ -422,6 +434,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         model_policies=model_policies,
         models=models,
         fanout=fanout,
+        model_invocable=model_invocable,
         body=body,
         path=path.resolve(),
         raw_content=markdown,

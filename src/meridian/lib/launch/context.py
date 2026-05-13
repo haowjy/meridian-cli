@@ -62,7 +62,7 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
-from .composition import ComposedLaunchContent, ProjectedContent
+from .composition import ComposedLaunchContent, ProjectedContent, PromptDocument
 from .cwd import resolve_child_execution_cwd
 from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
@@ -874,7 +874,10 @@ def _resolve_spawn_prepare_projection(
         resolved_template_variables,
     )
 
-    supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
+    if harness.capabilities.supports_native_skills:
+        supplemental_documents: tuple[PromptDocument, ...] = ()
+    else:
+        supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
 
     agent_profile_body = ""
     if (
@@ -975,10 +978,13 @@ def _resolve_primary_projection(
         frag.strip() for frag in passthrough_prompt_fragments if frag.strip()
     )
 
-    supplemental_documents = (
-        *compose_skill_prompt_documents(resolved_skills.loaded_skills),
-        *request.supplemental_prompt_documents,
-    )
+    if harness.capabilities.supports_native_skills:
+        supplemental_documents = tuple(request.supplemental_prompt_documents)
+    else:
+        supplemental_documents = (
+            *compose_skill_prompt_documents(resolved_skills.loaded_skills),
+            *request.supplemental_prompt_documents,
+        )
     agent_profile_body = ""
     if (
         profile is not None

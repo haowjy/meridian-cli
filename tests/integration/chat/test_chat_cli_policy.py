@@ -278,10 +278,7 @@ def test_chat_policy_snapshot_loads_harness_and_model_skill_variant(monkeypatch,
     )
 
     assert snapshot.skills == ("variant-skill",)
-    assert [doc.logical_name for doc in snapshot.prompt_inputs.skill_documents] == ["variant-skill"]
-    assert "Token variant body" in snapshot.prompt_inputs.skill_documents[0].content
-    assert "Base body" not in snapshot.prompt_inputs.skill_documents[0].content
-    assert snapshot.prompt_inputs.skill_documents[0].path == token_variant.resolve().as_posix()
+    assert snapshot.prompt_inputs.skill_documents == ()
 
 
 def test_chat_policy_snapshot_approval_env_beats_profile_and_config(monkeypatch, tmp_path) -> None:
@@ -391,10 +388,7 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert snapshot.mcp_tools == ("github=gh",)
     assert snapshot.prompt_inputs.agent_profile_body == ""
     assert snapshot.prompt_inputs.adhoc_agent_payload == "Reviewer profile body."
-    assert [doc.logical_name for doc in snapshot.prompt_inputs.skill_documents] == [
-        "profile-skill",
-        "cli-skill",
-    ]
+    assert snapshot.prompt_inputs.skill_documents == ()
 
     adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CODEX)
     plan = build_chat_backend_launch_plan(
@@ -412,8 +406,8 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert plan.spec.model == "gpt-5.4-mini"
     assert plan.spec.base_instructions == "Reviewer profile body."
     assert plan.spec.user_turn_content == "Please review this change."
-    assert "Profile skill body" in (plan.spec.developer_instructions or "")
-    assert "CLI skill body" in (plan.spec.developer_instructions or "")
+    assert "Profile skill body" not in (plan.spec.developer_instructions or "")
+    assert "CLI skill body" not in (plan.spec.developer_instructions or "")
     assert plan.spec.mcp_tools == ("github=gh",)
     assert not isinstance(plan.spec.permission_resolver, UnsafeNoOpPermissionResolver)
     assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in plan.connection_config.env_overrides

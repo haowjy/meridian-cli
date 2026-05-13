@@ -77,6 +77,55 @@ def test_parse_agent_profile_tools_field_map(tmp_path: Path) -> None:
     }
 
 
+def test_parse_agent_profile_model_invocable_false(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "coder.md",
+        [
+            "name: Coder",
+            "model-invocable: false",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_invocable is False
+
+
+def test_parse_agent_profile_model_invocable_missing_defaults_true(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "coder.md",
+        [
+            "name: Coder",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_invocable is True
+
+
+def test_parse_agent_profile_model_invocable_invalid_warns_and_defaults_true(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "coder.md",
+        [
+            "name: Coder",
+            "model-invocable: maybe",
+        ],
+    )
+    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_invocable is True
+    assert "has non-boolean model-invocable 'maybe'; treating as visible." in caplog.text
+
+
 def test_parse_agent_profile_models_preserves_supported_overrides(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
