@@ -41,11 +41,25 @@ class WorktreeRepoResolutionError(WorktreeError):
     """Git repository discovery failed."""
 
 
+class WorktreeMoveFailed(WorktreeError):
+    """Git could not move or rename the worktree."""
+
+
 @dataclass(frozen=True)
 class WorktreeCreateResult:
     path: Path
     branch: str
     created: bool  # False if reusing existing worktree
+
+
+@dataclass(frozen=True)
+class WorktreeMoveResult:
+    old_path: Path
+    new_path: Path
+    old_branch: str
+    new_branch: str
+    path_moved: bool
+    branch_renamed: bool
 
 
 def _run_git(
@@ -170,6 +184,72 @@ def remove_worktree(repo_root: Path, worktree_path: Path, *, force: bool = False
     )
 
 
+def move_worktree(
+    repo_root: Path,
+    old_path: Path,
+    new_path: Path,
+    old_branch: str,
+    new_branch: str,
+) -> WorktreeMoveResult:
+    """Move a worktree path and rename its branch as one operation with rollback."""
+    if not old_path.exists() or not worktree_exists(old_path):
+        raise WorktreeMoveFailed(f"Path {old_path} is not a valid git worktree.")
+    if new_path.exists():
+        raise WorktreeMoveFailed(f"Target path {new_path} already exists.")
+
+    _run_git(
+        repo_root,
+        ["worktree", "move", str(old_path), str(new_path)],
+        error_type=WorktreeMoveFailed,
+    )
+
+    branch_renamed = False
+    if old_branch != new_branch:
+        try:
+            _run_git(
+                new_path,
+                ["branch", "-m", old_branch, new_branch],
+                error_type=WorktreeMoveFailed,
+            )
+            branch_renamed = True
+        except WorktreeMoveFailed as exc:
+            branch_error = str(exc)
+            try:
+                _run_git(
+                    repo_root,
+                    ["worktree", "move", str(new_path), str(old_path)],
+                    error_type=WorktreeMoveFailed,
+                )
+            except WorktreeMoveFailed as rollback_exc:
+                raise WorktreeMoveFailed(
+                    "Branch rename failed after moving worktree: "
+                    f"{branch_error}. Rollback to '{old_path}' also failed: "
+                    f"{rollback_exc}. Worktree remains at '{new_path}'."
+                ) from exc
+            raise WorktreeMoveFailed(
+                "Branch rename failed after moving worktree: "
+                f"{branch_error}. Rolled back worktree path to '{old_path}'."
+            ) from exc
+
+    logger.info(
+        "worktree_ops.move_worktree.done",
+        repo_root=str(repo_root),
+        old_path=str(old_path),
+        new_path=str(new_path),
+        old_branch=old_branch,
+        new_branch=new_branch,
+        branch_renamed=branch_renamed,
+    )
+    return WorktreeMoveResult(
+        old_path=old_path,
+        new_path=new_path,
+        old_branch=old_branch,
+        new_branch=new_branch,
+        path_moved=old_path != new_path,
+        branch_renamed=branch_renamed,
+    )
+
+
 def _current_worktree_branch(worktree_path: Path) -> str:
     result = _run_git(
         worktree_path,
@@ -177,6 +257,11 @@ def _current_worktree_branch(worktree_path: Path) -> str:
         error_type=WorktreeCreateFailed,
     )
     return result.stdout.strip()
+
+
+def current_worktree_branch(worktree_path: Path) -> str:
+    """Return the currently checked-out branch for a worktree path."""
+    return _current_worktree_branch(worktree_path)
 
 
 def create_worktree(
@@ -251,12 +336,16 @@ __all__ = [
     "WorktreeCreateFailed",
     "WorktreeCreateResult",
     "WorktreeError",
+    "WorktreeMoveFailed",
+    "WorktreeMoveResult",
     "WorktreeRemoveFailed",
     "WorktreeRepoResolutionError",
     "WorktreeUnpushedError",
     "create_worktree",
+    "current_worktree_branch",
     "detect_git_repo",
     "ensure_no_unpushed_commits",
+    "move_worktree",
     "remove_worktree",
     "resolve_main_repo_root",
     "resolve_worktree_path",

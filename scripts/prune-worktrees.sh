@@ -212,12 +212,7 @@ for i in "${!candidate_paths[@]}"; do
     continue
   fi
 
-  if ! meridian work done "$slug" >/dev/null 2>&1; then
-    warn "meridian work done failed for slug '$slug'; refusing to prune this worktree"
-    failures=$((failures + 1))
-    continue
-  fi
-
+  # Step 1: Remove the git worktree.
   if [[ -d "$path" ]]; then
     if ! git worktree remove "$path"; then
       warn "failed to remove worktree: $path"
@@ -228,14 +223,20 @@ for i in "${!candidate_paths[@]}"; do
     log "Worktree already removed: $path"
   fi
 
+  # Step 2: Delete the branch (safe delete — fails if not merged).
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     if ! git branch -d "$branch"; then
-      warn "failed to delete branch safely: $branch"
+      warn "failed to delete branch safely: $branch (worktree removed; rerun to retry)"
       failures=$((failures + 1))
       continue
     fi
   else
     log "Branch already deleted: $branch"
+  fi
+
+  # Step 3: Only mark work done after both git operations succeed.
+  if ! meridian work done "$slug" >/dev/null 2>&1; then
+    warn "meridian work done failed for slug '$slug' (git cleanup succeeded)"
   fi
 done
 

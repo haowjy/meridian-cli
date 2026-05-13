@@ -236,7 +236,10 @@ def _lookup_explicit_work_item(
     work_id: str,
 ) -> tuple[str, bool]:
     resolved_work_id = _validate_exact_work_id(work_id)
-    return resolved_work_id, work_store.get_work_item(project_state_dir, resolved_work_id) is not None
+    return (
+        resolved_work_id,
+        work_store.get_work_item(project_state_dir, resolved_work_id) is not None,
+    )
 
 
 def _merge_warnings(*warnings: str | None) -> str | None:

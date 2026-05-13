@@ -252,10 +252,19 @@ def _work_rename(
         str,
         Parameter(help="New name (slug) for the work item."),
     ],
+    worktree: Annotated[
+        bool,
+        Parameter(name="--worktree", help="Also move the git worktree and rename its branch."),
+    ] = False,
 ) -> None:
     emit(
         work_rename_sync(
-            WorkRenameInput(work_id=work_id, new_name=new_name, chat_id=_runtime_chat_id())
+            WorkRenameInput(
+                work_id=work_id,
+                new_name=new_name,
+                rename_worktree=worktree,
+                chat_id=_runtime_chat_id(),
+            )
         )
     )
 

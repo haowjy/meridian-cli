@@ -6,6 +6,7 @@ from meridian.lib.ops.worktree_lifecycle import (
     WorktreeCleanupResult,
     WorktreeProvisionResult,
     WorktreeRecoveryResult,
+    WorktreeRenameResult,
     WorktreeRestoreResult,
 )
 
@@ -51,4 +52,19 @@ def format_cleanup_notice(result: WorktreeCleanupResult) -> str | None:
 def format_recovery_notice(result: WorktreeRecoveryResult) -> str | None:
     if result.status == "healed":
         return f"Recovered worktree metadata for {result.metadata.path}"
+    return None
+
+
+def format_rename_notice(result: WorktreeRenameResult) -> str | None:
+    if result.status == "not_configured":
+        return "No worktree configured; nothing to move."
+    if result.status == "missing":
+        return (
+            "Worktree directory missing; updated metadata to "
+            f"{result.metadata.path} ({result.metadata.branch})."
+        )
+    if result.status == "renamed":
+        return f"🌳 Moved worktree to {result.metadata.path} ({result.metadata.branch})"
+    if result.status == "failed":
+        return f"Warning: could not move worktree: {result.error}"
     return None

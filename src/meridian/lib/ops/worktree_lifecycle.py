@@ -16,10 +16,13 @@ import structlog
 from meridian.lib.config.settings import WorkConfig, load_config
 from meridian.lib.ops.worktree_ops import (
     WorktreeError,
+    WorktreeMoveFailed,
     WorktreeRepoResolutionError,
     create_worktree,
+    current_worktree_branch,
     detect_git_repo,
     ensure_no_unpushed_commits,
+    move_worktree,
     remove_worktree,
     resolve_main_repo_root,
     resolve_worktree_path,
@@ -63,6 +66,13 @@ class WorktreeCleanupResult:
 class WorktreeRecoveryResult:
     status: Literal["healed", "cleared"]
     metadata: WorktreeMetadata
+
+
+@dataclass(frozen=True)
+class WorktreeRenameResult:
+    status: Literal["not_configured", "missing", "renamed", "failed"]
+    metadata: WorktreeMetadata
+    error: str | None = None
 
 
 def default_worktree_branch(work_slug: str) -> str:
@@ -225,6 +235,65 @@ def cleanup_for_delete(project_root: Path, item: WorkItem) -> WorktreeCleanupRes
     return WorktreeCleanupResult(status="removed", metadata=item.worktree, forced=True)
 
 
+def rename_worktree(
+    project_root: Path,
+    item: WorkItem,
+    new_slug: str,
+    config: WorkConfig,
+) -> WorktreeRenameResult:
+    """Move a worktree path and rename its branch for a renamed work item."""
+    if item.worktree_path is None:
+        return WorktreeRenameResult(status="not_configured", metadata=item.worktree)
+
+    repo_root = resolve_main_repo_root(project_root)
+    if repo_root is None:
+        return WorktreeRenameResult(
+            status="failed",
+            metadata=item.worktree,
+            error=f"Could not determine git repository root from '{project_root}'.",
+        )
+
+    new_path = resolve_worktree_path(repo_root, new_slug, config.worktree_base)
+    new_branch = default_worktree_branch(new_slug)
+    old_path = Path(item.worktree_path)
+    if not old_path.is_dir():
+        return WorktreeRenameResult(
+            status="missing",
+            metadata=WorktreeMetadata(path=str(new_path), branch=new_branch, pending=False),
+        )
+
+    if item.worktree_branch:
+        old_branch = item.worktree_branch
+    else:
+        try:
+            old_branch = current_worktree_branch(old_path)
+        except WorktreeError as exc:
+            return WorktreeRenameResult(status="failed", metadata=item.worktree, error=str(exc))
+
+    try:
+        result = move_worktree(repo_root, old_path, new_path, old_branch, new_branch)
+    except WorktreeMoveFailed as exc:
+        logger.warning(
+            "worktree_lifecycle.rename_worktree.failed",
+            work_id=item.name,
+            old_path=str(old_path),
+            new_path=str(new_path),
+            old_branch=old_branch,
+            new_branch=new_branch,
+            error=str(exc),
+        )
+        return WorktreeRenameResult(status="failed", metadata=item.worktree, error=str(exc))
+
+    return WorktreeRenameResult(
+        status="renamed",
+        metadata=WorktreeMetadata(
+            path=str(result.new_path),
+            branch=result.new_branch,
+            pending=False,
+        ),
+    )
+
+
 def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResult:
     """Heal or clear an interrupted worktree-create marker."""
     config = load_config(project_root)
@@ -266,11 +335,13 @@ __all__ = [
     "WorktreeCleanupResult",
     "WorktreeProvisionResult",
     "WorktreeRecoveryResult",
+    "WorktreeRenameResult",
     "WorktreeRestoreResult",
     "cleanup_for_delete",
     "cleanup_for_done",
     "default_worktree_branch",
     "provision_for_start",
     "recover_pending",
+    "rename_worktree",
     "restore_for_reopen",
 ]

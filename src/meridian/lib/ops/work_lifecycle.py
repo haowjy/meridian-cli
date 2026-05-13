@@ -24,6 +24,7 @@ from meridian.lib.ops.work_dashboard import work_dir_display
 from meridian.lib.ops.worktree_format import (
     format_cleanup_notice,
     format_provision_notice,
+    format_rename_notice,
     format_restore_notice,
 )
 from meridian.lib.ops.worktree_lifecycle import (
@@ -31,6 +32,7 @@ from meridian.lib.ops.worktree_lifecycle import (
     cleanup_for_done,
     provision_for_start,
     recover_pending,
+    rename_worktree,
     restore_for_reopen,
 )
 from meridian.lib.state import session_store, spawn_store, work_store
@@ -233,11 +235,26 @@ class WorkSwitchOutput(BaseModel):
 
     work_id: str
     message: str
+    worktree_path: str | None = None
+    worktree_branch: str | None = None
+    worktree_exists: bool | None = None
+    worktree_pending: bool = False
     warning: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        return ""
+        headline = f"Active work item: {self.work_id}"
+        warning_text = self.warning or ""
+        if "Worktree creation was interrupted; no worktree available." in warning_text:
+            return f"{headline}\nWorktree: (creation interrupted, not available)"
+        if self.worktree_path is None:
+            return headline
+        if self.worktree_exists is False:
+            return f"{headline}\n🌳 {self.worktree_path} (missing)"
+
+        branch = self.worktree_branch or "unknown-branch"
+        suffix = " (recovered)" if "Recovered worktree at " in warning_text else ""
+        return f"{headline}\n🌳 {self.worktree_path} ({branch}){suffix}"
 
 
 class WorkReopenInput(BaseModel):
@@ -266,6 +283,7 @@ class WorkRenameInput(BaseModel):
 
     work_id: str
     new_name: str
+    rename_worktree: bool = False
     chat_id: str = ""
     project_root: str | None = None
 
@@ -276,6 +294,9 @@ class WorkRenameOutput(BaseModel):
     old_name: str
     new_name: str
     changed: bool = True
+    worktree_moved: bool = False
+    worktree_path: str | None = None
+    worktree_branch: str | None = None
     warning: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -642,6 +663,7 @@ def work_switch_sync(
 ) -> WorkSwitchOutput:
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
+    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     item = _require_work_item(project_state_dir, payload.work_id)
@@ -652,7 +674,46 @@ def work_switch_sync(
         if updated
         else f"Work item ready: {item.name} (no active session to update)"
     )
-    return WorkSwitchOutput(work_id=item.name, message=message, warning=warning)
+
+    worktree_path: str | None = item.worktree_path
+    worktree_branch: str | None = item.worktree_branch
+    worktree_exists: bool | None = None
+    worktree_pending = item.worktree_pending
+    recovered_message: str | None = None
+    worktree_warning: str | None = None
+
+    if worktree_path is not None:
+        worktree_exists = Path(worktree_path).is_dir()
+        if worktree_pending:
+            recovered = recover_pending(project_root, item)
+            work_store.update_work_item_worktree(
+                project_state_dir,
+                item.name,
+                path=recovered.metadata.path,
+                branch=recovered.metadata.branch,
+                pending=recovered.metadata.pending,
+            )
+            item = work_store.get_work_item(project_state_dir, item.name) or item
+            worktree_path = item.worktree_path
+            worktree_branch = item.worktree_branch
+            worktree_pending = item.worktree_pending
+            worktree_exists = Path(worktree_path).is_dir() if worktree_path is not None else None
+            if recovered.status == "healed":
+                recovered_message = f"Recovered worktree at {recovered.metadata.path}"
+            else:
+                worktree_warning = "Worktree creation was interrupted; no worktree available."
+        elif worktree_exists is False:
+            worktree_warning = f"Worktree path recorded but directory missing: {worktree_path}"
+
+    return WorkSwitchOutput(
+        work_id=item.name,
+        message=message,
+        worktree_path=worktree_path,
+        worktree_branch=worktree_branch,
+        worktree_exists=worktree_exists,
+        worktree_pending=worktree_pending,
+        warning=_merge_warnings(warning, recovered_message, worktree_warning),
+    )
 
 
 def work_rename_sync(
@@ -661,11 +722,53 @@ def work_rename_sync(
 ) -> WorkRenameOutput:
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
+    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     old_name = payload.work_id
-    _require_work_item(project_state_dir, old_name)
-    item = work_store.rename_work_item(project_state_dir, old_name, payload.new_name)
+    item = _require_work_item(project_state_dir, old_name)
+
+    new_slug = work_store.slugify(payload.new_name)
+    if not new_slug or new_slug != payload.new_name:
+        raise ValueError(
+            f"Invalid work item name '{payload.new_name}'. "
+            f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{new_slug or 'my-feature'}'."
+        )
+
+    rename_notice: str | None = None
+    worktree_moved = False
+    worktree_path: str | None = item.worktree_path
+    worktree_branch: str | None = item.worktree_branch
+    if payload.rename_worktree and new_slug != old_name:
+        from meridian.lib.config.settings import load_config  # local to avoid circular import
+
+        cfg = load_config(project_root)
+        wt_result = rename_worktree(project_root, item, new_slug, cfg.work)
+        rename_notice = format_rename_notice(wt_result)
+        if wt_result.status == "failed":
+            return WorkRenameOutput(
+                old_name=old_name,
+                new_name=old_name,
+                changed=False,
+                warning=_merge_warnings(warning, rename_notice),
+                worktree_moved=False,
+                worktree_path=item.worktree_path,
+                worktree_branch=item.worktree_branch,
+            )
+
+        worktree_moved = wt_result.status == "renamed"
+        worktree_path = wt_result.metadata.path
+        worktree_branch = wt_result.metadata.branch
+
+    item = work_store.rename_work_item(project_state_dir, old_name, new_slug)
+    if payload.rename_worktree and new_slug != old_name and worktree_path is not None:
+        item = work_store.update_work_item_worktree(
+            project_state_dir,
+            item.name,
+            path=worktree_path,
+            branch=worktree_branch,
+            pending=False,
+        )
 
     for spawn in spawn_store.list_spawns(runtime_state_root, filters={"work_id": old_name}):
         if spawn.kind == "child":
@@ -681,16 +784,14 @@ def work_rename_sync(
         work_id=item.name,
         data={"old_name": old_name, "new_name": item.name, "status": item.status},
     )
-    # WT-45: worktree_path is preserved through the rename (directory rename carries metadata).
-    # Inform the user that the worktree path is unchanged so they can update any saved references.
-    rename_warning: str | None = None
-    if item.worktree_path:
-        rename_warning = f"Note: worktree path unchanged at {item.worktree_path}"
     return WorkRenameOutput(
         old_name=old_name,
         new_name=item.name,
         changed=old_name != item.name,
-        warning=_merge_warnings(warning, rename_warning),
+        worktree_moved=worktree_moved,
+        worktree_path=item.worktree_path,
+        worktree_branch=item.worktree_branch,
+        warning=_merge_warnings(warning, rename_notice),
     )
 
 

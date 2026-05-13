@@ -93,11 +93,116 @@ jobs:
 
           echo "Anchored release workspace to main tip $(git rev-parse HEAD) for merge ${MERGE_SHA}."
 
+      - name: Accumulate bump from unreleased merges
+        if: steps.release_label.outputs.bump != 'skip'
+        id: accumulate_bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGERING_BUMP: ${{ steps.release_label.outputs.bump }}
+        run: |
+          git fetch --tags --force
+
+          is_stable_semver_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
+          }
+
+          is_ci_owned_stable_tag() {
+            local tag_name="$1"
+            is_stable_semver_tag "${tag_name}" || return 1
+            local commit_sha
+            commit_sha="$(git rev-parse "${tag_name}^{commit}" 2>/dev/null || true)"
+            [[ -n "${commit_sha}" ]] || return 1
+            local subject
+            subject="$(git show -s --format=%s "${commit_sha}")"
+            local tagger_email
+            tagger_email="$(git for-each-ref --format='%(taggeremail:trim)' "refs/tags/${tag_name}")"
+            [[ "${subject}" == Release\ * ]] || return 1
+            [[ "${tagger_email}" == "41898282+github-actions[bot]@users.noreply.github.com" ]]
+          }
+
+          bump_rank() {
+            case "$1" in
+              major) echo 3 ;;
+              minor) echo 2 ;;
+              patch) echo 1 ;;
+              *) echo 0 ;;
+            esac
+          }
+
+          rank_to_bump() {
+            case "$1" in
+              3) echo "major" ;;
+              2) echo "minor" ;;
+              1) echo "patch" ;;
+              *) echo "patch" ;;
+            esac
+          }
+
+          latest_tag=""
+          while IFS= read -r candidate; do
+            [[ -n "${candidate}" ]] || continue
+            if is_ci_owned_stable_tag "${candidate}"; then
+              latest_tag="${candidate}"
+              break
+            fi
+            echo "::warning::Ignoring untrusted stable tag ${candidate} while selecting unreleased merge range."
+          done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname)
+
+          if [[ -z "${latest_tag}" ]]; then
+            echo "accumulated_bump=${TRIGGERING_BUMP}" >> "$GITHUB_OUTPUT"
+            echo "::notice::No prior trusted release tag; using triggering PR bump: ${TRIGGERING_BUMP}"
+            exit 0
+          fi
+
+          max_rank="$(bump_rank "${TRIGGERING_BUMP}")"
+
+          while IFS= read -r merge_sha; do
+            [[ -n "${merge_sha}" ]] || continue
+
+            subject="$(git show -s --format=%s "${merge_sha}")"
+            pr_number=""
+            if [[ "${subject}" =~ Merge\ pull\ request\ \#([0-9]+) ]]; then
+              pr_number="${BASH_REMATCH[1]}"
+            elif [[ "${subject}" =~ \(#([0-9]+)\)$ ]]; then
+              pr_number="${BASH_REMATCH[1]}"
+            fi
+
+            if [[ -z "${pr_number}" ]]; then
+              echo "::notice::Skipping merge ${merge_sha}; no PR number found in subject '${subject}'."
+              continue
+            fi
+
+            while IFS= read -r label; do
+              case "${label}" in
+                release:major)
+                  rank="$(bump_rank major)"
+                  [[ "${rank}" -gt "${max_rank}" ]] && max_rank="${rank}"
+                  ;;
+                release:minor)
+                  rank="$(bump_rank minor)"
+                  [[ "${rank}" -gt "${max_rank}" ]] && max_rank="${rank}"
+                  ;;
+                release:patch)
+                  rank="$(bump_rank patch)"
+                  [[ "${rank}" -gt "${max_rank}" ]] && max_rank="${rank}"
+                  ;;
+              esac
+            done < <(gh pr view "${pr_number}" --json labels --jq '.labels[].name' 2>/dev/null || true)
+          done < <(git log --merges --format='%H' "${latest_tag}..HEAD" 2>/dev/null || true)
+
+          accumulated="$(rank_to_bump "${max_rank}")"
+          echo "accumulated_bump=${accumulated}" >> "$GITHUB_OUTPUT"
+          if [[ "${accumulated}" != "${TRIGGERING_BUMP}" ]]; then
+            echo "::notice::Accumulated bump elevated from ${TRIGGERING_BUMP} to ${accumulated} due to unreleased merge labels."
+          else
+            echo "::notice::Accumulated bump matches triggering PR: ${accumulated}"
+          fi
+
       - name: Compute next version from tags
         if: steps.release_label.outputs.bump != 'skip'
         id: next_version
         env:
-          BUMP: ${{ steps.release_label.outputs.bump }}
+          BUMP: ${{ steps.accumulate_bump.outputs.accumulated_bump || steps.release_label.outputs.bump }}
         run: |
           git fetch --tags --force
 

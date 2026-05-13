@@ -161,13 +161,14 @@ PowerShell mirrors exist for the standard developer workflow:
 | Setup git hooks | `scripts/setup-hooks.sh` | `scripts\setup-hooks.ps1` |
 | Pre-push gate | `scripts/check.sh` | `scripts\check.ps1` |
 | Full preflight | `scripts/preflight.sh` | `scripts\preflight.ps1` |
+| Prune worktrees | `scripts/prune-worktrees.sh` | `scripts\prune-worktrees.ps1` |
 
 ### Deferred items
 
 The following are explicitly out of scope and not implemented:
 
 - **ConPTY / terminal passthrough**: Primary-session TUI capture for Claude Code and Codex session-ID extraction relies on PTY semantics. Windows ConPTY support is not implemented — harness features that depend on PTY capture may not work correctly natively on Windows. WSL is the supported path for primary-session use on Windows.
-- **Full bash script parity**: Only the three scripts above have PowerShell mirrors. `scripts/quality-issues.sh` and other helpers remain POSIX-only.
+- **Full bash script parity**: Only the scripts listed above have PowerShell mirrors. `scripts/quality-issues.sh` and other helpers remain POSIX-only.
 
 ## Workspace conventions
 
