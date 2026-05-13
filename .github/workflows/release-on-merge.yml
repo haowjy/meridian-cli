@@ -68,11 +68,9 @@ jobs:
         if: steps.release_label.outputs.bump == 'skip'
         run: echo "::notice::release:skip label present. Skipping release workflow."
 
-      - name: Compute next version from tags
+      - name: Anchor release on current main
         if: steps.release_label.outputs.bump != 'skip'
-        id: next_version
         env:
-          BUMP: ${{ steps.release_label.outputs.bump }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           if [[ -z "${MERGE_SHA}" ]]; then
@@ -80,13 +78,28 @@ jobs:
             exit 1
           fi
 
-          git fetch --tags --force
-          git fetch origin main:main --force
+          git fetch origin main --force
+          git checkout -B main origin/main
 
           if ! git cat-file -e "${MERGE_SHA}^{commit}" >/dev/null 2>&1; then
             echo "::error::Merge commit ${MERGE_SHA} is not available in local checkout."
             exit 1
           fi
+
+          if ! git merge-base --is-ancestor "${MERGE_SHA}" HEAD; then
+            echo "::error::Merge commit ${MERGE_SHA} is not an ancestor of current main tip $(git rev-parse HEAD)."
+            exit 1
+          fi
+
+          echo "Anchored release workspace to main tip $(git rev-parse HEAD) for merge ${MERGE_SHA}."
+
+      - name: Compute next version from tags
+        if: steps.release_label.outputs.bump != 'skip'
+        id: next_version
+        env:
+          BUMP: ${{ steps.release_label.outputs.bump }}
+        run: |
+          git fetch --tags --force
 
           latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
           if [[ -z "${latest_tag}" ]]; then
@@ -231,16 +244,38 @@ jobs:
         if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           COMMIT_CREATED: ${{ steps.commit_release.outputs.commit_created }}
           RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
         run: |
+          release_commit_sha="${RELEASE_COMMIT_SHA}"
+
+          if [[ "${COMMIT_CREATED}" == "true" ]]; then
+            for attempt in 1 2 3; do
+              if git push origin HEAD:main; then
+                release_commit_sha="$(git rev-parse HEAD)"
+                break
+              fi
+
+              if [[ "${attempt}" -eq 3 ]]; then
+                echo "::error::Failed to push release commit to main after ${attempt} attempts."
+                exit 1
+              fi
+
+              echo "::warning::Push to main failed on attempt ${attempt}; rebasing onto latest origin/main and retrying."
+              git fetch origin main --force
+              if ! git merge-base --is-ancestor "${MERGE_SHA}" origin/main; then
+                echo "::error::Merge commit ${MERGE_SHA} is no longer an ancestor of origin/main; refusing to release."
+                exit 1
+              fi
+              git rebase origin/main
+            done
+          fi
+
           if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
             echo "::notice::Tag v${NEXT_VERSION} already exists before tag step. Skipping tag creation."
           else
-            git tag -a "v${NEXT_VERSION}" "${RELEASE_COMMIT_SHA}" -m "Release ${NEXT_VERSION}"
+            git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
           fi
 
-          if [[ "${COMMIT_CREATED}" == "true" ]]; then
-            git push origin HEAD:main
-          fi
           git push origin "v${NEXT_VERSION}"
