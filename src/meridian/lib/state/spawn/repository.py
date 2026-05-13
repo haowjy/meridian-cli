@@ -49,6 +49,8 @@ class StoredSpawnState(BaseModel):
     work_id: str | None = None
     goal: str | None = None
     harness_session_id: str | None = None
+    control_root: str | None = None
+    task_cwd: str | None = None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
     launch_mode: str | None = None
@@ -112,6 +114,8 @@ def record_to_stored_state(
         work_id=record.work_id,
         goal=record.goal,
         harness_session_id=record.harness_session_id,
+        control_root=record.control_root,
+        task_cwd=record.task_cwd,
         execution_cwd=record.execution_cwd,
         claude_config_dir=record.claude_config_dir,
         launch_mode=record.launch_mode,
@@ -158,6 +162,8 @@ def stored_state_to_record(
         work_id=stored.work_id,
         goal=stored.goal,
         harness_session_id=stored.harness_session_id,
+        control_root=stored.control_root,
+        task_cwd=stored.task_cwd,
         execution_cwd=stored.execution_cwd,
         claude_config_dir=stored.claude_config_dir,
         launch_mode=cast("LaunchMode | None", stored.launch_mode),

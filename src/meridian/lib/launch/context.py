@@ -231,8 +231,12 @@ class ChildEnvContext:
 class LaunchContext:
     request: SpawnRequest
     runtime: LaunchRuntime
+    # Compatibility alias for project/config operations only.
     project_root: Path
+    # Legacy alias for requested task cwd (or control root when unset).
     execution_cwd: Path
+    control_root: Path
+    task_cwd: Path | None
     runtime_root: Path
     work_id: str | None
     binding: ResolvedLaunchBinding
@@ -428,7 +432,8 @@ def materialize_launch_artifacts(
     agent: str | None,
     prompt_payload: PreparedPromptPayload,
     extra_args: tuple[str, ...] = (),
-    project_root: str | None = None,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
     mcp_tools: tuple[str, ...] = (),
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
@@ -444,6 +449,23 @@ def materialize_launch_artifacts(
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
+    task_cwd_instruction = ""
+    if task_cwd:
+        task_cwd_instruction = (
+            "\n\n# Task Working Directory\n"
+            f"Your process cwd is NOT your task directory. "
+            f"Your task working directory is: {task_cwd}\n"
+            f"Use absolute paths or `cd {task_cwd}` before filesystem operations. "
+            f"The `MERIDIAN_TASK_CWD` environment variable contains this path.\n"
+        )
+    effective_appended_system = prompt_payload.appended_system_prompt or ""
+    if task_cwd_instruction:
+        effective_appended_system = (
+            effective_appended_system + task_cwd_instruction
+            if effective_appended_system
+            else task_cwd_instruction.lstrip()
+        )
+
     run_params = SpawnParams(
         prompt=prompt,
         model=ModelId(model) if model else None,
@@ -452,14 +474,15 @@ def materialize_launch_artifacts(
         agent=agent,
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         extra_args=extra_args,
-        project_root=project_root,
+        control_root=control_root,
+        task_cwd=task_cwd,
         mcp_tools=mcp_tools,
         projected_roots=projected_roots,
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
         report_output_path=report_output_path,
-        appended_system_prompt=prompt_payload.appended_system_prompt,
+        appended_system_prompt=effective_appended_system or None,
         context_from_payload=context_from_payload,
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
@@ -558,6 +581,25 @@ def _dedupe_roots_in_order(roots: tuple[Path, ...]) -> tuple[Path, ...]:
         seen.add(key)
         deduped.append(root)
     return tuple(deduped)
+
+
+def _path_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _is_task_cwd_covered_by_projection(
+    *,
+    task_cwd: Path,
+    control_root: Path,
+    projected_roots: tuple[Path, ...],
+) -> bool:
+    if _path_within(task_cwd, control_root):
+        return True
+    return any(_path_within(task_cwd, root) for root in projected_roots)
 
 
 def _resolve_harness_id(
@@ -731,9 +773,10 @@ def compile_prepared_policy_surface(
 ) -> PreparedPolicySurface:
     """Compile the shared launch policy boundary before projector work."""
 
+    requested_task_cwd = runtime.resolved_requested_task_cwd or runtime.resolved_control_root
     project_paths = ProjectConfigPaths(
         project_root=project_root.expanduser().resolve(),
-        execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
+        execution_cwd=Path(requested_task_cwd).expanduser().resolve(),
     )
     config = (
         MeridianConfig.model_validate(runtime.config_snapshot)
@@ -1264,9 +1307,16 @@ def bind_launch_context(
 
     _ = (harness_registry, bindings.chat_id, bindings.dry_run)
 
+    resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
+    resolved_control_root = Path(runtime.resolved_control_root).expanduser().resolve()
+    resolved_requested_task_cwd = (
+        Path(runtime.resolved_requested_task_cwd).expanduser().resolve()
+        if runtime.resolved_requested_task_cwd is not None
+        else resolved_control_root
+    )
     project_paths = ProjectConfigPaths(
-        project_root=project_root.expanduser().resolve(),
-        execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
+        project_root=resolved_config_root,
+        execution_cwd=resolved_requested_task_cwd,
     )
     workspace_snapshot = resolve_workspace_snapshot_for_launch(project_paths.project_root)
     workspace_roots = get_projectable_roots(workspace_snapshot)
@@ -1301,8 +1351,8 @@ def bind_launch_context(
     )
     try:
         preflight = harness.preflight(
-            execution_cwd=execution_cwd,
-            child_cwd=child_cwd,
+            execution_cwd=resolved_control_root,
+            child_cwd=resolved_control_root,
             passthrough_args=tuple(resolved_request.extra_args),
         )
     except AttributeError:
@@ -1310,11 +1360,17 @@ def bind_launch_context(
             expanded_passthrough_args=tuple(resolved_request.extra_args)
         )
 
-    projected_roots = _dedupe_roots_in_order(
+    task_cwd = child_cwd if child_cwd.resolve() != resolved_control_root.resolve() else None
+    workspace_authority_roots = _dedupe_roots_in_order(
         (
             *workspace_roots,
             *git_context_roots,
             *context_projection_roots,
+        )
+    )
+    projected_roots = _dedupe_roots_in_order(
+        (
+            *workspace_authority_roots,
             runtime_root,
             system_temp_root,
         )
@@ -1331,6 +1387,29 @@ def bind_launch_context(
             *(
                 CompositionWarning(code=diag.code, message=diag.message)
                 for diag in workspace_projection.diagnostics
+            ),
+        )
+        resolved_request = resolved_request.model_copy(
+            update={"warning": summarize_composition_warnings(composition_warnings)}
+        )
+
+    if task_cwd is not None and not _is_task_cwd_covered_by_projection(
+        task_cwd=task_cwd,
+        control_root=resolved_control_root,
+        projected_roots=workspace_authority_roots,
+    ):
+        composition_warnings = (
+            *composition_warnings,
+            CompositionWarning(
+                code="task_cwd_not_projected",
+                message=(
+                    "Task cwd is outside control root and projected workspace roots; "
+                    "launch continues, but access is not granted automatically."
+                ),
+                detail={
+                    "task_cwd": task_cwd.as_posix(),
+                    "control_root": resolved_control_root.as_posix(),
+                },
             ),
         )
         resolved_request = resolved_request.model_copy(
@@ -1374,7 +1453,8 @@ def bind_launch_context(
         agent=resolved_request.agent,
         prompt_payload=prompt_payload,
         extra_args=projected_extra_args,
-        project_root=child_cwd.as_posix(),
+        control_root=resolved_control_root.as_posix(),
+        task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
         mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
@@ -1424,6 +1504,8 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    if task_cwd is not None:
+        child_context_env["MERIDIAN_TASK_CWD"] = task_cwd.as_posix()
     runtime_override_env = (
         runtime.resolved_runtime_overrides.to_env()
         if runtime.has_runtime_override_snapshot
@@ -1471,6 +1553,8 @@ def bind_launch_context(
         runtime=runtime,
         project_root=project_paths.project_root,
         execution_cwd=execution_cwd,
+        control_root=resolved_control_root,
+        task_cwd=task_cwd,
         runtime_root=runtime_root,
         work_id=effective_work_id,
         binding=binding,
@@ -1497,9 +1581,15 @@ def _build_launch_context_impl(
 ) -> LaunchContext:
     """Build deterministic launch context from raw request/runtime inputs."""
 
+    resolved_config_root = Path(runtime.resolved_config_root).expanduser().resolve()
+    resolved_requested_task_cwd = (
+        Path(runtime.resolved_requested_task_cwd).expanduser().resolve()
+        if runtime.resolved_requested_task_cwd is not None
+        else Path(runtime.resolved_control_root).expanduser().resolve()
+    )
     project_paths = ProjectConfigPaths(
-        project_root=Path(runtime.project_paths_project_root).expanduser().resolve(),
-        execution_cwd=Path(runtime.project_paths_execution_cwd).expanduser().resolve(),
+        project_root=resolved_config_root,
+        execution_cwd=resolved_requested_task_cwd,
     )
     if runtime.composition_surface != LaunchCompositionSurface.DIRECT:
         catalog = CatalogSession(project_paths.project_root, cache=cache)

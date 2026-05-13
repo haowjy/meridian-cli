@@ -346,7 +346,11 @@ class SpawnApplicationService:
                 metadata=start_metadata,
                 spawn_id=str(final_spawn_id),
                 harness_session_id=resolved_request.session.requested_harness_session_id,
-                execution_cwd=str(launch_ctx.binding.child_cwd),
+                control_root=launch_ctx.control_root.as_posix(),
+                task_cwd=(
+                    launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
+                ),
+                execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
                 launch_mode=payload.launch_mode,
                 runner_pid=payload.runner_pid,
                 status=payload.initial_status,
@@ -363,8 +367,9 @@ class SpawnApplicationService:
             spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.resolved_request.prompt,
-            project_root=launch_ctx.binding.child_cwd,
+            control_root=launch_ctx.control_root,
             env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
+            task_cwd=launch_ctx.task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
             debug_tracer=payload.debug_tracer,
         )
@@ -775,6 +780,8 @@ class SpawnApplicationService:
         self,
         spawn_id: SpawnId | str,
         *,
+        control_root: str | None = None,
+        task_cwd: str | None = None,
         execution_cwd: str | None = None,
         desc: str | None = None,
         work_id: str | None = None,
@@ -790,12 +797,25 @@ class SpawnApplicationService:
         so observers (SSE, WS, debug trace) see metadata changes.
         """
         # Only call store if at least one field is provided
-        if all(v is None for v in (execution_cwd, desc, work_id, harness_session_id, error)):
+        if all(
+            v is None
+            for v in (
+                control_root,
+                task_cwd,
+                execution_cwd,
+                desc,
+                work_id,
+                harness_session_id,
+                error,
+            )
+        ):
             return
 
         spawn_store.update_spawn(
             self._runtime_root,
             spawn_id,
+            control_root=control_root,
+            task_cwd=task_cwd,
             execution_cwd=execution_cwd,
             desc=desc,
             work_id=work_id,

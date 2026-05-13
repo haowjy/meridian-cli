@@ -731,6 +731,7 @@ async def execute_with_streaming(
 
         resolved_harness_id = launch_context.harness.id
         child_cwd = launch_context.binding.child_cwd
+        control_root = launch_context.control_root
         spec = launch_context.binding.spec
         child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
@@ -739,6 +740,12 @@ async def execute_with_streaming(
         spawn_store.update_spawn(
             runtime_root,
             run.spawn_id,
+            control_root=control_root.as_posix(),
+            task_cwd=(
+                child_cwd.as_posix()
+                if child_cwd.resolve() != control_root.resolve()
+                else None
+            ),
             execution_cwd=str(child_cwd),
         )
 
@@ -756,8 +763,9 @@ async def execute_with_streaming(
             spawn_id=run.spawn_id,
             harness_id=resolved_harness_id,
             prompt=spec.prompt,
-            project_root=child_cwd,
+            control_root=control_root,
             env_overrides=child_env,
+            task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
             debug_tracer=tracer,

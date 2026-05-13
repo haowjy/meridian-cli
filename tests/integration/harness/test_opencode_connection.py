@@ -124,7 +124,7 @@ def _build_connection_config(tmp_path: Path) -> ConnectionConfig:
         spawn_id=SpawnId("p-open-observer"),
         harness_id=HarnessId.OPENCODE,
         prompt="hello from test",
-        project_root=tmp_path,
+        control_root=tmp_path,
         env_overrides={"MERIDIAN_TEST_ENV": "1"},
         system="system from test",
     )
@@ -252,7 +252,7 @@ async def test_opencode_launch_process_passes_env_overrides_to_inherit_child_env
     await connection._launch_process(config, spec)
 
     assert captured["overrides"] == config.env_overrides
-    assert captured["cwd"] == str(config.project_root)
+    assert captured["cwd"] == str(config.control_root)
     env_result = captured["env"]
     assert isinstance(env_result, dict)
     assert env_result["MERIDIAN_INHERIT_CALLED"] == "1"

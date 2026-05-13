@@ -73,6 +73,34 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row.runner_pid == 2222
 
 
+def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    control_root = (tmp_path / "control-root").resolve()
+    task_cwd = (tmp_path / "task-cwd").resolve()
+    control_root.mkdir(parents=True, exist_ok=True)
+    task_cwd.mkdir(parents=True, exist_ok=True)
+
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            control_root=control_root.as_posix(),
+            task_cwd=task_cwd.as_posix(),
+            execution_cwd=task_cwd.as_posix(),
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.control_root == control_root.as_posix()
+    assert row.task_cwd == task_cwd.as_posix()
+    assert row.execution_cwd == task_cwd.as_posix()
+
+
 def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = str(

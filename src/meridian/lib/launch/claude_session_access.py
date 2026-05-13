@@ -14,7 +14,8 @@ class ClaudeSessionAccessSource:
 
     should_seed: bool
     source_session_id: str | None = None
-    source_cwd: Path | None = None
+    source_control_root: Path | None = None
+    target_control_root: Path | None = None
     source_config_root: Path | None = None
     target_config_root: Path | None = None
 
@@ -22,41 +23,36 @@ class ClaudeSessionAccessSource:
 def resolve_claude_session_access_source(
     session: SessionRequest,
     *,
-    child_cwd: Path,
+    control_root: Path,
     materialization_root: Path | None,
     target_config_root: Path | None,
 ) -> ClaudeSessionAccessSource:
     """Resolve Claude transcript-seeding inputs from one session request.
 
-    Explicit tracked source metadata wins. When a raw/untracked ref lacks
-    tracked source metadata, fall back to the child's cwd plus the durable
-    materialization root so continue/fork can still access the session.
+    Explicit source control-root metadata wins. Legacy/partial requests fall
+    back to the current launch control root so task cwd is never treated as
+    Claude project authority.
     """
 
     source_session_id = (session.requested_harness_session_id or "").strip() or None
     if source_session_id is None:
         return ClaudeSessionAccessSource(should_seed=False)
 
-    source_cwd = (session.source_execution_cwd or "").strip() or None
+    source_control_root = (session.source_control_root or "").strip() or None
     source_config_root = (session.source_claude_config_dir or "").strip() or None
 
-    if source_cwd is not None:
-        return ClaudeSessionAccessSource(
-            should_seed=True,
-            source_session_id=source_session_id,
-            source_cwd=Path(source_cwd),
-            source_config_root=Path(source_config_root) if source_config_root else None,
-            target_config_root=target_config_root,
-        )
-
-    if session.continue_source_tracked:
-        return ClaudeSessionAccessSource(should_seed=False)
+    resolved_source_control_root = (
+        Path(source_control_root) if source_control_root else control_root
+    )
 
     return ClaudeSessionAccessSource(
         should_seed=True,
         source_session_id=source_session_id,
-        source_cwd=child_cwd,
-        source_config_root=materialization_root,
+        source_control_root=resolved_source_control_root,
+        target_control_root=control_root,
+        source_config_root=(
+            Path(source_config_root) if source_config_root else materialization_root
+        ),
         target_config_root=target_config_root,
     )
 

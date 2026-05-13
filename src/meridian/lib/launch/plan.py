@@ -126,6 +126,10 @@ def build_primary_launch_runtime(
         ),
         report_output_path=_DRY_RUN_REPORT_PATH,
         runtime_root=runtime_root.as_posix(),
+        config_root=resolved_root.as_posix(),
+        control_root=resolved_root.as_posix(),
+        requested_task_cwd=resolved_cwd.as_posix(),
+        # Legacy aliases for older consumers.
         project_paths_project_root=resolved_root.as_posix(),
         project_paths_execution_cwd=resolved_cwd.as_posix(),
     )

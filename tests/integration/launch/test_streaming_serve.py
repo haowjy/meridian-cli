@@ -15,6 +15,7 @@ from meridian.lib.streaming.spawn_manager import DrainOutcome
 def _fake_launch_context(
     *,
     spawn_id: str,
+    project_root: Path,
     child_cwd: Path,
     prompt: str = "projected prompt",
     system: str | None = None,
@@ -33,6 +34,9 @@ def _fake_launch_context(
                 "session_agent_path": str(child_cwd / "agent.md"),
             },
         ),
+        project_root=project_root,
+        control_root=project_root,
+        task_cwd=child_cwd if child_cwd.resolve() != project_root.resolve() else None,
         work_id=None,
         binding=SimpleNamespace(
             child_cwd=child_cwd,
@@ -109,6 +113,7 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     def _build_launch_context(**kwargs: object) -> SimpleNamespace:
         return _fake_launch_context(
             spawn_id=str(kwargs["spawn_id"]),
+            project_root=tmp_path,
             child_cwd=child_cwd,
             system="SYSTEM: projected",
         )
@@ -134,7 +139,8 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     assert runner_call["spec"].name == "fake-spec"
     assert config.spawn_id == "p1"
     assert config.prompt == "projected prompt"
-    assert config.project_root == child_cwd
+    assert config.control_root == tmp_path
+    assert config.task_cwd == child_cwd
     assert config.system == "SYSTEM: projected"
     assert config.env_overrides["MERIDIAN_SPAWN_ID"] == "p1"
     assert config.env_overrides["MERIDIAN_PARENT_SPAWN_ID"] == "p-parent"
@@ -143,7 +149,9 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
 
     row = get_spawn(runtime_root, "p1")
     assert row is not None
-    assert row.execution_cwd == str(child_cwd)
+    assert row.control_root == tmp_path.as_posix()
+    assert row.task_cwd == child_cwd.as_posix()
+    assert row.execution_cwd == child_cwd.as_posix()
     assert row.status == "succeeded"
 
 

@@ -33,6 +33,8 @@ def session_scope(
     harness_session_id: str,
     chat_id: str | None = None,
     params: tuple[str, ...] = (),
+    control_root: str | None = None,
+    task_cwd: str | None = None,
     execution_cwd: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
     _start_session: Callable[..., str] = start_session,
@@ -52,6 +54,8 @@ def session_scope(
         skills=metadata.skills,
         skill_paths=metadata.skill_paths,
         forked_from_chat_id=request.forked_from_chat_id,
+        control_root=control_root,
+        task_cwd=task_cwd,
         execution_cwd=execution_cwd,
         kind=kind,
     )

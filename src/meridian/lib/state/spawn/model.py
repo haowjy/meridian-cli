@@ -51,6 +51,8 @@ class SpawnRecord(BaseModel):
     work_id: str | None
     goal: str | None = None
     harness_session_id: str | None
+    control_root: str | None = None
+    task_cwd: str | None = None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
     launch_mode: LaunchMode | None

@@ -333,7 +333,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "agent",
             "adhoc_agent_payload",
             "extra_args",
-            "project_root",
+            "control_root",
             "interactive",
             "continue_harness_session_id",
             "continue_fork",
@@ -344,7 +344,7 @@ class OpenCodeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"report_output_path", "context_from_payload", "reference_items"}
+        {"report_output_path", "context_from_payload", "reference_items", "task_cwd"}
     )
 
     @property

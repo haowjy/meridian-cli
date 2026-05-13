@@ -25,7 +25,8 @@ class TuiPassthrough(Protocol):
         *,
         spawn_id: SpawnId,
         spec: ResolvedLaunchSpec,
-        execution_cwd: Path,
+        control_root: Path,
+        task_cwd: Path | None,
         env: dict[str, str],
     ) -> ConnectionConfig:
         """Build the ConnectionConfig for observer mode."""

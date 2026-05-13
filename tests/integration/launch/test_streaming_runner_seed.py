@@ -77,8 +77,8 @@ class _ClaudeSeedPersistenceConnection:
 
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         self._spawn_id = config.spawn_id
-        self._project_root = config.project_root
-        runtime_root = resolve_project_runtime_root(config.project_root)
+        self._project_root = config.control_root
+        runtime_root = resolve_project_runtime_root(config.control_root)
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id
@@ -138,7 +138,7 @@ class _OpenCodeSeedPortConnection:
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
         self._spawn_id = config.spawn_id
-        runtime_root = resolve_project_runtime_root(config.project_root)
+        runtime_root = resolve_project_runtime_root(config.control_root)
         row = spawn_store.get_spawn(runtime_root, config.spawn_id)
         assert row is not None
         self.__class__.observed_start_session_id = row.harness_session_id

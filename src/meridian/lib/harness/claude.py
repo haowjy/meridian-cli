@@ -257,7 +257,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "agent",
             "adhoc_agent_payload",
             "extra_args",
-            "project_root",
+            "control_root",
             "interactive",
             "continue_harness_session_id",
             "continue_fork",
@@ -268,7 +268,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"report_output_path", "context_from_payload", "reference_items"}
+        {"report_output_path", "context_from_payload", "reference_items", "task_cwd"}
     )
 
     @property
@@ -364,8 +364,8 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt_file_path = str(
                 Path(report_output_path).expanduser().parent / "system-prompt.md"
             )
-        elif run.project_root:
-            prompt_file_path = str(Path(run.project_root) / "system-prompt.md")
+        elif run.control_root:
+            prompt_file_path = str(Path(run.control_root) / "system-prompt.md")
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
         return ResolvedLaunchSpec(
@@ -460,15 +460,15 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         session_access = resolve_claude_session_access_source(
             session,
-            child_cwd=child_cwd,
+            control_root=child_cwd,
             materialization_root=effective_config_root,
             target_config_root=effective_config_root,
         )
         if session_access.should_seed:
             ensure_claude_session_accessible(
                 source_session_id=session_access.source_session_id or resolved_harness_session_id,
-                source_cwd=session_access.source_cwd,
-                child_cwd=child_cwd,
+                source_cwd=session_access.source_control_root,
+                child_cwd=session_access.target_control_root or child_cwd,
                 source_config_root=session_access.source_config_root,
                 target_config_root=session_access.target_config_root,
             )

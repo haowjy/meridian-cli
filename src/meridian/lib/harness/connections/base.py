@@ -201,8 +201,9 @@ class ConnectionConfig:
     spawn_id: SpawnId
     harness_id: HarnessId
     prompt: str
-    project_root: Path
+    control_root: Path
     env_overrides: dict[str, str]
+    task_cwd: Path | None = None
     system: str | None = None
     timeout_seconds: float | None = None
     ws_bind_host: str = "127.0.0.1"

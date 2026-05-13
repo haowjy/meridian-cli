@@ -159,6 +159,8 @@ def _init_spawn(
     status: SpawnStatus = "running",
     launch_mode: LaunchMode | None = None,
     runner_pid: int | None = None,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
     execution_cwd: str | None = None,
     ctx: RuntimeContext | None = None,
 ) -> _SpawnContext:
@@ -201,6 +203,8 @@ def _init_spawn(
         harness_session_id=(
             None if request.session.continue_fork else request.session.requested_harness_session_id
         ),
+        control_root=control_root,
+        task_cwd=task_cwd,
         execution_cwd=execution_cwd,
         launch_mode=launch_mode,
         runner_pid=runner_pid,

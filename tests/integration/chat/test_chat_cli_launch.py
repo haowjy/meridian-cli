@@ -204,7 +204,7 @@ def test_chat_cli_builds_runtime_with_factory_inputs(
     spec = plan.spec
 
     assert config.harness_id == expected_harness
-    assert config.project_root == tmp_path
+    assert config.control_root == tmp_path
     assert spec.model == "model-x"
 
 

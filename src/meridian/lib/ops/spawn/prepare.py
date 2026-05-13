@@ -228,6 +228,7 @@ def build_create_payload(
                     (payload.session.requested_harness_session_id or "").strip() or None
                 ),
                 continue_fork=payload.session.continue_fork,
+                source_control_root=payload.session.source_control_root,
                 source_execution_cwd=payload.session.source_execution_cwd,
                 source_claude_config_dir=payload.session.source_claude_config_dir,
                 forked_from_chat_id=payload.session.forked_from_chat_id,
@@ -253,12 +254,16 @@ def build_create_payload(
                 runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
                     mode="json",
                     exclude_none=True,
-                ),
-                report_output_path=_DRY_RUN_REPORT_PATH,
-                runtime_root=runtime_root.as_posix(),
-                project_paths_project_root=project_root.as_posix(),
-                project_paths_execution_cwd=execution_cwd.as_posix(),
             ),
+            report_output_path=_DRY_RUN_REPORT_PATH,
+            runtime_root=runtime_root.as_posix(),
+            config_root=project_root.as_posix(),
+            control_root=project_root.as_posix(),
+            requested_task_cwd=execution_cwd.as_posix(),
+            # Legacy aliases.
+            project_paths_project_root=project_root.as_posix(),
+            project_paths_execution_cwd=execution_cwd.as_posix(),
+        ),
             harness_registry=harness_registry,
             dry_run=True,
         )
