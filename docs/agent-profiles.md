@@ -115,7 +115,7 @@ model-policies:
 | `alias` | Exact alias token used to select the model | `alias: sonnet` |
 | `model-glob` | Glob pattern against canonical model ID | `model-glob: "openai/*"` |
 
-Matching priority: `model` (most specific) > `alias` > `model-glob` (least specific). If two rules tie at the same specificity, launch fails with an ambiguity error.
+Matching is first-match-wins by list order. No specificity ranking or ambiguity errors are applied. If multiple rules could match, the earliest rule wins.
 
 ### Override keys
 
@@ -131,7 +131,7 @@ Model-policy overrides sit between explicit user flags and the profile's generic
 CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defaults  >  config  >  alias defaults
 ```
 
-Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace the agent policy list (including replacing it with an empty list) per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
+Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) prepend their `model-policies` rules before profile rules to form one effective ordered list. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
 
 ## Implicit Fallback Ordering in `model-policies`
 

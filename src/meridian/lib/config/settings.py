@@ -523,11 +523,17 @@ def _normalize_agent_model_policies(
                 f"Invalid value for '{policy_source}.override': expected at least one "
                 "override field."
             )
+        no_fallback = policy.get("no-fallback", False)
+        if not isinstance(no_fallback, bool):
+            raise ValueError(
+                f"Invalid value for '{policy_source}.no-fallback': expected bool."
+            )
         policies.append(
             {
                 "match_type": match_type,
                 "match_value": match_value,
                 "overrides": overrides,
+                "no_fallback": no_fallback,
             }
         )
     return policies
@@ -1337,6 +1343,7 @@ class AgentOverlayModelPolicy(BaseModel):
     match_type: str
     match_value: str
     overrides: dict[str, object]
+    no_fallback: bool = False
 
     @field_validator("match_type")
     @classmethod
@@ -1407,7 +1414,7 @@ class AgentOverlayConfig(BaseModel):
     sandbox: str | None = None
     autocompact: AutocompactValue = None
     autocompact_pct: AutocompactPctValue = None
-    # Three-state: None = inherit, () = suppress, non-empty = replace
+    # Three-state: None = inherit, () = prepend no-op, non-empty = prepend before profile rules
     model_policies: tuple[AgentOverlayModelPolicy, ...] | None = None
 
     @field_validator("model")

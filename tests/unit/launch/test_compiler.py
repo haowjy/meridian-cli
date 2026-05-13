@@ -284,7 +284,7 @@ def test_compile_launch_params_timeout_excludes_overlay_and_profile_defaults() -
     assert result.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
-def test_compile_launch_params_three_state_empty_overlay_uses_empty_policy_list() -> None:
+def test_compile_launch_params_three_state_empty_overlay_uses_profile_policy_list() -> None:
     alias = _alias_entry()
     profile_rule = ModelPolicyRule(
         match_type="alias",
@@ -301,11 +301,11 @@ def test_compile_launch_params_three_state_empty_overlay_uses_empty_policy_list(
 
     result = compile_launch_params(request)
 
-    assert result.execution_policy.effort == "low"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_DEFAULT
+    assert result.execution_policy.effort == "high"
+    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
-def test_compile_launch_params_three_state_model_policies_overlay_replaces_profile() -> None:
+def test_compile_launch_params_three_state_model_policies_overlay_prepends_profile() -> None:
     alias = _alias_entry()
     profile_rule = ModelPolicyRule(
         match_type="alias",
@@ -332,6 +332,144 @@ def test_compile_launch_params_three_state_model_policies_overlay_replaces_profi
 
     assert result.execution_policy.effort == "xhigh"
     assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
+
+
+def test_compile_launch_params_overlay_prepends_before_profile_policies() -> None:
+    alias = _alias_entry()
+    profile_rule = ModelPolicyRule(
+        match_type="alias",
+        match_value="gptmini",
+        overrides={"effort": "high"},
+    )
+    overlay = AgentOverlayConfig(
+        model_policies=(
+            AgentOverlayModelPolicy(
+                match_type="alias",
+                match_value="gptmini",
+                overrides={"effort": "xhigh"},
+            ),
+        )
+    )
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini"),
+        overlay=overlay,
+        profile_model_policies=(profile_rule,),
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.execution_policy.effort == "xhigh"
+    assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
+
+
+def test_compile_launch_params_profile_rule_wins_when_overlay_rule_doesnt_match() -> None:
+    alias = _alias_entry()
+    profile_rule = ModelPolicyRule(
+        match_type="alias",
+        match_value="gptmini",
+        overrides={"effort": "high"},
+    )
+    overlay = AgentOverlayConfig(
+        model_policies=(
+            AgentOverlayModelPolicy(
+                match_type="alias",
+                match_value="gpt55",
+                overrides={"effort": "xhigh"},
+            ),
+        )
+    )
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini"),
+        overlay=overlay,
+        profile_model_policies=(profile_rule,),
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.execution_policy.effort == "high"
+    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+
+
+def test_compile_launch_params_non_matching_overlay_rule_does_not_suppress_legacy_models() -> None:
+    alias = _alias_entry()
+    overlay = AgentOverlayConfig(
+        model_policies=(
+            AgentOverlayModelPolicy(
+                match_type="alias",
+                match_value="gpt55",
+                overrides={"effort": "xhigh"},
+            ),
+        )
+    )
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini"),
+        overlay=overlay,
+        profile_model_policies=(),
+        profile_legacy_models={"gptmini": AgentModelEntry(effort="high")},
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.execution_policy.effort == "high"
+    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+
+
+def test_compile_launch_params_model_overrides_profile_policy_harness() -> None:
+    alias = _alias_entry()
+    overlay = AgentOverlayConfig(
+        model="gptmini",
+        model_policies=(
+            AgentOverlayModelPolicy(
+                match_type="alias",
+                match_value="gpt55",
+                overrides={"harness": "claude"},
+            ),
+        ),
+    )
+    profile_rule = ModelPolicyRule(
+        match_type="alias",
+        match_value="gptmini",
+        overrides={"harness": "claude"},
+    )
+    request = _request(
+        overlay=overlay,
+        profile_model_policies=(profile_rule,),
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.model_policy_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+    assert result.harness == "codex"
+    assert result.harness_provenance == "model-derived-override"
+    assert result.field_provenance.harness_source is ProvenanceLevel.ALIAS_DEFAULT
+
+
+def test_compile_launch_params_first_match_wins_no_ambiguity_error() -> None:
+    alias = _alias_entry()
+    first_glob = ModelPolicyRule(
+        match_type="model-glob",
+        match_value="openai/*",
+        overrides={"effort": "medium"},
+    )
+    second_glob = ModelPolicyRule(
+        match_type="model-glob",
+        match_value="*/gpt-5.4-*",
+        overrides={"effort": "high"},
+    )
+    request = _request(
+        cli=RuntimeOverrides(model="gptmini"),
+        profile_model_policies=(first_glob, second_glob),
+        alias_entry=alias,
+    )
+
+    result = compile_launch_params(request)
+
+    assert result.execution_policy.effort == "medium"
+    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
 def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:

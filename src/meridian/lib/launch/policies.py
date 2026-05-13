@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
+from typing import Literal, cast
 
 from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.config.settings import AgentOverlayConfig, MeridianConfig
 from meridian.lib.core.overrides import (
     EXECUTION_POLICY_FIELDS,
     ExecutionPolicyField,
@@ -387,18 +388,18 @@ def _try_harness_availability_fallback(
     *,
     harness_id: HarnessId,
     harness_registry: HarnessRegistry,
-    profile: AgentProfile | None,
+    model_policies: tuple[ModelPolicyRule, ...],
     model_explicit: bool,
     catalog: CatalogSession,
 ) -> tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule] | None:
     """Attempt fallback when harness is unavailable. Returns None if no fallback found."""
 
-    if model_explicit or _harness_is_available(harness_id, harness_registry) or profile is None:
+    if model_explicit or _harness_is_available(harness_id, harness_registry) or not model_policies:
         return None
 
     for fallback_token, fallback_harness, fallback_entry, matched_rule in (
         _fallback_candidates_from_policies(
-            model_policies=profile.model_policies,
+            model_policies=model_policies,
             catalog=catalog,
             harness_registry=harness_registry,
         )
@@ -414,7 +415,7 @@ def _fallback_candidates_from_policies(
     catalog: CatalogSession,
     harness_registry: HarnessRegistry,
 ) -> list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]]:
-    """Build ordered harness-availability candidates from profile model-policies."""
+    """Build ordered harness-availability candidates from effective model-policies."""
 
     candidates: list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]] = []
     for rule in model_policies:
@@ -432,13 +433,11 @@ def _fallback_candidates_from_policies(
     return candidates
 
 
-def _profile_fallback_chain(
-    profile: AgentProfile | None,
+def _effective_fallback_chain(
+    model_policies: tuple[ModelPolicyRule, ...],
 ) -> tuple[dict[str, object], ...]:
-    if profile is None:
-        return ()
     fallback_chain: list[dict[str, object]] = []
-    for position, rule in enumerate(profile.model_policies, start=1):
+    for position, rule in enumerate(model_policies, start=1):
         if rule.no_fallback or rule.match_type not in {"alias", "model"}:
             continue
         fallback_chain.append(
@@ -453,12 +452,39 @@ def _profile_fallback_chain(
 
 def _with_fallback_chain(
     compiler_result: CompilerResult,
-    profile: AgentProfile | None,
+    model_policies: tuple[ModelPolicyRule, ...],
 ) -> CompilerResult:
-    fallback_chain = _profile_fallback_chain(profile)
+    fallback_chain = _effective_fallback_chain(model_policies)
     if not fallback_chain:
         return compiler_result
     return replace(compiler_result, fallback_chain=fallback_chain)
+
+
+def _overlay_model_policies(
+    overlay: AgentOverlayConfig | None,
+) -> tuple[ModelPolicyRule, ...]:
+    if overlay is None or overlay.model_policies is None:
+        return ()
+    return tuple(
+        ModelPolicyRule(
+            match_type=cast("Literal['model', 'alias', 'model-glob']", rule.match_type),
+            match_value=rule.match_value,
+            overrides=dict(rule.overrides),
+            no_fallback=rule.no_fallback,
+        )
+        for rule in overlay.model_policies
+    )
+
+
+def _effective_model_policies(
+    *,
+    profile: AgentProfile | None,
+    agent_overlay: AgentOverlayConfig | None,
+) -> tuple[ModelPolicyRule, ...]:
+    profile_policies = profile.model_policies if profile is not None else ()
+    if agent_overlay is None or agent_overlay.model_policies is None:
+        return profile_policies
+    return (*_overlay_model_policies(agent_overlay), *profile_policies)
 
 
 def resolve_policy_fields(
@@ -615,6 +641,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile.name if profile is not None else (requested_agent or configured_default_agent or "")
     )
     agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
+    effective_model_policies = _effective_model_policies(
+        profile=profile,
+        agent_overlay=agent_overlay,
+    )
 
     requested_model_token = (
         explicit_user_overrides.model
@@ -665,7 +695,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
 
     compiler_result = _with_fallback_chain(
         compile_launch_params(compiler_request),
-        profile,
+        effective_model_policies,
     )
     requested_token_for_selection = compiler_result.model_selection_requested_token
     harness_id = HarnessId(compiler_result.harness)
@@ -685,7 +715,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         if demoted_candidate is not None:
             try:
                 compiler_result = demoted_candidate
-                compiler_result = _with_fallback_chain(compiler_result, profile)
+                compiler_result = _with_fallback_chain(compiler_result, effective_model_policies)
                 harness_id = HarnessId(compiler_result.harness)
                 harness_provenance = "availability-fallback"
                 model_resolution_error = None
@@ -700,7 +730,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             fallback = _try_harness_availability_fallback(
                 harness_id=harness_id,
                 harness_registry=surface.harness_registry,
-                profile=profile,
+                model_policies=effective_model_policies,
                 model_explicit=model_explicit,
                 catalog=surface.catalog,
             )
@@ -723,7 +753,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             # recursive re-matching.
             compiler_result = _with_fallback_chain(
                 compile_launch_params(fallback_request),
-                profile,
+                effective_model_policies,
             )
             harness_id = HarnessId(compiler_result.harness)
             model_resolution_error = None

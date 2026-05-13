@@ -139,6 +139,10 @@ Scalar fields: `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact
 
 Each rule has a `match` table (exactly one of `model`, `alias`, `model-glob`) and an `override` table with supported fields: `harness`, `effort`, `approval`, `sandbox`, `autocompact`.
 
+Overlay rules are prepended before profile rules to form one effective
+ordered `model-policies` list. Matching uses first-match-wins by list order.
+Duplicate matches are valid; the earlier rule in the combined list wins.
+
 Harness-availability fallback candidates come from `model-policies` list order
 for rules matched by `alias` or `model`. `model-glob` rules are override-only.
 Set `no-fallback = true` on any rule to opt it out of fallback candidacy.
@@ -150,15 +154,15 @@ List/tool override keys (`skills`, `tools`, `disallowed-tools`, `mcp-tools`) are
 ### Three-state model-policy semantics
 
 - **Key absent**: Inherits model-policies from the agent profile
-- **Empty array** (`model-policies = []`): Uses an empty model-policy list for that agent (no policy transforms in the candidate chain). Also suppresses the legacy deprecated `models:` compatibility overrides from the profile — the entire conditional per-model override path is neutralized, not only `model-policies`.
-- **Non-empty array**: Replaces profile model-policies entirely (not merged). Same suppression of `models:` compatibility applies.
+- **Empty array** (`model-policies = []`): Prepends nothing; effective behavior is profile rules only.
+- **Non-empty array**: Prepends overlay rules before profile rules (not merged by match key).
 
 ### Precedence
 
 Per-field, strongest to weakest:
 1. CLI flags (`-m`, `--effort`, etc.)
 2. Environment variables (`MERIDIAN_MODEL`, `MERIDIAN_EFFORT`)
-3. Matched model-policy rule (from overlay if present, profile otherwise)
+3. Matched model-policy rule (from combined overlay+profile list, first-match-wins)
 4. Agent overlay generic defaults
 5. Agent profile defaults
 6. Config-level defaults

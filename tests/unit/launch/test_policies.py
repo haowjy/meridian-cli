@@ -209,7 +209,7 @@ def test_policy_warnings_preserve_combined_text_format() -> None:
     assert warnings[0].message == "profile missing\nmodel ambiguous"
 
 
-def test_match_model_policy_ranks_model_over_alias_over_glob(tmp_path: Path) -> None:
+def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> None:
     _write_agent_profile(
         tmp_path,
         name="reviewer",
@@ -233,11 +233,11 @@ def test_match_model_policy_ranks_model_over_alias_over_glob(tmp_path: Path) -> 
     )
 
     assert winner is not None
-    assert winner.match_type == "model"
-    assert winner.match_value == "gpt-5.5"
+    assert winner.match_type == "model-glob"
+    assert winner.match_value == "gpt-*"
 
 
-def test_match_model_policy_raises_on_same_rank_ambiguity(tmp_path: Path) -> None:
+def test_match_model_policy_same_rank_uses_first_match(tmp_path: Path) -> None:
     _write_agent_profile(
         tmp_path,
         name="reviewer",
@@ -252,12 +252,41 @@ def test_match_model_policy_raises_on_same_rank_ambiguity(tmp_path: Path) -> Non
     )
     profile = load_agent_profile("reviewer", tmp_path)
 
-    with pytest.raises(ValueError, match="Ambiguous model-policies"):
-        match_model_policy(
-            model_policies=profile.model_policies,
-            canonical_model_id="gpt-5.5",
-            selected_model_token="fast",
-        )
+    winner = match_model_policy(
+        model_policies=profile.model_policies,
+        canonical_model_id="gpt-5.5",
+        selected_model_token="fast",
+    )
+
+    assert winner is not None
+    assert winner.match_type == "model-glob"
+    assert winner.match_value == "gpt-*"
+
+
+def test_match_model_policy_first_match_wins_no_ambiguity(tmp_path: Path) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model-policies:\n"
+            "  - match: {model-glob: '*5.5'}\n"
+            "    override: {effort: medium}\n"
+            "  - match: {model-glob: 'gpt-*'}\n"
+            "    override: {effort: low}\n"
+        ),
+    )
+    profile = load_agent_profile("reviewer", tmp_path)
+
+    winner = match_model_policy(
+        model_policies=profile.model_policies,
+        canonical_model_id="gpt-5.5",
+        selected_model_token="fast",
+    )
+
+    assert winner is not None
+    assert winner.match_type == "model-glob"
+    assert winner.match_value == "*5.5"
 
 
 def test_validate_harness_compatibility_allows_policy_reroute() -> None:
@@ -340,6 +369,129 @@ def test_resolve_launch_policy_fallback_uses_policy_list_order(
 
     assert policy.model == "kimi-k2.6"
     assert policy.harness == HarnessId.OPENCODE
+
+
+def test_resolve_launch_policy_fallback_uses_combined_overlay_profile_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: codex}\n"
+            "    override: {effort: medium}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    codex = _mock_alias(alias="codex", model_id="gpt-5.3-codex", harness=HarnessId.CODEX)
+    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "codex": codex,
+            "gpt-5.3-codex": codex,
+            "opencode": opencode,
+            "kimi-k2.6": opencode,
+        },
+    )
+
+    config = MeridianConfig.model_validate(
+        {
+            "agents": {
+                "reviewer": {
+                    "model_policies": [
+                        {
+                            "match_type": "alias",
+                            "match_value": "opencode",
+                            "overrides": {"effort": "low"},
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.model == "kimi-k2.6"
+    assert policy.harness == HarnessId.OPENCODE
+    assert [candidate["token"] for candidate in policy.fallback_chain] == ["opencode", "codex"]
+
+
+def test_resolve_launch_policy_overlay_no_fallback_rule_skips_overlay_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: codex}\n"
+            "    override: {effort: medium}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    codex = _mock_alias(alias="codex", model_id="gpt-5.3-codex", harness=HarnessId.CODEX)
+    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "codex": codex,
+            "gpt-5.3-codex": codex,
+            "opencode": opencode,
+            "kimi-k2.6": opencode,
+        },
+    )
+
+    config = MeridianConfig.model_validate(
+        {
+            "agents": {
+                "reviewer": {
+                    "model_policies": [
+                        {
+                            "match_type": "alias",
+                            "match_value": "opencode",
+                            "overrides": {"effort": "low"},
+                            "no_fallback": True,
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.model == "gpt-5.3-codex"
+    assert policy.harness == HarnessId.CODEX
+    assert [candidate["token"] for candidate in policy.fallback_chain] == ["codex"]
 
 
 def test_resolve_launch_policy_explicit_model_suppresses_availability_fallback(

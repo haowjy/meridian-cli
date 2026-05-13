@@ -228,6 +228,28 @@ def test_config_show_reports_user_hook_suppression_with_user_provenance(
     assert "hooks: [] (suppressed) [source: user-config]" in shown.format_text(FormatContext())
 
 
+def test_config_show_reports_empty_overlay_model_policy_list(
+    tmp_path: Path,
+) -> None:
+    project_root = _repo(tmp_path)
+    (project_root / "meridian.toml").write_text(
+        "[agents.reviewer]\nmodel-policies = []\n",
+        encoding="utf-8",
+    )
+
+    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
+    policy_value = next(
+        item for item in shown.values if item.key == "agents.reviewer.model-policies"
+    )
+
+    assert policy_value.value == "[] (no overlay rules)"
+    assert policy_value.source == "file"
+    assert (
+        "agents.reviewer.model-policies: [] (no overlay rules) [source: file]"
+        in shown.format_text(FormatContext())
+    )
+
+
 def test_config_show_reports_project_hook_suppression_over_lower_precedence_user_hooks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -134,6 +134,32 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
+def test_load_config_parses_overlay_model_policy_no_fallback(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        "\n".join(
+            [
+                "[agents.reviewer]",
+                "",
+                "[[agents.reviewer.model-policies]]",
+                "match = { alias = 'gpt55' }",
+                "override = { effort = 'high' }",
+                "no-fallback = true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root, resolve_models=False)
+
+    overlay = config.agents["reviewer"]
+    assert overlay.model_policies is not None
+    assert len(overlay.model_policies) == 1
+    assert overlay.model_policies[0].match_type == "alias"
+    assert overlay.model_policies[0].no_fallback is True
+
+
 def test_load_config_ignores_legacy_state_path_when_root_config_missing(
     tmp_path: Path,
 ) -> None:
