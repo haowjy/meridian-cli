@@ -17,10 +17,10 @@ jobs:
       group: release-on-merge-main
       cancel-in-progress: false
     steps:
-      - name: Checkout main
+      - name: Checkout merge commit
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
       - name: Resolve release bump from labels
@@ -73,8 +73,20 @@ jobs:
         id: next_version
         env:
           BUMP: ${{ steps.release_label.outputs.bump }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
+          if [[ -z "${MERGE_SHA}" ]]; then
+            echo "::error::Missing pull_request.merge_commit_sha; cannot anchor release."
+            exit 1
+          fi
+
           git fetch --tags --force
+          git fetch origin main:main --force
+
+          if ! git cat-file -e "${MERGE_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "::error::Merge commit ${MERGE_SHA} is not available in local checkout."
+            exit 1
+          fi
 
           latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
           if [[ -z "${latest_tag}" ]]; then
@@ -109,8 +121,40 @@ jobs:
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "Computed next version ${next_version} from base ${base_version}."
 
-      - name: Skip when computed tag already exists
+      - name: Skip when merge commit already tagged
         if: steps.release_label.outputs.bump != 'skip'
+        id: merge_tag_guard
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          existing_merge_tag="$(git tag --points-at "${MERGE_SHA}" --list 'v*' | head -n 1)"
+          if [[ -n "${existing_merge_tag}" ]]; then
+            echo "merge_already_tagged=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Merge commit ${MERGE_SHA} already has tag ${existing_merge_tag}. Skipping release actions."
+            exit 0
+          fi
+
+          existing_release_tag=""
+          while IFS=$'\t' read -r commit_hash commit_subject; do
+            [[ "${commit_subject}" == Release\ * ]] || continue
+            parent_commit="$(git show -s --format=%P "${commit_hash}" | awk '{print $1}')"
+            [[ "${parent_commit}" == "${MERGE_SHA}" ]] || continue
+            commit_tag="$(git tag --points-at "${commit_hash}" --list 'v*' | head -n 1)"
+            if [[ -n "${commit_tag}" ]]; then
+              existing_release_tag="${commit_tag}"
+              break
+            fi
+          done < <(git log --format=$'%H\t%s' main)
+
+          if [[ -n "${existing_release_tag}" ]]; then
+            echo "merge_already_tagged=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Merge commit ${MERGE_SHA} already released via release commit tag ${existing_release_tag}. Skipping release actions."
+          else
+            echo "merge_already_tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip when computed tag already exists
+        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true'
         id: tag_guard
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
@@ -123,7 +167,7 @@ jobs:
           fi
 
       - name: Update version and changelog
-        if: steps.release_label.outputs.bump != 'skip' && steps.tag_guard.outputs.tag_exists != 'true'
+        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
         run: |
@@ -150,17 +194,53 @@ jobs:
             echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
           fi
 
-      - name: Commit and tag release
-        if: steps.release_label.outputs.bump != 'skip' && steps.tag_guard.outputs.tag_exists != 'true'
+      - name: Commit release changes
+        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
+        id: commit_release
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          release_commit=""
+          while IFS=$'\t' read -r commit_hash commit_subject; do
+            if [[ "${commit_subject}" == "Release ${NEXT_VERSION}" ]]; then
+              release_commit="${commit_hash}"
+              break
+            fi
+          done < <(git log --format=$'%H\t%s' main)
+
+          if [[ -n "${release_commit}" ]]; then
+            parent_commit="$(git show -s --format=%P "${release_commit}" | awk '{print $1}')"
+            if [[ "${parent_commit}" == "${MERGE_SHA}" ]]; then
+              echo "commit_created=false" >> "$GITHUB_OUTPUT"
+              echo "release_commit_sha=${release_commit}" >> "$GITHUB_OUTPUT"
+              echo "::notice::Release ${NEXT_VERSION} commit already exists on main at merge ${MERGE_SHA}. Skipping commit."
+              exit 0
+            fi
+          fi
+
           git add src/meridian/__init__.py CHANGELOG.md
           git commit -m "Release ${NEXT_VERSION}"
-          git tag -a "v${NEXT_VERSION}" -m "Release ${NEXT_VERSION}"
+          echo "commit_created=true" >> "$GITHUB_OUTPUT"
+          echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-          git push origin HEAD:main
+      - name: Tag and push release
+        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          COMMIT_CREATED: ${{ steps.commit_release.outputs.commit_created }}
+          RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
+            echo "::notice::Tag v${NEXT_VERSION} already exists before tag step. Skipping tag creation."
+          else
+            git tag -a "v${NEXT_VERSION}" "${RELEASE_COMMIT_SHA}" -m "Release ${NEXT_VERSION}"
+          fi
+
+          if [[ "${COMMIT_CREATED}" == "true" ]]; then
+            git push origin HEAD:main
+          fi
           git push origin "v${NEXT_VERSION}"
