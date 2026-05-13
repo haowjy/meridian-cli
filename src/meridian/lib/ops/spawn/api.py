@@ -220,6 +220,16 @@ def _missing_follow_up_session_error(source_ref: str) -> str:
     return f"Session '{normalized}' has no recorded harness session — cannot continue/fork."
 
 
+def _validate_exact_work_id(work_id: str) -> str:
+    normalized = work_store.slugify(work_id)
+    if not normalized or normalized != work_id:
+        raise ValueError(
+            f"Invalid work item name '{work_id}'. "
+            f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{normalized or 'my-feature'}'."
+        )
+    return normalized
+
+
 def _provision_worktree(
     *,
     project_root: Path,
@@ -230,55 +240,65 @@ def _provision_worktree(
 
     roots = resolve_roots(str(project_root))
     project_state_dir = roots.project_state_dir
-    resolved_work_id = ensure_explicit_work_item(project_state_dir, work_id)
+    resolved_work_id = _validate_exact_work_id(work_id)
+    item = work_store.get_work_item(project_state_dir, resolved_work_id)
+    created = False
+    if item is None:
+        resolved_work_id = ensure_explicit_work_item(project_state_dir, resolved_work_id)
+        created = True
     item = work_store.get_work_item(project_state_dir, resolved_work_id)
     if item is None:
         return
 
-    config = load_config(project_root)
-    worktree_requested = True if explicit_worktree is True else config.work.default_worktree
-
-    if not worktree_requested:
-        return
-
-    worktree_path_stale = (
-        item.worktree_path is not None and not Path(item.worktree_path).is_dir()
-    )
-    if item.worktree_path is not None and not worktree_path_stale:
-        return
-
-    work_store.update_work_item_worktree(project_state_dir, item.name, pending=True)
     try:
-        provisioned = provision_for_start(
-            project_root,
-            item.name,
-            config.work,
-            existing=item.worktree,
-        )
-    except Exception:
-        work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
-        raise
+        config = load_config(project_root)
+        worktree_requested = True if explicit_worktree is True else config.work.default_worktree
 
-    if provisioned.status == "skipped_not_git_repo" and explicit_worktree is True:
+        if not worktree_requested:
+            return
+
+        worktree_path_stale = (
+            item.worktree_path is not None and not Path(item.worktree_path).is_dir()
+        )
+        if item.worktree_path is not None and not worktree_path_stale:
+            return
+
+        work_store.update_work_item_worktree(project_state_dir, item.name, pending=True)
+        try:
+            provisioned = provision_for_start(
+                project_root,
+                item.name,
+                config.work,
+                existing=item.worktree,
+            )
+        except Exception:
+            work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
+            raise
+
+        if provisioned.status == "skipped_not_git_repo" and explicit_worktree is True:
+            work_store.update_work_item_worktree(
+                project_state_dir,
+                item.name,
+                branch=provisioned.metadata.branch,
+                pending=False,
+            )
+            raise ValueError(
+                f"Cannot create git worktree for '{item.name}': "
+                f"'{project_root}' is not inside a git repository. "
+                "Pass --no-worktree to skip worktree creation."
+            )
+
         work_store.update_work_item_worktree(
             project_state_dir,
             item.name,
+            path=provisioned.metadata.path,
             branch=provisioned.metadata.branch,
-            pending=False,
+            pending=provisioned.metadata.pending,
         )
-        raise ValueError(
-            f"Cannot create git worktree for '{item.name}': "
-            f"'{project_root}' is not inside a git repository. "
-            "Pass --no-worktree to skip worktree creation."
-        )
-
-    work_store.update_work_item_worktree(
-        project_state_dir,
-        item.name,
-        path=provisioned.metadata.path,
-        branch=provisioned.metadata.branch,
-        pending=provisioned.metadata.pending,
-    )
+    except Exception:
+        if created:
+            work_store.delete_work_item(project_state_dir, resolved_work_id, force=True)
+        raise
 
 
 def spawn_create_sync(
@@ -320,13 +340,6 @@ def spawn_create_sync(
         project_local_root = resolve_project_paths(resolved_root).root_dir
         resolved_work_id = ensure_explicit_work_item(project_local_root, payload.work)
         payload = payload.model_copy(update={"work": resolved_work_id})
-
-    if not payload.dry_run and payload.work.strip() and payload.worktree is not False:
-        _provision_worktree(
-            project_root=resolved_root,
-            work_id=payload.work,
-            explicit_worktree=payload.worktree,
-        )
 
     runtime = None
     if not payload.dry_run:
@@ -393,6 +406,13 @@ def spawn_create_sync(
             cli_command=prepared_request.cli_command,
             message="Dry run complete.",
             forked_from=forked_from,
+        )
+
+    if payload.work.strip() and payload.worktree is not False:
+        _provision_worktree(
+            project_root=resolved_root,
+            work_id=payload.work,
+            explicit_worktree=payload.worktree,
         )
 
     if runtime is None:
