@@ -8,6 +8,46 @@ on:
       - master
 
 jobs:
+  pr-release-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Warn when release label is missing
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          has_release_label=false
+          while IFS= read -r label; do
+            if [[ "$label" == release:* ]]; then
+              has_release_label=true
+              break
+            fi
+          done < <(jq -r '.[]' <<<"${LABELS_JSON}")
+
+          if [[ "${has_release_label}" == true ]]; then
+            echo "::notice::Release label detected on this PR."
+          else
+            echo "::warning::No release:* label set. Merge-to-main defaults to release:patch."
+          fi
+
+      - name: Note CHANGELOG.md coverage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "${BASE_SHA}" "${HEAD_SHA}" -- CHANGELOG.md | grep -q '^CHANGELOG\.md$'; then
+            echo "::notice::CHANGELOG.md is updated in this PR."
+          else
+            echo "::notice::CHANGELOG.md is unchanged in this PR."
+          fi
+
   lint:
     runs-on: ubuntu-latest
     permissions:
