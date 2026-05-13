@@ -208,6 +208,12 @@ def _parse_model_policies(
                     f"Agent profile '{profile_name}' model-policies[{index}] "
                     "fallback-order must be a positive integer."
                 )
+            if match_key == "model-glob":
+                raise ValueError(
+                    f"Agent profile '{profile_name}' model-policies[{index}] cannot use "
+                    "fallback-order with model-glob match type; use alias or model match "
+                    "instead."
+                )
             duplicate_index = fallback_order_indices.get(fallback_order)
             if duplicate_index is not None:
                 raise ValueError(

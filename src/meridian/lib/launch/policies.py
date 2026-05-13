@@ -120,6 +120,7 @@ class ResolvedLaunchPolicy:
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None
+    fallback_chain: tuple[dict[str, object], ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
 
@@ -315,13 +316,14 @@ def _compiler_request_for_fallback_candidate(
 
     policy_overrides = RuntimeOverrides.model_validate(dict(matched_rule.overrides))
     preserved_fields: tuple[str, ...] = ("harness", *EXECUTION_POLICY_FIELDS)
-    merged_cli = request.cli_overrides.model_copy(
-        update={
-            field_name: value
-            for field_name in preserved_fields
-            if (value := getattr(policy_overrides, field_name)) is not None
-        }
-    )
+    injected_fields = {
+        field_name: value
+        for field_name in preserved_fields
+        if (value := getattr(policy_overrides, field_name)) is not None
+        and getattr(request.cli_overrides, field_name) is None
+        and getattr(request.env_overrides, field_name) is None
+    }
+    merged_cli = request.cli_overrides.model_copy(update=injected_fields)
     overlay = request.agent_overlay
     if overlay is not None:
         overlay = overlay.model_copy(update={"model_policies": ()})
@@ -866,6 +868,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=harness_id),
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
+        fallback_chain=compiler_result.fallback_chain,
         warnings=_policy_warnings(
             profile_warning=profile_warning,
             model_warning=model_warning,

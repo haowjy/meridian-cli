@@ -577,6 +577,100 @@ def test_resolve_launch_policy_fallback_preserves_policy_effort_override_for_gpt
     assert policy.execution_policy.effort == "medium"
 
 
+def test_resolve_launch_policy_fallback_keeps_cli_effort_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: opencode}\n"
+            "    fallback-order: 1\n"
+            "    override: {harness: opencode, effort: medium}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "opencode": opencode,
+            "kimi-k2.6": opencode,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(agent="reviewer", effort="high"),
+                RuntimeOverrides(),
+            ),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.model == "kimi-k2.6"
+    assert policy.harness == HarnessId.OPENCODE
+    assert policy.execution_policy.effort == "high"
+
+
+def test_resolve_launch_policy_fallback_keeps_env_effort_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter=(
+            "name: reviewer\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: opencode}\n"
+            "    fallback-order: 1\n"
+            "    override: {harness: opencode, effort: medium}\n"
+        ),
+    )
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "opencode": opencode,
+            "kimi-k2.6": opencode,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(agent="reviewer"),
+                RuntimeOverrides(effort="high"),
+            ),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.OPENCODE),
+        )
+    )
+
+    assert policy.model == "kimi-k2.6"
+    assert policy.harness == HarnessId.OPENCODE
+    assert policy.execution_policy.effort == "high"
+
+
 def test_resolve_launch_policy_fallback_does_not_recursively_reapply_model_policies(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

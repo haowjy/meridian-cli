@@ -237,6 +237,26 @@ def test_parse_agent_profile_model_policies_parse_fallback_order(tmp_path: Path)
     assert [rule.fallback_order for rule in profile.model_policies] == [2, 1, None]
 
 
+def test_parse_agent_profile_rejects_model_glob_fallback_order(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "bad.md",
+        [
+            "name: Bad",
+            "model-policies:",
+            "  - match: {model-glob: 'gpt-*'}",
+            "    fallback-order: 1",
+            "    override: {effort: medium}",
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot use fallback-order with model-glob match type",
+    ):
+        parse_agent_profile(profile_path)
+
+
 def test_parse_agent_profile_model_policies_accepts_empty_override_with_fallback_order(
     tmp_path: Path,
 ) -> None:
