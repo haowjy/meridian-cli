@@ -54,7 +54,7 @@ class OpenCodePassthrough:
             spawn_id=spawn_id,
             harness_id=HarnessId.OPENCODE,
             prompt=spec.prompt,
-            project_root=execution_cwd,
+            control_root=execution_cwd,
             env_overrides=dict(env),
             system=spec.appended_system_prompt or None,
         )

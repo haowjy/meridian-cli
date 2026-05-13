@@ -280,6 +280,60 @@ def test_build_launch_context_env_keeps_project_root_when_execution_cwd_differs(
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
 
 
+def test_build_launch_context_exposes_task_cwd_and_guidance_when_execution_cwd_differs(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    execution_cwd = tmp_path / ".meridian" / "spawns" / "p-parent"
+    execution_cwd.mkdir(parents=True)
+    request = _build_spawn_request()
+    runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=execution_cwd)
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-task-cwd",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    final_env = runtime_ctx.binding.environment.final_env
+    assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
+    assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
+    assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
+    assert final_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
+    assert runtime_ctx.binding.run_params.appended_system_prompt is not None
+    assert "MERIDIAN_TASK_CWD" in runtime_ctx.binding.run_params.appended_system_prompt
+    assert execution_cwd.as_posix() in runtime_ctx.binding.run_params.appended_system_prompt
+    projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
+    assert execution_cwd.resolve() not in projected_roots
+
+
+def test_build_launch_context_omits_task_cwd_env_when_execution_cwd_matches_project_root(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    request = _build_spawn_request()
+    runtime = _build_launch_runtime(tmp_path=tmp_path)
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-no-task-cwd",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
+    assert runtime_ctx.binding.run_params.task_cwd is None
+    assert "MERIDIAN_TASK_CWD" not in bind_env
+    assert "MERIDIAN_TASK_CWD" not in runtime_ctx.binding.environment.final_env
+
+
 def test_build_launch_context_emits_child_spawn_id(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,

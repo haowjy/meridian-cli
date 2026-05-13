@@ -272,14 +272,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "mcp_tools",
             "projected_roots",
             "report_output_path",
-            "project_root",
+            "control_root",
             "adhoc_agent_payload",
             "appended_system_prompt",
             "user_turn_content",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"skills", "agent", "context_from_payload", "reference_items"}
+        {"skills", "agent", "context_from_payload", "reference_items", "task_cwd"}
     )
 
     @property

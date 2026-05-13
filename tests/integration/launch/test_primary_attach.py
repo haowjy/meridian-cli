@@ -28,12 +28,12 @@ from meridian.lib.launch.process.primary_attach import (
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
-def _build_config(*, spawn_id: SpawnId, project_root: Path, ws_port: int = 0) -> ConnectionConfig:
+def _build_config(*, spawn_id: SpawnId, control_root: Path, ws_port: int = 0) -> ConnectionConfig:
     return ConnectionConfig(
         spawn_id=spawn_id,
         harness_id=HarnessId.CODEX,
         prompt="hello",
-        project_root=project_root,
+        control_root=control_root,
         env_overrides={},
         ws_port=ws_port,
     )
@@ -214,7 +214,7 @@ async def test_primary_attach_writes_metadata_before_tui_launch(tmp_path: Path) 
     )
 
     await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p900"), project_root=tmp_path, ws_port=7811),
+        config=_build_config(spawn_id=SpawnId("p900"), control_root=tmp_path, ws_port=7811),
         spec=_build_spec(),
         cwd=tmp_path,
         env={},
@@ -245,7 +245,7 @@ async def test_primary_attach_captures_session_id_from_connection(tmp_path: Path
     )
 
     outcome = await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p901"), project_root=tmp_path),
+        config=_build_config(spawn_id=SpawnId("p901"), control_root=tmp_path),
         spec=_build_spec(),
         cwd=tmp_path,
         env={},
@@ -271,7 +271,7 @@ async def test_primary_attach_calls_on_running_when_tui_starts(tmp_path: Path) -
     )
 
     outcome = await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p901-running"), project_root=tmp_path),
+        config=_build_config(spawn_id=SpawnId("p901-running"), control_root=tmp_path),
         spec=_build_spec(),
         cwd=tmp_path,
         env={},
@@ -309,7 +309,7 @@ async def test_primary_attach_writes_valid_jsonl_events(tmp_path: Path) -> None:
     )
 
     await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p902"), project_root=tmp_path),
+        config=_build_config(spawn_id=SpawnId("p902"), control_root=tmp_path),
         spec=_build_spec(),
         cwd=tmp_path,
         env={},
@@ -365,7 +365,7 @@ async def test_primary_attach_activity_transitions_update_metadata(tmp_path: Pat
     launcher._write_metadata = _recording_write_metadata  # type: ignore[method-assign]
 
     await launcher.run(
-        config=_build_config(spawn_id=SpawnId("p903"), project_root=tmp_path),
+        config=_build_config(spawn_id=SpawnId("p903"), control_root=tmp_path),
         spec=_build_spec(),
         cwd=tmp_path,
         env={},
@@ -411,7 +411,7 @@ async def test_primary_attach_retries_port_bind_with_fresh_ports(tmp_path: Path)
     primary_attach_module._reserve_local_port = _reserve_retry_port
     try:
         outcome = await launcher.run(
-            config=_build_config(spawn_id=SpawnId("p904"), project_root=tmp_path, ws_port=29000),
+            config=_build_config(spawn_id=SpawnId("p904"), control_root=tmp_path, ws_port=29000),
             spec=_build_spec(),
             cwd=tmp_path,
             env={},
@@ -452,7 +452,7 @@ async def test_primary_attach_raises_after_max_port_bind_retries(tmp_path: Path)
             await launcher.run(
                 config=_build_config(
                     spawn_id=SpawnId("p905"),
-                    project_root=tmp_path,
+                    control_root=tmp_path,
                     ws_port=29100,
                 ),
                 spec=_build_spec(),

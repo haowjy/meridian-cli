@@ -408,7 +408,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
             port=port,
         )
         env = inherit_child_env(os.environ, config.env_overrides)
-        spawn_dir = resolve_spawn_log_dir(config.project_root, config.spawn_id)
+        spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         _materialize_system_prompt(spawn_dir, config.system, env)
         self._stderr_log_path = spawn_dir / "stderr.log"
@@ -420,7 +420,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *command,
-                cwd=str(config.project_root),
+                cwd=str(config.control_root),
                 env=env,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=self._stderr_handle,
@@ -538,7 +538,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         payload = project_opencode_spec_to_session_payload(
             spec,
-            project_root=self._config.project_root if self._config is not None else None,
+            project_root=self._config.control_root if self._config is not None else None,
         )
         payload_variants: tuple[dict[str, object], ...] = (payload, {}) if payload else ({},)
 

@@ -279,7 +279,7 @@ def build_chat_backend_launch_plan(
         skills=snapshot.skills,
         agent=snapshot.agent_name,
         prompt_payload=prompt_payload,
-        project_root=project_root.as_posix(),
+        control_root=project_root.as_posix(),
         mcp_tools=snapshot.mcp_tools,
         sandbox=ep.sandbox,
         tools=snapshot.tools,
@@ -302,7 +302,7 @@ def build_chat_backend_launch_plan(
         spawn_id=spawn_id,
         harness_id=harness_id,
         prompt=materialized.run_params.prompt,
-        project_root=project_root,
+        control_root=project_root,
         env_overrides=runtime_env,
         system=materialized.run_params.appended_system_prompt,
     )

@@ -129,7 +129,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
                 spawn_id=SpawnId("p-signal"),
                 harness_id=HarnessId.CODEX,
                 prompt="hello",
-                project_root=tmp_path,
+                control_root=tmp_path,
                 env_overrides={},
             ),
             spec=ResolvedLaunchSpec(

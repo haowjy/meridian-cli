@@ -218,7 +218,8 @@ class SpawnParams(BaseModel):
     # Pre-built ad-hoc native-agent payload. Empty string when not used.
     adhoc_agent_payload: str = ""
     extra_args: tuple[str, ...] = ()
-    project_root: str | None = None
+    control_root: str | None = None
+    task_cwd: str | None = None
     mcp_tools: tuple[str, ...] = ()
     projected_roots: tuple[Path, ...] = ()
     interactive: bool = False

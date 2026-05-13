@@ -68,7 +68,7 @@ class CodexPassthrough:
             spawn_id=spawn_id,
             harness_id=HarnessId.CODEX,
             prompt=spec.prompt,
-            project_root=execution_cwd,
+            control_root=execution_cwd,
             env_overrides=dict(env),
             ws_bind_host=ws_bind_host,
             ws_port=_reserve_local_port(ws_bind_host),

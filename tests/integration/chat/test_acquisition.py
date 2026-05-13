@@ -105,7 +105,7 @@ def _launch_plan_factory(
     *,
     spawn_id: SpawnId,
     harness_id: HarnessId,
-    project_root: Path,
+    control_root: Path,
     env_overrides: dict[str, str] | None = None,
 ):
     def build(chat_id: str, prompt: str) -> ChatBackendLaunchPlan:
@@ -114,7 +114,7 @@ def _launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=harness_id,
             prompt=prompt,
-            project_root=project_root,
+            control_root=control_root,
             env_overrides=env_overrides or {},
         )
         spec = ResolvedLaunchSpec(
@@ -145,7 +145,7 @@ async def test_cold_acquisition_registers_observer_before_start_and_uses_persist
         launch_plan_factory=_launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
-            project_root=tmp_path,
+            control_root=tmp_path,
         ),
     )
 
@@ -163,12 +163,12 @@ async def test_cold_acquisition_uses_launch_plan_connection_config(
     tmp_path: Path,
 ):
     manager = SpawnManager()
-    project_root = tmp_path / "project"
-    project_root.mkdir(parents=True)
+    control_root = tmp_path / "project"
+    control_root.mkdir(parents=True)
     env_overrides = {
         "MERIDIAN_HARNESS": "codex",
         "MERIDIAN_SPAWN_ID": "s-chat",
-        "MERIDIAN_PROJECT_DIR": str(project_root.resolve()),
+        "MERIDIAN_PROJECT_DIR": str(control_root.resolve()),
         "MERIDIAN_RUNTIME_DIR": str((tmp_path / "runtime").resolve()),
     }
 
@@ -179,7 +179,7 @@ async def test_cold_acquisition_uses_launch_plan_connection_config(
         launch_plan_factory=_launch_plan_factory(
             spawn_id=SpawnId("s-chat"),
             harness_id=HarnessId.CODEX,
-            project_root=project_root,
+            control_root=control_root,
             env_overrides=env_overrides,
         ),
     )
@@ -204,7 +204,7 @@ async def test_cold_acquisition_unregisters_observer_when_start_fails(tmp_path: 
         launch_plan_factory=_launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
-            project_root=tmp_path,
+            control_root=tmp_path,
         ),
     )
 
@@ -227,7 +227,7 @@ async def test_cold_acquisition_stops_spawn_when_heartbeat_fails(tmp_path: Path)
         launch_plan_factory=_launch_plan_factory(
             spawn_id=spawn_id,
             harness_id=HarnessId.CLAUDE,
-            project_root=tmp_path,
+            control_root=tmp_path,
         ),
     )
 

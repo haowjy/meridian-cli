@@ -363,8 +363,13 @@ class SpawnApplicationService:
             spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.resolved_request.prompt,
-            project_root=launch_ctx.binding.child_cwd,
+            control_root=launch_ctx.project_root,
             env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
+            task_cwd=(
+                launch_ctx.binding.child_cwd
+                if launch_ctx.binding.child_cwd.resolve() != launch_ctx.project_root.resolve()
+                else None
+            ),
             system=launch_ctx.binding.run_params.appended_system_prompt,
             debug_tracer=payload.debug_tracer,
         )

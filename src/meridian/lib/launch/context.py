@@ -428,7 +428,8 @@ def materialize_launch_artifacts(
     agent: str | None,
     prompt_payload: PreparedPromptPayload,
     extra_args: tuple[str, ...] = (),
-    project_root: str | None = None,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
     mcp_tools: tuple[str, ...] = (),
     projected_roots: tuple[Path, ...] = (),
     interactive: bool = False,
@@ -444,6 +445,23 @@ def materialize_launch_artifacts(
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
+    task_cwd_instruction = ""
+    if task_cwd:
+        task_cwd_instruction = (
+            "\n\n# Task Working Directory\n"
+            f"Your process cwd is NOT your task directory. "
+            f"Your task working directory is: {task_cwd}\n"
+            f"Use absolute paths or `cd {task_cwd}` before filesystem operations. "
+            f"The `MERIDIAN_TASK_CWD` environment variable contains this path.\n"
+        )
+    effective_appended_system = prompt_payload.appended_system_prompt or ""
+    if task_cwd_instruction:
+        effective_appended_system = (
+            effective_appended_system + task_cwd_instruction
+            if effective_appended_system
+            else task_cwd_instruction.lstrip()
+        )
+
     run_params = SpawnParams(
         prompt=prompt,
         model=ModelId(model) if model else None,
@@ -452,14 +470,15 @@ def materialize_launch_artifacts(
         agent=agent,
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         extra_args=extra_args,
-        project_root=project_root,
+        control_root=control_root,
+        task_cwd=task_cwd,
         mcp_tools=mcp_tools,
         projected_roots=projected_roots,
         interactive=interactive,
         continue_harness_session_id=continue_harness_session_id,
         continue_fork=continue_fork,
         report_output_path=report_output_path,
-        appended_system_prompt=prompt_payload.appended_system_prompt,
+        appended_system_prompt=effective_appended_system or None,
         context_from_payload=context_from_payload,
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
@@ -1374,7 +1393,12 @@ def bind_launch_context(
         agent=resolved_request.agent,
         prompt_payload=prompt_payload,
         extra_args=projected_extra_args,
-        project_root=child_cwd.as_posix(),
+        control_root=project_paths.project_root.as_posix(),
+        task_cwd=(
+            child_cwd.as_posix()
+            if child_cwd.resolve() != project_paths.project_root.resolve()
+            else None
+        ),
         mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
@@ -1424,6 +1448,8 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    if child_cwd.resolve() != project_paths.project_root.resolve():
+        child_context_env["MERIDIAN_TASK_CWD"] = child_cwd.as_posix()
     runtime_override_env = (
         runtime.resolved_runtime_overrides.to_env()
         if runtime.has_runtime_override_snapshot

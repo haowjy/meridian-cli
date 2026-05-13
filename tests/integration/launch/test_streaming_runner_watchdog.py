@@ -78,7 +78,7 @@ class _ReportThenHangConnection:
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = spec
         self._spawn_id = config.spawn_id
-        self._project_root = config.project_root
+        self._project_root = config.control_root
         self.state = "connected"
 
     async def stop(self) -> None:
