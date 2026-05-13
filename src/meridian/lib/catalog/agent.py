@@ -57,6 +57,7 @@ class ModelPolicyRule(BaseModel):
 
     match_type: Literal["model", "alias", "model-glob"]
     match_value: str
+    fallback_order: int | None = None
     overrides: Mapping[str, object]
 
 
@@ -158,6 +159,7 @@ def _parse_model_policies(
         )
 
     parsed: list[ModelPolicyRule] = []
+    fallback_order_indices: dict[int, int] = {}
     allowed_match_keys = {"model", "alias", "model-glob"}
     for index, raw_rule in enumerate(cast("list[object]", raw_policies), start=1):
         if not isinstance(raw_rule, Mapping):
@@ -197,6 +199,28 @@ def _parse_model_policies(
                 f"Agent profile '{profile_name}' has invalid model-policies[{index}].override: "
                 "expected mapping."
             )
+        fallback_order: int | None = None
+        raw_fallback_order = rule.get("fallback-order")
+        if raw_fallback_order is not None:
+            try:
+                fallback_order = int(str(raw_fallback_order).strip())
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Agent profile '{profile_name}' model-policies[{index}] "
+                    "fallback-order must be a positive integer."
+                ) from None
+            if fallback_order < 1:
+                raise ValueError(
+                    f"Agent profile '{profile_name}' model-policies[{index}] "
+                    "fallback-order must be a positive integer."
+                )
+            duplicate_index = fallback_order_indices.get(fallback_order)
+            if duplicate_index is not None:
+                raise ValueError(
+                    f"Agent profile '{profile_name}' has duplicate model-policies "
+                    f"fallback-order {fallback_order} (rules {duplicate_index} and {index})."
+                )
+            fallback_order_indices[fallback_order] = index
         overrides = {
             str(key).strip(): value
             for key, value in cast("Mapping[object, object]", raw_override).items()
@@ -218,6 +242,7 @@ def _parse_model_policies(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),
                 match_value=match_value,
+                fallback_order=fallback_order,
                 overrides=overrides,
             )
         )

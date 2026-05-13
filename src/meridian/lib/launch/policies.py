@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 
-from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile
+from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig
@@ -362,6 +362,15 @@ def _try_harness_availability_fallback(
     if model_explicit or _harness_is_available(harness_id, harness_registry) or profile is None:
         return None
 
+    for fallback_token, fallback_harness, fallback_entry, _matched_rule in (
+        _fallback_candidates_from_policies(
+            model_policies=profile.model_policies,
+            catalog=catalog,
+            harness_registry=harness_registry,
+        )
+    ):
+        return fallback_token, fallback_harness, fallback_entry
+
     for fanout_entry in profile.fanout:
         fallback_token = fanout_entry.value
         fallback = _fallback_entry_for_token(
@@ -373,6 +382,32 @@ def _try_harness_availability_fallback(
             return fallback
 
     return None
+
+
+def _fallback_candidates_from_policies(
+    *,
+    model_policies: tuple[ModelPolicyRule, ...],
+    catalog: CatalogSession,
+    harness_registry: HarnessRegistry,
+) -> list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]]:
+    """Build ordered harness-availability candidates from profile model-policies."""
+
+    ordered_rules = sorted(
+        (rule for rule in model_policies if rule.fallback_order is not None),
+        key=lambda rule: rule.fallback_order or 0,
+    )
+    candidates: list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]] = []
+    for rule in ordered_rules:
+        fallback = _fallback_entry_for_token(
+            rule.match_value,
+            catalog=catalog,
+            harness_registry=harness_registry,
+        )
+        if fallback is None:
+            continue
+        token, fallback_harness, entry = fallback
+        candidates.append((token, fallback_harness, entry, rule))
+    return candidates
 
 
 def resolve_policy_fields(

@@ -220,6 +220,105 @@ def test_parse_agent_profile_model_policies_and_structured_fanout(tmp_path: Path
     )
 
 
+def test_parse_agent_profile_model_policies_parse_fallback_order(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "reviewer.md",
+        [
+            "name: Reviewer",
+            "model-policies:",
+            "  - match: {alias: gpt55}",
+            "    fallback-order: 2",
+            "    override: {effort: medium}",
+            "  - match: {model: gpt-5.4}",
+            "    fallback-order: 1",
+            "    override: {effort: high}",
+            "  - match: {model-glob: 'gpt-*'}",
+            "    override: {approval: auto}",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert [rule.fallback_order for rule in profile.model_policies] == [2, 1, None]
+
+
+@pytest.mark.parametrize(
+    ("ordinal", "match"),
+    [
+        ("0", "fallback-order must be a positive integer"),
+        ("-1", "fallback-order must be a positive integer"),
+    ],
+)
+def test_parse_agent_profile_rejects_non_positive_fallback_order(
+    tmp_path: Path,
+    ordinal: str,
+    match: str,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "bad.md",
+        [
+            "name: Bad",
+            "model-policies:",
+            "  - match: {alias: gpt55}",
+            f"    fallback-order: {ordinal}",
+            "    override: {effort: high}",
+        ],
+    )
+
+    with pytest.raises(ValueError, match=match):
+        parse_agent_profile(profile_path)
+
+
+def test_parse_agent_profile_rejects_duplicate_model_policy_fallback_order(
+    tmp_path: Path,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "bad.md",
+        [
+            "name: Bad",
+            "model-policies:",
+            "  - match: {alias: gpt55}",
+            "    fallback-order: 1",
+            "    override: {effort: medium}",
+            "  - match: {alias: gpt54}",
+            "    fallback-order: 1",
+            "    override: {effort: high}",
+        ],
+    )
+
+    with pytest.raises(ValueError, match=r"duplicate model-policies fallback-order 1"):
+        parse_agent_profile(profile_path)
+
+
+def test_parse_agent_profile_model_policies_without_fallback_order_still_parse(
+    tmp_path: Path,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "reviewer.md",
+        [
+            "name: Reviewer",
+            "model-policies:",
+            "  - match: {alias: gpt55}",
+            "    override: {effort: medium}",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == (
+        ModelPolicyRule(
+            match_type="alias",
+            match_value="gpt55",
+            overrides={"effort": "medium"},
+        ),
+    )
+    assert profile.model_policies[0].fallback_order is None
+
+
 def test_parse_agent_profile_rejects_invalid_mode(tmp_path: Path) -> None:
     profile_path = _write_profile(tmp_path, "bad.md", ["name: Bad", "mode: worker"])
 
