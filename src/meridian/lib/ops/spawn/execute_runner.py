@@ -118,6 +118,13 @@ async def _prepare_execution_handoff(
                 ),
                 run_agent_name=resolved_agent_name,
                 inherited_work_id=work_id,
+                control_root=runtime_request.resolved_control_root,
+                task_cwd=(
+                    execution_cwd
+                    if Path(execution_cwd).resolve()
+                    != Path(runtime_request.resolved_control_root).resolve()
+                    else None
+                ),
                 execution_cwd=execution_cwd,
             )
         )
@@ -168,6 +175,10 @@ async def _prepare_execution_handoff(
             update={
                 "argv_intent": LaunchArgvIntent.SPEC_ONLY,
                 "runtime_root": runtime_root.as_posix(),
+                "config_root": project_paths.project_root.as_posix(),
+                "control_root": runtime_request.resolved_control_root,
+                "requested_task_cwd": execution_cwd,
+                # Legacy aliases.
                 "project_paths_project_root": project_paths.project_root.as_posix(),
                 "project_paths_execution_cwd": execution_cwd,
             }
@@ -319,7 +330,7 @@ async def launch_prepared_spawn(
                     runtime_root=runtime_root,
                     spawn_id=spawn.spawn_id,
                     session=handoff.resolved_request.session,
-                    child_cwd=handoff.launch_context.binding.child_cwd,
+                    child_cwd=handoff.launch_context.control_root,
                     child_env=child_env,
                     resolved_harness_session_id="",
                     record_effective_config_dir=_record_effective_config_dir,

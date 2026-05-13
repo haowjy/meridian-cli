@@ -25,6 +25,8 @@ class SessionRecord(BaseModel):
     kind: Literal["primary", "spawn"]
     harness: str
     harness_session_id: str
+    control_root: str | None = None
+    task_cwd: str | None = None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
     harness_session_ids: tuple[str, ...]
@@ -50,6 +52,8 @@ class SessionStartEvent(BaseModel):
     kind: Literal["primary", "spawn"] = "spawn"
     harness: str
     harness_session_id: str
+    control_root: str | None = None
+    task_cwd: str | None = None
     execution_cwd: str | None = None
     claude_config_dir: str | None = None
     model: str
@@ -114,6 +118,8 @@ def _record_from_start_event(event: SessionStartEvent) -> SessionRecord:
         kind=event.kind,
         harness=event.harness,
         harness_session_id=event.harness_session_id,
+        control_root=event.control_root,
+        task_cwd=event.task_cwd,
         execution_cwd=event.execution_cwd,
         claude_config_dir=event.claude_config_dir,
         harness_session_ids=(event.harness_session_id,),
@@ -410,6 +416,8 @@ def start_session(
     skills: tuple[str, ...] = (),
     skill_paths: tuple[str, ...] = (),
     forked_from_chat_id: str | None = None,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
     execution_cwd: str | None = None,
     claude_config_dir: str | None = None,
     kind: Literal["primary", "spawn"] = "spawn",
@@ -431,6 +439,8 @@ def start_session(
             kind=kind,
             harness=harness,
             harness_session_id=harness_session_id,
+            control_root=control_root,
+            task_cwd=task_cwd,
             execution_cwd=execution_cwd,
             claude_config_dir=claude_config_dir,
             model=model,

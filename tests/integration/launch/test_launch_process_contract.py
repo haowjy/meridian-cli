@@ -83,7 +83,8 @@ def test_execute_primary_process_uses_contract_bootstrap_mode_not_harness_id(
         harness_id=HarnessId.CODEX,
         primary_spawn_id=SpawnId("p-contract-blackbox"),
         log_dir=tmp_path,
-        child_cwd=tmp_path,
+        control_root=tmp_path,
+        task_cwd=None,
         child_env={},
         launch_spec=ResolvedLaunchSpec(
             prompt="hello",
@@ -144,7 +145,8 @@ def test_execute_primary_process_uses_contract_attach_failure_policy_not_harness
         harness_id=HarnessId.CLAUDE,
         primary_spawn_id=SpawnId("p-contract-fallback"),
         log_dir=tmp_path,
-        child_cwd=tmp_path,
+        control_root=tmp_path,
+        task_cwd=None,
         child_env={},
         launch_spec=ResolvedLaunchSpec(
             prompt="hello",

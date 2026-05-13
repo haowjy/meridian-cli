@@ -49,6 +49,7 @@ class SessionRequest(BaseModel):
     continue_chat_id: str | None = None
     requested_harness_session_id: str | None = None
     continue_fork: bool = False
+    source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     forked_from_chat_id: str | None = None
@@ -148,8 +149,39 @@ class LaunchRuntime(BaseModel):
     debug: bool = False
     report_output_path: str | None = None
     runtime_root: str
-    project_paths_project_root: str
-    project_paths_execution_cwd: str
+    config_root: str | None = None
+    control_root: str | None = None
+    requested_task_cwd: str | None = None
+    # Legacy aliases retained for compatibility with older persisted payloads.
+    # project_paths_project_root == config_root
+    # project_paths_execution_cwd == requested_task_cwd
+    project_paths_project_root: str | None = None
+    project_paths_execution_cwd: str | None = None
+
+    @property
+    def resolved_config_root(self) -> str:
+        configured = (self.config_root or "").strip()
+        if configured:
+            return configured
+        legacy = (self.project_paths_project_root or "").strip()
+        if legacy:
+            return legacy
+        raise ValueError("LaunchRuntime is missing config_root/project_paths_project_root.")
+
+    @property
+    def resolved_control_root(self) -> str:
+        explicit = (self.control_root or "").strip()
+        if explicit:
+            return explicit
+        return self.resolved_config_root
+
+    @property
+    def resolved_requested_task_cwd(self) -> str | None:
+        explicit = (self.requested_task_cwd or "").strip()
+        if explicit:
+            return explicit
+        legacy = (self.project_paths_execution_cwd or "").strip()
+        return legacy or None
 
     @property
     def has_runtime_override_snapshot(self) -> bool:

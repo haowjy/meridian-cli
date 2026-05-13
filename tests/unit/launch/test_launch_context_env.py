@@ -52,6 +52,10 @@ def _build_launch_runtime(
         composition_surface=composition_surface,
         report_output_path=(tmp_path / "report.md").as_posix(),
         runtime_root=(tmp_path / ".meridian").as_posix(),
+        config_root=tmp_path.as_posix(),
+        control_root=tmp_path.as_posix(),
+        requested_task_cwd=resolved_execution_cwd.as_posix(),
+        # Legacy aliases.
         project_paths_project_root=tmp_path.as_posix(),
         project_paths_execution_cwd=resolved_execution_cwd.as_posix(),
     )
@@ -309,6 +313,96 @@ def test_build_launch_context_exposes_task_cwd_and_guidance_when_execution_cwd_d
     assert execution_cwd.as_posix() in runtime_ctx.binding.run_params.appended_system_prompt
     projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
     assert execution_cwd.resolve() not in projected_roots
+
+
+def test_build_launch_context_warns_when_task_cwd_is_outside_control_and_projection(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    outside_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task"
+    outside_task_cwd.mkdir(parents=True, exist_ok=True)
+    request = _build_spawn_request()
+    runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=outside_task_cwd)
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-task-cwd-warning",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    warning_codes = {warning.code for warning in runtime_ctx.warnings}
+    projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
+
+    assert "task_cwd_not_projected" in warning_codes
+    assert runtime_ctx.binding.run_params.task_cwd == outside_task_cwd.as_posix()
+    assert outside_task_cwd.resolve() not in projected_roots
+
+
+def test_build_launch_context_prefers_explicit_runtime_roots_over_legacy_aliases(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    explicit_task_cwd = tmp_path.parent / f"{tmp_path.name}-explicit-task"
+    explicit_task_cwd.mkdir(parents=True, exist_ok=True)
+    legacy_project_root = tmp_path.parent / f"{tmp_path.name}-legacy-root"
+    legacy_project_root.mkdir(parents=True, exist_ok=True)
+    legacy_task_cwd = legacy_project_root / "legacy-task"
+    legacy_task_cwd.mkdir(parents=True, exist_ok=True)
+
+    runtime = LaunchRuntime(
+        argv_intent=LaunchArgvIntent.REQUIRED,
+        composition_surface=LaunchCompositionSurface.DIRECT,
+        report_output_path=(tmp_path / "report.md").as_posix(),
+        runtime_root=(tmp_path / ".meridian").as_posix(),
+        config_root=tmp_path.as_posix(),
+        control_root=tmp_path.as_posix(),
+        requested_task_cwd=explicit_task_cwd.as_posix(),
+        # Conflicting legacy aliases should be ignored when explicit roots exist.
+        project_paths_project_root=legacy_project_root.as_posix(),
+        project_paths_execution_cwd=legacy_task_cwd.as_posix(),
+    )
+    runtime_ctx = build_launch_context(
+        spawn_id="p-runtime-root-explicit",
+        request=_build_spawn_request(),
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.project_root == tmp_path
+    assert runtime_ctx.control_root == tmp_path
+    assert runtime_ctx.execution_cwd == explicit_task_cwd
+    assert runtime_ctx.binding.run_params.task_cwd == explicit_task_cwd.as_posix()
+
+
+def test_build_launch_context_claude_preflight_uses_control_root_when_task_cwd_differs(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    execution_cwd = tmp_path / ".meridian" / "spawns" / "p-parent"
+    execution_cwd.mkdir(parents=True)
+    request = SpawnRequest(
+        model="claude-sonnet-4-5",
+        harness=HarnessId.CLAUDE.value,
+        prompt="hello",
+        extra_args=("--user-tail", "1"),
+    )
+    runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=execution_cwd)
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-claude-preflight",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.binding.run_params.extra_args == ("--user-tail", "1")
 
 
 def test_build_launch_context_omits_task_cwd_env_when_execution_cwd_matches_project_root(

@@ -35,6 +35,8 @@ def _fake_launch_context(
             },
         ),
         project_root=project_root,
+        control_root=project_root,
+        task_cwd=child_cwd if child_cwd.resolve() != project_root.resolve() else None,
         work_id=None,
         binding=SimpleNamespace(
             child_cwd=child_cwd,
@@ -147,6 +149,8 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
 
     row = get_spawn(runtime_root, "p1")
     assert row is not None
+    assert row.control_root == str(tmp_path)
+    assert row.task_cwd == str(child_cwd)
     assert row.execution_cwd == str(child_cwd)
     assert row.status == "succeeded"
 

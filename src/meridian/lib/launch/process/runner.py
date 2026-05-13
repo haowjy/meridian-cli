@@ -118,6 +118,7 @@ RunPrimaryAttach = Callable[
         SpawnId,
         Path,
         Path,
+        Path | None,
         dict[str, str],
         ResolvedLaunchSpec,
         ProcessLauncher,
@@ -221,7 +222,8 @@ def _execute_via_managed_attach(
     harness_id: HarnessId,
     primary_spawn_id: SpawnId,
     log_dir: Path,
-    child_cwd: Path,
+    control_root: Path,
+    task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
     managed: Any,
@@ -235,7 +237,8 @@ def _execute_via_managed_attach(
         harness_id,
         primary_spawn_id,
         log_dir,
-        child_cwd,
+        control_root,
+        task_cwd,
         child_env,
         launch_spec,
         select_process_launcher(None),
@@ -255,7 +258,7 @@ def _execute_via_managed_attach(
 def _execute_via_blackbox(
     *,
     command: tuple[str, ...],
-    child_cwd: Path,
+    control_root: Path,
     child_env: dict[str, str],
     output_log_path: Path | None,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
@@ -265,7 +268,7 @@ def _execute_via_blackbox(
 
     exit_code, _child_pid = run_primary_process_with_capture_fn(
         command,
-        child_cwd,
+        control_root,
         child_env,
         output_log_path,
         on_running,
@@ -310,7 +313,8 @@ def _execute_primary_process(
     harness_id: HarnessId,
     primary_spawn_id: SpawnId,
     log_dir: Path,
-    child_cwd: Path,
+    control_root: Path,
+    task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
     command: tuple[str, ...],
@@ -330,7 +334,8 @@ def _execute_primary_process(
                 harness_id=harness_id,
                 primary_spawn_id=primary_spawn_id,
                 log_dir=log_dir,
-                child_cwd=child_cwd,
+                control_root=control_root,
+                task_cwd=task_cwd,
                 child_env=child_env,
                 launch_spec=launch_spec,
                 managed=managed,
@@ -361,7 +366,7 @@ def _execute_primary_process(
         return (
             _execute_via_blackbox(
                 command=command,
-                child_cwd=child_cwd,
+                control_root=control_root,
                 child_env=child_env,
                 output_log_path=output_log_path,
                 run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
@@ -572,7 +577,8 @@ async def _run_primary_attach(
     harness_id: HarnessId,
     spawn_id: SpawnId,
     spawn_dir: Path,
-    execution_cwd: Path,
+    control_root: Path,
+    task_cwd: Path | None,
     env: dict[str, str],
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
@@ -595,7 +601,8 @@ async def _run_primary_attach(
         config = passthrough.build_config(
             spawn_id=spawn_id,
             spec=spec,
-            execution_cwd=execution_cwd,
+            control_root=control_root,
+            task_cwd=task_cwd,
             env=env,
         )
         launcher = PrimaryAttachLauncher(
@@ -609,7 +616,7 @@ async def _run_primary_attach(
         return await launcher.run(
             config=config,
             spec=spec,
-            cwd=execution_cwd,
+            cwd=control_root,
             env=env,
         )
     except PrimaryAttachError:
@@ -624,7 +631,8 @@ def run_primary_attach(
     harness_id: HarnessId,
     spawn_id: SpawnId,
     spawn_dir: Path,
-    execution_cwd: Path,
+    control_root: Path,
+    task_cwd: Path | None,
     env: dict[str, str],
     spec: ResolvedLaunchSpec,
     process_launcher: ProcessLauncher,
@@ -640,7 +648,8 @@ def run_primary_attach(
                 harness_id=harness_id,
                 spawn_id=spawn_id,
                 spawn_dir=spawn_dir,
-                execution_cwd=execution_cwd,
+                control_root=control_root,
+                task_cwd=task_cwd,
                 env=env,
                 spec=spec,
                 process_launcher=process_launcher,
@@ -668,7 +677,9 @@ def run_harness_process(
 ) -> ProcessOutcome:
     """Start session, spawn tracking, launch process, wait for exit."""
 
-    project_root = launch_context.project_root
+    config_root = launch_context.project_root
+    control_root = launch_context.control_root
+    task_cwd = launch_context.task_cwd
     execution_cwd = launch_context.execution_cwd
     runtime_root = launch_context.runtime_root
     preview_context = launch_context
@@ -693,7 +704,7 @@ def run_harness_process(
     primary_started_local_iso: str | None = None
     prelaunch_state = HarnessPrelaunchState()
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
-    spawn_service = build_spawn_application_service_from_roots(project_root, runtime_root)
+    spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
     lifecycle_service = spawn_service.lifecycle
 
     resume_chat_id = (
@@ -707,6 +718,8 @@ def run_harness_process(
             request=preview_request.session,
             harness_session_id=session_scope_harness_session_id,
             chat_id=resume_chat_id,
+            control_root=str(control_root),
+            task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
             execution_cwd=str(execution_cwd),
             kind="primary",
             _start_session=start_session_fn,
@@ -736,6 +749,8 @@ def run_harness_process(
                         kind="primary",
                         prompt=preview_request.prompt,
                         harness_session_id=None if should_fork else resolved_harness_session_id,
+                        control_root=str(control_root),
+                        task_cwd=None,
                         execution_cwd=str(execution_cwd),
                         launch_mode=FOREGROUND_LAUNCH_MODE,
                         work_id=attached_work_id,
@@ -767,7 +782,7 @@ def run_harness_process(
                         )
                     resolved_harness_session_id = forked_session_id
                 initial_persisted_harness_session_id = resolved_harness_session_id
-                log_dir = resolve_spawn_log_dir(project_root, primary_spawn_id)
+                log_dir = resolve_spawn_log_dir(config_root, primary_spawn_id)
                 primary_started = time.monotonic()
                 primary_started_epoch = time.time()
                 primary_started_local_iso = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -782,7 +797,13 @@ def run_harness_process(
                     update={
                         "composition_surface": LaunchCompositionSurface.PRIMARY,
                         "runtime_root": runtime_root.as_posix(),
-                        "project_paths_project_root": project_root.as_posix(),
+                        "config_root": config_root.as_posix(),
+                        "control_root": control_root.as_posix(),
+                        "requested_task_cwd": (
+                            task_cwd.as_posix() if task_cwd is not None else None
+                        ),
+                        # Legacy aliases.
+                        "project_paths_project_root": config_root.as_posix(),
                         "project_paths_execution_cwd": execution_cwd.as_posix(),
                         "report_output_path": (log_dir / "report.md").as_posix(),
                     }
@@ -805,7 +826,7 @@ def run_harness_process(
                             plan_overrides=plan_overrides,
                         ),
                         runtime=runtime,
-                        project_root=project_root,
+                        project_root=config_root,
                         harness_registry=harness_registry,
                     )
                 else:
@@ -830,7 +851,19 @@ def run_harness_process(
                 child_env = dict(runtime_context.binding.environment.final_env)
                 if managed.chat_id:
                     child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
-                child_cwd = runtime_context.binding.child_cwd
+                task_cwd = (
+                    runtime_context.binding.child_cwd
+                    if runtime_context.binding.child_cwd.resolve() != control_root.resolve()
+                    else None
+                )
+                spawn_store.update_spawn(
+                    runtime_root,
+                    primary_spawn_id,
+                    control_root=control_root.as_posix(),
+                    task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
+                    execution_cwd=runtime_context.binding.child_cwd.as_posix(),
+                )
+                lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
                 launch_spec = runtime_context.binding.spec
                 if not resolved_harness_session_id:
                     generated_session_id = harness_adapter.derive_primary_seeded_session_id(
@@ -865,7 +898,7 @@ def run_harness_process(
                     runtime_root=runtime_root,
                     spawn_id=primary_spawn_id,
                     session=preview_request.session,
-                    child_cwd=child_cwd,
+                    child_cwd=control_root,
                     child_env=child_env,
                     resolved_harness_session_id=resolved_harness_session_id,
                     record_effective_config_dir=_record_effective_config_dir,
@@ -887,7 +920,8 @@ def run_harness_process(
                     harness_id=harness_id,
                     primary_spawn_id=primary_spawn_id,
                     log_dir=log_dir,
-                    child_cwd=child_cwd,
+                    control_root=control_root,
+                    task_cwd=task_cwd,
                     child_env=child_env,
                     launch_spec=launch_spec,
                     command=command,
@@ -921,7 +955,7 @@ def run_harness_process(
                     initial_persisted_harness_session_id=initial_persisted_harness_session_id,
                     harness_adapter=harness_adapter,
                     artifacts=artifacts,
-                    project_root=project_root,
+                    project_root=control_root,
                     model_id=session_metadata.model,
                     runtime_root=runtime_root,
                     primary_started=primary_started,

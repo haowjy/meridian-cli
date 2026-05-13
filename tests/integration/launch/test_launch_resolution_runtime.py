@@ -38,6 +38,9 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
         execution_cwd=execution_cwd,
     )
 
+    assert runtime.config_root == project_root.resolve().as_posix()
+    assert runtime.control_root == project_root.resolve().as_posix()
+    assert runtime.requested_task_cwd == execution_cwd.resolve().as_posix()
     assert runtime.project_paths_project_root == project_root.resolve().as_posix()
     assert runtime.project_paths_execution_cwd == execution_cwd.resolve().as_posix()
 

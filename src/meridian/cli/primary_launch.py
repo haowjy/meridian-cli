@@ -68,6 +68,7 @@ class _ResolvedSessionTarget(BaseModel):
     source_model: str | None = None
     source_agent: str | None = None
     source_work_id: str | None = None
+    source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     tracked: bool = False
@@ -98,6 +99,7 @@ def resolve_session_target(
         source_model=resolved.source_model,
         source_agent=resolved.source_agent,
         source_work_id=resolved.source_work_id,
+        source_control_root=resolved.source_control_root,
         source_execution_cwd=resolved.source_execution_cwd,
         source_claude_config_dir=resolved.source_claude_config_dir,
         tracked=resolved.tracked,
@@ -169,6 +171,7 @@ def run_primary_launch(
     continue_fork = False
     continue_warning: str | None = None
     forked_from_chat_id: str | None = None
+    source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     continue_source_tracked = False
@@ -213,6 +216,7 @@ def run_primary_launch(
                 "Use --harness to specify which harness owns this session."
             )
         continue_warning = resolved_continue.warning
+        source_control_root = resolved_continue.source_control_root
         source_execution_cwd = resolved_continue.source_execution_cwd
         source_claude_config_dir = resolved_continue.source_claude_config_dir
         continue_source_tracked = resolved_continue.tracked
@@ -249,6 +253,7 @@ def run_primary_launch(
         continue_warning = resolved_fork.warning
         continue_fork = True
         forked_from_chat_id = resolved_fork.chat_id
+        source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
         continue_source_tracked = resolved_fork.tracked
@@ -294,6 +299,7 @@ def run_primary_launch(
                 continue_chat_id=continue_chat_id,
                 continue_fork=continue_fork,
                 forked_from_chat_id=forked_from_chat_id,
+                source_control_root=source_control_root,
                 source_execution_cwd=source_execution_cwd,
                 source_claude_config_dir=source_claude_config_dir,
                 continue_source_tracked=continue_source_tracked,

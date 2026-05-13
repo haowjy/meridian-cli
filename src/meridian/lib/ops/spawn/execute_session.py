@@ -71,6 +71,7 @@ def _resolve_session_continuation(
         continue_chat_id=request.session.continue_chat_id,
         continue_fork=resolved_continue_fork,
         forked_from_chat_id=request.session.forked_from_chat_id,
+        source_control_root=request.session.source_control_root,
         source_execution_cwd=request.session.source_execution_cwd,
         source_claude_config_dir=request.session.source_claude_config_dir,
     )
@@ -85,6 +86,8 @@ def _session_execution_context(
     harness_session_id: str,
     run_agent_name: str | None,
     inherited_work_id: str | None = None,
+    control_root: str | None = None,
+    task_cwd: str | None = None,
     execution_cwd: str | None = None,
 ) -> Generator[_SessionExecutionContext, None, None]:
     with session_scope(
@@ -92,6 +95,8 @@ def _session_execution_context(
         metadata=metadata,
         request=request,
         harness_session_id=harness_session_id,
+        control_root=control_root,
+        task_cwd=task_cwd,
         execution_cwd=execution_cwd,
     ) as managed:
         attached_work_id = get_session_active_work_id(runtime_root, managed.chat_id)

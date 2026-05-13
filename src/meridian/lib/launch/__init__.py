@@ -94,7 +94,7 @@ def launch_primary(
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
 
-        resolved_project_root = Path(runtime.project_paths_project_root)
+        resolved_project_root = Path(runtime.resolved_config_root)
         request = request.model_copy(
             update={
                 "supplemental_prompt_documents": (
@@ -109,7 +109,7 @@ def launch_primary(
         else _resolve_work_id_for_launch(project_root, request)
     )
 
-    resolved_project_root = Path(runtime.project_paths_project_root).expanduser().resolve()
+    resolved_project_root = Path(runtime.resolved_config_root).expanduser().resolve()
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
     active_work_dir = (
         resolve_work_scratch_dir_for_project(

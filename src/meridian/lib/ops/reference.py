@@ -33,6 +33,7 @@ class ResolvedSessionReference:
     source_skills: tuple[str, ...]
     source_work_id: str | None
     tracked: bool
+    source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
     warning: str | None = None
@@ -136,6 +137,7 @@ def _build_tracked_reference(
     source_agent: str | None,
     source_skills: tuple[str, ...],
     source_work_id: str | None,
+    source_control_root: str | None = None,
     source_execution_cwd: str | None = None,
     source_claude_config_dir: str | None = None,
     project_root: Path,
@@ -158,6 +160,7 @@ def _build_tracked_reference(
         source_agent=source_agent,
         source_skills=source_skills,
         source_work_id=source_work_id,
+        source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=source_claude_config_dir,
         tracked=True,
@@ -173,7 +176,10 @@ def _resolve_spawn_reference(
 
     harness_session_id = _normalize_optional(row.harness_session_id)
     stored_harness = _normalize_optional(row.harness)
-    source_execution_cwd = row.execution_cwd
+    source_execution_cwd = _normalize_optional(getattr(row, "task_cwd", None)) or row.execution_cwd
+    source_control_root = (
+        _normalize_optional(getattr(row, "control_root", None)) or str(project_root)
+    )
     if source_execution_cwd is None and row.harness == "claude" and row.kind == "child":
         # Legacy Claude child spawns executed from the spawn log directory.
         source_execution_cwd = str(resolve_spawn_log_dir(project_root, ref))
@@ -187,6 +193,7 @@ def _resolve_spawn_reference(
         source_agent=_normalize_optional(row.agent),
         source_skills=row.skills,
         source_work_id=_normalize_optional(row.work_id),
+        source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=_normalize_optional(row.claude_config_dir),
         project_root=project_root,
@@ -211,7 +218,14 @@ def _resolve_chat_reference(
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
-        source_execution_cwd=session.execution_cwd or str(project_root),
+        source_control_root=(
+            _normalize_optional(getattr(session, "control_root", None)) or str(project_root)
+        ),
+        source_execution_cwd=(
+            _normalize_optional(getattr(session, "task_cwd", None))
+            or session.execution_cwd
+            or str(project_root)
+        ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
         project_root=project_root,
     )
@@ -235,7 +249,14 @@ def _resolve_harness_session_reference(
         source_agent=_normalize_optional(session.agent),
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
-        source_execution_cwd=session.execution_cwd or str(project_root),
+        source_control_root=(
+            _normalize_optional(getattr(session, "control_root", None)) or str(project_root)
+        ),
+        source_execution_cwd=(
+            _normalize_optional(getattr(session, "task_cwd", None))
+            or session.execution_cwd
+            or str(project_root)
+        ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
         project_root=project_root,
     )

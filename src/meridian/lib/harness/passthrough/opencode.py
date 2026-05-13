@@ -47,15 +47,17 @@ class OpenCodePassthrough:
         *,
         spawn_id: SpawnId,
         spec: ResolvedLaunchSpec,
-        execution_cwd: Path,
+        control_root: Path,
+        task_cwd: Path | None,
         env: dict[str, str],
     ) -> ConnectionConfig:
         return ConnectionConfig(
             spawn_id=spawn_id,
             harness_id=HarnessId.OPENCODE,
             prompt=spec.prompt,
-            control_root=execution_cwd,
+            control_root=control_root,
             env_overrides=dict(env),
+            task_cwd=task_cwd,
             system=spec.appended_system_prompt or None,
         )
 

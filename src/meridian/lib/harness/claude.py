@@ -460,15 +460,15 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
         session_access = resolve_claude_session_access_source(
             session,
-            child_cwd=child_cwd,
+            control_root=child_cwd,
             materialization_root=effective_config_root,
             target_config_root=effective_config_root,
         )
         if session_access.should_seed:
             ensure_claude_session_accessible(
                 source_session_id=session_access.source_session_id or resolved_harness_session_id,
-                source_cwd=session_access.source_cwd,
-                child_cwd=child_cwd,
+                source_cwd=session_access.source_control_root,
+                child_cwd=session_access.target_control_root or child_cwd,
                 source_config_root=session_access.source_config_root,
                 target_config_root=session_access.target_config_root,
             )

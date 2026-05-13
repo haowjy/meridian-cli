@@ -60,6 +60,24 @@ class BackgroundWorkerLaunchRequest(BaseModel):
     runtime: LaunchRuntime
 
 
+def _resolve_background_execution_cwd(
+    *,
+    runtime_request: LaunchRuntime,
+    project_root: Path,
+    work_id: str | None,
+) -> str:
+    explicit_task_cwd = runtime_request.resolved_requested_task_cwd
+    if explicit_task_cwd:
+        return explicit_task_cwd
+    return str(
+        resolve_child_execution_cwd(
+            project_root=project_root,
+            project_state_dir=resolve_project_paths(project_root).root_dir,
+            work_id=work_id,
+        )
+    )
+
+
 def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:
     """Remove non-durable launcher artifacts after terminal completion."""
     for name in _BACKGROUND_RUNTIME_ARTIFACTS:
@@ -240,15 +258,11 @@ async def _execute_existing_spawn(
         status=spawn_status,
     )
 
-    resolved_execution_cwd = (runtime_request.project_paths_execution_cwd or "").strip() or None
-    if not resolved_execution_cwd:
-        resolved_execution_cwd = str(
-            resolve_child_execution_cwd(
-                project_root=project_paths.project_root,
-                project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
-                work_id=spawn_record.work_id,
-            )
-        )
+    resolved_execution_cwd = _resolve_background_execution_cwd(
+        runtime_request=runtime_request,
+        project_root=project_paths.project_root,
+        work_id=spawn_record.work_id,
+    )
 
     _record_launch_boundary_observation(
         runtime_root,

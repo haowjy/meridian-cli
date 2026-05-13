@@ -47,10 +47,12 @@ def _build_primary_launch_context(
     prompt: str = "primary prompt",
     extra_args: tuple[str, ...] = (),
     session: SessionRequest | None = None,
+    execution_cwd: Path | None = None,
 ) -> tuple[Any, Any]:
     _write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
     config = load_config(project_root)
+    resolved_execution_cwd = execution_cwd or project_root
     launch_context = build_launch_context(
         spawn_id=f"dry-run-primary-{harness_id.value}",
         request=SpawnRequest(
@@ -67,7 +69,7 @@ def _build_primary_launch_context(
             config_snapshot=config.model_dump(mode="json", exclude_none=True),
             runtime_root=(project_root / ".meridian").as_posix(),
             project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=project_root.as_posix(),
+            project_paths_execution_cwd=resolved_execution_cwd.as_posix(),
         ),
         harness_registry=harness_registry,
         dry_run=True,
@@ -213,6 +215,55 @@ def test_run_harness_process_black_box_primary_uses_no_tui_log_artifact(
 
 
 @pytest.mark.slow
+def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_task_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "claude-split-root"
+    project_root.mkdir(parents=True)
+    task_cwd = project_root / ".meridian" / "spawns" / "p-parent"
+    task_cwd.mkdir(parents=True)
+    launch_context, harness_registry = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+        execution_cwd=task_cwd,
+    )
+    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
+    captured: dict[str, object] = {}
+
+    def fake_run_primary_process_with_capture(
+        command: Any,
+        cwd: Any,
+        env: Any,
+        output_log_path: Any,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        _ = command, output_log_path
+        captured["cwd"] = cwd
+        captured["task_env"] = dict(env).get("MERIDIAN_TASK_CWD")
+        assert callable(on_child_started)
+        on_child_started(4445)
+        return (0, 4445)
+
+    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
+    outcome = run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+    )
+
+    assert captured["cwd"] == project_root
+    assert captured["task_env"] == task_cwd.as_posix()
+    assert "MERIDIAN_TASK_CWD" in (launch_context.binding.run_params.appended_system_prompt or "")
+    projected_roots = {path.resolve() for path in launch_context.binding.spec.projected_roots}
+    assert task_cwd.resolve() not in projected_roots
+    assert outcome.exit_code == 0
+
+
+@pytest.mark.slow
 def test_run_harness_process_claude_primary_print_json_persists_session_id_from_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -282,12 +333,24 @@ def test_run_harness_process_claude_primary_stays_on_black_box_path(
         harness_id: Any,
         spawn_id: Any,
         spawn_dir: Any,
-        execution_cwd: Any,
+        control_root: Any,
+        task_cwd: Any,
         env: Any,
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
     ) -> PrimaryAttachOutcome:
+        _ = (
+            harness_id,
+            spawn_id,
+            spawn_dir,
+            control_root,
+            task_cwd,
+            env,
+            spec,
+            process_launcher,
+            on_running,
+        )
         raise AssertionError("claude primary must not use managed launcher path")
 
     def fake_run_primary_process_with_capture(

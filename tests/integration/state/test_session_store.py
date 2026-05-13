@@ -364,6 +364,33 @@ def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path
         session_store.stop_session(runtime_root, chat_id)
 
 
+def test_start_session_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    control_root = (tmp_path / "control-root").resolve()
+    task_cwd = (tmp_path / "task-cwd").resolve()
+    control_root.mkdir(parents=True, exist_ok=True)
+    task_cwd.mkdir(parents=True, exist_ok=True)
+
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="codex",
+        harness_session_id="thread-lookup",
+        model="gpt-5.4",
+        chat_id="c-root-test",
+        control_root=control_root.as_posix(),
+        task_cwd=task_cwd.as_posix(),
+        execution_cwd=task_cwd.as_posix(),
+    )
+    try:
+        record = session_store.get_session_record(runtime_root, chat_id)
+        assert record is not None
+        assert record.control_root == control_root.as_posix()
+        assert record.task_cwd == task_cwd.as_posix()
+        assert record.execution_cwd == task_cwd.as_posix()
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
+
+
 def test_list_all_session_records_includes_stopped_sessions(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     stopped_chat_id = session_store.start_session(

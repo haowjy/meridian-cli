@@ -96,12 +96,24 @@ def test_run_harness_process_uses_adapter_primary_seed_port_not_harness_id(
         harness_id: Any,
         spawn_id: Any,
         spawn_dir: Any,
-        execution_cwd: Any,
+        control_root: Any,
+        task_cwd: Any,
         env: Any,
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
     ) -> PrimaryAttachOutcome:
+        _ = (
+            harness_id,
+            spawn_id,
+            spawn_dir,
+            control_root,
+            task_cwd,
+            env,
+            spec,
+            process_launcher,
+            on_running,
+        )
         return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=5150)
 
     monkeypatch.setattr(
@@ -191,12 +203,23 @@ def test_run_harness_process_fork_uses_new_chat_and_materialized_session(
         harness_id: Any,
         spawn_id: Any,
         spawn_dir: Any,
-        execution_cwd: Any,
+        control_root: Any,
+        task_cwd: Any,
         env: Any,
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
     ) -> PrimaryAttachOutcome:
+        _ = (
+            harness_id,
+            spawn_id,
+            spawn_dir,
+            control_root,
+            task_cwd,
+            spec,
+            process_launcher,
+            on_running,
+        )
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return PrimaryAttachOutcome(
             exit_code=0,
@@ -317,12 +340,23 @@ def test_run_harness_process_fork_materialization_comes_from_contract(
         harness_id: Any,
         spawn_id: Any,
         spawn_dir: Any,
-        execution_cwd: Any,
+        control_root: Any,
+        task_cwd: Any,
         env: Any,
         spec: Any,
         process_launcher: Any,
         on_running: Any = None,
     ) -> PrimaryAttachOutcome:
+        _ = (
+            harness_id,
+            spawn_id,
+            spawn_dir,
+            control_root,
+            task_cwd,
+            spec,
+            process_launcher,
+            on_running,
+        )
         captured["env_chat_id"] = dict(env).get("MERIDIAN_CHAT_ID")
         return PrimaryAttachOutcome(
             exit_code=0,

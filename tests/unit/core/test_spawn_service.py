@@ -21,6 +21,9 @@ def _runtime_root(tmp_path: Path) -> Path:
 def _runtime_request(tmp_path: Path, runtime_root: Path) -> LaunchRuntime:
     return LaunchRuntime(
         runtime_root=runtime_root.as_posix(),
+        config_root=tmp_path.as_posix(),
+        control_root=tmp_path.as_posix(),
+        requested_task_cwd=tmp_path.as_posix(),
         project_paths_project_root=tmp_path.as_posix(),
         project_paths_execution_cwd=tmp_path.as_posix(),
     )
@@ -37,6 +40,8 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
         return SimpleNamespace(
             resolved_request=request,
             project_root=child_cwd.parent,
+            control_root=child_cwd.parent,
+            task_cwd=child_cwd,
             work_id=None,
             binding=SimpleNamespace(
                 child_cwd=child_cwd,

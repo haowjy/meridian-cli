@@ -23,10 +23,11 @@ class ClaudePassthrough:
         *,
         spawn_id: SpawnId,
         spec: ResolvedLaunchSpec,
-        execution_cwd: Path,
+        control_root: Path,
+        task_cwd: Path | None,
         env: dict[str, str],
     ) -> ConnectionConfig:
-        _ = spawn_id, spec, execution_cwd, env
+        _ = spawn_id, spec, control_root, task_cwd, env
         raise PassthroughError("Managed primary attach is not supported for claude")
 
     def build_tui_command(

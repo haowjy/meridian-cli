@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -71,6 +72,27 @@ def _build_detached_popen_kwargs() -> dict[str, Any]:
     }
 
 
+def _task_cwd_from_execution(*, control_root: Path, execution_cwd: str) -> str | None:
+    resolved_execution_cwd = Path(execution_cwd).expanduser().resolve()
+    if resolved_execution_cwd == control_root.resolve():
+        return None
+    return resolved_execution_cwd.as_posix()
+
+
+def _resolve_requested_execution_cwd(
+    *,
+    project_paths: Any,
+    work_id: str | None,
+) -> str:
+    return str(
+        resolve_child_execution_cwd(
+            project_root=project_paths.execution_cwd,
+            project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+            work_id=work_id,
+        )
+    )
+
+
 def execute_spawn_background(
     *,
     payload: SpawnCreateInput,
@@ -79,7 +101,15 @@ def execute_spawn_background(
     ctx: RuntimeContext | None = None,
 ) -> SpawnActionOutput:
     resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(project_root=runtime.project_root)
+    project_paths = resolve_project_config_paths(
+        project_root=runtime.project_root,
+        execution_cwd=runtime.authority.execution_cwd,
+    )
+    initial_execution_cwd = project_paths.execution_cwd.as_posix()
+    initial_task_cwd = _task_cwd_from_execution(
+        control_root=project_paths.project_root,
+        execution_cwd=initial_execution_cwd,
+    )
     if payload.stream:
         logger.warning("--stream requires --foreground; output goes to spawn log files.")
     context = _init_spawn(
@@ -90,23 +120,28 @@ def execute_spawn_background(
         work_id=payload.work,
         status="queued",
         launch_mode=BACKGROUND_LAUNCH_MODE,
-        execution_cwd=str(project_paths.execution_cwd),
+        control_root=project_paths.project_root.as_posix(),
+        task_cwd=initial_task_cwd,
+        execution_cwd=initial_execution_cwd,
         ctx=resolved_context,
     )
     spawn_id_text = str(context.spawn.spawn_id)
-    execution_cwd_str = str(
-        resolve_child_execution_cwd(
-            project_root=project_paths.project_root,
-            project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
-            work_id=context.work_id,
-        )
+    execution_cwd_str = _resolve_requested_execution_cwd(
+        project_paths=project_paths,
+        work_id=context.work_id,
     )
-    # Record pre-computed execution_cwd immediately so it's correct even if
-    # the background worker dies before runner.py's authoritative update.
-    if execution_cwd_str != str(project_paths.project_root):
+    task_cwd_str = _task_cwd_from_execution(
+        control_root=project_paths.project_root,
+        execution_cwd=execution_cwd_str,
+    )
+    if execution_cwd_str != initial_execution_cwd:
+        # Record resolved execution_cwd immediately so it's correct even if
+        # the background worker dies before runner.py's authoritative update.
         spawn_store.update_spawn(
             context.runtime_root,
             context.spawn.spawn_id,
+            control_root=project_paths.project_root.as_posix(),
+            task_cwd=task_cwd_str,
             execution_cwd=execution_cwd_str,
         )
     log_dir = resolve_spawn_log_dir(project_paths.project_root, context.spawn.spawn_id)
@@ -135,7 +170,7 @@ def execute_spawn_background(
         stage="parent_prepare",
         parent_pid=os.getpid(),
         command=launch_command,
-        cwd=str(project_paths.execution_cwd),
+        cwd=execution_cwd_str,
     )
     try:
         persisted_request = request.model_copy(update={"work_id_hint": context.work_id})
@@ -147,6 +182,10 @@ def execute_spawn_background(
                 exclude_none=True,
             ),
             runtime_root=context.runtime_root.as_posix(),
+            config_root=project_paths.project_root.as_posix(),
+            control_root=project_paths.project_root.as_posix(),
+            requested_task_cwd=execution_cwd_str,
+            # Legacy aliases.
             project_paths_project_root=project_paths.project_root.as_posix(),
             project_paths_execution_cwd=execution_cwd_str,
         )
@@ -165,7 +204,7 @@ def execute_spawn_background(
             stage="persist_worker_request",
             parent_pid=os.getpid(),
             command=launch_command,
-            cwd=str(project_paths.execution_cwd),
+            cwd=execution_cwd_str,
             error=str(exc),
             exception=exc,
         )
@@ -214,7 +253,7 @@ def execute_spawn_background(
         ):
             process = subprocess.Popen(
                 launch_command,
-                cwd=project_paths.execution_cwd,
+                cwd=execution_cwd_str,
                 env=launch_env,
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_handle,
@@ -229,7 +268,7 @@ def execute_spawn_background(
             stage="popen",
             parent_pid=os.getpid(),
             command=launch_command,
-            cwd=str(project_paths.execution_cwd),
+            cwd=execution_cwd_str,
             error=str(exc),
             exception=exc,
         )
@@ -269,7 +308,7 @@ def execute_spawn_background(
         parent_pid=os.getpid(),
         launcher_pid=process.pid,
         command=launch_command,
-        cwd=str(project_paths.execution_cwd),
+        cwd=execution_cwd_str,
     )
     build_spawn_lifecycle_service_from_roots(
         project_paths.project_root,
@@ -306,7 +345,15 @@ def execute_spawn_blocking(
     ctx: RuntimeContext | None = None,
 ) -> SpawnActionOutput:
     resolved_context = runtime_context(ctx)
-    project_paths = resolve_project_config_paths(project_root=runtime.project_root)
+    project_paths = resolve_project_config_paths(
+        project_root=runtime.project_root,
+        execution_cwd=runtime.authority.execution_cwd,
+    )
+    initial_execution_cwd = project_paths.execution_cwd.as_posix()
+    initial_task_cwd = _task_cwd_from_execution(
+        control_root=project_paths.project_root,
+        execution_cwd=initial_execution_cwd,
+    )
     context = _init_spawn(
         payload=payload,
         request=request,
@@ -316,7 +363,9 @@ def execute_spawn_blocking(
         status="queued",
         launch_mode=FOREGROUND_LAUNCH_MODE,
         runner_pid=os.getpid(),
-        execution_cwd=str(project_paths.execution_cwd),
+        control_root=project_paths.project_root.as_posix(),
+        task_cwd=initial_task_cwd,
+        execution_cwd=initial_execution_cwd,
         ctx=resolved_context,
     )
     spawn = context.spawn
@@ -325,19 +374,20 @@ def execute_spawn_blocking(
     context_from_resolved = request.context_from
 
     try:
-        execution_cwd_str = str(
-            resolve_child_execution_cwd(
-                project_root=project_paths.project_root,
-                project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
-                work_id=context.work_id,
-            )
+        execution_cwd_str = _resolve_requested_execution_cwd(
+            project_paths=project_paths,
+            work_id=context.work_id,
         )
-        if execution_cwd_str != str(project_paths.project_root):
-            # Pre-compute execution CWD for immediate visibility.
-            # runner.py writes the authoritative value right before execution.
+        if execution_cwd_str != initial_execution_cwd:
+            # Reflect post-work-id resolution before launch_prepared_spawn.
             spawn_store.update_spawn(
                 context.runtime_root,
                 spawn.spawn_id,
+                control_root=project_paths.project_root.as_posix(),
+                task_cwd=_task_cwd_from_execution(
+                    control_root=project_paths.project_root,
+                    execution_cwd=execution_cwd_str,
+                ),
                 execution_cwd=execution_cwd_str,
             )
         try:
@@ -373,8 +423,12 @@ def execute_spawn_blocking(
                         exclude_none=True,
                     ),
                     runtime_root=context.runtime_root.as_posix(),
+                    config_root=project_paths.project_root.as_posix(),
+                    control_root=project_paths.project_root.as_posix(),
+                    requested_task_cwd=execution_cwd_str,
+                    # Legacy aliases.
                     project_paths_project_root=project_paths.project_root.as_posix(),
-                    project_paths_execution_cwd=project_paths.execution_cwd.as_posix(),
+                    project_paths_execution_cwd=execution_cwd_str,
                 ),
                 runtime=runtime,
                 runtime_root=context.runtime_root,
