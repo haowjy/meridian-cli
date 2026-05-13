@@ -350,7 +350,7 @@ class SpawnApplicationService:
                 task_cwd=(
                     launch_ctx.task_cwd.as_posix() if launch_ctx.task_cwd is not None else None
                 ),
-                execution_cwd=str(launch_ctx.binding.child_cwd),
+                execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
                 launch_mode=payload.launch_mode,
                 runner_pid=payload.runner_pid,
                 status=payload.initial_status,
