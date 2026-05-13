@@ -1,0 +1,153 @@
+name: release-on-merge
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-on-merge-main
+      cancel-in-progress: false
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve release bump from labels
+        id: release_label
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          bump="patch"
+          has_release_label=false
+
+          while IFS= read -r label; do
+            case "$label" in
+              release:skip)
+                bump="skip"
+                has_release_label=true
+                break
+                ;;
+              release:major)
+                bump="major"
+                has_release_label=true
+                ;;
+              release:minor)
+                if [[ "$bump" != "major" ]]; then
+                  bump="minor"
+                fi
+                has_release_label=true
+                ;;
+              release:patch)
+                if [[ "$bump" != "major" && "$bump" != "minor" ]]; then
+                  bump="patch"
+                fi
+                has_release_label=true
+                ;;
+            esac
+          done < <(jq -r '.[]' <<<"${LABELS_JSON}")
+
+          if [[ "${has_release_label}" == false ]]; then
+            echo "::notice::No release:* label set. Defaulting to release:patch."
+          fi
+
+          echo "bump=${bump}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release bump: ${bump}"
+
+      - name: Skip release when label requests it
+        if: steps.release_label.outputs.bump == 'skip'
+        run: echo "::notice::release:skip label present. Skipping release workflow."
+
+      - name: Compute next version from tags
+        if: steps.release_label.outputs.bump != 'skip'
+        id: next_version
+        env:
+          BUMP: ${{ steps.release_label.outputs.bump }}
+        run: |
+          git fetch --tags --force
+
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
+          if [[ -z "${latest_tag}" ]]; then
+            base_version="0.0.0"
+            echo "::notice::No stable v* tags found. Bootstrapping from ${base_version}."
+          else
+            base_version="${latest_tag#v}"
+          fi
+
+          IFS='.' read -r major minor patch <<<"${base_version}"
+          case "${BUMP}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            *)
+              echo "::error::Unknown release bump '${BUMP}'."
+              exit 1
+              ;;
+          esac
+
+          next_version="${major}.${minor}.${patch}"
+          echo "next_version=${next_version}" >> "$GITHUB_OUTPUT"
+          echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
+          echo "Computed next version ${next_version} from base ${base_version}."
+
+      - name: Update version and changelog
+        if: steps.release_label.outputs.bump != 'skip'
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          sed -E -i "s/^__version__ = \".*\"$/__version__ = \"${NEXT_VERSION}\"/" src/meridian/__init__.py
+
+          if grep -q '^## \[Unreleased\]$' CHANGELOG.md; then
+            today="$(date -u +%Y-%m-%d)"
+            tmp_file="$(mktemp)"
+            awk -v version="${NEXT_VERSION}" -v date="${today}" '
+              BEGIN { promoted = 0 }
+              {
+                if (!promoted && $0 == "## [Unreleased]") {
+                  print "## [Unreleased]"
+                  print ""
+                  print "## [" version "] - " date
+                  promoted = 1
+                  next
+                }
+                print
+              }
+            ' CHANGELOG.md > "${tmp_file}"
+            mv "${tmp_file}" CHANGELOG.md
+          else
+            echo "::warning::CHANGELOG.md missing '## [Unreleased]'; skipping changelog promotion."
+          fi
+
+      - name: Commit and tag release
+        if: steps.release_label.outputs.bump != 'skip'
+        env:
+          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add src/meridian/__init__.py CHANGELOG.md
+          git commit -m "Release ${NEXT_VERSION}"
+          git tag -a "v${NEXT_VERSION}" -m "Release ${NEXT_VERSION}"
+
+          git push origin HEAD:main
+          git push origin "v${NEXT_VERSION}"
