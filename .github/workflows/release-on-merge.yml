@@ -140,28 +140,61 @@ jobs:
         env:
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
-          existing_merge_tag="$(git tag --points-at "${MERGE_SHA}" --list 'v*' | head -n 1)"
-          if [[ -n "${existing_merge_tag}" ]]; then
+          is_stable_semver_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
+          }
+
+          commit_subject() {
+            git show -s --format=%s "$1"
+          }
+
+          merge_commit_subject="$(commit_subject "${MERGE_SHA}")"
+          while IFS= read -r merge_tag; do
+            [[ -n "${merge_tag}" ]] || continue
+            if ! is_stable_semver_tag "${merge_tag}"; then
+              echo "::notice::Ignoring non-stable tag ${merge_tag} on merge commit ${MERGE_SHA}."
+              continue
+            fi
+
+            if [[ "${merge_commit_subject}" != Release\ * ]]; then
+              echo "::error::Stable tag ${merge_tag} points at non-release merge commit ${MERGE_SHA} (${merge_commit_subject})."
+              exit 1
+            fi
+
             echo "merge_already_tagged=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Merge commit ${MERGE_SHA} already has tag ${existing_merge_tag}. Skipping release actions."
+            echo "::notice::Merge commit ${MERGE_SHA} already has stable release tag ${merge_tag}. Skipping release actions."
             exit 0
-          fi
+          done < <(git tag --points-at "${MERGE_SHA}" --list 'v*')
 
           existing_release_tag=""
+          existing_release_commit=""
           while IFS=$'\t' read -r commit_hash commit_subject; do
             [[ "${commit_subject}" == Release\ * ]] || continue
             parent_commit="$(git show -s --format=%P "${commit_hash}" | awk '{print $1}')"
-            [[ "${parent_commit}" == "${MERGE_SHA}" ]] || continue
-            commit_tag="$(git tag --points-at "${commit_hash}" --list 'v*' | head -n 1)"
-            if [[ -n "${commit_tag}" ]]; then
-              existing_release_tag="${commit_tag}"
-              break
+            if ! git merge-base --is-ancestor "${MERGE_SHA}" "${parent_commit}"; then
+              continue
             fi
+
+            while IFS= read -r commit_tag; do
+              [[ -n "${commit_tag}" ]] || continue
+              if ! is_stable_semver_tag "${commit_tag}"; then
+                echo "::notice::Ignoring non-stable tag ${commit_tag} on release commit ${commit_hash}."
+                continue
+              fi
+              existing_release_tag="${commit_tag}"
+              existing_release_commit="${commit_hash}"
+              break 2
+            done < <(git tag --points-at "${commit_hash}" --list 'v*')
           done < <(git log --format=$'%H\t%s' main)
 
           if [[ -n "${existing_release_tag}" ]]; then
+            release_subject="$(commit_subject "${existing_release_commit}")"
+            if [[ "${release_subject}" != Release\ * ]]; then
+              echo "::error::Stable tag ${existing_release_tag} points at non-release commit ${existing_release_commit} (${release_subject})."
+              exit 1
+            fi
             echo "merge_already_tagged=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Merge commit ${MERGE_SHA} already released via release commit tag ${existing_release_tag}. Skipping release actions."
+            echo "::notice::Merge ${MERGE_SHA} already released by ${existing_release_tag} on commit ${existing_release_commit}."
           else
             echo "merge_already_tagged=false" >> "$GITHUB_OUTPUT"
           fi
@@ -171,10 +204,32 @@ jobs:
         id: tag_guard
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
+          is_stable_semver_tag() {
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
+          }
+
+          tag_name="v${NEXT_VERSION}"
           if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
+            if ! is_stable_semver_tag "${tag_name}"; then
+              echo "::error::Computed tag ${tag_name} is not a stable semver tag."
+              exit 1
+            fi
+
+            tag_commit="$(git rev-parse "${tag_name}^{commit}")"
+            tag_commit_subject="$(git show -s --format=%s "${tag_commit}")"
+            if [[ "${tag_commit_subject}" != Release\ * ]]; then
+              echo "::error::Tag ${tag_name} already exists on non-release commit ${tag_commit} (${tag_commit_subject})."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "${MERGE_SHA}" "${tag_commit}"; then
+              echo "::error::Tag ${tag_name} exists on release commit ${tag_commit} that does not include merge ${MERGE_SHA}."
+              exit 1
+            fi
+
             echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::Tag v${NEXT_VERSION} already exists. Skipping release actions."
+            echo "::notice::Tag ${tag_name} already exists on release commit ${tag_commit}; skipping release actions."
           else
             echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           fi
