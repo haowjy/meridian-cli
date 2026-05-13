@@ -48,6 +48,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     if [[ "$authorized" != true ]]; then
       printf 'BLOCKED: Direct push of release tag %s.\n' "$tag_name" >&2
       printf 'v* tags are CI-owned. Merge PR to main to auto-release.\n' >&2
+      printf 'Note: enforce server-side protection for refs/tags/v* in GitHub; local hooks are bypassable.\n' >&2
       exit 1
     fi
   elif [[ "$remote_ref" == refs/heads/* ]]; then
