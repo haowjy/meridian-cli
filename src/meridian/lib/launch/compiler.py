@@ -7,7 +7,7 @@ from enum import Enum
 from fnmatch import fnmatchcase
 from typing import Literal, cast
 
-from meridian.lib.catalog.agent import AgentModelEntry, FanoutEntry, ModelPolicyRule
+from meridian.lib.catalog.agent import AgentModelEntry, ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -67,7 +67,6 @@ class CompilerRequest:
     profile_policy_defaults: ResolvedExecutionPolicy
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
     profile_legacy_models: dict[str, AgentModelEntry] | None
-    profile_fanout: tuple[FanoutEntry, ...] | None
     profile_skills: tuple[str, ...]
 
     # Model catalog data
@@ -120,6 +119,7 @@ class CompilerResult:
     # Fallback info
     fallback_applied: bool = False
     fallback_model: str | None = None
+    fallback_chain: tuple[dict[str, object], ...] = ()
     model_policy_source: ProvenanceLevel = ProvenanceLevel.UNSET
     matched_model_policy: bool = False
 
@@ -169,6 +169,8 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
 
     if result.fallback_applied:
         output["fallback_model"] = result.fallback_model
+    if result.fallback_chain:
+        output["fallback_chain"] = list(result.fallback_chain)
     if result.warnings:
         output["warnings"] = list(result.warnings)
     return output

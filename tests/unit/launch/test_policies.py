@@ -436,7 +436,7 @@ def test_resolve_launch_policy_fallback_skips_unresolved_or_unavailable_candidat
     assert policy.harness == HarnessId.CODEX
 
 
-def test_resolve_launch_policy_policy_fallback_precedes_fanout(
+def test_resolve_launch_policy_rejects_legacy_fanout_profiles(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -469,19 +469,17 @@ def test_resolve_launch_policy_policy_fallback_precedes_fanout(
         },
     )
 
-    policy = resolve_launch_policy(
-        SurfacePolicyInput(
-            surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            catalog=CatalogSession(tmp_path),
-            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
-            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
-            config=MeridianConfig(),
-            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+    with pytest.raises(ValueError, match="contains 'fanout' which is no longer supported"):
+        resolve_launch_policy(
+            SurfacePolicyInput(
+                surface=LaunchCompositionSurface.SPAWN_PREPARE,
+                catalog=CatalogSession(tmp_path),
+                layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+                config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+                config=MeridianConfig(),
+                harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+            )
         )
-    )
-
-    assert policy.model == "gpt-5.3-codex"
-    assert policy.harness == HarnessId.CODEX
 
 
 def test_resolve_launch_policy_fallback_preserves_policy_harness_override_for_gpt55(

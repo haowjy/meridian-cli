@@ -5,7 +5,7 @@ from typing import Literal
 
 import pytest
 
-from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, FanoutEntry
+from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.model_aliases import entry
 from meridian.lib.launch.prompt import (
     _dedupe_fan_out_aliases,
@@ -22,7 +22,7 @@ def _profile(
     description: str,
     model: str | None = None,
     models: dict[str, AgentModelEntry] | None = None,
-    fanout: tuple[FanoutEntry, ...] = (),
+    model_policies: tuple[ModelPolicyRule, ...] = (),
     mode: Literal["primary", "subagent"] = "subagent",
     model_invocable: bool = True,
 ) -> AgentProfile:
@@ -38,9 +38,10 @@ def _profile(
         effort=None,
         approval=None,
         autocompact=None,
+        autocompact_pct=None,
         mode=mode,
+        model_policies=model_policies,
         models=models or {},
-        fanout=fanout,
         model_invocable=model_invocable,
         body="",
         path=tmp_path / f"{name}.md",
@@ -164,7 +165,7 @@ def test_build_agent_inventory_prompt_groups_by_mode(
     assert "Mode:" not in prompt
 
 
-def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
+def test_build_agent_inventory_prompt_uses_policy_fallback_chain_for_display(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -172,11 +173,21 @@ def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
         _profile(
             tmp_path=tmp_path,
             name="reviewer",
-            description="Explicit fanout",
+            description="Policy fallback chain",
             models={"policy-only": AgentModelEntry()},
-            fanout=(
-                FanoutEntry(entry_type="alias", value="gpt54"),
-                FanoutEntry(entry_type="alias", value="gpt55"),
+            model_policies=(
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt55",
+                    fallback_order=2,
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt54",
+                    fallback_order=1,
+                    overrides={"effort": "high"},
+                ),
             ),
         ),
     ]
@@ -197,7 +208,7 @@ def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
 
     assert prompt is not None
-    assert "- reviewer: Explicit fanout | Fan-out: gpt54, gpt55" in prompt.splitlines()
+    assert "- reviewer: Policy fallback chain | Fan-out: gpt54, gpt55" in prompt.splitlines()
     assert "policy-only" not in prompt
 
 
@@ -274,15 +285,25 @@ def test_get_fan_out_aliases_falls_back_to_models_keys(tmp_path: Path) -> None:
     assert _get_fan_out_aliases(profile) == ("gpt54", "gpt55")
 
 
-def test_get_fan_out_aliases_prefers_explicit_fanout(tmp_path: Path) -> None:
+def test_get_fan_out_aliases_prefers_policy_fallback_order(tmp_path: Path) -> None:
     profile = _profile(
         tmp_path=tmp_path,
         name="reviewer",
-        description="Explicit",
+        description="Fallback policy",
         models={"policy-only": AgentModelEntry()},
-        fanout=(
-            FanoutEntry(entry_type="alias", value="gpt54"),
-            FanoutEntry(entry_type="alias", value="gpt55"),
+        model_policies=(
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="gpt55",
+                fallback_order=2,
+                overrides={"effort": "medium"},
+            ),
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="gpt54",
+                fallback_order=1,
+                overrides={"effort": "high"},
+            ),
         ),
     )
 

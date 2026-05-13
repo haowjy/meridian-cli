@@ -61,7 +61,6 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `autocompact` | int | — | Compaction percentage threshold |
 | `timeout` | int | — | Spawn timeout in seconds |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
-| `fanout` | list | `[]` | Harness-availability fallback chain (see below) |
 | `models` | mapping | `{}` | Legacy per-model effort/autocompact overrides (deprecated) |
 
 ## `mode`
@@ -134,30 +133,31 @@ CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defau
 
 Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace the agent policy list (including replacing it with an empty list) per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
 
-## `fanout`
+## `fallback-order` in `model-policies`
 
-Declares a fallback model chain used when the head candidate's harness is unavailable. When Meridian detects the head candidate's harness is not installed, it walks the fanout entries in order and selects the first one whose harness is available.
+Harness-availability fallback candidates are now declared directly in
+`model-policies` with `fallback-order` (positive integer). Meridian sorts
+candidates by ascending `fallback-order` and selects the first candidate whose
+harness is available.
 
 ```yaml
 model: claude-sonnet
-fanout:
-  - alias: gpt5
-  - alias: codex
-  - model: openai/gpt-4o
+model-policies:
+  - match: { alias: gpt5 }
+    fallback-order: 1
+    override: { effort: medium }
+  - match: { alias: codex }
+    fallback-order: 2
+    override: { effort: medium }
 ```
 
-Each entry is either an `alias` (looked up in the model catalog) or a literal `model` ID. Fallback only activates when:
+Fallback only activates when:
 
 - the head candidate's harness is unavailable, **and**
 - the user did not explicitly set a model with `-m` / `MERIDIAN_MODEL`
 
-`fanout` also controls the fan-out column shown in `meridian mars list`.
-
-Shorthand (single alias):
-
-```yaml
-fanout: gpt5
-```
+Migration: replace legacy `fanout` entries with `model-policies` rules that set
+`fallback-order`.
 
 ## Skills and Skill Variants
 
@@ -193,7 +193,8 @@ See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agen
 - reviewer: Adversarial review | Model: gpt-5.4 | Fan-out: gpt, opus
 ```
 
-Each line shows: name, description, default model, and fanout aliases (deduplicated by resolved model ID).
+Each line shows: name, description, default model, and fallback-chain aliases
+(deduplicated by resolved model ID).
 
 ## Harness Availability Fallback
 
@@ -201,8 +202,8 @@ When a spawn is launched with an agent profile and the current head candidate's 
 
 1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
 2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head. The original base candidate is retained as the next availability fallback in the chain.
-3. Append `fanout` entries in declared order.
-4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → fanout) and pick the first candidate whose harness is available.
+3. Append `model-policies` rules that set `fallback-order`, sorted ascending.
+4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → fallback-order chain) and pick the first candidate whose harness is available.
 5. If nothing resolves, fail with a clear error naming the unavailable harness.
 
 `model-policies` participate as candidate transforms on top of the base launch candidate. They are not a separate token-discovery list outside the chain.
@@ -211,8 +212,10 @@ This means a profile like:
 
 ```yaml
 model: claude-sonnet
-fanout:
-  - alias: gpt5
+model-policies:
+  - match: { alias: gpt5 }
+    fallback-order: 1
+    override: { effort: medium }
 ```
 
 ...works on a machine with only Codex installed — it silently routes to `gpt5` rather than erroring.
@@ -230,7 +233,8 @@ models:
     autocompact: 20
 ```
 
-A deprecation warning is logged when `models:` is present without `model-policies:` or `fanout:`.
+A deprecation warning is logged when `models:` is present without
+`model-policies:`.
 
 ## Example Profiles
 
@@ -253,12 +257,15 @@ You summarize documents. Be concise. Return only the summary.
 name: coder
 description: Implementation tasks for backend, frontend, CLI, and infrastructure.
 model: gpt55
-fanout:
-  - alias: gpt55
-  - alias: codex
 model-policies:
   - match:
+      alias: gpt55
+    fallback-order: 1
+    override:
+      effort: medium
+  - match:
       alias: codex
+    fallback-order: 2
     override:
       effort: medium
   - match:

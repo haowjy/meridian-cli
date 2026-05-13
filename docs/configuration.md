@@ -123,6 +123,11 @@ approval = "auto"
 [[agents.tech-lead.model-policies]]
 match = { model-glob = "gpt*" }
 override = { effort = "medium", autocompact = 40 }
+
+[[agents.tech-lead.model-policies]]
+match = { alias = "codex" }
+fallback-order = 1
+override = { effort = "medium" }
 ```
 
 ### Supported fields
@@ -134,6 +139,10 @@ Scalar fields: `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact
 ### Model-policy rules
 
 Each rule has a `match` table (exactly one of `model`, `alias`, `model-glob`) and an `override` table with supported fields: `harness`, `effort`, `approval`, `sandbox`, `autocompact`.
+
+Use `fallback-order` to declare harness-availability fallback candidates. Legacy
+`fanout` is rejected; migrate each prior fanout token to a `model-policies`
+entry with `fallback-order`.
 
 List/tool override keys (`skills`, `tools`, `disallowed-tools`, `mcp-tools`) are rejected with a warning in config overlays.
 

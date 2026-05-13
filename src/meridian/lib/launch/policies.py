@@ -388,31 +388,20 @@ def _try_harness_availability_fallback(
     profile: AgentProfile | None,
     model_explicit: bool,
     catalog: CatalogSession,
-) -> tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule | None] | None:
+) -> tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule] | None:
     """Attempt fallback when harness is unavailable. Returns None if no fallback found."""
 
     if model_explicit or _harness_is_available(harness_id, harness_registry) or profile is None:
         return None
 
-    for fallback_token, fallback_harness, fallback_entry, _matched_rule in (
+    for fallback_token, fallback_harness, fallback_entry, matched_rule in (
         _fallback_candidates_from_policies(
             model_policies=profile.model_policies,
             catalog=catalog,
             harness_registry=harness_registry,
         )
     ):
-        return fallback_token, fallback_harness, fallback_entry, _matched_rule
-
-    for fanout_entry in profile.fanout:
-        fallback_token = fanout_entry.value
-        fallback = _fallback_entry_for_token(
-            fallback_token,
-            catalog=catalog,
-            harness_registry=harness_registry,
-        )
-        if fallback is not None:
-            token, fallback_harness, fallback_entry = fallback
-            return token, fallback_harness, fallback_entry, None
+        return fallback_token, fallback_harness, fallback_entry, matched_rule
 
     return None
 
@@ -441,6 +430,37 @@ def _fallback_candidates_from_policies(
         token, fallback_harness, entry = fallback
         candidates.append((token, fallback_harness, entry, rule))
     return candidates
+
+
+def _profile_fallback_chain(
+    profile: AgentProfile | None,
+) -> tuple[dict[str, object], ...]:
+    if profile is None:
+        return ()
+    ordered_rules = sorted(
+        (rule for rule in profile.model_policies if rule.fallback_order is not None),
+        key=lambda rule: rule.fallback_order or 0,
+    )
+    if not ordered_rules:
+        return ()
+    return tuple(
+        {
+            "token": rule.match_value,
+            "fallback_order": rule.fallback_order,
+            "override_summary": {key: rule.overrides[key] for key in sorted(rule.overrides)},
+        }
+        for rule in ordered_rules
+    )
+
+
+def _with_fallback_chain(
+    compiler_result: CompilerResult,
+    profile: AgentProfile | None,
+) -> CompilerResult:
+    fallback_chain = _profile_fallback_chain(profile)
+    if not fallback_chain:
+        return compiler_result
+    return replace(compiler_result, fallback_chain=fallback_chain)
 
 
 def resolve_policy_fields(
@@ -637,7 +657,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         ),
         profile_model_policies=profile.model_policies if profile is not None else None,
         profile_legacy_models=dict(profile.models) if profile is not None else None,
-        profile_fanout=profile.fanout if profile is not None else None,
         profile_skills=profile_skills,
         resolved_alias_entry=resolved_entry,
         alias_catalog=alias_catalog,
@@ -646,7 +665,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         supported_execution_policy_fields=tuple(surface.supported_execution_policy_fields),
     )
 
-    compiler_result = compile_launch_params(compiler_request)
+    compiler_result = _with_fallback_chain(
+        compile_launch_params(compiler_request),
+        profile,
+    )
     requested_token_for_selection = compiler_result.model_selection_requested_token
     harness_id = HarnessId(compiler_result.harness)
     harness_provenance = compiler_result.harness_provenance
@@ -665,6 +687,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         if demoted_candidate is not None:
             try:
                 compiler_result = demoted_candidate
+                compiler_result = _with_fallback_chain(compiler_result, profile)
                 harness_id = HarnessId(compiler_result.harness)
                 harness_provenance = "availability-fallback"
                 model_resolution_error = None
@@ -693,18 +716,17 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 ),
                 resolved_alias_entry=resolved_entry,
             )
-            fallback_request = (
-                _compiler_request_for_fallback_candidate(compiler_request, matched_rule)
-                if matched_rule is not None
-                else _compiler_request_for_base_candidate(compiler_request)
+            fallback_request = _compiler_request_for_fallback_candidate(
+                compiler_request,
+                matched_rule,
             )
-            # Fanout entries are explicit availability-chain candidates and
-            # should compile as base candidates. Policy-derived fallbacks keep
-            # the matched rule's overrides at CLI-equivalent precedence while
-            # still stripping policy lists to avoid recursive re-matching.
-            compiler_result = compile_launch_params(fallback_request)
-            if matched_rule is None and compiler_result.harness != str(harness_id):
-                compiler_result = replace(compiler_result, harness=str(harness_id))
+            # Policy-derived fallbacks keep the matched rule's overrides at
+            # CLI-equivalent precedence while stripping policy lists to avoid
+            # recursive re-matching.
+            compiler_result = _with_fallback_chain(
+                compile_launch_params(fallback_request),
+                profile,
+            )
             harness_id = HarnessId(compiler_result.harness)
             model_resolution_error = None
             harness_provenance = "availability-fallback"

@@ -70,7 +70,6 @@ def _request(
         profile_policy_defaults=profile_policy_defaults or ResolvedExecutionPolicy(),
         profile_model_policies=profile_model_policies,
         profile_legacy_models=profile_legacy_models,
-        profile_fanout=(),
         profile_skills=(),
         resolved_alias_entry=resolved_alias,
         alias_catalog=resolved_catalog,
@@ -122,6 +121,13 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         ),
         fallback_applied=True,
         fallback_model="gptmini",
+        fallback_chain=(
+            {
+                "token": "gptmini",
+                "fallback_order": 1,
+                "override_summary": {"effort": "high"},
+            },
+        ),
         warnings=("warning-one", "warning-two"),
     )
 
@@ -145,6 +151,13 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
             "timeout": "cli",
         },
         "fallback_model": "gptmini",
+        "fallback_chain": [
+            {
+                "token": "gptmini",
+                "fallback_order": 1,
+                "override_summary": {"effort": "high"},
+            }
+        ],
         "warnings": ["warning-one", "warning-two"],
     }
 

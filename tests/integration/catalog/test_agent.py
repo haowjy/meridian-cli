@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.catalog.agent import (
-    FanoutEntry,
     ModelPolicyRule,
     load_agent_profile,
     parse_agent_profile,
@@ -29,7 +28,14 @@ def test_scan_agent_profiles_reads_real_mars_agents_directory(tmp_path: Path) ->
     _write_profile(
         agents_dir,
         "reviewer.md",
-        ["name: Reviewer", "mode: primary", "fanout:", "  - alias: gpt55"],
+        [
+            "name: Reviewer",
+            "mode: primary",
+            "model-policies:",
+            "  - match: {alias: gpt55}",
+            "    fallback-order: 1",
+            "    override: {effort: medium}",
+        ],
     )
 
     profiles = scan_agent_profiles(project_root=project_root)
@@ -40,7 +46,7 @@ def test_scan_agent_profiles_reads_real_mars_agents_directory(tmp_path: Path) ->
         agents_dir.resolve(),
     ]
     assert profiles[1].mode == "primary"
-    assert profiles[1].fanout == (FanoutEntry(entry_type="alias", value="gpt55"),)
+    assert profiles[1].model_policies[0].fallback_order == 1
 
 
 def test_load_agent_profile_missing_error_points_to_mars_agents_path(tmp_path: Path) -> None:
@@ -150,33 +156,28 @@ def test_parse_agent_profile_models_preserves_supported_overrides(
     assert profile.models["unknown-only"].autocompact is None
 
 
-def test_parse_agent_profile_fanout_is_display_only_alias_list(
+def test_parse_agent_profile_rejects_legacy_fanout(
     tmp_path: Path,
 ) -> None:
     profile_path = _write_profile(
         tmp_path,
-        "reviewer.md",
+        "bad.md",
         [
-            "name: Reviewer",
-            "models:",
-            "  policy-only:",
-            "    effort: low",
+            "name: Bad",
             "fanout:",
             "  - gpt54",
             "  - gpt55",
         ],
     )
 
-    profile = parse_agent_profile(profile_path)
-
-    assert tuple(profile.models.keys()) == ("policy-only",)
-    assert profile.fanout == (
-        FanoutEntry(entry_type="alias", value="gpt54"),
-        FanoutEntry(entry_type="alias", value="gpt55"),
-    )
+    with pytest.raises(
+        ValueError,
+        match="contains 'fanout' which is no longer supported",
+    ):
+        parse_agent_profile(profile_path)
 
 
-def test_parse_agent_profile_model_policies_and_structured_fanout(tmp_path: Path) -> None:
+def test_parse_agent_profile_model_policies_parse(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "reviewer.md",
@@ -193,9 +194,6 @@ def test_parse_agent_profile_model_policies_and_structured_fanout(tmp_path: Path
             "      alias: opus",
             "    override:",
             "      harness: claude",
-            "fanout:",
-            "  - alias: opus",
-            "  - model: gemini-2.0-flash",
         ],
     )
 
@@ -213,10 +211,6 @@ def test_parse_agent_profile_model_policies_and_structured_fanout(tmp_path: Path
             match_value="opus",
             overrides={"harness": "claude"},
         ),
-    )
-    assert profile.fanout == (
-        FanoutEntry(entry_type="alias", value="opus"),
-        FanoutEntry(entry_type="model", value="gemini-2.0-flash"),
     )
 
 
@@ -416,13 +410,13 @@ def test_parse_agent_profile_accepts_deferred_model_policy_list_override_keys(
         ["fanout:", "  - {}"],
     ],
 )
-def test_parse_agent_profile_rejects_invalid_structured_fanout(
+def test_parse_agent_profile_rejects_all_fanout_shapes(
     tmp_path: Path,
     fanout_lines: list[str],
 ) -> None:
     profile_path = _write_profile(tmp_path, "bad.md", ["name: Bad", *fanout_lines])
 
-    with pytest.raises(ValueError, match="exactly one of alias or model"):
+    with pytest.raises(ValueError, match="contains 'fanout' which is no longer supported"):
         parse_agent_profile(profile_path)
 
 
@@ -472,7 +466,13 @@ def test_scan_agent_profiles_invalid_profile_authoring_does_not_emit_runtime_war
         profiles = scan_agent_profiles(project_root=project_root)
 
     assert [profile.name for profile in profiles] == ["Planner"]
-    assert diag.records == []
+    assert [record.getMessage() for record in diag.records] == [
+        "Agent profile 'Planner' has unknown effort 'invalid'.",
+        "Agent profile 'Planner' has autocompact 150 outside valid range.",
+        "Agent profile 'Planner' has invalid models entry for 'bad-effort'; entry ignored.",
+        "Agent profile 'Planner' uses legacy models without model-policies; "
+        "models is deprecated for policy overrides.",
+    ]
 
 
 def test_parse_agent_profile_keeps_valid_profile_autocompact(tmp_path: Path) -> None:

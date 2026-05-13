@@ -1,5 +1,6 @@
 """Agent profile parser for `.mars/agents/*.md`."""
 from collections.abc import Mapping
+import logging
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
@@ -32,6 +33,9 @@ _MODEL_POLICY_OVERRIDE_KEYS = (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class AgentModelEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
@@ -61,15 +65,6 @@ class ModelPolicyRule(BaseModel):
     overrides: Mapping[str, object]
 
 
-class FanoutEntry(BaseModel):
-    """One fan-out display entry."""
-
-    model_config = ConfigDict(frozen=True)
-
-    entry_type: Literal["alias", "model"]
-    value: str
-
-
 class AgentProfile(BaseModel):
     """Parsed agent profile with frontmatter defaults + markdown body."""
 
@@ -90,7 +85,6 @@ class AgentProfile(BaseModel):
     mode: Literal["primary", "subagent"] = "subagent"
     model_policies: tuple[ModelPolicyRule, ...] = ()
     models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
-    fanout: tuple[FanoutEntry, ...] = ()
     model_invocable: bool = True
     body: str
     path: Path
@@ -249,57 +243,6 @@ def _parse_model_policies(
     return tuple(parsed)
 
 
-def _parse_fanout_entries(
-    raw_fanout: object,
-    *,
-    profile_name: str,
-) -> tuple[FanoutEntry, ...]:
-    if raw_fanout is None:
-        return ()
-    if isinstance(raw_fanout, str):
-        normalized = raw_fanout.strip()
-        return (FanoutEntry(entry_type="alias", value=normalized),) if normalized else ()
-    if not isinstance(raw_fanout, list):
-        raise ValueError(f"Agent profile '{profile_name}' has invalid fanout: expected list.")
-
-    entries: list[FanoutEntry] = []
-    for index, raw_entry in enumerate(cast("list[object]", raw_fanout), start=1):
-        if isinstance(raw_entry, str):
-            normalized = raw_entry.strip()
-            if normalized:
-                entries.append(FanoutEntry(entry_type="alias", value=normalized))
-            continue
-        if not isinstance(raw_entry, Mapping):
-            raise ValueError(
-                f"Agent profile '{profile_name}' has invalid fanout[{index}]: expected mapping."
-            )
-        entry = cast("Mapping[object, object]", raw_entry)
-        normalized_entry = {str(key).strip(): value for key, value in entry.items()}
-        if len(normalized_entry) != 1:
-            raise ValueError(
-                f"Agent profile '{profile_name}' fanout[{index}] must have exactly one of "
-                "alias or model."
-            )
-        entry_key = next(iter(normalized_entry))
-        if entry_key not in {"alias", "model"}:
-            raise ValueError(
-                f"Agent profile '{profile_name}' fanout[{index}] has unknown key "
-                f"'{entry_key}': expected alias or model."
-            )
-        value = str(normalized_entry.get(entry_key, "")).strip()
-        if not value:
-            raise ValueError(
-                f"Agent profile '{profile_name}' fanout[{index}] {entry_key} must not be empty."
-            )
-        entries.append(
-            FanoutEntry(
-                entry_type=cast("Literal['alias', 'model']", entry_key),
-                value=value,
-            )
-        )
-    return tuple(entries)
-
-
 def parse_agent_profile(path: Path) -> AgentProfile:
     """Parse a single markdown agent profile file."""
 
@@ -318,10 +261,14 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     mode_value = frontmatter.get("mode")
     model_policies_value = frontmatter.get("model-policies")
     models_value = frontmatter.get("models")
-    fanout_value = frontmatter.get("fanout")
     model_invocable_value = frontmatter.get("model-invocable")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
+    if frontmatter.get("fanout") is not None:
+        raise ValueError(
+            f"Agent profile '{profile_name}' contains 'fanout' which is no longer supported. "
+            "Declare fallback candidates in model-policies with fallback-order instead."
+        )
     model_invocable = (
         model_invocable_value if isinstance(model_invocable_value, bool) else True
     )
@@ -359,13 +306,19 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         model_policies_value,
         profile_name=profile_name,
     )
-    fanout = _parse_fanout_entries(fanout_value, profile_name=profile_name)
 
     mode = str(mode_value).strip() if mode_value is not None else "subagent"
     if mode not in {"primary", "subagent"}:
         raise ValueError(
             f"Agent profile '{profile_name}' has invalid mode '{mode}': "
             "expected 'primary' or 'subagent'."
+        )
+
+    if models_value is not None and model_policies_value is None:
+        logger.warning(
+            "Agent profile '%s' uses legacy models without model-policies; "
+            "models is deprecated for policy overrides.",
+            profile_name,
         )
 
     return AgentProfile(
@@ -384,7 +337,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         mode=cast("Literal['primary', 'subagent']", mode),
         model_policies=model_policies,
         models=models,
-        fanout=fanout,
         model_invocable=model_invocable,
         body=body,
         path=path.resolve(),

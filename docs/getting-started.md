@@ -118,7 +118,8 @@ Existing roots are projected to harness launches automatically — `--add-dir` f
 
 - [commands.md](commands.md) — full CLI reference
 - [configuration.md](configuration.md) — config keys, model routing, environment variables
-- [agent-profiles.md](agent-profiles.md) — agent profile format, `model-policies`, `fanout`, and `mode`
+- [agent-profiles.md](agent-profiles.md) — agent profile format, `model-policies`, `fallback-order`, and `mode`
+  (legacy `fanout` profiles must be migrated to `model-policies` + `fallback-order`)
 - [codex-tui-passthrough.md](codex-tui-passthrough.md) — managed Codex startup, bootstrap, and attach behavior
 - [hooks.md](hooks.md) — hook events, builtin hooks, and `git-autosync`
 - [plugin-api.md](plugin-api.md) — stable API for hook and plugin authors
