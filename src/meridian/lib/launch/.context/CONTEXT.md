@@ -133,6 +133,18 @@ The orchestrator reads `os.getenv("MERIDIAN_HARNESS")` at wait time to determine
 its own yield interval — it is asking about *its own* harness's prompt-cache TTL,
 not the spawns it is waiting on.
 
+
+### Agent Inventory Prompt Filtering
+
+`build_agent_inventory_prompt()` in `prompt.py` filters agents to those with
+`model_invocable=True` before rendering the inventory block injected into the
+system prompt. The filter runs after sort, before primary/subagent grouping.
+
+This is a model-facing concern only. `scan_agent_profiles()` and
+`load_agent_profile()` are unaffected — they return all profiles. CLI listing
+and explicit `-a <name>` resolution use those neutral surfaces and are not
+filtered by `model_invocable`.
+
 ### Workspace Projection
 
 `workspace_projection.py` in this module owns `project_workspace_roots()` and
@@ -184,6 +196,44 @@ guaranteed by the context manager. Adding cleanup outside it creates a race betw
 
 The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str], object]` for
 test injection; in production it always points to `reclaim_session_owned_scopes_for_chat`.
+
+### Skill Injection Channels
+
+There are two distinct channels for delivering skill content to agents. They are
+controlled by separate capability flags and must not be conflated:
+
+**Channel 1 — `supplemental_documents`** (prompt-embedded):
+Populated by `compose_skill_prompt_documents()` in `_resolve_spawn_prepare_projection()`
+and `_resolve_primary_projection()`. **Gated on `not harness.capabilities.supports_native_skills`.**
+When the harness supports native skills (currently Claude, Codex, and OpenCode), this
+channel is suppressed — `supplemental_documents` is set to an empty tuple. Skills reach
+the agent via Mars-materialized native channels instead.
+
+**Channel 2 — `append-system-prompt`** (Claude spawns only):
+Populated by `compose_skill_injections()` in `_prepare_spawn_surface()` when
+`harness.run_prompt_policy().skill_injection_mode == "append-system-prompt"`.
+This channel is **not** gated on `supports_native_skills` — it is preserved for
+Claude spawn skill injection via `--append-system-prompt`.
+
+### `prepare_prompt_payload` or-chain Pitfall
+
+`prepare_prompt_payload(projected_content=X, appended_system_prompt=Y)` silently drops
+`Y` when `X` is present — the implementation prefers projected content and the
+or-chain short-circuits. Callers that need both (projected user-turn content from
+`project_content()` **and** an appended system prompt for Claude skill injection) must
+construct `PreparedPromptPayload` directly:
+
+```python
+PreparedPromptPayload(
+    adhoc_agent_payload=...,
+    appended_system_prompt=appended_system_prompt,  # not dropped
+    user_turn_content=content.prompt_payload.user_turn_content,
+)
+```
+
+`_prepare_spawn_surface()` uses direct construction for this reason. Avoid calling
+`prepare_prompt_payload()` in any path where both projected content and an appended
+system prompt must coexist.
 
 ## Patterns
 

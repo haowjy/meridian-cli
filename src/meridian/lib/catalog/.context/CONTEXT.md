@@ -68,6 +68,26 @@ always use `.harness` (the property), not `.resolved_harness` (the raw field).
 `AliasEntry.mars_provided_harness` exposes the raw mars-provided value for
 diagnostic display — do not use it for routing decisions.
 
+### AgentProfile.model_invocable
+
+`AgentProfile.model_invocable: bool = True` — controls whether an agent appears in
+the model-facing inventory prompt. Rules:
+
+- **Default is `True`** — profiles that omit `model-invocable` are visible to models.
+  This preserves backward compatibility for all existing profiles.
+- **YAML native booleans only** — `true` / `false` in frontmatter. Non-boolean values
+  (strings, integers) log a warning and default to `True`; they do not raise.
+- **Informational metadata only** — `model_invocable` is not checked by
+  `load_agent_profile()` or `scan_agent_profiles()`. Those remain neutral scanners
+  that return all profiles regardless of this field.
+- **Visibility filtering is the caller's responsibility.** The catalog layer does not
+  filter; `build_agent_inventory_prompt()` in `launch/prompt.py` owns the model-facing
+  filter seam.
+
+Do not add `model_invocable` checks to catalog scanning or loading functions —
+consumers that need all profiles (CLI listing, explicit `-a <name>` resolution)
+must not be affected by this flag.
+
 ## Fallback to `.mars/models-merged.json`
 
 When the mars binary is unavailable, `load_mars_aliases()` falls back to reading

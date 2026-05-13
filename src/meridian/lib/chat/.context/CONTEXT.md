@@ -69,6 +69,27 @@ support = new normalizer class + registration. Normalizers must not
 retain state across events — they receive one `HarnessEvent` and emit
 zero or more `ChatEvent`s.
 
+## ChatPolicySnapshot — Skill Document Gating
+
+`snapshot_from_resolved_policy()` gates skill document snapshotting on
+`adapter.capabilities.supports_native_skills`. When the harness supports native
+skills (Claude, Codex, OpenCode), `ChatPromptInputsSnapshot.skill_documents` is
+set to an empty tuple in the snapshot.
+
+This reflects the actual delivery channel: native-skill harnesses receive skills
+through Mars-materialized channels, not through the chat policy snapshot. Storing
+skill documents in the snapshot when native skills are active would duplicate
+content that is already delivered by another path.
+
+**The snapshot represents what the chat backend will inject, not a full copy of
+what the agent will see.** Callers reconstructing prompt content from the snapshot
+must account for this — skills absent from `skill_documents` are not missing,
+they are delivered via a separate channel.
+
+Schema version bumps (`CHAT_POLICY_SNAPSHOT_VERSION`) are required whenever the
+snapshot shape changes in a way that makes old snapshots unreadable by new code.
+The current version is `3`.
+
 ## Related KB
 
 → [KB: architecture/chat/overview.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/chat/overview.md)
