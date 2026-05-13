@@ -3,14 +3,27 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+
+## [0.1.2] - 2026-05-13
 ### Added
-- `work switch` reports worktree path, branch, existence, and pending state in output. Recovers interrupted worktree creation on switch (including crash window where path was never written).
+- `meridian spawn --worktree`/`--no-worktree` flag auto-provisions an isolated git worktree per spawn with rollback on failure.
+- `.github/workflows/release-on-merge.yml` — merge-to-main auto-release driven by PR labels (`release:patch`, `release:minor`, `release:major`, `release:skip`). CI reads label, bumps version, promotes changelog, commits and tags. Anchored to current main; idempotent across reruns.
+- `.github/PULL_REQUEST_TEMPLATE.md` — release label instructions for humans reviewing agent PRs.
+- `work switch` reports worktree path, branch, existence, and pending state in output. Recovers interrupted worktree creation on switch.
 - `work rename --worktree` flag moves git worktree directory and renames branch atomically with rollback on failure.
 - `scripts/prune-worktrees.ps1` — Windows PowerShell mirror of prune-worktrees.sh.
 
 ### Changed
-- Release workflow (`release-on-merge.yml`) accumulates bump labels from all unreleased merge commits between last tag and HEAD, preventing race conditions when multiple PRs merge before release runs.
+- `.github/workflows/meridian-ci.yml` extended with non-blocking PR label and changelog validation.
+- Release workflow accumulates bump labels from all unreleased merge commits between last tag and HEAD, preventing race conditions when multiple PRs merge before release runs.
+- Release workflow requires stable-tag provenance before skipping; ignores untrusted foreign tag collisions.
 - `prune-worktrees.sh` reordered: git worktree remove → git branch -d → meridian work done. Work item state only changes after both git operations succeed.
+- `AGENTS.md`, `DEVELOPMENT.md`, `docs/releasing.md` rewritten for merge-to-main auto-release workflow.
+- `.githooks/pre-push` updated for new release workflow.
+- `shared-workspace` skill removed from all agents except `product-lead` — worktrees eliminate the shared workspace problem.
+
+### Removed
+- `scripts/release.sh` — manual release script replaced by CI auto-release.
 
 ## [0.1.0] - 2026-05-12
 ### Fixed
