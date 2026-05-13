@@ -124,7 +124,7 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         fallback_chain=(
             {
                 "token": "gptmini",
-                "fallback_order": 1,
+                "position": 1,
                 "override_summary": {"effort": "high"},
             },
         ),
@@ -154,7 +154,7 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
         "fallback_chain": [
             {
                 "token": "gptmini",
-                "fallback_order": 1,
+                "position": 1,
                 "override_summary": {"effort": "high"},
             }
         ],

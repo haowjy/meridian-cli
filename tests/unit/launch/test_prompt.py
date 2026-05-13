@@ -179,13 +179,11 @@ def test_build_agent_inventory_prompt_uses_policy_fallback_chain_for_display(
                 ModelPolicyRule(
                     match_type="alias",
                     match_value="gpt55",
-                    fallback_order=2,
                     overrides={"effort": "medium"},
                 ),
                 ModelPolicyRule(
                     match_type="alias",
                     match_value="gpt54",
-                    fallback_order=1,
                     overrides={"effort": "high"},
                 ),
             ),
@@ -208,7 +206,7 @@ def test_build_agent_inventory_prompt_uses_policy_fallback_chain_for_display(
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
 
     assert prompt is not None
-    assert "- reviewer: Policy fallback chain | Fan-out: gpt54, gpt55" in prompt.splitlines()
+    assert "- reviewer: Policy fallback chain | Fan-out: gpt55, gpt54" in prompt.splitlines()
     assert "policy-only" not in prompt
 
 
@@ -285,7 +283,7 @@ def test_get_fan_out_aliases_falls_back_to_models_keys(tmp_path: Path) -> None:
     assert _get_fan_out_aliases(profile) == ("gpt54", "gpt55")
 
 
-def test_get_fan_out_aliases_prefers_policy_fallback_order(tmp_path: Path) -> None:
+def test_get_fan_out_aliases_uses_policy_list_order(tmp_path: Path) -> None:
     profile = _profile(
         tmp_path=tmp_path,
         name="reviewer",
@@ -295,19 +293,28 @@ def test_get_fan_out_aliases_prefers_policy_fallback_order(tmp_path: Path) -> No
             ModelPolicyRule(
                 match_type="alias",
                 match_value="gpt55",
-                fallback_order=2,
                 overrides={"effort": "medium"},
             ),
             ModelPolicyRule(
                 match_type="alias",
                 match_value="gpt54",
-                fallback_order=1,
                 overrides={"effort": "high"},
+            ),
+            ModelPolicyRule(
+                match_type="model-glob",
+                match_value="gpt-*",
+                overrides={"effort": "low"},
+            ),
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="disabled",
+                no_fallback=True,
+                overrides={"effort": "low"},
             ),
         ),
     )
 
-    assert _get_fan_out_aliases(profile) == ("gpt54", "gpt55")
+    assert _get_fan_out_aliases(profile) == ("gpt55", "gpt54")
 
 
 # --- _dedupe_fan_out_aliases ---

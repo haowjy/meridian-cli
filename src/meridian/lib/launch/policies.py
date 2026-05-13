@@ -416,12 +416,10 @@ def _fallback_candidates_from_policies(
 ) -> list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]]:
     """Build ordered harness-availability candidates from profile model-policies."""
 
-    ordered_rules = sorted(
-        (rule for rule in model_policies if rule.fallback_order is not None),
-        key=lambda rule: rule.fallback_order or 0,
-    )
     candidates: list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]] = []
-    for rule in ordered_rules:
+    for rule in model_policies:
+        if rule.no_fallback or rule.match_type == "model-glob":
+            continue
         fallback = _fallback_entry_for_token(
             rule.match_value,
             catalog=catalog,
@@ -439,20 +437,18 @@ def _profile_fallback_chain(
 ) -> tuple[dict[str, object], ...]:
     if profile is None:
         return ()
-    ordered_rules = sorted(
-        (rule for rule in profile.model_policies if rule.fallback_order is not None),
-        key=lambda rule: rule.fallback_order or 0,
-    )
-    if not ordered_rules:
-        return ()
-    return tuple(
-        {
-            "token": rule.match_value,
-            "fallback_order": rule.fallback_order,
-            "override_summary": {key: rule.overrides[key] for key in sorted(rule.overrides)},
-        }
-        for rule in ordered_rules
-    )
+    fallback_chain: list[dict[str, object]] = []
+    for position, rule in enumerate(profile.model_policies, start=1):
+        if rule.no_fallback or rule.match_type not in {"alias", "model"}:
+            continue
+        fallback_chain.append(
+            {
+                "token": rule.match_value,
+                "position": position,
+                "override_summary": {key: rule.overrides[key] for key in sorted(rule.overrides)},
+            }
+        )
+    return tuple(fallback_chain)
 
 
 def _with_fallback_chain(

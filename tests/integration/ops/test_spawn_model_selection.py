@@ -86,10 +86,8 @@ def test_spawn_create_dry_run_includes_profile_fallback_chain(
             "model: gpt55\n"
             "model-policies:\n"
             "  - match: {alias: opencode}\n"
-            "    fallback-order: 2\n"
             "    override: {harness: opencode, effort: medium}\n"
             "  - match: {alias: codex}\n"
-            "    fallback-order: 1\n"
             "    override: {effort: high}\n"
             "---\n\n"
             "# reviewer\n"
@@ -146,13 +144,13 @@ def test_spawn_create_dry_run_includes_profile_fallback_chain(
     assert result.status == "dry-run"
     assert result.to_wire()["fallback_chain"] == [
         {
-            "token": "codex",
-            "fallback_order": 1,
-            "override_summary": {"effort": "high"},
+            "token": "opencode",
+            "position": 1,
+            "override_summary": {"effort": "medium", "harness": "opencode"},
         },
         {
-            "token": "opencode",
-            "fallback_order": 2,
-            "override_summary": {"effort": "medium", "harness": "opencode"},
+            "token": "codex",
+            "position": 2,
+            "override_summary": {"effort": "high"},
         },
     ]

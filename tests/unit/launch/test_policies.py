@@ -295,7 +295,7 @@ def test_validate_harness_compatibility_rejects_same_layer_contradiction() -> No
         )
 
 
-def test_resolve_launch_policy_fallback_prefers_policy_fallback_order(
+def test_resolve_launch_policy_fallback_uses_policy_list_order(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -306,12 +306,10 @@ def test_resolve_launch_policy_fallback_prefers_policy_fallback_order(
             "name: reviewer\n"
             "model: claude\n"
             "model-policies:\n"
-            "  - match: {alias: codex}\n"
-            "    fallback-order: 2\n"
-            "    override: {effort: medium}\n"
             "  - match: {alias: opencode}\n"
-            "    fallback-order: 1\n"
             "    override: {effort: low}\n"
+            "  - match: {alias: codex}\n"
+            "    override: {effort: medium}\n"
         ),
     )
     claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
@@ -355,7 +353,6 @@ def test_resolve_launch_policy_explicit_model_suppresses_availability_fallback(
             "name: reviewer\n"
             "model-policies:\n"
             "  - match: {alias: codex}\n"
-            "    fallback-order: 1\n"
             "    override: {effort: medium}\n"
         ),
     )
@@ -399,13 +396,10 @@ def test_resolve_launch_policy_fallback_skips_unresolved_or_unavailable_candidat
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: missing}\n"
-            "    fallback-order: 1\n"
             "    override: {effort: low}\n"
             "  - match: {alias: claude}\n"
-            "    fallback-order: 2\n"
             "    override: {effort: medium}\n"
             "  - match: {alias: codex}\n"
-            "    fallback-order: 3\n"
             "    override: {effort: high}\n"
         ),
     )
@@ -448,7 +442,6 @@ def test_resolve_launch_policy_rejects_legacy_fanout_profiles(
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: codex}\n"
-            "    fallback-order: 1\n"
             "    override: {effort: medium}\n"
             "fanout:\n"
             "  - alias: opencode\n"
@@ -494,7 +487,6 @@ def test_resolve_launch_policy_fallback_preserves_policy_harness_override_for_gp
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: gpt55}\n"
-            "    fallback-order: 1\n"
             "    override: {harness: opencode, effort: medium}\n"
         ),
     )
@@ -542,7 +534,6 @@ def test_resolve_launch_policy_fallback_preserves_policy_effort_override_for_gpt
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: gpt55}\n"
-            "    fallback-order: 1\n"
             "    override: {harness: opencode, effort: medium}\n"
         ),
     )
@@ -589,7 +580,6 @@ def test_resolve_launch_policy_fallback_keeps_cli_effort_override(
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: opencode}\n"
-            "    fallback-order: 1\n"
             "    override: {harness: opencode, effort: medium}\n"
         ),
     )
@@ -636,7 +626,6 @@ def test_resolve_launch_policy_fallback_keeps_env_effort_override(
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: opencode}\n"
-            "    fallback-order: 1\n"
             "    override: {harness: opencode, effort: medium}\n"
         ),
     )
@@ -683,7 +672,6 @@ def test_resolve_launch_policy_fallback_does_not_recursively_reapply_model_polic
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: opencode}\n"
-            "    fallback-order: 1\n"
             "    override: {harness: opencode, effort: medium}\n"
             "  - match: {model: kimi-k2.6}\n"
             "    override: {harness: codex, effort: low}\n"

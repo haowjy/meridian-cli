@@ -246,12 +246,13 @@ def _dedupe_fan_out_aliases(
 def _get_fan_out_aliases(agent: AgentProfile) -> tuple[str, ...]:
     """Get fan-out aliases for inventory display.
 
-    Uses model-policies fallback-order entries when available, otherwise
+    Uses model-policies fallback entries when available, otherwise
     falls back to legacy models keys.
     """
-    fallback_rules = sorted(
-        (rule for rule in agent.model_policies if rule.fallback_order is not None),
-        key=lambda rule: rule.fallback_order or 0,
+    fallback_rules = tuple(
+        rule
+        for rule in agent.model_policies
+        if not rule.no_fallback and rule.match_type in {"alias", "model"}
     )
     if fallback_rules:
         return tuple(rule.match_value for rule in fallback_rules)

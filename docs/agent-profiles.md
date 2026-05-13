@@ -133,22 +133,26 @@ CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defau
 
 Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace the agent policy list (including replacing it with an empty list) per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
 
-## `fallback-order` in `model-policies`
+## Implicit Fallback Ordering in `model-policies`
 
-Harness-availability fallback candidates are now declared directly in
-`model-policies` with `fallback-order` (positive integer). Meridian sorts
-candidates by ascending `fallback-order` and selects the first candidate whose
-harness is available.
+Harness-availability fallback candidates are derived directly from
+`model-policies` list order:
+
+- rules with `match.alias` or `match.model` are fallback candidates, in the
+  order they appear
+- rules with `match.model-glob` are override-only (never fallback candidates)
+- `no-fallback: true` opts a rule out of fallback candidacy
 
 ```yaml
 model: claude-sonnet
 model-policies:
   - match: { alias: gpt5 }
-    fallback-order: 1
     override: { effort: medium }
   - match: { alias: codex }
-    fallback-order: 2
     override: { effort: medium }
+  - match: { model: openai/gpt-5.3-codex }
+    no-fallback: true
+    override: { autocompact: 20 }
 ```
 
 Fallback only activates when:
@@ -156,8 +160,9 @@ Fallback only activates when:
 - the head candidate's harness is unavailable, **and**
 - the user did not explicitly set a model with `-m` / `MERIDIAN_MODEL`
 
-Migration: replace legacy `fanout` entries with `model-policies` rules that set
-`fallback-order`.
+Legacy `fallback-order` and `fanout` are rejected with migration guidance.
+Migrate by ordering `model-policies` rules directly and adding
+`no-fallback: true` for rules that should never be considered for fallback.
 
 ## Skills and Skill Variants
 
@@ -202,8 +207,8 @@ When a spawn is launched with an agent profile and the current head candidate's 
 
 1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
 2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head. The original base candidate is retained as the next availability fallback in the chain.
-3. Append `model-policies` rules that set `fallback-order`, sorted ascending.
-4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → fallback-order chain) and pick the first candidate whose harness is available.
+3. Append fallback-eligible `model-policies` rules in declared list order (rules matched by `alias` or `model`; skip `no-fallback: true`; `model-glob` remains override-only).
+4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → implicit list-order fallback chain) and pick the first candidate whose harness is available.
 5. If nothing resolves, fail with a clear error naming the unavailable harness.
 
 `model-policies` participate as candidate transforms on top of the base launch candidate. They are not a separate token-discovery list outside the chain.
@@ -214,7 +219,6 @@ This means a profile like:
 model: claude-sonnet
 model-policies:
   - match: { alias: gpt5 }
-    fallback-order: 1
     override: { effort: medium }
 ```
 
@@ -260,16 +264,15 @@ model: gpt55
 model-policies:
   - match:
       alias: gpt55
-    fallback-order: 1
     override:
       effort: medium
   - match:
       alias: codex
-    fallback-order: 2
     override:
       effort: medium
   - match:
       model-glob: "anthropic/*"
+    no-fallback: true
     override:
       harness: claude
       effort: high

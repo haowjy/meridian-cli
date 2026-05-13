@@ -61,7 +61,7 @@ class ModelPolicyRule(BaseModel):
 
     match_type: Literal["model", "alias", "model-glob"]
     match_value: str
-    fallback_order: int | None = None
+    no_fallback: bool = False
     overrides: Mapping[str, object]
 
 
@@ -153,8 +153,8 @@ def _parse_model_policies(
         )
 
     parsed: list[ModelPolicyRule] = []
-    fallback_order_indices: dict[int, int] = {}
     allowed_match_keys = {"model", "alias", "model-glob"}
+    legacy_fallback_key = "fallback" + "-order"
     for index, raw_rule in enumerate(cast("list[object]", raw_policies), start=1):
         if not isinstance(raw_rule, Mapping):
             raise ValueError(
@@ -193,40 +193,32 @@ def _parse_model_policies(
                 f"Agent profile '{profile_name}' has invalid model-policies[{index}].override: "
                 "expected mapping."
             )
-        fallback_order: int | None = None
-        raw_fallback_order = rule.get("fallback-order")
-        if raw_fallback_order is not None:
-            try:
-                fallback_order = int(str(raw_fallback_order).strip())
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"Agent profile '{profile_name}' model-policies[{index}] "
-                    "fallback-order must be a positive integer."
-                ) from None
-            if fallback_order < 1:
-                raise ValueError(
-                    f"Agent profile '{profile_name}' model-policies[{index}] "
-                    "fallback-order must be a positive integer."
-                )
-            if match_key == "model-glob":
-                raise ValueError(
-                    f"Agent profile '{profile_name}' model-policies[{index}] cannot use "
-                    "fallback-order with model-glob match type; use alias or model match "
-                    "instead."
-                )
-            duplicate_index = fallback_order_indices.get(fallback_order)
-            if duplicate_index is not None:
-                raise ValueError(
-                    f"Agent profile '{profile_name}' has duplicate model-policies "
-                    f"fallback-order {fallback_order} (rules {duplicate_index} and {index})."
-                )
-            fallback_order_indices[fallback_order] = index
+        if any(str(key).strip() == legacy_fallback_key for key in rule):
+            raise ValueError(
+                f"Agent profile '{profile_name}' model-policies[{index}] uses "
+                "'fallback-order' which is no longer supported. Remove fallback-order — "
+                "fallback order is now implicit from list position. Use 'no-fallback: true' "
+                "to exclude a rule from fallback."
+            )
+        raw_no_fallback = rule.get("no-fallback", False)
+        if raw_no_fallback is None:
+            no_fallback = False
+        elif isinstance(raw_no_fallback, bool):
+            no_fallback = raw_no_fallback
+        else:
+            raise ValueError(
+                f"Agent profile '{profile_name}' model-policies[{index}] "
+                "no-fallback must be true or false."
+            )
+        if match_key == "model-glob":
+            no_fallback = True
         overrides = {
             str(key).strip(): value
             for key, value in cast("Mapping[object, object]", raw_override).items()
             if str(key).strip()
         }
-        if not overrides and fallback_order is None:
+        is_fallback_candidate = match_key in {"alias", "model"} and not no_fallback
+        if not overrides and not is_fallback_candidate:
             raise ValueError(
                 f"Agent profile '{profile_name}' model-policies[{index}] must set at least "
                 "one override field."
@@ -242,7 +234,7 @@ def _parse_model_policies(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),
                 match_value=match_value,
-                fallback_order=fallback_order,
+                no_fallback=no_fallback,
                 overrides=overrides,
             )
         )
@@ -273,7 +265,8 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     if frontmatter.get("fanout") is not None:
         raise ValueError(
             f"Agent profile '{profile_name}' contains 'fanout' which is no longer supported. "
-            "Declare fallback candidates in model-policies with fallback-order instead."
+            "Declare fallback candidates in model-policies list order instead. "
+            "Use 'no-fallback: true' to exclude a rule."
         )
     model_invocable = (
         model_invocable_value if isinstance(model_invocable_value, bool) else True

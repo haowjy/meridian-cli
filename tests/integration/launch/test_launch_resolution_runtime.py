@@ -259,7 +259,6 @@ def test_launch_resolution_fallback_policy_resolves_opencode_medium(
             "model: claude\n"
             "model-policies:\n"
             "  - match: {alias: gpt55}\n"
-            "    fallback-order: 1\n"
             "    override: {harness: opencode, effort: medium}\n"
         ),
     )

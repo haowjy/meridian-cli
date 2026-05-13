@@ -136,9 +136,9 @@ global default) rather than forcing a catalog lookup.
 `-a AGENT` loads the same `.mars/agents/*.md` profile format used by primary and spawn.
 All profile fields apply through the shared policy engine: model, harness, approval,
 sandbox, effort, autocompact, tools, disallowed tools, MCP tools, skills, model
-policies, and fallback-order policy candidates.
-Legacy `fanout` profiles are rejected; declare fallback candidates with
-`model-policies` + `fallback-order`.
+policies, and implicit fallback candidates (list order).
+Legacy `fanout` and `fallback-order` profiles are rejected; declare fallback
+candidates with `model-policies` list order + `no-fallback: true`.
 
 Precedence follows the shared launch rule — per field, independently:
 
