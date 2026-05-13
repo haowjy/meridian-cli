@@ -81,13 +81,11 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
     )
 
     system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
-    assert "Alias token body" in system_prompt
+    # Codex declares supports_native_skills=True, so skill content is suppressed
+    # from supplemental_documents. Skill variant resolution still picks the right path.
+    assert "Alias token body" not in system_prompt
     assert "Canonical body" not in system_prompt
     assert "Harness body" not in system_prompt
-    assert "name: variant-skill" in system_prompt
-    assert "description: Base metadata" in system_prompt
-    assert "name: ignored-token" not in system_prompt
-    assert "# Skill: " + token_variant.resolve().as_posix() in system_prompt
     assert preview.resolved_request.skill_paths == (token_variant.resolve().as_posix(),)
 
 
@@ -143,8 +141,13 @@ def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_onl
         if canonical_preview.projected_content
         else ""
     )
-    assert "Canonical body" in canonical_prompt
+    # Codex declares supports_native_skills=True, so skill content is suppressed.
+    # Variant resolution still picks canonical over prefix.
+    assert "Canonical body" not in canonical_prompt
     assert "Prefix body" not in canonical_prompt
+    assert canonical_preview.resolved_request.skill_paths == (
+        canonical_variant.resolve().as_posix(),
+    )
 
     canonical_variant.unlink()
     harness_preview = build_launch_context(
@@ -159,5 +162,9 @@ def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_onl
     harness_prompt = (
         harness_preview.projected_content.system_prompt if harness_preview.projected_content else ""
     )
-    assert "Harness body" in harness_prompt
+    # Skill content suppressed for native-skill harness; variant resolution still correct.
+    assert "Harness body" not in harness_prompt
     assert "Prefix body" not in harness_prompt
+    assert harness_preview.resolved_request.skill_paths == (
+        harness_variant.resolve().as_posix(),
+    )

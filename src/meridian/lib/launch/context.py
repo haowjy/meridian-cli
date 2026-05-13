@@ -1043,19 +1043,34 @@ def _prepare_spawn_surface(
             policy=policy,
         )
 
-    if content.prompt_payload.appended_system_prompt is None:
-        prompt_policy = policy.adapter.run_prompt_policy()
-        if prompt_policy.skill_injection_mode == "append-system-prompt":
-            appended_system_prompt = (
-                compose_skill_injections(policy.resolved_skills.loaded_skills) or None
+    prompt_policy = policy.adapter.run_prompt_policy()
+    if prompt_policy.skill_injection_mode == "append-system-prompt":
+        existing_appended = content.prompt_payload.appended_system_prompt
+        # When skills were suppressed from supplemental_documents (native-skill
+        # harness), compose_skill_injections() delivers them via the append
+        # channel instead.  When no projection produced system content, this is
+        # the sole source of appended content.
+        needs_skill_injection = (
+            existing_appended is None
+            or policy.adapter.capabilities.supports_native_skills
+        )
+        if needs_skill_injection:
+            skill_content = compose_skill_injections(
+                policy.resolved_skills.loaded_skills
             )
+            if existing_appended is None:
+                merged_appended = skill_content or None
+            elif skill_content:
+                merged_appended = f"{existing_appended}\n\n{skill_content}"
+            else:
+                merged_appended = existing_appended
             content = PreparedLaunchContent(
                 final_prompt=content.final_prompt,
                 resolved_context_from=content.resolved_context_from,
                 loaded_references=content.loaded_references,
-                prompt_payload=prepare_prompt_payload(
-                    projected_content=content.projected_content,
-                    appended_system_prompt=appended_system_prompt,
+                prompt_payload=PreparedPromptPayload(
+                    adhoc_agent_payload=content.prompt_payload.adhoc_agent_payload,
+                    appended_system_prompt=merged_appended,
                     user_turn_content=content.prompt_payload.user_turn_content,
                 ),
                 projected_content=content.projected_content,
