@@ -84,13 +84,11 @@ def _resolve_requested_execution_cwd(
     project_paths: Any,
     work_id: str | None,
 ) -> str:
-    return str(
-        resolve_child_execution_cwd(
-            project_root=project_paths.execution_cwd,
-            project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
-            work_id=work_id,
-        )
-    )
+    return resolve_child_execution_cwd(
+        project_root=project_paths.execution_cwd,
+        project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+        work_id=work_id,
+    ).as_posix()
 
 
 def execute_spawn_background(

@@ -149,9 +149,9 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
 
     row = get_spawn(runtime_root, "p1")
     assert row is not None
-    assert row.control_root == str(tmp_path)
-    assert row.task_cwd == str(child_cwd)
-    assert row.execution_cwd == str(child_cwd)
+    assert row.control_root == tmp_path.as_posix()
+    assert row.task_cwd == child_cwd.as_posix()
+    assert row.execution_cwd == child_cwd.as_posix()
     assert row.status == "succeeded"
 
 

@@ -178,13 +178,13 @@ def _resolve_spawn_reference(
     stored_harness = _normalize_optional(row.harness)
     source_execution_cwd = _normalize_optional(getattr(row, "task_cwd", None)) or row.execution_cwd
     source_control_root = (
-        _normalize_optional(getattr(row, "control_root", None)) or str(project_root)
+        _normalize_optional(getattr(row, "control_root", None)) or project_root.as_posix()
     )
     if source_execution_cwd is None and row.harness == "claude" and row.kind == "child":
         # Legacy Claude child spawns executed from the spawn log directory.
-        source_execution_cwd = str(resolve_spawn_log_dir(project_root, ref))
+        source_execution_cwd = resolve_spawn_log_dir(project_root, ref).as_posix()
     elif source_execution_cwd is None:
-        source_execution_cwd = str(project_root)
+        source_execution_cwd = project_root.as_posix()
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -219,12 +219,13 @@ def _resolve_chat_reference(
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
         source_control_root=(
-            _normalize_optional(getattr(session, "control_root", None)) or str(project_root)
+            _normalize_optional(getattr(session, "control_root", None))
+            or project_root.as_posix()
         ),
         source_execution_cwd=(
             _normalize_optional(getattr(session, "task_cwd", None))
             or session.execution_cwd
-            or str(project_root)
+            or project_root.as_posix()
         ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
         project_root=project_root,
@@ -250,12 +251,13 @@ def _resolve_harness_session_reference(
         source_skills=session.skills,
         source_work_id=_normalize_optional(session.active_work_id),
         source_control_root=(
-            _normalize_optional(getattr(session, "control_root", None)) or str(project_root)
+            _normalize_optional(getattr(session, "control_root", None))
+            or project_root.as_posix()
         ),
         source_execution_cwd=(
             _normalize_optional(getattr(session, "task_cwd", None))
             or session.execution_cwd
-            or str(project_root)
+            or project_root.as_posix()
         ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
         project_root=project_root,
