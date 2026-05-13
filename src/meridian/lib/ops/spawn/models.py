@@ -122,6 +122,7 @@ class SpawnCreateInput(SpawnLaunchOptions):
     skills: tuple[str, ...] = ()
     desc: str = ""
     work: str = ""
+    worktree: bool | None = None
     session: SessionRequest = SessionRequest()
 
     @field_validator("goal", mode="before")

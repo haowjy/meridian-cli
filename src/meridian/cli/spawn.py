@@ -269,6 +269,20 @@ def _spawn_create(
         str,
         Parameter(name="--work", help="Associate the spawn with a work item id."),
     ] = "",
+    worktree: Annotated[
+        bool | None,
+        Parameter(
+            name="--worktree",
+            help="Create a git worktree for the attached work item.",
+        ),
+    ] = None,
+    no_worktree: Annotated[
+        bool,
+        Parameter(
+            name="--no-worktree",
+            help="Skip worktree creation even if project default is set.",
+        ),
+    ] = False,
     dry_run: Annotated[
         bool,
         Parameter(name="--dry-run", help="Preview without executing harness."),
@@ -401,6 +415,11 @@ def _spawn_create(
         passthrough_args=passthrough,
         debug=debug,
     )
+    worktree_intent: bool | None = None
+    if no_worktree:
+        worktree_intent = False
+    elif worktree is not None:
+        worktree_intent = worktree
     resolved_prompt = _resolve_spawn_prompt(
         prompt,
         prompt_file,
@@ -465,6 +484,7 @@ def _spawn_create(
                 desc=desc,
                 goal=resolved_goal,
                 work=work,
+                worktree=worktree_intent,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
