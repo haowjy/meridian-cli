@@ -2,6 +2,16 @@
 
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
+## [Unreleased]
+### Added
+- `work switch` reports worktree path, branch, existence, and pending state in output. Recovers interrupted worktree creation on switch (including crash window where path was never written).
+- `work rename --worktree` flag moves git worktree directory and renames branch atomically with rollback on failure.
+- `scripts/prune-worktrees.ps1` — Windows PowerShell mirror of prune-worktrees.sh.
+
+### Changed
+- Release workflow (`release-on-merge.yml`) accumulates bump labels from all unreleased merge commits between last tag and HEAD, preventing race conditions when multiple PRs merge before release runs.
+- `prune-worktrees.sh` reordered: git worktree remove → git branch -d → meridian work done. Work item state only changes after both git operations succeed.
+
 ## [0.1.0] - 2026-05-12
 ### Fixed
 - Process reaper escape — spawned processes (Vite, Codex) no longer persist as orphans after session exit. Sync cleanup paths now use containment-aware dispatch (`terminate_scope_sync()`) instead of PID-tree fallback that missed reparented processes. Session-exit triggers cleanup of session-owned scopes. Dead `reclaim_stale_session_scopes()` deleted.
