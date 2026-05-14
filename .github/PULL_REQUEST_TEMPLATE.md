@@ -1,3 +1,11 @@
+## Why
+
+<!-- Problem or motivation. What breakage, gap, or need makes this PR worth merging? -->
+
+## Goal
+
+<!-- Intended outcome. What should be true after this merges? -->
+
 ## Summary
 
 <!-- What changed? Paste the agent-generated summary, then adjust for clarity. -->
@@ -9,6 +17,23 @@
 ## Changes
 
 <!-- Notable implementation details, behavior changes, risks, and follow-ups. -->
+
+## Verification
+
+<!-- What was run or checked? Include tests, smoke checks, type/lint, or why verification is not applicable. -->
+
+## Knowledge Updates
+
+<!-- Were .context/, KB, docs, or other durable knowledge artifacts updated?
+     If not, note why (for example: no new behavior, docs not applicable). -->
+
+## Spawn Trace
+
+<!-- Direct/top-level Meridian spawn IDs only: role and short purpose, for example:
+     - p123 coder — implemented catalog filtering
+     - p124 qa-lead — reviewed/updated tests
+     - p125 kb-lead — updated durable knowledge
+-->
 
 ## Release Label Guide
 
