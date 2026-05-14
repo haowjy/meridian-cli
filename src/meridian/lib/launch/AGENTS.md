@@ -89,6 +89,21 @@ Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED`
 only for `ops/spawn/prepare.py` dry-run display (needs real argv for `cli_command`).
 **Do not set `REQUIRED` on execution paths.**
 
+## Model-Policy Overlay Semantics
+
+Overlay rules (from `AgentOverlayConfig.model_policies`) **prepend** to profile rules —
+they do not replace them. Effective list = overlay rules first, profile rules second.
+First rule whose selector matches wins; later rules with the same selector are silently
+unreachable.
+
+Harness-availability fallback walks the combined list in order, skipping rules with
+`no_fallback=True` and rules with `match_type == "model-glob"` (always excluded).
+The demoted base candidate (pre-policy-transform) is tried before the policy list
+when a policy rule caused the primary harness selection.
+
+Source: `policies.py:_effective_model_policies()`, `_fallback_candidates_from_policies()`.
+Detail: [.context/CONTEXT.md](.context/CONTEXT.md#model-policy-overlay-composition-policiespy).
+
 ## Key Entry Points
 
 - `context.py` — `prepare_launch_surface()`, `bind_launch_context()` — the seam
@@ -114,7 +129,8 @@ bypasses it and leaks to stderr.
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — workspace projection detail, env injection,
-   background worker trust model, MERIDIAN_HARNESS child env behavior, full invariant table.
+   background worker trust model, MERIDIAN_HARNESS child env behavior, full invariant table,
+   model-policy overlay composition and fallback chain rules.
 
 ## Related
 
