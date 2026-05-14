@@ -107,20 +107,6 @@ jobs:
             grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
           }
 
-          is_ci_owned_stable_tag() {
-            local tag_name="$1"
-            is_stable_semver_tag "${tag_name}" || return 1
-            local commit_sha
-            commit_sha="$(git rev-parse "${tag_name}^{commit}" 2>/dev/null || true)"
-            [[ -n "${commit_sha}" ]] || return 1
-            local subject
-            subject="$(git show -s --format=%s "${commit_sha}")"
-            local tagger_email
-            tagger_email="$(git for-each-ref --format='%(taggeremail:trim)' "refs/tags/${tag_name}")"
-            [[ "${subject}" == Release\ * ]] || return 1
-            [[ "${tagger_email}" == "41898282+github-actions[bot]@users.noreply.github.com" ]]
-          }
-
           bump_rank() {
             case "$1" in
               major) echo 3 ;;
@@ -139,21 +125,15 @@ jobs:
             esac
           }
 
-          latest_tag=""
-          while IFS= read -r candidate; do
-            [[ -n "${candidate}" ]] || continue
-            if is_ci_owned_stable_tag "${candidate}"; then
-              latest_tag="${candidate}"
-              break
-            fi
-            echo "::warning::Ignoring untrusted stable tag ${candidate} while selecting unreleased merge range."
-          done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname)
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
 
           if [[ -z "${latest_tag}" ]]; then
             echo "accumulated_bump=${TRIGGERING_BUMP}" >> "$GITHUB_OUTPUT"
-            echo "::notice::No prior trusted release tag; using triggering PR bump: ${TRIGGERING_BUMP}"
+            echo "::notice::No prior stable release tag; using triggering PR bump: ${TRIGGERING_BUMP}"
             exit 0
           fi
+
+          echo "::notice::Using latest stable release tag ${latest_tag} for unreleased merge range."
 
           max_rank="$(bump_rank "${TRIGGERING_BUMP}")"
 
@@ -211,20 +191,6 @@ jobs:
             grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
           }
 
-          is_ci_owned_stable_tag() {
-            local tag_name="$1"
-            is_stable_semver_tag "${tag_name}" || return 1
-            local commit_sha
-            commit_sha="$(git rev-parse "${tag_name}^{commit}" 2>/dev/null || true)"
-            [[ -n "${commit_sha}" ]] || return 1
-            local subject
-            subject="$(git show -s --format=%s "${commit_sha}")"
-            local tagger_email
-            tagger_email="$(git for-each-ref --format='%(taggeremail:trim)' "refs/tags/${tag_name}")"
-            [[ "${subject}" == Release\ * ]] || return 1
-            [[ "${tagger_email}" == "41898282+github-actions[bot]@users.noreply.github.com" ]]
-          }
-
           bump_version() {
             local version="$1"
             local major minor patch
@@ -250,35 +216,22 @@ jobs:
             echo "${major}.${minor}.${patch}"
           }
 
-          trusted_base_tag=""
-          while IFS= read -r candidate_tag; do
-            [[ -n "${candidate_tag}" ]] || continue
-            if is_ci_owned_stable_tag "${candidate_tag}"; then
-              trusted_base_tag="${candidate_tag}"
-              break
-            fi
-            echo "::warning::Ignoring untrusted stable tag ${candidate_tag} while selecting release base."
-          done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname)
+          base_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
 
-          if [[ -z "${trusted_base_tag}" ]]; then
+          if [[ -z "${base_tag}" ]]; then
             base_version="0.0.0"
             echo "::notice::No stable v* tags found. Bootstrapping from ${base_version}."
           else
-            base_version="${trusted_base_tag#v}"
-            echo "::notice::Using trusted base tag ${trusted_base_tag}."
+            base_version="${base_tag#v}"
+            echo "::notice::Using latest stable release tag ${base_tag}."
           fi
 
           next_version="$(bump_version "${base_version}")"
           while git rev-parse -q --verify "refs/tags/v${next_version}" >/dev/null; do
             colliding_tag="v${next_version}"
-            if is_ci_owned_stable_tag "${colliding_tag}"; then
-              echo "::notice::CI-owned tag ${colliding_tag} already exists; selecting next candidate version."
-            else
-              colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
-              colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
-              colliding_tagger="$(git for-each-ref --format='%(taggeremail:trim)' "refs/tags/${colliding_tag}")"
-              echo "::warning::Untrusted tag collision at ${colliding_tag} (tagger=${colliding_tagger:-none}, commit=${colliding_commit}, subject='${colliding_subject}'). Advancing to a fresh version."
-            fi
+            colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
+            colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
+            echo "::notice::Stable tag collision at ${colliding_tag} (commit=${colliding_commit}, subject='${colliding_subject}'); selecting next candidate version."
             base_version="${next_version}"
             next_version="$(bump_version "${base_version}")"
           done
