@@ -178,16 +178,26 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
     projected = preview.projected_content
 
     assert preview.resolved_request.skill_paths
-    skill_path = preview.resolved_request.skill_paths[0]
 
-    assert f"# Skill: {skill_path}" in projected.system_prompt
-    assert "Use verification checklist." in projected.system_prompt
+
+    # Claude declares supports_native_skills=True, so skill content is
+    # suppressed from supplemental_documents (projected.system_prompt).
+    # Skills are delivered via compose_skill_injections() → appended_system_prompt.
+    assert "# Skill:" not in projected.system_prompt
     assert "# Meridian Agents" in projected.system_prompt
     assert "## Subagent" in projected.system_prompt
     assert "- dev-orchestrator" in projected.system_prompt
     assert "- reviewer" in projected.system_prompt
     assert "# Report" in projected.system_prompt
     assert "final assistant message must be the run report" in projected.system_prompt
+
+    # Skills still delivered via --append-system-prompt for Claude.
+    # The argv uses --append-system-prompt-file, so skill content is in the
+    # system prompt file content, not directly in argv.
+    assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
+    # Verify skill content is actually in the appended payload, not just the flag.
+    assert preview.binding.run_params.appended_system_prompt is not None
+    assert "Use verification checklist." in preview.binding.run_params.appended_system_prompt
 
     assert "complete the task" in projected.user_turn_content
     assert f"# Reference: {file_ref.as_posix()}" in projected.user_turn_content
@@ -248,9 +258,16 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
 
     assert preview.binding.run_params.continue_harness_session_id == harness_session_id
     assert preview.binding.run_params.continue_fork is True
-    assert "Use verification checklist." in projected.system_prompt
+    # Claude declares supports_native_skills=True, so skill content is
+    # suppressed from supplemental_documents (projected.system_prompt).
+    # Skills are delivered via compose_skill_injections() → appended_system_prompt.
+    assert "# Skill:" not in projected.system_prompt
     assert "# Meridian Agents" in projected.system_prompt
     assert "# Report" in projected.system_prompt
+    # Skills still delivered via --append-system-prompt-file
+    assert any("--append-system-prompt-file" in str(arg) for arg in preview.binding.argv)
+    assert preview.binding.run_params.appended_system_prompt is not None
+    assert "Use verification checklist." in preview.binding.run_params.appended_system_prompt
 
     assert "continue the task" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content

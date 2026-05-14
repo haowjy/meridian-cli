@@ -363,6 +363,10 @@ def build_agent_inventory_prompt(
     if not agents:
         return None
 
+    visible_agents = [agent for agent in agents if agent.model_invocable]
+    if not visible_agents:
+        return None
+
     if alias_catalog is None:
         alias_catalog = {
             alias.alias: alias
@@ -376,8 +380,8 @@ def build_agent_inventory_prompt(
         "Installed Meridian agents available at launch time.",
     ]
 
-    primary_agents = [agent for agent in agents if agent.mode == "primary"]
-    subagent_agents = [agent for agent in agents if agent.mode != "primary"]
+    primary_agents = [agent for agent in visible_agents if agent.mode == "primary"]
+    subagent_agents = [agent for agent in visible_agents if agent.mode != "primary"]
 
     if primary_agents:
         lines.extend(["", "## Primary"])

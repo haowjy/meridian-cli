@@ -229,17 +229,17 @@ def _resolve_profile_model_overrides(
     profile: AgentProfile | None,
     selected_entry: AliasEntry | None,
     alias_catalog: dict[str, AliasEntry],
-) -> tuple[RuntimeOverrides, str | None, bool]:
+) -> tuple[RuntimeOverrides, bool]:
     if profile is None or not profile.models or selected_entry is None:
-        return RuntimeOverrides(), None, False
+        return RuntimeOverrides(), False
 
     selected_alias = selected_entry.alias.strip()
     if selected_alias and selected_alias in profile.models:
-        return _entry_to_overrides(profile.models[selected_alias]), None, True
+        return _entry_to_overrides(profile.models[selected_alias]), True
 
     selected_model_id = str(selected_entry.model_id)
     if selected_model_id in profile.models:
-        return _entry_to_overrides(profile.models[selected_model_id]), None, True
+        return _entry_to_overrides(profile.models[selected_model_id]), True
 
     matched_keys: list[str] = []
     for key in profile.models:
@@ -250,17 +250,10 @@ def _resolve_profile_model_overrides(
             matched_keys.append(key)
 
     if not matched_keys:
-        return RuntimeOverrides(), None, False
+        return RuntimeOverrides(), False
 
     winner = matched_keys[0]
-    warning: str | None = None
-    if len(matched_keys) > 1:
-        warning = (
-            f"Agent profile '{profile.name}' has multiple models entries matching "
-            f"'{selected_entry.model_id}'. Using '{winner}' and ignoring: "
-            f"{', '.join(matched_keys[1:])}."
-        )
-    return _entry_to_overrides(profile.models[winner]), warning, True
+    return _entry_to_overrides(profile.models[winner]), True
 
 
 def _harness_is_available(
@@ -718,7 +711,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     )
     model_entry_matched = profile_policy_rule_matched
     if not model_entry_matched:
-        _, _, model_entry_matched = _resolve_profile_model_overrides(
+        _, model_entry_matched = _resolve_profile_model_overrides(
             profile=profile,
             selected_entry=selected_entry,
             alias_catalog=alias_catalog,

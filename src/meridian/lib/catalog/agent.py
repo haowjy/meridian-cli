@@ -1,7 +1,6 @@
 """Agent profile parser for `.mars/agents/*.md`."""
-
-import logging
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
@@ -18,9 +17,6 @@ from meridian.lib.core.overrides import (
     validate_autocompact_value,
 )
 from meridian.lib.tools import ToolsField, parse_tools_field
-
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 # Re-export under private names for backward compatibility within this module.
 _KNOWN_EFFORT_VALUES = KNOWN_EFFORT_VALUES
@@ -94,6 +90,7 @@ class AgentProfile(BaseModel):
     model_policies: tuple[ModelPolicyRule, ...] = ()
     models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
     fanout: tuple[FanoutEntry, ...] = ()
+    model_invocable: bool = True
     body: str
     path: Path
     raw_content: str
@@ -128,39 +125,23 @@ def _parse_model_overrides(
     *,
     profile_name: str,
 ) -> dict[str, AgentModelEntry]:
+    _ = profile_name
     if raw_models is None:
         return {}
     if not isinstance(raw_models, Mapping):
-        logger.warning(
-            "Agent profile '%s' has invalid models field: expected mapping.",
-            profile_name,
-        )
         return {}
 
     parsed: dict[str, AgentModelEntry] = {}
     for raw_key, raw_value in cast("Mapping[object, object]", raw_models).items():
         key = str(raw_key).strip()
         if not key:
-            logger.warning(
-                "Agent profile '%s' has empty models key; entry ignored.",
-                profile_name,
-            )
             continue
         if not isinstance(raw_value, Mapping):
-            logger.warning(
-                "Agent profile '%s' has invalid models entry for '%s': expected mapping.",
-                profile_name,
-                key,
-            )
             continue
         try:
             parsed[key] = AgentModelEntry.model_validate(raw_value)
         except ValidationError:
-            logger.warning(
-                "Agent profile '%s' has invalid models entry for '%s'; entry ignored.",
-                profile_name,
-                key,
-            )
+            continue
     return parsed
 
 
@@ -232,15 +213,6 @@ def _parse_model_policies(
             raise ValueError(
                 f"Agent profile '{profile_name}' model-policies[{index}] has unknown "
                 f"override key '{unknown_keys[0]}': expected one of {allowed}."
-            )
-        deferred_keys = sorted(set(overrides) & _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS)
-        if deferred_keys:
-            logger.warning(
-                "Agent profile '%s' model-policies[%d] uses not-yet-supported list "
-                "override keys: %s.",
-                profile_name,
-                index,
-                ", ".join(deferred_keys),
             )
         parsed.append(
             ModelPolicyRule(
@@ -322,24 +294,17 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     model_policies_value = frontmatter.get("model-policies")
     models_value = frontmatter.get("models")
     fanout_value = frontmatter.get("fanout")
+    model_invocable_value = frontmatter.get("model-invocable")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
+    model_invocable = (
+        model_invocable_value if isinstance(model_invocable_value, bool) else True
+    )
     sandbox = str(sandbox_value).strip() if sandbox_value is not None else None
     effort = str(effort_value).strip() if effort_value is not None else None
-    if effort is not None and effort and effort not in _KNOWN_EFFORT_VALUES:
-        logger.warning(
-            "Agent profile '%s' has unknown effort '%s'.",
-            profile_name,
-            effort,
-        )
 
     approval = str(approval_value).strip() if approval_value is not None else None
     if approval is not None and approval and approval not in _KNOWN_APPROVAL_VALUES:
-        logger.warning(
-            "Agent profile '%s' has unknown approval '%s'.",
-            profile_name,
-            approval,
-        )
         approval = None
 
     autocompact: int | None = None
@@ -347,41 +312,21 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         try:
             raw_autocompact = int(str(autocompact_value))
         except (TypeError, ValueError):
-            logger.warning(
-                "Agent profile '%s' has invalid autocompact '%s': expected int.",
-                profile_name,
-                autocompact_value,
-            )
+            pass
         else:
-            try:
+            with suppress(ValueError):
                 autocompact = cast("int | None", validate_autocompact_value(raw_autocompact))
-            except ValueError:
-                logger.warning(
-                    "Agent profile '%s' has autocompact %d outside valid range.",
-                    profile_name,
-                    raw_autocompact,
-                )
 
     autocompact_pct: int | None = None
     if autocompact_pct_value is not None:
         try:
             raw_autocompact_pct = int(str(autocompact_pct_value))
         except (TypeError, ValueError):
-            logger.warning(
-                "Agent profile '%s' has invalid autocompact_pct '%s': expected int.",
-                profile_name,
-                autocompact_pct_value,
-            )
+            pass
         else:
-            try:
+            with suppress(ValueError):
                 autocompact_pct = cast(
                     "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
-                )
-            except ValueError:
-                logger.warning(
-                    "Agent profile '%s' has autocompact_pct %d outside valid range (1-100).",
-                    profile_name,
-                    raw_autocompact_pct,
                 )
 
     models = _parse_model_overrides(models_value, profile_name=profile_name)
@@ -396,13 +341,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         raise ValueError(
             f"Agent profile '{profile_name}' has invalid mode '{mode}': "
             "expected 'primary' or 'subagent'."
-        )
-
-    if models_value is not None and model_policies_value is None and fanout_value is None:
-        logger.warning(
-            "Agent profile '%s' uses legacy models without model-policies or fanout; "
-            "models is deprecated for fan-out display and policy overrides.",
-            profile_name,
         )
 
     return AgentProfile(
@@ -422,6 +360,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         model_policies=model_policies,
         models=models,
         fanout=fanout,
+        model_invocable=model_invocable,
         body=body,
         path=path.resolve(),
         raw_content=markdown,
@@ -455,14 +394,6 @@ def scan_agent_profiles(
             if existing is not None:
                 if files_have_equal_text(existing.path, profile.path):
                     continue
-                logger.warning(
-                    "Agent profile '%s' found in multiple paths with conflicting content: "
-                    "%s, %s. Using %s; conflicting duplicate ignored.",
-                    profile.name,
-                    existing.path,
-                    profile.path,
-                    existing.path,
-                )
                 continue
             selected_by_name[profile.name] = profile
             profiles.append(profile)

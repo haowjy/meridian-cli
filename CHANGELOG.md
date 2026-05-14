@@ -8,6 +8,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.1.2] - 2026-05-13
 ### Added
+- `model-invocable` frontmatter field on agent profiles. `false` omits the agent from the model-facing `# Meridian Agents` inventory. Missing defaults to visible; non-boolean values warn and stay visible.
+- Native-skill harness suppression: harnesses declaring `supports_native_skills=True` no longer duplicate skill prompt documents into supplemental_documents. Claude skill delivery preserved via `--append-system-prompt-file`.
 - `meridian spawn --worktree`/`--no-worktree` flag auto-provisions an isolated git worktree per spawn with rollback on failure.
 - `.github/workflows/release-on-merge.yml` — merge-to-main auto-release driven by PR labels (`release:patch`, `release:minor`, `release:major`, `release:skip`). CI reads label, bumps version, promotes changelog, commits and tags. Anchored to current main; idempotent across reruns.
 - `.github/PULL_REQUEST_TEMPLATE.md` — release label instructions for humans reviewing agent PRs.
@@ -16,6 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scripts/prune-worktrees.ps1` — Windows PowerShell mirror of prune-worktrees.sh.
 
 ### Changed
+- Runtime catalog reads no longer warn for package authoring metadata mistakes; Mars owns profile/skill validation diagnostics.
 - `.github/workflows/meridian-ci.yml` extended with non-blocking PR label and changelog validation.
 - Release workflow accumulates bump labels from all unreleased merge commits between last tag and HEAD, preventing race conditions when multiple PRs merge before release runs.
 - Release workflow requires stable-tag provenance before skipping; ignores untrusted foreign tag collisions.

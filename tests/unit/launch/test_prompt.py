@@ -24,6 +24,7 @@ def _profile(
     models: dict[str, AgentModelEntry] | None = None,
     fanout: tuple[FanoutEntry, ...] = (),
     mode: Literal["primary", "subagent"] = "subagent",
+    model_invocable: bool = True,
 ) -> AgentProfile:
     return AgentProfile(
         name=name,
@@ -40,6 +41,7 @@ def _profile(
         mode=mode,
         models=models or {},
         fanout=fanout,
+        model_invocable=model_invocable,
         body="",
         path=tmp_path / f"{name}.md",
         raw_content="",
@@ -197,6 +199,68 @@ def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
     assert prompt is not None
     assert "- reviewer: Explicit fanout | Fan-out: gpt54, gpt55" in prompt.splitlines()
     assert "policy-only" not in prompt
+
+
+def test_build_agent_inventory_prompt_excludes_non_model_invocable_agents(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    profiles = [
+        _profile(
+            tmp_path=tmp_path,
+            name="visible-agent",
+            description="Visible agent",
+            model_invocable=True,
+        ),
+        _profile(
+            tmp_path=tmp_path,
+            name="hidden-agent",
+            description="Hidden agent",
+            model_invocable=False,
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.prompt.scan_agent_profiles",
+        lambda *, project_root: profiles,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.prompt.load_merged_aliases",
+        lambda *, project_root: [],
+    )
+
+    prompt = build_agent_inventory_prompt(project_root=tmp_path)
+
+    assert prompt is not None
+    assert "visible-agent" in prompt
+    assert "hidden-agent" not in prompt
+
+
+def test_build_agent_inventory_prompt_returns_none_when_all_hidden(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    profiles = [
+        _profile(
+            tmp_path=tmp_path,
+            name="hidden-one",
+            description="Hidden one",
+            model_invocable=False,
+        ),
+        _profile(
+            tmp_path=tmp_path,
+            name="hidden-two",
+            description="Hidden two",
+            model_invocable=False,
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.prompt.scan_agent_profiles",
+        lambda *, project_root: profiles,
+    )
+
+    assert build_agent_inventory_prompt(project_root=tmp_path) is None
 
 
 def test_get_fan_out_aliases_falls_back_to_models_keys(tmp_path: Path) -> None:

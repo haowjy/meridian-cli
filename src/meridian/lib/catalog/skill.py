@@ -1,16 +1,11 @@
 """SKILL.md parsing, scanning, and filesystem-backed skill catalog."""
 
-import logging
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import IndexReport, SkillContent, SkillManifest
-
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
-
 
 # ---------------------------------------------------------------------------
 # Skill document model
@@ -62,7 +57,6 @@ def split_markdown_frontmatter(markdown: str) -> tuple[dict[str, object], str]:
     try:
         post = frontmatter.loads(markdown)
     except yaml.YAMLError:
-        logger.warning("Malformed YAML frontmatter, treating as plain markdown")
         return {}, markdown
     return dict(post.metadata), post.content
 
@@ -157,11 +151,6 @@ def replace_skill_body(base: SkillDocument, body: str) -> str:
             return f"{base.content[:body_start]}{body}"
     if not base.body:
         return f"{base.content}{body}"
-    logger.warning(
-        "Could not isolate frontmatter prefix for skill '%s';"
-        " using variant body without base prefix",
-        base.name,
-    )
     return body
 
 
@@ -190,14 +179,6 @@ def scan_skills(
             if existing is not None:
                 if files_have_equal_text(existing.path, document.path):
                     continue
-                logger.warning(
-                    "Skill '%s' found in multiple paths with conflicting content: %s, %s. "
-                    "Using %s; conflicting duplicate ignored.",
-                    document.name,
-                    existing.path,
-                    document.path,
-                    existing.path,
-                )
                 continue
             selected_by_name[document.name] = document
             documents.append(document)
