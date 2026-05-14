@@ -453,6 +453,14 @@ class GitAutosync:
         required_patterns = (".git", "**/.git", ".meridian/autosync/")
         result = self._run_git(clone_path, ["rev-parse", "--git-path", "info/exclude"], timeout=5)
         if result.returncode != 0:
+            logger.warning(
+                "git_autosync_default_ignores_path_failed",
+                clone_path=clone_path,
+                error=self._format_git_error(
+                    "git rev-parse --git-path info/exclude failed",
+                    result,
+                ),
+            )
             return
 
         path_str = result.stdout.strip()
@@ -466,7 +474,12 @@ class GitAutosync:
         try:
             exclude_path.parent.mkdir(parents=True, exist_ok=True)
             existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
-        except OSError:
+        except OSError as exc:
+            logger.warning(
+                "git_autosync_default_ignores_read_failed",
+                clone_path=clone_path,
+                error=str(exc),
+            )
             return
 
         existing_lines = {line.strip() for line in existing.splitlines() if line.strip()}
@@ -485,7 +498,12 @@ class GitAutosync:
         try:
             tmp_path.write_text(new_content, encoding="utf-8")
             tmp_path.replace(exclude_path)
-        except OSError:
+        except OSError as exc:
+            logger.warning(
+                "git_autosync_default_ignores_write_failed",
+                clone_path=clone_path,
+                error=str(exc),
+            )
             try:
                 if tmp_path.exists():
                     tmp_path.unlink()
@@ -523,7 +541,15 @@ class GitAutosync:
 
         result = self._run_git(
             clone_path,
-            ["stash", "push", "-m", "autosync-exclude", "--", *dirty_files],
+            [
+                "stash",
+                "push",
+                "--include-untracked",
+                "-m",
+                "autosync-exclude",
+                "--",
+                *dirty_files,
+            ],
             timeout=_STASH_TIMEOUT_SECS,
         )
         if result.returncode != 0:
@@ -1066,7 +1092,18 @@ class GitAutosync:
 
         # 9. Divergence check
         branch = self._get_current_branch(clone_path)
-        ahead, behind = self._check_divergence(clone_path, branch)
+        divergence = self._check_divergence(clone_path, branch)
+        if divergence is None:
+            if stashed_excludes:
+                self._unstash_excluded_files(clone_path)
+            return _SyncOutcome(
+                outcome="skipped",
+                success=True,
+                skipped=True,
+                skip_reason="divergence_check_failed",
+                error="Could not determine ahead/behind status.",
+            )
+        ahead, behind = divergence
 
         # 10. Merge when behind
         if behind > 0:
@@ -1091,6 +1128,12 @@ class GitAutosync:
 
                 # Merge conflict is detected by active MERGE_HEAD.
                 if self._is_merge_in_progress(clone_path):
+                    conflict_paths = self._get_conflict_paths(clone_path)
+                    remote_ref = f"origin/{branch}"
+                    local_sha = self._get_sha(clone_path, "HEAD")
+                    remote_sha = self._get_sha(clone_path, remote_ref)
+                    conflict_type = self._detect_conflict_type(clone_path, conflict_paths, branch)
+
                     abort = self._run_git(
                         clone_path,
                         ["merge", "--abort"],
@@ -1131,19 +1174,7 @@ class GitAutosync:
                         )
 
                     conflict_id = self._generate_conflict_id()
-                    conflict_paths = self._get_conflict_paths(clone_path)
-                    local_sha = self._get_sha(clone_path, "HEAD")
-                    remote_ref = f"origin/{branch}"
-                    remote_sha = self._get_sha(clone_path, remote_ref)
-                    conflict_type = self._detect_conflict_type(clone_path, conflict_paths, branch)
-
-                    context_name = (
-                        context.work_id
-                        or context.work_dir
-                        or Path(clone_path).name
-                        if context is not None
-                        else Path(clone_path).name
-                    )
+                    context_name = Path(clone_path).name
                     event_name = context.event_name if context is not None else "spawn.finalized"
                     spawn_id = context.spawn_id if context is not None else None
 
@@ -1221,7 +1252,9 @@ class GitAutosync:
 
             just_merged = True
             files_changed = self._get_commit_stats(clone_path)
-            ahead, _ = self._check_divergence(clone_path, branch)
+            divergence_after_merge = self._check_divergence(clone_path, branch)
+            if divergence_after_merge is not None:
+                ahead, _ = divergence_after_merge
 
         # 11. Push when local commits are present.
         if ahead > 0 or just_committed or just_merged:
@@ -1260,10 +1293,15 @@ class GitAutosync:
             skip_reason="nothing_to_sync",
         )
 
-    def _check_divergence(self, clone_path: str, branch: str | None = None) -> tuple[int, int]:
+    def _check_divergence(
+        self,
+        clone_path: str,
+        branch: str | None = None,
+    ) -> tuple[int, int] | None:
         """Check commits ahead/behind upstream. Returns (ahead, behind).
 
-        When rev-list fails, logs a warning and attempts fallback.
+        When rev-list fails, logs a warning and attempts fallback. Returns None
+        when divergence cannot be determined.
         """
 
         result = self._run_git(
@@ -1299,12 +1337,17 @@ class GitAutosync:
                     ["log", "--oneline", f"{remote_ref}..HEAD"],
                     timeout=_DIFF_TIMEOUT_SECS,
                 )
-                ahead = 0
                 if ahead_result.returncode == 0:
                     ahead = len([line for line in ahead_result.stdout.splitlines() if line.strip()])
-                return (ahead, behind)
+                    return (ahead, behind)
 
-        return (0, 0)
+                logger.warning(
+                    "git_autosync_divergence_fallback_failed",
+                    clone_path=clone_path,
+                    error=(ahead_result.stderr or ahead_result.stdout or "").strip(),
+                )
+
+        return None
 
     def _run_git(
         self,
