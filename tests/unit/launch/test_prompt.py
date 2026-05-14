@@ -1,4 +1,3 @@
-# qa-validated: model-invocable-agent-visibility
 from __future__ import annotations
 
 from pathlib import Path

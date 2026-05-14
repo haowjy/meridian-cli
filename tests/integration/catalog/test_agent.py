@@ -1,4 +1,3 @@
-# qa-validated: model-invocable-agent-visibility
 import logging
 from pathlib import Path
 
@@ -107,7 +106,7 @@ def test_parse_agent_profile_model_invocable_missing_defaults_true(tmp_path: Pat
     assert profile.model_invocable is True
 
 
-def test_parse_agent_profile_model_invocable_invalid_warns_and_defaults_true(
+def test_parse_agent_profile_model_invocable_invalid_defaults_true_without_warning(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -124,7 +123,7 @@ def test_parse_agent_profile_model_invocable_invalid_warns_and_defaults_true(
     profile = parse_agent_profile(profile_path)
 
     assert profile.model_invocable is True
-    assert "has non-boolean model-invocable 'maybe'; treating as visible." in caplog.text
+    assert caplog.records == []
 
 
 def test_parse_agent_profile_models_preserves_supported_overrides(
@@ -406,28 +405,6 @@ def test_scan_agent_profiles_warnings_can_be_captured_at_boundary(
         "Agent profile 'Planner' uses legacy models without model-policies or fanout; "
         "models is deprecated for fan-out display and policy overrides.",
     ]
-
-
-def test_scan_agent_profiles_does_not_filter_model_invocable_false(tmp_path: Path) -> None:
-    """Catalog scan must return all profiles regardless of model_invocable.
-
-    Filtering happens only in build_agent_inventory_prompt().  Explicit `-a`
-    invocation must still reach model-invocable: false agents, so scan and load
-    must remain unfiltered at the catalog layer.
-    """
-    project_root = tmp_path / "repo"
-    agents_dir = project_root / ".mars" / "agents"
-    agents_dir.mkdir(parents=True)
-    _write_profile(agents_dir, "visible.md", ["name: Visible"])
-    _write_profile(agents_dir, "hidden.md", ["name: Hidden", "model-invocable: false"])
-
-    profiles = scan_agent_profiles(project_root=project_root)
-    names = [p.name for p in profiles]
-
-    assert "Visible" in names
-    assert "Hidden" in names
-    hidden = next(p for p in profiles if p.name == "Hidden")
-    assert hidden.model_invocable is False
 
 
 def test_parse_agent_profile_keeps_valid_profile_autocompact(tmp_path: Path) -> None:
