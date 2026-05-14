@@ -409,6 +409,9 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         ("hooks", "check"), "Check hook configuration.", extension_ref="meridian.hooks.check"
     ),
     _write_project(("hooks", "run"), "Run hooks.", extension_ref="meridian.hooks.run"),
+    _read_runtime(("sync", "conflict", "list"), "List unresolved autosync conflicts."),
+    _read_runtime(("sync", "conflict", "show"), "Show autosync conflict details."),
+    _write_runtime(("sync", "conflict", "resolve"), "Mark autosync conflict resolved."),
     _read_project(("workspace", "list"), "List workspaces."),
     _write_project(
         ("workspace", "init"),

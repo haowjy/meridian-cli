@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -52,6 +54,7 @@ class ContextOutput(BaseModel):
     kb_resolved: str
     kb_source: str
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
+    sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)
 
     def _available_names(self) -> tuple[str, ...]:
@@ -79,8 +82,9 @@ class ContextOutput(BaseModel):
         if ctx is not None and ctx.verbosity > 0:
             verbose = True
 
+        lines: list[str]
         if verbose:
-            lines: list[str] = []
+            lines = []
             lines.append("work:")
             lines.append(f"  source: {self.work_source}")
             lines.append(f"  path: {self.work_path}")
@@ -98,16 +102,26 @@ class ContextOutput(BaseModel):
                 lines.append(f"  source: {entry.source}")
                 lines.append(f"  path: {entry.path}")
                 lines.append(f"  resolved: {entry.resolved}")
-            return "\n".join(lines)
-
-        active_work_dir = Path(self.active_work_dir) if self.active_work_dir else None
-        return "\n".join(
-            render_context_lines(
-                self._to_resolved_paths(),
-                check_env=True,
-                active_work_dir=active_work_dir,
+        else:
+            active_work_dir = Path(self.active_work_dir) if self.active_work_dir else None
+            lines = list(
+                render_context_lines(
+                    self._to_resolved_paths(),
+                    check_env=True,
+                    active_work_dir=active_work_dir,
+                )
             )
-        )
+
+        if self.sync_status:
+            lines.append("")
+            lines.append("Sync:")
+            for name in sorted(self.sync_status):
+                status_lines = self.sync_status[name].splitlines() or [""]
+                lines.append(f"  {name}: {status_lines[0]}")
+                for status_line in status_lines[1:]:
+                    lines.append(status_line)
+
+        return "\n".join(lines)
 
     def resolve_name(self, name: str) -> str:
         """Resolve one context-name query to its absolute path string."""
@@ -186,6 +200,95 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
     return parsed
 
 
+def _relative_time(iso_str: str) -> str:
+    """Format an ISO timestamp as a compact relative time string."""
+
+    try:
+        normalized = iso_str.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+        delta = max(0, int((now - parsed).total_seconds()))
+    except (TypeError, ValueError):
+        return iso_str
+
+    if delta < 60:
+        return f"{delta}s ago"
+    minutes = delta // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
+
+
+def _sync_status_for_context(context_root: Path) -> str | None:
+    """Return compact sync status text for one context root."""
+
+    state_file = context_root / ".meridian" / "autosync" / "state.json"
+    conflict_dir = context_root / ".meridian" / "autosync" / "conflicts"
+    if not state_file.exists() and not conflict_dir.exists():
+        return None
+
+    state_info = "unknown"
+    if state_file.exists():
+        try:
+            state_raw = json.loads(state_file.read_text(encoding="utf-8"))
+            if isinstance(state_raw, dict):
+                outcome = str(state_raw.get("outcome", "unknown"))
+                last_sync_raw = state_raw.get("last_sync")
+                if isinstance(last_sync_raw, str) and last_sync_raw.strip():
+                    state_info = f"{outcome}, {_relative_time(last_sync_raw)}"
+                else:
+                    state_info = outcome
+        except (OSError, json.JSONDecodeError):
+            state_info = "unknown"
+
+    conflict_lines: list[str] = []
+    unresolved_count = 0
+    if conflict_dir.exists():
+        try:
+            files = sorted(conflict_dir.iterdir())
+        except OSError:
+            files = []
+        for conflict_file in files:
+            if conflict_file.suffix != ".json":
+                continue
+            try:
+                payload = json.loads(conflict_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict) or bool(payload.get("resolved", False)):
+                continue
+            unresolved_count += 1
+            paths_raw = payload.get("paths", [])
+            if isinstance(paths_raw, list):
+                paths_str = ", ".join(str(item) for item in paths_raw) or "(no paths)"
+            else:
+                paths_str = "(no paths)"
+            conflict_id = str(payload.get("id", conflict_file.stem))
+            conflict_type = str(payload.get("conflict_type", "unknown"))
+            conflict_lines.append(f"    {conflict_id} {paths_str} ({conflict_type})")
+
+    if unresolved_count > 0:
+        return "\n".join(
+            [
+                f"conflict ({state_info}) — {unresolved_count} unresolved",
+                *conflict_lines,
+            ]
+        )
+
+    if state_info:
+        return f"ok ({state_info})"
+
+    return None
+
+
 def context_sync(input: ContextInput) -> ContextOutput:
     """Synchronous handler for context query."""
 
@@ -196,6 +299,15 @@ def context_sync(input: ContextInput) -> ContextOutput:
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
     extra_config = _extra_context_config(context_config)
     extra_contexts: dict[str, ContextEntryOutput] = {}
+    sync_status: dict[str, str] = {}
+
+    work_sync = _sync_status_for_context(resolved_paths.work_root)
+    if work_sync is not None:
+        sync_status["work"] = work_sync
+    kb_sync = _sync_status_for_context(resolved_paths.kb_root)
+    if kb_sync is not None:
+        sync_status["kb"] = kb_sync
+
     for name, (path, source) in resolved_paths.extra.items():
         normalized = name.strip().lower()
         config_entry = extra_config.get(normalized)
@@ -206,6 +318,9 @@ def context_sync(input: ContextInput) -> ContextOutput:
             path=config_entry.path,
             resolved=path.as_posix(),
         )
+        extra_sync = _sync_status_for_context(path)
+        if extra_sync is not None:
+            sync_status[normalized] = extra_sync
 
     return ContextOutput(
         work_path=context_config.work.path,
@@ -222,6 +337,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
         kb_resolved=resolved_paths.kb_root.as_posix(),
         kb_source=context_config.kb.source.value,
         extra_contexts=extra_contexts,
+        sync_status=sync_status,
         render_verbose=input.verbose,
     )
 
