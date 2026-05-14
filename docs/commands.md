@@ -9,7 +9,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
 | `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are now the preferred reference — shown in the quit message when a primary session ends. |
 | `meridian --fork REF` | Launch a new primary session by forking a prior spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id |
-| `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides the agent through first-time environment setup |
+| `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
@@ -56,7 +56,11 @@ chat. Flags:
 | `--include-primaries` | Also cancel primary (top-level) sessions |
 | `--include-others` | Opt out of subtree scoping — cancel across the full chat (matches the behavior before subtree scoping was introduced) |
 
-`meridian bootstrap` accepts the same launch flags as a primary session (`-m`, `--harness`, `-a`, `--work`, `--approval`, `--effort`, `--timeout`, `--dry-run`). Bootstrap docs are injected automatically — no extra flags needed. The `-a` flag selects the agent profile; if omitted, Meridian uses the default bootstrap agent from the installed catalog.
+`meridian bootstrap` accepts the same launch flags as a primary session (`-m`, `--harness`, `-a`, `--work`, `--approval`, `--effort`, `--timeout`, `--dry-run`) plus setup flags (`--add`, `--link`).
+
+When setup flags are present, bootstrap first runs the same setup flow as `meridian init --add/--link` (including Mars init when needed), then launches the guided bootstrap session with bootstrap docs injected. Setup flags cannot be combined with `--dry-run`.
+
+The `-a` flag explicitly selects the bootstrap agent profile. If omitted, normal primary agent resolution applies (including `primary.agent` configured by package metadata during setup).
 
 For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex-tui-passthrough.md).
 
@@ -207,7 +211,7 @@ event types, command types, reconnect/replay, persistence, and harness support m
 
 | Command | Description |
 | ------- | ----------- |
-| `meridian init [--link DIR]` | Initialize project config/runtime state; optional convenience link wiring via mars |
+| `meridian init [--add SOURCE] [--link DIR]` | Initialize project config/runtime state; optional Mars package install/link setup |
 | `meridian workspace init` | Create or update local `[workspace]` examples in `meridian.local.toml` |
 | `meridian config show` | Show resolved configuration |
 | `meridian config set KEY VALUE` | Set a config value |
@@ -304,9 +308,19 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars upgrade` | Fetch latest versions and sync |
 | `meridian mars doctor` | Check for drift and integrity issues |
 
-`meridian init --link DIR` is the top-level convenience path:
+`meridian init` (no setup flags) bootstraps Meridian config/runtime only.
+
+`meridian init --add ...` runs setup flow:
+- initializes Mars when `mars.toml` is missing
+- installs package sources
+- links requested targets (or package-declared defaults)
+- applies package-declared `primary.agent` when config is unset
+
+`meridian init --link DIR` without `--add` is still a top-level convenience path:
 - without `mars.toml`, it shells through `meridian mars init --link DIR`
 - with `mars.toml`, it shells through `meridian mars link DIR`
+
+`meridian bootstrap --add ... --link ...` runs this same setup flow, then launches a guided bootstrap primary session.
 
 `meridian mars sync` automatically sets `MERIDIAN_MANAGED=1` in the mars subprocess environment. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc.
 

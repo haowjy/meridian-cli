@@ -16,6 +16,20 @@ def register_bootstrap_command(
 ) -> None:
     @app.command(name="bootstrap")
     def bootstrap(  # pyright: ignore[reportUnusedFunction]
+        add: Annotated[
+            list[str] | None,
+            Parameter(
+                name="--add",
+                help="Package specifier(s) to install before launching bootstrap. Repeatable.",
+            ),
+        ] = None,
+        link: Annotated[
+            list[str] | None,
+            Parameter(
+                name="--link",
+                help="Link target(s) to materialize before launching bootstrap. Repeatable.",
+            ),
+        ] = None,
         model: Annotated[
             str,
             Parameter(name=["--model", "-m"], help="Model id or alias for primary harness."),
@@ -71,9 +85,13 @@ def register_bootstrap_command(
         """Launch a primary agent session with installed bootstrap docs."""
 
         from meridian.cli import primary_launch
+        from meridian.cli.mars_passthrough import resolve_init_project_root
+        from meridian.lib.ops.init_ops import run_init_flow
 
         if yolo and approval is not None:
             raise ValueError("Cannot combine --yolo with --approval.")
+        if (add or link) and dry_run:
+            raise ValueError("Cannot combine setup flags (--add/--link) with --dry-run.")
 
         explicit_harness = harness.strip() if harness is not None and harness.strip() else None
         global_harness = get_global_harness()
@@ -82,8 +100,19 @@ def register_bootstrap_command(
                 f"Conflicting harness selections: '{global_harness}' and '{explicit_harness}'."
             )
 
+        project_root = None
+        if add or link:
+            project_root = resolve_init_project_root(None)
+            run_init_flow(
+                project_root=project_root,
+                add_sources=add or [],
+                link_targets=link,
+                output_format="text",
+            )
+
         emit(
             primary_launch.run_primary_launch(
+                project_root=project_root,
                 continue_ref=None,
                 fork_ref=None,
                 model=model,

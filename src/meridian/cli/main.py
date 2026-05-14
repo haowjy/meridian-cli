@@ -63,7 +63,7 @@ from meridian.cli.output import (
 from meridian.cli.output import emit as emit_output
 from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
-from meridian.cli.startup.policy import StartupClass
+from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_effect_process
 from meridian.lib.core.sink import OutputSink
@@ -737,6 +737,20 @@ def _workspace_subcommand(argv: Sequence[str]) -> str | None:
     return None
 
 
+def _bootstrap_setup_requested(argv: Sequence[str]) -> bool:
+    if not argv or argv[0] != "bootstrap":
+        return False
+
+    for token in argv[1:]:
+        if token == "--":
+            break
+        if token in {"--add", "--link"}:
+            return True
+        if token.startswith("--add=") or token.startswith("--link="):
+            return True
+    return False
+
+
 def _known_child_commands(parent: str) -> set[str]:
     return {
         descriptor.command_path[1]
@@ -944,6 +958,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     bootstrap_skipped = any(arg in {"--help", "-h"} for arg in cleaned_args)
     state_requirement = descriptor.state_requirement if descriptor is not None else None
+    # bootstrap --add/--link must resolve root with init semantics in the handler
+    # and reject invalid --dry-run combinations before any startup writes.
+    if _bootstrap_setup_requested(cleaned_args):
+        state_requirement = StateRequirement.NONE
     project_root = None
     with manual_hook_authority_scope(
         suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
