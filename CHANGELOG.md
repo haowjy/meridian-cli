@@ -3,6 +3,8 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+
+## [0.1.3] - 2026-05-14
 ### Fixed
 - Release workflow honors the highest stable semver tag, including historical/manual releases, when computing the next version.
 
