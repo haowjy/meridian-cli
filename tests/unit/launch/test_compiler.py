@@ -74,7 +74,9 @@ def test_compiler_result_dry_run_dict_includes_fallback_chain_and_warnings() -> 
         harness="codex",
         execution_policy=ResolvedExecutionPolicy(effort="high"),
         skill_names=(),
-        fallback_chain=({"token": "gptmini", "position": 1, "override_summary": {"effort": "high"}},),
+        fallback_chain=(
+            {"token": "gptmini", "position": 1, "override_summary": {"effort": "high"}},
+        ),
         warnings=("warning-one",),
     )
 
