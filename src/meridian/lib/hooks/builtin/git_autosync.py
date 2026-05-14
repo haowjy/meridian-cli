@@ -1336,7 +1336,7 @@ class GitAutosync:
         duration = int((time.monotonic() - start) * 1000)
 
         log_kwargs: dict[str, Any] = {
-            "event": context.event_name,
+            "hook_event": context.event_name,
             "outcome": outcome.outcome,
             "duration_ms": duration,
         }
