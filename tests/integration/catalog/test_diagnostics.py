@@ -43,7 +43,4 @@ def test_build_launch_context_does_not_leak_library_warnings_to_stderr(
     with capture_library_diagnostics() as diag:
         build_agent_inventory_prompt(project_root=tmp_path)
 
-    assert [record.getMessage() for record in diag.records] == [
-        "Agent profile 'Legacy' uses legacy models without model-policies; "
-        "models is deprecated for policy overrides.",
-    ]
+    assert diag.records == []

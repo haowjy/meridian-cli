@@ -1,5 +1,4 @@
 """Agent profile parser for `.mars/agents/*.md`."""
-import logging
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
@@ -33,7 +32,6 @@ _MODEL_POLICY_OVERRIDE_KEYS = (
 )
 
 
-logger = logging.getLogger(__name__)
 
 
 class AgentModelEntry(BaseModel):
@@ -311,13 +309,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         raise ValueError(
             f"Agent profile '{profile_name}' has invalid mode '{mode}': "
             "expected 'primary' or 'subagent'."
-        )
-
-    if models_value is not None and model_policies_value is None:
-        logger.warning(
-            "Agent profile '%s' uses legacy models without model-policies; "
-            "models is deprecated for policy overrides.",
-            profile_name,
         )
 
     return AgentProfile(
