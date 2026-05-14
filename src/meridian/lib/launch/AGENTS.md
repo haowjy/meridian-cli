@@ -101,7 +101,7 @@ Harness-availability fallback walks the combined list in order, skipping rules w
 The demoted base candidate (pre-policy-transform) is tried before the policy list
 when a policy rule caused the primary harness selection.
 
-Source: `policies.py:_effective_model_policies()`, `_fallback_candidates_from_policies()`.
+Source: `compiler.py:effective_model_policies()`, `policies.py:_fallback_candidates_from_policies()`.
 Detail: [.context/CONTEXT.md](.context/CONTEXT.md#model-policy-overlay-composition-policiespy).
 
 ## Key Entry Points

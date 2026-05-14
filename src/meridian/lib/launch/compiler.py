@@ -7,7 +7,7 @@ from enum import Enum
 from fnmatch import fnmatchcase
 from typing import Literal, cast
 
-from meridian.lib.catalog.agent import AgentModelEntry, ModelPolicyRule
+from meridian.lib.catalog.agent import ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -64,7 +64,6 @@ class CompilerRequest:
     profile_routing_harness: str | None
     profile_policy_defaults: ResolvedExecutionPolicy
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
-    profile_legacy_models: dict[str, AgentModelEntry] | None
     profile_skills: tuple[str, ...]
 
     # Model catalog data
@@ -177,7 +176,10 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
     model_token, model_source = _resolve_model_token(request)
     canonical_model_id = _canonical_model_id(model_token=model_token, request=request)
 
-    effective_policies, overlay_policy_count = _effective_model_policies(request)
+    effective_policies, overlay_policy_count = effective_model_policies(
+        profile_model_policies=request.profile_model_policies,
+        agent_overlay=request.agent_overlay,
+    )
     matched_policy = _match_policy_rule(
         model_policies=effective_policies,
         canonical_model_id=canonical_model_id,
@@ -190,21 +192,8 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
     )
     matched_policy_overrides = _policy_overrides(matched_policy)
 
-    legacy_overrides = RuntimeOverrides()
-    if matched_policy is None:
-        legacy_overrides, legacy_warning = _resolve_legacy_model_overrides(
-            request=request,
-            model_token=model_token,
-            canonical_model_id=canonical_model_id,
-        )
-        if legacy_warning:
-            warnings.append(legacy_warning)
-
     policy_override_tier = matched_policy_overrides
     policy_override_source = policy_source if matched_policy is not None else ProvenanceLevel.UNSET
-    if matched_policy is None and legacy_overrides.model_dump(exclude_none=True):
-        policy_override_tier = legacy_overrides
-        policy_override_source = ProvenanceLevel.PROFILE_MODEL_POLICY
 
     harness, harness_source, harness_provenance = _resolve_harness(
         request=request,
@@ -402,14 +391,16 @@ def _overlay_policy_rules(overlay: AgentOverlayConfig) -> tuple[ModelPolicyRule,
     )
 
 
-def _effective_model_policies(
-    request: CompilerRequest,
+def effective_model_policies(
+    *,
+    profile_model_policies: tuple[ModelPolicyRule, ...] | None,
+    agent_overlay: AgentOverlayConfig | None,
 ) -> tuple[tuple[ModelPolicyRule, ...], int]:
-    profile_policies = request.profile_model_policies or ()
-    if request.agent_overlay is None or request.agent_overlay.model_policies is None:
+    profile_policies = profile_model_policies or ()
+    if agent_overlay is None or agent_overlay.model_policies is None:
         return profile_policies, 0
 
-    overlay_policies = _overlay_policy_rules(request.agent_overlay)
+    overlay_policies = _overlay_policy_rules(agent_overlay)
     effective_policies = (*overlay_policies, *profile_policies)
     return effective_policies, len(overlay_policies)
 
@@ -449,53 +440,6 @@ def _policy_overrides(rule: ModelPolicyRule | None) -> RuntimeOverrides:
     if rule is None:
         return RuntimeOverrides()
     return RuntimeOverrides.model_validate(dict(rule.overrides))
-
-
-def _resolve_legacy_model_overrides(
-    *,
-    request: CompilerRequest,
-    model_token: str,
-    canonical_model_id: str,
-) -> tuple[RuntimeOverrides, str | None]:
-    legacy_models = request.profile_legacy_models or {}
-    if not legacy_models or not model_token:
-        return RuntimeOverrides(), None
-
-    if model_token in legacy_models:
-        return _entry_to_overrides(legacy_models[model_token]), None
-    if canonical_model_id and canonical_model_id in legacy_models:
-        return _entry_to_overrides(legacy_models[canonical_model_id]), None
-    if request.resolved_alias_entry is None:
-        return RuntimeOverrides(), None
-
-    selected_model_id = request.resolved_alias_entry.model_id
-    matched_keys: list[str] = []
-    for key in legacy_models:
-        catalog_entry = request.alias_catalog.get(key)
-        if catalog_entry is None:
-            continue
-        if catalog_entry.model_id == selected_model_id:
-            matched_keys.append(key)
-
-    if not matched_keys:
-        return RuntimeOverrides(), None
-
-    winner = matched_keys[0]
-    warning: str | None = None
-    if len(matched_keys) > 1:
-        warning = (
-            f"Profile legacy models has multiple entries matching '{selected_model_id}'. "
-            f"Using '{winner}' and ignoring: {', '.join(matched_keys[1:])}."
-        )
-    return _entry_to_overrides(legacy_models[winner]), warning
-
-
-def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        effort=entry.effort,
-        autocompact=entry.autocompact,
-        autocompact_pct=entry.autocompact_pct,
-    )
 
 
 def _policy_rule_harness(policy_rule: ModelPolicyRule | None) -> str | None:
@@ -599,6 +543,7 @@ __all__ = [
     "ResolvedExecutionPolicy",
     "compile_launch_params",
     "compiler_result_to_dry_run_dict",
+    "effective_model_policies",
     "match_model_policy",
     "render_provenance",
 ]

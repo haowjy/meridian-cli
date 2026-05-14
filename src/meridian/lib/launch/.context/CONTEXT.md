@@ -125,7 +125,8 @@ Do not set `REQUIRED` on execution paths.
 
 ### Model-Policy Overlay Composition (`policies.py`)
 
-**Overlay prepends; does not replace.** `_effective_model_policies()` builds the
+**Overlay prepends; does not replace.** `effective_model_policies()` in
+`compiler.py` builds the
 combined policy list as:
 
 ```python

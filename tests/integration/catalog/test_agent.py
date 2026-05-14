@@ -128,33 +128,6 @@ def test_parse_agent_profile_model_invocable_invalid_defaults_true_without_warni
     assert caplog.records == []
 
 
-def test_parse_agent_profile_models_preserves_supported_overrides(
-    tmp_path: Path,
-) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "models:",
-            "  gpt55:",
-            "    effort: low",
-            "    autocompact: 200000",
-            "    lane: correctness",
-            "  unknown-only:",
-            "    custom_field: ok",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert tuple(profile.models.keys()) == ("gpt55", "unknown-only")
-    assert profile.models["gpt55"].effort == "low"
-    assert profile.models["gpt55"].autocompact == 200000
-    assert profile.models["unknown-only"].effort is None
-    assert profile.models["unknown-only"].autocompact is None
-
-
 def test_parse_agent_profile_rejects_legacy_fanout(
     tmp_path: Path,
 ) -> None:
@@ -173,6 +146,22 @@ def test_parse_agent_profile_rejects_legacy_fanout(
         ValueError,
         match="contains 'fanout' which is no longer supported",
     ):
+        parse_agent_profile(profile_path)
+
+
+def test_parse_agent_profile_rejects_legacy_models(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "bad.md",
+        [
+            "name: Bad",
+            "models:",
+            "  gpt55:",
+            "    effort: low",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="contains 'models' which is no longer supported"):
         parse_agent_profile(profile_path)
 
 
@@ -451,30 +440,6 @@ def test_parse_agent_profile_rejects_all_fanout_shapes(
         parse_agent_profile(profile_path)
 
 
-def test_parse_agent_profile_models_discards_invalid_entries(tmp_path: Path) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "planner.md",
-        [
-            "name: Planner",
-            "models:",
-            "  valid:",
-            "    effort: medium",
-            "  bad-effort:",
-            "    effort: auto",
-            "  bad-autocompact:",
-            "    autocompact: 101",
-            "  bad-autocompact-bool:",
-            "    autocompact: true",
-            "  '   ':",
-            "    effort: low",
-        ],
-    )
-    profile = parse_agent_profile(profile_path)
-
-    assert tuple(profile.models.keys()) == ("valid",)
-
-
 def test_scan_agent_profiles_invalid_profile_authoring_does_not_emit_runtime_warnings(
     tmp_path: Path,
 ) -> None:
@@ -488,9 +453,9 @@ def test_scan_agent_profiles_invalid_profile_authoring_does_not_emit_runtime_war
             "name: Planner",
             "effort: invalid",
             "autocompact: 150",
-            "models:",
-            "  bad-effort:",
-            "    effort: auto",
+            "model-policies:",
+            "  - match: {alias: gpt55}",
+            "    override: {effort: medium}",
         ],
     )
     with capture_library_diagnostics() as diag:

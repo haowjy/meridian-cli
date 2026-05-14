@@ -518,15 +518,16 @@ def _normalize_agent_model_policies(
             policy["override"],
             source=f"{policy_source}.override",
         )
-        if not overrides:
-            raise ValueError(
-                f"Invalid value for '{policy_source}.override': expected at least one "
-                "override field."
-            )
         no_fallback = policy.get("no-fallback", False)
         if not isinstance(no_fallback, bool):
             raise ValueError(
                 f"Invalid value for '{policy_source}.no-fallback': expected bool."
+            )
+        is_fallback_candidate = match_type in {"alias", "model"} and not no_fallback
+        if not overrides and not is_fallback_candidate:
+            raise ValueError(
+                f"Invalid value for '{policy_source}.override': expected at least one "
+                "override field."
             )
         policies.append(
             {

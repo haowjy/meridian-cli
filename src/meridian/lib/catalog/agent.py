@@ -4,15 +4,13 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
-    AutocompactPctValue,
-    AutocompactValue,
     validate_autocompact_pct_value,
     validate_autocompact_value,
 )
@@ -30,26 +28,6 @@ _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS = frozenset(
 _MODEL_POLICY_OVERRIDE_KEYS = (
     _MODEL_POLICY_SCALAR_OVERRIDE_KEYS | _MODEL_POLICY_DEFERRED_LIST_OVERRIDE_KEYS
 )
-
-
-
-
-class AgentModelEntry(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
-
-    effort: str | None = None
-    autocompact: AutocompactValue = None
-    autocompact_pct: AutocompactPctValue = None
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        if normalized not in _KNOWN_EFFORT_VALUES:
-            raise ValueError(f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}")
-        return normalized
 
 
 class ModelPolicyRule(BaseModel):
@@ -82,7 +60,6 @@ class AgentProfile(BaseModel):
     autocompact_pct: int | None = None
     mode: Literal["primary", "subagent"] = "subagent"
     model_policies: tuple[ModelPolicyRule, ...] = ()
-    models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
     model_invocable: bool = True
     body: str
     path: Path
@@ -111,31 +88,6 @@ def _normalize_deduplicated(value: object) -> tuple[str, ...]:
             seen.add(item)
             result.append(item)
     return tuple(result)
-
-
-def _parse_model_overrides(
-    raw_models: object,
-    *,
-    profile_name: str,
-) -> dict[str, AgentModelEntry]:
-    _ = profile_name
-    if raw_models is None:
-        return {}
-    if not isinstance(raw_models, Mapping):
-        return {}
-
-    parsed: dict[str, AgentModelEntry] = {}
-    for raw_key, raw_value in cast("Mapping[object, object]", raw_models).items():
-        key = str(raw_key).strip()
-        if not key:
-            continue
-        if not isinstance(raw_value, Mapping):
-            continue
-        try:
-            parsed[key] = AgentModelEntry.model_validate(raw_value)
-        except ValidationError:
-            continue
-    return parsed
 
 
 def _parse_model_policies(
@@ -256,7 +208,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     autocompact_pct_value = frontmatter.get("autocompact_pct")
     mode_value = frontmatter.get("mode")
     model_policies_value = frontmatter.get("model-policies")
-    models_value = frontmatter.get("models")
     model_invocable_value = frontmatter.get("model-invocable")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
@@ -265,6 +216,11 @@ def parse_agent_profile(path: Path) -> AgentProfile:
             f"Agent profile '{profile_name}' contains 'fanout' which is no longer supported. "
             "Declare fallback candidates in model-policies list order instead. "
             "Use 'no-fallback: true' to exclude a rule."
+        )
+    if frontmatter.get("models") is not None:
+        raise ValueError(
+            f"Agent profile '{profile_name}' contains 'models' which is no longer supported. "
+            "Use model-policies to express per-model overrides."
         )
     model_invocable = (
         model_invocable_value if isinstance(model_invocable_value, bool) else True
@@ -298,7 +254,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
                     "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
                 )
 
-    models = _parse_model_overrides(models_value, profile_name=profile_name)
     model_policies = _parse_model_policies(
         model_policies_value,
         profile_name=profile_name,
@@ -326,7 +281,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         autocompact_pct=autocompact_pct,
         mode=cast("Literal['primary', 'subagent']", mode),
         model_policies=model_policies,
-        models=models,
         model_invocable=model_invocable,
         body=body,
         path=path.resolve(),

@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- Legacy `models:` field on agent profiles — parser, compiler, policy resolver, prompt builder. Use `model-policies:` instead. Profiles with `models:` now fail-closed at parse time.
+- `AgentModelEntry` type and all legacy model-override resolution paths in compiler and policies.
+- Duplicate `_effective_model_policies()` in policies.py — centralized in compiler.py.
+
+### Changed
+- Config overlay `model-policies` accepts empty `override: {}` for fallback-candidate rules (parity with profile parsing).
+
 ## [0.1.3] - 2026-05-14
 ### Fixed
 - Release workflow honors the highest stable semver tag, including historical/manual releases, when computing the next version.

@@ -5,7 +5,7 @@ from typing import Literal
 
 import pytest
 
-from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, ModelPolicyRule
+from meridian.lib.catalog.agent import AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.model_aliases import entry
 from meridian.lib.launch.prompt import (
     _dedupe_fan_out_aliases,
@@ -21,7 +21,6 @@ def _profile(
     name: str,
     description: str,
     model: str | None = None,
-    models: dict[str, AgentModelEntry] | None = None,
     model_policies: tuple[ModelPolicyRule, ...] = (),
     mode: Literal["primary", "subagent"] = "subagent",
     model_invocable: bool = True,
@@ -41,7 +40,6 @@ def _profile(
         autocompact_pct=None,
         mode=mode,
         model_policies=model_policies,
-        models=models or {},
         model_invocable=model_invocable,
         body="",
         path=tmp_path / f"{name}.md",
@@ -75,19 +73,41 @@ def test_build_agent_inventory_prompt_renders_model_and_fan_out_metadata(
             tmp_path=tmp_path,
             name="beta",
             description="Fan-out only",
-            models={"opus46": AgentModelEntry()},
+            model_policies=(
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="opus46",
+                    overrides={"effort": "medium"},
+                ),
+            ),
         ),
         _profile(
             tmp_path=tmp_path,
             name="alpha",
             description="Primary reviewer",
             model="gpt54",
-            models={
-                "gpt54": AgentModelEntry(),
-                "gpt55": AgentModelEntry(),
-                "dup55": AgentModelEntry(),
-                "unknown_alias": AgentModelEntry(),
-            },
+            model_policies=(
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt54",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt55",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="dup55",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="unknown_alias",
+                    overrides={"effort": "medium"},
+                ),
+            ),
         ),
     ]
     alias_load_count = 0
@@ -174,7 +194,6 @@ def test_build_agent_inventory_prompt_uses_policy_fallback_chain_for_display(
             tmp_path=tmp_path,
             name="reviewer",
             description="Policy fallback chain",
-            models={"policy-only": AgentModelEntry()},
             model_policies=(
                 ModelPolicyRule(
                     match_type="alias",
@@ -272,15 +291,14 @@ def test_build_agent_inventory_prompt_returns_none_when_all_hidden(
     assert build_agent_inventory_prompt(project_root=tmp_path) is None
 
 
-def test_get_fan_out_aliases_falls_back_to_models_keys(tmp_path: Path) -> None:
+def test_get_fan_out_aliases_empty_without_policy_entries(tmp_path: Path) -> None:
     profile = _profile(
         tmp_path=tmp_path,
         name="reviewer",
         description="Fallback",
-        models={"gpt54": AgentModelEntry(), "gpt55": AgentModelEntry()},
     )
 
-    assert _get_fan_out_aliases(profile) == ("gpt54", "gpt55")
+    assert _get_fan_out_aliases(profile) == ()
 
 
 def test_get_fan_out_aliases_uses_policy_list_order(tmp_path: Path) -> None:
@@ -288,7 +306,6 @@ def test_get_fan_out_aliases_uses_policy_list_order(tmp_path: Path) -> None:
         tmp_path=tmp_path,
         name="reviewer",
         description="Fallback policy",
-        models={"policy-only": AgentModelEntry()},
         model_policies=(
             ModelPolicyRule(
                 match_type="alias",

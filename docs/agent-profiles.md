@@ -61,7 +61,6 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `autocompact` | int | — | Compaction percentage threshold |
 | `timeout` | int | — | Spawn timeout in seconds |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
-| `models` | mapping | `{}` | Legacy per-model effort/autocompact overrides (deprecated) |
 
 ## `mode`
 
@@ -223,22 +222,6 @@ model-policies:
 ```
 
 ...works on a machine with only Codex installed — it silently routes to `gpt5` rather than erroring.
-
-## Legacy `models:` Field
-
-The `models:` mapping was an earlier mechanism for per-model `effort` and `autocompact` overrides. It is still accepted but deprecated in favor of `model-policies:`.
-
-```yaml
-# deprecated — use model-policies instead
-models:
-  claude-sonnet:
-    effort: high
-  gpt5:
-    autocompact: 20
-```
-
-A deprecation warning is logged when `models:` is present without
-`model-policies:`.
 
 ## Example Profiles
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     import pytest
 
-from meridian.lib.catalog.agent import AgentModelEntry, ModelPolicyRule
+from meridian.lib.catalog.agent import ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig, AgentOverlayModelPolicy, MeridianConfig
@@ -49,7 +49,6 @@ def _request(
     profile_routing_harness: str | None = None,
     profile_policy_defaults: ResolvedExecutionPolicy | None = None,
     profile_model_policies: tuple[ModelPolicyRule, ...] | None = None,
-    profile_legacy_models: dict[str, AgentModelEntry] | None = None,
     alias_entry: AliasEntry | None = None,
     alias_catalog: dict[str, AliasEntry] | None = None,
     supported_execution_policy_fields: tuple[str, ...] | frozenset[str] | None = None,
@@ -68,7 +67,6 @@ def _request(
         profile_routing_harness=profile_routing_harness,
         profile_policy_defaults=profile_policy_defaults or ResolvedExecutionPolicy(),
         profile_model_policies=profile_model_policies,
-        profile_legacy_models=profile_legacy_models,
         profile_skills=(),
         resolved_alias_entry=resolved_alias,
         alias_catalog=resolved_catalog,
@@ -230,23 +228,6 @@ def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
     assert result.execution_policy.effort == "high"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
-
-def test_compile_launch_params_legacy_model_fallback_applies_without_model_policies() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=AgentOverlayConfig(),
-        profile_model_policies=(),
-        profile_legacy_models={"gptmini": AgentModelEntry(effort="high")},
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.execution_policy.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
-
-
 def test_compile_launch_params_per_field_precedence_is_independent() -> None:
     alias = _alias_entry()
     request = _request(
@@ -385,32 +366,6 @@ def test_compile_launch_params_profile_rule_wins_when_overlay_rule_doesnt_match(
 
     assert result.execution_policy.effort == "high"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
-
-
-def test_compile_launch_params_non_matching_overlay_rule_does_not_suppress_legacy_models() -> None:
-    alias = _alias_entry()
-    overlay = AgentOverlayConfig(
-        model_policies=(
-            AgentOverlayModelPolicy(
-                match_type="alias",
-                match_value="gpt55",
-                overrides={"effort": "xhigh"},
-            ),
-        )
-    )
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=overlay,
-        profile_model_policies=(),
-        profile_legacy_models={"gptmini": AgentModelEntry(effort="high")},
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.execution_policy.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
-
 
 def test_compile_launch_params_model_overrides_profile_policy_harness() -> None:
     alias = _alias_entry()

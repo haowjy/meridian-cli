@@ -246,8 +246,7 @@ def _dedupe_fan_out_aliases(
 def _get_fan_out_aliases(agent: AgentProfile) -> tuple[str, ...]:
     """Get fan-out aliases for inventory display.
 
-    Uses model-policies fallback entries when available, otherwise
-    falls back to legacy models keys.
+    Uses model-policies fallback entries only.
     """
     fallback_rules = tuple(
         rule
@@ -256,8 +255,6 @@ def _get_fan_out_aliases(agent: AgentProfile) -> tuple[str, ...]:
     )
     if fallback_rules:
         return tuple(rule.match_value for rule in fallback_rules)
-    if agent.models:
-        return tuple(agent.models.keys())
     return ()
 
 
