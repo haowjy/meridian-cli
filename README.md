@@ -18,7 +18,7 @@ This is a clean break. There is no automatic migration.
 
 ## Why
 
-Claude Code is the best way to run Claude. Codex CLI is the best way to run GPT. Each provider's harness is optimized for their models — sandboxing, tool use, context handling, everything.
+Claude Code is (supposed to be) the best way to run Claude. Codex CLI is often the best way to run GPT. Each provider's harness is optimized for their models — sandboxing, tool use, context handling, everything (supposedly).
 
 But you can only use one at a time.
 
