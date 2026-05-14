@@ -50,6 +50,7 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `model` | str | — | Default model alias or ID (e.g. `claude-sonnet`, `gpt-5.3-codex`) |
 | `harness` | str | — | Force a specific harness (`claude`, `codex`, `opencode`) |
 | `mode` | str | `subagent` | `primary` or `subagent` — controls listing grouping |
+| `model-invocable` | bool | `true` | `false` hides agent from model-facing inventory prompt; explicit `-a NAME` invocation still works |
 | `skills` | list[str] | `[]` | Skill names to inject into the system prompt |
 | `tools` | list[str] | `[]` | Tool names to allow |
 | `disallowed-tools` | list[str] | `[]` | Tool names to block |

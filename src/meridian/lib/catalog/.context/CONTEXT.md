@@ -76,7 +76,7 @@ the model-facing inventory prompt. Rules:
 - **Default is `True`** — profiles that omit `model-invocable` are visible to models.
   This preserves backward compatibility for all existing profiles.
 - **YAML native booleans only** — `true` / `false` in frontmatter. Non-boolean values
-  (strings, integers) log a warning and default to `True`; they do not raise.
+  (strings, integers) silently default to `True`; they do not raise.
 - **Informational metadata only** — `model_invocable` is not checked by
   `load_agent_profile()` or `scan_agent_profiles()`. Those remain neutral scanners
   that return all profiles regardless of this field.
