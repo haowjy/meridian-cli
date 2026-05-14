@@ -4,6 +4,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Git autosync: merge instead of rebase for remote integration. On conflict: `merge --abort` preserves local state (local-wins), writes conflict metadata JSON, appends notice to AGENTS.md managed section.
+- Git autosync: default `conflict_policy` changed from `leave` to `abort`.
+- Git autosync: `_FETCH_TIMEOUT_SECS` separated from `_REMOTE_TIMEOUT_SECS` (60s vs 10s).
+- Git autosync: divergence detection logs warning on failure instead of silent `(0,0)`, with fallback.
+
+### Added
+- `meridian sync conflict list` — terse summary of unresolved autosync conflicts.
+- `meridian sync conflict show <id>` — detailed conflict info with merge resolution commands.
+- `meridian sync conflict resolve <id>` — mark resolved, strip AGENTS.md notice block, idempotent.
+- `meridian context` — sync status section with conflict counts and relative timestamps.
+- Git autosync: default ignores for `.git` and `.meridian/autosync/` in `.git/info/exclude`.
+- Git autosync: exclude stash/unstash around merge to prevent dirty-tree failures.
+- Git autosync: per-conflict metadata at `<sync-root>/.meridian/autosync/conflicts/<id>.json`.
+- Git autosync: sync-level state at `<sync-root>/.meridian/autosync/state.json`.
+- Git autosync: structured logging per sync cycle with file change stats.
+- Git autosync: AGENTS.md conflict notice inside `<!-- autosync-notices -->` managed section.
+
 ## [0.1.5] - 2026-05-15
 
 ## [0.1.4] - 2026-05-14
