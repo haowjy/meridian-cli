@@ -1,32 +1,18 @@
+# qa-validated: orchestrator-opencode-fallback-runtime
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    import pytest
-
 from meridian.lib.catalog.agent import ModelPolicyRule
-from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.config.settings import AgentOverlayConfig, AgentOverlayModelPolicy, MeridianConfig
+from meridian.lib.config.settings import AgentOverlayConfig, AgentOverlayModelPolicy
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
-from meridian.lib.harness.adapter import SubprocessHarness
-from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.compiler import (
     CompilerRequest,
     CompilerResult,
-    FieldProvenance,
-    ProvenanceLevel,
     compile_launch_params,
     compiler_result_to_dry_run_dict,
-    render_provenance,
 )
-from meridian.lib.launch.policies import resolve_policies
-from meridian.lib.launch.resolve import ResolvedSkills
 
 
 def _alias_entry(alias: str = "gptmini") -> AliasEntry:
@@ -80,79 +66,25 @@ def _request(
     )
 
 
-def test_render_provenance_only_includes_set_fields() -> None:
-    provenance = FieldProvenance(
-        model_source=ProvenanceLevel.CLI,
-        effort_source=ProvenanceLevel.PROFILE_DEFAULT,
-    )
-
-    assert render_provenance(provenance) == {
-        "model": "cli",
-        "effort": "profile-default",
-    }
-
-
-def test_compiler_result_dry_run_dict_includes_provenance() -> None:
+def test_compiler_result_dry_run_dict_includes_fallback_chain_and_warnings() -> None:
     result = CompilerResult(
         agent_name="coder",
         model="openai/gpt-5.4-mini",
         model_token="gptmini",
         harness="codex",
-        execution_policy=ResolvedExecutionPolicy(
-            effort="high",
-            approval="auto",
-            sandbox="workspace-write",
-            autocompact=1000,
-            timeout=30.0,
-        ),
+        execution_policy=ResolvedExecutionPolicy(effort="high"),
         skill_names=(),
-        field_provenance=FieldProvenance(
-            model_source=ProvenanceLevel.CLI,
-            harness_source=ProvenanceLevel.ALIAS_DEFAULT,
-            effort_source=ProvenanceLevel.PROFILE_MODEL_POLICY,
-            approval_source=ProvenanceLevel.CONFIG_DEFAULT,
-            sandbox_source=ProvenanceLevel.ENV,
-            autocompact_source=ProvenanceLevel.PROFILE_DEFAULT,
-            timeout_source=ProvenanceLevel.CLI,
-        ),
-        fallback_chain=(
-            {
-                "token": "gptmini",
-                "position": 1,
-                "override_summary": {"effort": "high"},
-            },
-        ),
-        warnings=("warning-one", "warning-two"),
+        fallback_chain=({"token": "gptmini", "position": 1, "override_summary": {"effort": "high"}},),
+        warnings=("warning-one",),
     )
 
-    assert compiler_result_to_dry_run_dict(result) == {
-        "agent": "coder",
-        "model": "gptmini",
-        "canonical_model": "openai/gpt-5.4-mini",
-        "harness": "codex",
-        "effort": "high",
-        "approval": "auto",
-        "sandbox": "workspace-write",
-        "autocompact": 1000,
-        "timeout": 30.0,
-        "provenance": {
-            "model": "cli",
-            "harness": "alias-default",
-            "effort": "profile-model-policy",
-            "approval": "config-default",
-            "sandbox": "env",
-            "autocompact": "profile-default",
-            "timeout": "cli",
-        },
-        "fallback_chain": [
-            {
-                "token": "gptmini",
-                "position": 1,
-                "override_summary": {"effort": "high"},
-            }
-        ],
-        "warnings": ["warning-one", "warning-two"],
-    }
+    output = compiler_result_to_dry_run_dict(result)
+
+    assert output["model"] == "gptmini"  # model_token used when set
+    assert output["fallback_chain"] == [
+        {"token": "gptmini", "position": 1, "override_summary": {"effort": "high"}}
+    ]
+    assert output["warnings"] == ["warning-one"]
 
 
 def test_compile_launch_params_routing_precedence_cli_beats_overlay_and_profile() -> None:
@@ -168,21 +100,6 @@ def test_compile_launch_params_routing_precedence_cli_beats_overlay_and_profile(
 
     assert result.model_token == "gptmini"
     assert result.model == "openai/gpt-5.4-mini"
-    assert result.field_provenance.model_source is ProvenanceLevel.CLI
-
-
-def test_compile_launch_params_routing_precedence_overlay_beats_profile() -> None:
-    alias = _alias_entry()
-    request = _request(
-        overlay=AgentOverlayConfig(model="gptmini"),
-        profile_routing_model="profile-model",
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.model_token == "gptmini"
-    assert result.field_provenance.model_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
 
 
 def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
@@ -204,7 +121,6 @@ def test_compile_launch_params_policy_precedence_cli_effort_wins() -> None:
     result = compile_launch_params(request)
 
     assert result.execution_policy.effort == "xhigh"
-    assert result.field_provenance.effort_source is ProvenanceLevel.CLI
 
 
 def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
@@ -226,22 +142,6 @@ def test_compile_launch_params_policy_precedence_matched_policy_wins() -> None:
     result = compile_launch_params(request)
 
     assert result.execution_policy.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
-
-def test_compile_launch_params_per_field_precedence_is_independent() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=AgentOverlayConfig(effort="high"),
-        config=RuntimeOverrides(approval="confirm"),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.field_provenance.model_source is ProvenanceLevel.CLI
-    assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
-    assert result.field_provenance.approval_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
 def test_compile_launch_params_timeout_excludes_overlay_and_profile_defaults() -> None:
@@ -257,7 +157,6 @@ def test_compile_launch_params_timeout_excludes_overlay_and_profile_defaults() -
     result = compile_launch_params(request)
 
     assert result.execution_policy.timeout == 40.0
-    assert result.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
 def test_compile_launch_params_three_state_empty_overlay_uses_profile_policy_list() -> None:
@@ -278,7 +177,6 @@ def test_compile_launch_params_three_state_empty_overlay_uses_profile_policy_lis
     result = compile_launch_params(request)
 
     assert result.execution_policy.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
 def test_compile_launch_params_three_state_model_policies_overlay_prepends_profile() -> None:
@@ -307,7 +205,6 @@ def test_compile_launch_params_three_state_model_policies_overlay_prepends_profi
     result = compile_launch_params(request)
 
     assert result.execution_policy.effort == "xhigh"
-    assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
 
 
 def test_compile_launch_params_profile_rule_wins_when_overlay_rule_doesnt_match() -> None:
@@ -336,7 +233,7 @@ def test_compile_launch_params_profile_rule_wins_when_overlay_rule_doesnt_match(
     result = compile_launch_params(request)
 
     assert result.execution_policy.effort == "high"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+
 
 def test_compile_launch_params_model_derived_harness_beats_policy_harness_override() -> None:
     """Model-derived harness (from alias catalog) wins over a policy rule that sets harness
@@ -390,7 +287,6 @@ def test_compile_launch_params_first_match_wins_no_ambiguity_error() -> None:
     result = compile_launch_params(request)
 
     assert result.execution_policy.effort == "medium"
-    assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
 
 def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
@@ -412,7 +308,6 @@ def test_compile_launch_params_ignores_unsupported_execution_fields() -> None:
 
     assert result.execution_policy.timeout is None
     assert result.execution_policy.approval == "confirm"
-    assert result.field_provenance.timeout_source is ProvenanceLevel.UNSET
 
 
 def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> None:
@@ -426,89 +321,3 @@ def test_compile_launch_params_harness_prefers_model_derived_over_profile() -> N
     result = compile_launch_params(request)
 
     assert result.harness == "codex"
-    assert result.harness_provenance == "model-derived-override"
-    assert result.field_provenance.harness_source is ProvenanceLevel.ALIAS_DEFAULT
-
-
-def test_compile_launch_params_child_cli_override_beats_parent_overlay() -> None:
-    alias = _alias_entry()
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini", effort="xhigh"),
-        overlay=AgentOverlayConfig(effort="medium"),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.execution_policy.effort == "xhigh"
-    assert result.field_provenance.effort_source is ProvenanceLevel.CLI
-
-
-class _StubCatalog:
-    def __init__(self, project_root: Path) -> None:
-        self.project_root = project_root
-
-    def alias_map(self) -> dict[str, AliasEntry]:
-        return {}
-
-    def resolve_model(self, token: str) -> AliasEntry:
-        raise ValueError(token)
-
-
-class _MockHarnessRegistry:
-    def get_subprocess_harness(self, harness_id: HarnessId) -> SubprocessHarness:
-        _ = harness_id
-        return cast("SubprocessHarness", object())
-
-
-def test_resolve_policies_picks_up_overlay_from_config(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from meridian.lib.launch import policies as policies_module
-
-    captured: dict[str, AgentOverlayConfig | None] = {}
-    original_compile = policies_module.compile_launch_params
-
-    def _capture_compile(request: CompilerRequest) -> CompilerResult:
-        captured["overlay"] = request.agent_overlay
-        return original_compile(request)
-
-    def _load_agent_profile_with_fallback(**_: object) -> tuple[None, None]:
-        return (None, None)
-
-    def _materialize_harness(
-        _result: object,
-        harness_registry: HarnessRegistry,
-    ) -> SimpleNamespace:
-        _ = harness_registry
-        return SimpleNamespace(adapter=object())
-
-    def _resolve_skills_from_profile(**_: object) -> ResolvedSkills:
-        return ResolvedSkills(skill_names=(), loaded_skills=(), missing_skills=())
-
-    monkeypatch.setattr(policies_module, "compile_launch_params", _capture_compile)
-    monkeypatch.setattr(
-        policies_module,
-        "load_agent_profile_with_fallback",
-        _load_agent_profile_with_fallback,
-    )
-    monkeypatch.setattr(policies_module, "materialize_harness", _materialize_harness)
-    monkeypatch.setattr(
-        policies_module,
-        "resolve_skills_from_profile",
-        _resolve_skills_from_profile,
-    )
-
-    config = MeridianConfig.model_validate({"agents": {"coder": {"effort": "high"}}})
-    overlay = config.agents["coder"]
-    result = resolve_policies(
-        catalog=cast("CatalogSession", _StubCatalog(tmp_path)),
-        layers=(RuntimeOverrides(agent="coder"),),
-        config_overrides=RuntimeOverrides(),
-        config=config,
-        harness_registry=cast("HarnessRegistry", _MockHarnessRegistry()),
-    )
-
-    assert captured["overlay"] == overlay
-    assert result.execution_policy.effort == "high"

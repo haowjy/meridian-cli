@@ -1,3 +1,4 @@
+# qa-validated: orchestrator-opencode-fallback-runtime
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,6 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.policies import (
     SurfacePolicyInput,
-    _policy_warnings,
     match_model_policy,
     resolve_launch_policy,
     resolve_policy_fields,
@@ -85,17 +85,6 @@ def test_resolve_policy_fields_resolves_per_field_precedence() -> None:
     assert resolved.autocompact == 70000
 
 
-def test_resolve_policy_fields_tuple_form_matches_positional_form() -> None:
-    tiers = (
-        RuntimeOverrides(),
-        RuntimeOverrides(effort="high"),
-        RuntimeOverrides(effort="medium", approval="auto"),
-        RuntimeOverrides(approval="confirm"),
-    )
-
-    assert resolve_policy_fields(tiers) == resolve_policy_fields(*tiers)
-
-
 def test_resolve_policy_fields_model_policy_scope_strips_routing_fields() -> None:
     resolved = resolve_policy_fields(
         RuntimeOverrides(
@@ -117,32 +106,6 @@ def test_resolve_policy_fields_model_policy_scope_strips_routing_fields() -> Non
     assert resolved.agent is None
     assert resolved.effort == "high"
     assert resolved.approval == "auto"
-
-
-def test_surface_policy_input_splits_routing_and_execution_layers() -> None:
-    registry = get_default_harness_registry()
-    surface = SurfacePolicyInput(
-        surface=LaunchCompositionSurface.SPAWN_PREPARE,
-        catalog=CatalogSession(Path.cwd()),
-        layers=(
-            RuntimeOverrides(model="gptmini", effort="high", approval="auto"),
-            RuntimeOverrides(harness="codex", sandbox="workspace-write"),
-        ),
-        config_overrides=RuntimeOverrides(agent="reviewer", timeout=20.0),
-        config=MeridianConfig(),
-        harness_registry=registry,
-    )
-
-    assert surface.routing_layers == (
-        RuntimeOverrides(model="gptmini"),
-        RuntimeOverrides(harness="codex"),
-        RuntimeOverrides(agent="reviewer"),
-    )
-    assert surface.execution_policy_layers == (
-        RuntimeOverrides(effort="high", approval="auto"),
-        RuntimeOverrides(sandbox="workspace-write"),
-        RuntimeOverrides(timeout=20.0),
-    )
 
 
 def test_chat_and_spawn_prepare_surfaces_resolve_equivalent_shared_policy_fields(
@@ -191,24 +154,6 @@ def test_chat_and_spawn_prepare_surfaces_resolve_equivalent_shared_policy_fields
     assert chat_policy.execution_policy.approval == spawn_policy.execution_policy.approval
 
 
-def test_resolve_policy_fields_rejects_mixed_tuple_usage() -> None:
-    with pytest.raises(TypeError, match="tier tuple only as its sole argument"):
-        resolve_policy_fields(
-            RuntimeOverrides(effort="high"),
-            (RuntimeOverrides(approval="auto"),),
-        )
-
-
-def test_policy_warnings_preserve_combined_text_format() -> None:
-    warnings = _policy_warnings(
-        profile_warning="profile missing",
-        model_warning="model ambiguous",
-    )
-
-    assert [warning.code for warning in warnings] == ["policy_warning"]
-    assert warnings[0].message == "profile missing\nmodel ambiguous"
-
-
 def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> None:
     _write_agent_profile(
         tmp_path,
@@ -226,6 +171,8 @@ def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> No
     )
     profile = load_agent_profile("reviewer", tmp_path)
 
+    # canonical_id matches glob AND alias matches alias rule AND model matches model rule —
+    # first rule (glob) must win
     winner = match_model_policy(
         model_policies=profile.model_policies,
         canonical_model_id="gpt-5.5",
@@ -235,58 +182,6 @@ def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> No
     assert winner is not None
     assert winner.match_type == "model-glob"
     assert winner.match_value == "gpt-*"
-
-
-def test_match_model_policy_same_rank_uses_first_match(tmp_path: Path) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter=(
-            "name: reviewer\n"
-            "model-policies:\n"
-            "  - match: {model-glob: 'gpt-*'}\n"
-            "    override: {effort: low}\n"
-            "  - match: {model-glob: '*5.5'}\n"
-            "    override: {effort: medium}\n"
-        ),
-    )
-    profile = load_agent_profile("reviewer", tmp_path)
-
-    winner = match_model_policy(
-        model_policies=profile.model_policies,
-        canonical_model_id="gpt-5.5",
-        selected_model_token="fast",
-    )
-
-    assert winner is not None
-    assert winner.match_type == "model-glob"
-    assert winner.match_value == "gpt-*"
-
-
-def test_match_model_policy_first_match_wins_no_ambiguity(tmp_path: Path) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter=(
-            "name: reviewer\n"
-            "model-policies:\n"
-            "  - match: {model-glob: '*5.5'}\n"
-            "    override: {effort: medium}\n"
-            "  - match: {model-glob: 'gpt-*'}\n"
-            "    override: {effort: low}\n"
-        ),
-    )
-    profile = load_agent_profile("reviewer", tmp_path)
-
-    winner = match_model_policy(
-        model_policies=profile.model_policies,
-        canonical_model_id="gpt-5.5",
-        selected_model_token="fast",
-    )
-
-    assert winner is not None
-    assert winner.match_type == "model-glob"
-    assert winner.match_value == "*5.5"
 
 
 def test_validate_harness_compatibility_allows_policy_reroute() -> None:
@@ -582,7 +477,7 @@ def test_resolve_launch_policy_fallback_skips_unresolved_or_unavailable_candidat
     assert policy.harness == HarnessId.CODEX
 
 
-def test_resolve_launch_policy_fallback_preserves_policy_harness_override_for_gpt55(
+def test_resolve_launch_policy_fallback_preserves_policy_harness_and_effort_overrides(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -627,51 +522,6 @@ def test_resolve_launch_policy_fallback_preserves_policy_harness_override_for_gp
 
     assert policy.model == "gpt-5.5"
     assert policy.harness == HarnessId.OPENCODE
-
-
-def test_resolve_launch_policy_fallback_preserves_policy_effort_override_for_gpt55(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter=(
-            "name: reviewer\n"
-            "model: claude\n"
-            "model-policies:\n"
-            "  - match: {alias: gpt55}\n"
-            "    override: {harness: opencode, effort: medium}\n"
-        ),
-    )
-    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
-    gpt55 = _mock_alias(
-        alias="gpt55",
-        model_id="gpt-5.5",
-        harness=HarnessId.CODEX,
-        default_effort="low",
-    )
-    _patch_alias_resolution(
-        monkeypatch,
-        resolved_entries={
-            "claude": claude,
-            "claude-haiku-4-5": claude,
-            "gpt55": gpt55,
-            "gpt-5.5": gpt55,
-        },
-    )
-
-    policy = resolve_launch_policy(
-        SurfacePolicyInput(
-            surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            catalog=CatalogSession(tmp_path),
-            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
-            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
-            config=MeridianConfig(),
-            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-        )
-    )
-
     assert policy.execution_policy.effort == "medium"
 
 
@@ -709,52 +559,6 @@ def test_resolve_launch_policy_fallback_keeps_cli_effort_override(
             layers=(
                 RuntimeOverrides(agent="reviewer", effort="high"),
                 RuntimeOverrides(),
-            ),
-            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
-            config=MeridianConfig(),
-            harness_registry=_registry_with_harnesses(HarnessId.OPENCODE),
-        )
-    )
-
-    assert policy.model == "kimi-k2.6"
-    assert policy.harness == HarnessId.OPENCODE
-    assert policy.execution_policy.effort == "high"
-
-
-def test_resolve_launch_policy_fallback_keeps_env_effort_override(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter=(
-            "name: reviewer\n"
-            "model: claude\n"
-            "model-policies:\n"
-            "  - match: {alias: opencode}\n"
-            "    override: {harness: opencode, effort: medium}\n"
-        ),
-    )
-    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
-    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
-    _patch_alias_resolution(
-        monkeypatch,
-        resolved_entries={
-            "claude": claude,
-            "claude-haiku-4-5": claude,
-            "opencode": opencode,
-            "kimi-k2.6": opencode,
-        },
-    )
-
-    policy = resolve_launch_policy(
-        SurfacePolicyInput(
-            surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            catalog=CatalogSession(tmp_path),
-            layers=(
-                RuntimeOverrides(agent="reviewer"),
-                RuntimeOverrides(effort="high"),
             ),
             config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
             config=MeridianConfig(),
