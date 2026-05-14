@@ -5,7 +5,7 @@ from typing import Literal
 
 import pytest
 
-from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile, FanoutEntry
+from meridian.lib.catalog.agent import AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.model_aliases import entry
 from meridian.lib.launch.prompt import (
     _dedupe_fan_out_aliases,
@@ -21,8 +21,7 @@ def _profile(
     name: str,
     description: str,
     model: str | None = None,
-    models: dict[str, AgentModelEntry] | None = None,
-    fanout: tuple[FanoutEntry, ...] = (),
+    model_policies: tuple[ModelPolicyRule, ...] = (),
     mode: Literal["primary", "subagent"] = "subagent",
     model_invocable: bool = True,
 ) -> AgentProfile:
@@ -38,9 +37,9 @@ def _profile(
         effort=None,
         approval=None,
         autocompact=None,
+        autocompact_pct=None,
         mode=mode,
-        models=models or {},
-        fanout=fanout,
+        model_policies=model_policies,
         model_invocable=model_invocable,
         body="",
         path=tmp_path / f"{name}.md",
@@ -74,19 +73,41 @@ def test_build_agent_inventory_prompt_renders_model_and_fan_out_metadata(
             tmp_path=tmp_path,
             name="beta",
             description="Fan-out only",
-            models={"opus46": AgentModelEntry()},
+            model_policies=(
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="opus46",
+                    overrides={"effort": "medium"},
+                ),
+            ),
         ),
         _profile(
             tmp_path=tmp_path,
             name="alpha",
             description="Primary reviewer",
             model="gpt54",
-            models={
-                "gpt54": AgentModelEntry(),
-                "gpt55": AgentModelEntry(),
-                "dup55": AgentModelEntry(),
-                "unknown_alias": AgentModelEntry(),
-            },
+            model_policies=(
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt54",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt55",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="dup55",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="unknown_alias",
+                    overrides={"effort": "medium"},
+                ),
+            ),
         ),
     ]
     alias_load_count = 0
@@ -164,7 +185,7 @@ def test_build_agent_inventory_prompt_groups_by_mode(
     assert "Mode:" not in prompt
 
 
-def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
+def test_build_agent_inventory_prompt_uses_policy_fallback_chain_for_display(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -172,11 +193,18 @@ def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
         _profile(
             tmp_path=tmp_path,
             name="reviewer",
-            description="Explicit fanout",
-            models={"policy-only": AgentModelEntry()},
-            fanout=(
-                FanoutEntry(entry_type="alias", value="gpt54"),
-                FanoutEntry(entry_type="alias", value="gpt55"),
+            description="Policy fallback chain",
+            model_policies=(
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt55",
+                    overrides={"effort": "medium"},
+                ),
+                ModelPolicyRule(
+                    match_type="alias",
+                    match_value="gpt54",
+                    overrides={"effort": "high"},
+                ),
             ),
         ),
     ]
@@ -197,7 +225,7 @@ def test_build_agent_inventory_prompt_uses_explicit_fanout_for_display(
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
 
     assert prompt is not None
-    assert "- reviewer: Explicit fanout | Fan-out: gpt54, gpt55" in prompt.splitlines()
+    assert "- reviewer: Policy fallback chain | Fan-out: gpt55, gpt54" in prompt.splitlines()
     assert "policy-only" not in prompt
 
 
@@ -263,30 +291,47 @@ def test_build_agent_inventory_prompt_returns_none_when_all_hidden(
     assert build_agent_inventory_prompt(project_root=tmp_path) is None
 
 
-def test_get_fan_out_aliases_falls_back_to_models_keys(tmp_path: Path) -> None:
+def test_get_fan_out_aliases_empty_without_policy_entries(tmp_path: Path) -> None:
     profile = _profile(
         tmp_path=tmp_path,
         name="reviewer",
         description="Fallback",
-        models={"gpt54": AgentModelEntry(), "gpt55": AgentModelEntry()},
     )
 
-    assert _get_fan_out_aliases(profile) == ("gpt54", "gpt55")
+    assert _get_fan_out_aliases(profile) == ()
 
 
-def test_get_fan_out_aliases_prefers_explicit_fanout(tmp_path: Path) -> None:
+def test_get_fan_out_aliases_uses_policy_list_order(tmp_path: Path) -> None:
     profile = _profile(
         tmp_path=tmp_path,
         name="reviewer",
-        description="Explicit",
-        models={"policy-only": AgentModelEntry()},
-        fanout=(
-            FanoutEntry(entry_type="alias", value="gpt54"),
-            FanoutEntry(entry_type="alias", value="gpt55"),
+        description="Fallback policy",
+        model_policies=(
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="gpt55",
+                overrides={"effort": "medium"},
+            ),
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="gpt54",
+                overrides={"effort": "high"},
+            ),
+            ModelPolicyRule(
+                match_type="model-glob",
+                match_value="gpt-*",
+                overrides={"effort": "low"},
+            ),
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="disabled",
+                no_fallback=True,
+                overrides={"effort": "low"},
+            ),
         ),
     )
 
-    assert _get_fan_out_aliases(profile) == ("gpt54", "gpt55")
+    assert _get_fan_out_aliases(profile) == ("gpt55", "gpt54")
 
 
 # --- _dedupe_fan_out_aliases ---

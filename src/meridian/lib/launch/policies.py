@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 
-from meridian.lib.catalog.agent import AgentModelEntry, AgentProfile
+from meridian.lib.catalog.agent import AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig
@@ -26,6 +26,7 @@ from .compiler import (
     FieldProvenance,
     ProvenanceLevel,
     compile_launch_params,
+    effective_model_policies,
     match_model_policy,
 )
 from .launch_types import (
@@ -120,6 +121,7 @@ class ResolvedLaunchPolicy:
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None
+    fallback_chain: tuple[dict[str, object], ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
 
@@ -216,46 +218,6 @@ def _policy_warnings(
     return ()
 
 
-def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        effort=entry.effort,
-        autocompact=entry.autocompact,
-        autocompact_pct=entry.autocompact_pct,
-    )
-
-
-def _resolve_profile_model_overrides(
-    *,
-    profile: AgentProfile | None,
-    selected_entry: AliasEntry | None,
-    alias_catalog: dict[str, AliasEntry],
-) -> tuple[RuntimeOverrides, bool]:
-    if profile is None or not profile.models or selected_entry is None:
-        return RuntimeOverrides(), False
-
-    selected_alias = selected_entry.alias.strip()
-    if selected_alias and selected_alias in profile.models:
-        return _entry_to_overrides(profile.models[selected_alias]), True
-
-    selected_model_id = str(selected_entry.model_id)
-    if selected_model_id in profile.models:
-        return _entry_to_overrides(profile.models[selected_model_id]), True
-
-    matched_keys: list[str] = []
-    for key in profile.models:
-        catalog_entry = alias_catalog.get(key)
-        if catalog_entry is None:
-            continue
-        if catalog_entry.model_id == selected_entry.model_id:
-            matched_keys.append(key)
-
-    if not matched_keys:
-        return RuntimeOverrides(), False
-
-    winner = matched_keys[0]
-    return _entry_to_overrides(profile.models[winner]), True
-
-
 def _harness_is_available(
     harness_id: HarnessId,
     harness_registry: HarnessRegistry,
@@ -296,6 +258,39 @@ def _compiler_request_for_base_candidate(
         overlay = overlay.model_copy(update={"model_policies": ()})
     return replace(
         request,
+        agent_overlay=overlay,
+        profile_model_policies=(),
+    )
+
+
+def _compiler_request_for_fallback_candidate(
+    request: CompilerRequest,
+    matched_rule: ModelPolicyRule,
+) -> CompilerRequest:
+    """Return fallback-candidate request while preserving matched-rule overrides.
+
+    Fallback candidates must not recursively re-run model-policies against the
+    fallback token, but they must carry the selected matched rule's policy
+    overrides so the compiled fallback keeps its intended execution policy and
+    harness routing.
+    """
+
+    policy_overrides = RuntimeOverrides.model_validate(dict(matched_rule.overrides))
+    preserved_fields: tuple[str, ...] = ("harness", *EXECUTION_POLICY_FIELDS)
+    injected_fields = {
+        field_name: value
+        for field_name in preserved_fields
+        if (value := getattr(policy_overrides, field_name)) is not None
+        and getattr(request.cli_overrides, field_name) is None
+        and getattr(request.env_overrides, field_name) is None
+    }
+    merged_cli = request.cli_overrides.model_copy(update=injected_fields)
+    overlay = request.agent_overlay
+    if overlay is not None:
+        overlay = overlay.model_copy(update={"model_policies": ()})
+    return replace(
+        request,
+        cli_overrides=merged_cli,
         agent_overlay=overlay,
         profile_model_policies=(),
     )
@@ -353,26 +348,76 @@ def _try_harness_availability_fallback(
     *,
     harness_id: HarnessId,
     harness_registry: HarnessRegistry,
-    profile: AgentProfile | None,
+    model_policies: tuple[ModelPolicyRule, ...],
     model_explicit: bool,
     catalog: CatalogSession,
-) -> tuple[str, HarnessId, AliasEntry | None] | None:
+) -> tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule] | None:
     """Attempt fallback when harness is unavailable. Returns None if no fallback found."""
 
-    if model_explicit or _harness_is_available(harness_id, harness_registry) or profile is None:
+    if model_explicit or _harness_is_available(harness_id, harness_registry) or not model_policies:
         return None
 
-    for fanout_entry in profile.fanout:
-        fallback_token = fanout_entry.value
-        fallback = _fallback_entry_for_token(
-            fallback_token,
+    for fallback_token, fallback_harness, fallback_entry, matched_rule in (
+        _fallback_candidates_from_policies(
+            model_policies=model_policies,
             catalog=catalog,
             harness_registry=harness_registry,
         )
-        if fallback is not None:
-            return fallback
+    ):
+        return fallback_token, fallback_harness, fallback_entry, matched_rule
 
     return None
+
+
+def _fallback_candidates_from_policies(
+    *,
+    model_policies: tuple[ModelPolicyRule, ...],
+    catalog: CatalogSession,
+    harness_registry: HarnessRegistry,
+) -> list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]]:
+    """Build ordered harness-availability candidates from effective model-policies."""
+
+    candidates: list[tuple[str, HarnessId, AliasEntry | None, ModelPolicyRule]] = []
+    for rule in model_policies:
+        if rule.no_fallback or rule.match_type == "model-glob":
+            continue
+        fallback = _fallback_entry_for_token(
+            rule.match_value,
+            catalog=catalog,
+            harness_registry=harness_registry,
+        )
+        if fallback is None:
+            continue
+        token, fallback_harness, entry = fallback
+        candidates.append((token, fallback_harness, entry, rule))
+    return candidates
+
+
+def _effective_fallback_chain(
+    model_policies: tuple[ModelPolicyRule, ...],
+) -> tuple[dict[str, object], ...]:
+    fallback_chain: list[dict[str, object]] = []
+    for position, rule in enumerate(model_policies, start=1):
+        if rule.no_fallback or rule.match_type not in {"alias", "model"}:
+            continue
+        fallback_chain.append(
+            {
+                "token": rule.match_value,
+                "position": position,
+                "override_summary": {key: rule.overrides[key] for key in sorted(rule.overrides)},
+            }
+        )
+    return tuple(fallback_chain)
+
+
+def _with_fallback_chain(
+    compiler_result: CompilerResult,
+    model_policies: tuple[ModelPolicyRule, ...],
+) -> CompilerResult:
+    fallback_chain = _effective_fallback_chain(model_policies)
+    if not fallback_chain:
+        return compiler_result
+    return replace(compiler_result, fallback_chain=fallback_chain)
 
 
 def resolve_policy_fields(
@@ -400,99 +445,6 @@ def _require_policy_tier(
     if isinstance(tier, tuple):
         raise TypeError("resolve_policy_fields() accepts a tier tuple only as its sole argument.")
     return tier
-
-
-def _log_unmatched_profile_policy_defaults(
-    *,
-    profile: AgentProfile | None,
-    selected_entry: AliasEntry | None,
-    model_entry_matched: bool,
-    profile_defaults: RuntimeOverrides,
-) -> None:
-    if profile is None or not profile.models or selected_entry is None or model_entry_matched:
-        return
-    if not profile_defaults.model_dump(exclude_none=True):
-        return
-    _LOGGER.debug(
-        "Agent profile '%s' has generic model-policy defaults but no matching "
-        "models entry for '%s'; using generic profile defaults.",
-        profile.name,
-        selected_entry.model_id,
-    )
-
-
-def _model_entry_harness_provenance(entry: AliasEntry) -> str:
-    if entry.mars_provided_harness is not None:
-        return "mars-provided"
-    return "pattern-fallback"
-
-
-def resolve_harness_routing(
-    *,
-    resolved: RuntimeOverrides,
-    resolved_entry: AliasEntry | None,
-    model_resolution_error: ValueError | None,
-    policy_rule_harness: str | None,
-    model_layer_index: int | None,
-    harness_layer_index: int | None,
-    pre_profile_layer_count: int,
-    configured_default_harness: str,
-) -> tuple[HarnessId, str | None]:
-    """Resolve harness from model identity and override layers.
-
-    Returns (harness_id, provenance_note).
-    """
-
-    explicit_harness = (
-        resolved.harness
-        if _is_pre_profile_explicit_layer(
-            layer_index=harness_layer_index,
-            pre_profile_layer_count=pre_profile_layer_count,
-        )
-        else None
-    )
-
-    if explicit_harness:
-        harness_id = HarnessId(explicit_harness)
-        provenance_note = "explicit-override"
-    elif policy_rule_harness:
-        harness_id = HarnessId(policy_rule_harness)
-        provenance_note = "profile-model-policy"
-    elif resolved.harness:
-        harness_id = HarnessId(resolved.harness)
-        provenance_note = "explicit-override"
-    elif resolved.model:
-        if model_resolution_error is not None:
-            raise model_resolution_error
-        assert resolved_entry is not None
-        harness_id = resolved_entry.harness
-        provenance_note = _model_entry_harness_provenance(resolved_entry)
-    else:
-        harness_id = HarnessId(configured_default_harness or "claude")
-        provenance_note = "configured-default"
-
-    model_set_in_pre_profile_layers = _is_pre_profile_explicit_layer(
-        layer_index=model_layer_index,
-        pre_profile_layer_count=pre_profile_layer_count,
-    )
-    harness_from_profile_or_config = (
-        harness_layer_index is not None and harness_layer_index >= pre_profile_layer_count
-    )
-    harness_from_model_policy = policy_rule_harness is not None
-    if (
-        resolved.model
-        and model_set_in_pre_profile_layers
-        and (harness_from_model_policy or harness_from_profile_or_config)
-    ):
-        if model_resolution_error is not None:
-            raise model_resolution_error
-        assert resolved_entry is not None
-        model_derived_harness = resolved_entry.harness
-        if harness_id != model_derived_harness:
-            harness_id = model_derived_harness
-            provenance_note = "model-derived-override"
-
-    return harness_id, provenance_note
 
 
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
@@ -529,6 +481,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile.name if profile is not None else (requested_agent or configured_default_agent or "")
     )
     agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
+    effective_policies, _overlay_policy_count = effective_model_policies(
+        profile_model_policies=profile.model_policies if profile is not None else None,
+        agent_overlay=agent_overlay,
+    )
 
     requested_model_token = (
         explicit_user_overrides.model
@@ -551,7 +507,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
     compiler_request = CompilerRequest(
         requested_agent=requested_agent,
-        requested_model=surface.cli_overrides.model or surface.env_overrides.model,
         cli_overrides=surface.cli_overrides,
         env_overrides=surface.env_overrides,
         agent_overlay=agent_overlay,
@@ -568,8 +523,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             autocompact_pct=profile.autocompact_pct if profile is not None else None,
         ),
         profile_model_policies=profile.model_policies if profile is not None else None,
-        profile_legacy_models=dict(profile.models) if profile is not None else None,
-        profile_fanout=profile.fanout if profile is not None else None,
         profile_skills=profile_skills,
         resolved_alias_entry=resolved_entry,
         alias_catalog=alias_catalog,
@@ -578,7 +531,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         supported_execution_policy_fields=tuple(surface.supported_execution_policy_fields),
     )
 
-    compiler_result = compile_launch_params(compiler_request)
+    compiler_result = _with_fallback_chain(
+        compile_launch_params(compiler_request),
+        effective_policies,
+    )
     requested_token_for_selection = compiler_result.model_selection_requested_token
     harness_id = HarnessId(compiler_result.harness)
     harness_provenance = compiler_result.harness_provenance
@@ -597,6 +553,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         if demoted_candidate is not None:
             try:
                 compiler_result = demoted_candidate
+                compiler_result = _with_fallback_chain(compiler_result, effective_policies)
                 harness_id = HarnessId(compiler_result.harness)
                 harness_provenance = "availability-fallback"
                 model_resolution_error = None
@@ -611,13 +568,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             fallback = _try_harness_availability_fallback(
                 harness_id=harness_id,
                 harness_registry=surface.harness_registry,
-                profile=profile,
+                model_policies=effective_policies,
                 model_explicit=model_explicit,
                 catalog=surface.catalog,
             )
             if fallback is None:
                 raise primary_error
-            fallback_model, harness_id, resolved_entry = fallback
+            fallback_model, harness_id, resolved_entry, matched_rule = fallback
             compiler_request = replace(
                 compiler_request,
                 cli_overrides=compiler_request.cli_overrides.model_copy(
@@ -625,15 +582,18 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 ),
                 resolved_alias_entry=resolved_entry,
             )
-            # Fanout entries are explicit availability-chain candidates.
-            # Compile the selected fanout token as a base candidate so
-            # the chain does not recursively re-apply model-policy
-            # transformations to fallback entries.
-            compiler_result = compile_launch_params(
-                _compiler_request_for_base_candidate(compiler_request)
+            fallback_request = _compiler_request_for_fallback_candidate(
+                compiler_request,
+                matched_rule,
             )
-            if compiler_result.harness != str(harness_id):
-                compiler_result = replace(compiler_result, harness=str(harness_id))
+            # Policy-derived fallbacks keep the matched rule's overrides at
+            # CLI-equivalent precedence while stripping policy lists to avoid
+            # recursive re-matching.
+            compiler_result = _with_fallback_chain(
+                compile_launch_params(fallback_request),
+                effective_policies,
+            )
+            harness_id = HarnessId(compiler_result.harness)
             model_resolution_error = None
             harness_provenance = "availability-fallback"
             materialized = materialize_harness(
@@ -709,13 +669,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     profile_policy_rule_matched = compiler_result.matched_model_policy and (
         compiler_result.model_policy_source is ProvenanceLevel.PROFILE_MODEL_POLICY
     )
-    model_entry_matched = profile_policy_rule_matched
-    if not model_entry_matched:
-        _, model_entry_matched = _resolve_profile_model_overrides(
-            profile=profile,
-            selected_entry=selected_entry,
-            alias_catalog=alias_catalog,
-        )
     profile_policy_defaults = profile_overrides.execution_policy_scope()
     if (
         profile is not None
@@ -729,13 +682,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             "No model-policies rule matched for '%s'; using generic profile model-policy defaults.",
             selected_entry.model_id,
         )
-    _log_unmatched_profile_policy_defaults(
-        profile=profile,
-        selected_entry=selected_entry,
-        model_entry_matched=model_entry_matched,
-        profile_defaults=profile_policy_defaults,
-    )
-
     resolved_routing, resolved_execution_policy = _build_final_resolved_views(
         base_resolved=base_resolved,
         compiler_result=compiler_result,
@@ -772,6 +718,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=harness_id),
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
+        fallback_chain=compiler_result.fallback_chain,
         warnings=_policy_warnings(
             profile_warning=profile_warning,
             model_warning=model_warning,
@@ -812,7 +759,6 @@ __all__ = [
     "ResolvedPolicies",
     "SurfacePolicyInput",
     "match_model_policy",
-    "resolve_harness_routing",
     "resolve_launch_policy",
     "resolve_policies",
     "resolve_policy_fields",

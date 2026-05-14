@@ -221,7 +221,7 @@ def _dedupe_fan_out_aliases(
     """Deduplicate display entries by resolved model id preserving profile order.
 
     Alias entries are resolved through the alias catalog. Entries that are not
-    known aliases may be literal model ids from structured fanout, so their
+    known aliases may be literal model ids from policy fallback rules, so their
     display value is treated as the canonical model id for deduplication.
     """
 
@@ -246,12 +246,15 @@ def _dedupe_fan_out_aliases(
 def _get_fan_out_aliases(agent: AgentProfile) -> tuple[str, ...]:
     """Get fan-out aliases for inventory display.
 
-    Uses explicit fanout field when available, falls back to models keys.
+    Uses model-policies fallback entries only.
     """
-    if agent.fanout:
-        return tuple(entry.value for entry in agent.fanout)
-    if agent.models:
-        return tuple(agent.models.keys())
+    fallback_rules = tuple(
+        rule
+        for rule in agent.model_policies
+        if not rule.no_fallback and rule.match_type in {"alias", "model"}
+    )
+    if fallback_rules:
+        return tuple(rule.match_value for rule in fallback_rules)
     return ()
 
 

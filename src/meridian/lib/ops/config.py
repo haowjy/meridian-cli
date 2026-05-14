@@ -577,7 +577,7 @@ def _dynamic_config_values(inspection: _ConfigInspectionState) -> list[ConfigRes
                 continue
             policies_seq = cast("list[object] | tuple[object, ...]", policies)
             if len(policies_seq) == 0:
-                rendered_policy_value = "[] (suppressed)"
+                rendered_policy_value = "[] (no overlay rules)"
             else:
                 rules_desc: list[str] = []
                 for policy_value in policies_seq:

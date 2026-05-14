@@ -310,7 +310,7 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 
 `meridian mars sync` automatically sets `MERIDIAN_MANAGED=1` in the mars subprocess environment. Mars uses this signal to suppress native agent emission to harness directories — agents are read by Meridian from `.mars/agents/`, not duplicated into `.claude/agents/` etc.
 
-See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `fanout`, and `mode`.
+See [agent-profiles.md](agent-profiles.md) for the agent profile format including `model-policies`, `no-fallback`, and `mode`. Legacy `fanout` and `fallback-order` are rejected; migrate to `model-policies` list order + `no-fallback: true`.
 
 ## Spawn Statuses
 

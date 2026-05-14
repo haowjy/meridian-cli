@@ -61,8 +61,6 @@ The frontmatter controls Meridian's routing and policy behavior. The markdown bo
 | `autocompact` | int | — | Compaction percentage threshold |
 | `timeout` | int | — | Spawn timeout in seconds |
 | `model-policies` | list | `[]` | Per-model override rules (see below) |
-| `fanout` | list | `[]` | Harness-availability fallback chain (see below) |
-| `models` | mapping | `{}` | Legacy per-model effort/autocompact overrides (deprecated) |
 
 ## `mode`
 
@@ -116,7 +114,7 @@ model-policies:
 | `alias` | Exact alias token used to select the model | `alias: sonnet` |
 | `model-glob` | Glob pattern against canonical model ID | `model-glob: "openai/*"` |
 
-Matching priority: `model` (most specific) > `alias` > `model-glob` (least specific). If two rules tie at the same specificity, launch fails with an ambiguity error.
+Matching is first-match-wins by list order. No specificity ranking or ambiguity errors are applied. If multiple rules could match, the earliest rule wins.
 
 ### Override keys
 
@@ -132,32 +130,38 @@ Model-policy overrides sit between explicit user flags and the profile's generic
 CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defaults  >  config  >  alias defaults
 ```
 
-Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) can replace the agent policy list (including replacing it with an empty list) per-project without editing the profile. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
+Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) prepend their `model-policies` rules before profile rules to form one effective ordered list. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
 
-## `fanout`
+## Implicit Fallback Ordering in `model-policies`
 
-Declares a fallback model chain used when the head candidate's harness is unavailable. When Meridian detects the head candidate's harness is not installed, it walks the fanout entries in order and selects the first one whose harness is available.
+Harness-availability fallback candidates are derived directly from
+`model-policies` list order:
+
+- rules with `match.alias` or `match.model` are fallback candidates, in the
+  order they appear
+- rules with `match.model-glob` are override-only (never fallback candidates)
+- `no-fallback: true` opts a rule out of fallback candidacy
 
 ```yaml
 model: claude-sonnet
-fanout:
-  - alias: gpt5
-  - alias: codex
-  - model: openai/gpt-4o
+model-policies:
+  - match: { alias: gpt5 }
+    override: { effort: medium }
+  - match: { alias: codex }
+    override: { effort: medium }
+  - match: { model: openai/gpt-5.3-codex }
+    no-fallback: true
+    override: { autocompact: 20 }
 ```
 
-Each entry is either an `alias` (looked up in the model catalog) or a literal `model` ID. Fallback only activates when:
+Fallback only activates when:
 
 - the head candidate's harness is unavailable, **and**
 - the user did not explicitly set a model with `-m` / `MERIDIAN_MODEL`
 
-`fanout` also controls the fan-out column shown in `meridian mars list`.
-
-Shorthand (single alias):
-
-```yaml
-fanout: gpt5
-```
+Legacy `fallback-order` and `fanout` are rejected with migration guidance.
+Migrate by ordering `model-policies` rules directly and adding
+`no-fallback: true` for rules that should never be considered for fallback.
 
 ## Skills and Skill Variants
 
@@ -193,7 +197,8 @@ See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agen
 - reviewer: Adversarial review | Model: gpt-5.4 | Fan-out: gpt, opus
 ```
 
-Each line shows: name, description, default model, and fanout aliases (deduplicated by resolved model ID).
+Each line shows: name, description, default model, and fallback-chain aliases
+(deduplicated by resolved model ID).
 
 ## Harness Availability Fallback
 
@@ -201,8 +206,8 @@ When a spawn is launched with an agent profile and the current head candidate's 
 
 1. Compile the base launch candidate from normal precedence (profile/config/user inputs).
 2. Apply the active `model-policies` list to that base candidate. When a rule matches, its override becomes the new head. The original base candidate is retained as the next availability fallback in the chain.
-3. Append `fanout` entries in declared order.
-4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → fanout) and pick the first candidate whose harness is available.
+3. Append fallback-eligible `model-policies` rules in declared list order (rules matched by `alias` or `model`; skip `no-fallback: true`; `model-glob` remains override-only).
+4. Walk the resulting ordered candidate chain (policy-rerouted head → demoted base → implicit list-order fallback chain) and pick the first candidate whose harness is available.
 5. If nothing resolves, fail with a clear error naming the unavailable harness.
 
 `model-policies` participate as candidate transforms on top of the base launch candidate. They are not a separate token-discovery list outside the chain.
@@ -211,26 +216,12 @@ This means a profile like:
 
 ```yaml
 model: claude-sonnet
-fanout:
-  - alias: gpt5
+model-policies:
+  - match: { alias: gpt5 }
+    override: { effort: medium }
 ```
 
 ...works on a machine with only Codex installed — it silently routes to `gpt5` rather than erroring.
-
-## Legacy `models:` Field
-
-The `models:` mapping was an earlier mechanism for per-model `effort` and `autocompact` overrides. It is still accepted but deprecated in favor of `model-policies:`.
-
-```yaml
-# deprecated — use model-policies instead
-models:
-  claude-sonnet:
-    effort: high
-  gpt5:
-    autocompact: 20
-```
-
-A deprecation warning is logged when `models:` is present without `model-policies:` or `fanout:`.
 
 ## Example Profiles
 
@@ -253,16 +244,18 @@ You summarize documents. Be concise. Return only the summary.
 name: coder
 description: Implementation tasks for backend, frontend, CLI, and infrastructure.
 model: gpt55
-fanout:
-  - alias: gpt55
-  - alias: codex
 model-policies:
+  - match:
+      alias: gpt55
+    override:
+      effort: medium
   - match:
       alias: codex
     override:
       effort: medium
   - match:
       model-glob: "anthropic/*"
+    no-fallback: true
     override:
       harness: claude
       effort: high

@@ -7,7 +7,7 @@ from enum import Enum
 from fnmatch import fnmatchcase
 from typing import Literal, cast
 
-from meridian.lib.catalog.agent import AgentModelEntry, FanoutEntry, ModelPolicyRule
+from meridian.lib.catalog.agent import ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import AgentOverlayConfig
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -29,7 +29,6 @@ class ProvenanceLevel(Enum):
     PROFILE_DEFAULT = "profile-default"
     CONFIG_DEFAULT = "config-default"
     ALIAS_DEFAULT = "alias-default"
-    HARNESS_FALLBACK = "harness-fallback"
     UNSET = "unset"
 
 
@@ -53,7 +52,6 @@ class CompilerRequest:
 
     # Identity
     requested_agent: str | None
-    requested_model: str | None
 
     # Layered override sources — separate for provenance accuracy
     cli_overrides: RuntimeOverrides
@@ -66,8 +64,6 @@ class CompilerRequest:
     profile_routing_harness: str | None
     profile_policy_defaults: ResolvedExecutionPolicy
     profile_model_policies: tuple[ModelPolicyRule, ...] | None  # None = no profile
-    profile_legacy_models: dict[str, AgentModelEntry] | None
-    profile_fanout: tuple[FanoutEntry, ...] | None
     profile_skills: tuple[str, ...]
 
     # Model catalog data
@@ -93,7 +89,6 @@ class CompilerResult:
 
     # Identity
     agent_name: str | None
-    profile_found: bool
 
     # Model + routing
     model: str
@@ -118,8 +113,7 @@ class CompilerResult:
     warnings: tuple[str, ...] = ()
 
     # Fallback info
-    fallback_applied: bool = False
-    fallback_model: str | None = None
+    fallback_chain: tuple[dict[str, object], ...] = ()
     model_policy_source: ProvenanceLevel = ProvenanceLevel.UNSET
     matched_model_policy: bool = False
 
@@ -167,8 +161,8 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
 
     output["provenance"] = render_provenance(result.field_provenance)
 
-    if result.fallback_applied:
-        output["fallback_model"] = result.fallback_model
+    if result.fallback_chain:
+        output["fallback_chain"] = list(result.fallback_chain)
     if result.warnings:
         output["warnings"] = list(result.warnings)
     return output
@@ -182,31 +176,24 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
     model_token, model_source = _resolve_model_token(request)
     canonical_model_id = _canonical_model_id(model_token=model_token, request=request)
 
-    effective_policies, policy_source, legacy_models_allowed = _effective_model_policies(request)
+    effective_policies, overlay_policy_count = effective_model_policies(
+        profile_model_policies=request.profile_model_policies,
+        agent_overlay=request.agent_overlay,
+    )
     matched_policy = _match_policy_rule(
         model_policies=effective_policies,
         canonical_model_id=canonical_model_id,
         selected_model_token=model_token,
     )
+    policy_source = _matched_policy_provenance(
+        matched_policy=matched_policy,
+        model_policies=effective_policies,
+        overlay_policy_count=overlay_policy_count,
+    )
     matched_policy_overrides = _policy_overrides(matched_policy)
-
-    legacy_overrides = RuntimeOverrides()
-    if matched_policy is None and legacy_models_allowed:
-        legacy_overrides = _resolve_legacy_model_overrides(
-            request=request,
-            model_token=model_token,
-            canonical_model_id=canonical_model_id,
-        )
 
     policy_override_tier = matched_policy_overrides
     policy_override_source = policy_source if matched_policy is not None else ProvenanceLevel.UNSET
-    if (
-        matched_policy is None
-        and legacy_models_allowed
-        and legacy_overrides.model_dump(exclude_none=True)
-    ):
-        policy_override_tier = legacy_overrides
-        policy_override_source = ProvenanceLevel.PROFILE_MODEL_POLICY
 
     harness, harness_source, harness_provenance = _resolve_harness(
         request=request,
@@ -297,7 +284,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
 
     return CompilerResult(
         agent_name=request.requested_agent,
-        profile_found=request.profile_model_policies is not None,
         model=model,
         model_token=model_token,
         harness=harness,
@@ -324,9 +310,7 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             timeout_source=timeout_source,
         ),
         warnings=tuple(warnings),
-        fallback_applied=False,
-        fallback_model=None,
-        model_policy_source=policy_source if effective_policies else ProvenanceLevel.UNSET,
+        model_policy_source=policy_source,
         matched_model_policy=matched_policy is not None,
     )
 
@@ -337,38 +321,19 @@ def match_model_policy(
     canonical_model_id: str,
     selected_model_token: str,
 ) -> ModelPolicyRule | None:
-    """Find the single best-matching model policy rule.
+    """Find the first matching model policy rule by list order.
 
-    Ranking: exact model > exact alias > model-glob. Ambiguity at the
-    same specificity rank raises ValueError.
+    Rules are evaluated in order. The first match wins.
     """
 
-    ranked_matches: list[tuple[int, ModelPolicyRule]] = []
     for rule in model_policies:
         if rule.match_type == "model" and rule.match_value == canonical_model_id:
-            ranked_matches.append((0, rule))
-        elif rule.match_type == "alias" and rule.match_value == selected_model_token:
-            ranked_matches.append((1, rule))
-        elif rule.match_type == "model-glob" and fnmatchcase(canonical_model_id, rule.match_value):
-            ranked_matches.append((2, rule))
-
-    if not ranked_matches:
-        return None
-
-    best_rank = min(rank for rank, _rule in ranked_matches)
-    winners = [rule for rank, rule in ranked_matches if rank == best_rank]
-    if len(winners) > 1:
-        match_kind = {
-            0: "model",
-            1: "alias",
-            2: "model-glob",
-        }[best_rank]
-        values = ", ".join(rule.match_value for rule in winners)
-        raise ValueError(
-            f"Ambiguous model-policies for {match_kind} match on "
-            f"'{selected_model_token}' / '{canonical_model_id}': {values}."
-        )
-    return winners[0]
+            return rule
+        if rule.match_type == "alias" and rule.match_value == selected_model_token:
+            return rule
+        if rule.match_type == "model-glob" and fnmatchcase(canonical_model_id, rule.match_value):
+            return rule
+    return None
 
 
 def _resolve_field[T](
@@ -420,21 +385,40 @@ def _overlay_policy_rules(overlay: AgentOverlayConfig) -> tuple[ModelPolicyRule,
             match_type=cast("Literal['model', 'alias', 'model-glob']", rule.match_type),
             match_value=rule.match_value,
             overrides=dict(rule.overrides),
+            no_fallback=rule.no_fallback,
         )
         for rule in overlay.model_policies
     )
 
 
-def _effective_model_policies(
-    request: CompilerRequest,
-) -> tuple[tuple[ModelPolicyRule, ...], ProvenanceLevel, bool]:
-    if request.agent_overlay is not None and request.agent_overlay.model_policies is not None:
-        return (
-            _overlay_policy_rules(request.agent_overlay),
-            ProvenanceLevel.AGENT_OVERLAY_POLICY,
-            False,
-        )
-    return request.profile_model_policies or (), ProvenanceLevel.PROFILE_MODEL_POLICY, True
+def effective_model_policies(
+    *,
+    profile_model_policies: tuple[ModelPolicyRule, ...] | None,
+    agent_overlay: AgentOverlayConfig | None,
+) -> tuple[tuple[ModelPolicyRule, ...], int]:
+    profile_policies = profile_model_policies or ()
+    if agent_overlay is None or agent_overlay.model_policies is None:
+        return profile_policies, 0
+
+    overlay_policies = _overlay_policy_rules(agent_overlay)
+    effective_policies = (*overlay_policies, *profile_policies)
+    return effective_policies, len(overlay_policies)
+
+
+def _matched_policy_provenance(
+    *,
+    matched_policy: ModelPolicyRule | None,
+    model_policies: tuple[ModelPolicyRule, ...],
+    overlay_policy_count: int,
+) -> ProvenanceLevel:
+    if matched_policy is None:
+        return ProvenanceLevel.UNSET
+    for index, candidate in enumerate(model_policies):
+        if candidate is matched_policy:
+            if index < overlay_policy_count:
+                return ProvenanceLevel.AGENT_OVERLAY_POLICY
+            return ProvenanceLevel.PROFILE_MODEL_POLICY
+    return ProvenanceLevel.UNSET
 
 
 def _match_policy_rule(
@@ -456,47 +440,6 @@ def _policy_overrides(rule: ModelPolicyRule | None) -> RuntimeOverrides:
     if rule is None:
         return RuntimeOverrides()
     return RuntimeOverrides.model_validate(dict(rule.overrides))
-
-
-def _resolve_legacy_model_overrides(
-    *,
-    request: CompilerRequest,
-    model_token: str,
-    canonical_model_id: str,
-) -> RuntimeOverrides:
-    legacy_models = request.profile_legacy_models or {}
-    if not legacy_models or not model_token:
-        return RuntimeOverrides()
-
-    if model_token in legacy_models:
-        return _entry_to_overrides(legacy_models[model_token])
-    if canonical_model_id and canonical_model_id in legacy_models:
-        return _entry_to_overrides(legacy_models[canonical_model_id])
-    if request.resolved_alias_entry is None:
-        return RuntimeOverrides()
-
-    selected_model_id = request.resolved_alias_entry.model_id
-    matched_keys: list[str] = []
-    for key in legacy_models:
-        catalog_entry = request.alias_catalog.get(key)
-        if catalog_entry is None:
-            continue
-        if catalog_entry.model_id == selected_model_id:
-            matched_keys.append(key)
-
-    if not matched_keys:
-        return RuntimeOverrides()
-
-    winner = matched_keys[0]
-    return _entry_to_overrides(legacy_models[winner])
-
-
-def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:
-    return RuntimeOverrides(
-        effort=entry.effort,
-        autocompact=entry.autocompact,
-        autocompact_pct=entry.autocompact_pct,
-    )
 
 
 def _policy_rule_harness(policy_rule: ModelPolicyRule | None) -> str | None:
@@ -528,8 +471,7 @@ def _provenance_rank(level: ProvenanceLevel) -> int:
         ProvenanceLevel.PROFILE_DEFAULT: 5,
         ProvenanceLevel.CONFIG_DEFAULT: 6,
         ProvenanceLevel.ALIAS_DEFAULT: 7,
-        ProvenanceLevel.HARNESS_FALLBACK: 8,
-        ProvenanceLevel.UNSET: 9,
+        ProvenanceLevel.UNSET: 8,
     }
     return order[level]
 
@@ -601,6 +543,7 @@ __all__ = [
     "ResolvedExecutionPolicy",
     "compile_launch_params",
     "compiler_result_to_dry_run_dict",
+    "effective_model_policies",
     "match_model_policy",
     "render_provenance",
 ]

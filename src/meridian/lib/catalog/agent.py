@@ -4,15 +4,13 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.catalog.skill import files_have_equal_text, split_markdown_frontmatter
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.overrides import (
     KNOWN_APPROVAL_VALUES,
     KNOWN_EFFORT_VALUES,
-    AutocompactPctValue,
-    AutocompactValue,
     validate_autocompact_pct_value,
     validate_autocompact_value,
 )
@@ -32,24 +30,6 @@ _MODEL_POLICY_OVERRIDE_KEYS = (
 )
 
 
-class AgentModelEntry(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
-
-    effort: str | None = None
-    autocompact: AutocompactValue = None
-    autocompact_pct: AutocompactPctValue = None
-
-    @field_validator("effort")
-    @classmethod
-    def _validate_effort(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        if normalized not in _KNOWN_EFFORT_VALUES:
-            raise ValueError(f"expected one of {sorted(_KNOWN_EFFORT_VALUES)}")
-        return normalized
-
-
 class ModelPolicyRule(BaseModel):
     """One model-policy override rule from profile frontmatter."""
 
@@ -57,16 +37,8 @@ class ModelPolicyRule(BaseModel):
 
     match_type: Literal["model", "alias", "model-glob"]
     match_value: str
+    no_fallback: bool = False
     overrides: Mapping[str, object]
-
-
-class FanoutEntry(BaseModel):
-    """One fan-out display entry."""
-
-    model_config = ConfigDict(frozen=True)
-
-    entry_type: Literal["alias", "model"]
-    value: str
 
 
 class AgentProfile(BaseModel):
@@ -88,8 +60,6 @@ class AgentProfile(BaseModel):
     autocompact_pct: int | None = None
     mode: Literal["primary", "subagent"] = "subagent"
     model_policies: tuple[ModelPolicyRule, ...] = ()
-    models: Mapping[str, AgentModelEntry] = Field(default_factory=dict)
-    fanout: tuple[FanoutEntry, ...] = ()
     model_invocable: bool = True
     body: str
     path: Path
@@ -120,31 +90,6 @@ def _normalize_deduplicated(value: object) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _parse_model_overrides(
-    raw_models: object,
-    *,
-    profile_name: str,
-) -> dict[str, AgentModelEntry]:
-    _ = profile_name
-    if raw_models is None:
-        return {}
-    if not isinstance(raw_models, Mapping):
-        return {}
-
-    parsed: dict[str, AgentModelEntry] = {}
-    for raw_key, raw_value in cast("Mapping[object, object]", raw_models).items():
-        key = str(raw_key).strip()
-        if not key:
-            continue
-        if not isinstance(raw_value, Mapping):
-            continue
-        try:
-            parsed[key] = AgentModelEntry.model_validate(raw_value)
-        except ValidationError:
-            continue
-    return parsed
-
-
 def _parse_model_policies(
     raw_policies: object,
     *,
@@ -159,6 +104,7 @@ def _parse_model_policies(
 
     parsed: list[ModelPolicyRule] = []
     allowed_match_keys = {"model", "alias", "model-glob"}
+    legacy_fallback_key = "fallback" + "-order"
     for index, raw_rule in enumerate(cast("list[object]", raw_policies), start=1):
         if not isinstance(raw_rule, Mapping):
             raise ValueError(
@@ -197,12 +143,32 @@ def _parse_model_policies(
                 f"Agent profile '{profile_name}' has invalid model-policies[{index}].override: "
                 "expected mapping."
             )
+        if any(str(key).strip() == legacy_fallback_key for key in rule):
+            raise ValueError(
+                f"Agent profile '{profile_name}' model-policies[{index}] uses "
+                "'fallback-order' which is no longer supported. Remove fallback-order — "
+                "fallback order is now implicit from list position. Use 'no-fallback: true' "
+                "to exclude a rule from fallback."
+            )
+        raw_no_fallback = rule.get("no-fallback", False)
+        if raw_no_fallback is None:
+            no_fallback = False
+        elif isinstance(raw_no_fallback, bool):
+            no_fallback = raw_no_fallback
+        else:
+            raise ValueError(
+                f"Agent profile '{profile_name}' model-policies[{index}] "
+                "no-fallback must be true or false."
+            )
+        if match_key == "model-glob":
+            no_fallback = True
         overrides = {
             str(key).strip(): value
             for key, value in cast("Mapping[object, object]", raw_override).items()
             if str(key).strip()
         }
-        if not overrides:
+        is_fallback_candidate = match_key in {"alias", "model"} and not no_fallback
+        if not overrides and not is_fallback_candidate:
             raise ValueError(
                 f"Agent profile '{profile_name}' model-policies[{index}] must set at least "
                 "one override field."
@@ -218,61 +184,11 @@ def _parse_model_policies(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),
                 match_value=match_value,
+                no_fallback=no_fallback,
                 overrides=overrides,
             )
         )
     return tuple(parsed)
-
-
-def _parse_fanout_entries(
-    raw_fanout: object,
-    *,
-    profile_name: str,
-) -> tuple[FanoutEntry, ...]:
-    if raw_fanout is None:
-        return ()
-    if isinstance(raw_fanout, str):
-        normalized = raw_fanout.strip()
-        return (FanoutEntry(entry_type="alias", value=normalized),) if normalized else ()
-    if not isinstance(raw_fanout, list):
-        raise ValueError(f"Agent profile '{profile_name}' has invalid fanout: expected list.")
-
-    entries: list[FanoutEntry] = []
-    for index, raw_entry in enumerate(cast("list[object]", raw_fanout), start=1):
-        if isinstance(raw_entry, str):
-            normalized = raw_entry.strip()
-            if normalized:
-                entries.append(FanoutEntry(entry_type="alias", value=normalized))
-            continue
-        if not isinstance(raw_entry, Mapping):
-            raise ValueError(
-                f"Agent profile '{profile_name}' has invalid fanout[{index}]: expected mapping."
-            )
-        entry = cast("Mapping[object, object]", raw_entry)
-        normalized_entry = {str(key).strip(): value for key, value in entry.items()}
-        if len(normalized_entry) != 1:
-            raise ValueError(
-                f"Agent profile '{profile_name}' fanout[{index}] must have exactly one of "
-                "alias or model."
-            )
-        entry_key = next(iter(normalized_entry))
-        if entry_key not in {"alias", "model"}:
-            raise ValueError(
-                f"Agent profile '{profile_name}' fanout[{index}] has unknown key "
-                f"'{entry_key}': expected alias or model."
-            )
-        value = str(normalized_entry.get(entry_key, "")).strip()
-        if not value:
-            raise ValueError(
-                f"Agent profile '{profile_name}' fanout[{index}] {entry_key} must not be empty."
-            )
-        entries.append(
-            FanoutEntry(
-                entry_type=cast("Literal['alias', 'model']", entry_key),
-                value=value,
-            )
-        )
-    return tuple(entries)
 
 
 def parse_agent_profile(path: Path) -> AgentProfile:
@@ -292,11 +208,20 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     autocompact_pct_value = frontmatter.get("autocompact_pct")
     mode_value = frontmatter.get("mode")
     model_policies_value = frontmatter.get("model-policies")
-    models_value = frontmatter.get("models")
-    fanout_value = frontmatter.get("fanout")
     model_invocable_value = frontmatter.get("model-invocable")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
+    if frontmatter.get("fanout") is not None:
+        raise ValueError(
+            f"Agent profile '{profile_name}' contains 'fanout' which is no longer supported. "
+            "Declare fallback candidates in model-policies list order instead. "
+            "Use 'no-fallback: true' to exclude a rule."
+        )
+    if frontmatter.get("models") is not None:
+        raise ValueError(
+            f"Agent profile '{profile_name}' contains 'models' which is no longer supported. "
+            "Use model-policies to express per-model overrides."
+        )
     model_invocable = (
         model_invocable_value if isinstance(model_invocable_value, bool) else True
     )
@@ -329,12 +254,10 @@ def parse_agent_profile(path: Path) -> AgentProfile:
                     "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
                 )
 
-    models = _parse_model_overrides(models_value, profile_name=profile_name)
     model_policies = _parse_model_policies(
         model_policies_value,
         profile_name=profile_name,
     )
-    fanout = _parse_fanout_entries(fanout_value, profile_name=profile_name)
 
     mode = str(mode_value).strip() if mode_value is not None else "subagent"
     if mode not in {"primary", "subagent"}:
@@ -358,8 +281,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         autocompact_pct=autocompact_pct,
         mode=cast("Literal['primary', 'subagent']", mode),
         model_policies=model_policies,
-        models=models,
-        fanout=fanout,
         model_invocable=model_invocable,
         body=body,
         path=path.resolve(),

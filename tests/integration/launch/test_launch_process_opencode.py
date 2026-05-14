@@ -15,10 +15,15 @@ from typing import Any
 import pytest
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.projections.project_opencode_streaming import (
+    project_opencode_spec_to_session_payload,
+)
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process.primary_attach import (
     PrimaryAttachError,
     PrimaryAttachOutcome,
@@ -32,6 +37,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.types import SessionMode
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -460,3 +466,60 @@ def test_launch_primary_dry_run_returns_terminal_surface_mode(tmp_path: Path) ->
 
     assert result.exit_code == 0
     assert result.terminal_surface_mode == "pty_mediated"
+
+
+def test_opencode_non_interactive_projection_includes_variant_from_effort(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "opencode-subprocess-variant"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    harness_registry = get_default_harness_registry()
+    config = load_config(project_root)
+
+    launch_context = build_launch_context(
+        spawn_id="dry-run-opencode-subprocess-variant",
+        request=SpawnRequest(
+            prompt="run task",
+            prompt_is_composed=False,
+            model="gemini-2.5-pro",
+            harness=HarnessId.OPENCODE.value,
+            execution_policy=ResolvedExecutionPolicy(effort="medium"),
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            config_snapshot=config.model_dump(mode="json", exclude_none=True),
+            runtime_root=(project_root / ".meridian").as_posix(),
+            project_paths_project_root=project_root.as_posix(),
+            project_paths_execution_cwd=project_root.as_posix(),
+        ),
+        harness_registry=harness_registry,
+        dry_run=True,
+    )
+
+    argv = launch_context.binding.argv
+    assert "--variant" in argv
+    variant_index = argv.index("--variant")
+    assert argv[variant_index + 1] == "medium"
+
+
+def test_opencode_streaming_logs_effort_warning_without_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("DEBUG")
+    payload = project_opencode_spec_to_session_payload(
+        ResolvedLaunchSpec(
+            model="gemini-2.5-pro",
+            effort="medium",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        )
+    )
+
+    assert payload["model"] == "gemini-2.5-pro"
+    assert payload["modelID"] == "gemini-2.5-pro"
+    assert "effort" not in payload
+    assert (
+        "OpenCode streaming does not support effort override; ignoring effort=medium"
+        in caplog.text
+    )

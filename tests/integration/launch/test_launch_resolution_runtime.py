@@ -7,8 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.types import HarnessId
-from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.catalog.model_aliases import AliasEntry
+from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.harness.registry import (
+    HarnessRegistry,
+    get_default_harness_registry,
+)
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.launch.plan import (
@@ -26,6 +31,55 @@ def _write_minimal_mars_config(project_root: Path) -> None:
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
     )
+
+
+def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:
+    path = project_root / ".mars" / "agents" / f"{name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\n{frontmatter}\n---\n\n# {name}\n", encoding="utf-8")
+
+
+def _mock_alias(
+    *,
+    alias: str,
+    model_id: str,
+    harness: HarnessId,
+    default_effort: str | None = None,
+) -> AliasEntry:
+    return AliasEntry(
+        alias=alias,
+        model_id=ModelId(model_id),
+        resolved_harness=harness,
+        default_effort=default_effort,
+    )
+
+
+def _patch_alias_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    resolved_entries: dict[str, AliasEntry],
+) -> None:
+    def resolve_entry(self: CatalogSession, name: str) -> AliasEntry:
+        _ = self
+        try:
+            return resolved_entries[name]
+        except KeyError as exc:
+            raise ValueError(f"Unknown model alias '{name}'") from exc
+
+    def list_entries(self: CatalogSession) -> list[AliasEntry]:
+        _ = self
+        return list(resolved_entries.values())
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_entry)
+    monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
+
+
+def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
+    base_registry = get_default_harness_registry()
+    registry = HarnessRegistry()
+    for harness_id in harness_ids:
+        registry.register(base_registry.get(harness_id))
+    return registry
 
 
 def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) -> None:
@@ -190,3 +244,50 @@ def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
 
     assert preview.harness.id is expected_harness
     assert preview.resolved_request.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
+
+
+def test_launch_resolution_fallback_policy_resolves_opencode_medium(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    _write_agent_profile(
+        tmp_path,
+        name="dev-orchestrator",
+        frontmatter=(
+            "name: dev-orchestrator\n"
+            "model: claude\n"
+            "model-policies:\n"
+            "  - match: {alias: gpt55}\n"
+            "    override: {harness: opencode, effort: medium}\n"
+        ),
+    )
+
+    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    gpt55 = _mock_alias(
+        alias="gpt55",
+        model_id="gpt-5.5",
+        harness=HarnessId.CODEX,
+        default_effort="low",
+    )
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "claude": claude,
+            "claude-haiku-4-5": claude,
+            "gpt55": gpt55,
+            "gpt-5.5": gpt55,
+        },
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-fallback-opencode-medium",
+        request=build_primary_spawn_request(request=LaunchRequest(agent="dev-orchestrator")),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+        dry_run=True,
+    )
+
+    assert preview.harness.id is HarnessId.OPENCODE
+    assert preview.resolved_request.model == "gpt-5.5"
+    assert preview.resolved_request.execution_policy.effort == "medium"

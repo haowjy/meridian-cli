@@ -159,6 +159,7 @@ class SpawnActionOutput(BaseModel):
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    fallback_chain: tuple[dict[str, object], ...] = ()
     terminal_surface_mode: str | None = None
     project_root: str | None = None
     project_root_source: str | None = None
@@ -240,6 +241,8 @@ class SpawnActionOutput(BaseModel):
                     "canonical_model_id": self.model_selection_canonical_id,
                     "harness_provenance": self.model_selection_harness_provenance,
                 }
+            if self.fallback_chain:
+                wire["fallback_chain"] = list(self.fallback_chain)
             if self.terminal_surface_mode is not None:
                 wire["terminal_surface_mode"] = self.terminal_surface_mode
             if self.cli_command:
