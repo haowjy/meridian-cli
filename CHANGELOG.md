@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-14
+
 ### Removed
 - Legacy `models:` field on agent profiles — parser, compiler, policy resolver, prompt builder. Use `model-policies:` instead. Profiles with `models:` now fail-closed at parse time.
 - `AgentModelEntry` type and all legacy model-override resolution paths in compiler and policies.
