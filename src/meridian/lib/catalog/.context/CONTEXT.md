@@ -51,6 +51,9 @@ separate CLI invocations and prevent alias updates from being picked up.
 
 ### Agent Profile Model-Policy Parsing Rules (`agent.py`)
 
+**`models:`** — raises `ValueError` at parse time. Removed; use `model-policies:` for
+per-model overrides.
+
 **`fanout:`** — raises `ValueError` at parse time. Not supported; profiles express
 fallback candidates via ordered `model-policies` list rules instead.
 
