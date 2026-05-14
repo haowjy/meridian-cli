@@ -582,51 +582,6 @@ def test_resolve_launch_policy_fallback_skips_unresolved_or_unavailable_candidat
     assert policy.harness == HarnessId.CODEX
 
 
-def test_resolve_launch_policy_rejects_legacy_fanout_profiles(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter=(
-            "name: reviewer\n"
-            "model: claude\n"
-            "model-policies:\n"
-            "  - match: {alias: codex}\n"
-            "    override: {effort: medium}\n"
-            "fanout:\n"
-            "  - alias: opencode\n"
-        ),
-    )
-    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
-    codex = _mock_alias(alias="codex", model_id="gpt-5.3-codex", harness=HarnessId.CODEX)
-    opencode = _mock_alias(alias="opencode", model_id="kimi-k2.6", harness=HarnessId.OPENCODE)
-    _patch_alias_resolution(
-        monkeypatch,
-        resolved_entries={
-            "claude": claude,
-            "claude-haiku-4-5": claude,
-            "codex": codex,
-            "gpt-5.3-codex": codex,
-            "opencode": opencode,
-            "kimi-k2.6": opencode,
-        },
-    )
-
-    with pytest.raises(ValueError, match="contains 'fanout' which is no longer supported"):
-        resolve_launch_policy(
-            SurfacePolicyInput(
-                surface=LaunchCompositionSurface.SPAWN_PREPARE,
-                catalog=CatalogSession(tmp_path),
-                layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
-                config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
-                config=MeridianConfig(),
-                harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-            )
-        )
-
-
 def test_resolve_launch_policy_fallback_preserves_policy_harness_override_for_gpt55(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

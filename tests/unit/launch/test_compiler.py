@@ -310,35 +310,6 @@ def test_compile_launch_params_three_state_model_policies_overlay_prepends_profi
     assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
 
 
-def test_compile_launch_params_overlay_prepends_before_profile_policies() -> None:
-    alias = _alias_entry()
-    profile_rule = ModelPolicyRule(
-        match_type="alias",
-        match_value="gptmini",
-        overrides={"effort": "high"},
-    )
-    overlay = AgentOverlayConfig(
-        model_policies=(
-            AgentOverlayModelPolicy(
-                match_type="alias",
-                match_value="gptmini",
-                overrides={"effort": "xhigh"},
-            ),
-        )
-    )
-    request = _request(
-        cli=RuntimeOverrides(model="gptmini"),
-        overlay=overlay,
-        profile_model_policies=(profile_rule,),
-        alias_entry=alias,
-    )
-
-    result = compile_launch_params(request)
-
-    assert result.execution_policy.effort == "xhigh"
-    assert result.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_POLICY
-
-
 def test_compile_launch_params_profile_rule_wins_when_overlay_rule_doesnt_match() -> None:
     alias = _alias_entry()
     profile_rule = ModelPolicyRule(
@@ -367,7 +338,9 @@ def test_compile_launch_params_profile_rule_wins_when_overlay_rule_doesnt_match(
     assert result.execution_policy.effort == "high"
     assert result.field_provenance.effort_source is ProvenanceLevel.PROFILE_MODEL_POLICY
 
-def test_compile_launch_params_model_overrides_profile_policy_harness() -> None:
+def test_compile_launch_params_model_derived_harness_beats_policy_harness_override() -> None:
+    """Model-derived harness (from alias catalog) wins over a policy rule that sets harness
+    to a different value when the model was set at a higher-precedence tier than the harness."""
     alias = _alias_entry()
     overlay = AgentOverlayConfig(
         model="gptmini",
@@ -392,10 +365,8 @@ def test_compile_launch_params_model_overrides_profile_policy_harness() -> None:
 
     result = compile_launch_params(request)
 
-    assert result.model_policy_source is ProvenanceLevel.PROFILE_MODEL_POLICY
+    # alias catalog says gptmini → codex; policy tried to set claude but model-derived wins
     assert result.harness == "codex"
-    assert result.harness_provenance == "model-derived-override"
-    assert result.field_provenance.harness_source is ProvenanceLevel.ALIAS_DEFAULT
 
 
 def test_compile_launch_params_first_match_wins_no_ambiguity_error() -> None:

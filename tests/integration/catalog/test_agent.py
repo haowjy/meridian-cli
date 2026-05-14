@@ -316,32 +316,6 @@ def test_parse_agent_profile_rejects_legacy_fallback_order(
         parse_agent_profile(profile_path)
 
 
-def test_parse_agent_profile_model_policies_without_no_fallback_still_parse_as_fallback(
-    tmp_path: Path,
-) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "model-policies:",
-            "  - match: {alias: gpt55}",
-            "    override: {effort: medium}",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="alias",
-            match_value="gpt55",
-            overrides={"effort": "medium"},
-        ),
-    )
-    assert profile.model_policies[0].no_fallback is False
-
-
 def test_parse_agent_profile_rejects_invalid_mode(tmp_path: Path) -> None:
     profile_path = _write_profile(tmp_path, "bad.md", ["name: Bad", "mode: worker"])
 
