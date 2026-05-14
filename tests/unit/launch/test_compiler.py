@@ -60,7 +60,6 @@ def _request(
         resolved_catalog = {alias_entry.alias: alias_entry} if alias_entry is not None else {}
     return CompilerRequest(
         requested_agent="coder",
-        requested_model=None,
         cli_overrides=cli or RuntimeOverrides(),
         env_overrides=env or RuntimeOverrides(),
         agent_overlay=overlay,
@@ -98,7 +97,6 @@ def test_render_provenance_only_includes_set_fields() -> None:
 def test_compiler_result_dry_run_dict_includes_provenance() -> None:
     result = CompilerResult(
         agent_name="coder",
-        profile_found=True,
         model="openai/gpt-5.4-mini",
         model_token="gptmini",
         harness="codex",
@@ -119,8 +117,6 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
             autocompact_source=ProvenanceLevel.PROFILE_DEFAULT,
             timeout_source=ProvenanceLevel.CLI,
         ),
-        fallback_applied=True,
-        fallback_model="gptmini",
         fallback_chain=(
             {
                 "token": "gptmini",
@@ -150,7 +146,6 @@ def test_compiler_result_dry_run_dict_includes_provenance() -> None:
             "autocompact": "profile-default",
             "timeout": "cli",
         },
-        "fallback_model": "gptmini",
         "fallback_chain": [
             {
                 "token": "gptmini",

@@ -533,80 +533,6 @@ def _log_unmatched_profile_policy_defaults(
     )
 
 
-def _model_entry_harness_provenance(entry: AliasEntry) -> str:
-    if entry.mars_provided_harness is not None:
-        return "mars-provided"
-    return "pattern-fallback"
-
-
-def resolve_harness_routing(
-    *,
-    resolved: RuntimeOverrides,
-    resolved_entry: AliasEntry | None,
-    model_resolution_error: ValueError | None,
-    policy_rule_harness: str | None,
-    model_layer_index: int | None,
-    harness_layer_index: int | None,
-    pre_profile_layer_count: int,
-    configured_default_harness: str,
-) -> tuple[HarnessId, str | None]:
-    """Resolve harness from model identity and override layers.
-
-    Returns (harness_id, provenance_note).
-    """
-
-    explicit_harness = (
-        resolved.harness
-        if _is_pre_profile_explicit_layer(
-            layer_index=harness_layer_index,
-            pre_profile_layer_count=pre_profile_layer_count,
-        )
-        else None
-    )
-
-    if explicit_harness:
-        harness_id = HarnessId(explicit_harness)
-        provenance_note = "explicit-override"
-    elif policy_rule_harness:
-        harness_id = HarnessId(policy_rule_harness)
-        provenance_note = "profile-model-policy"
-    elif resolved.harness:
-        harness_id = HarnessId(resolved.harness)
-        provenance_note = "explicit-override"
-    elif resolved.model:
-        if model_resolution_error is not None:
-            raise model_resolution_error
-        assert resolved_entry is not None
-        harness_id = resolved_entry.harness
-        provenance_note = _model_entry_harness_provenance(resolved_entry)
-    else:
-        harness_id = HarnessId(configured_default_harness or "claude")
-        provenance_note = "configured-default"
-
-    model_set_in_pre_profile_layers = _is_pre_profile_explicit_layer(
-        layer_index=model_layer_index,
-        pre_profile_layer_count=pre_profile_layer_count,
-    )
-    harness_from_profile_or_config = (
-        harness_layer_index is not None and harness_layer_index >= pre_profile_layer_count
-    )
-    harness_from_model_policy = policy_rule_harness is not None
-    if (
-        resolved.model
-        and model_set_in_pre_profile_layers
-        and (harness_from_model_policy or harness_from_profile_or_config)
-    ):
-        if model_resolution_error is not None:
-            raise model_resolution_error
-        assert resolved_entry is not None
-        model_derived_harness = resolved_entry.harness
-        if harness_id != model_derived_harness:
-            harness_id = model_derived_harness
-            provenance_note = "model-derived-override"
-
-    return harness_id, provenance_note
-
-
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     """Resolve the shared launch policy boundary for one launch-like surface."""
 
@@ -667,7 +593,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
     compiler_request = CompilerRequest(
         requested_agent=requested_agent,
-        requested_model=surface.cli_overrides.model or surface.env_overrides.model,
         cli_overrides=surface.cli_overrides,
         env_overrides=surface.env_overrides,
         agent_overlay=agent_overlay,
@@ -935,7 +860,6 @@ __all__ = [
     "ResolvedPolicies",
     "SurfacePolicyInput",
     "match_model_policy",
-    "resolve_harness_routing",
     "resolve_launch_policy",
     "resolve_policies",
     "resolve_policy_fields",

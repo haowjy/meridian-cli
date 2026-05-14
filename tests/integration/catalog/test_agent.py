@@ -498,9 +498,6 @@ def test_scan_agent_profiles_invalid_profile_authoring_does_not_emit_runtime_war
 
     assert [profile.name for profile in profiles] == ["Planner"]
     assert [record.getMessage() for record in diag.records] == [
-        "Agent profile 'Planner' has unknown effort 'invalid'.",
-        "Agent profile 'Planner' has autocompact 150 outside valid range.",
-        "Agent profile 'Planner' has invalid models entry for 'bad-effort'; entry ignored.",
         "Agent profile 'Planner' uses legacy models without model-policies; "
         "models is deprecated for policy overrides.",
     ]

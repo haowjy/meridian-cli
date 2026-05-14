@@ -29,7 +29,6 @@ class ProvenanceLevel(Enum):
     PROFILE_DEFAULT = "profile-default"
     CONFIG_DEFAULT = "config-default"
     ALIAS_DEFAULT = "alias-default"
-    HARNESS_FALLBACK = "harness-fallback"
     UNSET = "unset"
 
 
@@ -53,7 +52,6 @@ class CompilerRequest:
 
     # Identity
     requested_agent: str | None
-    requested_model: str | None
 
     # Layered override sources — separate for provenance accuracy
     cli_overrides: RuntimeOverrides
@@ -92,7 +90,6 @@ class CompilerResult:
 
     # Identity
     agent_name: str | None
-    profile_found: bool
 
     # Model + routing
     model: str
@@ -117,8 +114,6 @@ class CompilerResult:
     warnings: tuple[str, ...] = ()
 
     # Fallback info
-    fallback_applied: bool = False
-    fallback_model: str | None = None
     fallback_chain: tuple[dict[str, object], ...] = ()
     model_policy_source: ProvenanceLevel = ProvenanceLevel.UNSET
     matched_model_policy: bool = False
@@ -167,8 +162,6 @@ def compiler_result_to_dry_run_dict(result: CompilerResult) -> dict[str, object]
 
     output["provenance"] = render_provenance(result.field_provenance)
 
-    if result.fallback_applied:
-        output["fallback_model"] = result.fallback_model
     if result.fallback_chain:
         output["fallback_chain"] = list(result.fallback_chain)
     if result.warnings:
@@ -302,7 +295,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
 
     return CompilerResult(
         agent_name=request.requested_agent,
-        profile_found=request.profile_model_policies is not None,
         model=model,
         model_token=model_token,
         harness=harness,
@@ -329,8 +321,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             timeout_source=timeout_source,
         ),
         warnings=tuple(warnings),
-        fallback_applied=False,
-        fallback_model=None,
         model_policy_source=policy_source,
         matched_model_policy=matched_policy is not None,
     )
@@ -537,8 +527,7 @@ def _provenance_rank(level: ProvenanceLevel) -> int:
         ProvenanceLevel.PROFILE_DEFAULT: 5,
         ProvenanceLevel.CONFIG_DEFAULT: 6,
         ProvenanceLevel.ALIAS_DEFAULT: 7,
-        ProvenanceLevel.HARNESS_FALLBACK: 8,
-        ProvenanceLevel.UNSET: 9,
+        ProvenanceLevel.UNSET: 8,
     }
     return order[level]
 

@@ -1,6 +1,6 @@
 """Agent profile parser for `.mars/agents/*.md`."""
-from collections.abc import Mapping
 import logging
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
