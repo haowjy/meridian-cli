@@ -18,6 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scripts/prune-worktrees.ps1` — Windows PowerShell mirror of prune-worktrees.sh.
 
 ### Changed
+- Runtime catalog reads no longer warn for package authoring metadata mistakes; Mars owns profile/skill validation diagnostics.
 - `.github/workflows/meridian-ci.yml` extended with non-blocking PR label and changelog validation.
 - Release workflow accumulates bump labels from all unreleased merge commits between last tag and HEAD, preventing race conditions when multiple PRs merge before release runs.
 - Release workflow requires stable-tag provenance before skipping; ignores untrusted foreign tag collisions.

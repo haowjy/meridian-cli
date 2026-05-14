@@ -192,13 +192,11 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
 
     legacy_overrides = RuntimeOverrides()
     if matched_policy is None and legacy_models_allowed:
-        legacy_overrides, legacy_warning = _resolve_legacy_model_overrides(
+        legacy_overrides = _resolve_legacy_model_overrides(
             request=request,
             model_token=model_token,
             canonical_model_id=canonical_model_id,
         )
-        if legacy_warning:
-            warnings.append(legacy_warning)
 
     policy_override_tier = matched_policy_overrides
     policy_override_source = policy_source if matched_policy is not None else ProvenanceLevel.UNSET
@@ -465,17 +463,17 @@ def _resolve_legacy_model_overrides(
     request: CompilerRequest,
     model_token: str,
     canonical_model_id: str,
-) -> tuple[RuntimeOverrides, str | None]:
+) -> RuntimeOverrides:
     legacy_models = request.profile_legacy_models or {}
     if not legacy_models or not model_token:
-        return RuntimeOverrides(), None
+        return RuntimeOverrides()
 
     if model_token in legacy_models:
-        return _entry_to_overrides(legacy_models[model_token]), None
+        return _entry_to_overrides(legacy_models[model_token])
     if canonical_model_id and canonical_model_id in legacy_models:
-        return _entry_to_overrides(legacy_models[canonical_model_id]), None
+        return _entry_to_overrides(legacy_models[canonical_model_id])
     if request.resolved_alias_entry is None:
-        return RuntimeOverrides(), None
+        return RuntimeOverrides()
 
     selected_model_id = request.resolved_alias_entry.model_id
     matched_keys: list[str] = []
@@ -487,16 +485,10 @@ def _resolve_legacy_model_overrides(
             matched_keys.append(key)
 
     if not matched_keys:
-        return RuntimeOverrides(), None
+        return RuntimeOverrides()
 
     winner = matched_keys[0]
-    warning: str | None = None
-    if len(matched_keys) > 1:
-        warning = (
-            f"Profile legacy models has multiple entries matching '{selected_model_id}'. "
-            f"Using '{winner}' and ignoring: {', '.join(matched_keys[1:])}."
-        )
-    return _entry_to_overrides(legacy_models[winner]), warning
+    return _entry_to_overrides(legacy_models[winner])
 
 
 def _entry_to_overrides(entry: AgentModelEntry) -> RuntimeOverrides:

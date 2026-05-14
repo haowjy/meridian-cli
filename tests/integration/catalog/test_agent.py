@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import pytest
@@ -118,8 +117,6 @@ def test_parse_agent_profile_model_invocable_invalid_defaults_true_without_warni
             "model-invocable: maybe",
         ],
     )
-    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
-
     profile = parse_agent_profile(profile_path)
 
     assert profile.model_invocable is True
@@ -128,7 +125,6 @@ def test_parse_agent_profile_model_invocable_invalid_defaults_true_without_warni
 
 def test_parse_agent_profile_models_preserves_supported_overrides(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     profile_path = _write_profile(
         tmp_path,
@@ -145,8 +141,6 @@ def test_parse_agent_profile_models_preserves_supported_overrides(
         ],
     )
 
-    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
-
     profile = parse_agent_profile(profile_path)
 
     assert tuple(profile.models.keys()) == ("gpt55", "unknown-only")
@@ -154,7 +148,6 @@ def test_parse_agent_profile_models_preserves_supported_overrides(
     assert profile.models["gpt55"].autocompact == 200000
     assert profile.models["unknown-only"].effort is None
     assert profile.models["unknown-only"].autocompact is None
-    assert "uses legacy models" in caplog.text
 
 
 def test_parse_agent_profile_fanout_is_display_only_alias_list(
@@ -291,7 +284,6 @@ def test_parse_agent_profile_rejects_unknown_model_policy_override_key(
 
 def test_parse_agent_profile_accepts_deferred_model_policy_list_override_keys(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     profile_path = _write_profile(
         tmp_path,
@@ -309,8 +301,6 @@ def test_parse_agent_profile_accepts_deferred_model_policy_list_override_keys(
             "        - github",
         ],
     )
-    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
-
     profile = parse_agent_profile(profile_path)
 
     assert profile.model_policies[0].overrides == {
@@ -318,7 +308,6 @@ def test_parse_agent_profile_accepts_deferred_model_policy_list_override_keys(
         "tools": ["Read"],
         "mcp-tools": ["github"],
     }
-    assert "not-yet-supported list override keys" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -338,10 +327,7 @@ def test_parse_agent_profile_rejects_invalid_structured_fanout(
         parse_agent_profile(profile_path)
 
 
-def test_parse_agent_profile_models_discards_invalid_entries_and_warns(
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_parse_agent_profile_models_discards_invalid_entries(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "planner.md",
@@ -360,21 +346,13 @@ def test_parse_agent_profile_models_discards_invalid_entries_and_warns(
             "    effort: low",
         ],
     )
-    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
-
     profile = parse_agent_profile(profile_path)
 
     assert tuple(profile.models.keys()) == ("valid",)
-    warning_text = "\n".join(record.message for record in caplog.records)
-    assert "invalid models entry for 'bad-effort'" in warning_text
-    assert "invalid models entry for 'bad-autocompact'" in warning_text
-    assert "invalid models entry for 'bad-autocompact-bool'" in warning_text
-    assert "empty models key" in warning_text
 
 
-def test_scan_agent_profiles_warnings_can_be_captured_at_boundary(
+def test_scan_agent_profiles_invalid_profile_authoring_does_not_emit_runtime_warnings(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     project_root = tmp_path / "repo"
     agents_dir = project_root / ".mars" / "agents"
@@ -391,20 +369,11 @@ def test_scan_agent_profiles_warnings_can_be_captured_at_boundary(
             "    effort: auto",
         ],
     )
-    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
-
     with capture_library_diagnostics() as diag:
         profiles = scan_agent_profiles(project_root=project_root)
 
     assert [profile.name for profile in profiles] == ["Planner"]
-    assert caplog.records == []
-    assert [record.getMessage() for record in diag.records] == [
-        "Agent profile 'Planner' has unknown effort 'invalid'.",
-        "Agent profile 'Planner' has autocompact 150 outside valid range.",
-        "Agent profile 'Planner' has invalid models entry for 'bad-effort'; entry ignored.",
-        "Agent profile 'Planner' uses legacy models without model-policies or fanout; "
-        "models is deprecated for fan-out display and policy overrides.",
-    ]
+    assert diag.records == []
 
 
 def test_parse_agent_profile_keeps_valid_profile_autocompact(tmp_path: Path) -> None:
@@ -424,7 +393,6 @@ def test_parse_agent_profile_keeps_valid_profile_autocompact(tmp_path: Path) -> 
 
 def test_parse_agent_profile_drops_out_of_range_profile_autocompact(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     profile_path = _write_profile(
         tmp_path,
@@ -435,8 +403,5 @@ def test_parse_agent_profile_drops_out_of_range_profile_autocompact(
             "autocompact: 150",
         ],
     )
-    caplog.set_level(logging.WARNING, logger="meridian.lib.catalog.agent")
-
     profile = parse_agent_profile(profile_path)
     assert profile.autocompact is None
-    assert "outside valid range" in caplog.text
