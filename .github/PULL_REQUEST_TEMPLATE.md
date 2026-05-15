@@ -42,7 +42,7 @@ After merge to `main`, CI (`.github/workflows/release-on-merge.yml`) will:
 1. Compute the next patch version from existing `v*` tags
 2. Update `src/meridian/__init__.py` + promote `CHANGELOG.md` `[Unreleased]`
 3. Commit `Release X.Y.Z`, create/push `vX.Y.Z`
-4. Trigger `.github/workflows/publish-pypi.yml` from the tag push
+4. Run `.github/workflows/publish-pypi.yml` directly
 
 ## Cleanup
 

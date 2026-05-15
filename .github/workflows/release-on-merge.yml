@@ -7,10 +7,12 @@ on:
 
 jobs:
   release:
-    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') && !contains(github.event.head_commit.message, 'release:skip') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.push_release.outputs.tag }}
     concurrency:
       group: release-on-main
       cancel-in-progress: false
@@ -173,6 +175,7 @@ jobs:
 
       - name: Push release commit and tag
         if: steps.release_guard.outputs.already_released != 'true'
+        id: push_release
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
           TRIGGER_SHA: ${{ github.sha }}
@@ -212,3 +215,15 @@ jobs:
           fi
 
           git push origin "v${NEXT_VERSION}"
+          echo "tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    uses: ./.github/workflows/publish-pypi.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write

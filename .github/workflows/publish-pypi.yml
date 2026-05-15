@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 jobs:
   verify-provenance:
@@ -12,11 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
       - name: Verify tag provenance
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           PY_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' src/meridian/__init__.py)
 
           if [[ "$TAG_VERSION" != "$PY_VERSION" ]]; then
@@ -25,12 +33,13 @@ jobs:
           fi
 
           DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"; then
+          RELEASE_SHA="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" "origin/$DEFAULT_BRANCH"; then
             echo "::error::Tagged commit is not reachable from $DEFAULT_BRANCH"
             exit 1
           fi
 
-          COMMIT_MSG=$(git log -1 --format=%s "$GITHUB_SHA")
+          COMMIT_MSG=$(git log -1 --format=%s "$RELEASE_SHA")
           if [[ "$TAG_VERSION" == *-rc* ]]; then
             [[ "$COMMIT_MSG" == "Release candidate $TAG_VERSION" ]] || \
               echo "::warning::RC commit message doesn't match expected format"
@@ -52,6 +61,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7

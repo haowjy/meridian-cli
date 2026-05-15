@@ -11,6 +11,8 @@ meridian-cli stable releases are automatic on every normal push to `main`.
 
 Direct pushes to `main` follow the same release path.
 
+Put `release:skip` in the pushed head commit message to skip auto-release.
+
 ## What CI does
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:
@@ -20,7 +22,9 @@ On push to `main`, `.github/workflows/release-on-merge.yml`:
 - Promotes `CHANGELOG.md` `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
 - Creates commit `Release X.Y.Z`
 - Creates and pushes tag `vX.Y.Z`
-- `publish-pypi.yml` fires on tag push
+- Calls `publish-pypi.yml` directly for PyPI publish
+
+`publish-pypi.yml` also runs on manual/backfill `v*` tag pushes.
 
 The release workflow ignores its own `Release X.Y.Z` commit so the auto-commit
 does not recursively release again.

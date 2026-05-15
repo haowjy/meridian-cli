@@ -109,6 +109,8 @@ Stable meridian-cli releases happen automatically after normal pushes to `main`.
 
 Direct pushes to `main` use the same release path.
 
+Put `release:skip` in the pushed head commit message to skip auto-release.
+
 ### What CI does on main push
 
 `.github/workflows/release-on-merge.yml` runs on every normal push to `main`. It:
@@ -118,7 +120,7 @@ Direct pushes to `main` use the same release path.
 3. Promotes `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`
 4. Creates commit `Release X.Y.Z`
 5. Creates and pushes tag `vX.Y.Z`
-6. PyPI publish fires on the tag push (`publish-pypi.yml`)
+6. PyPI publish runs through `publish-pypi.yml`
 
 The workflow skips its own `Release X.Y.Z` commit so release auto-commits do not
 trigger another release.
@@ -136,7 +138,7 @@ scripts/prune-worktrees.sh --yes        # execute
 
 - Do not edit `src/meridian/__init__.py` for stable releases — CI owns it
 - Do not create or push `v*` tags manually — CI owns them
-- The pre-push hook blocks direct `v*` tag pushes; CI bypasses this via `GITHUB_TOKEN`
+- The pre-push hook blocks direct `v*` tag pushes; GitHub Actions creates release tags without running local hooks
 
 ## Run from source
 
