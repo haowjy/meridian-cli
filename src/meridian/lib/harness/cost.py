@@ -134,8 +134,9 @@ def estimate_usage_cost(
     total = 0.0
     if semantics == "openai_inclusive":
         cached_input = usage.cache_read_input_tokens or 0
+        cache_created = usage.cache_creation_input_tokens or 0
         if usage.input_tokens is not None and input_per_m is not None:
-            uncached_input = max(usage.input_tokens - cached_input, 0)
+            uncached_input = max(usage.input_tokens - cached_input - cache_created, 0)
             total += uncached_input * input_per_m / 1_000_000
         if usage.cache_read_input_tokens is not None and cache_read_per_m is not None:
             total += usage.cache_read_input_tokens * cache_read_per_m / 1_000_000
