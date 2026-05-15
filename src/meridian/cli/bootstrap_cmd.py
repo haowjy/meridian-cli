@@ -115,6 +115,7 @@ def register_bootstrap_command(
                 project_root=project_root,
                 continue_ref=None,
                 fork_ref=None,
+                fork_fresh_ref=None,
                 model=model,
                 harness=global_harness or explicit_harness,
                 agent=agent,

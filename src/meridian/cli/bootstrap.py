@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from meridian.cli.argv_normalization import SELF_FORK_REF_SENTINEL
 from meridian.cli.startup.policy import StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
@@ -19,6 +20,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--config",
         "--continue",
         "--fork",
+        "--fork-fresh",
         "--model",
         "-m",
         "--harness",
@@ -94,6 +96,13 @@ def _first_positional_token(argv: Sequence[str]) -> str | None:
     if resolved is None:
         return None
     _, token = resolved
+    return token
+
+
+def _first_positional_token_for_global_parse(argv: Sequence[str]) -> str | None:
+    token = _first_positional_token(argv)
+    if token == SELF_FORK_REF_SENTINEL:
+        return None
     return token
 
 
@@ -222,13 +231,13 @@ def extract_global_options(
             index += 1
             continue
         if arg == "--agent":
-            if _first_positional_token(cleaned) is not None:
-                if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
-                    cleaned.extend(("-a", argv[index + 1]))
-                    index += 2
-                else:
-                    cleaned.append("-a")
-                    index += 1
+            if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
+                cleaned.extend(("-a", argv[index + 1]))
+                index += 2
+                continue
+            if _first_positional_token_for_global_parse(cleaned) is not None:
+                cleaned.append("-a")
+                index += 1
                 continue
             force_agent = True
             index += 1

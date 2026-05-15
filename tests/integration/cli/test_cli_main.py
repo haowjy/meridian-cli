@@ -32,6 +32,238 @@ def test_main_harness_shortcut_routes_into_primary_launch(
     assert captured["dry_run"] is True
 
 
+def test_main_skips_fork_normalization_for_mars_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run_mars_passthrough(
+        args: list[str],
+        *,
+        output_format: str | None = None,
+    ) -> None:
+        captured["args"] = tuple(args)
+        captured["output_format"] = output_format
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli_main, "_run_mars_passthrough", _fake_run_mars_passthrough)
+    monkeypatch.setattr(cli_main, "_emit_usage_command_invoked", lambda *_a, **_k: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["mars", "models", "list", "--fork"])
+
+    assert exc_info.value.code == 0
+    assert captured["args"] == ("models", "list", "--fork")
+    assert captured["output_format"] == "text"
+
+
+def test_main_bare_fork_is_normalized_before_primary_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p123")
+    captured: dict[str, object] = {}
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--fork", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["fork_ref"] == "__SELF__"
+    assert captured["fork_fresh_ref"] is None
+
+
+def test_main_bare_fork_without_meridian_spawn_id_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--fork", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: Cannot infer --fork target: not inside a Meridian-managed session. "
+        "Pass --fork REF explicitly.\n"
+    )
+
+
+def test_main_bare_fork_with_global_agent_flag_still_dispatches_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p123")
+    captured: dict[str, object] = {}
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--fork", "--agent", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["fork_ref"] == "__SELF__"
+    assert captured["agent"] is None
+
+
+def test_main_bare_fork_with_continue_reports_conflict_before_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--fork", "--continue", "c123", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork with --continue.\n"
+
+
+def test_main_fork_rejects_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--fork", "c123", "-m", "gpt-5.4-mini", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: --fork preserves launch identity. "
+        "Use --fork-fresh to change agent, model, or skills.\n"
+    )
+
+
+def test_main_fork_fresh_allows_model_and_agent_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--fork-fresh",
+                "c123",
+                "-m",
+                "gpt-5.4-mini",
+                "-a",
+                "reviewer",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured["fork_ref"] is None
+    assert captured["fork_fresh_ref"] == "c123"
+    assert captured["model"] == "gpt-5.4-mini"
+    assert captured["agent"] == "reviewer"
+
+
+def test_main_fork_fresh_with_long_form_agent_forwards_root_agent_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--fork-fresh",
+                "c123",
+                "--agent",
+                "reviewer",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured["fork_ref"] is None
+    assert captured["fork_fresh_ref"] == "c123"
+    assert captured["agent"] == "reviewer"
+
+
+def test_main_fork_rejects_long_form_agent_override(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--fork", "c123", "--agent", "reviewer", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: --fork preserves launch identity. "
+        "Use --fork-fresh to change agent, model, or skills.\n"
+    )
+
+
+def test_main_rejects_combining_fork_and_fork_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--fork", "c123", "--fork-fresh", "c123", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork with --fork-fresh.\n"
+
+
+def test_main_rejects_fork_fresh_with_continue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--fork-fresh", "c123", "--continue", "c123", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork-fresh with --continue.\n"
+
+
 def test_init_alias_link_uses_mars_flow_with_full_link_target_when_called_directly(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

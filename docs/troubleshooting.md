@@ -91,26 +91,38 @@ Also inspect the spawn's `stderr.log` artifact if needed. Common failure surface
 Primary session resume/fork:
 ```bash
 meridian --continue REF
-meridian --fork REF
+meridian --fork [REF]
+meridian --fork-fresh [REF]
 ```
 
 Child spawn resume/fork/context attach:
 ```bash
 meridian spawn --continue ID -p "continue from where you left off"
-meridian spawn --fork REF -p "start a new branch of this spawn/chat context"
+meridian spawn --fork [REF] -p "start a new branch of this spawn/chat context"
+meridian spawn --fork-fresh [REF] -p "branch and switch agent/model/skills"
 meridian spawn --from REF -p "next task"
 ```
 
 Use spawn refs such as `p123` or chat/session refs such as `c123`.
 
-Primary `--continue REF` / `--fork REF` and spawn `--fork REF` also accept a raw harness session id, for example:
+Primary `--continue REF` / `--fork [REF]` / `--fork-fresh [REF]` and spawn fork modes also accept a raw harness session id, for example:
 ```bash
 meridian --continue 01JABCDEF1234567890
 ```
 
 When a primary session ends, the quit message now shows the chat ID (e.g. `c123`) as the preferred `--continue` reference. Chat IDs are stable and human-friendly; UUIDs still work but are no longer the default suggestion.
 
-`--continue` resumes the same session. `--fork` starts a new session seeded from prior context. `--from` only attaches prior context; it does not resume/fork transcript state.
+`--continue` resumes the same session. `--fork` starts a new session seeded from prior context while preserving source agent/model/skills. `--fork-fresh` starts a new fork and allows agent/model/skills overrides. `--from` only attaches prior context; it does not resume/fork transcript state.
+
+Inside a Meridian-managed session, `--fork` and `--fork-fresh` default `REF` to `$MERIDIAN_SPAWN_ID`, so bare `--fork` / `--fork-fresh` works for "branch this session."
+
+If you try `--fork` with `-m`, `-a`, or `--skills`, Meridian rejects it with:
+
+```text
+--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.
+```
+
+Use `--fork-fresh` for identity changes. Note this may reduce prompt-cache locality because the profile/system prompt can change.
 
 To find which spawns belong to a work item:
 ```bash

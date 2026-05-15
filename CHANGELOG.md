@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
+- `--fork-fresh [REF]` on both `meridian` (primary) and `meridian spawn` surfaces. It forks transcript lineage while allowing identity overrides (`-m`, `-a`, `--skills` on spawn). Bare `--fork-fresh` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions.
+
+### Changed
+- `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
+- Bare `--fork` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Outside a managed session it fails with: `Cannot infer --fork target: not inside a Meridian-managed session. Pass --fork REF explicitly.`
+- CLI argv normalization now rewrites bare/equals forms for `--fork` and `--fork-fresh` before bootstrap and Cyclopts parsing, so forms like `--fork`, `--fork=`, and `--fork --bg` parse consistently.
+
 ## [0.1.8] - 2026-05-16
 
 ### Added

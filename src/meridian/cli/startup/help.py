@@ -25,7 +25,10 @@ Primary launch/resume:
   meridian -m MODEL                     Launch the primary harness
   meridian --continue c123              Resume from ref
   meridian --fork p123                  Fork from ref
+  meridian --fork-fresh p123 -m MODEL   Fork and switch identity
   refs: chat id (c123), spawn id (p123), or raw harness session id
+  --fork preserves agent/model/skills identity. --fork-fresh allows
+  identity changes and may reduce prompt-cache locality.
 
 Quick start:
   meridian spawn -m MODEL --prompt-file /tmp/task.md --bg   Launch a subagent
@@ -144,7 +147,11 @@ Primary launch/resume:
 
   meridian --fork p123
 
+  meridian --fork-fresh p123 -m MODEL
+
   refs: chat id (c123), spawn id (p123), or raw harness session id
+  --fork preserves agent/model/skills identity. --fork-fresh allows
+  identity changes and may reduce prompt-cache locality.
 
 Global harness selection: --harness (or prefix with claude/codex/opencode)
 

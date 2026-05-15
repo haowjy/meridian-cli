@@ -8,7 +8,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | ------- | ----------- |
 | `meridian` | Launch the primary agent session with startup context, including the installed agent catalog |
 | `meridian --continue REF` | Resume a prior primary session from a chat/session ref (`c123`), spawn ref (`p123`), or raw harness session id. Chat IDs are now the preferred reference — shown in the quit message when a primary session ends. |
-| `meridian --fork REF` | Launch a new primary session by forking a prior spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id |
+| `meridian --fork [REF]` | Launch a new primary session by forking while preserving launch identity (agent/model/skills). `REF` accepts a spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id. |
+| `meridian --fork-fresh [REF]` | Launch a new primary session by forking and allowing launch identity changes (`-m`, `-a`). |
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
 | `meridian spawn list` | See running and recent spawns |
@@ -16,7 +17,8 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn wait ID` | Block until a spawn completes |
 | `meridian spawn show ID` | Read a spawn's report and status |
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
-| `meridian spawn --fork REF -p "next"` | Start a new spawn by forking a prior spawn, chat/session, or raw harness session id |
+| `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
+| `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
 | `meridian spawn --from REF -p "next"` | Start a new spawn with prior spawn or chat/session context |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
@@ -34,12 +36,21 @@ Common `spawn` flags:
 | `-p "prompt"` | Inline prompt |
 | `--prompt-file PATH` | Read prompt from file |
 | `-f FILE` | Attach context file (repeatable) |
-| `--fork REF` | Fork a prior spawn ref (`p123`), chat/session ref (`c123`), or raw harness session id into a new session |
+| `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
+| `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `--from REF` | Attach prior context from a spawn ref (`p123`) or chat/session ref (`c123`) |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `yolo` |
+
+`--fork` is identity-preserving by design. It rejects `-m`, `-a`, and `--skills`:
+
+```text
+--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.
+```
+
+`--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
 `spawn show` includes primary-session metadata when available from `primary_meta.json`:
 `kind`, `activity`, `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
