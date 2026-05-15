@@ -63,9 +63,27 @@ meridian init
 
 This creates `.meridian/` with a project UUID and default `.gitignore`. The `.gitignore` inside `.meridian/` is managed automatically — it tracks `id`, `kb/`, `work/`, and `archive/` and ignores everything else. Spawn history and session state live at the user level (`~/.meridian/projects/<uuid>/`) and are never committed.
 
+Bare `meridian init` bootstraps Meridian config/runtime only. It does not initialize Mars packages on its own.
+
 ## Tool Integration
 
-To expose installed agent packages to a harness tool directory (`.claude/`, `.cursor/`, etc.), use the top-level convenience flag:
+To initialize Mars and install packages from the top-level command, use `--add`:
+
+```bash
+meridian init --add meridian-flow/meridian-dev-workflow --link .claude
+```
+
+`meridian init --add ...` initializes Mars when needed, installs packages, and applies requested links.
+
+For first-run onboarding, `bootstrap` can do setup and launch the guided primary session in one command:
+
+```bash
+meridian bootstrap --add meridian-flow/meridian-dev-workflow --link .claude
+```
+
+Setup flags (`--add`, `--link`) cannot be combined with `--dry-run`.
+
+To expose already-installed package content to a harness tool directory (`.claude/`, `.cursor/`, etc.), use the top-level convenience flag:
 
 ```bash
 meridian init --link .claude

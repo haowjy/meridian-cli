@@ -52,12 +52,25 @@ You need at least one harness installed: [Claude Code](https://docs.anthropic.co
 
 ## Set Up a Project
 
+`meridian init` by itself only bootstraps Meridian project config:
+
 ```bash
-meridian init --link .claude
-meridian mars add meridian-flow/meridian-dev-workflow
+meridian init
 ```
 
-This installs a full dev team — architects, coders, reviewers, testers — and links them into Claude Code. Agent packages are managed by [mars](https://github.com/meridian-flow/mars-agents).
+To initialize Mars package content in the same step, use setup flags:
+
+```bash
+meridian init --add meridian-flow/meridian-dev-workflow --link .claude
+```
+
+For first-run onboarding, bootstrap can do setup + launch in one command:
+
+```bash
+meridian bootstrap --add meridian-flow/meridian-dev-workflow --link .claude
+```
+
+`--add` / `--link` setup flags cannot be combined with `--dry-run`.
 
 ## Usage
 
