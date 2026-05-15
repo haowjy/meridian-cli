@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -88,8 +89,11 @@ def read_sync_state(sync_root: Path) -> SyncState | None:
     if data is None:
         return None
 
+    last_sync_raw = data.get("last_sync")
+    last_sync = last_sync_raw if isinstance(last_sync_raw, str) and last_sync_raw.strip() else ""
+
     return SyncState(
-        last_sync=str(data.get("last_sync", "unknown")),
+        last_sync=last_sync,
         outcome=str(data.get("outcome", "unknown")),
         conflict_id=_to_optional_str(data.get("conflict_id")),
     )
@@ -240,13 +244,19 @@ def write_sync_state(
 def mark_resolved(sync_root: Path, conflict_id: str) -> bool:
     """Mark one conflict as resolved. Returns True when metadata was updated."""
 
-    target, data = _find_conflict_file(sync_root, conflict_id)
+    try:
+        target, data = _find_conflict_file(sync_root, conflict_id)
+    except OSError:
+        return False
     if target is None or data is None:
         return False
 
     data["resolved"] = True
     data["resolved_at"] = datetime.now(UTC).isoformat()
-    _atomic_write_text(target, json.dumps(data, indent=2))
+    try:
+        _atomic_write_text(target, json.dumps(data, indent=2))
+    except OSError:
+        return False
     return True
 
 
@@ -294,7 +304,11 @@ def append_conflict_notice(
         section = f"\n{_NOTICE_START}\n{notice_block}\n{_NOTICE_END}\n"
         new_content = content.rstrip("\n") + "\n" + section
 
-    _atomic_write_text(agents_md, new_content)
+    try:
+        _atomic_write_text(agents_md, new_content)
+    except OSError:
+        _cleanup_tmp_file(agents_md)
+        return False
     return True
 
 
@@ -337,7 +351,10 @@ def strip_conflict_notice(sync_root: Path, conflict_id: str) -> bool:
             new_content = new_content[:ns_idx] + new_content[ne_idx:]
 
     new_content = new_content.rstrip("\n") + "\n" if new_content.strip() else ""
-    _atomic_write_text(agents_md, new_content)
+    try:
+        _atomic_write_text(agents_md, new_content)
+    except OSError:
+        return False
     return True
 
 
@@ -427,6 +444,11 @@ def _atomic_write_text(target: Path, content: str) -> None:
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(target)
+
+
+def _cleanup_tmp_file(target: Path) -> None:
+    with suppress(OSError):
+        target.with_suffix(target.suffix + ".tmp").unlink()
 
 
 __all__ = [
