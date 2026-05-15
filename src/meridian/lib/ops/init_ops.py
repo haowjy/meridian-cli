@@ -154,10 +154,10 @@ def maybe_set_primary_agent(
 
     import tomlkit
 
-    doc_map = cast(dict[str, Any], tomlkit.parse(content))
+    doc_map = cast("dict[str, Any]", tomlkit.parse(content))
     primary_table_raw: Any = doc_map.get("primary")
     primary_table: dict[str, Any] | None = (
-        cast(dict[str, Any], primary_table_raw) if isinstance(primary_table_raw, dict) else None
+        cast("dict[str, Any]", primary_table_raw) if isinstance(primary_table_raw, dict) else None
     )
     if primary_table is not None:
         current_agent_raw: Any = primary_table.get("agent")
