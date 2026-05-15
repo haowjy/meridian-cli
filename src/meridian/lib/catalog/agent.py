@@ -144,10 +144,14 @@ def _parse_model_policies(
             if str(key).strip()
         }
         # Silently filter unknown override keys (lenient parsing).
+        raw_override_count = len(overrides)
         overrides = {
             key: value for key, value in overrides.items() if key in _MODEL_POLICY_OVERRIDE_KEYS
         }
-        # Empty overrides are valid — intentional no-op rule.
+        # Skip rules where all override keys were invalid (likely a typo).
+        # Empty/missing override is intentional no-op — only skip if keys existed but none survived.
+        if raw_override_count > 0 and not overrides:
+            continue
         parsed.append(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),

@@ -311,6 +311,25 @@ def test_parse_agent_profile_filters_unknown_model_policy_override_key(tmp_path:
     )
 
 
+def test_parse_agent_profile_skips_rule_when_all_override_keys_invalid(tmp_path: Path) -> None:
+    """A rule with only invalid override keys is silently dropped, not kept as no-op."""
+    profile_path = _write_profile(
+        tmp_path,
+        "typo.md",
+        [
+            "name: Typo",
+            "model-policies:",
+            "  - match: {model: gpt-5.5}",
+            "    override:",
+            "      harenss: opencode",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == ()
+
+
 def test_parse_agent_profile_ignores_invalid_optional_fields(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
