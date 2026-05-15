@@ -18,7 +18,7 @@ Hook policy:
 - Pre-push is strict: it runs `scripts/preflight.sh`, which currently runs
   `uv run ruff check .`, `uv run pytest-llm`, and `uv run pyright`, then blocks
   direct `v*` tag pushes. `v*` tags are CI-owned; they are created automatically
-  on PR merge to `main`.
+  after normal pushes to `main`.
 - Humans may bypass hooks with Git's standard `--no-verify` only when they are
   doing so intentionally. LLM agents must not use `--no-verify` unless the user
   explicitly instructs them to.
@@ -98,23 +98,20 @@ uv run pyright
 
 ## Release
 
-Stable meridian-cli releases happen automatically when you merge a PR to `main`.
+Stable meridian-cli releases happen automatically after normal pushes to `main`.
 
 ### What you do
 
 1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
 2. Write changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
 3. Open a PR with the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
-4. Set one release label:
-   - `release:patch` (default if unlabeled)
-   - `release:minor`
-   - `release:major`
-   - `release:skip`
-5. Merge the PR to `main`
+4. Merge the PR to `main`
 
-### What CI does on merge
+Direct pushes to `main` use the same release path.
 
-`.github/workflows/release-on-merge.yml` runs on every merged PR. It:
+### What CI does on main push
+
+`.github/workflows/release-on-merge.yml` runs on every normal push to `main`. It:
 
 1. Computes the next version from existing git tags
 2. Bumps `src/meridian/__init__.py`
@@ -122,6 +119,9 @@ Stable meridian-cli releases happen automatically when you merge a PR to `main`.
 4. Creates commit `Release X.Y.Z`
 5. Creates and pushes tag `vX.Y.Z`
 6. PyPI publish fires on the tag push (`publish-pypi.yml`)
+
+The workflow skips its own `Release X.Y.Z` commit so release auto-commits do not
+trigger another release.
 
 ### Post-merge
 

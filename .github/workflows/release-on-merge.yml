@@ -1,218 +1,55 @@
-name: release-on-merge
+name: release-on-main
 
 on:
-  pull_request:
-    types:
-      - closed
+  push:
     branches:
       - main
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true
+    if: ${{ !startsWith(github.event.head_commit.message, 'Release ') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: read
     concurrency:
-      group: release-on-merge-main
+      group: release-on-main
       cancel-in-progress: false
     steps:
-      - name: Checkout merge commit
+      - name: Checkout main
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: main
           fetch-depth: 0
 
-      - name: Resolve release bump from labels
-        id: release_label
-        env:
-          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
-        run: |
-          bump="patch"
-          has_release_label=false
-
-          while IFS= read -r label; do
-            case "$label" in
-              release:skip)
-                bump="skip"
-                has_release_label=true
-                break
-                ;;
-              release:major)
-                bump="major"
-                has_release_label=true
-                ;;
-              release:minor)
-                if [[ "$bump" != "major" ]]; then
-                  bump="minor"
-                fi
-                has_release_label=true
-                ;;
-              release:patch)
-                if [[ "$bump" != "major" && "$bump" != "minor" ]]; then
-                  bump="patch"
-                fi
-                has_release_label=true
-                ;;
-            esac
-          done < <(jq -r '.[]' <<<"${LABELS_JSON}")
-
-          if [[ "${has_release_label}" == false ]]; then
-            echo "::notice::No release:* label set. Defaulting to release:patch."
-          fi
-
-          echo "bump=${bump}" >> "$GITHUB_OUTPUT"
-          echo "Resolved release bump: ${bump}"
-
-      - name: Skip release when label requests it
-        if: steps.release_label.outputs.bump == 'skip'
-        run: echo "::notice::release:skip label present. Skipping release workflow."
-
       - name: Anchor release on current main
-        if: steps.release_label.outputs.bump != 'skip'
         env:
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TRIGGER_SHA: ${{ github.sha }}
         run: |
-          if [[ -z "${MERGE_SHA}" ]]; then
-            echo "::error::Missing pull_request.merge_commit_sha; cannot anchor release."
-            exit 1
-          fi
-
           git fetch origin main --force
           git checkout -B main origin/main
 
-          if ! git cat-file -e "${MERGE_SHA}^{commit}" >/dev/null 2>&1; then
-            echo "::error::Merge commit ${MERGE_SHA} is not available in local checkout."
+          if ! git cat-file -e "${TRIGGER_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "::error::Trigger commit ${TRIGGER_SHA} is not available in local checkout."
             exit 1
           fi
 
-          if ! git merge-base --is-ancestor "${MERGE_SHA}" HEAD; then
-            echo "::error::Merge commit ${MERGE_SHA} is not an ancestor of current main tip $(git rev-parse HEAD)."
+          if ! git merge-base --is-ancestor "${TRIGGER_SHA}" HEAD; then
+            echo "::error::Trigger commit ${TRIGGER_SHA} is not an ancestor of current main tip $(git rev-parse HEAD)."
             exit 1
           fi
 
-          echo "Anchored release workspace to main tip $(git rev-parse HEAD) for merge ${MERGE_SHA}."
+          echo "Anchored release workspace to main tip $(git rev-parse HEAD) for trigger ${TRIGGER_SHA}."
 
-      - name: Accumulate bump from unreleased merges
-        if: steps.release_label.outputs.bump != 'skip'
-        id: accumulate_bump
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TRIGGERING_BUMP: ${{ steps.release_label.outputs.bump }}
-        run: |
-          git fetch --tags --force
-
-          is_stable_semver_tag() {
-            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
-          }
-
-          bump_rank() {
-            case "$1" in
-              major) echo 3 ;;
-              minor) echo 2 ;;
-              patch) echo 1 ;;
-              *) echo 0 ;;
-            esac
-          }
-
-          rank_to_bump() {
-            case "$1" in
-              3) echo "major" ;;
-              2) echo "minor" ;;
-              1) echo "patch" ;;
-              *) echo "patch" ;;
-            esac
-          }
-
-          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)"
-
-          if [[ -z "${latest_tag}" ]]; then
-            echo "accumulated_bump=${TRIGGERING_BUMP}" >> "$GITHUB_OUTPUT"
-            echo "::notice::No prior stable release tag; using triggering PR bump: ${TRIGGERING_BUMP}"
-            exit 0
-          fi
-
-          echo "::notice::Using latest stable release tag ${latest_tag} for unreleased merge range."
-
-          max_rank="$(bump_rank "${TRIGGERING_BUMP}")"
-
-          while IFS= read -r merge_sha; do
-            [[ -n "${merge_sha}" ]] || continue
-
-            subject="$(git show -s --format=%s "${merge_sha}")"
-            pr_number=""
-            if [[ "${subject}" =~ Merge\ pull\ request\ \#([0-9]+) ]]; then
-              pr_number="${BASH_REMATCH[1]}"
-            elif [[ "${subject}" =~ \(#([0-9]+)\)$ ]]; then
-              pr_number="${BASH_REMATCH[1]}"
-            fi
-
-            if [[ -z "${pr_number}" ]]; then
-              echo "::notice::Skipping merge ${merge_sha}; no PR number found in subject '${subject}'."
-              continue
-            fi
-
-            while IFS= read -r label; do
-              case "${label}" in
-                release:major)
-                  rank="$(bump_rank major)"
-                  [[ "${rank}" -gt "${max_rank}" ]] && max_rank="${rank}"
-                  ;;
-                release:minor)
-                  rank="$(bump_rank minor)"
-                  [[ "${rank}" -gt "${max_rank}" ]] && max_rank="${rank}"
-                  ;;
-                release:patch)
-                  rank="$(bump_rank patch)"
-                  [[ "${rank}" -gt "${max_rank}" ]] && max_rank="${rank}"
-                  ;;
-              esac
-            done < <(gh pr view "${pr_number}" --json labels --jq '.labels[].name' 2>/dev/null || true)
-          done < <(git log --merges --format='%H' "${latest_tag}..HEAD" 2>/dev/null || true)
-
-          accumulated="$(rank_to_bump "${max_rank}")"
-          echo "accumulated_bump=${accumulated}" >> "$GITHUB_OUTPUT"
-          if [[ "${accumulated}" != "${TRIGGERING_BUMP}" ]]; then
-            echo "::notice::Accumulated bump elevated from ${TRIGGERING_BUMP} to ${accumulated} due to unreleased merge labels."
-          else
-            echo "::notice::Accumulated bump matches triggering PR: ${accumulated}"
-          fi
-
-      - name: Compute next version from tags
-        if: steps.release_label.outputs.bump != 'skip'
+      - name: Compute next patch version from tags
         id: next_version
-        env:
-          BUMP: ${{ steps.accumulate_bump.outputs.accumulated_bump || steps.release_label.outputs.bump }}
         run: |
           git fetch --tags --force
-
-          is_stable_semver_tag() {
-            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
-          }
 
           bump_version() {
             local version="$1"
             local major minor patch
             IFS='.' read -r major minor patch <<<"${version}"
-            case "${BUMP}" in
-              major)
-                major=$((major + 1))
-                minor=0
-                patch=0
-                ;;
-              minor)
-                minor=$((minor + 1))
-                patch=0
-                ;;
-              patch)
-                patch=$((patch + 1))
-                ;;
-              *)
-                echo "::error::Unknown release bump '${BUMP}'."
-                exit 1
-                ;;
-            esac
+            patch=$((patch + 1))
             echo "${major}.${minor}.${patch}"
           }
 
@@ -240,44 +77,21 @@ jobs:
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "Computed next version ${next_version} from base ${base_version}."
 
-      - name: Skip when merge commit already tagged
-        if: steps.release_label.outputs.bump != 'skip'
-        id: merge_tag_guard
+      - name: Skip when trigger already released
+        id: release_guard
         env:
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TRIGGER_SHA: ${{ github.sha }}
         run: |
           is_stable_semver_tag() {
             grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
           }
-
-          commit_subject() {
-            git show -s --format=%s "$1"
-          }
-
-          merge_commit_subject="$(commit_subject "${MERGE_SHA}")"
-          while IFS= read -r merge_tag; do
-            [[ -n "${merge_tag}" ]] || continue
-            if ! is_stable_semver_tag "${merge_tag}"; then
-              echo "::notice::Ignoring non-stable tag ${merge_tag} on merge commit ${MERGE_SHA}."
-              continue
-            fi
-
-            if [[ "${merge_commit_subject}" != Release\ * ]]; then
-              echo "::error::Stable tag ${merge_tag} points at non-release merge commit ${MERGE_SHA} (${merge_commit_subject})."
-              exit 1
-            fi
-
-            echo "merge_already_tagged=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Merge commit ${MERGE_SHA} already has stable release tag ${merge_tag}. Skipping release actions."
-            exit 0
-          done < <(git tag --points-at "${MERGE_SHA}" --list 'v*')
 
           existing_release_tag=""
           existing_release_commit=""
           while IFS=$'\t' read -r commit_hash commit_subject; do
             [[ "${commit_subject}" == Release\ * ]] || continue
             parent_commit="$(git show -s --format=%P "${commit_hash}" | awk '{print $1}')"
-            if ! git merge-base --is-ancestor "${MERGE_SHA}" "${parent_commit}"; then
+            if ! git merge-base --is-ancestor "${TRIGGER_SHA}" "${parent_commit}"; then
               continue
             fi
 
@@ -294,54 +108,14 @@ jobs:
           done < <(git log --format=$'%H\t%s' main)
 
           if [[ -n "${existing_release_tag}" ]]; then
-            release_subject="$(commit_subject "${existing_release_commit}")"
-            if [[ "${release_subject}" != Release\ * ]]; then
-              echo "::error::Stable tag ${existing_release_tag} points at non-release commit ${existing_release_commit} (${release_subject})."
-              exit 1
-            fi
-            echo "merge_already_tagged=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Merge ${MERGE_SHA} already released by ${existing_release_tag} on commit ${existing_release_commit}."
+            echo "already_released=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Trigger ${TRIGGER_SHA} already released by ${existing_release_tag} on commit ${existing_release_commit}."
           else
-            echo "merge_already_tagged=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Skip when computed tag already exists
-        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true'
-        id: tag_guard
-        env:
-          NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-        run: |
-          is_stable_semver_tag() {
-            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$1"
-          }
-
-          tag_name="v${NEXT_VERSION}"
-          if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
-            if ! is_stable_semver_tag "${tag_name}"; then
-              echo "::error::Computed tag ${tag_name} is not a stable semver tag."
-              exit 1
-            fi
-
-            tag_commit="$(git rev-parse "${tag_name}^{commit}")"
-            tag_commit_subject="$(git show -s --format=%s "${tag_commit}")"
-            if [[ "${tag_commit_subject}" != Release\ * ]]; then
-              echo "::error::Tag ${tag_name} already exists on non-release commit ${tag_commit} (${tag_commit_subject})."
-              exit 1
-            fi
-            if ! git merge-base --is-ancestor "${MERGE_SHA}" "${tag_commit}"; then
-              echo "::error::Tag ${tag_name} exists on release commit ${tag_commit} that does not include merge ${MERGE_SHA}."
-              exit 1
-            fi
-
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Tag ${tag_name} already exists on release commit ${tag_commit}; skipping release actions."
-          else
-            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+            echo "already_released=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update version and changelog
-        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
+        if: steps.release_guard.outputs.already_released != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
         run: |
@@ -369,72 +143,54 @@ jobs:
           fi
 
       - name: Commit release changes
-        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
+        if: steps.release_guard.outputs.already_released != 'true'
         id: commit_release
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          release_commit=""
-          while IFS=$'\t' read -r commit_hash commit_subject; do
-            if [[ "${commit_subject}" == "Release ${NEXT_VERSION}" ]]; then
-              release_commit="${commit_hash}"
-              break
-            fi
-          done < <(git log --format=$'%H\t%s' main)
-
-          if [[ -n "${release_commit}" ]]; then
-            parent_commit="$(git show -s --format=%P "${release_commit}" | awk '{print $1}')"
-            if [[ "${parent_commit}" == "${MERGE_SHA}" ]]; then
-              echo "commit_created=false" >> "$GITHUB_OUTPUT"
-              echo "release_commit_sha=${release_commit}" >> "$GITHUB_OUTPUT"
-              echo "::notice::Release ${NEXT_VERSION} commit already exists on main at merge ${MERGE_SHA}. Skipping commit."
-              exit 0
-            fi
-          fi
-
           git add src/meridian/__init__.py CHANGELOG.md
           git commit -m "Release ${NEXT_VERSION}"
-          echo "commit_created=true" >> "$GITHUB_OUTPUT"
           echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Tag and push release
-        if: steps.release_label.outputs.bump != 'skip' && steps.merge_tag_guard.outputs.merge_already_tagged != 'true' && steps.tag_guard.outputs.tag_exists != 'true'
+      - name: Push release commit and tag
+        if: steps.release_guard.outputs.already_released != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-          COMMIT_CREATED: ${{ steps.commit_release.outputs.commit_created }}
+          TRIGGER_SHA: ${{ github.sha }}
           RELEASE_COMMIT_SHA: ${{ steps.commit_release.outputs.release_commit_sha }}
         run: |
           release_commit_sha="${RELEASE_COMMIT_SHA}"
 
-          if [[ "${COMMIT_CREATED}" == "true" ]]; then
-            for attempt in 1 2 3; do
-              if git push origin HEAD:main; then
-                release_commit_sha="$(git rev-parse HEAD)"
-                break
-              fi
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              release_commit_sha="$(git rev-parse HEAD)"
+              break
+            fi
 
-              if [[ "${attempt}" -eq 3 ]]; then
-                echo "::error::Failed to push release commit to main after ${attempt} attempts."
-                exit 1
-              fi
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "::error::Failed to push release commit to main after ${attempt} attempts."
+              exit 1
+            fi
 
-              echo "::warning::Push to main failed on attempt ${attempt}; rebasing onto latest origin/main and retrying."
-              git fetch origin main --force
-              if ! git merge-base --is-ancestor "${MERGE_SHA}" origin/main; then
-                echo "::error::Merge commit ${MERGE_SHA} is no longer an ancestor of origin/main; refusing to release."
-                exit 1
-              fi
-              git rebase origin/main
-            done
-          fi
+            echo "::warning::Push to main failed on attempt ${attempt}; rebasing onto latest origin/main and retrying."
+            git fetch origin main --force
+            if ! git merge-base --is-ancestor "${TRIGGER_SHA}" origin/main; then
+              echo "::error::Trigger commit ${TRIGGER_SHA} is no longer an ancestor of origin/main; refusing to release."
+              exit 1
+            fi
+            git rebase origin/main
+          done
 
           if git rev-parse -q --verify "refs/tags/v${NEXT_VERSION}" >/dev/null; then
-            echo "::notice::Tag v${NEXT_VERSION} already exists before tag step. Skipping tag creation."
+            tag_commit="$(git rev-parse "v${NEXT_VERSION}^{commit}")"
+            if [[ "${tag_commit}" != "${release_commit_sha}" ]]; then
+              echo "::error::Tag v${NEXT_VERSION} already exists on ${tag_commit}, expected ${release_commit_sha}."
+              exit 1
+            fi
+            echo "::notice::Tag v${NEXT_VERSION} already exists on release commit ${release_commit_sha}."
           else
             git tag -a "v${NEXT_VERSION}" "${release_commit_sha}" -m "Release ${NEXT_VERSION}"
           fi

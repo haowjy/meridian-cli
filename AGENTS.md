@@ -63,14 +63,13 @@ Hook policy:
 
 **NEVER use `--no-verify` on git push unless explicitly instructed by the user.**
 
-**NEVER manually create or push git tags matching `v*`.** Tags come from CI on PR merge to main.
+**NEVER manually create or push git tags matching `v*`.** Tags come from CI after normal pushes to main.
 
 ### Release workflow
 
 ```bash
-# Open a PR from a worktree branch, set one release:* label, merge to main.
-# CI bumps version, promotes changelog, commits Release X.Y.Z, and tags vX.Y.Z.
-# release:patch is the default when no release:* label is set.
+# Open a PR from a worktree branch and merge to main.
+# CI bumps the patch version, promotes changelog, commits Release X.Y.Z, and tags vX.Y.Z.
 # Agents write notes under CHANGELOG.md [Unreleased], but must not edit __version__ or create tags.
 
 # Post-merge cleanup:
@@ -162,7 +161,7 @@ In a git worktree, URLs auto-prefix with the branch name (e.g. `https://new-ui.a
 Prefer `patch` by default, especially while the project is still on `0.0.x`.
 Omit `minor` and `major` in normal release flow. Use an explicit version only when the user explicitly asks for a larger version jump.
 
-Stable releases happen by PR merge to `main` with a `release:*` label. `release:patch` is the default when no label is set.
+Stable releases happen after normal pushes to `main`. Patch is the default release bump.
 
 ### Releasing Prompt Packages
 
@@ -179,7 +178,7 @@ Update CHANGELOG.md entries under `[Unreleased]` as you work — `meridian mars 
 
 ### Releasing mars-agents and meridian-cli
 
-- `meridian-cli`: stable releases are merge-to-main auto-release (`release-on-merge.yml`).
+- `meridian-cli`: stable releases are main-push auto-release (`release-on-merge.yml`).
 - `mars-agents`: continue using its repo `scripts/release.sh` flow.
 
 Do not use `meridian mars version` for these repos — that's for prompt packages only.
