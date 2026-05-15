@@ -17,6 +17,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Error diagnostics list supported harnesses when rejecting invalid combinations.
 - `is_policy_reroute` bypass removed — policy-derived harness overrides validated like any other route selection.
 - `ModelSelectionContext.harness_model_id` carries per-harness model string; applied only at harness command boundary, not in telemetry/display/persistence.
+- Consolidated Mars candidate/runnable-path parsing: `parse_harness_candidates`/`parse_runnable_paths` replace duplicated inner functions in `models.py`.
 
 ## [0.1.7] - 2026-05-15
 
