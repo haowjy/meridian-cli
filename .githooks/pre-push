@@ -6,17 +6,7 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 # Git exports GIT_DIR into hooks; if we reassign the same name, subprocesses
 # (like pytest via preflight) inherit it and git commands in test fixtures
 # operate on the real repo instead of their tmp_path repos.
-_GIT_DIR="$(git rev-parse --absolute-git-dir)"
-RELEASE_DIR="$_GIT_DIR/meridian-release"
-AUTH_FILE="$RELEASE_DIR/auth.json"
 ZERO_SHA="0000000000000000000000000000000000000000"
-
-json_field() {
-  local file="$1"
-  local field="$2"
-  grep -m 1 "^[[:space:]]*\"$field\"[[:space:]]*:" "$file" \
-    | sed 's/^[[:space:]]*"[^"]*"[[:space:]]*:[[:space:]]*"\(.*\)"[[:space:]]*,\{0,1\}[[:space:]]*$/\1/'
-}
 
 has_branch_refs=false
 
@@ -25,32 +15,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     tag_name="${remote_ref#refs/tags/}"
 
     if [[ "$local_sha" == "$ZERO_SHA" ]]; then
-      printf 'BLOCKED: Deletion of release tag %s.\n' "$tag_name" >&2
+      printf 'BLOCKED: deletion of release tag %s.\n' "$tag_name" >&2
       exit 1
     fi
 
     if [[ "$remote_sha" != "$ZERO_SHA" ]]; then
-      printf 'BLOCKED: Update of release tag %s.\n' "$tag_name" >&2
+      printf 'BLOCKED: update of release tag %s.\n' "$tag_name" >&2
       exit 1
     fi
 
-    authorized=false
-    if [[ -f "$AUTH_FILE" ]]; then
-      auth_tag="$(json_field "$AUTH_FILE" tag || true)"
-      auth_sha="$(json_field "$AUTH_FILE" target_sha || true)"
-      local_tag_sha="$(git rev-parse "$local_ref^{}" 2>/dev/null || true)"
-
-      if [[ "$auth_tag" == "$tag_name" ]] && [[ "$auth_sha" == "$local_tag_sha" ]]; then
-        authorized=true
-      fi
-    fi
-
-    if [[ "$authorized" != true ]]; then
-      printf 'BLOCKED: Direct push of release tag %s.\n' "$tag_name" >&2
-      printf 'v* tags are CI-owned. Merge PR to main to auto-release.\n' >&2
-      printf 'Note: enforce server-side protection for refs/tags/v* in GitHub; local hooks are bypassable.\n' >&2
-      exit 1
-    fi
+    printf 'BLOCKED: direct push of release tag %s.\n' "$tag_name" >&2
+    printf 'v* tags are CI-owned. Push normal changes to main; CI creates release tags.\n' >&2
+    printf 'Note: enforce server-side protection for refs/tags/v* in GitHub; local hooks are bypassable.\n' >&2
+    exit 1
   elif [[ "$remote_ref" == refs/heads/* ]]; then
     has_branch_refs=true
   fi

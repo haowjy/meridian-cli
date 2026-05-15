@@ -33,5 +33,6 @@ switch ($Mode) {
         Invoke-Step uv, run, ruff, check, '.'
         Invoke-Step uv, run, pyright
         Invoke-Step uv, run, pytest, '-x', '-q'
+        Invoke-Step uv, build, '--no-sources'
     }
 }

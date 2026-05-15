@@ -97,10 +97,7 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run full gate
-        run: uv run pytest -n auto -m "not windows_only"
-
-      - name: Build distributions
-        run: uv build --no-sources
+        run: scripts/preflight.sh full
 
   compat:
     runs-on: ubuntu-latest

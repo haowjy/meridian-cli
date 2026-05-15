@@ -20,6 +20,18 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
 
       - name: Anchor release on current main
         env:
@@ -113,6 +125,10 @@ jobs:
           else
             echo "already_released=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Run shared preflight
+        if: steps.release_guard.outputs.already_released != 'true'
+        run: scripts/preflight.sh full
 
       - name: Update version and changelog
         if: steps.release_guard.outputs.already_released != 'true'

@@ -179,7 +179,7 @@ Update CHANGELOG.md entries under `[Unreleased]` as you work — `meridian mars 
 ### Releasing mars-agents and meridian-cli
 
 - `meridian-cli`: stable releases are main-push auto-release (`release-on-merge.yml`).
-- `mars-agents`: continue using its repo `scripts/release.sh` flow.
+- `mars-agents`: stable releases are main-push auto-release (`release-on-main.yml`).
 
 Do not use `meridian mars version` for these repos — that's for prompt packages only.
 

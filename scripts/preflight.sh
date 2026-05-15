@@ -20,6 +20,7 @@ case "$MODE" in
     run_step uv run ruff check .
     run_step uv run pyright
     run_step uv run pytest -x -q
+    run_step uv build --no-sources
     ;;
   *)
     printf 'Usage: preflight.sh [fast|full]\n' >&2
