@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +17,7 @@ from meridian.lib.context.resolver import (
 )
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.paths import load_context_config
 
@@ -52,6 +54,7 @@ class ContextOutput(BaseModel):
     kb_resolved: str
     kb_source: str
     extra_contexts: dict[str, ContextEntryOutput] = Field(default_factory=dict)
+    sync_status: dict[str, str] = Field(default_factory=dict)
     render_verbose: bool = Field(default=False, exclude=True, repr=False)
 
     def _available_names(self) -> tuple[str, ...]:
@@ -79,8 +82,9 @@ class ContextOutput(BaseModel):
         if ctx is not None and ctx.verbosity > 0:
             verbose = True
 
+        lines: list[str]
         if verbose:
-            lines: list[str] = []
+            lines = []
             lines.append("work:")
             lines.append(f"  source: {self.work_source}")
             lines.append(f"  path: {self.work_path}")
@@ -98,16 +102,26 @@ class ContextOutput(BaseModel):
                 lines.append(f"  source: {entry.source}")
                 lines.append(f"  path: {entry.path}")
                 lines.append(f"  resolved: {entry.resolved}")
-            return "\n".join(lines)
-
-        active_work_dir = Path(self.active_work_dir) if self.active_work_dir else None
-        return "\n".join(
-            render_context_lines(
-                self._to_resolved_paths(),
-                check_env=True,
-                active_work_dir=active_work_dir,
+        else:
+            active_work_dir = Path(self.active_work_dir) if self.active_work_dir else None
+            lines = list(
+                render_context_lines(
+                    self._to_resolved_paths(),
+                    check_env=True,
+                    active_work_dir=active_work_dir,
+                )
             )
-        )
+
+        if self.sync_status:
+            lines.append("")
+            lines.append("Sync:")
+            for name in sorted(self.sync_status):
+                status_lines = self.sync_status[name].splitlines() or [""]
+                lines.append(f"  {name}: {status_lines[0]}")
+                for status_line in status_lines[1:]:
+                    lines.append(status_line)
+
+        return "\n".join(lines)
 
     def resolve_name(self, name: str) -> str:
         """Resolve one context-name query to its absolute path string."""
@@ -186,6 +200,61 @@ def _extra_context_config(config: ContextConfig) -> dict[str, ArbitraryContextCo
     return parsed
 
 
+def _relative_time(iso_str: str) -> str:
+    """Format an ISO timestamp as a compact relative time string."""
+
+    try:
+        normalized = iso_str.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        now = datetime.now(UTC)
+        delta = max(0, int((now - parsed).total_seconds()))
+    except (TypeError, ValueError):
+        return iso_str
+
+    if delta < 60:
+        return f"{delta}s ago"
+    minutes = delta // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
+
+
+def _sync_status_for_context(context_root: Path) -> str | None:
+    """Return compact sync status text for one context root."""
+    status = read_status(context_root)
+    if status.state is None and not status.unresolved_conflicts:
+        return None
+
+    state_info = "unknown"
+    if status.state is not None:
+        if status.state.last_sync:
+            state_info = f"{status.state.outcome}, {_relative_time(status.state.last_sync)}"
+        else:
+            state_info = status.state.outcome
+
+    if status.unresolved_conflicts:
+        conflict_lines: list[str] = []
+        for c in status.unresolved_conflicts:
+            paths_str = ", ".join(c.paths) or "(no paths)"
+            conflict_lines.append(f"    {c.id} {paths_str} ({c.conflict_type})")
+        return "\n".join(
+            [
+                f"conflict ({state_info}) — {len(status.unresolved_conflicts)} unresolved",
+                *conflict_lines,
+            ]
+        )
+
+    return f"ok ({state_info})"
+
+
 def context_sync(input: ContextInput) -> ContextOutput:
     """Synchronous handler for context query."""
 
@@ -196,6 +265,15 @@ def context_sync(input: ContextInput) -> ContextOutput:
     resolved_paths = resolve_context_paths(authority.project_root, context_config)
     extra_config = _extra_context_config(context_config)
     extra_contexts: dict[str, ContextEntryOutput] = {}
+    sync_status: dict[str, str] = {}
+
+    work_sync = _sync_status_for_context(resolved_paths.work_root)
+    if work_sync is not None:
+        sync_status["work"] = work_sync
+    kb_sync = _sync_status_for_context(resolved_paths.kb_root)
+    if kb_sync is not None:
+        sync_status["kb"] = kb_sync
+
     for name, (path, source) in resolved_paths.extra.items():
         normalized = name.strip().lower()
         config_entry = extra_config.get(normalized)
@@ -206,6 +284,9 @@ def context_sync(input: ContextInput) -> ContextOutput:
             path=config_entry.path,
             resolved=path.as_posix(),
         )
+        extra_sync = _sync_status_for_context(path)
+        if extra_sync is not None:
+            sync_status[normalized] = extra_sync
 
     return ContextOutput(
         work_path=context_config.work.path,
@@ -222,6 +303,7 @@ def context_sync(input: ContextInput) -> ContextOutput:
         kb_resolved=resolved_paths.kb_root.as_posix(),
         kb_source=context_config.kb.source.value,
         extra_contexts=extra_contexts,
+        sync_status=sync_status,
         render_verbose=input.verbose,
     )
 

@@ -133,7 +133,10 @@ grep -q '^keep.txt$' /tmp/meridian-autosync-last-files.txt && \
 echo "PASS: exclude patterns respected" || echo "FAIL: excluded paths were committed"
 ```
 
-### AUTOSYNC-4. Conflict path leaves rebase for review and skips sync [IMPORTANT]
+### AUTOSYNC-4. Conflict path aborts merge, records metadata, and skips sync [IMPORTANT]
+
+Expected behavior: autosync captures conflict paths, aborts the merge, records
+`.meridian/autosync/conflicts/*.json`, and (when `AGENTS.md` exists) appends a notice block.
 
 ```bash
 export E2E_OTHER="$E2E_REPO/other"
@@ -178,15 +181,15 @@ context = HookContext(
 result = GitAutosync().execute(context, hook)
 assert result.success is True
 assert result.skipped is True
-assert result.skip_reason == "rebase_conflict"
-print("PASS: conflict path skipped with rebase_conflict")
+assert result.skip_reason == "conflict_detected"
+print("PASS: conflict path skipped with conflict_detected")
 PY
 
-test -d "$E2E_WORK/.git/rebase-merge" && \
-grep -q '^<<<<<<< HEAD$' "$E2E_WORK/keep.txt" && \
-grep -q '^=======$' "$E2E_WORK/keep.txt" && \
-grep -q '^>>>>>>> ' "$E2E_WORK/keep.txt" && \
-echo "PASS: rebase conflict left for review" || echo "FAIL: rebase conflict not left for review"
+test ! -f "$E2E_WORK/.git/MERGE_HEAD" && \
+test -f "$E2E_WORK/.meridian/autosync/state.json" && \
+test -d "$E2E_WORK/.meridian/autosync/conflicts" && \
+ls "$E2E_WORK/.meridian/autosync/conflicts/"*.json >/dev/null 2>&1 && \
+echo "PASS: merge aborted and conflict metadata recorded" || echo "FAIL: conflict metadata flow failed"
 ```
 
 ### AUTOSYNC-5. No-op run skips with `nothing_to_sync` [IMPORTANT]

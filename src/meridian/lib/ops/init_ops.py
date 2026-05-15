@@ -6,11 +6,15 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.util import FormatContext
+
+
+def _empty_content() -> dict[str, list[str]]:
+    return {}
 
 
 @dataclass(frozen=True)
@@ -19,7 +23,7 @@ class InitAddResult:
 
     declared_targets: list[str]
     declared_primary_agent: str | None
-    content: dict[str, list[str]] = field(default_factory=dict)
+    content: dict[str, list[str]] = field(default_factory=_empty_content)
 
 
 @dataclass(frozen=True)
@@ -150,20 +154,23 @@ def maybe_set_primary_agent(
 
     import tomlkit
 
-    doc = tomlkit.parse(content)
-    primary_table = doc.get("primary")
-    if isinstance(primary_table, dict):
-        current_agent = primary_table.get("agent")
-        if isinstance(current_agent, str) and current_agent.strip():
-            if current_agent == declared_primary_agent:
+    doc_map = cast("dict[str, Any]", tomlkit.parse(content))
+    primary_table_raw: Any = doc_map.get("primary")
+    primary_table: dict[str, Any] | None = (
+        cast("dict[str, Any]", primary_table_raw) if isinstance(primary_table_raw, dict) else None
+    )
+    if primary_table is not None:
+        current_agent_raw: Any = primary_table.get("agent")
+        if isinstance(current_agent_raw, str) and current_agent_raw.strip():
+            if current_agent_raw == declared_primary_agent:
                 return PrimaryAgentAction(action="already_set", agent=declared_primary_agent)
             return PrimaryAgentAction(
                 action="differs",
                 agent=declared_primary_agent,
-                current=current_agent,
+                current=current_agent_raw,
                 message=(
                     f"Package recommends '{declared_primary_agent}' as primary agent. "
-                    f"Current primary is '{current_agent}'. "
+                    f"Current primary is '{current_agent_raw}'. "
                     f"Run `meridian -a {declared_primary_agent}` to try it, "
                     f"or `meridian config set primary.agent {declared_primary_agent}` "
                     f"to change your default."
@@ -236,7 +243,7 @@ def run_init_flow(
     primary_action = maybe_set_primary_agent(project_root, declared_primary_agent)
 
     # 7. Build result
-    content = add_result.content if add_result else {}
+    content: dict[str, list[str]] = add_result.content if add_result else {}
 
     result = InitResult(
         project_root=project_root.as_posix(),

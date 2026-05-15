@@ -622,6 +622,11 @@ def _register_commands_for_invocation(
             get_global_options=get_global_options,
         )
 
+    def _register_sync() -> None:
+        from meridian.cli.sync_cmd import register_sync_commands
+
+        register_sync_commands(app, emit)
+
     def _register_chat() -> None:
         from meridian.cli.chat_cmd import register_chat_command
 
@@ -668,6 +673,7 @@ def _register_commands_for_invocation(
         "context": ("misc", _register_misc),
         "streaming": ("misc", _register_misc),
         "test": ("misc", _register_misc),
+        "sync": ("sync", _register_sync),
         "chat": ("chat", _register_chat),
         "kg": ("kg", _register_kg),
         "mermaid": ("mermaid", _register_mermaid),

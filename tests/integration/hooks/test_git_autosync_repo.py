@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -128,6 +130,38 @@ def _configure_clone_override(
     )
 
 
+def _read_conflicts(work: Path) -> list[dict[str, object]]:
+    """Read all conflict metadata files from a sync root."""
+
+    conflict_dir = work / ".meridian" / "autosync" / "conflicts"
+    if not conflict_dir.exists():
+        return []
+
+    conflicts: list[dict[str, object]] = []
+    for path in sorted(conflict_dir.iterdir()):
+        if path.suffix != ".json":
+            continue
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            conflicts.append(cast("dict[str, object]", loaded))
+    return conflicts
+
+
+def _git_path(repo: Path, name: str, *, env: dict[str, str]) -> Path:
+    path_str = _git("rev-parse", "--git-path", name, cwd=repo, env=env).stdout.strip()
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = repo / path
+    return path
+
+
+def _clone_remote(remote: Path, target: Path, *, env: dict[str, str]) -> Path:
+    _git("clone", str(remote), str(target), env=env)
+    _git("config", "user.email", "autosync-test@example.com", cwd=target, env=env)
+    _git("config", "user.name", "Autosync Test", cwd=target, env=env)
+    return target
+
+
 def test_git_autosync_syncs_and_pushes_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -239,7 +273,7 @@ def test_git_autosync_excludes_configured_paths(
     assert any("tmp/" in line or "tmp/cache.txt" in line for line in status_lines)
 
 
-def test_git_autosync_leaves_rebase_conflict_for_review(
+def test_git_autosync_merge_conflict_aborts_and_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -248,11 +282,7 @@ def test_git_autosync_leaves_rebase_conflict_for_review(
     _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
     branch = _current_branch(work, env=git_env)
 
-    other = tmp_path / "other"
-    _git("clone", str(remote), str(other), env=git_env)
-    _git("config", "user.email", "autosync-test@example.com", cwd=other, env=git_env)
-    _git("config", "user.name", "Autosync Test", cwd=other, env=git_env)
-
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
     (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
     _git("add", "-A", cwd=other, env=git_env)
     _git("commit", "-m", "remote change", cwd=other, env=git_env)
@@ -261,29 +291,254 @@ def test_git_autosync_leaves_rebase_conflict_for_review(
 
     (work / "shared.txt").write_text("local change\n", encoding="utf-8")
 
-    hook = GitAutosync()
-    result = hook.execute(_context(work), _hook(remote=str(remote)))
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
 
     assert result.outcome == "skipped"
     assert result.success is True
     assert result.skipped is True
-    assert result.skip_reason == "rebase_conflict"
-    assert result.error is not None
-    assert f"Rebase conflict at {work}" in result.error
-    assert "Conflicts left for review" in result.error
+    assert result.skip_reason == "conflict_detected"
 
-    assert (work / ".git" / "rebase-merge").exists()
-    assert not (work / ".git" / "rebase-apply").exists()
-    conflicted_file = (work / "shared.txt").read_text(encoding="utf-8")
-    assert "<<<<<<< HEAD" in conflicted_file
-    assert "=======" in conflicted_file
-    assert ">>>>>>> " in conflicted_file
+    assert not _git_path(work, "rebase-merge", env=git_env).exists()
+    assert not _git_path(work, "rebase-apply", env=git_env).exists()
+    assert not _git_path(work, "MERGE_HEAD", env=git_env).exists()
+
+    merged_file = (work / "shared.txt").read_text(encoding="utf-8")
+    assert merged_file == "local change\n"
+    assert "<<<<<<<" not in merged_file
+
+    conflicts = _read_conflicts(work)
+    assert len(conflicts) == 1
+    assert conflicts[0].get("id")
+    assert conflicts[0].get("resolved") is False
 
     remote_head_after_hook = _remote_head(remote, branch, env=git_env)
     assert remote_head_after_hook == remote_head_after_other
 
-    second_result = hook.execute(_context(work), _hook(remote=str(remote)))
-    assert second_result.outcome == "skipped"
-    assert second_result.success is True
-    assert second_result.skipped is True
-    assert second_result.skip_reason == "existing_rebase_conflict"
+
+def test_git_autosync_merge_conflict_writes_agents_md_notice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote change", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    (work / "AGENTS.md").write_text("# Test\n", encoding="utf-8")
+    (work / "shared.txt").write_text("local change\n", encoding="utf-8")
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.outcome == "skipped"
+    assert result.skip_reason == "conflict_detected"
+
+    agents_md = (work / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- autosync-notices -->" in agents_md
+    assert "<!-- /autosync-notices -->" in agents_md
+    assert "### Autosync Conflict" in agents_md
+
+    subjects = _git("log", "--pretty=%s", cwd=work, env=git_env).stdout.splitlines()
+    assert any(subject.startswith("autosync: conflict notice") for subject in subjects)
+
+
+def test_git_autosync_merge_conflict_skips_notice_when_no_agents_md(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote change", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    assert not (work / "AGENTS.md").exists()
+    (work / "shared.txt").write_text("local change\n", encoding="utf-8")
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.outcome == "skipped"
+    assert result.skip_reason == "conflict_detected"
+    assert not (work / "AGENTS.md").exists()
+
+    conflicts = _read_conflicts(work)
+    assert len(conflicts) == 1
+
+
+def test_git_autosync_clean_merge_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+    branch = _current_branch(work, env=git_env)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "file_a.txt").write_text("from remote\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote adds file_a", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    (work / "file_b.txt").write_text("from local\n", encoding="utf-8")
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.outcome == "success"
+    assert result.success is True
+    assert (work / "file_a.txt").read_text(encoding="utf-8") == "from remote\n"
+    assert (work / "file_b.txt").read_text(encoding="utf-8") == "from local\n"
+
+    local_head = _git("rev-parse", "HEAD", cwd=work, env=git_env).stdout.strip()
+    remote_head = _remote_head(remote, branch, env=git_env)
+    assert local_head == remote_head
+
+
+def test_git_autosync_delete_remote_merges_cleanly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "keep.txt").unlink()
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote deletes keep", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.outcome == "success"
+    assert result.success is True
+    assert not (work / "keep.txt").exists()
+
+
+def test_git_autosync_retry_after_conflict_resolves_cleanly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+    branch = _current_branch(work, env=git_env)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote change", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    (work / "shared.txt").write_text("local change\n", encoding="utf-8")
+
+    hook = GitAutosync()
+    first = hook.execute(_context(work), _hook(remote=str(remote)))
+
+    assert first.outcome == "skipped"
+    assert first.skip_reason == "conflict_detected"
+    assert _read_conflicts(work)
+
+    (other / "shared.txt").write_text("local change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote aligns", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    second = hook.execute(_context(work), _hook(remote=str(remote)))
+
+    assert second.outcome == "success"
+    assert second.success is True
+
+    local_head = _git("rev-parse", "HEAD", cwd=work, env=git_env).stdout.strip()
+    remote_head = _remote_head(remote, branch, env=git_env)
+    assert local_head == remote_head
+
+
+def test_git_autosync_default_ignores_written(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.success is True
+
+    exclude_contents = (work / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert ".git" in exclude_contents
+    assert "**/.git" in exclude_contents
+    assert ".meridian/autosync/" in exclude_contents
+
+
+def test_git_autosync_aborts_stale_rebase_on_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+    branch = _current_branch(work, env=git_env)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote change", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    (work / "shared.txt").write_text("local change\n", encoding="utf-8")
+    _git("add", "-A", cwd=work, env=git_env)
+    _git("commit", "-m", "local change", cwd=work, env=git_env)
+
+    rebase = _git("pull", "--rebase", "origin", branch, cwd=work, env=git_env, check=False)
+    assert rebase.returncode != 0
+    assert _git_path(work, "rebase-merge", env=git_env).exists() or _git_path(
+        work, "rebase-apply", env=git_env
+    ).exists()
+
+    (other / "shared.txt").write_text("local change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote aligns", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.success is True
+    assert not _git_path(work, "rebase-merge", env=git_env).exists()
+    assert not _git_path(work, "rebase-apply", env=git_env).exists()
+
+
+def test_git_autosync_conflict_metadata_not_staged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_env = isolated_git_env(global_config_path=tmp_path / "gitconfig")
+    remote, work = _seed_remote(tmp_path, env=git_env)
+    _configure_clone_override(tmp_path, monkeypatch, repo_url=str(remote), clone_path=work)
+
+    other = _clone_remote(remote, tmp_path / "other", env=git_env)
+    (other / "shared.txt").write_text("remote change\n", encoding="utf-8")
+    _git("add", "-A", cwd=other, env=git_env)
+    _git("commit", "-m", "remote change", cwd=other, env=git_env)
+    _git("push", "origin", "HEAD", cwd=other, env=git_env)
+
+    (work / "shared.txt").write_text("local change\n", encoding="utf-8")
+
+    result = GitAutosync().execute(_context(work), _hook(remote=str(remote)))
+
+    assert result.outcome == "skipped"
+    assert result.skip_reason == "conflict_detected"
+    assert _read_conflicts(work)
+
+    touched = _git("log", "--all", "--name-only", "--pretty=format:", cwd=work, env=git_env).stdout
+    touched_paths = [line.strip() for line in touched.splitlines() if line.strip()]
+    assert not any(path.startswith(".meridian/autosync/") for path in touched_paths)
