@@ -112,7 +112,7 @@ def _parse_model_policies(
             continue
         rule = cast("Mapping[object, object]", raw_rule)
         raw_match = rule.get("match")
-        raw_override = rule.get("override")
+        raw_override = rule.get("override", {})
         if not isinstance(raw_match, Mapping):
             continue
         match = cast("Mapping[object, object]", raw_match)
@@ -125,6 +125,8 @@ def _parse_model_policies(
         match_value = str(normalized_match.get(match_key, "")).strip()
         if not match_value:
             continue
+        if raw_override is None:
+            raw_override = {}
         if not isinstance(raw_override, Mapping):
             continue
         raw_no_fallback = rule.get("no-fallback", False)
@@ -144,9 +146,9 @@ def _parse_model_policies(
         is_fallback_candidate = match_key in {"alias", "model"} and not no_fallback
         if not overrides and not is_fallback_candidate:
             continue
-        unknown_keys = sorted(set(overrides) - _MODEL_POLICY_OVERRIDE_KEYS)
-        if unknown_keys:
-            continue
+        overrides = {
+            key: value for key, value in overrides.items() if key in _MODEL_POLICY_OVERRIDE_KEYS
+        }
         parsed.append(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),

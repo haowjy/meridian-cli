@@ -97,8 +97,6 @@ model-policies:
 
   - match:
       alias: gpt5
-    override:
-      autocompact: 20
 
   - match:
       model-glob: "openai/*"
@@ -118,9 +116,13 @@ Matching is first-match-wins by list order. No specificity ranking or ambiguity 
 
 ### Override keys
 
-Scalar overrides in `override:` accept the same keys as profile-level frontmatter:
+Omit `override` or set `override: {}` when the rule only declares fallback order.
+Unknown override keys are ignored by Meridian so newer Mars packages can remain
+launchable on older Meridian versions.
 
-`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `timeout`
+Scalar overrides in `override:` accept these runtime keys:
+
+`harness`, `sandbox`, `approval`, `effort`, `autocompact`, `autocompact_pct`, `timeout`
 
 ### Precedence
 

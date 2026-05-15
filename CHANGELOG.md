@@ -6,6 +6,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Agent profile catalog: silently ignore invalid generated profile metadata instead of blocking spawn. Mars owns package validation.
+- Agent profile catalog: accept missing `model-policies[].override` for fallback rules and ignore unknown override keys inside otherwise usable rules.
 - Repository docs and package examples point at `haowjy/*` repos instead of stale `meridian-flow/*` owners.
 
 ## [0.1.6] - 2026-05-15

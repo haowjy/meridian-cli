@@ -210,6 +210,31 @@ def test_parse_agent_profile_model_policies_accepts_empty_override_with_fallback
     )
 
 
+def test_parse_agent_profile_model_policies_accepts_missing_override_with_fallback_candidate(
+    tmp_path: Path,
+) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "reviewer.md",
+        [
+            "name: Reviewer",
+            "model-policies:",
+            "  - match: {alias: claude-opus-4-6}",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == (
+        ModelPolicyRule(
+            match_type="alias",
+            match_value="claude-opus-4-6",
+            no_fallback=False,
+            overrides={},
+        ),
+    )
+
+
 def test_parse_agent_profile_ignores_noop_non_fallback_policy_rule(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
@@ -253,22 +278,30 @@ def test_parse_agent_profile_ignores_invalid_model_policy_rules(
     assert profile.model_policies == ()
 
 
-def test_parse_agent_profile_ignores_unknown_model_policy_override_key(tmp_path: Path) -> None:
+def test_parse_agent_profile_filters_unknown_model_policy_override_key(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
-        "bad.md",
+        "mixed.md",
         [
-            "name: Bad",
+            "name: Mixed",
             "model-policies:",
             "  - match: {model: gpt-5.5}",
             "    override:",
+            "      effort: high",
             "      temperature: 0.2",
         ],
     )
 
     profile = parse_agent_profile(profile_path)
 
-    assert profile.model_policies == ()
+    assert profile.model_policies == (
+        ModelPolicyRule(
+            match_type="model",
+            match_value="gpt-5.5",
+            no_fallback=False,
+            overrides={"effort": "high"},
+        ),
+    )
 
 
 def test_parse_agent_profile_ignores_invalid_optional_fields(tmp_path: Path) -> None:

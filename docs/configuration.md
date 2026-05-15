@@ -122,7 +122,7 @@ approval = "auto"
 
 [[agents.tech-lead.model-policies]]
 match = { model-glob = "gpt*" }
-override = { effort = "medium", autocompact = 40 }
+override = { effort = "medium", autocompact_pct = 40 }
 
 [[agents.tech-lead.model-policies]]
 match = { alias = "codex" }
@@ -131,23 +131,17 @@ override = { effort = "medium" }
 
 ### Supported fields
 
-Scalar fields: `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`.
+Scalar fields: `model`, `harness`, `effort`, `approval`, `sandbox`, `autocompact`, `autocompact_pct`.
 
 **`timeout` is not supported in v1.** Timeout continues to resolve through existing CLI/env/profile/config paths.
 
 ### Model-policy rules
 
-Each rule has a `match` table (exactly one of `model`, `alias`, `model-glob`) and an `override` table with supported fields: `harness`, `effort`, `approval`, `sandbox`, `autocompact`.
+Config overlay rules use the same `match`, `override`, and fallback semantics as profile `model-policies`. See [agent-profiles.md](agent-profiles.md#model-policies).
 
 Overlay rules are prepended before profile rules to form one effective
 ordered `model-policies` list. Matching uses first-match-wins by list order.
 Duplicate matches are valid; the earlier rule in the combined list wins.
-
-Harness-availability fallback candidates come from `model-policies` list order
-for rules matched by `alias` or `model`. `model-glob` rules are override-only.
-Set `no-fallback = true` on any rule to opt it out of fallback candidacy.
-Legacy `fallback-order` and `fanout` are rejected; migrate by ordering
-`model-policies` directly and adding `no-fallback = true` where needed.
 
 List/tool override keys (`skills`, `tools`, `disallowed-tools`, `mcp-tools`) are rejected with a warning in config overlays.
 
