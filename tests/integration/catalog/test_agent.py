@@ -53,29 +53,31 @@ def test_load_agent_profile_missing_error_points_to_mars_agents_path(tmp_path: P
         load_agent_profile("reviewer", project_root=project_root)
 
 
-def test_parse_agent_profile_rejects_legacy_fanout(tmp_path: Path) -> None:
+def test_parse_agent_profile_ignores_legacy_fanout(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
         ["name: Bad", "fanout:", "  - gpt54", "  - gpt55"],
     )
 
-    with pytest.raises(ValueError, match="contains 'fanout' which is no longer supported"):
-        parse_agent_profile(profile_path)
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.name == "Bad"
 
 
-def test_parse_agent_profile_rejects_legacy_models(tmp_path: Path) -> None:
+def test_parse_agent_profile_ignores_legacy_models(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
         ["name: Bad", "models:", "  gpt55:", "    effort: low"],
     )
 
-    with pytest.raises(ValueError, match="contains 'models' which is no longer supported"):
-        parse_agent_profile(profile_path)
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.name == "Bad"
 
 
-def test_parse_agent_profile_rejects_legacy_fallback_order(tmp_path: Path) -> None:
+def test_parse_agent_profile_ignores_legacy_fallback_order(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
@@ -88,11 +90,15 @@ def test_parse_agent_profile_rejects_legacy_fallback_order(tmp_path: Path) -> No
         ],
     )
 
-    with pytest.raises(
-        ValueError,
-        match="uses 'fallback-order' which is no longer supported",
-    ):
-        parse_agent_profile(profile_path)
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == (
+        ModelPolicyRule(
+            match_type="alias",
+            match_value="gpt55",
+            overrides={"effort": "high"},
+        ),
+    )
 
 
 def test_parse_agent_profile_model_policies_parse(tmp_path: Path) -> None:
@@ -204,9 +210,7 @@ def test_parse_agent_profile_model_policies_accepts_empty_override_with_fallback
     )
 
 
-def test_parse_agent_profile_rejects_empty_override_when_rule_is_not_a_fallback_candidate(
-    tmp_path: Path,
-) -> None:
+def test_parse_agent_profile_ignores_noop_non_fallback_policy_rule(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
@@ -220,40 +224,36 @@ def test_parse_agent_profile_rejects_empty_override_when_rule_is_not_a_fallback_
         ],
     )
 
-    with pytest.raises(ValueError, match="at least one override"):
-        parse_agent_profile(profile_path)
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == ()
 
 
 @pytest.mark.parametrize(
-    "lines, match",
+    "lines",
     [
-        (
-            [
-                "model-policies:",
-                "  - match:",
-                "      model: gpt-5.5",
-                "      alias: gpt",
-                "    override:",
-                "      effort: high",
-            ],
-            "exactly one match key",
-        ),
+        [
+            "model-policies:",
+            "  - match:",
+            "      model: gpt-5.5",
+            "      alias: gpt",
+            "    override:",
+            "      effort: high",
+        ],
     ],
 )
-def test_parse_agent_profile_rejects_invalid_model_policies(
+def test_parse_agent_profile_ignores_invalid_model_policy_rules(
     tmp_path: Path,
     lines: list[str],
-    match: str,
 ) -> None:
     profile_path = _write_profile(tmp_path, "bad.md", ["name: Bad", *lines])
 
-    with pytest.raises(ValueError, match=match):
-        parse_agent_profile(profile_path)
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == ()
 
 
-def test_parse_agent_profile_rejects_unknown_model_policy_override_key(
-    tmp_path: Path,
-) -> None:
+def test_parse_agent_profile_ignores_unknown_model_policy_override_key(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
@@ -266,5 +266,44 @@ def test_parse_agent_profile_rejects_unknown_model_policy_override_key(
         ],
     )
 
-    with pytest.raises(ValueError, match="unknown override key 'temperature'"):
-        parse_agent_profile(profile_path)
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == ()
+
+
+def test_parse_agent_profile_ignores_invalid_optional_fields(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "bad.md",
+        [
+            "name: Bad",
+            "mode: daemon",
+            "approval: nope",
+            "autocompact: 101",
+            "autocompact_pct: 0",
+            "tools: maybe",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.mode == "subagent"
+    assert profile.approval is None
+    assert profile.autocompact is None
+    assert profile.autocompact_pct is None
+    assert profile.tools is None
+
+
+def test_scan_agent_profiles_skips_unreadable_profile_without_blocking_catalog(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    agents_dir = project_root / ".mars" / "agents"
+    agents_dir.mkdir(parents=True)
+    _write_profile(agents_dir, "coder.md", ["name: Coder"])
+    bad_path = agents_dir / "broken.md"
+    bad_path.mkdir()
+
+    profiles = scan_agent_profiles(project_root=project_root)
+
+    assert [profile.name for profile in profiles] == ["Coder"]

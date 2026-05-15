@@ -90,76 +90,50 @@ def _normalize_deduplicated(value: object) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _parse_tools(raw_tools: object, *, profile_name: str) -> ToolsField | None:
+    try:
+        return parse_tools_field(raw_tools, source=f"{profile_name}.tools")
+    except ValueError:
+        return None
+
+
 def _parse_model_policies(
     raw_policies: object,
-    *,
-    profile_name: str,
 ) -> tuple[ModelPolicyRule, ...]:
     if raw_policies is None:
         return ()
     if not isinstance(raw_policies, list):
-        raise ValueError(
-            f"Agent profile '{profile_name}' has invalid model-policies: expected list."
-        )
+        return ()
 
     parsed: list[ModelPolicyRule] = []
     allowed_match_keys = {"model", "alias", "model-glob"}
-    legacy_fallback_key = "fallback" + "-order"
-    for index, raw_rule in enumerate(cast("list[object]", raw_policies), start=1):
+    for raw_rule in cast("list[object]", raw_policies):
         if not isinstance(raw_rule, Mapping):
-            raise ValueError(
-                f"Agent profile '{profile_name}' has invalid model-policies[{index}]: "
-                "expected mapping."
-            )
+            continue
         rule = cast("Mapping[object, object]", raw_rule)
         raw_match = rule.get("match")
         raw_override = rule.get("override")
         if not isinstance(raw_match, Mapping):
-            raise ValueError(
-                f"Agent profile '{profile_name}' has invalid model-policies[{index}].match: "
-                "expected mapping."
-            )
+            continue
         match = cast("Mapping[object, object]", raw_match)
         normalized_match = {str(key).strip(): value for key, value in match.items()}
         if len(normalized_match) != 1:
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] must have exactly "
-                "one match key: model, alias, or model-glob."
-            )
+            continue
         match_key = next(iter(normalized_match))
         if match_key not in allowed_match_keys:
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] has unknown match "
-                f"key '{match_key}': expected model, alias, or model-glob."
-            )
+            continue
         match_value = str(normalized_match.get(match_key, "")).strip()
         if not match_value:
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] match '{match_key}' "
-                "must not be empty."
-            )
+            continue
         if not isinstance(raw_override, Mapping):
-            raise ValueError(
-                f"Agent profile '{profile_name}' has invalid model-policies[{index}].override: "
-                "expected mapping."
-            )
-        if any(str(key).strip() == legacy_fallback_key for key in rule):
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] uses "
-                "'fallback-order' which is no longer supported. Remove fallback-order — "
-                "fallback order is now implicit from list position. Use 'no-fallback: true' "
-                "to exclude a rule from fallback."
-            )
+            continue
         raw_no_fallback = rule.get("no-fallback", False)
         if raw_no_fallback is None:
             no_fallback = False
         elif isinstance(raw_no_fallback, bool):
             no_fallback = raw_no_fallback
         else:
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] "
-                "no-fallback must be true or false."
-            )
+            continue
         if match_key == "model-glob":
             no_fallback = True
         overrides = {
@@ -169,17 +143,10 @@ def _parse_model_policies(
         }
         is_fallback_candidate = match_key in {"alias", "model"} and not no_fallback
         if not overrides and not is_fallback_candidate:
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] must set at least "
-                "one override field."
-            )
+            continue
         unknown_keys = sorted(set(overrides) - _MODEL_POLICY_OVERRIDE_KEYS)
         if unknown_keys:
-            allowed = ", ".join(sorted(_MODEL_POLICY_OVERRIDE_KEYS))
-            raise ValueError(
-                f"Agent profile '{profile_name}' model-policies[{index}] has unknown "
-                f"override key '{unknown_keys[0]}': expected one of {allowed}."
-            )
+            continue
         parsed.append(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),
@@ -211,17 +178,6 @@ def parse_agent_profile(path: Path) -> AgentProfile:
     model_invocable_value = frontmatter.get("model-invocable")
 
     profile_name = str(name_value).strip() if name_value is not None else path.stem
-    if frontmatter.get("fanout") is not None:
-        raise ValueError(
-            f"Agent profile '{profile_name}' contains 'fanout' which is no longer supported. "
-            "Declare fallback candidates in model-policies list order instead. "
-            "Use 'no-fallback: true' to exclude a rule."
-        )
-    if frontmatter.get("models") is not None:
-        raise ValueError(
-            f"Agent profile '{profile_name}' contains 'models' which is no longer supported. "
-            "Use model-policies to express per-model overrides."
-        )
     model_invocable = (
         model_invocable_value if isinstance(model_invocable_value, bool) else True
     )
@@ -240,7 +196,9 @@ def parse_agent_profile(path: Path) -> AgentProfile:
             pass
         else:
             with suppress(ValueError):
-                autocompact = cast("int | None", validate_autocompact_value(raw_autocompact))
+                autocompact = cast(
+                    "int | None", validate_autocompact_value(raw_autocompact)
+                )
 
     autocompact_pct: int | None = None
     if autocompact_pct_value is not None:
@@ -256,15 +214,11 @@ def parse_agent_profile(path: Path) -> AgentProfile:
 
     model_policies = _parse_model_policies(
         model_policies_value,
-        profile_name=profile_name,
     )
 
     mode = str(mode_value).strip() if mode_value is not None else "subagent"
     if mode not in {"primary", "subagent"}:
-        raise ValueError(
-            f"Agent profile '{profile_name}' has invalid mode '{mode}': "
-            "expected 'primary' or 'subagent'."
-        )
+        mode = "subagent"
 
     return AgentProfile(
         name=profile_name,
@@ -272,7 +226,7 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         model=str(model_value).strip() if model_value is not None else None,
         harness=str(harness_value).strip() if harness_value is not None else None,
         skills=_normalize_string_list(frontmatter.get("skills")),
-        tools=parse_tools_field(frontmatter.get("tools"), source=f"{profile_name}.tools"),
+        tools=_parse_tools(frontmatter.get("tools"), profile_name=profile_name),
         mcp_tools=_normalize_deduplicated(frontmatter.get("mcp-tools")),
         sandbox=sandbox,
         effort=effort,
@@ -310,7 +264,10 @@ def scan_agent_profiles(
         if not directory.is_dir():
             continue
         for path in sorted(directory.glob("*.md")):
-            profile = parse_agent_profile(path)
+            try:
+                profile = parse_agent_profile(path)
+            except (OSError, ValueError):
+                continue
             existing = selected_by_name.get(profile.name)
             if existing is not None:
                 if files_have_equal_text(existing.path, profile.path):
