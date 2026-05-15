@@ -11,6 +11,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.policies import (
+    ModelSelectionContext,
     SurfacePolicyInput,
     match_model_policy,
     resolve_launch_policy,
@@ -67,6 +68,32 @@ def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
     for harness_id in harness_ids:
         registry.register(base_registry.get(harness_id))
     return registry
+
+
+def test_model_selection_context_has_harness_model_id_field() -> None:
+    context = ModelSelectionContext(
+        requested_token="fast",
+        selected_model_token="fast",
+        canonical_model_id="fake-model",
+        mars_provided_harness=HarnessId.CODEX,
+        resolved_entry=None,
+        harness_provenance="resolved",
+    )
+
+    assert hasattr(context, "harness_model_id")
+
+
+def test_model_selection_context_harness_model_id_defaults_to_none() -> None:
+    context = ModelSelectionContext(
+        requested_token="fast",
+        selected_model_token="fast",
+        canonical_model_id="fake-model",
+        mars_provided_harness=HarnessId.CODEX,
+        resolved_entry=None,
+        harness_provenance="resolved",
+    )
+
+    assert context.harness_model_id is None
 
 
 def test_resolve_policy_fields_resolves_per_field_precedence() -> None:

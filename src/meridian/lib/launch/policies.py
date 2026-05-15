@@ -647,6 +647,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         catalog=surface.catalog,
     )
     resolved_model_default_harness = _resolved_model_default_harness(resolved_model_entry)
+    policy_warnings: list[CompositionWarning] = []
 
     if final_model and user_explicit_same_precedence:
         if model_resolution_error is not None:
@@ -663,9 +664,15 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         and resolved_model_entry is not None
         and resolved_model_default_harness is not None
         and harness_id != resolved_model_default_harness
-        and resolved_model_entry.harness_candidates
+        and compiler_result.field_provenance.harness_source
+        not in (ProvenanceLevel.CLI, ProvenanceLevel.ENV)
     ):
-        harness_source = "model-policy" if compiler_result.matched_model_policy else "resolved"
+        harness_source = "resolved"
+        if compiler_result.field_provenance.harness_source in (
+            ProvenanceLevel.PROFILE_MODEL_POLICY,
+            ProvenanceLevel.AGENT_OVERLAY_POLICY,
+        ):
+            harness_source = "model-policy"
         validate_harness_compatibility(
             model=final_model,
             harness_id=harness_id,
@@ -694,6 +701,22 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             )
             if computed != canonical_model_id:
                 harness_model_for_spec = computed
+            raw_harness_candidates = getattr(selected_entry, "harness_candidates", ()) or ()
+            harness_candidates = tuple(str(candidate) for candidate in raw_harness_candidates)
+            if (
+                harness_model_for_spec is None
+                and str(harness_id) in harness_candidates
+            ):
+                policy_warnings.append(
+                    CompositionWarning(
+                        code="missing_runnable_path",
+                        message=(
+                            f"Harness '{harness_id}' is a supported candidate for model "
+                            f"'{final_model}' but no harness-specific model ID is available. "
+                            "Using canonical model ID."
+                        ),
+                    )
+                )
         selected_model_token = (
             (selected_entry.alias.strip() or str(selected_entry.model_id))
             if selected_entry is not None
@@ -751,6 +774,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     )
 
     model_warning = "\n".join(compiler_result.warnings).strip() or None
+    policy_warnings = [
+        *_policy_warnings(
+            profile_warning=profile_warning,
+            model_warning=model_warning,
+        ),
+        *policy_warnings,
+    ]
 
     return ResolvedLaunchPolicy(
         profile=profile,
@@ -764,10 +794,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
         fallback_chain=compiler_result.fallback_chain,
-        warnings=_policy_warnings(
-            profile_warning=profile_warning,
-            model_warning=model_warning,
-        ),
+        warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
     )
 
