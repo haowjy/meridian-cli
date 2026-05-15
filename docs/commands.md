@@ -19,7 +19,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
-| `meridian spawn --from REF -p "next"` | Start a new spawn with prior spawn or chat/session context |
+| `meridian spawn --from [REF] -p "next"` | Start a new spawn with prior spawn or chat/session context (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `meridian spawn cancel ID` | Cancel a running spawn |
 | `meridian spawn cancel-all` | Cancel all running spawns in the current chat (or subtree when called from a nested spawn) |
 | `meridian spawn inject ID --message "text"` | Inject a message into a running streaming spawn |
@@ -38,7 +38,7 @@ Common `spawn` flags:
 | `-f FILE` | Attach context file (repeatable) |
 | `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
-| `--from REF` | Attach prior context from a spawn ref (`p123`) or chat/session ref (`c123`) |
+| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
@@ -51,6 +51,8 @@ Common `spawn` flags:
 ```
 
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
+
+Session initiation modes: `--continue` resumes the same transcript, `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
 
 `spawn show` includes primary-session metadata when available from `primary_meta.json`:
 `kind`, `activity`, `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,

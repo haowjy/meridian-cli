@@ -3,6 +3,7 @@
 These checks validate fork flows on both root and spawn commands:
 - `--fork [ref]` (identity-preserving)
 - `--fork-fresh [ref]` (identity-changing)
+- `--from [ref]` (reference-only context seeding)
 
 This suite requires a working harness because several scenarios execute real forks.
 
@@ -190,6 +191,48 @@ assert root_doc["message"] == "Fork dry-run."
 assert root_doc.get("forked_from") == os.environ["SOURCE_CHAT_ID"]
 print("PASS: bare --fork resolved from MERIDIAN_SPAWN_ID for spawn and root")
 PY
+```
+
+### FORK-3c. Bare `--from` uses `$MERIDIAN_SPAWN_ID` [NORMAL]
+
+```bash
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)" && \
+MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json spawn --from -p "review what I just did" --dry-run > /tmp/meridian-fork-3c.json && \
+SOURCE_SPAWN_ID="$SOURCE_SPAWN_ID" uv run python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+doc = json.loads(Path("/tmp/meridian-fork-3c.json").read_text(encoding="utf-8"))
+assert doc["status"] == "dry-run"
+assert doc.get("context_from") == [os.environ["SOURCE_SPAWN_ID"]]
+print("PASS: bare --from resolved from MERIDIAN_SPAWN_ID")
+PY
+```
+
+### FORK-3d. `--from` and `--continue` are mutually exclusive [CRITICAL]
+
+```bash
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)"
+if uv run meridian spawn --from "$SOURCE_SPAWN_ID" --continue "$SOURCE_SPAWN_ID" -p "should fail" >/tmp/meridian-fork-3d.out 2>&1; then
+  echo "FAIL: --from + --continue unexpectedly succeeded"
+elif grep -q "Cannot combine --from with --continue." /tmp/meridian-fork-3d.out; then
+  echo "PASS: --from + --continue rejected cleanly"
+else
+  echo "FAIL: --from + --continue error text was not useful"
+fi
 ```
 
 ### FORK-4. `--fork` and `--from` are mutually exclusive [CRITICAL]

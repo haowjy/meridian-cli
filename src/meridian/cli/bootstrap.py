@@ -21,6 +21,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--continue",
         "--fork",
         "--fork-fresh",
+        "--from",
         "--model",
         "-m",
         "--harness",

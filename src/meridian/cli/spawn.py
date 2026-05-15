@@ -472,8 +472,6 @@ def _spawn_create(
             prepared=_prepare_spawn_runtime_write(),
         )
     elif resolved_continue_from is not None:
-        if context_from:
-            raise ValueError("Cannot use --from with --continue")
         result = spawn_continue_sync(
             SpawnContinueInput(
                 spawn_id=resolved_continue_from,
@@ -497,7 +495,7 @@ def _spawn_create(
                 prompt=resolved_prompt,
                 model=model,
                 files=references,
-                context_from=context_from,
+                context_from=fork_resolution.resolved_context_from,
                 template_vars=template_vars,
                 agent=agent,
                 skills=parsed_skills,

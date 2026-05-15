@@ -7,6 +7,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
 - `--fork-fresh [REF]` on both `meridian` (primary) and `meridian spawn` surfaces. It forks transcript lineage while allowing identity overrides (`-m`, `-a`, `--skills` on spawn). Bare `--fork-fresh` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions.
+- Bare `--from` on `meridian spawn` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Same argv normalization as `--fork` / `--fork-fresh`.
 
 ### Changed
 - `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
@@ -14,6 +15,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CLI argv normalization now rewrites bare/equals forms for `--fork` and `--fork-fresh` before bootstrap and Cyclopts parsing, so forms like `--fork`, `--fork=`, and `--fork --bg` parse consistently.
 - Fork conflict validation (mutual exclusion, identity lock, `--from` conflicts) centralized in `argv_normalization.validate_fork_mode()`. Both `spawn.py` and `primary_launch.py` use shared validator instead of duplicated inline checks.
 - Bootstrap sentinel awareness replaced with generic `SYNTHETIC_VALUE_TOKENS` set — decouples bootstrap from fork feature encoding.
+- `resolve_fork_ref` → `resolve_optional_ref(flag_name=)` with flag-specific inference errors for `--fork`, `--fork-fresh`, and `--from`.
+- `--from` + `--continue` now rejected with: `Cannot combine --from with --continue.`
 
 ## [0.1.8] - 2026-05-16
 
