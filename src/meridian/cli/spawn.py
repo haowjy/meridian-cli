@@ -9,7 +9,7 @@ from typing import Annotated, Any, cast, get_args
 
 from cyclopts import App, Parameter
 
-from meridian.cli.argv_normalization import resolve_fork_ref
+from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import parse_csv_list, require_established_project_root
@@ -51,10 +51,6 @@ from meridian.lib.ops.spawn.api import (
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
 
 Emitter = Callable[[Any], None]
-_FORK_IDENTITY_ERROR = (
-    "--fork preserves launch identity. "
-    "Use --fork-fresh to change agent, model, or skills."
-)
 _SPAWN_STATUS_VALUES: tuple[SpawnStatus, ...] = cast(
     "tuple[SpawnStatus, ...]", get_args(SpawnStatus)
 )
@@ -416,25 +412,15 @@ def _spawn_create(
     parsed_skills = parse_csv_list(skills, field_name="skills")
     resolved_goal = normalize_goal(goal)
 
-    if raw_fork_from is not None and raw_fork_fresh_from is not None:
-        raise ValueError("Cannot combine --fork with --fork-fresh.")
-
-    if raw_fork_from is not None and resolved_continue_from is not None:
-        raise ValueError("Cannot combine --fork with --continue.")
-    if raw_fork_fresh_from is not None and resolved_continue_from is not None:
-        raise ValueError("Cannot combine --fork-fresh with --continue.")
-
-    if raw_fork_from is not None:
-        if context_from:
-            raise ValueError("Cannot combine --fork with --from (MVP limitation).")
-        if ((agent is not None and agent.strip()) or model.strip() or skills is not None):
-            raise ValueError(_FORK_IDENTITY_ERROR)
-
-    if raw_fork_fresh_from is not None and context_from:
-        raise ValueError("Cannot combine --fork-fresh with --from (MVP limitation).")
-
-    resolved_fork_from = resolve_fork_ref(raw_fork_from)
-    resolved_fork_fresh_from = resolve_fork_ref(raw_fork_fresh_from)
+    fork_resolution = validate_fork_mode(
+        fork_from=raw_fork_from,
+        fork_fresh_from=raw_fork_fresh_from,
+        continue_from=resolved_continue_from,
+        context_from=context_from,
+        agent=agent,
+        model=model,
+        skills=skills,
+    )
     shared_launch_kwargs = _shared_launch_input_kwargs(
         dry_run=dry_run,
         verbose=verbose,
@@ -464,9 +450,9 @@ def _spawn_create(
         is_continue=resolved_continue_from is not None,
     )
 
-    fork_source_ref = resolved_fork_from or resolved_fork_fresh_from
+    fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
     if fork_source_ref is not None:
-        fork_is_fresh = resolved_fork_fresh_from is not None
+        fork_is_fresh = fork_resolution.is_fresh
         result = spawn_fork_sync(
             SpawnForkInput(
                 source_ref=fork_source_ref,

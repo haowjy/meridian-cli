@@ -1,10 +1,16 @@
+import re
+
 import pytest
 
 from meridian.cli.argv_normalization import (
+    FORK_IDENTITY_ERROR,
     FORK_INFERENCE_ERROR,
     SELF_FORK_REF_SENTINEL,
+    SYNTHETIC_VALUE_TOKENS,
+    ForkModeResolution,
     normalize_optional_value_flags,
     resolve_fork_ref,
+    validate_fork_mode,
 )
 
 
@@ -42,3 +48,122 @@ def test_resolve_fork_ref_self_sentinel_without_context_errors(
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
     with pytest.raises(ValueError, match=FORK_INFERENCE_ERROR):
         resolve_fork_ref(SELF_FORK_REF_SENTINEL)
+
+
+def test_synthetic_value_tokens_contains_sentinel() -> None:
+    assert SELF_FORK_REF_SENTINEL in SYNTHETIC_VALUE_TOKENS
+
+
+def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
+    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork with --fork-fresh.")):
+        validate_fork_mode(fork_from="p1", fork_fresh_from="p2", continue_from=None)
+
+
+def test_validate_fork_mode_conflicts_fork_and_continue() -> None:
+    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork with --continue.")):
+        validate_fork_mode(fork_from="p1", fork_fresh_from=None, continue_from="c1")
+
+
+def test_validate_fork_mode_conflicts_fork_fresh_and_continue() -> None:
+    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork-fresh with --continue.")):
+        validate_fork_mode(fork_from=None, fork_fresh_from="p1", continue_from="c1")
+
+
+def test_validate_fork_mode_conflicts_fork_and_from() -> None:
+    with pytest.raises(
+        ValueError, match=re.escape("Cannot combine --fork with --from (MVP limitation).")
+    ):
+        validate_fork_mode(
+            fork_from="p1",
+            fork_fresh_from=None,
+            continue_from=None,
+            context_from=("c1",),
+        )
+
+
+def test_validate_fork_mode_conflicts_fork_fresh_and_from() -> None:
+    with pytest.raises(
+        ValueError, match=re.escape("Cannot combine --fork-fresh with --from (MVP limitation).")
+    ):
+        validate_fork_mode(
+            fork_from=None,
+            fork_fresh_from="p1",
+            continue_from=None,
+            context_from=("c1",),
+        )
+
+
+def test_validate_fork_mode_rejects_identity_override_agent() -> None:
+    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
+        validate_fork_mode(
+            fork_from="p1",
+            fork_fresh_from=None,
+            continue_from=None,
+            agent="reviewer",
+        )
+
+
+def test_validate_fork_mode_rejects_identity_override_model() -> None:
+    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
+        validate_fork_mode(
+            fork_from="p1",
+            fork_fresh_from=None,
+            continue_from=None,
+            model="gpt-5.4-mini",
+        )
+
+
+def test_validate_fork_mode_rejects_identity_override_skills() -> None:
+    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
+        validate_fork_mode(
+            fork_from="p1",
+            fork_fresh_from=None,
+            continue_from=None,
+            skills="foo,bar",
+        )
+
+
+def test_validate_fork_mode_allows_fork_fresh_with_agent_model_and_skills() -> None:
+    assert validate_fork_mode(
+        fork_from=None,
+        fork_fresh_from="p1",
+        continue_from=None,
+        agent="reviewer",
+        model="gpt-5.4-mini",
+        skills="foo,bar",
+    ) == ForkModeResolution(fork_ref=None, fork_fresh_ref="p1", is_fork=True, is_fresh=True)
+
+
+def test_validate_fork_mode_no_fork_no_continue_returns_empty_resolution() -> None:
+    assert validate_fork_mode(
+        fork_from=None,
+        fork_fresh_from=None,
+        continue_from=None,
+    ) == ForkModeResolution(fork_ref=None, fork_fresh_ref=None, is_fork=False, is_fresh=False)
+
+
+def test_validate_fork_mode_resolves_fork_ref() -> None:
+    assert validate_fork_mode(
+        fork_from="p123",
+        fork_fresh_from=None,
+        continue_from=None,
+    ) == ForkModeResolution(fork_ref="p123", fork_fresh_ref=None, is_fork=True, is_fresh=False)
+
+
+def test_validate_fork_mode_resolves_fork_fresh_ref() -> None:
+    assert validate_fork_mode(
+        fork_from=None,
+        fork_fresh_from="p456",
+        continue_from=None,
+    ) == ForkModeResolution(fork_ref=None, fork_fresh_ref="p456", is_fork=True, is_fresh=True)
+
+
+def test_validate_fork_mode_resolves_sentinel_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p42")
+    assert validate_fork_mode(
+        fork_from=SELF_FORK_REF_SENTINEL,
+        fork_fresh_from=None,
+        continue_from=None,
+    ) == ForkModeResolution(fork_ref="p42", fork_fresh_ref=None, is_fork=True, is_fresh=False)

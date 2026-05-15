@@ -4,13 +4,34 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 SELF_FORK_REF_SENTINEL = "__SELF__"
+SYNTHETIC_VALUE_TOKENS: frozenset[str] = frozenset({SELF_FORK_REF_SENTINEL})
+FORK_IDENTITY_ERROR = (
+    "--fork preserves launch identity. "
+    "Use --fork-fresh to change agent, model, or skills."
+)
 FORK_INFERENCE_ERROR = (
     "Cannot infer --fork target: not inside a Meridian-managed session. "
     "Pass --fork REF explicitly."
 )
+_FORK_FRESH_CONFLICT = "Cannot combine --fork with --fork-fresh."
+_FORK_CONTINUE_CONFLICT = "Cannot combine --fork with --continue."
+_FORK_FRESH_CONTINUE_CONFLICT = "Cannot combine --fork-fresh with --continue."
+_FORK_FROM_CONFLICT = "Cannot combine --fork with --from (MVP limitation)."
+_FORK_FRESH_FROM_CONFLICT = "Cannot combine --fork-fresh with --from (MVP limitation)."
 _OPTIONAL_FORK_VALUE_FLAGS = ("--fork", "--fork-fresh")
+
+
+@dataclass(frozen=True)
+class ForkModeResolution:
+    """Result of resolving and validating fork/continue/from interactions."""
+
+    fork_ref: str | None
+    fork_fresh_ref: str | None
+    is_fork: bool
+    is_fresh: bool
 
 
 def normalize_optional_value_flags(argv: Sequence[str]) -> list[str]:
@@ -71,3 +92,43 @@ def resolve_fork_ref(raw_ref: str | None) -> str | None:
     if not spawn_id:
         raise ValueError(FORK_INFERENCE_ERROR)
     return spawn_id
+
+
+def validate_fork_mode(
+    *,
+    fork_from: str | None,
+    fork_fresh_from: str | None,
+    continue_from: str | None,
+    context_from: tuple[str, ...] | Sequence[str] = (),
+    agent: str | None = None,
+    model: str = "",
+    skills: str | None = None,
+) -> ForkModeResolution:
+    """Validate fork/continue/from mutual exclusions and resolve refs."""
+
+    if fork_from is not None and fork_fresh_from is not None:
+        raise ValueError(_FORK_FRESH_CONFLICT)
+    if fork_from is not None and continue_from is not None:
+        raise ValueError(_FORK_CONTINUE_CONFLICT)
+    if fork_fresh_from is not None and continue_from is not None:
+        raise ValueError(_FORK_FRESH_CONTINUE_CONFLICT)
+
+    if fork_from is not None and context_from:
+        raise ValueError(_FORK_FROM_CONFLICT)
+    if fork_fresh_from is not None and context_from:
+        raise ValueError(_FORK_FRESH_FROM_CONFLICT)
+
+    if (
+        fork_from is not None
+        and ((agent is not None and agent.strip()) or model.strip() or skills is not None)
+    ):
+        raise ValueError(FORK_IDENTITY_ERROR)
+
+    resolved_fork = resolve_fork_ref(fork_from)
+    resolved_fork_fresh = resolve_fork_ref(fork_fresh_from)
+    return ForkModeResolution(
+        fork_ref=resolved_fork,
+        fork_fresh_ref=resolved_fork_fresh,
+        is_fork=resolved_fork is not None or resolved_fork_fresh is not None,
+        is_fresh=resolved_fork_fresh is not None,
+    )

@@ -12,6 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
 - Bare `--fork` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Outside a managed session it fails with: `Cannot infer --fork target: not inside a Meridian-managed session. Pass --fork REF explicitly.`
 - CLI argv normalization now rewrites bare/equals forms for `--fork` and `--fork-fresh` before bootstrap and Cyclopts parsing, so forms like `--fork`, `--fork=`, and `--fork --bg` parse consistently.
+- Fork conflict validation (mutual exclusion, identity lock, `--from` conflicts) centralized in `argv_normalization.validate_fork_mode()`. Both `spawn.py` and `primary_launch.py` use shared validator instead of duplicated inline checks.
+- Bootstrap sentinel awareness replaced with generic `SYNTHETIC_VALUE_TOKENS` set — decouples bootstrap from fork feature encoding.
 
 ## [0.1.8] - 2026-05-16
 

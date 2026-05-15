@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.cli.argv_normalization import SELF_FORK_REF_SENTINEL
+from meridian.cli.argv_normalization import SYNTHETIC_VALUE_TOKENS
 from meridian.cli.startup.policy import StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
@@ -101,7 +101,7 @@ def _first_positional_token(argv: Sequence[str]) -> str | None:
 
 def _first_positional_token_for_global_parse(argv: Sequence[str]) -> str | None:
     token = _first_positional_token(argv)
-    if token == SELF_FORK_REF_SENTINEL:
+    if token in SYNTHETIC_VALUE_TOKENS:
         return None
     return token
 

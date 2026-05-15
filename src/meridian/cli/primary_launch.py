@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.cli.argv_normalization import resolve_fork_ref
+from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.utils import missing_fork_session_error
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.util import FormatContext
@@ -131,11 +131,6 @@ def run_primary_launch(
     include_bootstrap_documents: bool = False,
     prompt: str | None = None,
 ) -> PrimaryLaunchOutput:
-    fork_identity_error = (
-        "--fork preserves launch identity. "
-        "Use --fork-fresh to change agent, model, or skills."
-    )
-
     def _result_message(*, exit_code: int) -> str:
         if dry_run:
             if resume_target is not None:
@@ -171,20 +166,15 @@ def run_primary_launch(
     fork_fresh_target_requested = raw_fork_fresh_target or None
     resolved_approval = approval if approval is not None else ("yolo" if yolo else "default")
 
-    if fork_target_requested is not None and fork_fresh_target_requested is not None:
-        raise ValueError("Cannot combine --fork with --fork-fresh.")
-    if resume_target is not None and fork_target_requested is not None:
-        raise ValueError("Cannot combine --fork with --continue.")
-    if resume_target is not None and fork_fresh_target_requested is not None:
-        raise ValueError("Cannot combine --fork-fresh with --continue.")
-    if fork_target_requested is not None and (
-        model.strip() or (agent is not None and agent.strip())
-    ):
-        raise ValueError(fork_identity_error)
-    normalized_fork_ref = resolve_fork_ref(fork_target_requested)
-    normalized_fork_fresh_ref = resolve_fork_ref(fork_fresh_target_requested)
-    fork_target = normalized_fork_ref if normalized_fork_ref else None
-    fork_fresh_target = normalized_fork_fresh_ref if normalized_fork_fresh_ref else None
+    fork_resolution = validate_fork_mode(
+        fork_from=fork_target_requested,
+        fork_fresh_from=fork_fresh_target_requested,
+        continue_from=resume_target,
+        agent=agent,
+        model=model,
+    )
+    fork_target = fork_resolution.fork_ref
+    fork_fresh_target = fork_resolution.fork_fresh_ref
     selected_fork_target = fork_target if fork_target is not None else fork_fresh_target
 
     continue_harness_session_id: str | None = None
