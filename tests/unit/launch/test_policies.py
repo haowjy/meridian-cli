@@ -184,20 +184,21 @@ def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> No
     assert winner.match_value == "gpt-*"
 
 
-def test_validate_harness_compatibility_allows_policy_reroute() -> None:
+def test_validate_harness_compatibility_allows_model_policy_candidate_route() -> None:
     registry = get_default_harness_registry()
     model_entry = _mock_alias(
         alias="claude",
         model_id="claude-haiku-4-5",
         harness=HarnessId.CLAUDE,
     )
+    object.__setattr__(model_entry, "harness_candidates", ("claude", "codex"))
 
     validate_harness_compatibility(
         model="claude-haiku-4-5",
         harness_id=HarnessId.CODEX,
         model_entry=model_entry,
         harness_registry=registry,
-        is_policy_reroute=True,
+        harness_source="model-policy",
     )
 
 
@@ -209,13 +210,13 @@ def test_validate_harness_compatibility_rejects_same_layer_contradiction() -> No
         harness=HarnessId.CLAUDE,
     )
 
-    with pytest.raises(ValueError, match="incompatible with model"):
+    with pytest.raises(ValueError, match="from model-policy override"):
         validate_harness_compatibility(
             model="claude-haiku-4-5",
             harness_id=HarnessId.CODEX,
             model_entry=model_entry,
             harness_registry=registry,
-            is_policy_reroute=False,
+            harness_source="model-policy",
         )
 
 

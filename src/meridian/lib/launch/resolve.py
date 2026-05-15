@@ -160,14 +160,9 @@ def validate_harness_compatibility(
     harness_id: HarnessId,
     model_entry: AliasEntry | None,
     harness_registry: HarnessRegistry,
-    is_policy_reroute: bool = False,
+    harness_source: str = "resolved",
 ) -> None:
-    """Validate harness/model compatibility with provenance awareness.
-
-    Policy-driven reroutes intentionally override the model-derived harness, so
-    they only need the harness to be supported for primary launch. Same-layer
-    user overrides also validate that the harness matches the model route.
-    """
+    """Validate harness/model compatibility with candidate-aware routing."""
 
     supported_primary_harnesses = tuple(
         harness_id_candidate
@@ -179,11 +174,24 @@ def validate_harness_compatibility(
         supported_text = ", ".join(str(harness) for harness in supported_primary_harnesses)
         raise ValueError(f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}.")
 
-    if is_policy_reroute or model_entry is None:
+    if model_entry is None:
         return
+
+    harness_candidates = tuple(getattr(model_entry, "harness_candidates", ()) or ())
+    if harness_candidates:
+        if str(harness_id) not in harness_candidates:
+            supported = ", ".join(harness_candidates)
+            source_note = " from model-policy override" if harness_source == "model-policy" else ""
+            raise ValueError(
+                f"Harness '{harness_id}'{source_note} is not a supported route "
+                f"for model '{model}'. Supported harnesses: {supported}."
+            )
+        return
+
     if harness_id != model_entry.harness:
+        source_note = " from model-policy override" if harness_source == "model-policy" else ""
         raise ValueError(
-            f"Harness '{harness_id}' is incompatible with model '{model}' "
+            f"Harness '{harness_id}'{source_note} is incompatible with model '{model}' "
             f"(routes to '{model_entry.harness}')."
         )
 
@@ -194,7 +202,6 @@ def resolve_harness(
     model_entry: AliasEntry | None,
     harness_override: str | None,
     harness_registry: HarnessRegistry,
-    is_policy_reroute: bool = False,
 ) -> HarnessId:
     """Determine final primary-launch harness from a resolved model entry."""
 
@@ -213,9 +220,30 @@ def resolve_harness(
         harness_id=override_harness,
         model_entry=model_entry,
         harness_registry=harness_registry,
-        is_policy_reroute=is_policy_reroute,
+        harness_source="resolved",
     )
     return override_harness
+
+
+def select_harness_model_id(
+    *,
+    model_entry: AliasEntry | None,
+    harness_id: HarnessId,
+    canonical_model_id: str,
+) -> str:
+    """Select the harness-specific model ID for the chosen route.
+
+    Returns canonical_model_id when no harness-specific ID is available.
+    """
+    if model_entry is None:
+        return canonical_model_id
+
+    harness_model_id_for = getattr(model_entry, "harness_model_id_for", None)
+    if callable(harness_model_id_for):
+        specific_id = harness_model_id_for(str(harness_id))
+        if isinstance(specific_id, str):
+            return specific_id
+    return canonical_model_id
 
 
 __all__ = [
@@ -227,5 +255,6 @@ __all__ = [
     "resolve_profile_path",
     "resolve_skill_paths",
     "resolve_skills_from_profile",
+    "select_harness_model_id",
     "validate_harness_compatibility",
 ]

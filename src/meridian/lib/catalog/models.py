@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from contextlib import suppress
 from pathlib import Path
+from typing import cast
 
 from meridian.lib.catalog.model_aliases import (
     AliasEntry,
     MarsResultCache,
+    RunnablePath,
     cached_mars_models_list_all,
     cached_mars_models_resolve,
     load_mars_aliases,
@@ -48,6 +50,52 @@ def resolve_model(
     if not normalized:
         raise ValueError("Model identifier must not be empty.")
 
+    def _extract_harness_candidates(payload: dict[str, object]) -> tuple[str, ...]:
+        raw_candidates = payload.get("harness_candidates")
+        return tuple(
+            candidate.strip()
+            for candidate in (
+                cast("list[object]", raw_candidates) if isinstance(raw_candidates, list) else []
+            )
+            if isinstance(candidate, str) and candidate.strip()
+        )
+
+    def _extract_runnable_paths(payload: dict[str, object]) -> tuple[RunnablePath, ...]:
+        raw_paths = payload.get("runnable_paths")
+        runnable_paths: list[RunnablePath] = []
+        for path in (cast("list[object]", raw_paths) if isinstance(raw_paths, list) else []):
+            if not isinstance(path, dict):
+                continue
+            typed_path = cast("dict[str, object]", path)
+            raw_harness = typed_path.get("harness")
+            raw_harness_model_id = typed_path.get("harness_model_id")
+            if not (
+                isinstance(raw_harness, str)
+                and raw_harness.strip()
+                and isinstance(raw_harness_model_id, str)
+                and raw_harness_model_id.strip()
+            ):
+                continue
+            raw_provider = typed_path.get("mars_provider")
+            fallback_provider = typed_path.get("provider")
+            provider = (
+                raw_provider.strip()
+                if isinstance(raw_provider, str) and raw_provider.strip()
+                else (
+                    fallback_provider.strip()
+                    if isinstance(fallback_provider, str) and fallback_provider.strip()
+                    else ""
+                )
+            )
+            runnable_paths.append(
+                RunnablePath(
+                    harness=raw_harness.strip(),
+                    harness_model_id=raw_harness_model_id.strip(),
+                    provider=provider,
+                )
+            )
+        return tuple(runnable_paths)
+
     def exact_id_alias_entry(model: dict[str, object]) -> AliasEntry:
         harness: object = model.get("harness")
         resolved_harness: HarnessId | None = None
@@ -56,11 +104,15 @@ def resolve_model(
                 resolved_harness = HarnessId(harness.strip())
 
         description = model.get("description")
+        harness_candidates = _extract_harness_candidates(model)
+        runnable_paths = _extract_runnable_paths(model)
         return AliasEntry(
             alias="",
             model_id=ModelId(normalized),
             resolved_harness=resolved_harness,
             description=description.strip() if isinstance(description, str) else None,
+            harness_candidates=harness_candidates,
+            runnable_paths=runnable_paths,
         )
 
     def find_exact_id_match() -> dict[str, object] | None:
@@ -106,6 +158,8 @@ def resolve_model(
             and not isinstance(raw_default_autocompact_pct, bool)
             else None
         )
+        harness_candidates = _extract_harness_candidates(mars_result)
+        runnable_paths = _extract_runnable_paths(mars_result)
 
         return AliasEntry(
             alias=str(mars_result.get("name", "") or ""),
@@ -115,6 +169,8 @@ def resolve_model(
             default_effort=default_effort,
             default_autocompact=default_autocompact,
             default_autocompact_pct=default_autocompact_pct,
+            harness_candidates=harness_candidates,
+            runnable_paths=runnable_paths,
         )
 
     # Step 1: Try mars resolve (alias + harness in one call) before the

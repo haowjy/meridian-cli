@@ -642,7 +642,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             harness_id=harness_id,
             model_entry=resolved_model_entry,
             harness_registry=surface.harness_registry,
-            is_policy_reroute=False,
         )
 
     selected_entry: AliasEntry | None = resolved_model_entry
