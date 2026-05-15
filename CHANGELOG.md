@@ -4,8 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-05-15
+
 ### Changed
 - Release workflow: PR merges release only with a `release:*` label. CI creates the patch release commit and `vX.Y.Z` tag, then directly runs PyPI publish. Missing labels, `release:skip`, or direct `main` pushes skip auto-release. Tag pushes remain a manual/backfill publish path.
+- Workflow docs: document label-gated auto-release and manual tag backfill behavior.
 - Agent profile catalog: silently ignore invalid generated profile metadata instead of blocking spawn. Mars owns package validation.
 - Agent profile catalog: accept missing `model-policies[].override` for fallback rules and ignore unknown override keys inside otherwise usable rules.
 - Repository docs and package examples point at `haowjy/*` repos instead of stale `meridian-flow/*` owners.
