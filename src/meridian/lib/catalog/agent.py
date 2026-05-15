@@ -210,9 +210,13 @@ def parse_agent_profile(path: Path) -> AgentProfile:
         else:
             with suppress(ValueError):
                 autocompact_pct = cast(
-def test_parse_agent_profile_model_policies_accepts_missing_override(
-    )
+                    "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
+                )
 
+
+    model_policies = _parse_model_policies(
+        model_policies_value,
+    )
     mode = str(mode_value).strip() if mode_value is not None else "subagent"
     if mode not in {"primary", "subagent"}:
         mode = "subagent"
