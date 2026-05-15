@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import ArtifactKey, SpawnId
+from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.harness.adapter import SpawnExtractor
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.launch.artifact_io import read_artifact_text
@@ -102,6 +102,7 @@ def enrich_finalize(
     spawn_id: SpawnId,
     log_dir: Path,
     model_id: str | None = None,
+    harness_id: HarnessId | str | None = None,
     project_root: Path | None = None,
     secrets: tuple[SecretSpec, ...] = (),
 ) -> FinalizeExtraction:
@@ -111,6 +112,7 @@ def enrich_finalize(
         model_id=(model_id or "").strip() or None,
         usage=extractor.extract_usage(artifacts, spawn_id),
         project_root=project_root,
+        harness_id=str(harness_id) if harness_id is not None else None,
     )
     harness_session_id = extractor.extract_session_id(artifacts, spawn_id)
     report = extract_or_fallback_report(artifacts, spawn_id, extractor=extractor)

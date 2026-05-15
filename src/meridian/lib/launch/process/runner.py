@@ -510,6 +510,7 @@ def _extract_primary_usage(
             model_id=(model_id or "").strip() or None,
             usage=raw_usage,
             project_root=project_root,
+            harness_id=str(harness_adapter.id),
         )
         if all(
             value is None

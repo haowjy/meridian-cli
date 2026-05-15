@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.domain import TokenUsage
+from meridian.lib.core.types import HarnessId
+
+CostSemantics = Literal["additive", "openai_inclusive"]
 
 
 def _float(value: object) -> float | None:
@@ -67,11 +70,32 @@ def _load_model(model_id: str, project_root: Path | None = None) -> dict[str, ob
     return None
 
 
+def _cost_semantics(model: dict[str, object], harness_id: str | None) -> CostSemantics:
+    """Return token bucket semantics for catalog-based estimation.
+
+    OpenAI/Codex reports expose cache-read and reasoning as breakdowns of inclusive
+    input/output totals. OpenCode artifacts observed in the wild expose additive
+    buckets, even when the underlying model provider is OpenAI.
+    """
+
+    normalized_harness = (harness_id or "").strip().lower()
+    if normalized_harness == HarnessId.OPENCODE.value:
+        return "additive"
+    if normalized_harness == HarnessId.CODEX.value:
+        return "openai_inclusive"
+
+    provider = str(model.get("provider", "")).strip().lower()
+    if provider == "openai":
+        return "openai_inclusive"
+    return "additive"
+
+
 def estimate_usage_cost(
     *,
     model_id: str | None,
     usage: TokenUsage,
     project_root: Path | None = None,
+    harness_id: str | None = None,
 ) -> TokenUsage:
     """Return usage with estimated total cost when catalog pricing is available.
 
@@ -106,17 +130,30 @@ def estimate_usage_cost(
     if reasoning_per_m is None and output_per_m is not None:
         reasoning_per_m = output_per_m
 
+    semantics = _cost_semantics(model, harness_id)
     total = 0.0
-    if usage.input_tokens is not None and input_per_m is not None:
-        total += usage.input_tokens * input_per_m / 1_000_000
-    if usage.output_tokens is not None and output_per_m is not None:
-        total += usage.output_tokens * output_per_m / 1_000_000
-    if usage.cache_read_input_tokens is not None and cache_read_per_m is not None:
-        total += usage.cache_read_input_tokens * cache_read_per_m / 1_000_000
+    if semantics == "openai_inclusive":
+        cached_input = usage.cache_read_input_tokens or 0
+        if usage.input_tokens is not None and input_per_m is not None:
+            uncached_input = max(usage.input_tokens - cached_input, 0)
+            total += uncached_input * input_per_m / 1_000_000
+        if usage.cache_read_input_tokens is not None and cache_read_per_m is not None:
+            total += usage.cache_read_input_tokens * cache_read_per_m / 1_000_000
+        if usage.output_tokens is not None and output_per_m is not None:
+            total += usage.output_tokens * output_per_m / 1_000_000
+        elif usage.reasoning_tokens is not None and reasoning_per_m is not None:
+            total += usage.reasoning_tokens * reasoning_per_m / 1_000_000
+    else:
+        if usage.input_tokens is not None and input_per_m is not None:
+            total += usage.input_tokens * input_per_m / 1_000_000
+        if usage.output_tokens is not None and output_per_m is not None:
+            total += usage.output_tokens * output_per_m / 1_000_000
+        if usage.cache_read_input_tokens is not None and cache_read_per_m is not None:
+            total += usage.cache_read_input_tokens * cache_read_per_m / 1_000_000
+        if usage.reasoning_tokens is not None and reasoning_per_m is not None:
+            total += usage.reasoning_tokens * reasoning_per_m / 1_000_000
     if usage.cache_creation_input_tokens is not None and cache_write_per_m is not None:
         total += usage.cache_creation_input_tokens * cache_write_per_m / 1_000_000
-    if usage.reasoning_tokens is not None and reasoning_per_m is not None:
-        total += usage.reasoning_tokens * reasoning_per_m / 1_000_000
     if total <= 0:
         return usage
     return usage.model_copy(update={"total_cost_usd": total, "cost_is_estimate": True})

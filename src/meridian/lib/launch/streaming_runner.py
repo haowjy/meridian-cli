@@ -925,6 +925,7 @@ async def execute_with_streaming(
                     spawn_id=run.spawn_id,
                     log_dir=log_dir,
                     model_id=run.model,
+                    harness_id=resolved_harness_id,
                     project_root=project_root,
                     secrets=secrets,
                 )
