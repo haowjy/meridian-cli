@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import json
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -21,6 +19,15 @@ from typing import Any
 
 import structlog
 
+from meridian.lib.hooks.builtin.autosync_store import (
+    AUTOSYNC_IGNORE_PATTERNS,
+    ConflictRecord,
+    append_conflict_notice,
+    generate_conflict_id,
+    has_unresolved_conflict,
+    write_conflict,
+    write_sync_state,
+)
 from meridian.plugin_api import (
     Hook,
     HookContext,
@@ -46,9 +53,6 @@ _STASH_TIMEOUT_SECS = 30
 _DIFF_TIMEOUT_SECS = 30
 _MAX_ERROR_CHARS = 500
 _LOCK_TIMEOUT_SECS = 60.0
-
-_NOTICE_START = "<!-- autosync-notices -->"
-_NOTICE_END = "<!-- /autosync-notices -->"
 
 
 @dataclass(frozen=True)
@@ -450,7 +454,7 @@ class GitAutosync:
     def _ensure_default_ignores(self, clone_path: str) -> None:
         """Ensure core autosync ignore patterns exist in .git/info/exclude."""
 
-        required_patterns = (".git", "**/.git", ".meridian/autosync/")
+        required_patterns = AUTOSYNC_IGNORE_PATTERNS
         result = self._run_git(clone_path, ["rev-parse", "--git-path", "info/exclude"], timeout=5)
         if result.returncode != 0:
             logger.warning(
@@ -579,209 +583,6 @@ class GitAutosync:
                 clone_path=clone_path,
                 error=self._format_git_error("stash pop failed", pop),
             )
-
-    def _conflict_dir(self, clone_path: str) -> Path:
-        """Return the conflict metadata directory for a sync root."""
-
-        return Path(clone_path) / ".meridian" / "autosync" / "conflicts"
-
-    def _state_file(self, clone_path: str) -> Path:
-        """Return the state file path for a sync root."""
-
-        return Path(clone_path) / ".meridian" / "autosync" / "state.json"
-
-    def _has_unresolved_conflict(self, clone_path: str) -> bool:
-        """Check if there's an existing unresolved conflict for this sync root."""
-
-        conflict_dir = self._conflict_dir(clone_path)
-        if not conflict_dir.exists():
-            return False
-
-        for conflict_file in conflict_dir.iterdir():
-            if conflict_file.suffix != ".json":
-                continue
-            try:
-                data = json.loads(conflict_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            if not data.get("resolved", False):
-                return True
-
-        return False
-
-    def _generate_conflict_id(self) -> str:
-        """Generate a conflict ID like c20260512-001."""
-
-        date_str = datetime.now(UTC).strftime("%Y%m%d")
-        short_hash = hashlib.sha256(str(time.monotonic_ns()).encode()).hexdigest()[:3]
-        return f"c{date_str}-{short_hash}"
-
-    def _write_conflict_metadata(
-        self,
-        clone_path: str,
-        conflict_id: str,
-        *,
-        context_name: str,
-        conflict_type: str,
-        paths: list[str],
-        local_sha: str,
-        remote_sha: str,
-        remote_branch: str,
-        event_name: str,
-        spawn_id: str | None = None,
-    ) -> None:
-        """Write conflict metadata JSON atomically."""
-
-        conflict_dir = self._conflict_dir(clone_path)
-        conflict_dir.mkdir(parents=True, exist_ok=True)
-
-        metadata = {
-            "id": conflict_id,
-            "context": context_name,
-            "sync_root": clone_path,
-            "conflict_type": conflict_type,
-            "paths": paths,
-            "local_sha": local_sha,
-            "remote_sha": remote_sha,
-            "remote_branch": remote_branch,
-            "trigger": {
-                "event": event_name,
-                "spawn_id": spawn_id,
-            },
-            "created_at": datetime.now(UTC).isoformat(),
-            "resolved": False,
-        }
-
-        target = conflict_dir / f"{conflict_id}.json"
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        tmp.replace(target)
-
-    def _write_sync_state(
-        self,
-        clone_path: str,
-        *,
-        outcome: str,
-        conflict_id: str | None = None,
-    ) -> None:
-        """Write sync-level state JSON atomically."""
-
-        state_dir = Path(clone_path) / ".meridian" / "autosync"
-        state_dir.mkdir(parents=True, exist_ok=True)
-
-        state = {
-            "last_sync": datetime.now(UTC).isoformat(),
-            "outcome": outcome,
-            "conflict_id": conflict_id,
-        }
-
-        target = self._state_file(clone_path)
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp.replace(target)
-
-    def _conflict_block_start(self, conflict_id: str) -> str:
-        return f"<!-- autosync-conflict:{conflict_id} -->"
-
-    def _conflict_block_end(self, conflict_id: str) -> str:
-        return f"<!-- /autosync-conflict:{conflict_id} -->"
-
-    def _format_conflict_notice(
-        self,
-        conflict_id: str,
-        paths: list[str],
-        remote_branch: str,
-    ) -> str:
-        """Format a conflict notice block for AGENTS.md."""
-
-        paths_str = ", ".join(f"`{path}`" for path in paths)
-        return (
-            f"{self._conflict_block_start(conflict_id)}\n"
-            "### Autosync Conflict\n"
-            "\n"
-            f"Conflict `{conflict_id}` — autosync could not merge remote changes.\n"
-            f"Affected paths: {paths_str}. The working tree retains the\n"
-            f"local version. Remote changes are at `origin/{remote_branch}`.\n"
-            "\n"
-            "To resolve:\n"
-            "1. `git fetch origin`\n"
-            f"2. `git merge origin/{remote_branch}`\n"
-            "3. Resolve any conflicts in the affected files\n"
-            "4. `git add` the resolved files and `git commit`\n"
-            "5. Remove this notice block when done.\n"
-            "\n"
-            "If you are not modifying the affected files, this does not block your work.\n"
-            f"{self._conflict_block_end(conflict_id)}"
-        )
-
-    def _append_agents_notice(
-        self,
-        clone_path: str,
-        conflict_id: str,
-        paths: list[str],
-        remote_branch: str,
-    ) -> bool:
-        """Append a conflict notice to AGENTS.md at the sync root."""
-
-        agents_md = Path(clone_path) / "AGENTS.md"
-        if not agents_md.exists():
-            return False
-
-        try:
-            content = agents_md.read_text(encoding="utf-8")
-        except OSError:
-            logger.warning("git_autosync_agents_md_read_failed", clone_path=clone_path)
-            return False
-
-        conflict_start = self._conflict_block_start(conflict_id)
-        conflict_end = self._conflict_block_end(conflict_id)
-        conflict_pattern = re.compile(
-            rf"{re.escape(conflict_start)}.*?{re.escape(conflict_end)}",
-            flags=re.DOTALL,
-        )
-        if conflict_pattern.search(content):
-            return False
-
-        notice_block = self._format_conflict_notice(conflict_id, paths, remote_branch)
-
-        if _NOTICE_START in content and _NOTICE_END in content:
-            start_idx = content.index(_NOTICE_START)
-            end_idx = content.index(_NOTICE_END)
-            if start_idx >= end_idx:
-                logger.warning(
-                    "git_autosync_agents_md_malformed_markers",
-                    clone_path=clone_path,
-                )
-                return False
-
-            prefix = content[:end_idx]
-            if not prefix.endswith("\n"):
-                prefix += "\n"
-            new_content = prefix + notice_block + "\n" + content[end_idx:]
-        elif _NOTICE_START in content or _NOTICE_END in content:
-            logger.warning(
-                "git_autosync_agents_md_malformed_markers",
-                clone_path=clone_path,
-            )
-            return False
-        else:
-            section = f"\n{_NOTICE_START}\n{notice_block}\n{_NOTICE_END}\n"
-            new_content = content.rstrip("\n") + "\n" + section
-
-        tmp_path = agents_md.with_suffix(agents_md.suffix + ".tmp")
-        try:
-            tmp_path.write_text(new_content, encoding="utf-8")
-            tmp_path.replace(agents_md)
-        except OSError:
-            logger.warning("git_autosync_agents_md_write_failed", clone_path=clone_path)
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except OSError:
-                pass
-            return False
-
-        return True
 
     def _get_conflict_paths(self, clone_path: str) -> list[str]:
         """Get paths that have merge conflicts from git status."""
@@ -1065,9 +866,9 @@ class GitAutosync:
             if stashed_excludes:
                 self._unstash_excluded_files(clone_path)
             if just_committed:
-                self._write_sync_state(clone_path, outcome="success")
+                write_sync_state(Path(clone_path), outcome="success")
                 return _SyncOutcome(outcome="success", success=True, files_changed=files_changed)
-            self._write_sync_state(clone_path, outcome="nothing_to_sync")
+            write_sync_state(Path(clone_path), outcome="nothing_to_sync")
             return _SyncOutcome(
                 outcome="skipped",
                 success=True,
@@ -1157,14 +958,14 @@ class GitAutosync:
                             error=f"{message}; {abort_error}",
                         )
 
-                    if self._has_unresolved_conflict(clone_path):
+                    if has_unresolved_conflict(Path(clone_path)):
                         if stashed_excludes:
                             self._unstash_excluded_files(clone_path)
                         logger.warning(
                             "git_autosync_merge_conflict_already_recorded",
                             clone_path=clone_path,
                         )
-                        self._write_sync_state(clone_path, outcome="conflict_detected")
+                        write_sync_state(Path(clone_path), outcome="conflict_detected")
                         return _SyncOutcome(
                             outcome="skipped",
                             success=True,
@@ -1173,26 +974,29 @@ class GitAutosync:
                             error="Unresolved autosync conflict already recorded.",
                         )
 
-                    conflict_id = self._generate_conflict_id()
+                    conflict_id = generate_conflict_id()
                     context_name = Path(clone_path).name
                     event_name = context.event_name if context is not None else "spawn.finalized"
                     spawn_id = context.spawn_id if context is not None else None
 
-                    self._write_conflict_metadata(
-                        clone_path,
-                        conflict_id,
-                        context_name=context_name,
+                    record = ConflictRecord(
+                        id=conflict_id,
+                        context=context_name,
+                        sync_root=clone_path,
                         conflict_type=conflict_type,
-                        paths=conflict_paths,
+                        paths=tuple(conflict_paths),
                         local_sha=local_sha,
                         remote_sha=remote_sha,
                         remote_branch=branch,
                         event_name=event_name,
                         spawn_id=spawn_id,
+                        created_at=datetime.now(UTC).isoformat(),
+                        resolved=False,
                     )
+                    write_conflict(Path(clone_path), record)
 
-                    notice_written = self._append_agents_notice(
-                        clone_path,
+                    notice_written = append_conflict_notice(
+                        Path(clone_path),
                         conflict_id,
                         conflict_paths,
                         branch,
@@ -1221,8 +1025,8 @@ class GitAutosync:
                                     ),
                                 )
 
-                    self._write_sync_state(
-                        clone_path,
+                    write_sync_state(
+                        Path(clone_path),
                         outcome="conflict_detected",
                         conflict_id=conflict_id,
                     )
@@ -1273,7 +1077,7 @@ class GitAutosync:
                     files_changed=files_changed,
                 )
 
-            self._write_sync_state(clone_path, outcome="success")
+            write_sync_state(Path(clone_path), outcome="success")
             if stashed_excludes:
                 self._unstash_excluded_files(clone_path)
             return _SyncOutcome(
@@ -1283,7 +1087,7 @@ class GitAutosync:
             )
 
         # 12. Nothing to sync.
-        self._write_sync_state(clone_path, outcome="nothing_to_sync")
+        write_sync_state(Path(clone_path), outcome="nothing_to_sync")
         if stashed_excludes:
             self._unstash_excluded_files(clone_path)
         return _SyncOutcome(

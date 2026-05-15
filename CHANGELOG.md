@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Git autosync: merge instead of rebase for remote integration. On conflict: `merge --abort` preserves local state (local-wins), writes conflict metadata JSON, appends notice to AGENTS.md managed section.
 - Git autosync: default `conflict_policy` changed from `leave` to `abort`.
 - Git autosync: `_FETCH_TIMEOUT_SECS` separated from `_REMOTE_TIMEOUT_SECS` (60s vs 10s).
@@ -32,6 +33,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Duplicate `_effective_model_policies()` in policies.py — centralized in compiler.py.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Config overlay `model-policies` accepts empty `override: {}` for fallback-candidate rules (parity with profile parsing).
 
 ## [0.1.3] - 2026-05-14
@@ -55,6 +57,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scripts/prune-worktrees.ps1` — Windows PowerShell mirror of prune-worktrees.sh.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Runtime catalog reads no longer warn for package authoring metadata mistakes; Mars owns profile/skill validation diagnostics.
 - `.github/workflows/meridian-ci.yml` extended with non-blocking PR label and changelog validation.
 - Release workflow accumulates bump labels from all unreleased merge commits between last tag and HEAD, preventing race conditions when multiple PRs merge before release runs.
@@ -97,6 +100,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `source = "git"` without `remote` in context config is now valid (local-only tracking) instead of logging a warning and falling back.
 - **Execution policy carrier refactor.** `ResolvedExecutionPolicy` promoted to Pydantic `BaseModel` carrier passed opaquely through `SpawnRequest`, `LaunchRequest`, `ChatPolicySnapshot`, `CompilerRequest`, and `CompilerResult`. Adding a new execution-policy field now touches 2 files (carrier type + compiler resolution) instead of ~7 pass-through layers. 27 flat policy fields collapsed to 5 carrier fields; ~150 lines net reduction.
 - `ChatPolicySnapshot` version bumped to 2. Old v1 snapshots auto-migrate via `model_validator(mode="before")` — no manual migration needed.
@@ -155,6 +159,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Declarative help profiles selected at app-build time from catalog metadata.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian doctor` (no flags) is now cheap and per-project only — no automatic background global scans. Background per-project repairs (stale locks, orphan runs) still run silently on primary launches.
 - `meridian doctor --global` is the explicit, opt-in path for expensive cross-project maintenance. Requires root process (rejects in nested execution).
 - `meridian chat` (all subcommands) rejects with clear error in nested execution (`MERIDIAN_DEPTH > 0`). Chat is root-only.
@@ -188,6 +193,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian work root` command — prints the work items container path. Escape hatch for the root that's no longer shown in agent prompts.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Bumped mars-agents 0.2.5→0.2.6. Skill schema: `invocation: explicit|implicit` replaced by `model-invocable` + `user-invocable` booleans. Old fields are hard errors.
 - CLAUDE.md: release docs clarified — `meridian mars version` for prompt packages, `scripts/release.sh` for mars-agents and meridian-cli.
 - Env vars renamed: `MERIDIAN_WORK_DIR` → `MERIDIAN_ACTIVE_WORK_DIR`, `MERIDIAN_WORK_ID` → `MERIDIAN_ACTIVE_WORK_ID`. Agents confused the context root (`$MERIDIAN_CONTEXT_WORK_DIR`) with the active item dir when both said "WORK_DIR."
@@ -217,6 +223,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Portless error classification. All immediate non-zero exits were treated as route-occupied collisions. Now captures stderr via tempfile and matches known collision indicators; generic failures surface actual stderr output.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Mars compiled store migrated from `.agents/` to `.mars/`. `meridian mars sync` passthrough uses managed env. Remaining `.agents` path references cleaned up in resolve.py and test fixtures.
 - Mars model identity now separates harness affinity from model ID.
 - OpenCode harness drops `opencode-` model prefix routing. Use `--harness opencode` to force harness selection; raw `provider/model` IDs pass through unchanged. Default OpenCode visibility narrowed to `gemini*` only.
@@ -270,6 +277,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Archived old frontend, FastAPI app server, HCP chat stack, `meridian app` command, app-backed tests, and built UI artifacts. Active codebase clear for fresh `meridian chat` / `meridian app` rebuild.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian spawn wait` yield default now harness-aware: unknown 240s, Claude 270s, Codex 900s; mixed waits use shortest. `--yield-after-secs` still overrides.
 - Harness event semantics now live in narrow pure helpers for terminal outcome, activity transitions, and signal clearing.
 - App-server-backed extension invocation now reports no app server while local extension discovery/dispatch stays active.
@@ -299,6 +307,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.45] - 2026-04-25
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `mars-agents` 0.1.18 -> 0.1.19. Mars model listing now uses harness-aware runnable visibility and OpenCode provider/model availability.
 - Background spawn note trimmed. `meridian spawn --bg` now returns a short "Backgrounded. Spawn id: ... Collect later with \`meridian spawn wait\`." hint instead of a long immediate-wait warning.
 - `meridian models list` now fails fast. Use `meridian mars models list`.
@@ -355,6 +364,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Per-spawn details endpoint, infinite scroll.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
 - `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
 - `mars-agents` 0.1.17 → 0.1.18. Mars alias defaults (`default_effort`, `autocompact`) now flow into Meridian model resolution.
@@ -404,6 +414,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Frontend NewSessionDialog**: Submits to `POST /api/spawns` with agent/model/prompt selection.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Agent-mode CLI output defaults to text for all commands. Prior JSON defaults on `config.get`, `spawn.cancel`, `spawn.create`, `spawn.continue`, `spawn.wait`, `context`, `work.current` flipped to text. Explicit `--json` still available.
 - `spawn.wait` omits report body by default; pass `--report` to include. Report path always shown.
 - Lifecycle events (`meridian.spawn.start`, `meridian.spawn.done`) suppressed in agent mode for all commands. Human mode routes `TextSink.event()` to stderr.
@@ -439,6 +450,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Nested Claude managed spawns now deny native delegation tools (Agent, TaskCreate, TaskGet, TaskList, TaskOutput, TaskStop, TaskUpdate) by default. Profiles opt out per-tool via `tools:` frontmatter listing. Prevents untracked sub-agent spawns outside Meridian policy.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `resolve_child_execution_cwd()` always returns `project_root`. Prior CLAUDECODE→spawn_log_dir redirect removed; `.claude/settings.json` now discovered correctly in nested Claude contexts.
 
 ### Fixed
@@ -447,6 +459,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.42] - 2026-04-22
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Spawn prompt projection now has one shared inline path. Codex and OpenCode inherit base inline projection: system instructions, task context, then user task.
 - Harness adapter docs now name the canonical prompt category routing and inline block order.
 
@@ -466,6 +479,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.40] - 2026-04-22
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - App chat UI migrated from frontend-v2.
 - Thread activity internals now named around spawn activity and stream control.
 - Agent mode output defaults now per command: control-plane -> JSON, read/browse -> text.
@@ -479,6 +493,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.40-rc.2] - 2026-04-22
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Default app server port changed from `8420` to `7676`. Vite proxy config updated to match.
 - **Work items: directory is the work item.** Eliminated `work-items/` metadata index. Work item exists iff its directory exists in `work/` (active) or `archive/work/` (done). `__status.json` inside each dir holds mutable metadata. `meridian work list` scans the actual work directory — no separate index to drift. Auto-heals missing/malformed status files. Fixes #69, #70.
 - `work list --done` now paginated: shows last 10 by default, `-n N` for custom limit, `--all` for everything.
@@ -504,6 +519,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch artifacts now emit `references.json` when references exist, with per-item routing (`inline`, `native-injection`, `omitted`) and native flag detail.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Claude primary launch now separates system instructions from the starting user prompt instead of appending the full prompt to system.
 - Launch artifacts now write from one shared projection path. Primary uses adapter `ProjectedContent` as authority for `system-prompt.md`, `starting-prompt.md`, and `projection-manifest.json`.
 - Spawn prepare now excludes OpenCode native-injected files from inline prompt content, so `--file` delivery is single path, not duplicated inline+native.
@@ -529,6 +545,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Plugin API v1**: Stable contract at `meridian.plugin_api` for hooks/plugins. Exports: hook types, state helpers, git helpers, config helpers, file locking.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - CLI help text updated: root epilogue and `spawn` description now advertise primary launch/resume/fork forms, session ref syntax (`c123`/`p123`/raw), foreground capture fallback (Unix TTY, falls back to subprocess on Windows/non-TTY), and correct `--autocompact` range (1-100). Agent root help updated to match.
 - `spawn show/children/files/cancel/wait/log` accept chat_id refs (e.g. `c213`). Resolves to most recent spawn with that chat_id.
 - `meridian context` command — returns context tuple (`work_id`, `repo_root`, `state_root`, `depth`). JSON when spawned or with `--json`; human-friendly text in TTY.
@@ -574,6 +591,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `ConfigSurface` builder unifies `config show` and `doctor` workspace state.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Bundled `mars-agents` 0.1.2 → 0.1.3.
 - Workspace file location follows `MERIDIAN_PROJECT_ROOT` — lives at `state_root.parent / workspace.local.toml`.
 
@@ -584,6 +602,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `spawn show` renders `orphan_finalization` distinct from `orphan_run` — tells apart drain-window hangs from runner-dead-during-run.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian-dev-workflow` bumped 0.0.25 → 0.0.26 via `meridian mars sync`.
 - `@impl-orchestrator` now runs a mandatory Explore phase before planning — verifies design against code reality, produces `plan/pre-planning-notes.md` as a gate artifact, terminates to a Redesign Brief when design is falsified.
 - `agent-staffing` skill: new "Fan-Out vs Parallel Lanes" terminology section (same-prompt-different-models vs different-prompts-different-focus-areas); new `@reviewer as Architectural Drift Gate` section (CI-spawned reviewer enforces structural invariants semantically against a declared-invariant prompt).
@@ -612,6 +631,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Primary `meridian` launch startup agent catalog. Fresh and forked sessions now show installed agents before user input. Claude gets it in appended system prompt; Codex and OpenCode inline.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Startup inventory now agent-only. Skills still load through normal harness launch path, but not duplicated in startup catalog.
 
 ### Fixed
@@ -622,6 +642,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.27] - 2026-04-12
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Dev workflow package updated for unified `impl-orchestrator`.
 
 ### Fixed
@@ -641,6 +662,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CHANGELOG.md` resumed after staleness. Now in caveman style.
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - **Reaper rewrite**: 500-line state machine → 119 lines (~30 core). No PID files, no heartbeat, no foreground/background dispatch. Just: is `runner_pid` alive? Branch on `exited_at` presence.
 - **PID/heartbeat file elimination**: `harness.pid`, `background.pid`, `heartbeat` removed. PIDs come from event stream only. Spawn directories are artifact-only.
 - **`SpawnExtractor` protocol**: extraction split from adapter into composable protocol. `StreamingExtractor` wraps harness bundle for connection-aware extraction.
@@ -666,6 +688,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `gpt52` builtin alias for `gpt-5.2`; Claude `tools` passthrough in launch plan
 
 ### Changed
+- Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Auto-resolve builtin aliases from discovered models; manifest-first bootstrap
 
 ## [0.0.4] - 2026-03-17

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -18,6 +17,7 @@ from meridian.lib.context.resolver import (
 )
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.hooks.builtin.autosync_store import read_status
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.state.paths import load_context_config
 
@@ -229,64 +229,30 @@ def _relative_time(iso_str: str) -> str:
 
 def _sync_status_for_context(context_root: Path) -> str | None:
     """Return compact sync status text for one context root."""
-
-    state_file = context_root / ".meridian" / "autosync" / "state.json"
-    conflict_dir = context_root / ".meridian" / "autosync" / "conflicts"
-    if not state_file.exists() and not conflict_dir.exists():
+    status = read_status(context_root)
+    if status.state is None and not status.unresolved_conflicts:
         return None
 
     state_info = "unknown"
-    if state_file.exists():
-        try:
-            state_raw = json.loads(state_file.read_text(encoding="utf-8"))
-            if isinstance(state_raw, dict):
-                outcome = str(state_raw.get("outcome", "unknown"))
-                last_sync_raw = state_raw.get("last_sync")
-                if isinstance(last_sync_raw, str) and last_sync_raw.strip():
-                    state_info = f"{outcome}, {_relative_time(last_sync_raw)}"
-                else:
-                    state_info = outcome
-        except (OSError, json.JSONDecodeError):
-            state_info = "unknown"
+    if status.state is not None:
+        if status.state.last_sync:
+            state_info = f"{status.state.outcome}, {_relative_time(status.state.last_sync)}"
+        else:
+            state_info = status.state.outcome
 
-    conflict_lines: list[str] = []
-    unresolved_count = 0
-    if conflict_dir.exists():
-        try:
-            files = sorted(conflict_dir.iterdir())
-        except OSError:
-            files = []
-        for conflict_file in files:
-            if conflict_file.suffix != ".json":
-                continue
-            try:
-                payload = json.loads(conflict_file.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict) or bool(payload.get("resolved", False)):
-                continue
-            unresolved_count += 1
-            paths_raw = payload.get("paths", [])
-            if isinstance(paths_raw, list):
-                paths_str = ", ".join(str(item) for item in paths_raw) or "(no paths)"
-            else:
-                paths_str = "(no paths)"
-            conflict_id = str(payload.get("id", conflict_file.stem))
-            conflict_type = str(payload.get("conflict_type", "unknown"))
-            conflict_lines.append(f"    {conflict_id} {paths_str} ({conflict_type})")
-
-    if unresolved_count > 0:
+    if status.unresolved_conflicts:
+        conflict_lines: list[str] = []
+        for c in status.unresolved_conflicts:
+            paths_str = ", ".join(c.paths) or "(no paths)"
+            conflict_lines.append(f"    {c.id} {paths_str} ({c.conflict_type})")
         return "\n".join(
             [
-                f"conflict ({state_info}) — {unresolved_count} unresolved",
+                f"conflict ({state_info}) — {len(status.unresolved_conflicts)} unresolved",
                 *conflict_lines,
             ]
         )
 
-    if state_info:
-        return f"ok ({state_info})"
-
-    return None
+    return f"ok ({state_info})"
 
 
 def context_sync(input: ContextInput) -> ContextOutput:
