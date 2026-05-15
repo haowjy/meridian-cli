@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-05-15
+
 ### Changed
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Git autosync: merge instead of rebase for remote integration. On conflict: `merge --abort` preserves local state (local-wins), writes conflict metadata JSON, appends notice to AGENTS.md managed section.
