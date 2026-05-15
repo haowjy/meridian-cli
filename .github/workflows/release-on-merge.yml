@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     outputs:
       tag: ${{ steps.push_release.outputs.tag }}
     concurrency:
@@ -54,7 +55,41 @@ jobs:
 
           echo "Anchored release workspace to main tip $(git rev-parse HEAD) for trigger ${TRIGGER_SHA}."
 
+      - name: Resolve release intent
+        id: release_intent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          prs_json="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${REPOSITORY}/commits/${TRIGGER_SHA}/pulls" 2>/dev/null || printf '[]')"
+          pr_count="$(jq 'length' <<<"${prs_json}")"
+
+          if [[ "${pr_count}" -eq 0 ]]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No associated PR found; skipping auto-release. Push a v* tag manually for backfill release."
+            exit 0
+          fi
+
+          labels="$(jq -r '.[0].labels[].name' <<<"${prs_json}")"
+          if grep -qx 'release:skip' <<<"${labels}"; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::release:skip label present; skipping release."
+            exit 0
+          fi
+
+          if grep -q '^release:' <<<"${labels}"; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release label present; releasing."
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release:* label present; skipping release."
+          fi
+
       - name: Compute next patch version from tags
+        if: steps.release_intent.outputs.should_release == 'true'
         id: next_version
         run: |
           git fetch --tags --force
@@ -92,6 +127,7 @@ jobs:
           echo "Computed next version ${next_version} from base ${base_version}."
 
       - name: Skip when trigger already released
+        if: steps.release_intent.outputs.should_release == 'true'
         id: release_guard
         env:
           TRIGGER_SHA: ${{ github.sha }}
@@ -129,11 +165,11 @@ jobs:
           fi
 
       - name: Run shared preflight
-        if: steps.release_guard.outputs.already_released != 'true'
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         run: scripts/preflight.sh full
 
       - name: Update version and changelog
-        if: steps.release_guard.outputs.already_released != 'true'
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
         run: |
@@ -161,7 +197,7 @@ jobs:
           fi
 
       - name: Commit release changes
-        if: steps.release_guard.outputs.already_released != 'true'
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         id: commit_release
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}
@@ -174,7 +210,7 @@ jobs:
           echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Push release commit and tag
-        if: steps.release_guard.outputs.already_released != 'true'
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         id: push_release
         env:
           NEXT_VERSION: ${{ steps.next_version.outputs.next_version }}

@@ -19,6 +19,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Warn when release label is missing
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          has_release_label=false
+          while IFS= read -r label; do
+            if [[ "$label" == release:* ]]; then
+              has_release_label=true
+              break
+            fi
+          done < <(jq -r '.[]' <<<"${LABELS_JSON}")
+
+          if [[ "${has_release_label}" == true ]]; then
+            echo "::notice::Release label detected on this PR."
+          else
+            echo "::warning::No release:* label set. Merge to main will skip auto-release."
+          fi
+
       - name: Note CHANGELOG.md coverage
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

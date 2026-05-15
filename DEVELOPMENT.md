@@ -105,22 +105,29 @@ Stable meridian-cli releases happen automatically after normal pushes to `main`.
 1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
 2. Write changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
 3. Open a PR with the PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
-4. Merge the PR to `main`
+4. Set one release label:
+   - `release:patch`
+   - `release:skip`
+5. Merge the PR to `main`
 
-Direct pushes to `main` use the same release path.
+PR merges without a `release:*` label skip auto-release. Direct pushes to `main`
+also skip auto-release because there is no PR label to inspect.
 
-Put `release:skip` in the pushed head commit message to skip auto-release.
+Put `release:skip` in the pushed head commit message to skip auto-release even
+when a release label is present.
 
 ### What CI does on main push
 
 `.github/workflows/release-on-merge.yml` runs on every normal push to `main`. It:
 
-1. Computes the next version from existing git tags
-2. Bumps `src/meridian/__init__.py`
-3. Promotes `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`
-4. Creates commit `Release X.Y.Z`
-5. Creates and pushes tag `vX.Y.Z`
-6. PyPI publish runs through `publish-pypi.yml`
+1. Reads the PR label for the pushed commit
+2. Skips when no `release:*` label is present or when `release:skip` is present
+3. Computes the next version from existing git tags
+4. Bumps `src/meridian/__init__.py`
+5. Promotes `CHANGELOG.md` `[Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`
+6. Creates commit `Release X.Y.Z`
+7. Creates and pushes tag `vX.Y.Z`
+8. PyPI publish runs through `publish-pypi.yml`
 
 The workflow skips its own `Release X.Y.Z` commit so release auto-commits do not
 trigger another release.
