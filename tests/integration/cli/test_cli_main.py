@@ -183,9 +183,9 @@ def test_bootstrap_with_setup_runs_init_flow_and_passes_project_root_to_primary_
             [
                 "bootstrap",
                 "--add",
-                "meridian-flow/meridian-dev-workflow",
+                "haowjy/meridian-dev-workflow",
                 "--add",
-                "meridian-flow/meridian-base",
+                "haowjy/meridian-base",
                 "--link",
                 ".claude",
                 "--link",
@@ -197,7 +197,7 @@ def test_bootstrap_with_setup_runs_init_flow_and_passes_project_root_to_primary_
     expected_root = nested_cwd.resolve().as_posix()
     assert captured_init == {
         "project_root": expected_root,
-        "add_sources": ["meridian-flow/meridian-dev-workflow", "meridian-flow/meridian-base"],
+        "add_sources": ["haowjy/meridian-dev-workflow", "haowjy/meridian-base"],
         "link_targets": [".claude", ".cursor"],
         "output_format": "text",
     }
@@ -235,7 +235,7 @@ def test_bootstrap_setup_flags_reject_dry_run_before_setup(
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["bootstrap", "--add", "meridian-flow/meridian-dev-workflow", "--dry-run"])
+        cli_main.main(["bootstrap", "--add", "haowjy/meridian-dev-workflow", "--dry-run"])
 
     assert exc_info.value.code == 1
     captured = capsys.readouterr()

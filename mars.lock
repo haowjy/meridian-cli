@@ -5,14 +5,14 @@ url = "github.com/anthropics/skills"
 commit = "f458cee31a7577a47ba0c9a101976fa599385174"
 
 [dependencies.meridian-base]
-url = "github.com/meridian-flow/meridian-base"
-version = "v0.4.2"
-commit = "97fba0905da6628b73c9968540d12e77f6cd62fc"
+url = "github.com/haowjy/meridian-base"
+version = "v0.4.4"
+commit = "401de02577db51c3482d89a06a65294872c6c1c3"
 
 [dependencies.meridian-dev-workflow]
-url = "github.com/meridian-flow/meridian-dev-workflow"
-version = "v0.7.0"
-commit = "e775a1f39f64af2bd0a4d01034d9aacf19e82fb7"
+url = "github.com/haowjy/meridian-dev-workflow"
+version = "v0.7.1"
+commit = "865a647f1217ddf61a0c4bca4f420d30a2868869"
 
 [dependencies.meridian-prompter]
 url = "github.com/meridian-flow/meridian-prompter"
@@ -359,13 +359,13 @@ installed_checksum = "sha256:02e114bdd270825474574c9873d37f86aea0a163abebdbf3ba1
 [items."agent/smoke-tester"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.0"
-source_checksum = "sha256:3a195d3e40c7752a11a591a189a08f96e9c098e36d6ebd99cebc12b45bebc156"
+version = "v0.7.1"
+source_checksum = "sha256:b4f02a74ef4aef7fd353f93b2e1ad9b54e80e63757020a837684f25a4ac6fd6a"
 
 [[items."agent/smoke-tester".outputs]]
 target_root = ".mars"
 dest_path = "agents/smoke-tester.md"
-installed_checksum = "sha256:3a195d3e40c7752a11a591a189a08f96e9c098e36d6ebd99cebc12b45bebc156"
+installed_checksum = "sha256:b4f02a74ef4aef7fd353f93b2e1ad9b54e80e63757020a837684f25a4ac6fd6a"
 
 [items."agent/tech-lead"]
 source = "meridian-dev-workflow"
@@ -490,13 +490,13 @@ installed_checksum = "sha256:dbe2bd94c03e7f6e6cf95868828ff669a147f8ed5a1b8821eab
 [items."skill/agent-staffing"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.0"
-source_checksum = "sha256:1d22b835c5332ce5c4b872f44dee3b2e6c5e1a16d2ea91101bca46dc01375d6f"
+version = "v0.7.1"
+source_checksum = "sha256:65a9f9d4c2e98c244961e60164f22baef72e51729ce7da664fbd8c7113e5adcc"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".mars"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:1d22b835c5332ce5c4b872f44dee3b2e6c5e1a16d2ea91101bca46dc01375d6f"
+installed_checksum = "sha256:65a9f9d4c2e98c244961e60164f22baef72e51729ce7da664fbd8c7113e5adcc"
 
 [items."skill/architecture"]
 source = "meridian-dev-workflow"
@@ -632,13 +632,13 @@ installed_checksum = "sha256:b7f1eae40e9a38bbb9bff3b0db27df75c05483f0b8f25e5d173
 [items."skill/llm-writing"]
 source = "meridian-base"
 kind = "skill"
-version = "v0.3.3"
-source_checksum = "sha256:d6a812731854182724dc6cedf69f413bf2a3e2fb7c89c0c9c56432539ccfff79"
+version = "v0.4.4"
+source_checksum = "sha256:a37163bbb99919da9478ca4d6b0e5162118727e13f176fa3a74dd11a1874a1ca"
 
 [[items."skill/llm-writing".outputs]]
 target_root = ".mars"
 dest_path = "skills/llm-writing"
-installed_checksum = "sha256:d6a812731854182724dc6cedf69f413bf2a3e2fb7c89c0c9c56432539ccfff79"
+installed_checksum = "sha256:a37163bbb99919da9478ca4d6b0e5162118727e13f176fa3a74dd11a1874a1ca"
 
 [items."skill/md-validation"]
 source = "meridian-base"
@@ -774,13 +774,13 @@ installed_checksum = "sha256:ffaa9227f9724d4a1c4beb2d44d639ea08d2aa52126af51e720
 [items."skill/shared-workspace"]
 source = "meridian-base"
 kind = "skill"
-version = "v0.3.3"
-source_checksum = "sha256:b3627550043ce5454a212be1d9df5b07a7c486369a3d168f8b3f21b67099dc1a"
+version = "v0.4.4"
+source_checksum = "sha256:3f9792bf96862b2847df7372753883b78c3da6cc3f7c8e226ba09227e1a6e385"
 
 [[items."skill/shared-workspace".outputs]]
 target_root = ".mars"
 dest_path = "skills/shared-workspace"
-installed_checksum = "sha256:b3627550043ce5454a212be1d9df5b07a7c486369a3d168f8b3f21b67099dc1a"
+installed_checksum = "sha256:3f9792bf96862b2847df7372753883b78c3da6cc3f7c8e226ba09227e1a6e385"
 
 [items."skill/skill-artifacts"]
 source = "meridian-prompter"
@@ -796,13 +796,13 @@ installed_checksum = "sha256:aa5f11d84cab8f991abe5260cff0d1af9f61ef6229d16d54616
 [items."skill/smoke-test"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.5.3"
-source_checksum = "sha256:f01b9dda8e86e4502fe8a687f1034f8e34a7c5ce0dc0b9f80a36fdafb2928546"
+version = "v0.7.1"
+source_checksum = "sha256:d9d49cfacd7c78d023aca3646a3e58f9a455e8f6eeffbfe8afa2cfd2c5c01cd4"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".mars"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:f01b9dda8e86e4502fe8a687f1034f8e34a7c5ce0dc0b9f80a36fdafb2928546"
+installed_checksum = "sha256:d9d49cfacd7c78d023aca3646a3e58f9a455e8f6eeffbfe8afa2cfd2c5c01cd4"
 
 [items."skill/tech-docs"]
 source = "meridian-dev-workflow"

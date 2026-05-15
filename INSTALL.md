@@ -36,7 +36,7 @@ uv tool install meridian-cli
 From source (for development or pre-release):
 
 ```bash
-git clone https://github.com/meridian-flow/meridian-cli.git
+git clone https://github.com/haowjy/meridian-cli.git
 cd meridian-cli
 uv tool install --force . --no-cache --reinstall
 ```
@@ -75,13 +75,13 @@ Ask the user: `Would you like to install the dev workflow agents and skills? Thi
 If yes, add the dev workflow package (includes core primitives as a dependency):
 
 ```bash
-meridian mars add meridian-flow/meridian-dev-workflow
+meridian mars add haowjy/meridian-dev-workflow
 ```
 
 If they only want the core coordination primitives (without the dev team):
 
 ```bash
-meridian mars add meridian-flow/meridian-base
+meridian mars add haowjy/meridian-base
 ```
 
 ## Step 4: Shell Completion (Optional)

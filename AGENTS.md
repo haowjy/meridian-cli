@@ -93,8 +93,8 @@ Catalog/config modules (`meridian.lib.catalog.*`, `meridian.lib.config.*`) use s
 
 Source repos:
 
-- **`meridian-flow/meridian-base`** — core agents, skills, and spawn infrastructure (e.g. `meridian-spawn`, `meridian-subagent`)
-- **`meridian-flow/meridian-dev-workflow`** — dev orchestration agents and skills (e.g. `dev-orchestrator`, `reviewer`, `coder`, `agent-staffing`)
+- **`haowjy/meridian-base`** — core agents, skills, and spawn infrastructure (e.g. `meridian-spawn`, `meridian-subagent`)
+- **`haowjy/meridian-dev-workflow`** — dev orchestration agents and skills (e.g. `dev-orchestrator`, `reviewer`, `coder`, `agent-staffing`)
 
 When writing or editing agent profiles and skills, follow the prompt and skill design guidance in the source repo at `skills/agent-creator/SKILL.md` and `skills/skill-creator/SKILL.md`, plus their `resources/anti-patterns.md` references.
 
@@ -234,7 +234,7 @@ To see current quality/immediate burn-down work on GitHub, use:
 scripts/quality-issues.sh
 ```
 
-Lists open issues on `meridian-flow/meridian-cli`, excludes issues labelled `future`, and groups by `quality:high`, `quality:medium`, `quality:low`, then unprioritized. Mars capability packaging issues appear here by default — they are not future work unless explicitly labelled `future`.
+Lists open issues on `haowjy/meridian-cli`, excludes issues labelled `future`, and groups by `quality:high`, `quality:medium`, `quality:low`, then unprioritized. Mars capability packaging issues appear here by default — they are not future work unless explicitly labelled `future`.
 
 ## Related Repos
 

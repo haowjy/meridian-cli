@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/meridian-flow/meridian-cli.git
+git clone https://github.com/haowjy/meridian-cli.git
 cd meridian-cli
 uv sync --extra dev
 scripts/setup-hooks.sh        # Windows: scripts/setup-hooks.ps1

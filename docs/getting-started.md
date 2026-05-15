@@ -70,7 +70,7 @@ Bare `meridian init` bootstraps Meridian config/runtime only. It does not initia
 To initialize Mars and install packages from the top-level command, use `--add`:
 
 ```bash
-meridian init --add meridian-flow/meridian-dev-workflow --link .claude
+meridian init --add haowjy/meridian-dev-workflow --link .claude
 ```
 
 `meridian init --add ...` initializes Mars when needed, installs packages, and applies requested links.
@@ -78,7 +78,7 @@ meridian init --add meridian-flow/meridian-dev-workflow --link .claude
 For first-run onboarding, `bootstrap` can do setup and launch the guided primary session in one command:
 
 ```bash
-meridian bootstrap --add meridian-flow/meridian-dev-workflow --link .claude
+meridian bootstrap --add haowjy/meridian-dev-workflow --link .claude
 ```
 
 Setup flags (`--add`, `--link`) cannot be combined with `--dry-run`.

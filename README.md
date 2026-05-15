@@ -41,7 +41,7 @@ pip install meridian-cli
 From source:
 
 ```bash
-git clone https://github.com/meridian-flow/meridian-cli.git
+git clone https://github.com/haowjy/meridian-cli.git
 cd meridian-cli
 uv tool install --force . --no-cache --reinstall
 ```
@@ -61,13 +61,13 @@ meridian init
 To initialize Mars package content in the same step, use setup flags:
 
 ```bash
-meridian init --add meridian-flow/meridian-dev-workflow --link .claude
+meridian init --add haowjy/meridian-dev-workflow --link .claude
 ```
 
 For first-run onboarding, bootstrap can do setup + launch in one command:
 
 ```bash
-meridian bootstrap --add meridian-flow/meridian-dev-workflow --link .claude
+meridian bootstrap --add haowjy/meridian-dev-workflow --link .claude
 ```
 
 `--add` / `--link` setup flags cannot be combined with `--dry-run`.
@@ -125,9 +125,9 @@ graph TB
 
 ## Agent Packages
 
-**[meridian-dev-workflow](https://github.com/meridian-flow/meridian-dev-workflow)** — A dev team: architects, coders, reviewers, testers, researchers, documenters, and the orchestrators that coordinate them.
+**[meridian-dev-workflow](https://github.com/haowjy/meridian-dev-workflow)** — A dev team: architects, coders, reviewers, testers, researchers, documenters, and the orchestrators that coordinate them.
 
-**[meridian-base](https://github.com/meridian-flow/meridian-base)** — Core coordination primitives. Included as a dependency of meridian-dev-workflow.
+**[meridian-base](https://github.com/haowjy/meridian-base)** — Core coordination primitives. Included as a dependency of meridian-dev-workflow.
 
 ## Docs
 

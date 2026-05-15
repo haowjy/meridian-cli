@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-REPO="meridian-flow/meridian-cli"
+REPO="haowjy/meridian-cli"
 LIMIT="${QUALITY_ISSUES_LIMIT:-200}"
 COMMON_SEARCH='-label:future'
 ISSUE_TEMPLATE='{{if not .}}  (none){{"\n"}}{{else}}{{range .}}{{printf "  #%-5v %s\n" .number .title}}{{printf "         labels: "}}{{range $i, $l := .labels}}{{if $i}}, {{end}}{{.name}}{{end}}{{printf "\n         %s\n" .url}}{{end}}{{end}}'
@@ -13,7 +13,7 @@ usage() {
 Usage:
   scripts/quality-issues.sh [--limit N]
 
-Lists open meridian-flow/meridian-cli issues for the quality/immediate board.
+Lists open haowjy/meridian-cli issues for the quality/immediate board.
 Excludes issues labelled `future` and groups by quality priority.
 
 Environment:
