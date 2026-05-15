@@ -134,7 +134,7 @@ def _coerce_optional_int(value: object) -> int | None:
     return None
 
 
-def _coerce_harness_candidates(raw_candidates: object) -> tuple[str, ...]:
+def parse_harness_candidates(raw_candidates: object) -> tuple[str, ...]:
     if not isinstance(raw_candidates, list):
         return ()
     return tuple(
@@ -144,7 +144,7 @@ def _coerce_harness_candidates(raw_candidates: object) -> tuple[str, ...]:
     )
 
 
-def _coerce_runnable_paths(raw_paths: object) -> tuple[RunnablePath, ...]:
+def parse_runnable_paths(raw_paths: object) -> tuple[RunnablePath, ...]:
     if not isinstance(raw_paths, list):
         return ()
 
@@ -544,8 +544,8 @@ def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEn
         default_effort = item.get("default_effort")
         default_autocompact = item.get("autocompact")
         default_autocompact_pct = item.get("autocompact_pct")
-        harness_candidates = _coerce_harness_candidates(item.get("harness_candidates"))
-        runnable_paths = _coerce_runnable_paths(item.get("runnable_paths"))
+        harness_candidates = parse_harness_candidates(item.get("harness_candidates"))
+        runnable_paths = parse_runnable_paths(item.get("runnable_paths"))
 
         # Skip aliases that didn't resolve to a concrete model ID
         if not isinstance(resolved_model, str) or not resolved_model.strip():
@@ -684,6 +684,8 @@ __all__ = [
     "cached_mars_models_resolve",
     "load_mars_aliases",
     "load_mars_descriptions",
+    "parse_harness_candidates",
+    "parse_runnable_paths",
     "run_mars_models_list_all",
     "run_mars_models_resolve",
 ]

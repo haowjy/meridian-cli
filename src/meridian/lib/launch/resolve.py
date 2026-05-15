@@ -177,7 +177,7 @@ def validate_harness_compatibility(
     if model_entry is None:
         return
 
-    harness_candidates = tuple(getattr(model_entry, "harness_candidates", ()) or ())
+    harness_candidates = tuple(model_entry.harness_candidates or ())
     if harness_candidates:
         if str(harness_id) not in harness_candidates:
             supported = ", ".join(harness_candidates)
@@ -238,11 +238,9 @@ def select_harness_model_id(
     if model_entry is None:
         return canonical_model_id
 
-    harness_model_id_for = getattr(model_entry, "harness_model_id_for", None)
-    if callable(harness_model_id_for):
-        specific_id = harness_model_id_for(str(harness_id))
-        if isinstance(specific_id, str):
-            return specific_id
+    specific_id = model_entry.harness_model_id_for(str(harness_id))
+    if isinstance(specific_id, str):
+        return specific_id
     return canonical_model_id
 
 

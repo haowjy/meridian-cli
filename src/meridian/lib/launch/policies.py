@@ -701,8 +701,9 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             )
             if computed != canonical_model_id:
                 harness_model_for_spec = computed
-            raw_harness_candidates = getattr(selected_entry, "harness_candidates", ()) or ()
-            harness_candidates = tuple(str(candidate) for candidate in raw_harness_candidates)
+            harness_candidates = tuple(
+                str(candidate) for candidate in selected_entry.harness_candidates
+            )
             if (
                 harness_model_for_spec is None
                 and str(harness_id) in harness_candidates
