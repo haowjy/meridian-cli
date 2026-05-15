@@ -141,6 +141,16 @@ handles `--work` resolution before the spawn row is created. The resumed-session
 case (reading `preserved_work_id`) is handled inside `run_harness_process()` in
 `launch/process/`.
 
+**Sync/conflict boundary: ops resolves roots, autosync_store owns artifacts.**
+`sync_conflicts.py` and `context.py` follow the same pattern: ops determines
+*which* directories are sync roots (context resolution via `_find_sync_roots()`
+and `resolve_context_paths()`), then delegates all artifact access to
+`hooks/builtin/autosync_store`. The store is the single owner of
+`.meridian/autosync/` path layout and JSON parsing — no other module
+constructs those paths directly. `_find_sync_roots()` in `sync_conflicts.py`
+uses `autosync_store.has_autosync_state()` to filter candidates, so candidate
+discovery stays in ops and artifact presence checking stays in the store.
+
 ## Related KB
 
 - `architecture/launch-system.md` — full four-adapter diagram; ops/spawn is adapter #2
