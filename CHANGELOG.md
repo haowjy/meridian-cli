@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
+
 ## [0.1.7] - 2026-05-15
 
 ### Changed

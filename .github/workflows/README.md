@@ -41,3 +41,7 @@ Manual tags must point at a valid release commit:
 - `CHANGELOG.md` has the promoted release section.
 - Commit subject is `Release X.Y.Z`.
 - The tagged commit is reachable from the default branch.
+
+Use `scripts/manually-release.sh` for manual/backfill releases. It runs the
+shared preflight, blocks empty `[Unreleased]` releases, updates version and
+changelog, creates the release commit, and tags the result.
