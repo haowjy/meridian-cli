@@ -160,9 +160,10 @@ def validate_harness_compatibility(
     harness_id: HarnessId,
     model_entry: AliasEntry | None,
     harness_registry: HarnessRegistry,
-    harness_source: str = "resolved",
 ) -> None:
-    """Validate harness/model compatibility with candidate-aware routing."""
+    """Validate that the selected harness is available for primary launch."""
+
+    _ = model, model_entry
 
     supported_primary_harnesses = tuple(
         harness_id_candidate
@@ -173,27 +174,6 @@ def validate_harness_compatibility(
     if harness_id not in supported_primary_set:
         supported_text = ", ".join(str(harness) for harness in supported_primary_harnesses)
         raise ValueError(f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}.")
-
-    if model_entry is None:
-        return
-
-    harness_candidates = tuple(model_entry.harness_candidates or ())
-    if harness_candidates:
-        if str(harness_id) not in harness_candidates:
-            supported = ", ".join(harness_candidates)
-            source_note = " from model-policy override" if harness_source == "model-policy" else ""
-            raise ValueError(
-                f"Harness '{harness_id}'{source_note} is not a supported route "
-                f"for model '{model}'. Supported harnesses: {supported}."
-            )
-        return
-
-    if harness_id != model_entry.harness:
-        source_note = " from model-policy override" if harness_source == "model-policy" else ""
-        raise ValueError(
-            f"Harness '{harness_id}'{source_note} is incompatible with model '{model}' "
-            f"(routes to '{model_entry.harness}')."
-        )
 
 
 def resolve_harness(
@@ -220,7 +200,6 @@ def resolve_harness(
         harness_id=override_harness,
         model_entry=model_entry,
         harness_registry=harness_registry,
-        harness_source="resolved",
     )
     return override_harness
 

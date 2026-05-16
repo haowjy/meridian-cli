@@ -225,11 +225,10 @@ def test_validate_harness_compatibility_allows_model_policy_candidate_route() ->
         harness_id=HarnessId.CODEX,
         model_entry=model_entry,
         harness_registry=registry,
-        harness_source="model-policy",
     )
 
 
-def test_validate_harness_compatibility_rejects_same_layer_contradiction() -> None:
+def test_validate_harness_compatibility_allows_same_layer_contradiction() -> None:
     registry = get_default_harness_registry()
     model_entry = _mock_alias(
         alias="claude",
@@ -237,14 +236,12 @@ def test_validate_harness_compatibility_rejects_same_layer_contradiction() -> No
         harness=HarnessId.CLAUDE,
     )
 
-    with pytest.raises(ValueError, match="from model-policy override"):
-        validate_harness_compatibility(
-            model="claude-haiku-4-5",
-            harness_id=HarnessId.CODEX,
-            model_entry=model_entry,
-            harness_registry=registry,
-            harness_source="model-policy",
-        )
+    validate_harness_compatibility(
+        model="claude-haiku-4-5",
+        harness_id=HarnessId.CODEX,
+        model_entry=model_entry,
+        harness_registry=registry,
+    )
 
 
 def test_resolve_launch_policy_fallback_uses_policy_list_order(

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from meridian.lib.catalog.model_aliases import AliasEntry, RunnablePath
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
@@ -53,7 +51,7 @@ def test_validate_harness_compatibility_accepts_harness_candidate_route() -> Non
     )
 
 
-def test_validate_harness_compatibility_rejects_harness_outside_candidates() -> None:
+def test_validate_harness_compatibility_allows_harness_outside_candidates() -> None:
     model_entry = AliasEntry(
         alias="fast",
         model_id=ModelId("fake-model"),
@@ -61,20 +59,19 @@ def test_validate_harness_compatibility_rejects_harness_outside_candidates() -> 
         harness_candidates=("codex", "opencode"),
     )
 
-    with pytest.raises(ValueError, match="Supported harnesses: codex, opencode"):
-        validate_harness_compatibility(
-            model="fake-model",
-            harness_id=HarnessId.CLAUDE,
-            model_entry=model_entry,
-            harness_registry=_registry_with_harnesses(
-                HarnessId.CLAUDE,
-                HarnessId.CODEX,
-                HarnessId.OPENCODE,
-            ),
-        )
+    validate_harness_compatibility(
+        model="fake-model",
+        harness_id=HarnessId.CLAUDE,
+        model_entry=model_entry,
+        harness_registry=_registry_with_harnesses(
+            HarnessId.CLAUDE,
+            HarnessId.CODEX,
+            HarnessId.OPENCODE,
+        ),
+    )
 
 
-def test_validate_harness_compatibility_empty_candidates_uses_single_harness_check() -> None:
+def test_validate_harness_compatibility_allows_harness_with_empty_candidates() -> None:
     model_entry = AliasEntry(
         alias="fast",
         model_id=ModelId("fake-model"),
@@ -82,16 +79,15 @@ def test_validate_harness_compatibility_empty_candidates_uses_single_harness_che
         harness_candidates=(),
     )
 
-    with pytest.raises(ValueError, match="incompatible with model"):
-        validate_harness_compatibility(
-            model="fake-model",
-            harness_id=HarnessId.OPENCODE,
-            model_entry=model_entry,
-            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-        )
+    validate_harness_compatibility(
+        model="fake-model",
+        harness_id=HarnessId.OPENCODE,
+        model_entry=model_entry,
+        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+    )
 
 
-def test_validate_harness_compatibility_model_policy_error_mentions_override_source() -> None:
+def test_validate_harness_compatibility_allows_policy_reroute_outside_candidates() -> None:
     model_entry = AliasEntry(
         alias="fast",
         model_id=ModelId("fake-model"),
@@ -99,14 +95,12 @@ def test_validate_harness_compatibility_model_policy_error_mentions_override_sou
         harness_candidates=("codex",),
     )
 
-    with pytest.raises(ValueError, match="from model-policy override"):
-        validate_harness_compatibility(
-            model="fake-model",
-            harness_id=HarnessId.OPENCODE,
-            model_entry=model_entry,
-            harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-            harness_source="model-policy",
-        )
+    validate_harness_compatibility(
+        model="fake-model",
+        harness_id=HarnessId.OPENCODE,
+        model_entry=model_entry,
+        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
+    )
 
 
 def test_validate_harness_compatibility_skips_model_route_check_without_model_entry() -> None:

@@ -105,7 +105,7 @@ def test_chat_policy_snapshot_resolves_alias_to_canonical_model(monkeypatch, tmp
     assert snapshot.harness == "codex"
 
 
-def test_chat_policy_snapshot_rejects_incompatible_explicit_harness(monkeypatch, tmp_path) -> None:
+def test_chat_policy_snapshot_allows_forced_explicit_harness(monkeypatch, tmp_path) -> None:
     alias_entry = _mock_alias("gptmini", "gpt-5.4-mini", HarnessId.CODEX)
 
     def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
@@ -117,18 +117,20 @@ def test_chat_policy_snapshot_rejects_incompatible_explicit_harness(monkeypatch,
     monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
     monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
 
-    with pytest.raises(ValueError, match="incompatible"):
-        chat_cmd._resolve_chat_policy_snapshot(
-            project_root=tmp_path,
-            model="gptmini",
-            harness="claude",
-            agent=None,
-            skills=(),
-            approval=None,
-            sandbox=None,
-            effort=None,
-            autocompact=None,
-        )
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model="gptmini",
+        harness="claude",
+        agent=None,
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert snapshot.canonical_model_id == "gpt-5.4-mini"
+    assert snapshot.harness == "claude"
 
 
 def test_chat_policy_snapshot_without_model_does_not_force_catalog_lookup(

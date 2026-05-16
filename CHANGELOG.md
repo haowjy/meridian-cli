@@ -12,10 +12,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Empty `override: {}` accepted as intentional no-op in model-policy rules.
 
 ### Changed
-- `validate_harness_compatibility()` checks `harness_candidates` when available; falls back to strict single-harness check when candidates unknown.
-- Validation applies to all final harness/model pairs, not just CLI same-precedence overrides.
-- Error diagnostics list supported harnesses when rejecting invalid combinations.
-- `is_policy_reroute` bypass removed — policy-derived harness overrides validated like any other route selection.
+- Explicit harness selection is a force — model/harness compatibility checks removed; only unavailable primary-launch adapters are rejected.
+- Launch policy no longer re-validates final model/harness pairs after harness materialization.
 - `ModelSelectionContext.harness_model_id` carries per-harness model string; applied only at harness command boundary, not in telemetry/display/persistence.
 - Consolidated Mars candidate/runnable-path parsing: `parse_harness_candidates`/`parse_runnable_paths` replace duplicated inner functions in `models.py`.
 

@@ -646,40 +646,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         config=surface.config,
         catalog=surface.catalog,
     )
-    resolved_model_default_harness = _resolved_model_default_harness(resolved_model_entry)
     policy_warnings: list[CompositionWarning] = []
-
-    if final_model and user_explicit_same_precedence:
-        if model_resolution_error is not None:
-            raise model_resolution_error
-        validate_harness_compatibility(
-            model=final_model,
-            harness_id=harness_id,
-            model_entry=resolved_model_entry,
-            harness_registry=surface.harness_registry,
-        )
-    if (
-        final_model
-        and not user_explicit_same_precedence
-        and resolved_model_entry is not None
-        and resolved_model_default_harness is not None
-        and harness_id != resolved_model_default_harness
-        and compiler_result.field_provenance.harness_source
-        not in (ProvenanceLevel.CLI, ProvenanceLevel.ENV)
-    ):
-        harness_source = "resolved"
-        if compiler_result.field_provenance.harness_source in (
-            ProvenanceLevel.PROFILE_MODEL_POLICY,
-            ProvenanceLevel.AGENT_OVERLAY_POLICY,
-        ):
-            harness_source = "model-policy"
-        validate_harness_compatibility(
-            model=final_model,
-            harness_id=harness_id,
-            model_entry=resolved_model_entry,
-            harness_registry=surface.harness_registry,
-            harness_source=harness_source,
-        )
 
     selected_entry: AliasEntry | None = resolved_model_entry
     model_selection: ModelSelectionContext | None = None
