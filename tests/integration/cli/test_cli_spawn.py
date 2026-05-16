@@ -10,6 +10,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnCreateInput,
     SpawnForkInput,
     SpawnListEntry,
+    SpawnListInput,
     SpawnListOutput,
 )
 
@@ -123,6 +124,66 @@ def test_spawn_list_rejects_agent_filter_spelling(
     captured = capsys.readouterr()
     assert 'Unknown option: "--agent"' in captured.err
     assert 'Unknown option: "-a"' not in captured.err
+
+
+def test_spawn_list_recent_view_uses_active_statuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_list_sync(
+        payload: SpawnListInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnListOutput:
+        _ = (sink, prepared)
+        captured["status"] = payload.status
+        captured["statuses"] = payload.statuses
+        return SpawnListOutput(spawns=())
+
+    monkeypatch.setattr(spawn_cli, "spawn_list_sync", _fake_spawn_list_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "list", "--view", "recent"])
+
+    assert exc_info.value.code == 0
+    assert captured["status"] is None
+    assert captured["statuses"] == spawn_cli._ACTIVE_VIEW_STATUSES
+
+
+def test_spawn_list_view_error_lists_recent_as_supported(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "list", "--view", "not-a-view"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Unsupported spawn view 'not-a-view'" in captured.err
+    assert (
+        "Supported views: active, recent, all, running, queued, completed, failed, cancelled"
+        in captured.err
+    )
+
+
+def test_spawn_list_help_mentions_recent_active_view(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "list", "--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    rendered = f"{captured.out}\n{captured.err}"
+    assert "recent (recent active spawns)" in rendered
 
 
 def test_spawn_agent_launch_flag_still_targets_profile(

@@ -528,7 +528,8 @@ def _spawn_list(
         Parameter(
             name="--view",
             help=(
-                "Preset list view: active, all, running, queued, completed, failed, cancelled. "
+                "Preset list view: active, recent (recent active spawns), "
+                "all, running, queued, completed, failed, cancelled. "
                 "Default: active."
             ),
         ),
@@ -566,6 +567,7 @@ def _spawn_list(
             limit = 5
     view_map: dict[str, tuple[SpawnStatus, ...]] = {
         "active": _ACTIVE_VIEW_STATUSES,
+        "recent": _ACTIVE_VIEW_STATUSES,
         "all": (),
         "running": ("running",),
         "queued": ("queued",),
