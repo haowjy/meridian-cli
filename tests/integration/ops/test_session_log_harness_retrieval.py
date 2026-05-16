@@ -7,6 +7,7 @@ each harness type (opencode, codex, claude) using env-var overrides.
 """
 
 import json
+import sqlite3
 from pathlib import Path
 
 from meridian.lib.harness.claude import project_slug
@@ -80,7 +81,75 @@ def _write_claude_session(
     return session_path
 
 
-def test_session_log_resolves_opencode_storage_session_file(
+def _write_opencode_db_session(
+    *,
+    db_path: Path,
+    session_id: str,
+    messages: list[tuple[str, str]],
+) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL
+            );
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            """
+        )
+        now = 1_778_945_817_030
+        connection.execute(
+            "INSERT INTO session (id, time_created, time_updated) VALUES (?, ?, ?)",
+            (session_id, now, now),
+        )
+        for index, (role, text) in enumerate(messages):
+            timestamp = now + index
+            message_id = f"msg_{index}"
+            part_id = f"prt_{index}"
+            connection.execute(
+                "INSERT INTO message "
+                "(id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    message_id,
+                    session_id,
+                    timestamp,
+                    timestamp,
+                    json.dumps({"role": role, "time": {"created": timestamp}}),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    part_id,
+                    message_id,
+                    session_id,
+                    timestamp,
+                    timestamp,
+                    json.dumps({"type": "text", "text": text}),
+                ),
+            )
+        connection.commit()
+
+
+def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -94,6 +163,14 @@ def test_session_log_resolves_opencode_storage_session_file(
     session_file = xdg_data_home / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
     session_file.parent.mkdir(parents=True)
     session_file.write_text("[]\n", encoding="utf-8")
+    _write_opencode_db_session(
+        db_path=xdg_data_home / "opencode" / "opencode.db",
+        session_id=session_id,
+        messages=[
+            ("user", "show transcript please"),
+            ("assistant", "here is your transcript"),
+        ],
+    )
     monkeypatch.setenv("XDG_DATA_HOME", xdg_data_home.as_posix())
 
     spawn_store.start_spawn(
@@ -119,8 +196,11 @@ def test_session_log_resolves_opencode_storage_session_file(
     )
 
     assert output.session_id == session_id
-    assert output.segment_messages == 0
-    assert output.messages == ()
+    assert output.source == "opencode transcript"
+    assert [(message.role, message.content) for message in output.messages] == [
+        ("user", "show transcript please"),
+        ("assistant", "here is your transcript"),
+    ]
 
 
 def test_session_log_resolves_codex_session_file_from_codex_home_env(

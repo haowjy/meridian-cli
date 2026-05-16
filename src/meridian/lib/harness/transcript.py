@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import NamedTuple, Protocol, cast
@@ -296,17 +298,137 @@ class JsonlTranscriptProvider(TranscriptProvider):
         return path.name != HISTORY_FILENAME
 
     def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    payload_obj = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload_obj, dict):
-                    yield cast("dict[str, object]", payload_obj)
+        yield from _iter_json_events(path)
+
+
+def _iter_json_events(path: Path) -> Iterator[dict[str, object]]:
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload_obj = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload_obj, dict):
+                yield cast("dict[str, object]", payload_obj)
+                continue
+            if isinstance(payload_obj, list):
+                for item in cast("list[object]", payload_obj):
+                    if isinstance(item, dict):
+                        yield cast("dict[str, object]", item)
+
+
+def _opencode_db_path_for_session_file(path: Path) -> Path | None:
+    if path.parent.name not in {"session_diff", "session"}:
+        return None
+    storage_root = path.parent.parent
+    if storage_root.name != "storage":
+        return None
+    return storage_root.parent / "opencode.db"
+
+
+def _load_opencode_db_events(path: Path) -> list[dict[str, object]]:
+    session_id = path.stem.strip()
+    if not session_id:
+        return []
+
+    db_path = _opencode_db_path_for_session_file(path)
+    if db_path is None or not db_path.is_file():
+        return []
+
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=0.1) as connection:
+            message_rows = connection.execute(
+                """
+                SELECT id, data, time_created
+                FROM message
+                WHERE session_id = ?
+                ORDER BY time_created ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+            part_rows = connection.execute(
+                """
+                SELECT message_id, data, time_created, id
+                FROM part
+                WHERE session_id = ?
+                ORDER BY time_created ASC, id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        return []
+
+    if not message_rows:
+        return []
+
+    parts_by_message: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for message_id, part_data, _time_created, _part_id in part_rows:
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_message_id:
+            continue
+        try:
+            part_obj = json.loads(str(part_data))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(part_obj, dict):
+            parts_by_message[normalized_message_id].append(cast("dict[str, object]", part_obj))
+
+    events: list[dict[str, object]] = []
+    for message_id, message_data, _time_created in message_rows:
+        normalized_message_id = str(message_id or "").strip()
+        if not normalized_message_id:
+            continue
+        try:
+            message_obj = json.loads(str(message_data))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(message_obj, dict):
+            continue
+
+        message_payload = cast("dict[str, object]", message_obj)
+        role = str(message_payload.get("role", "")).strip().lower()
+        if role not in {"assistant", "user", "system"}:
+            continue
+
+        text_parts: list[str] = []
+        for part in parts_by_message.get(normalized_message_id, []):
+            if str(part.get("type", "")).strip().lower() != "text":
+                continue
+            text = text_from_value(part.get("text"))
+            if text:
+                text_parts.append(text)
+
+        content = "\n".join(text_parts).strip()
+        if not content:
+            content = text_from_value(message_payload.get("content"))
+        if not content:
+            content = text_from_value(message_payload.get("text"))
+        if not content:
+            continue
+        events.append({"role": role, "content": content})
+
+    return events
+
+
+class OpenCodeStorageTranscriptProvider(TranscriptProvider):
+    """OpenCode storage provider that prefers opencode.db transcript rows."""
+
+    def supports(self, path: Path) -> bool:
+        return (
+            path.suffix == ".json"
+            and path.parent.name in {"session_diff", "session"}
+            and path.parent.parent.name == "storage"
+        )
+
+    def iter_events(self, path: Path) -> Iterator[dict[str, object]]:
+        db_events = _load_opencode_db_events(path)
+        if db_events:
+            yield from db_events
+            return
+        yield from _iter_json_events(path)
 
 
 class HistoryJsonlTranscriptProvider(TranscriptProvider):
@@ -322,6 +444,7 @@ class HistoryJsonlTranscriptProvider(TranscriptProvider):
 
 _TRANSCRIPT_PROVIDERS: tuple[TranscriptProvider, ...] = (
     HistoryJsonlTranscriptProvider(),
+    OpenCodeStorageTranscriptProvider(),
     JsonlTranscriptProvider(),
 )
 
@@ -380,6 +503,7 @@ __all__ = [
     "DefaultTranscriptEventParser",
     "HistoryJsonlTranscriptProvider",
     "JsonlTranscriptProvider",
+    "OpenCodeStorageTranscriptProvider",
     "TranscriptEventParser",
     "TranscriptMessage",
     "TranscriptProvider",

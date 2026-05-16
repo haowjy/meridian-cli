@@ -11,6 +11,7 @@ file to tmp_path but exercises only the parsing contract.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from meridian.lib.harness.transcript import DefaultTranscriptEventParser, parse_transcript_file
@@ -44,6 +45,78 @@ def test_parse_session_file_splits_segments_on_compaction_boundary(tmp_path: Pat
     ]
     assert [(message.role, message.content) for message in segments[1]] == [
         ("assistant", "after boundary")
+    ]
+
+
+def test_parse_session_file_supports_json_array_lines(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.json"
+    session_file.write_text(
+        json.dumps(
+            [
+                {"role": "user", "content": "array user"},
+                {"role": "assistant", "content": "array assistant"},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    segments, total_compactions = parse_transcript_file(session_file)
+
+    assert total_compactions == 0
+    assert len(segments) == 1
+    assert [(message.role, message.content) for message in segments[0]] == [
+        ("user", "array user"),
+        ("assistant", "array assistant"),
+    ]
+
+
+def test_parse_session_file_prefers_opencode_db_transcript(tmp_path: Path) -> None:
+    session_id = "ses_fixture_db_1"
+    session_file = tmp_path / "opencode" / "storage" / "session_diff" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("[]\n", encoding="utf-8")
+
+    db_path = tmp_path / "opencode" / "opencode.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO message "
+            "(id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("msg_1", session_id, 1, 1, json.dumps({"role": "assistant"})),
+        )
+        connection.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("prt_1", "msg_1", session_id, 1, 1, json.dumps({"type": "text", "text": "db text"})),
+        )
+        connection.commit()
+
+    segments, total_compactions = parse_transcript_file(session_file)
+
+    assert total_compactions == 0
+    assert len(segments) == 1
+    assert [(message.role, message.content) for message in segments[0]] == [
+        ("assistant", "db text")
     ]
 
 
