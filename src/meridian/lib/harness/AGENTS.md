@@ -94,6 +94,11 @@ unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode 
 
 ## Adding a Harness
 
+Full guide: [`docs/harness-integration.md`](../../../docs/harness-integration.md) —
+end-to-end with Pi as the worked example. Covers probing, adapter, projection,
+extraction, connection, semantics, wrapper/runtime, session parity, model/catalog,
+and verification.
+
 Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (`__init__.py`). Missing any
 causes `ImportError` or `ValueError` at startup — the drift guards make omissions loud.
 See [.context/CONTEXT.md](.context/CONTEXT.md) for the full checklist.
