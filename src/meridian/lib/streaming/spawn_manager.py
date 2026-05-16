@@ -57,6 +57,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
 
+_PI_SUBSPAWN_START_EVENTS: frozenset[str] = frozenset(
+    {
+        "meridian_subspawn_start",
+        "meridian.subspawn.start",
+    }
+)
+_PI_SUBSPAWN_END_EVENTS: frozenset[str] = frozenset(
+    {
+        "meridian_subspawn_end",
+        "meridian.subspawn.end",
+    }
+)
+
 StartConnectionPort = Callable[
     ["ConnectionConfig", ResolvedLaunchSpec],
     Awaitable["HarnessConnection[Any]"],
@@ -88,6 +101,62 @@ class SpawnSession:
     cancel_sent: bool = False
     cancel_event_emitted: bool = False
     control_actions: ControlActionCoordinator | None = None
+
+
+def _normalized_event_label(event: HarnessEvent) -> str:
+    candidates: list[str] = [event.event_type]
+    payload_type = event.payload.get("type")
+    if isinstance(payload_type, str):
+        candidates.append(payload_type)
+    for raw in candidates:
+        normalized = raw.strip().lower().replace("-", "_").replace("/", ".")
+        if normalized:
+            return normalized
+    return ""
+
+
+def _pi_subspawn_id(payload: dict[str, object]) -> str | None:
+    for key in ("subspawn_id", "spawn_id", "child_spawn_id", "id"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                return normalized
+    return None
+
+
+@dataclass
+class _PiSubspawnTracker:
+    active_ids: set[str]
+    anonymous_active_count: int = 0
+
+    @classmethod
+    def empty(cls) -> _PiSubspawnTracker:
+        return cls(active_ids=set())
+
+    def observe(self, event: HarnessEvent) -> None:
+        if event.harness_id != HarnessId.PI.value:
+            return
+
+        label = _normalized_event_label(event)
+        if label in _PI_SUBSPAWN_START_EVENTS:
+            subspawn_id = _pi_subspawn_id(event.payload)
+            if subspawn_id is not None:
+                self.active_ids.add(subspawn_id)
+            else:
+                self.anonymous_active_count += 1
+            return
+
+        if label in _PI_SUBSPAWN_END_EVENTS:
+            subspawn_id = _pi_subspawn_id(event.payload)
+            if subspawn_id is not None:
+                self.active_ids.discard(subspawn_id)
+                return
+            if self.anonymous_active_count > 0:
+                self.anonymous_active_count -= 1
+
+    def has_pending(self) -> bool:
+        return bool(self.active_ids) or self.anonymous_active_count > 0
 
 
 def _ensure_harness_bootstrap() -> None:
@@ -371,9 +440,12 @@ class SpawnManager:
         drain_cancelled = False
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
+        pending_terminal_outcome: TerminalEventOutcome | None = None
+        pi_subspawn_tracker = _PiSubspawnTracker.empty()
         policy = drain_policy if drain_policy is not None else SingleTurnDrainPolicy()
         try:
             async for event in receiver.events():
+                pi_subspawn_tracker.observe(event)
                 if tracer is not None:
                     tracer.emit(
                         "drain",
@@ -428,10 +500,25 @@ class SpawnManager:
                 if event_outcome is not None:
                     action: DrainAction = policy.classify(event_outcome)
                     if action.terminate:
-                        recorded_terminal_outcome = event_outcome
-                        break
+                        if pi_subspawn_tracker.has_pending():
+                            pending_terminal_outcome = event_outcome
+                            logger.info(
+                                "Pi terminal event deferred until subspawn drain boundary "
+                                "for spawn %s "
+                                "(active_subspawns=%s anonymous_subspawns=%d)",
+                                spawn_id,
+                                sorted(pi_subspawn_tracker.active_ids),
+                                pi_subspawn_tracker.anonymous_active_count,
+                            )
+                        else:
+                            recorded_terminal_outcome = event_outcome
+                            break
                     if action.emit_turn_boundary:
                         await self._fan_out_turn_boundary(spawn_id, event_outcome)
+                    continue
+                if pending_terminal_outcome is not None and not pi_subspawn_tracker.has_pending():
+                    recorded_terminal_outcome = pending_terminal_outcome
+                    break
         except asyncio.CancelledError:
             drain_cancelled = True
             raise
@@ -853,6 +940,8 @@ class SpawnManager:
         try:
             await asyncio.wait_for(asyncio.shield(session.drain_task), timeout=2.0)
         except (TimeoutError, asyncio.CancelledError, Exception):
+            if prefer_drain_outcome:
+                self._resolve_completion_future(session, fallback_outcome)
             session.drain_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await session.drain_task
