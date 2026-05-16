@@ -42,6 +42,7 @@ from .resolve import (
     dedupe_skill_names,
     load_agent_profile_with_fallback,
     resolve_skills_from_profile,
+    select_harness_model_id,
     validate_harness_compatibility,
 )
 
@@ -61,6 +62,7 @@ class ModelSelectionContext:
     mars_provided_harness: HarnessId | None
     resolved_entry: AliasEntry | None
     harness_provenance: str
+    harness_model_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -216,6 +218,17 @@ def _policy_warnings(
             ),
         )
     return ()
+
+
+def _resolved_model_default_harness(model_entry: AliasEntry | None) -> HarnessId | None:
+    """Return a model entry's default harness when it can be resolved."""
+
+    if model_entry is None:
+        return None
+    try:
+        return model_entry.harness
+    except ValueError:
+        return None
 
 
 def _harness_is_available(
@@ -633,21 +646,45 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         config=surface.config,
         catalog=surface.catalog,
     )
-
-    if final_model and user_explicit_same_precedence:
-        if model_resolution_error is not None:
-            raise model_resolution_error
-        validate_harness_compatibility(
-            model=final_model,
-            harness_id=harness_id,
-            model_entry=resolved_model_entry,
-            harness_registry=surface.harness_registry,
-            is_policy_reroute=False,
-        )
+    policy_warnings: list[CompositionWarning] = []
 
     selected_entry: AliasEntry | None = resolved_model_entry
     model_selection: ModelSelectionContext | None = None
     if final_model:
+        canonical_model_id = (
+            str(selected_entry.model_id) if selected_entry is not None else final_model
+        )
+        harness_model_for_spec: str | None = None
+        selected_entry_default_harness = _resolved_model_default_harness(selected_entry)
+        if (
+            selected_entry is not None
+            and selected_entry_default_harness is not None
+            and harness_id != selected_entry_default_harness
+        ):
+            computed = select_harness_model_id(
+                model_entry=selected_entry,
+                harness_id=harness_id,
+                canonical_model_id=canonical_model_id,
+            )
+            if computed != canonical_model_id:
+                harness_model_for_spec = computed
+            harness_candidates = tuple(
+                str(candidate) for candidate in selected_entry.harness_candidates
+            )
+            if (
+                harness_model_for_spec is None
+                and str(harness_id) in harness_candidates
+            ):
+                policy_warnings.append(
+                    CompositionWarning(
+                        code="missing_runnable_path",
+                        message=(
+                            f"Harness '{harness_id}' is a supported candidate for model "
+                            f"'{final_model}' but no harness-specific model ID is available. "
+                            "Using canonical model ID."
+                        ),
+                    )
+                )
         selected_model_token = (
             (selected_entry.alias.strip() or str(selected_entry.model_id))
             if selected_entry is not None
@@ -656,14 +693,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         model_selection = ModelSelectionContext(
             requested_token=requested_token_for_selection or final_model,
             selected_model_token=selected_model_token,
-            canonical_model_id=(
-                str(selected_entry.model_id) if selected_entry is not None else final_model
-            ),
+            canonical_model_id=canonical_model_id,
             mars_provided_harness=(
                 selected_entry.mars_provided_harness if selected_entry is not None else None
             ),
             resolved_entry=selected_entry,
             harness_provenance=harness_provenance or "",
+            harness_model_id=harness_model_for_spec,
         )
 
     profile_policy_rule_matched = compiler_result.matched_model_policy and (
@@ -706,6 +742,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     )
 
     model_warning = "\n".join(compiler_result.warnings).strip() or None
+    policy_warnings = [
+        *_policy_warnings(
+            profile_warning=profile_warning,
+            model_warning=model_warning,
+        ),
+        *policy_warnings,
+    ]
 
     return ResolvedLaunchPolicy(
         profile=profile,
@@ -719,10 +762,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         field_provenance=compiler_result.field_provenance,
         model_selection=model_selection,
         fallback_chain=compiler_result.fallback_chain,
-        warnings=_policy_warnings(
-            profile_warning=profile_warning,
-            model_warning=model_warning,
-        ),
+        warnings=tuple(policy_warnings),
         alias_catalog=alias_catalog,
     )
 

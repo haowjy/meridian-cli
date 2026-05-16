@@ -143,12 +143,15 @@ def _parse_model_policies(
             for key, value in cast("Mapping[object, object]", raw_override).items()
             if str(key).strip()
         }
-        is_fallback_candidate = match_key in {"alias", "model"} and not no_fallback
-        if not overrides and not is_fallback_candidate:
-            continue
+        # Silently filter unknown override keys (lenient parsing).
+        raw_override_count = len(overrides)
         overrides = {
             key: value for key, value in overrides.items() if key in _MODEL_POLICY_OVERRIDE_KEYS
         }
+        # Skip rules where all override keys were invalid (likely a typo).
+        # Empty/missing override is intentional no-op — only skip if keys existed but none survived.
+        if raw_override_count > 0 and not overrides:
+            continue
         parsed.append(
             ModelPolicyRule(
                 match_type=cast("Literal['model', 'alias', 'model-glob']", match_key),
@@ -214,10 +217,10 @@ def parse_agent_profile(path: Path) -> AgentProfile:
                     "int | None", validate_autocompact_pct_value(raw_autocompact_pct)
                 )
 
+
     model_policies = _parse_model_policies(
         model_policies_value,
     )
-
     mode = str(mode_value).strip() if mode_value is not None else "subagent"
     if mode not in {"primary", "subagent"}:
         mode = "subagent"

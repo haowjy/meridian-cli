@@ -5,9 +5,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
+- Candidate-aware harness routing: `--harness opencode --model gpt-5.5` accepted when Mars reports OpenCode as a runnable candidate.
+- `RunnablePath` type and `AliasEntry.harness_candidates`/`runnable_paths` fields carry Mars multi-path data through catalog resolution.
+- `select_harness_model_id()` picks per-harness model ID (e.g. `openai/gpt-5.5`) from runnable paths at the bind boundary.
+- Model-policy `override: {harness: opencode}` validated against candidates and selects harness-specific model ID.
+- Empty `override: {}` accepted as intentional no-op in model-policy rules.
+
+### Changed
+- Explicit harness selection is a force — model/harness compatibility checks removed; only unavailable primary-launch adapters are rejected.
+- Launch policy no longer re-validates final model/harness pairs after harness materialization.
+- `ModelSelectionContext.harness_model_id` carries per-harness model string; applied only at harness command boundary, not in telemetry/display/persistence.
+- Consolidated Mars candidate/runnable-path parsing: `parse_harness_candidates`/`parse_runnable_paths` replace duplicated inner functions in `models.py`.
 
 ## [0.1.7] - 2026-05-15
+
+### Added
+- `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
 
 ### Changed
 - Release workflow: PR merges release only with a `release:*` label. CI creates the patch release commit and `vX.Y.Z` tag, then directly runs PyPI publish. Missing labels, `release:skip`, or direct `main` pushes skip auto-release. Tag pushes remain a manual/backfill publish path.

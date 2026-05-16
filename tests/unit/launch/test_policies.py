@@ -11,6 +11,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.policies import (
+    ModelSelectionContext,
     SurfacePolicyInput,
     match_model_policy,
     resolve_launch_policy,
@@ -67,6 +68,32 @@ def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
     for harness_id in harness_ids:
         registry.register(base_registry.get(harness_id))
     return registry
+
+
+def test_model_selection_context_has_harness_model_id_field() -> None:
+    context = ModelSelectionContext(
+        requested_token="fast",
+        selected_model_token="fast",
+        canonical_model_id="fake-model",
+        mars_provided_harness=HarnessId.CODEX,
+        resolved_entry=None,
+        harness_provenance="resolved",
+    )
+
+    assert hasattr(context, "harness_model_id")
+
+
+def test_model_selection_context_harness_model_id_defaults_to_none() -> None:
+    context = ModelSelectionContext(
+        requested_token="fast",
+        selected_model_token="fast",
+        canonical_model_id="fake-model",
+        mars_provided_harness=HarnessId.CODEX,
+        resolved_entry=None,
+        harness_provenance="resolved",
+    )
+
+    assert context.harness_model_id is None
 
 
 def test_resolve_policy_fields_resolves_per_field_precedence() -> None:
@@ -184,7 +211,24 @@ def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> No
     assert winner.match_value == "gpt-*"
 
 
-def test_validate_harness_compatibility_allows_policy_reroute() -> None:
+def test_validate_harness_compatibility_allows_model_policy_candidate_route() -> None:
+    registry = get_default_harness_registry()
+    model_entry = _mock_alias(
+        alias="claude",
+        model_id="claude-haiku-4-5",
+        harness=HarnessId.CLAUDE,
+    )
+    object.__setattr__(model_entry, "harness_candidates", ("claude", "codex"))
+
+    validate_harness_compatibility(
+        model="claude-haiku-4-5",
+        harness_id=HarnessId.CODEX,
+        model_entry=model_entry,
+        harness_registry=registry,
+    )
+
+
+def test_validate_harness_compatibility_allows_same_layer_contradiction() -> None:
     registry = get_default_harness_registry()
     model_entry = _mock_alias(
         alias="claude",
@@ -197,26 +241,7 @@ def test_validate_harness_compatibility_allows_policy_reroute() -> None:
         harness_id=HarnessId.CODEX,
         model_entry=model_entry,
         harness_registry=registry,
-        is_policy_reroute=True,
     )
-
-
-def test_validate_harness_compatibility_rejects_same_layer_contradiction() -> None:
-    registry = get_default_harness_registry()
-    model_entry = _mock_alias(
-        alias="claude",
-        model_id="claude-haiku-4-5",
-        harness=HarnessId.CLAUDE,
-    )
-
-    with pytest.raises(ValueError, match="incompatible with model"):
-        validate_harness_compatibility(
-            model="claude-haiku-4-5",
-            harness_id=HarnessId.CODEX,
-            model_entry=model_entry,
-            harness_registry=registry,
-            is_policy_reroute=False,
-        )
 
 
 def test_resolve_launch_policy_fallback_uses_policy_list_order(

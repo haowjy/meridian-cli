@@ -26,6 +26,16 @@ from meridian.lib.core.types import HarnessId, ModelId
 logger = logging.getLogger(__name__)
 
 
+class RunnablePath(BaseModel):
+    """One runnable harness route for a model, as reported by Mars."""
+
+    model_config = ConfigDict(frozen=True)
+
+    harness: str
+    harness_model_id: str
+    provider: str = ""
+
+
 class AliasEntry(BaseModel):
     """Alias entry for model lookup."""
 
@@ -38,6 +48,8 @@ class AliasEntry(BaseModel):
     default_effort: str | None = Field(default=None, exclude=True)
     default_autocompact: int | None = Field(default=None, exclude=True)
     default_autocompact_pct: int | None = Field(default=None, exclude=True)
+    harness_candidates: tuple[str, ...] = Field(default=(), exclude=True)
+    runnable_paths: tuple[RunnablePath, ...] = Field(default=(), exclude=True)
 
     @property
     def harness(self) -> HarnessId:
@@ -48,6 +60,13 @@ class AliasEntry(BaseModel):
     @property
     def mars_provided_harness(self) -> HarnessId | None:
         return self.resolved_harness
+
+    def harness_model_id_for(self, harness: str) -> str | None:
+        """Return the harness-specific model ID for a given harness, or None."""
+        for path in self.runnable_paths:
+            if path.harness == harness:
+                return path.harness_model_id
+        return None
 
     def format_text(self, ctx: object | None = None) -> str:
         _ = ctx
@@ -70,6 +89,8 @@ def entry(
     default_effort: str | None = None,
     default_autocompact: int | None = None,
     default_autocompact_pct: int | None = None,
+    harness_candidates: tuple[str, ...] = (),
+    runnable_paths: tuple[RunnablePath, ...] = (),
 ) -> AliasEntry:
     resolved_harness: HarnessId | None = None
     if harness:
@@ -83,6 +104,8 @@ def entry(
         default_effort=default_effort,
         default_autocompact=default_autocompact,
         default_autocompact_pct=default_autocompact_pct,
+        harness_candidates=harness_candidates,
+        runnable_paths=runnable_paths,
     )
 
 
@@ -109,6 +132,41 @@ def _coerce_optional_int(value: object) -> int | None:
         except ValueError:
             return None
     return None
+
+
+def parse_harness_candidates(raw_candidates: object) -> tuple[str, ...]:
+    if not isinstance(raw_candidates, list):
+        return ()
+    return tuple(
+        candidate.strip()
+        for candidate in cast("list[object]", raw_candidates)
+        if isinstance(candidate, str) and candidate.strip()
+    )
+
+
+def parse_runnable_paths(raw_paths: object) -> tuple[RunnablePath, ...]:
+    if not isinstance(raw_paths, list):
+        return ()
+
+    runnable_paths: list[RunnablePath] = []
+    for path in cast("list[object]", raw_paths):
+        if not isinstance(path, dict):
+            continue
+        typed_path = cast("dict[str, object]", path)
+        harness = _coerce_optional_string(typed_path.get("harness"))
+        harness_model_id = _coerce_optional_string(typed_path.get("harness_model_id"))
+        if harness is None or harness_model_id is None:
+            continue
+        mars_provider = _coerce_optional_string(typed_path.get("mars_provider"))
+        provider = mars_provider or _coerce_optional_string(typed_path.get("provider"))
+        runnable_paths.append(
+            RunnablePath(
+                harness=harness,
+                harness_model_id=harness_model_id,
+                provider=provider or "",
+            )
+        )
+    return tuple(runnable_paths)
 
 
 def _normalize_project_root_key(project_root: Path | None) -> str:
@@ -486,6 +544,8 @@ def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEn
         default_effort = item.get("default_effort")
         default_autocompact = item.get("autocompact")
         default_autocompact_pct = item.get("autocompact_pct")
+        harness_candidates = parse_harness_candidates(item.get("harness_candidates"))
+        runnable_paths = parse_runnable_paths(item.get("runnable_paths"))
 
         # Skip aliases that didn't resolve to a concrete model ID
         if not isinstance(resolved_model, str) or not resolved_model.strip():
@@ -500,6 +560,8 @@ def _mars_list_to_entries(aliases_list: list[dict[str, object]]) -> list[AliasEn
                 default_effort=_coerce_optional_string(default_effort),
                 default_autocompact=_coerce_optional_int(default_autocompact),
                 default_autocompact_pct=_coerce_optional_int(default_autocompact_pct),
+                harness_candidates=harness_candidates,
+                runnable_paths=runnable_paths,
             )
         )
 
@@ -616,11 +678,14 @@ def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
 __all__ = [
     "AliasEntry",
     "MarsResultCache",
+    "RunnablePath",
     "cached_mars_models_list",
     "cached_mars_models_list_all",
     "cached_mars_models_resolve",
     "load_mars_aliases",
     "load_mars_descriptions",
+    "parse_harness_candidates",
+    "parse_runnable_paths",
     "run_mars_models_list_all",
     "run_mars_models_resolve",
 ]

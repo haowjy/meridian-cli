@@ -1447,6 +1447,9 @@ def bind_launch_context(
         ids={"spawn_id": bindings.spawn_id},
         data={"model_family": model_family, "harness": harness.id.value},
     )
+    effective_model = model
+    if model_selection is not None and model_selection.harness_model_id is not None:
+        effective_model = model_selection.harness_model_id
 
     if (
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
@@ -1469,7 +1472,7 @@ def bind_launch_context(
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,
-        model=model,
+        model=effective_model,
         effort=resolved_request.execution_policy.effort,
         skills=resolved_request.skills,
         agent=resolved_request.agent,

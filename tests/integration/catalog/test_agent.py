@@ -210,7 +210,7 @@ def test_parse_agent_profile_model_policies_accepts_empty_override_with_fallback
     )
 
 
-def test_parse_agent_profile_model_policies_accepts_missing_override_with_fallback_candidate(
+def test_parse_agent_profile_model_policies_accepts_missing_override(
     tmp_path: Path,
 ) -> None:
     profile_path = _write_profile(
@@ -235,7 +235,7 @@ def test_parse_agent_profile_model_policies_accepts_missing_override_with_fallba
     )
 
 
-def test_parse_agent_profile_ignores_noop_non_fallback_policy_rule(tmp_path: Path) -> None:
+def test_parse_agent_profile_keeps_noop_non_fallback_policy_rule(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
@@ -251,7 +251,14 @@ def test_parse_agent_profile_ignores_noop_non_fallback_policy_rule(tmp_path: Pat
 
     profile = parse_agent_profile(profile_path)
 
-    assert profile.model_policies == ()
+    assert profile.model_policies == (
+        ModelPolicyRule(
+            match_type="model",
+            match_value="gpt-5.5",
+            no_fallback=True,
+            overrides={},
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -302,6 +309,25 @@ def test_parse_agent_profile_filters_unknown_model_policy_override_key(tmp_path:
             overrides={"effort": "high"},
         ),
     )
+
+
+def test_parse_agent_profile_skips_rule_when_all_override_keys_invalid(tmp_path: Path) -> None:
+    """A rule with only invalid override keys is silently dropped, not kept as no-op."""
+    profile_path = _write_profile(
+        tmp_path,
+        "typo.md",
+        [
+            "name: Typo",
+            "model-policies:",
+            "  - match: {model: gpt-5.5}",
+            "    override:",
+            "      harenss: opencode",
+        ],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_policies == ()
 
 
 def test_parse_agent_profile_ignores_invalid_optional_fields(tmp_path: Path) -> None:

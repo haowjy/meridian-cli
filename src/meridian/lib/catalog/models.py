@@ -11,6 +11,8 @@ from meridian.lib.catalog.model_aliases import (
     cached_mars_models_list_all,
     cached_mars_models_resolve,
     load_mars_aliases,
+    parse_harness_candidates,
+    parse_runnable_paths,
     run_mars_models_list_all,
     run_mars_models_resolve,
 )
@@ -56,11 +58,15 @@ def resolve_model(
                 resolved_harness = HarnessId(harness.strip())
 
         description = model.get("description")
+        harness_candidates = parse_harness_candidates(model.get("harness_candidates"))
+        runnable_paths = parse_runnable_paths(model.get("runnable_paths"))
         return AliasEntry(
             alias="",
             model_id=ModelId(normalized),
             resolved_harness=resolved_harness,
             description=description.strip() if isinstance(description, str) else None,
+            harness_candidates=harness_candidates,
+            runnable_paths=runnable_paths,
         )
 
     def find_exact_id_match() -> dict[str, object] | None:
@@ -106,6 +112,8 @@ def resolve_model(
             and not isinstance(raw_default_autocompact_pct, bool)
             else None
         )
+        harness_candidates = parse_harness_candidates(mars_result.get("harness_candidates"))
+        runnable_paths = parse_runnable_paths(mars_result.get("runnable_paths"))
 
         return AliasEntry(
             alias=str(mars_result.get("name", "") or ""),
@@ -115,6 +123,8 @@ def resolve_model(
             default_effort=default_effort,
             default_autocompact=default_autocompact,
             default_autocompact_pct=default_autocompact_pct,
+            harness_candidates=harness_candidates,
+            runnable_paths=runnable_paths,
         )
 
     # Step 1: Try mars resolve (alias + harness in one call) before the
