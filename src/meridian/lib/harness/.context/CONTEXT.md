@@ -21,6 +21,11 @@ which fields it consumes (`consumed_fields`) and which it deliberately ignores
 (`explicitly_ignored_fields`). Their union must cover all `SpawnParams` fields, or
 `_enforce_spawn_params_accounting()` raises `ImportError` on startup.
 
+At the harness command boundary, `bind_launch_context()` applies
+`ModelSelectionContext.harness_model_id` if set — the harness-specific model string
+from Mars `RunnablePath` data. This means `--model gpt-5.5 --harness opencode` passes
+`openai/gpt-5.5` to the OpenCode subprocess, not bare `gpt-5.5`.
+
 ### Two Launch Paths
 
 **Subprocess path** (`lib/launch/`): forks a one-shot process. stdout/stderr are
@@ -56,8 +61,14 @@ Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
 `explicitly_ignored_fields`. Enforced at import time by `launch_spec.py:_enforce_spawn_params_accounting()`. Adding a field to `SpawnParams` without updating all adapters → `ImportError` on startup. This is not documentation — it is enforcement.
 
 Currently ignored fields:
-- Claude ignores `report_output_path`
-- Codex ignores `skills`, `agent`
+- Claude ignores `report_output_path`, `task_cwd`, `context_from_payload`, `reference_items`
+- Codex ignores `skills`, `agent`, `task_cwd`, `context_from_payload`, `reference_items`
+
+`task_cwd` is ignored by harness adapters because the `control_root`/`task_cwd` split
+assigns different responsibilities to different layers: adapters consume `control_root`
+for spawn directory resolution and `--add-dir` roots, while `task_cwd` is injected into
+the agent's working context via system prompt in `bind_launch_context()` at the composition
+layer. The harness command never needs the raw `task_cwd` value.
 
 ### Projection Drift Guard
 
