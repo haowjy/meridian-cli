@@ -105,6 +105,101 @@ def test_main_sets_pi_agent_dir_and_passes_remaining_args(
     assert (tmp_path / "agent-dir" / "sessions").is_dir()
 
 
+def test_main_prefers_packaged_binary_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    packaged_binary = tmp_path / "meridian-pi"
+    packaged_binary.write_text("binary")
+    packaged_binary.chmod(0o755)
+
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured["env"] = env
+        captured["check"] = check
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_compiled_binary_candidates",
+        lambda: (packaged_binary,),
+    )
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 0
+    assert captured["command"] == [str(packaged_binary), "--help"]
+
+
+def test_main_prefers_binary_override_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    override_binary = tmp_path / "override-pi"
+    override_binary.write_text("binary")
+    override_binary.chmod(0o755)
+
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured["env"] = env
+        captured["check"] = check
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setenv("MERIDIAN_PI_BINARY", str(override_binary))
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_compiled_binary_candidates",
+        lambda: (tmp_path / "ignored-packaged-binary",),
+    )
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 0
+    assert captured["command"] == [str(override_binary), "--help"]
+
+
+def test_main_falls_back_to_node_runner_when_packaged_binary_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        captured["command"] = command
+        captured["env"] = env
+        captured["check"] = check
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: tmp_path / "runner.mjs")
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_compiled_binary_candidates",
+        lambda: (tmp_path / "missing-binary",),
+    )
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 0
+    assert captured["command"] == ["node", str(tmp_path / "runner.mjs"), "--help"]
+
+
 def test_main_reports_missing_node_runtime(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -125,6 +220,29 @@ def test_main_reports_missing_node_runtime(
 
     assert raised.value.code == 1
     assert "Node.js runtime is required" in capsys.readouterr().err
+
+
+def test_main_reports_missing_binary_override(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        _ = command, env, check
+        raise FileNotFoundError("missing-pi-binary")
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setenv("MERIDIAN_PI_BINARY", "/missing/meridian-pi")
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "Pi runtime binary not found" in stderr
+    assert "Node.js runtime is required" not in stderr
 
 
 def test_main_reports_invalid_wrapper_flag(

@@ -2,6 +2,9 @@
   "name": "meridian-pi-runtime",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build:binary": "bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi"
+  },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0"
   }

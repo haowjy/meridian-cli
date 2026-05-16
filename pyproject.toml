@@ -84,6 +84,8 @@ exclude = [
   "/src/meridian/pi_runtime/node_modules",
   "/src/meridian/pi_runtime/node_modules/**",
   "/src/meridian/pi_runtime/package-lock.json",
+  "/src/meridian/pi_runtime/bun.lock",
+  "/src/meridian/pi_runtime/bun.lockb",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -92,6 +94,8 @@ exclude = [
   "src/meridian/pi_runtime/node_modules",
   "src/meridian/pi_runtime/node_modules/**",
   "src/meridian/pi_runtime/package-lock.json",
+  "src/meridian/pi_runtime/bun.lock",
+  "src/meridian/pi_runtime/bun.lockb",
 ]
 
 [tool.pyright]
