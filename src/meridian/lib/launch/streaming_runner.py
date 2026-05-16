@@ -26,7 +26,7 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
 )
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
@@ -424,6 +424,9 @@ async def run_streaming_spawn(
             raise RuntimeError("failed to subscribe to spawn stream")
 
         terminal_event_future = loop.create_future()
+        terminal_event_capture = (
+            terminal_event_future if config.harness_id != HarnessId.PI else None
+        )
         completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
@@ -433,7 +436,7 @@ async def run_streaming_spawn(
                 budget_breach_holder=[None],
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
-                terminal_event_future=terminal_event_future,
+                terminal_event_future=terminal_event_capture,
             )
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
@@ -519,6 +522,9 @@ async def _run_streaming_attempt(
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
     )
+    terminal_event_capture = (
+        terminal_event_future if config.harness_id != HarnessId.PI else None
+    )
     subscriber: asyncio.Queue[HarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -553,7 +559,7 @@ async def _run_streaming_attempt(
                 budget_breach_holder=budget_breach_holder,
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
-                terminal_event_future=terminal_event_future,
+                terminal_event_future=terminal_event_capture,
             )
         )
         signal_task = asyncio.create_task(signal_event.wait())
@@ -620,6 +626,8 @@ async def _run_streaming_attempt(
             drain_error = drain_outcome.error
             if timed_out and drain_outcome.status == "succeeded":
                 timed_out = False
+            if drain_outcome.error == "report_watchdog":
+                terminated_by_report_watchdog = True
 
         # The watchdog resolves the completion future mid-flight inside
         # stop_spawn(), so completion_task can finish before watchdog_task.
@@ -628,7 +636,7 @@ async def _run_streaming_attempt(
             if watchdog_task.done():
                 with suppress(Exception):
                     terminated_by_report_watchdog = bool(watchdog_task.result())
-            elif drain_outcome is not None and drain_outcome.error == "report_watchdog":
+            else:
                 try:
                     await asyncio.wait_for(asyncio.shield(watchdog_task), timeout=2.0)
                     terminated_by_report_watchdog = bool(watchdog_task.result())
