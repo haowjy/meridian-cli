@@ -97,6 +97,7 @@ def build_primary_spawn_request(
         agent=(request.agent or "").strip() or None,
         extra_args=request.passthrough_args,
         supplemental_prompt_documents=request.supplemental_prompt_documents,
+        context_from=request.context_from,
         execution_policy=request.execution_policy,
         session=normalized_session,
         work_id_hint=(request.work_id or "").strip() or None,

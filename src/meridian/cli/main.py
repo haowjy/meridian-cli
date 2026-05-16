@@ -271,6 +271,16 @@ def root(
             ),
         ),
     ] = None,
+    from_ref: Annotated[
+        str | None,
+        Parameter(
+            name="--from",
+            help=(
+                "Start a fresh primary session with context from a prior spawn or "
+                "session ref. Does not fork transcript lineage."
+            ),
+        ),
+    ] = None,
     model: Annotated[
         str,
         Parameter(name=["--model", "-m"], help="Model id or alias for primary harness."),
@@ -364,6 +374,7 @@ def root(
         continue_ref=continue_ref,
         fork_ref=fork_ref,
         fork_fresh_ref=fork_fresh_ref,
+        from_ref=from_ref,
         model=model,
         harness=global_harness or explicit_harness,
         agent=agent,
@@ -435,6 +446,7 @@ def _run_primary_launch(
     continue_ref: str | None,
     fork_ref: str | None,
     fork_fresh_ref: str | None,
+    from_ref: str | None,
     model: str,
     harness: str | None,
     agent: str | None,
@@ -456,6 +468,7 @@ def _run_primary_launch(
             continue_ref=continue_ref,
             fork_ref=fork_ref,
             fork_fresh_ref=fork_fresh_ref,
+            from_ref=from_ref,
             model=model,
             harness=harness,
             agent=agent,

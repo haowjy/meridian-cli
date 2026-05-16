@@ -114,6 +114,7 @@ def run_primary_launch(
     continue_ref: str | None,
     fork_ref: str | None,
     fork_fresh_ref: str | None,
+    from_ref: str | None = None,
     model: str,
     harness: str | None,
     agent: str | None,
@@ -162,14 +163,17 @@ def run_primary_launch(
     resume_target = normalized_continue_ref if normalized_continue_ref else None
     raw_fork_target = fork_ref.strip() if fork_ref is not None else ""
     raw_fork_fresh_target = fork_fresh_ref.strip() if fork_fresh_ref is not None else ""
+    raw_from_target = from_ref.strip() if from_ref is not None else ""
     fork_target_requested = raw_fork_target or None
     fork_fresh_target_requested = raw_fork_fresh_target or None
+    context_from_requested = (raw_from_target,) if raw_from_target else ()
     resolved_approval = approval if approval is not None else ("yolo" if yolo else "default")
 
     fork_resolution = validate_fork_mode(
         fork_from=fork_target_requested,
         fork_fresh_from=fork_fresh_target_requested,
         continue_from=resume_target,
+        context_from=context_from_requested,
         agent=agent,
         model=model,
     )
@@ -298,6 +302,7 @@ def run_primary_launch(
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
+            context_from=fork_resolution.resolved_context_from,
             dry_run=dry_run,
             execution_policy=ResolvedExecutionPolicy(
                 approval=resolved_approval if resolved_approval != "default" else None,

@@ -344,6 +344,51 @@ class ResolvedContinuation:
     warning: str | None = None
 
 
+@dataclass(frozen=True)
+class TaskContextInputs:
+    """Resolved user-turn context fields for launch content composition."""
+
+    reference_items: tuple[ReferenceItem, ...]
+    prior_output: str
+    resolved_context_from: tuple[str, ...]
+
+
+def resolve_task_context_inputs(
+    *,
+    context_from: tuple[str, ...],
+    reference_files: tuple[str, ...],
+    project_root: Path,
+) -> TaskContextInputs:
+    """Resolve ``--from`` refs and ``-f`` files into user-turn context blocks."""
+
+    loaded_references = load_reference_items(
+        reference_files,
+        base_dir=project_root,
+    )
+    resolved_context_from = context_from
+    prior_output = ""
+    if context_from:
+        from meridian.lib.ops.spawn.context_ref import (
+            render_context_refs,
+            resolve_context_ref,
+            resolved_context_ref_value,
+        )
+
+        resolved_context_refs = tuple(
+            resolve_context_ref(project_root, ref) for ref in context_from
+        )
+        resolved_context_from = tuple(
+            resolved_context_ref_value(ref) for ref in resolved_context_refs
+        )
+        prior_output = render_context_refs(resolved_context_refs)
+
+    return TaskContextInputs(
+        reference_items=loaded_references,
+        prior_output=sanitize_prior_output(prior_output) if prior_output.strip() else "",
+        resolved_context_from=resolved_context_from,
+    )
+
+
 def merge_env_overrides(
     *,
     plan_overrides: Mapping[str, str],
@@ -847,26 +892,11 @@ def _resolve_spawn_prepare_projection(
     harness = policy.adapter
     resolved_skills = policy.resolved_skills
 
-    loaded_references = load_reference_items(
-        request.reference_files,
-        base_dir=project_paths.project_root,
+    task_ctx = resolve_task_context_inputs(
+        context_from=request.context_from,
+        reference_files=request.reference_files,
+        project_root=project_paths.project_root,
     )
-    resolved_context_from = request.context_from
-    prior_output: str | None = None
-    if request.context_from:
-        from meridian.lib.ops.spawn.context_ref import (
-            render_context_refs,
-            resolve_context_ref,
-            resolved_context_ref_value,
-        )
-
-        resolved_context_refs = tuple(
-            resolve_context_ref(project_paths.project_root, ref) for ref in request.context_from
-        )
-        resolved_context_from = tuple(
-            resolved_context_ref_value(ref) for ref in resolved_context_refs
-        )
-        prior_output = render_context_refs(resolved_context_refs)
 
     resolved_template_variables = resolve_template_variables(request.template_vars)
     cleaned_user_prompt = substitute_template_variables(
@@ -923,19 +953,15 @@ def _resolve_spawn_prepare_projection(
             completion_contract=completion_contract,
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
-            reference_items=loaded_references,
-            prior_output=(
-                sanitize_prior_output(prior_output)
-                if prior_output is not None and prior_output.strip()
-                else ""
-            ),
+            reference_items=task_ctx.reference_items,
+            prior_output=task_ctx.prior_output,
         )
     )
 
     return PreparedLaunchContent(
         final_prompt=projected.user_turn_content.strip() or cleaned_user_prompt,
-        resolved_context_from=resolved_context_from,
-        loaded_references=loaded_references,
+        resolved_context_from=task_ctx.resolved_context_from,
+        loaded_references=task_ctx.reference_items,
         prompt_payload=prepare_prompt_payload(projected_content=projected),
         projected_content=projected,
         agent_inventory_prompt=agent_inventory_prompt,
@@ -993,6 +1019,12 @@ def _resolve_primary_projection(
     ):
         agent_profile_body = profile.body.strip()
 
+    task_ctx = resolve_task_context_inputs(
+        context_from=request.context_from,
+        reference_files=request.reference_files,
+        project_root=project_paths.project_root,
+    )
+
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
@@ -1003,15 +1035,16 @@ def _resolve_primary_projection(
             completion_contract="",
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
-            reference_items=(),
-            prior_output="",
+            reference_items=task_ctx.reference_items,
+            prior_output=task_ctx.prior_output,
         )
     )
 
     return (
         PreparedLaunchContent(
             final_prompt=projected.user_turn_content.strip() or request.prompt,
-            resolved_context_from=request.context_from,
+            resolved_context_from=task_ctx.resolved_context_from,
+            loaded_references=task_ctx.reference_items,
             prompt_payload=prepare_prompt_payload(projected_content=projected),
             projected_content=projected,
             agent_inventory_prompt=agent_inventory_prompt,
@@ -1699,6 +1732,7 @@ __all__ = [
     "PreparedPolicySurface",
     "PreparedPromptPayload",
     "RuntimeBindings",
+    "TaskContextInputs",
     "bind_launch_context",
     "build_child_runtime_env_overrides",
     "build_launch_context",
@@ -1708,4 +1742,5 @@ __all__ = [
     "normalize_usage_model_family",
     "prepare_launch_surface",
     "prepare_prompt_payload",
+    "resolve_task_context_inputs",
 ]

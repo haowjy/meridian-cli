@@ -78,6 +78,67 @@ def test_main_bare_fork_is_normalized_before_primary_dispatch(
     assert captured["fork_fresh_ref"] is None
 
 
+def test_main_from_forwards_to_primary_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    captured: dict[str, object] = {}
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--from", "p123", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["from_ref"] == "p123"
+    assert captured["fork_ref"] is None
+    assert captured["fork_fresh_ref"] is None
+
+
+def test_main_bare_from_is_normalized_before_primary_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p123")
+    captured: dict[str, object] = {}
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--from", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["from_ref"] == "__SELF__"
+
+
+def test_main_bare_from_without_meridian_spawn_id_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "--from", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: Cannot infer --from target: not inside a Meridian-managed session. "
+        "Pass --from REF explicitly.\n"
+    )
+
+
 def test_main_bare_fork_without_meridian_spawn_id_errors(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -262,6 +323,40 @@ def test_main_rejects_fork_fresh_with_continue(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "error: Cannot combine --fork-fresh with --continue.\n"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (
+            ["--human", "--from", "p123", "--continue", "c123", "--dry-run"],
+            "Cannot combine --from with --continue.",
+        ),
+        (
+            ["--human", "--from", "p123", "--fork", "c123", "--dry-run"],
+            "Cannot combine --fork with --from (MVP limitation).",
+        ),
+        (
+            ["--human", "--from", "p123", "--fork-fresh", "c123", "--dry-run"],
+            "Cannot combine --fork-fresh with --from (MVP limitation).",
+        ),
+    ],
+)
+def test_main_rejects_from_with_other_session_initiation_modes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    expected: str,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(argv)
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"error: {expected}\n"
 
 
 def test_init_alias_link_uses_mars_flow_with_full_link_target_when_called_directly(

@@ -21,6 +21,7 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
+from meridian.lib.ops.spawn import context_ref
 from tests.support.fixtures import write_agent, write_skill
 
 pytestmark = pytest.mark.slow
@@ -125,6 +126,18 @@ def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
         assert spawn_request.prompt == ""
 
 
+def test_build_primary_spawn_request_copies_context_from() -> None:
+    request = LaunchRequest(
+        model="test-model",
+        harness=HarnessId.CLAUDE.value,
+        context_from=("p123",),
+    )
+
+    spawn_request = build_primary_spawn_request(request=request)
+
+    assert spawn_request.context_from == ("p123",)
+
+
 @pytest.mark.parametrize(
     ("model", "requires_initial_prompt"),
     [
@@ -213,6 +226,40 @@ def test_primary_launch_injects_inventory_by_harness_family(
     assert f"- {peer_name}" in text
     assert "SKILLS" not in text
     assert f"{skill_name}: {skill_description}" not in text
+
+
+def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4")
+    monkeypatch.setattr(context_ref, "resolve_context_ref", lambda _root, _ref: object())
+    monkeypatch.setattr(context_ref, "resolved_context_ref_value", lambda _ref: "p999")
+    monkeypatch.setattr(
+        context_ref,
+        "render_context_refs",
+        lambda _refs: '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>',
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-primary-from",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(
+                model="claude-sonnet-4",
+                agent="dev-orchestrator",
+                context_from=("p123",),
+            )
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.projected_content is not None
+    assert "prior context" in preview.projected_content.user_turn_content
+    assert "prior context" not in preview.projected_content.system_prompt
+    assert preview.resolved_request.context_from == ("p999",)
 
 
 @pytest.mark.parametrize(
