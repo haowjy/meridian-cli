@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.cli.argv_normalization import SYNTHETIC_VALUE_TOKENS
+from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.policy import StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
@@ -57,6 +58,7 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
 )
 HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "opencode"})
 _CHAT_MANAGEMENT_SUBCOMMANDS = frozenset({"ls", "show", "log", "close"})
+_TOP_LEVEL_COMMAND_TOKENS = frozenset(COMMAND_CATALOG.top_level_names()) | HARNESS_SHORTCUT_NAMES
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,10 @@ def _is_chat_management_invocation(argv: Sequence[str]) -> bool:
     if len(argv) < 2:
         return False
     return argv[0] == "chat" and argv[1] in _CHAT_MANAGEMENT_SUBCOMMANDS
+
+
+def _is_top_level_command_token(token: str) -> bool:
+    return token in _TOP_LEVEL_COMMAND_TOKENS
 
 
 def extract_global_options(
@@ -232,11 +238,14 @@ def extract_global_options(
             index += 1
             continue
         if arg == "--agent":
+            has_positional = _first_positional_token_for_global_parse(cleaned) is not None
             if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
-                cleaned.extend(("-a", argv[index + 1]))
-                index += 2
-                continue
-            if _first_positional_token_for_global_parse(cleaned) is not None:
+                next_token = argv[index + 1]
+                if has_positional or not _is_top_level_command_token(next_token):
+                    cleaned.extend(("-a", next_token))
+                    index += 2
+                    continue
+            if has_positional:
                 cleaned.append("-a")
                 index += 1
                 continue
