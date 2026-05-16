@@ -12,12 +12,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Minimal Pi SDK runtime package scaffold under `src/meridian/pi_runtime/` with `runner.mjs` dynamic import of `@earendil-works/pi-coding-agent` and clear missing-dependency guidance.
 - Unit tests for `meridian-pi` wrapper arg stripping, agent-dir precedence, env projection, directory creation, and error handling.
 - Bun compile entrypoint/script for Pi runtime (`compile_runner.mjs`, `npm run build:binary`) targeting `src/meridian/pi_runtime/bin/meridian-pi`.
+- `scripts/build-meridian-pi-runtime.sh` helper plus runtime README notes for local Bun binary builds and packaging caveats.
 
 ### Changed
 - Reaper legacy-worker cleanup warning now says it cleaned up a stale spawn and identifies the affected spawn explicitly.
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
 - `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
+- `meridian-pi` now fails fast with clear errors when an override/packaged runtime binary exists but cannot execute; Node fallback remains only for missing packaged binaries.
 
 ## [0.1.13] - 2026-05-19
 ### Changed

@@ -115,6 +115,15 @@ def _resolve_packaged_binary() -> Path | None:
     return None
 
 
+def _first_present_packaged_binary() -> Path | None:
+    """Return the first packaged Bun binary candidate that exists on disk."""
+
+    for candidate in _compiled_binary_candidates():
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _build_child_env(base_env: Mapping[str, str], agent_dir: Path) -> dict[str, str]:
     """Build child environment with the resolved Pi agent dir."""
 
@@ -147,6 +156,7 @@ def main() -> None:
     child_env = _build_child_env(os.environ, agent_dir)
     binary_override = child_env.get(_WRAPPER_BINARY_ENV, "").strip()
     used_node_fallback = False
+    command_kind = "pi-runtime-binary"
     if binary_override:
         command = [str(Path(binary_override).expanduser()), *passthrough_args]
     else:
@@ -154,7 +164,15 @@ def main() -> None:
         if packaged_binary is not None:
             command = [str(packaged_binary), *passthrough_args]
         else:
+            present_packaged_binary = _first_present_packaged_binary()
+            if present_packaged_binary is not None:
+                _print_error(
+                    "packaged Pi runtime binary is present but not executable on this host: "
+                    f"{present_packaged_binary}"
+                )
+                raise SystemExit(1)
             used_node_fallback = True
+            command_kind = "node-runtime"
             node_bin = child_env.get(_NODE_BIN_ENV, "node").strip() or "node"
             runner_path = _runner_path()
             command = [node_bin, str(runner_path), *passthrough_args]
@@ -169,6 +187,12 @@ def main() -> None:
         else:
             _print_error(f"Pi runtime binary not found: {command[0]}")
         raise SystemExit(1) from error
+    except OSError as error:
+        if command_kind == "node-runtime":
+            _print_error(f"failed to execute Node.js runtime command '{command[0]}': {error}")
+        else:
+            _print_error(f"failed to execute Pi runtime binary '{command[0]}': {error}")
+        raise SystemExit(1) from error
 
     raise SystemExit(completed.returncode)
 
@@ -177,6 +201,7 @@ __all__ = [
     "_build_child_env",
     "_compiled_binary_candidates",
     "_ensure_agent_dir_layout",
+    "_first_present_packaged_binary",
     "_is_runnable_binary",
     "_resolve_agent_dir",
     "_resolve_packaged_binary",
