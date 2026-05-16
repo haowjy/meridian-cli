@@ -197,7 +197,8 @@ argv
 
 ## Related KB
 
-→ [KB: architecture/startup-pipeline.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/startup-pipeline.md)
+→ [concepts/session-initiation.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md) — four-mode session initiation semantics, identity lock, bare flag inference, and `--from` placement
+→ [decisions/launch.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/decisions/launch.md) — rationale for the launch-mode split and argv normalization
 
 ## Lateral Links
 

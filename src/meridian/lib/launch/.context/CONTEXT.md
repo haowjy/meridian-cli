@@ -228,6 +228,10 @@ test injection; in production it always points to `reclaim_session_owned_scopes_
 `resolve_task_context_inputs()` in `context.py` is the single seam for assembling
 user-turn context blocks from `--from` refs and `-f` reference files:
 
+The full four-mode session-initiation model and its rationale live in
+[concepts/session-initiation.md](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md).
+This code-local note records only the launch seam and the fields it threads.
+
 ```python
 @dataclass(frozen=True)
 class TaskContextInputs:
@@ -270,28 +274,10 @@ is the only extraction authorized by this change.
 
 #### Why User-Turn, Not System Prompt
 
-Prior-context (`--from` output) goes into the user turn, not the system prompt. This
-is a deliberate architectural decision, not a convenience choice:
-
-1. **Prompt injection surface.** Prior spawn reports may contain user-generated content
-   and tool outputs. The system prompt grants implicit authority. Defense-in-depth
-   places untrusted content in the user turn (evidence channel), not the system prompt
-   (instruction channel).
-
-2. **Cache locality.** System prompt content determines the prompt-cache fingerprint.
-   Variable prior-context in the system prompt destroys cache locality across sessions
-   sharing the same agent, model, and skill set. User-turn injection preserves the
-   stable system-prompt cache prefix.
-
-3. **Harness consistency.** The `--append-system-prompt` channel is reserved for
-   system-level material (skills, agent profile, inventory, report instructions).
-   Claude, Codex, and OpenCode all treat user-turn injection consistently; system
-   prompt handling varies by harness capability.
-
-4. **Semantic consistency with `-f`.** File refs (`-f`) already go into user-turn
-   `context_blocks`. `--from` context is structurally the same kind of input — external
-   evidence to reason about, not standing instruction. Using the same channel avoids
-   a confusing asymmetry between the two flags.
+Prior context is rendered into the user turn, not the system prompt. The full
+rationale lives in [concepts/session-initiation.md](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md);
+at this layer, the rule is simply to keep `--from` blocks in user-turn context
+blocks and out of `SystemInstruction`.
 
 ### Skill Injection Channels
 
@@ -351,6 +337,8 @@ exception paths. Do not replicate this logic inline.
 ## Related KB
 
 - `architecture/launch-system.md` — full adapter diagram, prepare/bind split detail, module map
+- `concepts/session-initiation.md` — four-mode initiation semantics, user-turn placement, identity lock, bare-flag inference
+- `concepts/composition-pipeline.md` — user-turn composition and harness projection details for `TASK_CONTEXT`
 - `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, authority lattice
 - `architecture/spawn-finalization.md` — finalization policy, per-spawn lock, `CompleteSpawnOutcome`
 
