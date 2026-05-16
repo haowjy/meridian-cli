@@ -5,7 +5,7 @@ url = "github.com/anthropics/skills"
 commit = "f458cee31a7577a47ba0c9a101976fa599385174"
 
 [dependencies.meridian-base]
-url = "github.com/haowjy/meridian-base"
+url = "github.com/meridian-flow/meridian-base"
 version = "v0.4.4"
 commit = "401de02577db51c3482d89a06a65294872c6c1c3"
 

@@ -61,28 +61,33 @@ agent = "product-lead"
 # verbosity = "normal"  # example override; default is unset
 
 # -- Context externalization -------------------------------------------------
-# Work items and knowledge base are stored in a separate git repo
+# Work items stored in private repo, KB in public repo, strategy in shared docs
 [context.work]
 source = "git"
-remote = "git@github.com:meridian-flow/docs.git"
+remote = "git@github.com:haowjy/meridian-cli-docs.git"
 path = "work"
 archive = "archive/meridian-cli/work"
 
 [context.kb]
 source = "git"
-remote = "git@github.com:meridian-flow/docs.git"
+remote = "git@github.com:haowjy/meridian-cli-kb.git"
 path = "kb"
 
 [context.strategy]
 source = "git"
-remote = "git@github.com:meridian-flow/docs.git"
+remote = "git@github.com:voluma-bio/docs.git"
 path = "strategy"
 
 # -- Hooks -------------------------------------------------------------------
-# Auto-sync work/kb to the docs repo on spawn and work events
+# Auto-sync work to private docs repo
 [[hooks]]
 builtin = "git-autosync"
-remote = "git@github.com:meridian-flow/docs.git"
+remote = "git@github.com:haowjy/meridian-cli-docs.git"
+
+# Auto-sync KB to public KB repo
+[[hooks]]
+builtin = "git-autosync"
+remote = "git@github.com:haowjy/meridian-cli-kb.git"
 
 # -- Workspace roots ---------------------------------------------------------
 # Use parent directory to avoid Claude Code skill leakage from individual repos.
