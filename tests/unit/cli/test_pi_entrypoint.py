@@ -245,6 +245,60 @@ def test_main_reports_missing_binary_override(
     assert "Node.js runtime is required" not in stderr
 
 
+def test_main_reports_binary_override_execution_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        _ = command, env, check
+        raise PermissionError("permission denied")
+
+    binary_override = tmp_path / "override-pi"
+    binary_override.write_text("binary")
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setenv("MERIDIAN_PI_BINARY", str(binary_override))
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "failed to execute Pi runtime binary" in stderr
+    assert "Node.js runtime is required" not in stderr
+
+
+def test_main_fails_fast_for_non_executable_packaged_binary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    packaged_binary = tmp_path / "meridian-pi"
+    packaged_binary.write_text("binary")
+    packaged_binary.chmod(0o644)
+
+    def should_not_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"unexpected subprocess invocation: {command!r}, {env!r}, {check!r}")
+
+    monkeypatch.setattr(pi_entrypoint, "_compiled_binary_candidates", lambda: (packaged_binary,))
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", should_not_run)
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "present but not executable on this host" in stderr
+    assert str(packaged_binary) in stderr
+
+
 def test_main_reports_invalid_wrapper_flag(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
