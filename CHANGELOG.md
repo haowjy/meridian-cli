@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bare `--from` on `meridian spawn` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Same argv normalization as `--fork` / `--fork-fresh`.
 
 ### Changed
+- OpenCode session logs read transcript messages from `opencode.db` when `session_diff` is empty/non-transcript.
 - `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
 - Bare `--fork` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Outside a managed session it fails with: `Cannot infer --fork target: not inside a Meridian-managed session. Pass --fork REF explicitly.`
 - CLI argv normalization now rewrites bare/equals forms for `--fork` and `--fork-fresh` before bootstrap and Cyclopts parsing, so forms like `--fork`, `--fork=`, and `--fork --bg` parse consistently.
