@@ -126,11 +126,18 @@ session artifact that references the spawn ID — the row must exist first (I-10
 `capture_library_diagnostics()` captures stdlib warnings during spawn; structlog
 bypasses it and leaks to stderr.
 
+**Don't put `--from` prior-context in the system prompt.** Prior spawn reports may
+contain user-generated content; the system prompt is an instruction channel with
+implicit authority. Use `resolve_task_context_inputs()` to land it in the user turn.
+Variable content in the system prompt also destroys prompt-cache locality.
+See [.context/CONTEXT.md](.context/CONTEXT.md#why-user-turn-not-system-prompt) for the full rationale.
+
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — workspace projection detail, env injection,
    background worker trust model, MERIDIAN_HARNESS child env behavior, full invariant table,
-   model-policy overlay composition and fallback chain rules.
+   model-policy overlay composition and fallback chain rules, user-turn context threading
+   (`resolve_task_context_inputs()`) and why prior-context goes in the user turn.
 
 ## Related
 
