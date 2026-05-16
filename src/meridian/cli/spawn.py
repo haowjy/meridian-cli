@@ -9,6 +9,7 @@ from typing import Annotated, Any, cast, get_args
 
 from cyclopts import App, Parameter
 
+from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
 from meridian.cli.utils import parse_csv_list, require_established_project_root
@@ -369,8 +370,19 @@ def _spawn_create(
         Parameter(
             name="--fork",
             help=(
-                "Fork from a session ref: chat id (c123), spawn id (p123), "
+                "Fork from a session ref while preserving launch identity "
+                "(agent/model/skills): chat id (c123), spawn id (p123), "
                 "or raw harness session id."
+            ),
+        ),
+    ] = None,
+    fork_fresh_from: Annotated[
+        str | None,
+        Parameter(
+            name="--fork-fresh",
+            help=(
+                "Fork from a session ref and allow launch identity changes "
+                "(agent/model/skills). This may reduce prompt-cache locality."
             ),
         ),
     ] = None,
@@ -388,6 +400,8 @@ def _spawn_create(
     passthrough = _get_global_options().passthrough_args
     global_harness = _get_global_options().harness
     resolved_continue_from = (continue_from or "").strip() or None
+    raw_fork_from = (fork_from or "").strip() or None
+    raw_fork_fresh_from = (fork_fresh_from or "").strip() or None
 
     # Resolve --yolo / --approval interaction.
     if yolo and approval is not None:
@@ -397,7 +411,16 @@ def _spawn_create(
     resolved_approval = approval if approval is not None else ("yolo" if yolo else None)
     parsed_skills = parse_csv_list(skills, field_name="skills")
     resolved_goal = normalize_goal(goal)
-    resolved_fork_from = (fork_from or "").strip() or None
+
+    fork_resolution = validate_fork_mode(
+        fork_from=raw_fork_from,
+        fork_fresh_from=raw_fork_fresh_from,
+        continue_from=resolved_continue_from,
+        context_from=context_from,
+        agent=agent,
+        model=model,
+        skills=skills,
+    )
     shared_launch_kwargs = _shared_launch_input_kwargs(
         dry_run=dry_run,
         verbose=verbose,
@@ -427,23 +450,20 @@ def _spawn_create(
         is_continue=resolved_continue_from is not None,
     )
 
-    if resolved_fork_from is not None and resolved_continue_from is not None:
-        raise ValueError("Cannot combine --fork with --continue.")
-
-    if resolved_fork_from is not None:
-        if context_from:
-            raise ValueError("Cannot combine --fork with --from (MVP limitation).")
+    fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
+    if fork_source_ref is not None:
+        fork_is_fresh = fork_resolution.is_fresh
         result = spawn_fork_sync(
             SpawnForkInput(
-                source_ref=resolved_fork_from,
+                source_ref=fork_source_ref,
                 prompt=resolved_prompt,
-                model=model,
+                model=model if fork_is_fresh else "",
                 files=references,
                 template_vars=template_vars,
-                agent=agent,
-                skills=parsed_skills,
+                agent=agent if fork_is_fresh else None,
+                skills=parsed_skills if fork_is_fresh else (),
                 goal=resolved_goal,
-                inherit_source_skills=skills is None,
+                inherit_source_skills=True if not fork_is_fresh else skills is None,
                 desc=desc,
                 work=work,
                 **shared_launch_kwargs,
@@ -452,8 +472,6 @@ def _spawn_create(
             prepared=_prepare_spawn_runtime_write(),
         )
     elif resolved_continue_from is not None:
-        if context_from:
-            raise ValueError("Cannot use --from with --continue")
         result = spawn_continue_sync(
             SpawnContinueInput(
                 spawn_id=resolved_continue_from,
@@ -477,7 +495,7 @@ def _spawn_create(
                 prompt=resolved_prompt,
                 model=model,
                 files=references,
-                context_from=context_from,
+                context_from=fork_resolution.resolved_context_from,
                 template_vars=template_vars,
                 agent=agent,
                 skills=parsed_skills,
@@ -522,6 +540,10 @@ def _spawn_list(
     model: Annotated[
         str | None,
         Parameter(name="--model", help="Filter by model id."),
+    ] = None,
+    profile: Annotated[
+        str | None,
+        Parameter(name="--profile", help="Filter by agent profile name."),
     ] = None,
     primary: Annotated[
         bool,
@@ -571,6 +593,7 @@ def _spawn_list(
             status=normalized_status,
             statuses=normalized_statuses,
             model=model,
+            profile=profile,
             primary=primary,
             limit=limit,
             failed=False,

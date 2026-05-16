@@ -526,6 +526,9 @@ def spawn_list_sync(
     if payload.model is not None and payload.model.strip():
         wanted_model = payload.model.strip()
         spawns = [row for row in spawns if row.model == wanted_model]
+    if payload.profile is not None and payload.profile.strip():
+        wanted_profile = payload.profile.strip()
+        spawns = [row for row in spawns if row.agent == wanted_profile]
     if payload.primary:
         spawns = [row for row in spawns if row.kind == "primary"]
 

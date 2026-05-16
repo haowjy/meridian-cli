@@ -106,9 +106,99 @@ was deleted when `init_ops` took over the `--link` case — do not recreate it.
 Auto-link is the default behavior; there are no confirmation prompts in the init
 flow, so `--yes` has no meaning here and was removed.
 
+## Session Initiation Argument Handling
+
+`argv_normalization.py` is the central hub for `--fork`, `--fork-fresh`, `--from`,
+and `--continue` argument handling. It runs before bootstrap and before Cyclopts
+parsing.
+
+### The Sentinel: `SELF_FORK_REF_SENTINEL = "__SELF__"`
+
+Cyclopts requires a value for `str | None` parameters. Bare `--fork` (no value)
+causes a parse error. The fix: `normalize_optional_value_flags(argv)` rewrites
+bare and equals-form flags before Cyclopts sees them, inserting `__SELF__` as
+the value token.
+
+| Input form | Normalized form |
+|---|---|
+| `--fork` | `--fork __SELF__` |
+| `--fork=` | `--fork __SELF__` |
+| `--fork=p123` | `--fork p123` |
+| `--from` | `--from __SELF__` |
+
+`__SELF__` is not a valid spawn ref (`pN`), chat ref (`cN`), or UUID — no
+collision risk. `SYNTHETIC_VALUE_TOKENS` (a `frozenset` containing `__SELF__`)
+is imported by `bootstrap.py` so it can skip synthetic values during
+passthrough-args splitting and positional-token detection.
+
+`normalize_optional_value_flags()` is called in `main()` before bootstrap and
+before Cyclopts parsing. The `mars` command is exempted (its args pass through
+verbatim).
+
+### Ref Resolution: `resolve_optional_ref(raw_ref, *, flag_name)`
+
+When a handler receives `__SELF__`, it calls `resolve_optional_ref()` to resolve
+it to the current session's spawn ID from `MERIDIAN_SPAWN_ID`. If
+`MERIDIAN_SPAWN_ID` is not set (agent is not inside a managed session), it raises
+`ValueError` with a flag-specific error message:
+
+- `--fork` → `FORK_INFERENCE_ERROR`: "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills."
+- `--from` → `FROM_INFERENCE_ERROR`
+
+`resolve_fork_ref(raw_ref)` is a legacy wrapper for `--fork` callers; prefer
+`resolve_optional_ref` with an explicit `flag_name`.
+
+### Conflict Matrix: `validate_fork_mode()`
+
+All mutual exclusion checks for session-initiation flags live in one place.
+Both `spawn.py` (`_spawn_create`) and `primary_launch.py` (`run_primary_launch`)
+call `validate_fork_mode()` and receive a `ForkModeResolution` — neither
+re-implements validation.
+
+Enforced conflicts:
+
+| Combination | Error |
+|---|---|
+| `--fork` + `--fork-fresh` | Cannot combine |
+| `--fork` + `--continue` | Cannot combine |
+| `--fork-fresh` + `--continue` | Cannot combine |
+| `--from` + `--continue` | Cannot combine |
+| `--fork` + `--from` | Cannot combine (MVP limitation) |
+| `--fork-fresh` + `--from` | Cannot combine (MVP limitation) |
+| `--fork` + `--agent`/`--model`/`--skills` | Identity lock violation |
+
+The identity lock (`--fork` blocks agent/model/skills overrides) is CLI policy,
+not an ops invariant. The ops layer (`SpawnForkInput`) handles both
+identity-preserving and identity-changing forks correctly. Non-CLI callers (MCP,
+programmatic) may fork with identity changes legitimately. Do not push this check
+into the ops layer.
+
+### `ForkModeResolution` (frozen dataclass)
+
+```
+ForkModeResolution
+  fork_ref: str | None          — resolved --fork ref (sentinel expanded)
+  fork_fresh_ref: str | None    — resolved --fork-fresh ref
+  is_fork: bool                 — True if either fork flag present
+  is_fresh: bool                — True if --fork-fresh was used
+  resolved_context_from: tuple[str, ...]  — resolved --from refs
+```
+
+### Pipeline Position
+
+```
+argv
+  └── normalize_optional_value_flags()     ← rewrites bare/equals forms, inserts __SELF__
+        └── _extract_global_options()      ← strips global flags, returns cleaned argv
+              └── _split_passthrough_args() ← splits at --, skips SYNTHETIC_VALUE_TOKENS
+                    └── Cyclopts parse      ← always sees a value for optional-value flags
+                          └── validate_fork_mode()  ← conflict checks + ref resolution
+```
+
 ## Related KB
 
-→ [KB: architecture/startup-pipeline.md](/home/jimyao/.meridian/git/meridian-flow-docs/kb/architecture/startup-pipeline.md)
+→ [concepts/session-initiation.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md) — four-mode session initiation semantics, identity lock, bare flag inference, and `--from` placement
+→ [decisions/launch.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/decisions/launch.md) — rationale for the launch-mode split and argv normalization
 
 ## Lateral Links
 

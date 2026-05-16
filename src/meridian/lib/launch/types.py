@@ -52,6 +52,7 @@ class LaunchRequest(BaseModel):
     passthrough_args: tuple[str, ...] = ()
     pinned_context: str = ""
     supplemental_prompt_documents: tuple[PromptDocument, ...] = ()
+    context_from: tuple[str, ...] = ()
     include_bootstrap_documents: bool = False
     dry_run: bool = False
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/etc.)

@@ -1,6 +1,11 @@
 # Fork
 
-These checks validate the standalone `--fork <ref>` flow on both root and spawn commands. This suite requires a working harness because several scenarios execute real forks.
+These checks validate fork flows on both root and spawn commands:
+- `--fork [ref]` (identity-preserving)
+- `--fork-fresh [ref]` (identity-changing)
+- `--from [ref]` (reference-only context seeding)
+
+This suite requires a working harness because several scenarios execute real forks.
 
 ## Setup
 
@@ -154,6 +159,82 @@ print("PASS: spawn --fork accepts session ids")
 PY
 ```
 
+### FORK-3b. Bare `--fork` uses `$MERIDIAN_SPAWN_ID` [CRITICAL]
+
+```bash
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)" && \
+SOURCE_CHAT_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_chat_id'])
+PY
+)" && \
+MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json spawn --fork -p "Bare fork from env." --dry-run > /tmp/meridian-fork-3b-spawn.json && \
+MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json --fork --dry-run > /tmp/meridian-fork-3b-root.json && \
+SOURCE_CHAT_ID="$SOURCE_CHAT_ID" uv run python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+spawn_doc = json.loads(Path("/tmp/meridian-fork-3b-spawn.json").read_text(encoding="utf-8"))
+root_doc = json.loads(Path("/tmp/meridian-fork-3b-root.json").read_text(encoding="utf-8"))
+assert spawn_doc["status"] == "dry-run"
+assert spawn_doc.get("forked_from") == os.environ["SOURCE_CHAT_ID"]
+assert root_doc["message"] == "Fork dry-run."
+assert root_doc.get("forked_from") == os.environ["SOURCE_CHAT_ID"]
+print("PASS: bare --fork resolved from MERIDIAN_SPAWN_ID for spawn and root")
+PY
+```
+
+### FORK-3c. Bare `--from` uses `$MERIDIAN_SPAWN_ID` [NORMAL]
+
+```bash
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)" && \
+MERIDIAN_SPAWN_ID="$SOURCE_SPAWN_ID" uv run meridian --json spawn --from -p "review what I just did" --dry-run > /tmp/meridian-fork-3c.json && \
+SOURCE_SPAWN_ID="$SOURCE_SPAWN_ID" uv run python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+doc = json.loads(Path("/tmp/meridian-fork-3c.json").read_text(encoding="utf-8"))
+assert doc["status"] == "dry-run"
+assert doc.get("context_from") == [os.environ["SOURCE_SPAWN_ID"]]
+print("PASS: bare --from resolved from MERIDIAN_SPAWN_ID")
+PY
+```
+
+### FORK-3d. `--from` and `--continue` are mutually exclusive [CRITICAL]
+
+```bash
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)"
+if uv run meridian spawn --from "$SOURCE_SPAWN_ID" --continue "$SOURCE_SPAWN_ID" -p "should fail" >/tmp/meridian-fork-3d.out 2>&1; then
+  echo "FAIL: --from + --continue unexpectedly succeeded"
+elif grep -q "Cannot combine --from with --continue." /tmp/meridian-fork-3d.out; then
+  echo "PASS: --from + --continue rejected cleanly"
+else
+  echo "FAIL: --from + --continue error text was not useful"
+fi
+```
+
 ### FORK-4. `--fork` and `--from` are mutually exclusive [CRITICAL]
 
 ```bash
@@ -192,7 +273,7 @@ else
 fi
 ```
 
-### FORK-6. Model override on fork is honored [IMPORTANT]
+### FORK-6. Model override on `--fork` is rejected [IMPORTANT]
 
 ```bash
 MODEL_OVERRIDE="${MODEL_OVERRIDE:-gpt-5.4}"
@@ -203,19 +284,16 @@ meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding
 print(meta['source_spawn_id'])
 PY
 )" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" -m "$MODEL_OVERRIDE" -p "Model override smoke." --dry-run > /tmp/meridian-fork-6.json && \
-MODEL_OVERRIDE="$MODEL_OVERRIDE" uv run python - <<'PY'
-import json
-import os
-from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-6.json").read_text(encoding="utf-8"))
-assert doc["status"] == "dry-run"
-assert doc.get("model") == os.environ["MODEL_OVERRIDE"]
-print("PASS: fork dry-run honored model override")
-PY
+if uv run meridian spawn --fork "$SOURCE_SPAWN_ID" -m "$MODEL_OVERRIDE" -p "Model override smoke." --dry-run >/tmp/meridian-fork-6.out 2>&1; then
+  echo "FAIL: --fork + -m unexpectedly succeeded"
+elif grep -q -- "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills." /tmp/meridian-fork-6.out; then
+  echo "PASS: --fork + -m rejected with identity-lock guidance"
+else
+  echo "FAIL: --fork + -m error text was not useful"
+fi
 ```
 
-### FORK-7. Agent override on fork is honored [IMPORTANT]
+### FORK-7. Agent override on `--fork` is rejected [IMPORTANT]
 
 ```bash
 SOURCE_SPAWN_ID="$(uv run python - <<'PY'
@@ -225,14 +303,56 @@ meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding
 print(meta['source_spawn_id'])
 PY
 )" && \
-uv run meridian --json spawn --fork "$SOURCE_SPAWN_ID" --agent architect -p "Agent override smoke." --dry-run > /tmp/meridian-fork-7.json && \
+if uv run meridian spawn --fork "$SOURCE_SPAWN_ID" --agent architect -p "Agent override smoke." --dry-run >/tmp/meridian-fork-7.out 2>&1; then
+  echo "FAIL: --fork + --agent unexpectedly succeeded"
+elif grep -q -- "--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills." /tmp/meridian-fork-7.out; then
+  echo "PASS: --fork + --agent rejected with identity-lock guidance"
+else
+  echo "FAIL: --fork + --agent error text was not useful"
+fi
+```
+
+### FORK-7b. `--fork-fresh` honors model override [IMPORTANT]
+
+```bash
+MODEL_OVERRIDE="${MODEL_OVERRIDE:-gpt-5.4}"
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)" && \
+uv run meridian --json spawn --fork-fresh "$SOURCE_SPAWN_ID" -m "$MODEL_OVERRIDE" -p "Model override smoke." --dry-run > /tmp/meridian-fork-7b.json && \
+MODEL_OVERRIDE="$MODEL_OVERRIDE" uv run python - <<'PY'
+import json
+import os
+from pathlib import Path
+doc = json.loads(Path("/tmp/meridian-fork-7b.json").read_text(encoding="utf-8"))
+assert doc["status"] == "dry-run"
+assert doc.get("model") == os.environ["MODEL_OVERRIDE"]
+print("PASS: --fork-fresh dry-run honored model override")
+PY
+```
+
+### FORK-7c. `--fork-fresh` honors agent override [IMPORTANT]
+
+```bash
+SOURCE_SPAWN_ID="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+meta = json.loads(Path('/tmp/meridian-fork-source-meta.json').read_text(encoding='utf-8'))
+print(meta['source_spawn_id'])
+PY
+)" && \
+uv run meridian --json spawn --fork-fresh "$SOURCE_SPAWN_ID" --agent architect -p "Agent override smoke." --dry-run > /tmp/meridian-fork-7c.json && \
 uv run python - <<'PY'
 import json
 from pathlib import Path
-doc = json.loads(Path("/tmp/meridian-fork-7.json").read_text(encoding="utf-8"))
+doc = json.loads(Path("/tmp/meridian-fork-7c.json").read_text(encoding="utf-8"))
 assert doc["status"] == "dry-run"
 assert doc.get("agent") == "architect"
-print("PASS: fork dry-run honored agent override")
+print("PASS: --fork-fresh dry-run honored agent override")
 PY
 ```
 

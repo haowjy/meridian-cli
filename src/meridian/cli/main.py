@@ -29,6 +29,7 @@ from meridian.cli.app_tree import (
     work_app,
     workspace_app,
 )
+from meridian.cli.argv_normalization import normalize_optional_value_flags
 from meridian.cli.bootstrap import (
     extract_global_options as _bootstrap_extract_global_options,
 )
@@ -254,8 +255,29 @@ def root(
         Parameter(
             name="--fork",
             help=(
-                "Fork from a session ref: chat id (c123), spawn id (p123), "
+                "Fork from a session ref while preserving launch identity "
+                "(agent/model/skills): chat id (c123), spawn id (p123), "
                 "or raw harness session id."
+            ),
+        ),
+    ] = None,
+    fork_fresh_ref: Annotated[
+        str | None,
+        Parameter(
+            name="--fork-fresh",
+            help=(
+                "Fork from a session ref and allow launch identity changes "
+                "(agent/model/skills). This may reduce prompt-cache locality."
+            ),
+        ),
+    ] = None,
+    from_ref: Annotated[
+        str | None,
+        Parameter(
+            name="--from",
+            help=(
+                "Start a fresh primary session with context from a prior spawn or "
+                "session ref. Does not fork transcript lineage."
             ),
         ),
     ] = None,
@@ -351,6 +373,8 @@ def root(
     _run_primary_launch(
         continue_ref=continue_ref,
         fork_ref=fork_ref,
+        fork_fresh_ref=fork_fresh_ref,
+        from_ref=from_ref,
         model=model,
         harness=global_harness or explicit_harness,
         agent=agent,
@@ -421,6 +445,8 @@ def _run_primary_launch(
     *,
     continue_ref: str | None,
     fork_ref: str | None,
+    fork_fresh_ref: str | None,
+    from_ref: str | None,
     model: str,
     harness: str | None,
     agent: str | None,
@@ -441,6 +467,8 @@ def _run_primary_launch(
         primary_launch.run_primary_launch(
             continue_ref=continue_ref,
             fork_ref=fork_ref,
+            fork_fresh_ref=fork_fresh_ref,
+            from_ref=from_ref,
             model=model,
             harness=harness,
             agent=agent,
@@ -899,6 +927,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     from meridian.lib.core.logging import configure_logging
 
     args = list(sys.argv[1:] if argv is None else argv)
+    if _bootstrap_first_positional_token(args) != "mars":
+        args = normalize_optional_value_flags(args)
 
     json_mode = "--json" in args
     if not json_mode and "--format" in args:

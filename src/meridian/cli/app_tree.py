@@ -13,7 +13,13 @@ app = App(
         "  meridian [-m MODEL]\n\n"
         "  meridian --continue c123\n\n"
         "  meridian --fork p123\n\n"
-        "  refs: chat id (c123), spawn id (p123), or raw harness session id\n\n"
+        "  meridian --fork-fresh p123 -m gpt-5.4-mini\n\n"
+        "  meridian --from p123\n\n"
+        "  continue/fork refs: chat id (c123), spawn id (p123), or raw harness session id\n"
+        "  --from refs: chat id (c123) or spawn id (p123)\n\n"
+        "  --fork preserves agent/model/skills identity. --fork-fresh allows\n"
+        "  identity changes and may reduce prompt-cache locality. --from starts\n"
+        "  fresh with prior context as reference material only.\n\n"
         "Global harness selection: --harness (or prefix with claude/codex/opencode)\n\n"
         "Bundled package manager: meridian mars ARGS...\n\n"
         'Run "meridian spawn -h" for subagent usage.\n'
@@ -36,6 +42,7 @@ spawn_app = App(
         "  meridian spawn -m gpt-5.3-codex --prompt-file /tmp/fix-auth.md --bg\n\n"
         "  meridian spawn -m claude-sonnet-4-6 --prompt-file /tmp/review.md --bg -f src/main.py\n\n"
         "  meridian spawn --fork c123 --prompt-file /tmp/follow-up.md --bg\n\n"
+        "  meridian spawn --fork-fresh c123 -a reviewer --prompt-file /tmp/role-shift.md --bg\n\n"
         "  meridian spawn wait\n"
     ),
     help_formatter="plain",

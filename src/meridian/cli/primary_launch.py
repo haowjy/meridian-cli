@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.utils import missing_fork_session_error
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.util import FormatContext
@@ -112,6 +113,8 @@ def run_primary_launch(
     project_root: Path | None = None,
     continue_ref: str | None,
     fork_ref: str | None,
+    fork_fresh_ref: str | None,
+    from_ref: str | None = None,
     model: str,
     harness: str | None,
     agent: str | None,
@@ -133,18 +136,18 @@ def run_primary_launch(
         if dry_run:
             if resume_target is not None:
                 return "Resume dry-run."
-            if fork_target is not None:
+            if selected_fork_target is not None:
                 return "Fork dry-run."
             return "Launch dry-run."
         if exit_code == 0:
             if resume_target is not None:
                 return "Session resumed."
-            if fork_target is not None:
+            if selected_fork_target is not None:
                 return "Session forked."
             return "Session finished."
         if resume_target is not None:
             return "Session resume failed."
-        if fork_target is not None:
+        if selected_fork_target is not None:
             return "Session fork failed."
         return "Session failed."
 
@@ -157,13 +160,26 @@ def run_primary_launch(
     project_root = project_root.resolve() if project_root is not None else Path.cwd().resolve()
     harness_registry = get_default_harness_registry()
     normalized_continue_ref = continue_ref.strip() if continue_ref is not None else ""
-    normalized_fork_ref = fork_ref.strip() if fork_ref is not None else ""
     resume_target = normalized_continue_ref if normalized_continue_ref else None
-    fork_target = normalized_fork_ref if normalized_fork_ref else None
+    raw_fork_target = fork_ref.strip() if fork_ref is not None else ""
+    raw_fork_fresh_target = fork_fresh_ref.strip() if fork_fresh_ref is not None else ""
+    raw_from_target = from_ref.strip() if from_ref is not None else ""
+    fork_target_requested = raw_fork_target or None
+    fork_fresh_target_requested = raw_fork_fresh_target or None
+    context_from_requested = (raw_from_target,) if raw_from_target else ()
     resolved_approval = approval if approval is not None else ("yolo" if yolo else "default")
 
-    if resume_target is not None and fork_target is not None:
-        raise ValueError("Cannot combine --fork with --continue.")
+    fork_resolution = validate_fork_mode(
+        fork_from=fork_target_requested,
+        fork_fresh_from=fork_fresh_target_requested,
+        continue_from=resume_target,
+        context_from=context_from_requested,
+        agent=agent,
+        model=model,
+    )
+    fork_target = fork_resolution.fork_ref
+    fork_fresh_target = fork_resolution.fork_fresh_ref
+    selected_fork_target = fork_target if fork_target is not None else fork_fresh_target
 
     continue_harness_session_id: str | None = None
     continue_chat_id: str | None = None
@@ -222,10 +238,12 @@ def run_primary_launch(
         continue_source_tracked = resolved_continue.tracked
         continue_source_ref = resume_target
         session_mode = SessionMode.RESUME
-    elif fork_target is not None:
-        resolved_fork = resolve_session_target(project_root=project_root, continue_ref=fork_target)
+    elif selected_fork_target is not None:
+        resolved_fork = resolve_session_target(
+            project_root=project_root, continue_ref=selected_fork_target
+        )
         if resolved_fork.missing_harness_session_id:
-            raise ValueError(missing_fork_session_error(fork_target))
+            raise ValueError(missing_fork_session_error(selected_fork_target))
 
         source_harness = (
             resolved_fork.harness.strip()
@@ -246,7 +264,7 @@ def run_primary_launch(
         continue_harness = explicit_harness or source_harness
         if continue_harness is None:
             raise ValueError(
-                f"Session '{resolved_fork.harness_session_id or fork_target}' "
+                f"Session '{resolved_fork.harness_session_id or selected_fork_target}' "
                 "not recognized by any harness. "
                 "Use --harness to specify which harness owns this session."
             )
@@ -257,8 +275,8 @@ def run_primary_launch(
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
         continue_source_tracked = resolved_fork.tracked
-        continue_source_ref = fork_target
-        output_forked_from = resolved_fork.chat_id or fork_target
+        continue_source_ref = selected_fork_target
+        output_forked_from = resolved_fork.chat_id or selected_fork_target
         session_mode = SessionMode.FORK
 
         if not model.strip() and resolved_fork.source_model is not None:
@@ -274,7 +292,7 @@ def run_primary_launch(
             model=requested_model,
             harness=(
                 continue_harness
-                if (resume_target is not None or fork_target is not None)
+                if (resume_target is not None or selected_fork_target is not None)
                 else harness
             ),
             agent=requested_agent,
@@ -284,6 +302,7 @@ def run_primary_launch(
             pinned_context="",
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
+            context_from=fork_resolution.resolved_context_from,
             dry_run=dry_run,
             execution_policy=ResolvedExecutionPolicy(
                 approval=resolved_approval if resolved_approval != "default" else None,

@@ -8,6 +8,7 @@ import pytest
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCreateInput,
+    SpawnForkInput,
     SpawnListEntry,
     SpawnListOutput,
 )
@@ -107,6 +108,47 @@ def test_spawn_goal_rejects_empty_value(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "error: --goal cannot be empty\n"
+
+
+def test_spawn_list_rejects_agent_filter_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "list", "--agent", "reviewer"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert 'Unknown option: "--agent"' in captured.err
+    assert 'Unknown option: "-a"' not in captured.err
+
+
+def test_spawn_agent_launch_flag_still_targets_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["agent"] = payload.agent
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "--agent", "reviewer", "-p", "task", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["agent"] == "reviewer"
 
 
 def test_spawn_runtime_error_is_reported_without_traceback(
@@ -286,3 +328,274 @@ def test_spawn_children_agent_mode_uses_children_text_view(
     rendered = capsys.readouterr().out
     assert "reviewer" in rendered
     assert "review child" in rendered
+
+
+def test_spawn_bare_fork_uses_meridian_spawn_id_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setenv("MERIDIAN_SPAWN_ID", "p321")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_fork_sync(
+        payload: SpawnForkInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["source_ref"] = payload.source_ref
+        captured["model"] = payload.model
+        captured["agent"] = payload.agent
+        captured["skills"] = payload.skills
+        captured["inherit_source_skills"] = payload.inherit_source_skills
+        return SpawnActionOutput(command="spawn.fork", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_fork_sync", _fake_spawn_fork_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "--fork", "-p", "branch", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured == {
+        "source_ref": "p321",
+        "model": "",
+        "agent": None,
+        "skills": (),
+        "inherit_source_skills": True,
+    }
+
+
+def test_spawn_bare_fork_without_meridian_spawn_id_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "--fork", "-p", "branch", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: Cannot infer --fork target: not inside a Meridian-managed session. "
+        "Pass --fork REF explicitly.\n"
+    )
+
+
+def test_spawn_bare_fork_with_continue_reports_conflict_before_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--human",
+                "spawn",
+                "--fork",
+                "--continue",
+                "p123",
+                "-p",
+                "branch",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork with --continue.\n"
+
+
+def test_spawn_bare_fork_fresh_with_continue_reports_conflict_before_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--human",
+                "spawn",
+                "--fork-fresh",
+                "--continue",
+                "p123",
+                "-p",
+                "branch",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork-fresh with --continue.\n"
+
+
+def test_spawn_bare_fork_with_from_reports_conflict_before_inference(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--human",
+                "spawn",
+                "--fork",
+                "--from",
+                "p123",
+                "-p",
+                "branch",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork with --from (MVP limitation).\n"
+
+
+def test_spawn_fork_rejects_identity_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            ["--human", "spawn", "--fork", "p123", "-a", "reviewer", "-p", "branch", "--dry-run"]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: --fork preserves launch identity. "
+        "Use --fork-fresh to change agent, model, or skills.\n"
+    )
+
+
+def test_spawn_fork_fresh_accepts_identity_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_fork_sync(
+        payload: SpawnForkInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["source_ref"] = payload.source_ref
+        captured["model"] = payload.model
+        captured["agent"] = payload.agent
+        captured["skills"] = payload.skills
+        captured["inherit_source_skills"] = payload.inherit_source_skills
+        return SpawnActionOutput(command="spawn.fork", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_fork_sync", _fake_spawn_fork_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "spawn",
+                "--fork-fresh",
+                "p123",
+                "-a",
+                "reviewer",
+                "-m",
+                "gpt-5.4-mini",
+                "--skills",
+                "skill-a",
+                "-p",
+                "branch",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured == {
+        "source_ref": "p123",
+        "model": "gpt-5.4-mini",
+        "agent": "reviewer",
+        "skills": ("skill-a",),
+        "inherit_source_skills": False,
+    }
+
+
+def test_spawn_rejects_combining_fork_and_fork_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--human",
+                "spawn",
+                "--fork",
+                "p123",
+                "--fork-fresh",
+                "p123",
+                "-p",
+                "branch",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork with --fork-fresh.\n"
+
+
+def test_spawn_rejects_fork_fresh_with_from(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--human",
+                "spawn",
+                "--fork-fresh",
+                "p123",
+                "--from",
+                "p123",
+                "-p",
+                "branch",
+                "--dry-run",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: Cannot combine --fork-fresh with --from (MVP limitation).\n"

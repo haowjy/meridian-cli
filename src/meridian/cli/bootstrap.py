@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from meridian.cli.argv_normalization import SYNTHETIC_VALUE_TOKENS
+from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.policy import StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
@@ -19,6 +21,8 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--config",
         "--continue",
         "--fork",
+        "--fork-fresh",
+        "--from",
         "--model",
         "-m",
         "--harness",
@@ -54,6 +58,7 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
 )
 HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "opencode"})
 _CHAT_MANAGEMENT_SUBCOMMANDS = frozenset({"ls", "show", "log", "close"})
+_TOP_LEVEL_COMMAND_TOKENS = frozenset(COMMAND_CATALOG.top_level_names()) | HARNESS_SHORTCUT_NAMES
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,13 @@ def _first_positional_token(argv: Sequence[str]) -> str | None:
     return token
 
 
+def _first_positional_token_for_global_parse(argv: Sequence[str]) -> str | None:
+    token = _first_positional_token(argv)
+    if token in SYNTHETIC_VALUE_TOKENS:
+        return None
+    return token
+
+
 def first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
     return _first_positional_token_with_index(argv)
 
@@ -118,6 +130,27 @@ def _is_chat_management_invocation(argv: Sequence[str]) -> bool:
     if len(argv) < 2:
         return False
     return argv[0] == "chat" and argv[1] in _CHAT_MANAGEMENT_SUBCOMMANDS
+
+
+def _is_top_level_command_token(token: str) -> bool:
+    return token in _TOP_LEVEL_COMMAND_TOKENS
+
+
+def _leading_positionals(argv: Sequence[str], *, limit: int) -> tuple[str, ...]:
+    tokens: list[str] = []
+    for token in argv:
+        if token == "--":
+            break
+        if token.startswith("-"):
+            continue
+        tokens.append(token)
+        if len(tokens) >= limit:
+            break
+    return tuple(tokens)
+
+
+def _is_spawn_list_invocation(argv: Sequence[str]) -> bool:
+    return _leading_positionals(argv, limit=2) == ("spawn", "list")
 
 
 def extract_global_options(
@@ -222,13 +255,20 @@ def extract_global_options(
             index += 1
             continue
         if arg == "--agent":
-            if _first_positional_token(cleaned) is not None:
-                if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
-                    cleaned.extend(("-a", argv[index + 1]))
+            has_positional = _first_positional_token_for_global_parse(cleaned) is not None
+            if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
+                next_token = argv[index + 1]
+                if has_positional and _is_spawn_list_invocation(cleaned):
+                    cleaned.extend(("--agent", next_token))
                     index += 2
-                else:
-                    cleaned.append("-a")
-                    index += 1
+                    continue
+                if has_positional or not _is_top_level_command_token(next_token):
+                    cleaned.extend(("-a", next_token))
+                    index += 2
+                    continue
+            if has_positional:
+                cleaned.append("-a")
+                index += 1
                 continue
             force_agent = True
             index += 1

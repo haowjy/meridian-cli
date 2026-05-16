@@ -223,6 +223,62 @@ guaranteed by the context manager. Adding cleanup outside it creates a race betw
 The `_reclaim_session_scopes` parameter accepts a `Callable[[Path, str], object]` for
 test injection; in production it always points to `reclaim_session_owned_scopes_for_chat`.
 
+### User-Turn Context Threading
+
+`resolve_task_context_inputs()` in `context.py` is the single seam for assembling
+user-turn context blocks from `--from` refs and `-f` reference files:
+
+The full four-mode session-initiation model and its rationale live in
+[concepts/session-initiation.md](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md).
+This code-local note records only the launch seam and the fields it threads.
+
+```python
+@dataclass(frozen=True)
+class TaskContextInputs:
+    reference_items: tuple[ReferenceItem, ...]
+    prior_output: str
+    resolved_context_from: tuple[str, ...]
+
+def resolve_task_context_inputs(
+    *,
+    context_from: tuple[str, ...],
+    reference_files: tuple[str, ...],
+    project_root: Path,
+) -> TaskContextInputs: ...
+```
+
+Both `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()` call
+this function. Before this seam existed, `_resolve_primary_projection()` hardcoded
+`reference_items=()` and `prior_output=""` — primary launch always had empty user-turn
+context even when `LaunchRequest.context_from` was populated.
+
+**Content ordering** inside the assembled user turn:
+
+```
+1. -f reference blocks   (reference_items, rendered as context_blocks)
+2. --from prior-context  (render_context_refs + sanitize_prior_output)
+3. -p / --prompt-file    (current_request text)
+```
+
+**`LaunchRequest.context_from`** carries the resolved set of prior-context refs
+(from `--from` on both spawn and primary surfaces). It is populated by the CLI layer
+from `ForkModeResolution.resolved_context_from` and passed through to
+`SpawnRequest.context_from` via `build_primary_spawn_request()` in `plan.py`.
+Before this field existed, primary launch silently dropped `--from` refs.
+
+**Do not unify `_resolve_spawn_prepare_projection()` and `_resolve_primary_projection()`.**
+Only the user-turn context resolution step is shared. The two projections differ in
+supplemental documents, agent profile body handling, report instruction, completion
+contract, session seeding, and passthrough arg normalization. `resolve_task_context_inputs()`
+is the only extraction authorized by this change.
+
+#### Why User-Turn, Not System Prompt
+
+Prior context is rendered into the user turn, not the system prompt. The full
+rationale lives in [concepts/session-initiation.md](../../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md);
+at this layer, the rule is simply to keep `--from` blocks in user-turn context
+blocks and out of `SystemInstruction`.
+
 ### Skill Injection Channels
 
 There are two distinct channels for delivering skill content to agents. They are
@@ -281,6 +337,8 @@ exception paths. Do not replicate this logic inline.
 ## Related KB
 
 - `architecture/launch-system.md` — full adapter diagram, prepare/bind split detail, module map
+- `concepts/session-initiation.md` — four-mode initiation semantics, user-turn placement, identity lock, bare-flag inference
+- `concepts/composition-pipeline.md` — user-turn composition and harness projection details for `TASK_CONTEXT`
 - `concepts/spawn-lifecycle.md` — spawn status machine, crash recovery, authority lattice
 - `architecture/spawn-finalization.md` — finalization policy, per-spawn lock, `CompleteSpawnOutcome`
 

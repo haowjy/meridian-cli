@@ -198,7 +198,7 @@ Should fail with a clear error.
 
 ```bash
 uv run meridian spawn --from "$SEED_ID" --continue "$SEED_ID" -p "test" 2>/tmp/meridian-from-conflict.err; RC=$?
-test $RC -ne 0 && grep -q "Cannot use --from with --continue" /tmp/meridian-from-conflict.err && \
+test $RC -ne 0 && grep -q "Cannot combine --from with --continue." /tmp/meridian-from-conflict.err && \
   echo "PASS: FROM-5 conflict rejected" || echo "FAIL: FROM-5"
 ```
 
