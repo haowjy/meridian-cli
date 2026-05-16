@@ -8,6 +8,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
 - Pi launch constants for wrapper binary: `meridian-pi` subprocess/json mode and primary base command constants.
 - Pi harness unit tests for projection, extraction, registry/contract wiring, semantics, and CLI shortcut parsing.
+- Real `meridian-pi` wrapper entrypoint: CLI command now resolves Meridian-specific agent dir (`--agent-dir` > `MERIDIAN_PI_AGENT_DIR` > `MERIDIAN_HOME/pi/agent`), creates required Pi dirs, sets `PI_CODING_AGENT_DIR`, then launches Pi via SDK runner.
+- Minimal Pi SDK runtime package scaffold under `src/meridian/pi_runtime/` with `runner.mjs` dynamic import of `@earendil-works/pi-coding-agent` and clear missing-dependency guidance.
+- Unit tests for `meridian-pi` wrapper arg stripping, agent-dir precedence, env projection, directory creation, and error handling.
 
 ### Changed
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.

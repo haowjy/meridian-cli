@@ -1,0 +1,8 @@
+{
+  "name": "meridian-pi-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0"
+  }
+}
