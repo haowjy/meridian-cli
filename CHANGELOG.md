@@ -11,10 +11,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Real `meridian-pi` wrapper entrypoint: CLI command now resolves Meridian-specific agent dir (`--agent-dir` > `MERIDIAN_PI_AGENT_DIR` > `MERIDIAN_HOME/pi/agent`), creates required Pi dirs, sets `PI_CODING_AGENT_DIR`, then launches Pi via SDK runner.
 - Minimal Pi SDK runtime package scaffold under `src/meridian/pi_runtime/` with `runner.mjs` dynamic import of `@earendil-works/pi-coding-agent` and clear missing-dependency guidance.
 - Unit tests for `meridian-pi` wrapper arg stripping, agent-dir precedence, env projection, directory creation, and error handling.
+- Bun compile entrypoint/script for Pi runtime (`compile_runner.mjs`, `npm run build:binary`) targeting `src/meridian/pi_runtime/bin/meridian-pi`.
 
 ### Changed
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
+- `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
 
 ## [0.1.8] - 2026-05-16
 
