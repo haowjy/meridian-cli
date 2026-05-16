@@ -110,6 +110,47 @@ def test_spawn_goal_rejects_empty_value(
     assert captured.err == "error: --goal cannot be empty\n"
 
 
+def test_spawn_list_rejects_agent_filter_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "list", "--agent", "reviewer"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert 'Unknown option: "--agent"' in captured.err
+    assert 'Unknown option: "-a"' not in captured.err
+
+
+def test_spawn_agent_launch_flag_still_targets_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    captured: dict[str, object] = {}
+
+    def _fake_spawn_create_sync(
+        payload: SpawnCreateInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnActionOutput:
+        _ = (sink, prepared)
+        captured["agent"] = payload.agent
+        return SpawnActionOutput(command="spawn.create", status="dry-run")
+
+    monkeypatch.setattr(spawn_cli, "spawn_create_sync", _fake_spawn_create_sync)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["spawn", "--agent", "reviewer", "-p", "task", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["agent"] == "reviewer"
+
+
 def test_spawn_runtime_error_is_reported_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

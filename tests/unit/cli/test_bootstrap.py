@@ -35,3 +35,13 @@ def test_extract_global_options_preserves_agent_profile_selection() -> None:
 
     assert cleaned == ["-a", "reviewer", "--dry-run"]
     assert parsed.force_agent is False
+
+
+def test_extract_global_options_keeps_spawn_list_agent_flag_for_subcommand_validation() -> None:
+    cleaned, parsed = extract_global_options(
+        ["spawn", "list", "--agent", "reviewer"],
+        normalize_output_format=_normalize_output_format,
+    )
+
+    assert cleaned == ["spawn", "list", "--agent", "reviewer"]
+    assert parsed.force_agent is False

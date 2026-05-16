@@ -187,6 +187,39 @@ def test_spawn_list_does_not_infer_running_star_from_exited_at(tmp_path: Path) -
     assert output.spawns[0].status_display is None
 
 
+def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    reviewer_spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c1",
+        model="gpt-5.4",
+        agent="reviewer",
+        harness="codex",
+        prompt="review",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="c2",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="code",
+    )
+
+    output = spawn_api.spawn_list_sync(
+        SpawnListInput(
+            project_root=project_root.as_posix(),
+            statuses=(),
+            profile="reviewer",
+        )
+    )
+
+    assert [entry.spawn_id for entry in output.spawns] == [str(reviewer_spawn_id)]
+
+
 def test_spawn_list_and_show_suppress_terminal_primary_activity(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

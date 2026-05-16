@@ -338,6 +338,7 @@ class SpawnListInput(BaseModel):
     status: SpawnStatus | None = None
     statuses: tuple[SpawnStatus, ...] | None = None
     model: str | None = None
+    profile: str | None = None
     primary: bool = False
     limit: int = 20
     failed: bool = False

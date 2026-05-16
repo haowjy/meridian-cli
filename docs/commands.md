@@ -14,6 +14,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian bootstrap` | Launch a primary session with all installed bootstrap docs injected — guides first-time setup |
 | `meridian spawn -a AGENT -p "task"` | Delegate work to a routed agent/model |
 | `meridian spawn list` | See running and recent spawns |
+| `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
 | `meridian spawn wait ID` | Block until a spawn completes |
 | `meridian spawn show ID` | Read a spawn's report and status |
@@ -42,6 +43,7 @@ Common `spawn` flags:
 | `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item |
+| `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `yolo` |
 

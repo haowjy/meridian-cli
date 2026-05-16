@@ -541,6 +541,10 @@ def _spawn_list(
         str | None,
         Parameter(name="--model", help="Filter by model id."),
     ] = None,
+    profile: Annotated[
+        str | None,
+        Parameter(name="--profile", help="Filter by agent profile name."),
+    ] = None,
     primary: Annotated[
         bool,
         Parameter(name="--primary", help="Only show primary spawns."),
@@ -589,6 +593,7 @@ def _spawn_list(
             status=normalized_status,
             statuses=normalized_statuses,
             model=model,
+            profile=profile,
             primary=primary,
             limit=limit,
             failed=False,

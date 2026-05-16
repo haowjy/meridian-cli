@@ -136,6 +136,23 @@ def _is_top_level_command_token(token: str) -> bool:
     return token in _TOP_LEVEL_COMMAND_TOKENS
 
 
+def _leading_positionals(argv: Sequence[str], *, limit: int) -> tuple[str, ...]:
+    tokens: list[str] = []
+    for token in argv:
+        if token == "--":
+            break
+        if token.startswith("-"):
+            continue
+        tokens.append(token)
+        if len(tokens) >= limit:
+            break
+    return tuple(tokens)
+
+
+def _is_spawn_list_invocation(argv: Sequence[str]) -> bool:
+    return _leading_positionals(argv, limit=2) == ("spawn", "list")
+
+
 def extract_global_options(
     argv: Sequence[str],
     *,
@@ -241,6 +258,10 @@ def extract_global_options(
             has_positional = _first_positional_token_for_global_parse(cleaned) is not None
             if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
                 next_token = argv[index + 1]
+                if has_positional and _is_spawn_list_invocation(cleaned):
+                    cleaned.extend(("--agent", next_token))
+                    index += 2
+                    continue
                 if has_positional or not _is_top_level_command_token(next_token):
                     cleaned.extend(("-a", next_token))
                     index += 2
