@@ -189,7 +189,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
         overrides: dict[str, str] = {
-            "PI_CODING_AGENT_DIR": str(get_user_home() / "pi" / "agent"),
+            "PI_CODING_AGENT_DIR": str(get_user_home() / "meridian-pi" / "agent"),
         }
         if config.pi_launch_config_path:
             overrides["MERIDIAN_PI_LAUNCH_CONFIG"] = config.pi_launch_config_path

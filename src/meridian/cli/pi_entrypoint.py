@@ -66,9 +66,9 @@ def _resolve_agent_dir(cli_agent_dir: str | None, env: Mapping[str, str]) -> Pat
 
     meridian_home = env.get("MERIDIAN_HOME", "").strip()
     if meridian_home:
-        return Path(meridian_home).expanduser() / "pi" / "agent"
+        return Path(meridian_home).expanduser() / "meridian-pi" / "agent"
 
-    return get_user_home() / "pi" / "agent"
+    return get_user_home() / "meridian-pi" / "agent"
 
 
 def _ensure_agent_dir_layout(agent_dir: Path) -> None:

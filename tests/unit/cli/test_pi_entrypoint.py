@@ -57,7 +57,7 @@ def test_resolve_agent_dir_precedence(tmp_path: Path) -> None:
     env_default = {"MERIDIAN_HOME": str(tmp_path / "home")}
     default_dir = pi_entrypoint._resolve_agent_dir(None, env_default)
 
-    assert default_dir == tmp_path / "home" / "pi" / "agent"
+    assert default_dir == tmp_path / "home" / "meridian-pi" / "agent"
 
     env_override = {
         "MERIDIAN_HOME": str(tmp_path / "home"),
@@ -380,13 +380,18 @@ def test_main_reports_invalid_wrapper_flag(
     assert "--agent-dir requires" in capsys.readouterr().err
 
 
-def test_runtime_build_script_copies_package_metadata_to_binary_layout() -> None:
+def test_runtime_build_script_copies_sidecar_assets_to_binary_layout() -> None:
     runtime_package_json = (
         Path(__file__).resolve().parents[3] / "src" / "meridian" / "pi_runtime" / "package.json"
     )
     package_doc = json.loads(runtime_package_json.read_text(encoding="utf-8"))
     scripts = package_doc["scripts"]
 
-    assert "copy:runtime-metadata" in scripts
-    assert "bin/package.json" in scripts["copy:runtime-metadata"]
-    assert "copy:runtime-metadata" in scripts["build:binary"]
+    assert "copy:runtime-assets" in scripts
+    copy_assets_script = scripts["copy:runtime-assets"]
+    assert "bin/package.json" in copy_assets_script
+    assert "bin/theme" in copy_assets_script
+    assert "bin/assets" in copy_assets_script
+    assert "bin/export-html" in copy_assets_script
+    assert "bin/photon_rs_bg.wasm" in copy_assets_script
+    assert "copy:runtime-assets" in scripts["build:binary"]
