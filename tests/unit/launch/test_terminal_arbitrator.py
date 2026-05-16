@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from meridian.lib.harness.semantics import TerminalEventOutcome
+from meridian.lib.launch.streaming import terminal_arbitrator as terminal_arbitrator_module
 from meridian.lib.launch.streaming.terminal_arbitrator import (
     TriggerKind,
     arbitrate_terminal,
@@ -110,11 +111,18 @@ async def test_budget_beats_completion_when_both_ready() -> None:
 
 
 @pytest.mark.asyncio
-async def test_timeout_beats_late_terminal_frame() -> None:
+async def test_timeout_beats_terminal_frame_that_misses_timeout_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        terminal_arbitrator_module,
+        "_TIMEOUT_COMPLETION_GRACE_SECONDS",
+        0.05,
+    )
     loop = asyncio.get_running_loop()
     terminal_future = _terminal_future()
     loop.call_later(
-        0.01,
+        0.2,
         terminal_future.set_result,
         TerminalEventOutcome(status="succeeded", exit_code=0),
     )
@@ -124,7 +132,7 @@ async def test_timeout_beats_late_terminal_frame() -> None:
         terminal_event_future=terminal_future,
         signal_task=_future(),
         timeout_task=_future(None, done=True),
-        grace_seconds=0.1,
+        grace_seconds=0.01,
     )
 
     assert decision.trigger is TriggerKind.TIMEOUT
@@ -132,6 +140,28 @@ async def test_timeout_beats_late_terminal_frame() -> None:
     assert decision.synthetic_status == "failed"
     assert decision.synthetic_exit_code == 3
     assert decision.synthetic_error == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_terminal_frame_beats_timeout_when_it_lands_within_timeout_grace() -> None:
+    loop = asyncio.get_running_loop()
+    completion_future = _future()
+    terminal_future = _terminal_future()
+    outcome = TerminalEventOutcome(status="succeeded", exit_code=0)
+    loop.call_later(0.01, terminal_future.set_result, outcome)
+
+    decision = await arbitrate_terminal(
+        completion_task=completion_future,
+        terminal_event_future=terminal_future,
+        signal_task=_future(),
+        timeout_task=_future(None, done=True),
+        grace_seconds=0.1,
+    )
+
+    assert decision.trigger is TriggerKind.TERMINAL_FRAME
+    assert decision.terminal_outcome == outcome
+    assert decision.stop_required is True
+    assert completion_future.done() is False
 
 
 @pytest.mark.asyncio

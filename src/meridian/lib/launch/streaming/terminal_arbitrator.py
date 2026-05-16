@@ -15,6 +15,7 @@ from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.harness.semantics import TerminalEventOutcome
 
 _TERMINAL_EVENT_GRACE_SECONDS = 0.5
+_TIMEOUT_COMPLETION_GRACE_SECONDS = 5.0
 
 
 class TriggerKind(Enum):
@@ -92,6 +93,13 @@ async def arbitrate_terminal(
         )
 
     if timeout_task is not None and timeout_task in done:
+        completion_after_timeout = await _completion_after_timeout_decision(
+            completion_task=completion_task,
+            terminal_event_future=terminal_event_future,
+            grace_seconds=grace_seconds,
+        )
+        if completion_after_timeout is not None:
+            return completion_after_timeout
         return ArbitrationDecision(
             trigger=TriggerKind.TIMEOUT,
             terminal_outcome=None,
@@ -159,6 +167,42 @@ async def _completion_decision(
         synthetic_exit_code=None,
         synthetic_error=None,
     )
+
+
+async def _completion_after_timeout_decision(
+    *,
+    completion_task: asyncio.Future[Any],
+    terminal_event_future: asyncio.Future[TerminalEventOutcome],
+    grace_seconds: float,
+) -> ArbitrationDecision | None:
+    """Prefer completion when timeout and completion race at the boundary."""
+
+    if terminal_event_future.done():
+        return _terminal_frame_decision(terminal_event_future.result())
+
+    if completion_task.done():
+        return await _completion_decision(terminal_event_future, grace_seconds)
+
+    timeout_window = max(grace_seconds, _TIMEOUT_COMPLETION_GRACE_SECONDS)
+    done: set[asyncio.Future[object]]
+    try:
+        done, _ = await asyncio.wait(
+            {
+                cast("asyncio.Future[object]", completion_task),
+                cast("asyncio.Future[object]", terminal_event_future),
+            },
+            timeout=timeout_window,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except TimeoutError:  # pragma: no cover - defensive; asyncio.wait does not raise here.
+        done = set()
+
+    if terminal_event_future in done:
+        return _terminal_frame_decision(terminal_event_future.result())
+    if completion_task in done:
+        return await _completion_decision(terminal_event_future, grace_seconds)
+
+    return None
 
 
 async def _completion_grace(

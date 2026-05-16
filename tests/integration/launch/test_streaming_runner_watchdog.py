@@ -20,7 +20,12 @@ from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch import constants as launch_constants
 from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import (
+    ExecutionBudget,
+    LaunchArgvIntent,
+    LaunchRuntime,
+    SpawnRequest,
+)
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import (
@@ -115,6 +120,85 @@ class _ReportThenHangConnection:
             await asyncio.sleep(3600)
 
 
+class _PiTimeoutThenTerminalConnection:
+    def __init__(self) -> None:
+        self.state = "created"
+        self._spawn_id = SpawnId("")
+        self._project_root: Path | None = None
+        self._session_id = "session-pi-timeout-race"
+        self._stop_event = asyncio.Event()
+        self.capabilities = ConnectionCapabilities(
+            mid_turn_injection="queue",
+            supports_steer=False,
+            supports_cancel=True,
+            runtime_model_switch=False,
+            structured_reasoning=True,
+        )
+
+    @property
+    def harness_id(self) -> HarnessId:
+        return HarnessId.PI
+
+    @property
+    def spawn_id(self) -> SpawnId:
+        return self._spawn_id
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def subprocess_pid(self) -> int | None:
+        return 5252
+
+    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+        _ = spec
+        self._spawn_id = config.spawn_id
+        self._project_root = config.control_root
+        self.state = "connected"
+
+    async def stop(self) -> None:
+        self.state = "stopped"
+        self._stop_event.set()
+
+    def health(self) -> bool:
+        return self.state == "connected"
+
+    async def send_user_message(self, text: str) -> None:
+        _ = text
+
+    async def send_cancel(self) -> None:
+        return None
+
+    async def events(self):  # type: ignore[no-untyped-def]
+        project_root = self._project_root
+        assert project_root is not None
+        spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
+        spawn_dir.mkdir(parents=True, exist_ok=True)
+        (spawn_dir / "report.md").write_text("# Auto-extracted Report\n\nOK\n", encoding="utf-8")
+        yield HarnessEvent(
+            event_type="session",
+            harness_id="pi",
+            payload={"type": "session", "id": self._session_id},
+        )
+        yield HarnessEvent(
+            event_type="turn_start",
+            harness_id="pi",
+            payload={"type": "turn_start"},
+        )
+        await self._stop_event.wait()
+        yield HarnessEvent(
+            event_type="agent_end",
+            harness_id="pi",
+            payload={
+                "type": "agent_end",
+                "messages": [
+                    {"role": "assistant", "stopReason": "stop"},
+                ],
+            },
+        )
+
+
 class _EndMonotonicFailsClock(FakeClock):
     def __init__(self, start: float = 0.0) -> None:
         super().__init__(start=start)
@@ -132,6 +216,15 @@ def _build_request() -> SpawnRequest:
         model="gpt-5.3-codex",
         harness=HarnessId.CODEX.value,
         prompt="hello",
+    )
+
+
+def _build_pi_timeout_request(timeout_secs: int) -> SpawnRequest:
+    return SpawnRequest(
+        model="openai-codex/gpt-5.4-mini",
+        harness=HarnessId.PI.value,
+        prompt="Reply with exactly: OK",
+        budget=ExecutionBudget(timeout_secs=timeout_secs),
     )
 
 
@@ -231,6 +324,66 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     assert fake_heartbeat.touches
     report = (runtime_root / "spawns" / str(run.spawn_id) / "report.md").read_text(encoding="utf-8")
     assert "Watchdog fallback completed." in report
+
+
+@pytest.mark.asyncio
+async def test_execute_with_streaming_prefers_pi_terminal_after_timeout_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = resolve_project_runtime_root(tmp_path)
+    artifacts = LocalStore(root_dir=tmp_path / ".artifacts")
+    registry = HarnessRegistry.with_defaults()
+    fake_clock = FakeClock(start=1_000.0)
+    fake_heartbeat = FakeHeartbeat()
+    fake_heartbeat.set_clock(fake_clock)
+
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id: _PiTimeoutThenTerminalConnection,
+    )
+
+    run = Spawn(
+        spawn_id=SpawnId("r-pi-timeout-terminal-race"),
+        prompt="Reply with exactly: OK",
+        model=ModelId("openai-codex/gpt-5.4-mini"),
+        status="queued",
+    )
+    spawn_store.start_spawn(
+        runtime_root,
+        chat_id="test-chat-pi-timeout-race",
+        model=str(run.model),
+        agent="",
+        harness=HarnessId.PI.value,
+        kind="streaming",
+        prompt=run.prompt,
+        spawn_id=run.spawn_id,
+        launch_mode="foreground",
+        status="queued",
+    )
+
+    exit_code = await asyncio.wait_for(
+        _execute_with_context(
+            run,
+            request=_build_pi_timeout_request(timeout_secs=1),
+            project_root=tmp_path,
+            runtime_root=runtime_root,
+            artifacts=artifacts,
+            registry=registry,
+            clock=fake_clock,
+            heartbeat_touch=fake_heartbeat.touch,
+            heartbeat_interval_secs=0.001,
+        ),
+        timeout=15.0,
+    )
+
+    assert exit_code == 0
+    row = spawn_store.get_spawn(runtime_root, run.spawn_id)
+    assert row is not None
+    assert row.status == "succeeded"
+    assert row.exit_code == 0
+    assert row.error is None
 
 
 @pytest.mark.asyncio

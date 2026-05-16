@@ -774,6 +774,7 @@ class SpawnManager:
         status: SpawnStatus = "cancelled",
         exit_code: int = 1,
         error: str | None = None,
+        prefer_drain_outcome: bool = False,
     ) -> DrainOutcome | None:
         """Stop one managed spawn and clean up all associated resources."""
 
@@ -796,14 +797,16 @@ class SpawnManager:
                     error=error,
                 )
 
-        outcome = self._resolve_completion_future(
-            session,
-            DrainOutcome(
-                status=status,
-                exit_code=exit_code,
-                error=error,
-                duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-            ),
+        fallback_outcome = DrainOutcome(
+            status=status,
+            exit_code=exit_code,
+            error=error,
+            duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
+        )
+        outcome = (
+            self._resolve_completion_future(session, fallback_outcome)
+            if not prefer_drain_outcome
+            else fallback_outcome
         )
 
         if session.debug_tracer is not None:
@@ -856,6 +859,8 @@ class SpawnManager:
         if session.drain_task.done() and not session.drain_task.cancelled():
             with suppress(Exception):
                 session.drain_task.result()
+        if prefer_drain_outcome:
+            outcome = self._resolve_completion_future(session, fallback_outcome)
         await self._observers.shutdown(spawn_id)
 
         with suppress(Exception):
