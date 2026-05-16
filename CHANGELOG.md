@@ -20,6 +20,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
 - `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
 - `meridian-pi` now fails fast with clear errors when an override/packaged runtime binary exists but cannot execute; Node fallback remains only for missing packaged binaries.
+- `meridian-pi` Node fallback now requires source/dev runtime deps (`runner.mjs` plus `node_modules/@earendil-works/pi-coding-agent`). Installed artifacts without compiled binary now fail early with explicit build/override guidance instead of Node import errors.
 
 ## [0.1.13] - 2026-05-19
 ### Changed

@@ -10,6 +10,17 @@ import pytest
 from meridian.cli import pi_entrypoint
 
 
+def _create_source_runtime_layout(runtime_dir: Path) -> Path:
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    runner_path = runtime_dir / "runner.mjs"
+    runner_path.write_text("// runner")
+    (runtime_dir / "node_modules" / "@earendil-works" / "pi-coding-agent").mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    return runner_path
+
+
 def test_strip_agent_dir_flag_removes_wrapper_only_flag() -> None:
     passthrough, agent_dir = pi_entrypoint._strip_agent_dir_flag(
         [
@@ -71,11 +82,24 @@ def test_ensure_agent_dir_layout_creates_required_subdirectories(tmp_path: Path)
     assert (agent_dir / "bin").is_dir()
 
 
+def test_compiled_binary_candidates_prefers_posix_binary_first() -> None:
+    candidate_names = pi_entrypoint._compiled_binary_candidate_names("posix")
+
+    assert candidate_names == ("meridian-pi", "meridian-pi.exe")
+
+
+def test_compiled_binary_candidates_prefers_windows_binary_first() -> None:
+    candidate_names = pi_entrypoint._compiled_binary_candidate_names("nt")
+
+    assert candidate_names == ("meridian-pi.exe", "meridian-pi")
+
+
 def test_main_sets_pi_agent_dir_and_passes_remaining_args(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     captured: dict[str, object] = {}
+    runner_path = _create_source_runtime_layout(tmp_path / "pi-runtime")
 
     def fake_run(
         command: list[str], *, env: dict[str, str], check: bool
@@ -86,7 +110,7 @@ def test_main_sets_pi_agent_dir_and_passes_remaining_args(
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
-    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: tmp_path / "runner.mjs")
+    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: runner_path)
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
     monkeypatch.setattr(
         pi_entrypoint.sys,
@@ -98,7 +122,7 @@ def test_main_sets_pi_agent_dir_and_passes_remaining_args(
         pi_entrypoint.main()
 
     assert raised.value.code == 0
-    assert captured["command"] == ["node", str(tmp_path / "runner.mjs"), "--help"]
+    assert captured["command"] == ["node", str(runner_path), "--help"]
     captured_env = captured["env"]
     assert isinstance(captured_env, dict)
     assert captured_env["PI_CODING_AGENT_DIR"] == str(tmp_path / "agent-dir")
@@ -175,6 +199,7 @@ def test_main_falls_back_to_node_runner_when_packaged_binary_absent(
     tmp_path: Path,
 ) -> None:
     captured: dict[str, object] = {}
+    runner_path = _create_source_runtime_layout(tmp_path / "pi-runtime")
 
     def fake_run(
         command: list[str], *, env: dict[str, str], check: bool
@@ -185,7 +210,7 @@ def test_main_falls_back_to_node_runner_when_packaged_binary_absent(
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
-    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: tmp_path / "runner.mjs")
+    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: runner_path)
     monkeypatch.setattr(
         pi_entrypoint,
         "_compiled_binary_candidates",
@@ -197,7 +222,37 @@ def test_main_falls_back_to_node_runner_when_packaged_binary_absent(
         pi_entrypoint.main()
 
     assert raised.value.code == 0
-    assert captured["command"] == ["node", str(tmp_path / "runner.mjs"), "--help"]
+    assert captured["command"] == ["node", str(runner_path), "--help"]
+
+
+def test_main_reports_missing_compiled_runtime_and_source_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    runner_path = tmp_path / "missing-runner.mjs"
+
+    def should_not_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"unexpected subprocess invocation: {command!r}, {env!r}, {check!r}")
+
+    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: runner_path)
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", should_not_run)
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_compiled_binary_candidates",
+        lambda: (tmp_path / "missing-binary",),
+    )
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "compiled meridian-pi runtime is not installed" in stderr
+    assert "build-meridian-pi-runtime.sh" in stderr
 
 
 def test_main_reports_missing_node_runtime(
@@ -205,6 +260,8 @@ def test_main_reports_missing_node_runtime(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
+    runner_path = _create_source_runtime_layout(tmp_path / "pi-runtime")
+
     def fake_run(
         command: list[str], *, env: dict[str, str], check: bool
     ) -> subprocess.CompletedProcess[str]:
@@ -212,7 +269,7 @@ def test_main_reports_missing_node_runtime(
         raise FileNotFoundError("node")
 
     monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
-    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: tmp_path / "runner.mjs")
+    monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: runner_path)
     monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
 
     with pytest.raises(SystemExit) as raised:
