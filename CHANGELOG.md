@@ -4,6 +4,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
+- Pi launch constants for wrapper binary: `meridian-pi` subprocess/json mode and primary base command constants.
+- Pi harness unit tests for projection, extraction, registry/contract wiring, semantics, and CLI shortcut parsing.
+
+### Changed
+- Reaper legacy-worker cleanup warning now says it cleaned up a stale spawn and identifies the affected spawn explicitly.
+- Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
+- Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
+
 ## [0.1.13] - 2026-05-19
 ### Changed
 - Release flow matches Mars shape: main workflow creates RC-by-default release commits/tags; tag-triggered `release.yml` is sole PyPI publish identity.

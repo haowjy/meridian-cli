@@ -34,11 +34,13 @@ class HarnessRegistry(BaseModel):
         from meridian.lib.harness.claude import ClaudeAdapter
         from meridian.lib.harness.codex import CodexAdapter
         from meridian.lib.harness.opencode import OpenCodeAdapter
+        from meridian.lib.harness.pi import PiAdapter
 
         registry = cls()
         registry.register(ClaudeAdapter())
         registry.register(CodexAdapter())
         registry.register(OpenCodeAdapter())
+        registry.register(PiAdapter())
         return registry
 
     def register(self, adapter: HarnessEntry) -> None:

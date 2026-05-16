@@ -58,6 +58,8 @@ class PermissionConfig(BaseModel):
     approval: ApprovalMode = "default"
     # Optional OpenCode permission map JSON derived from ToolsField.
     opencode_permission_override: str | None = None
+    # Optional Meridian-compiled launch config path consumed by meridian-pi.
+    pi_launch_config_path: str | None = None
 
 
 def _install_readonly_permission_field(field_name: str) -> None:
@@ -71,7 +73,12 @@ def _install_readonly_permission_field(field_name: str) -> None:
     setattr(PermissionConfig, field_name, property(_get, _set))
 
 
-for _field_name in ("sandbox", "approval", "opencode_permission_override"):
+for _field_name in (
+    "sandbox",
+    "approval",
+    "opencode_permission_override",
+    "pi_launch_config_path",
+):
     _install_readonly_permission_field(_field_name)
 
 
