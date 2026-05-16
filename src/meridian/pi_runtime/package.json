@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:binary": "bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi"
+    "build:binary": "bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi && bun run copy:runtime-metadata",
+    "copy:runtime-metadata": "bun -e \"import { copyFileSync, mkdirSync } from 'node:fs'; mkdirSync('./bin', { recursive: true }); copyFileSync('./package.json', './bin/package.json');\""
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0"

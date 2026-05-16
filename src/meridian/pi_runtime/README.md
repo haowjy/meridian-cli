@@ -17,6 +17,9 @@ cd src/meridian/pi_runtime
 bun run build:binary
 ```
 
+`build:binary` also copies `package.json` to `bin/package.json`. The Bun-compiled
+runtime expects that metadata file next to the executable at runtime.
+
 ## Release caveat
 
 Generated Bun binaries are intentionally **not committed**.  
