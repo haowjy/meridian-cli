@@ -52,7 +52,7 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
         "--no-dry-run",
     }
 )
-HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "opencode"})
+HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "opencode", "pi"})
 _CHAT_MANAGEMENT_SUBCOMMANDS = frozenset({"ls", "show", "log", "close"})
 
 

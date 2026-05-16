@@ -10,6 +10,7 @@ class HarnessId(StrEnum):
     CLAUDE = "claude"
     CODEX = "codex"
     OPENCODE = "opencode"
+    PI = "pi"
 
 
 class TransportId(StrEnum):

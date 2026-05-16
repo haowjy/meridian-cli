@@ -4,6 +4,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
+- Pi launch constants for wrapper binary: `meridian-pi` subprocess/json mode and primary base command constants.
+- Pi harness unit tests for projection, extraction, registry/contract wiring, semantics, and CLI shortcut parsing.
+
+### Changed
+- Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
+- Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
+
 ## [0.1.8] - 2026-05-16
 
 ### Added

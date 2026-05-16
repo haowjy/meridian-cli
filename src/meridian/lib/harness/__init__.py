@@ -67,6 +67,7 @@ def _run_bootstrap() -> None:
     from meridian.lib.harness import claude as _claude
     from meridian.lib.harness import codex as _codex
     from meridian.lib.harness import opencode as _opencode
+    from meridian.lib.harness import pi as _pi
 
     from meridian.lib.harness.projections import project_claude as _project_claude
     from meridian.lib.harness.projections import (
@@ -81,10 +82,14 @@ def _run_bootstrap() -> None:
     from meridian.lib.harness.projections import (
         project_opencode_subprocess as _project_opencode_subprocess,
     )
+    from meridian.lib.harness.projections import (
+        project_pi_subprocess as _project_pi_subprocess,
+    )
 
     from meridian.lib.harness.extractors import claude as _claude_extractor
     from meridian.lib.harness.extractors import codex as _codex_extractor
     from meridian.lib.harness.extractors import opencode as _opencode_extractor
+    from meridian.lib.harness.extractors import pi as _pi_extractor
 
     from meridian.lib.harness.launch_spec import _enforce_spawn_params_accounting
 
@@ -92,14 +97,17 @@ def _run_bootstrap() -> None:
         _claude,
         _codex,
         _opencode,
+        _pi,
         _project_claude,
         _project_codex_subprocess,
         _project_codex_streaming,
         _project_opencode_subprocess,
         _project_opencode_streaming,
+        _project_pi_subprocess,
         _claude_extractor,
         _codex_extractor,
         _opencode_extractor,
+        _pi_extractor,
     )
     _enforce_spawn_params_accounting()
     _bootstrapped = True

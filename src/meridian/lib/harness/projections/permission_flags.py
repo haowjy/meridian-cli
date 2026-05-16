@@ -35,6 +35,10 @@ def _permission_flags_for_harness(
     harness_id: HarnessId,
     config: PermissionConfig,
 ) -> tuple[str, ...]:
+    if harness_id == HarnessId.PI:
+        # Pi permissions are mediated through extension UI hooks, not CLI flags.
+        return ()
+
     # New harness families that need approval/sandbox projection belong here.
     if config.approval == "yolo":
         if harness_id == HarnessId.CLAUDE:

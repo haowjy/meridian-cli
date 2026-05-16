@@ -45,10 +45,13 @@ BASE_COMMAND_CODEX_SUBPROCESS: Final[tuple[str, ...]] = ("codex", "exec", "--jso
 BASE_COMMAND_CODEX_STREAMING: Final[tuple[str, ...]] = ("codex", "app-server")
 BASE_COMMAND_OPENCODE_SUBPROCESS: Final[tuple[str, ...]] = ("opencode", "run")
 BASE_COMMAND_OPENCODE_STREAMING: Final[tuple[str, ...]] = ("opencode", "serve")
+BASE_COMMAND_PI_SUBPROCESS: Final[tuple[str, ...]] = ("meridian-pi", "-p", "--mode", "json")
+BASE_COMMAND_PI_STREAMING: Final[tuple[str, ...]] = ("meridian-pi", "--mode", "rpc")
 
 PRIMARY_BASE_COMMAND_CLAUDE: Final[tuple[str, ...]] = ("claude",)
 PRIMARY_BASE_COMMAND_CODEX: Final[tuple[str, ...]] = ("codex",)
 PRIMARY_BASE_COMMAND_OPENCODE: Final[tuple[str, ...]] = ("opencode",)
+PRIMARY_BASE_COMMAND_PI: Final[tuple[str, ...]] = ("meridian-pi",)
 
 __all__ = [
     "BASE_COMMAND_CLAUDE_STREAMING",
@@ -57,6 +60,8 @@ __all__ = [
     "BASE_COMMAND_CODEX_SUBPROCESS",
     "BASE_COMMAND_OPENCODE_STREAMING",
     "BASE_COMMAND_OPENCODE_SUBPROCESS",
+    "BASE_COMMAND_PI_STREAMING",
+    "BASE_COMMAND_PI_SUBPROCESS",
     "BLOCKED_CHILD_ENV_VARS",
     "DEFAULT_INFRA_EXIT_CODE",
     "HISTORY_FILENAME",
@@ -65,6 +70,7 @@ __all__ = [
     "PRIMARY_BASE_COMMAND_CLAUDE",
     "PRIMARY_BASE_COMMAND_CODEX",
     "PRIMARY_BASE_COMMAND_OPENCODE",
+    "PRIMARY_BASE_COMMAND_PI",
     "PRIMARY_META_FILENAME",
     "REPORT_FILENAME",
     "REPORT_WATCHDOG_GRACE_SECONDS",
