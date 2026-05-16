@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -111,6 +112,11 @@ def test_main_sets_pi_agent_dir_and_passes_remaining_args(
 
     monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
     monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: runner_path)
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_compiled_binary_candidates",
+        lambda: (tmp_path / "missing-packaged-binary",),
+    )
     monkeypatch.setenv("MERIDIAN_HOME", str(tmp_path / "meridian-home"))
     monkeypatch.setattr(
         pi_entrypoint.sys,
@@ -270,6 +276,11 @@ def test_main_reports_missing_node_runtime(
 
     monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
     monkeypatch.setattr(pi_entrypoint, "_runner_path", lambda: runner_path)
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_compiled_binary_candidates",
+        lambda: (tmp_path / "missing-packaged-binary",),
+    )
     monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
 
     with pytest.raises(SystemExit) as raised:
@@ -367,3 +378,15 @@ def test_main_reports_invalid_wrapper_flag(
 
     assert raised.value.code == 2
     assert "--agent-dir requires" in capsys.readouterr().err
+
+
+def test_runtime_build_script_copies_package_metadata_to_binary_layout() -> None:
+    runtime_package_json = (
+        Path(__file__).resolve().parents[3] / "src" / "meridian" / "pi_runtime" / "package.json"
+    )
+    package_doc = json.loads(runtime_package_json.read_text(encoding="utf-8"))
+    scripts = package_doc["scripts"]
+
+    assert "copy:runtime-metadata" in scripts
+    assert "bin/package.json" in scripts["copy:runtime-metadata"]
+    assert "copy:runtime-metadata" in scripts["build:binary"]

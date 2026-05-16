@@ -18,6 +18,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
 - `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
+- Pi Bun runtime build now copies runtime metadata to `src/meridian/pi_runtime/bin/package.json` so compiled `meridian-pi` launches through the wrapper without `ENOENT` sidecar failures.
 - `meridian-pi` now fails fast with clear errors when an override/packaged runtime binary exists but cannot execute; Node fallback remains only for missing packaged binaries.
 - `meridian-pi` Node fallback now requires source/dev runtime deps (`runner.mjs` plus `node_modules/@earendil-works/pi-coding-agent`). Installed artifacts without compiled binary now fail early with explicit build/override guidance instead of Node import errors.
 
