@@ -166,6 +166,11 @@ from `meridian.lib.launch.workspace_projection`.
 
 ### Adding a Harness
 
+The full end-to-end guide is at [`docs/harness-integration.md`](../../../../docs/harness-integration.md).
+It covers probing, adapter implementation, projection, extraction, connection/semantics,
+wrapper/runtime packaging, session parity, model/catalog/Mars integration, and a
+verification checklist — using Pi as the worked example.
+
 Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (listed in `__init__.py`):
 1. `core/types.py` — register `HarnessId`/`TransportId`
 2. `<new_harness>.py` — adapter with `HarnessContract`, bundle registration, transport map side effect
