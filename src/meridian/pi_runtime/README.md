@@ -24,3 +24,8 @@ Generated Bun binaries are intentionally **not committed**.
 `meridian-cli` wheel is universal Python. A future release step can package
 platform-specific binaries (or lazy-download them), but the current universal wheel
 must not blindly ship a single prebuilt binary.
+
+When a compiled binary is absent, `meridian-pi` only falls back to the Node runner
+for source/dev layouts where both `runner.mjs` and
+`node_modules/@earendil-works/pi-coding-agent` are present. Installed artifacts
+without those runtime deps now fail fast with a clear build/override error.

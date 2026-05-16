@@ -89,9 +89,20 @@ def _compiled_binary_candidates() -> tuple[Path, ...]:
     """Return candidate paths for the Bun-compiled Pi binary."""
 
     runtime_dir = Path(__file__).resolve().parents[1] / "pi_runtime" / "bin"
-    base_path = runtime_dir / _PI_BINARY_NAME
-    windows_path = runtime_dir / f"{_PI_BINARY_NAME}.exe"
-    return (base_path, windows_path)
+    return tuple(
+        runtime_dir / candidate_name
+        for candidate_name in _compiled_binary_candidate_names(os.name)
+    )
+
+
+def _compiled_binary_candidate_names(os_name: str) -> tuple[str, str]:
+    """Return OS-ordered runtime binary candidate names."""
+
+    base_name = _PI_BINARY_NAME
+    windows_name = f"{_PI_BINARY_NAME}.exe"
+    if os_name == "nt":
+        return (windows_name, base_name)
+    return (base_name, windows_name)
 
 
 def _is_runnable_binary(candidate: Path) -> bool:
@@ -130,6 +141,15 @@ def _build_child_env(base_env: Mapping[str, str], agent_dir: Path) -> dict[str, 
     child_env = dict(base_env)
     child_env[_PI_AGENT_DIR_ENV] = str(agent_dir)
     return child_env
+
+
+def _node_fallback_available(runner_path: Path) -> bool:
+    """Return whether source/dev Node fallback dependencies are available."""
+
+    runtime_dependency_dir = (
+        runner_path.parent / "node_modules" / "@earendil-works" / "pi-coding-agent"
+    )
+    return runner_path.is_file() and runtime_dependency_dir.is_dir()
 
 
 def _print_error(message: str) -> None:
@@ -171,10 +191,17 @@ def main() -> None:
                     f"{present_packaged_binary}"
                 )
                 raise SystemExit(1)
+            runner_path = _runner_path()
+            if not _node_fallback_available(runner_path):
+                _print_error(
+                    "compiled meridian-pi runtime is not installed; build it with "
+                    "scripts/build-meridian-pi-runtime.sh or set MERIDIAN_PI_BINARY; "
+                    "source/dev fallback requires runtime deps installed."
+                )
+                raise SystemExit(1)
             used_node_fallback = True
             command_kind = "node-runtime"
             node_bin = child_env.get(_NODE_BIN_ENV, "node").strip() or "node"
-            runner_path = _runner_path()
             command = [node_bin, str(runner_path), *passthrough_args]
 
     try:
@@ -199,10 +226,12 @@ def main() -> None:
 
 __all__ = [
     "_build_child_env",
+    "_compiled_binary_candidate_names",
     "_compiled_binary_candidates",
     "_ensure_agent_dir_layout",
     "_first_present_packaged_binary",
     "_is_runnable_binary",
+    "_node_fallback_available",
     "_resolve_agent_dir",
     "_resolve_packaged_binary",
     "_runner_path",
