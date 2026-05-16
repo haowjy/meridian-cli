@@ -116,6 +116,36 @@ adds the `wait_required` / `terminal: false` fields for background spawns.
 The distinction matters: agents that parse `to_wire()` without requesting it explicitly will
 receive `to_agent_wire()` instead.
 
+## SpawnActionOutput Text Format Contract
+
+`format_text()` branches on `FormatContext.verbosity` and spawn status:
+
+- **`verbosity == 0` + terminal status** (`succeeded`, `failed`, `cancelled`) + non-background:
+  uses `_format_terminal_text()`. Output: `{spawn_id} {status} ({duration}s)\n\n{report body or
+  "(no report)"}\n\nTranscript: meridian session log {spawn_id}`. Warning and error fields appear
+  before the report body.
+- **All other cases** (non-terminal, background, `--verbose`): uses the existing verbose format
+  (`_format_default_text()` / `_format_verbose_text()`).
+
+## SpawnDetailOutput format_text / format_wait_text
+
+`format_text()` now accepts `FormatContext`:
+- `verbosity == 0` → `_format_compact_text()`: `{spawn_id} {status} ({meta})\n\n{report body}`
+- `verbosity > 0` → `_format_verbose_text()`: full kv_block (unchanged).
+
+`SpawnWaitMultiOutput.format_text()` delegates to `format_wait_text()` for single-spawn waits,
+which uses verbosity-gated compact vs verbose.
+
+## Foreground Path Populates report
+
+`execute_spawn_blocking()` in `execute.py` reads `report.md` after spawn completion and
+passes `report=report_body` into `SpawnActionOutput`. Previously `report` was always `None` for
+foreground results. Text output uses that report for compact rendering; explicit JSON also exposes
+the primary result content structurally with report and transcript fields.
+
+Callers in default text mode now get the report inline without needing a separate `spawn show`
+call. Callers that need machine-readable output should request `--format json`.
+
 ## Lateral Links
 
 → [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — ops/ layer overview, SpawnApplicationService, SEAM-1/2/3

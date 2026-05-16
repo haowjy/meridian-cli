@@ -176,6 +176,11 @@ class SpawnActionOutput(BaseModel):
     def goal_contract_preview(self) -> str | None:
         return build_goal_contract_preview(self.goal)
 
+    def _transcript_command(self) -> str | None:
+        if self.command != "spawn.create" or self.spawn_id is None or self.background:
+            return None
+        return f"meridian session log {self.spawn_id}"
+
     def to_wire(self) -> dict[str, object]:
         """Project minimal external JSON shape. Omit nulls and input echo."""
         wire: dict[str, object] = {"status": self.status}
@@ -200,6 +205,9 @@ class SpawnActionOutput(BaseModel):
             wire["exit_code"] = self.exit_code
         if self.context_from_resolved:
             wire["context_from_resolved"] = list(self.context_from_resolved)
+        transcript_command = self._transcript_command()
+        if transcript_command is not None:
+            wire["transcript_command"] = transcript_command
         if self.status == "dry-run":
             if self.project_root is not None or self.runtime_root is not None:
                 wire["resolved_authority"] = {
@@ -281,7 +289,39 @@ class SpawnActionOutput(BaseModel):
         return self.to_wire()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        _ = ctx
+        effective_ctx = ctx or FormatContext()
+        if (
+            self.command == "spawn.create"
+            and self.status in {"succeeded", "failed", "cancelled"}
+            and not self.background
+            and effective_ctx.verbosity == 0
+        ):
+            return self._format_terminal_text()
+        return self._format_default_text()
+
+    def _format_terminal_text(self) -> str:
+        if self.spawn_id is None:
+            return self._format_default_text()
+        duration_suffix = ""
+        if self.duration_secs is not None:
+            duration_suffix = f" ({self.duration_secs:.1f}s)"
+        lines = [f"{self.spawn_id} {self.status}{duration_suffix}"]
+        if self.warning:
+            lines.append(f"Warning: {self.warning}")
+        if self.error:
+            lines.append(f"Error: {self.error}")
+        report_text = (self.report or "").strip()
+        if report_text:
+            lines.append("")
+            lines.append(report_text)
+        elif self.status == "succeeded":
+            lines.append("")
+            lines.append("(no report)")
+        lines.append("")
+        lines.append(f"Transcript: meridian session log {self.spawn_id}")
+        return "\n".join(lines)
+
+    def _format_default_text(self) -> str:
         lines: list[str] = []
         if self.message:
             lines.append(self.message)
@@ -329,6 +369,13 @@ class SpawnActionOutput(BaseModel):
             lines.append(shlex.join(self.cli_command))
         if self.exit_code is not None:
             lines.append(f"Exit code: {self.exit_code}")
+        transcript_command = self._transcript_command()
+        if transcript_command is not None:
+            report_text = (self.report or "").strip()
+            if report_text:
+                lines.append("")
+                lines.append(report_text)
+            lines.append(f"Transcript: {transcript_command}")
         return "\n".join(lines)
 
 
@@ -670,6 +717,9 @@ class SpawnDetailOutput(BaseModel):
             return None
         return f"Report for {self.spawn_id}\n{report_text}"
 
+    def transcript_command(self) -> str:
+        return f"meridian session log {self.spawn_id}"
+
     def to_cli_wire(self) -> dict[str, object]:
         """Project slim JSON shape for wire serialization. Omits internal fields."""
         wire: dict[str, object] = {
@@ -745,6 +795,47 @@ class SpawnDetailOutput(BaseModel):
         return self.to_cli_wire()
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
+        effective_ctx = ctx or FormatContext()
+        return self._format_verbose_text(always_show_transcript=effective_ctx.verbosity > 0)
+
+    def format_wait_text(self, ctx: FormatContext | None = None) -> str:
+        effective_ctx = ctx or FormatContext()
+        if effective_ctx.verbosity > 0:
+            return self._format_verbose_text(always_show_transcript=True)
+        return self._format_compact_text()
+
+    def _format_compact_text(self) -> str:
+        status_str = self.status
+        if self.exit_code is not None and self.status == "failed":
+            status_str += f" (exit {self.exit_code})"
+
+        meta_parts: list[str] = []
+        if self.duration_secs is not None:
+            meta_parts.append(f"{self.duration_secs:.1f}s")
+        meta_suffix = f" ({', '.join(meta_parts)})" if meta_parts else ""
+
+        lines = [f"{self.spawn_id} {status_str}{meta_suffix}"]
+        if self.failure_reason:
+            failure_value = self.failure_reason
+            if failure_value == "orphan_finalization":
+                failure_value = (
+                    "orphan_finalization (harness likely completed; "
+                    "report.md may still contain useful content)"
+                )
+            lines.append(f"Failure: {failure_value}")
+
+        report_text = self._normalized_report_body()
+        if report_text is not None:
+            lines.append("")
+            lines.append(report_text)
+            lines.append("")
+        else:
+            lines.append("")
+        lines.append(f"Transcript: {self.transcript_command()}")
+
+        return "\n".join(lines)
+
+    def _format_verbose_text(self, *, always_show_transcript: bool = False) -> str:
         """Key-value detail view for text output mode. Omits None/empty fields."""
         from meridian.lib.core.formatting import kv_block
 
@@ -833,8 +924,9 @@ class SpawnDetailOutput(BaseModel):
             ),
             (
                 "Transcript",
-                f"meridian session log {self.spawn_id}"
-                if self.harness_session_id and self.harness_session_id.strip()
+                self.transcript_command()
+                if always_show_transcript
+                or (self.harness_session_id is not None and self.harness_session_id.strip())
                 else None,
             ),
         ]
@@ -939,12 +1031,13 @@ class SpawnWaitMultiOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         """Render waited spawns, expanding report content when available."""
+        effective_ctx = ctx or FormatContext()
         if self.checkpoint:
             return self._format_checkpoint_text()
         if not self.spawns:
             return ""
         if len(self.spawns) == 1:
-            return self.spawns[0].format_text(ctx)
+            return self.spawns[0].format_wait_text(effective_ctx)
 
         from meridian.lib.core.formatting import tabular
 
@@ -1019,8 +1112,18 @@ class SpawnWaitMultiOutput(BaseModel):
             wire["status"] = self.status
         if self.exit_code is not None:
             wire["exit_code"] = self.exit_code
-        # Sparse spawn details
-        wire["spawns"] = [spawn.to_cli_wire() for spawn in self.spawns]
+        if len(self.spawns) == 1:
+            single = self.spawns[0]
+            wire["transcript_command"] = single.transcript_command()
+            if single.report_body is not None:
+                wire["report_body"] = single.report_body
+        # Sparse spawn details.
+        spawn_wires: list[dict[str, object]] = []
+        for spawn in self.spawns:
+            spawn_wire = spawn.to_cli_wire()
+            spawn_wire["transcript_command"] = spawn.transcript_command()
+            spawn_wires.append(spawn_wire)
+        wire["spawns"] = spawn_wires
         return wire
 
     def to_cli_output(
