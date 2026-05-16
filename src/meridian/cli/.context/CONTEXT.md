@@ -200,6 +200,33 @@ argv
 → [concepts/session-initiation.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/concepts/session-initiation.md) — four-mode session initiation semantics, identity lock, bare flag inference, and `--from` placement
 → [decisions/launch.md](../../../../../../../.meridian/git/haowjy-meridian-cli-kb/kb/decisions/launch.md) — rationale for the launch-mode split and argv normalization
 
+## Spawn Output Mode Changes (spawn-return-report)
+
+### Catalog default_output_mode for spawn
+
+`("spawn",)` and `("spawn", "wait")` have `default_output_mode="text"` in `catalog.py`. This means agent mode (no explicit `--format`) uses compact text output, not JSON. All other spawn subcommands retain `"json"`.
+
+Rule: if you add a new spawn subcommand, default to `"json"` unless it surfaces content agents need to read directly.
+
+### `--metadata` flag
+
+Added to `_spawn_create` and `_spawn_wait` handlers. In text mode, shows detailed inline accounting (model, harness, exit code, duration, cost, tokens, report path) while still including report body and transcript pointer.
+
+Pattern: compact default → `--metadata` inline accounting → `spawn show` full record.
+
+### Verbose threading at emit point
+
+Both `_spawn_create` and `_spawn_wait` thread `--verbose` and `--metadata` into `FormatContext` at the emit point:
+
+```python
+if output_format != "json" and (metadata or verbose):
+    emit(result.format_text(FormatContext(verbosity=1)))
+else:
+    emit(result)
+```
+
+This avoids touching the global emit pipeline. Use this same pattern if you add new spawn subcommands that need context-aware text formatting.
+
 ## Lateral Links
 
 → [../../lib/bootstrap/.context/CONTEXT.md](../../lib/bootstrap/.context/CONTEXT.md) — bootstrap functions invoked after classification

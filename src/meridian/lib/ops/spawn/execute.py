@@ -1,7 +1,6 @@
 """Spawn execution entry points: execute_spawn_blocking, execute_spawn_background."""
 
 import asyncio
-import json
 import os
 import subprocess
 import time
@@ -48,7 +47,7 @@ from .execute_init import (
 from .execute_runner import launch_prepared_spawn
 from .failure_policy import finalize_launch_failure_sync
 from .models import SpawnActionOutput, SpawnCreateInput
-from .query import read_spawn_row
+from .query import read_report, read_spawn_row
 
 logger = structlog.get_logger(__name__)
 _BACKGROUND_SUBMIT_MESSAGE = "Background spawn submitted."
@@ -402,8 +401,6 @@ def execute_spawn_blocking(
                 spawn_id=str(spawn.spawn_id),
                 exc_info=True,
             )
-        # Emit spawn ID immediately so the caller can reference it while blocking.
-        print(json.dumps({"spawn_id": str(spawn.spawn_id), "status": "running"}), flush=True)
         started = time.monotonic()
         stream_stdout_to_terminal = payload.stream
         event_observer = None
@@ -466,7 +463,12 @@ def execute_spawn_blocking(
 
     duration = time.monotonic() - started
     row = read_spawn_row(project_paths.project_root, str(spawn.spawn_id))
-    # Report is read on-demand via `spawn show`, not inlined here.
+    _, report_body = read_report(
+        project_paths.project_root,
+        str(spawn.spawn_id),
+        include_body=True,
+        runtime_root=context.runtime_root,
+    )
     status = "failed"
     if row is not None:
         status = row.status
@@ -505,9 +507,9 @@ def execute_spawn_blocking(
         reference_files=request.reference_files,
         template_vars=request.template_vars,
         context_from_resolved=context_from_resolved,
-        report=None,
+        report=report_body,
         exit_code=exit_code,
-        duration_secs=duration,
+        duration_secs=done_secs,
     )
 
 

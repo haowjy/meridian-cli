@@ -22,6 +22,7 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES
+from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.spawn.api import (
     SpawnActionOutput,
@@ -292,6 +293,16 @@ def _spawn_create(
         bool,
         Parameter(name="--verbose", help="Enable verbose spawn logging.", show=True),
     ] = False,
+    metadata: Annotated[
+        bool,
+        Parameter(
+            name="--metadata",
+            help=(
+                "Include detailed spawn metadata in text output "
+                "(report-first view remains primary)."
+            ),
+        ),
+    ] = False,
     quiet: Annotated[
         bool,
         Parameter(name="--quiet", help="Reduce non-essential command output.", show=True),
@@ -508,7 +519,17 @@ def _spawn_create(
             sink=_current_output_sink(),
             prepared=_prepare_spawn_runtime_write(),
         )
-    emit(result)
+    output_format = _get_global_options().output.format
+    if output_format != "json" and metadata:
+        detailed_output = _spawn_create_metadata_output(result)
+        if detailed_output is not None:
+            emit(detailed_output.format_text(FormatContext(verbosity=1)))
+        else:
+            emit(result.format_text(FormatContext(verbosity=1)))
+    elif output_format != "json" and verbose:
+        emit(result.format_text(FormatContext(verbosity=1)))
+    else:
+        emit(result)
     exit_code = _spawn_create_exit_code(result)
     if exit_code != 0:
         raise SystemExit(exit_code)
@@ -734,6 +755,16 @@ def _spawn_wait(
         bool,
         Parameter(name="--verbose", help="Enable verbose wait status output.", show=True),
     ] = False,
+    metadata: Annotated[
+        bool,
+        Parameter(
+            name="--metadata",
+            help=(
+                "Include detailed spawn metadata in text output "
+                "(report-first view remains primary)."
+            ),
+        ),
+    ] = False,
     quiet: Annotated[
         bool,
         Parameter(name="--quiet", help="Suppress wait progress output.", show=True),
@@ -742,9 +773,9 @@ def _spawn_wait(
         bool,
         Parameter(
             name="--report",
-            help="Include full report body in output (default: omitted).",
+            help="Include full report body in output (default: enabled). Use --no-report to omit.",
         ),
-    ] = False,
+    ] = True,
 ) -> None:
     result = spawn_wait_sync(
         SpawnWaitInput(
@@ -759,11 +790,31 @@ def _spawn_wait(
         sink=_current_output_sink(),
         prepared=_prepare_spawn_runtime_read(),
     )
-    emit(result)
+    output_format = _get_global_options().output.format
+    if output_format != "json" and (metadata or verbose):
+        emit(result.format_text(FormatContext(verbosity=1)))
+    else:
+        emit(result)
     if result.checkpoint:
         return
     if result.any_failed:
         raise SystemExit(1)
+
+
+def _spawn_create_metadata_output(result: SpawnActionOutput) -> Any | None:
+    if result.spawn_id is None or result.background or result.status == "dry-run":
+        return None
+    try:
+        return spawn_show_sync(
+            SpawnShowInput(
+                spawn_id=result.spawn_id,
+                include_report_body=True,
+            ),
+            sink=_current_output_sink(),
+            prepared=_prepare_spawn_runtime_read(),
+        )
+    except (KeyError, RuntimeError, ValueError, FileNotFoundError, OSError):
+        return None
 
 
 def _spawn_files(

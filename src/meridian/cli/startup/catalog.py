@@ -287,13 +287,13 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(
         ("spawn",),
         "Create a spawn via spawn default route.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.create",
     ),
     _write_runtime(
         ("spawn", "create"),
         "Create a spawn.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.create",
     ),
     _write_runtime(
@@ -317,7 +317,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _read_runtime(
         ("spawn", "wait"),
         "Wait for spawns.",
-        default_output_mode="json",
+        default_output_mode="text",
         extension_ref="meridian.spawn.wait",
     ),
     _write_runtime(

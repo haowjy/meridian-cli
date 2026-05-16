@@ -12,12 +12,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.1.9] - 2026-05-16
 
 ### Added
+- `meridian spawn --metadata` and `meridian spawn wait --metadata` — inline detailed spawn accounting while preserving report body and transcript pointer.
+- Spawn output smoke guide and boundary tests for report-first create/wait behavior.
 - `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
 - `--fork-fresh [REF]` on both `meridian` (primary) and `meridian spawn` surfaces. It forks transcript lineage while allowing identity overrides (`-m`, `-a`, `--skills` on spawn). Bare `--fork-fresh` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions.
 - `meridian --from [REF]` starts a fresh primary session with prior spawn or chat/session context as user-turn reference material. Bare `--from` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions.
 - Bare `--from` on `meridian spawn` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Same argv normalization as `--fork` / `--fork-fresh`.
 
 ### Changed
+- Foreground `meridian spawn` and single-spawn `spawn wait` default to report-first compact output: status, report body, transcript command. Agent-mode defaults match compact text; explicit JSON carries report/transcript fields.
+- `spawn wait` includes report body by default; use `--no-report` to suppress it.
 - `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
 - Bare `--fork` now defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Outside a managed session it fails with: `Cannot infer --fork target: not inside a Meridian-managed session. Pass --fork REF explicitly.`
 - CLI argv normalization now rewrites bare/equals forms for `--fork` and `--fork-fresh` before bootstrap and Cyclopts parsing, so forms like `--fork`, `--fork=`, and `--fork --bg` parse consistently.

@@ -183,6 +183,19 @@ def agent_mode_enabled() -> bool:
     return is_nested_meridian_process()
 
 
+def _spawn_background_requested(argv: Sequence[str]) -> bool:
+    if not argv or argv[0] != "spawn":
+        return False
+    for token in argv[1:]:
+        if token == "--":
+            break
+        if token in {"--background", "--bg"}:
+            return True
+        if token.startswith("--background="):
+            return True
+    return False
+
+
 def _resolve_output_format_for_command(
     *,
     argv: Sequence[str],
@@ -198,6 +211,14 @@ def _resolve_output_format_for_command(
     descriptor = classify_invocation(argv, COMMAND_CATALOG)
     if descriptor is not None and descriptor.default_output_mode in {"text", "json"}:
         agent_default_format = cast("Literal['text', 'json']", descriptor.default_output_mode)
+        if (
+            agent_mode
+            and explicit_format is None
+            and descriptor.command_path in {("spawn",), ("spawn", "create")}
+            and _spawn_background_requested(argv)
+        ):
+            # Keep background submission wire output stable for agent-mode callers.
+            agent_default_format = "json"
 
     return resolve_effective_format(
         explicit_format=explicit_format,

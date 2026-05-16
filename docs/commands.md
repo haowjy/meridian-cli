@@ -16,7 +16,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list` | See running and recent spawns |
 | `meridian spawn list --profile reviewer` | Show spawns launched with the `reviewer` profile |
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
-| `meridian spawn wait ID` | Block until a spawn completes |
+| `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-report` to suppress |
 | `meridian spawn show ID` | Read a spawn's report and status |
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
@@ -46,6 +46,9 @@ Common `spawn` flags:
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `yolo` |
+| `--metadata` | Show detailed inline accounting (model, cost, tokens, duration, report path). Still includes report body and transcript command. |
+| `--no-report` | Suppress report body from output (default is now to show it) |
+| `--verbose` | Debug/runtime verbosity |
 
 `--fork` is identity-preserving by design. It rejects `-m`, `-a`, and `--skills`:
 
@@ -56,6 +59,30 @@ Common `spawn` flags:
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
 Session initiation modes: `--continue` resumes the same transcript, `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+
+### Spawn Output
+
+Foreground `spawn` and single-spawn `spawn wait` default to compact output:
+one-line status + report body + transcript pointer. Metadata (tokens, cost,
+timestamps, paths, model) is hidden by default.
+
+| Mode | Output |
+|------|--------|
+| Default (no format flag) | Compact text: status + report body + `Transcript: meridian session log <id>` |
+| `--metadata` | Compact text + inline accounting (model, cost, tokens, duration, report path) |
+| `--verbose` | Debug/runtime verbosity |
+| `--no-report` | Status line only; report body suppressed |
+| `--format json` | Structured JSON with report body and transcript command fields |
+| `--bg` | Spawn ID + wait instructions (unchanged) |
+
+Progressive disclosure:
+
+```bash
+meridian spawn -a reviewer -p "task"              # compact: status + report
+meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens/path inline
+meridian spawn show p123                           # full detailed record (unchanged)
+meridian session log p123                          # full transcript (unchanged)
+```
 
 `spawn show` includes primary-session metadata when available from `primary_meta.json`:
 `kind`, `activity`, `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
