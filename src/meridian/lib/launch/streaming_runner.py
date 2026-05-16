@@ -594,6 +594,7 @@ async def _run_streaming_attempt(
                 status="failed",
                 exit_code=3,
                 error="timeout",
+                prefer_drain_outcome=True,
             )
             drain_exit_code = 3
         elif decision.trigger == TriggerKind.WATCHDOG:
@@ -617,6 +618,8 @@ async def _run_streaming_attempt(
         if drain_outcome is not None and terminal_outcome is None:
             drain_exit_code = drain_outcome.exit_code
             drain_error = drain_outcome.error
+            if timed_out and drain_outcome.status == "succeeded":
+                timed_out = False
 
         # The watchdog resolves the completion future mid-flight inside
         # stop_spawn(), so completion_task can finish before watchdog_task.
