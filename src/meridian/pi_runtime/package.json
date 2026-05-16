@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:binary": "bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi && bun run copy:runtime-metadata",
-    "copy:runtime-metadata": "bun -e \"import { copyFileSync, mkdirSync } from 'node:fs'; mkdirSync('./bin', { recursive: true }); copyFileSync('./package.json', './bin/package.json');\""
+    "build:binary": "bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi && bun run copy:runtime-assets",
+    "copy:runtime-assets": "bun -e \"import { copyFileSync, cpSync, existsSync, mkdirSync } from 'node:fs'; import { dirname } from 'node:path'; const runtimeDist = './node_modules/@earendil-works/pi-coding-agent/dist'; const runtimePackageRoot = './node_modules/@earendil-works/pi-coding-agent'; const copyFile = (from, to) => { if (!existsSync(from)) throw new Error('missing runtime asset: ' + from); mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); }; const copyDir = (from, to) => { if (!existsSync(from)) throw new Error('missing runtime asset: ' + from); mkdirSync(dirname(to), { recursive: true }); cpSync(from, to, { recursive: true, force: true }); }; copyFile('./package.json', './bin/package.json'); copyFile(runtimePackageRoot + '/README.md', './bin/README.md'); copyFile(runtimePackageRoot + '/CHANGELOG.md', './bin/CHANGELOG.md'); copyDir(runtimeDist + '/modes/interactive/theme', './bin/theme'); copyDir(runtimeDist + '/modes/interactive/assets', './bin/assets'); copyDir(runtimeDist + '/core/export-html', './bin/export-html'); copyDir(runtimePackageRoot + '/docs', './bin/docs'); copyDir(runtimePackageRoot + '/examples', './bin/examples'); copyFile('./node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm', './bin/photon_rs_bg.wasm');\""
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0"

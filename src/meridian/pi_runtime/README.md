@@ -17,8 +17,17 @@ cd src/meridian/pi_runtime
 bun run build:binary
 ```
 
-`build:binary` also copies `package.json` to `bin/package.json`. The Bun-compiled
-runtime expects that metadata file next to the executable at runtime.
+`build:binary` also copies required Pi sidecar assets next to the executable:
+
+- `bin/package.json`
+- `bin/theme/`
+- `bin/assets/`
+- `bin/export-html/`
+- `bin/docs/`
+- `bin/examples/`
+- `bin/photon_rs_bg.wasm`
+
+The Bun-compiled runtime resolves these assets relative to the executable.
 
 ## Release caveat
 

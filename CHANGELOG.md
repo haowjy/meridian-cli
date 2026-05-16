@@ -9,7 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
 - Pi launch constants for wrapper binary: `meridian-pi` subprocess/json mode and primary base command constants.
 - Pi harness unit tests for projection, extraction, registry/contract wiring, semantics, and CLI shortcut parsing.
-- Real `meridian-pi` wrapper entrypoint: CLI command now resolves Meridian-specific agent dir (`--agent-dir` > `MERIDIAN_PI_AGENT_DIR` > `MERIDIAN_HOME/pi/agent`), creates required Pi dirs, sets `PI_CODING_AGENT_DIR`, then launches Pi via SDK runner.
+- Real `meridian-pi` wrapper entrypoint: CLI command now resolves Meridian-specific agent dir (`--agent-dir` > `MERIDIAN_PI_AGENT_DIR` > `MERIDIAN_HOME/meridian-pi/agent`), creates required Pi dirs, sets `PI_CODING_AGENT_DIR`, then launches Pi via SDK runner.
 - Minimal Pi SDK runtime package scaffold under `src/meridian/pi_runtime/` with `runner.mjs` dynamic import of `@earendil-works/pi-coding-agent` and clear missing-dependency guidance.
 - Unit tests for `meridian-pi` wrapper arg stripping, agent-dir precedence, env projection, directory creation, and error handling.
 - Bun compile entrypoint/script for Pi runtime (`compile_runner.mjs`, `npm run build:binary`) targeting `src/meridian/pi_runtime/bin/meridian-pi`.
@@ -19,7 +19,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
 - `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
-- Pi Bun runtime build now copies runtime metadata to `src/meridian/pi_runtime/bin/package.json` so compiled `meridian-pi` launches through the wrapper without `ENOENT` sidecar failures.
+- Pi Bun runtime build now copies required sidecar assets (`package.json`, `theme/`, `assets/`, `export-html/`, docs/examples, and `photon_rs_bg.wasm`) into `src/meridian/pi_runtime/bin/` so compiled `meridian-pi` can launch without missing-runtime-asset `ENOENT` failures.
 - `meridian-pi` now fails fast with clear errors when an override/packaged runtime binary exists but cannot execute; Node fallback remains only for missing packaged binaries.
 - `meridian-pi` Node fallback now requires source/dev runtime deps (`runner.mjs` plus `node_modules/@earendil-works/pi-coding-agent`). Installed artifacts without compiled binary now fail early with explicit build/override guidance instead of Node import errors.
 

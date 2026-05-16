@@ -33,7 +33,7 @@ def test_pi_adapter_registered_with_expected_phase12_contract() -> None:
             pi_launch_config_path="/tmp/pi-launch-config.json",
         )
     )
-    assert Path(overrides["PI_CODING_AGENT_DIR"]).parts[-2:] == ("pi", "agent")
+    assert Path(overrides["PI_CODING_AGENT_DIR"]).parts[-2:] == ("meridian-pi", "agent")
     assert overrides["MERIDIAN_PI_LAUNCH_CONFIG"] == "/tmp/pi-launch-config.json"
 
 
