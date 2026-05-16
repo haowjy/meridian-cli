@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-16
+
 ### Added
 - Candidate-aware harness routing: `--harness opencode --model gpt-5.5` accepted when Mars reports OpenCode as a runnable candidate.
 - `RunnablePath` type and `AliasEntry.harness_candidates`/`runnable_paths` fields carry Mars multi-path data through catalog resolution.
