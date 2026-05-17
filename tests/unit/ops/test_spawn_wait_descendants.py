@@ -59,11 +59,8 @@ def _make_record(
 
 
 def _patch_spawns(spawns: list[SpawnRecord]):
-    """Patch reconcile_spawns and list_spawns to return the given records."""
-    return patch(
-        "meridian.lib.state.reaper.reconcile_spawns",
-        return_value=spawns,
-    )
+    """Patch list_spawns to return the given records."""
+    return patch("meridian.lib.ops.spawn.api.spawn_store.list_spawns", return_value=spawns)
 
 
 def test_no_descendant_filter_returns_all_active(tmp_path: Path) -> None:
@@ -73,10 +70,7 @@ def test_no_descendant_filter_returns_all_active(tmp_path: Path) -> None:
         _make_record("p2", parent_id="p1"),
         _make_record("p3", parent_id="p1"),
     ]
-    with (
-        _patch_spawns(spawns),
-        patch("meridian.lib.ops.spawn.api.spawn_store.list_spawns", return_value=[]),
-    ):
+    with _patch_spawns(spawns):
         result = _discover_pending_spawns(tmp_path, tmp_path, "c1", exclude_spawn_id="p2")
     assert {r.id for r in result} == {"p1", "p3"}
 
@@ -91,10 +85,7 @@ def test_descendant_filter_excludes_ancestors_and_siblings(tmp_path: Path) -> No
         _make_record("p5", parent_id="p1"),  # sibling
         _make_record("p6", parent_id="p3"),  # grandchild of p2
     ]
-    with (
-        _patch_spawns(spawns),
-        patch("meridian.lib.ops.spawn.api.spawn_store.list_spawns", return_value=[]),
-    ):
+    with _patch_spawns(spawns):
         result = _discover_pending_spawns(
             tmp_path,
             tmp_path,
@@ -115,10 +106,7 @@ def test_descendant_filter_with_completed_children(tmp_path: Path) -> None:
         _make_record("p3", parent_id="p2", status="succeeded"),
         _make_record("p4", parent_id="p2", status="running"),
     ]
-    with (
-        _patch_spawns(spawns),
-        patch("meridian.lib.ops.spawn.api.spawn_store.list_spawns", return_value=[]),
-    ):
+    with _patch_spawns(spawns):
         result = _discover_pending_spawns(
             tmp_path,
             tmp_path,
@@ -136,10 +124,7 @@ def test_descendant_filter_no_children_returns_empty(tmp_path: Path) -> None:
         _make_record("p2", parent_id="p1"),
         _make_record("p5", parent_id="p1"),
     ]
-    with (
-        _patch_spawns(spawns),
-        patch("meridian.lib.ops.spawn.api.spawn_store.list_spawns", return_value=[]),
-    ):
+    with _patch_spawns(spawns):
         result = _discover_pending_spawns(
             tmp_path,
             tmp_path,
@@ -148,3 +133,19 @@ def test_descendant_filter_no_children_returns_empty(tmp_path: Path) -> None:
             only_descendants_of="p2",
         )
     assert result == []
+
+
+def test_discovery_does_not_reconcile_unrelated_spawns(tmp_path: Path) -> None:
+    """No-arg wait discovery must not run global stale-spawn cleanup."""
+    spawns = [
+        _make_record("p1", parent_id=None),
+        _make_record("p2", parent_id="p1"),
+    ]
+    with (
+        _patch_spawns(spawns),
+        patch("meridian.lib.state.reaper.reconcile_spawns") as reconcile_spawns,
+    ):
+        result = _discover_pending_spawns(tmp_path, tmp_path, "c1", exclude_spawn_id="p1")
+
+    assert [r.id for r in result] == ["p2"]
+    reconcile_spawns.assert_not_called()

@@ -1244,13 +1244,13 @@ def _discover_pending_spawns(
     ancestors, or the primary session. This prevents no-arg ``spawn wait``
     from blocking on the entire chat tree.
     """
-    from meridian.lib.state.reaper import reconcile_spawns
-
-    all_spawns = reconcile_spawns(
-        project_root,
-        runtime_root,
-        spawn_store.list_spawns(runtime_root),
-    )
+    _ = project_root
+    # Discovery for no-arg `spawn wait` is a routing step, not a lifecycle
+    # maintenance step.  Do not reconcile the whole project here: a subagent
+    # waiting for its own children must not trigger unrelated stale-spawn
+    # cleanup logs in the agent transcript.  The actual wait loop reconciles
+    # only the selected targets via read_spawn_row().
+    all_spawns = spawn_store.list_spawns(runtime_root)
 
     # Build descendant set if scoping to a parent
     descendant_ids: set[str] | None = None
