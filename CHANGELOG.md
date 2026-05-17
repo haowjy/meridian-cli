@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-05-17
+
 ### Fixed
 - Unnamed duplicate builtin hooks now synthesize stable identity names, so multiple `git-autosync` remotes no longer override each other.
 - Git subprocess seams strip inherited repo-scoped `GIT_*` environment before invoking git. Worktree operations and `git-autosync` no longer risk retargeting commands into the parent checkout when launched from a git hook or git-managed process.
