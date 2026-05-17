@@ -7,6 +7,8 @@ from typing import Final
 OUTPUT_FILENAME: Final[str] = "output.jsonl"
 HISTORY_FILENAME: Final[str] = "history.jsonl"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
+PI_WRAPPER_RUNTIME_META_FILENAME: Final[str] = "pi_wrapper_runtime_meta.json"
+PI_WRAPPER_METADATA_PATH_ENV: Final[str] = "MERIDIAN_PI_WRAPPER_METADATA_PATH"
 STDERR_FILENAME: Final[str] = "stderr.log"
 TOKENS_FILENAME: Final[str] = "tokens.json"
 REPORT_FILENAME: Final[str] = "report.md"
@@ -51,7 +53,7 @@ BASE_COMMAND_PI_STREAMING: Final[tuple[str, ...]] = ("meridian-pi", "--mode", "r
 PRIMARY_BASE_COMMAND_CLAUDE: Final[tuple[str, ...]] = ("claude",)
 PRIMARY_BASE_COMMAND_CODEX: Final[tuple[str, ...]] = ("codex",)
 PRIMARY_BASE_COMMAND_OPENCODE: Final[tuple[str, ...]] = ("opencode",)
-PRIMARY_BASE_COMMAND_PI: Final[tuple[str, ...]] = ("meridian-pi", "--mode", "rpc")
+PRIMARY_BASE_COMMAND_PI: Final[tuple[str, ...]] = ("meridian-pi",)
 
 __all__ = [
     "BASE_COMMAND_CLAUDE_STREAMING",
@@ -66,6 +68,8 @@ __all__ = [
     "DEFAULT_INFRA_EXIT_CODE",
     "HISTORY_FILENAME",
     "OUTPUT_FILENAME",
+    "PI_WRAPPER_METADATA_PATH_ENV",
+    "PI_WRAPPER_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",
     "PRIMARY_BASE_COMMAND_CLAUDE",
     "PRIMARY_BASE_COMMAND_CODEX",

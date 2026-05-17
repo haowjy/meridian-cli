@@ -27,13 +27,18 @@ from meridian.lib.harness.adapter import (
 from meridian.lib.harness.bundle import (
     HarnessBundle,
     HarnessProjectionPorts,
-    project_subprocess_spec,
     register_harness_bundle,
 )
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
-from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
+from meridian.lib.harness.extractors.pi import (
+    PI_EXTRACTOR,
+    detect_pi_session_id_from_session_files,
+)
 from meridian.lib.harness.projections.pi_extension_projection import (
     resolve_pi_extension_entrypoints,
+)
+from meridian.lib.harness.projections.project_pi_native_tui import (
+    project_pi_native_tui_spec_to_cli_args,
 )
 from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
@@ -53,8 +58,18 @@ from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.user_paths import get_user_home
 
 
+def _project_pi_subprocess_cli_args(
+    spec: ResolvedLaunchSpec,
+    *,
+    base_command: tuple[str, ...],
+) -> list[str]:
+    if spec.interactive:
+        return project_pi_native_tui_spec_to_cli_args(spec, base_command=base_command)
+    return project_pi_spec_to_cli_args(spec, base_command=base_command)
+
+
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
-    """RPC harness implementation for ``meridian-pi``."""
+    """Pi harness implementation for ``meridian-pi``."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
@@ -103,7 +118,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 mode=ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN,
             ),
             extraction=ExtractionContract(
-                session_observation_order=("artifacts", "current_session"),
+                session_observation_order=("artifacts", "primary_detection", "current_session"),
             ),
             approval=ApprovalContract(
                 subprocess_permission_flags_projected_by_shared_policy=False,
@@ -156,7 +171,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            pi_extension_entrypoints=resolve_pi_extension_entrypoints(),
+            pi_extension_entrypoints=(
+                () if run.interactive else resolve_pi_extension_entrypoints()
+            ),
             agent_name=None,
             skills=(),
         )
@@ -164,7 +181,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
-        return project_subprocess_spec(self.id, spec, base_command=base_command)
+        return _project_pi_subprocess_cli_args(spec, base_command=base_command)
 
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
@@ -216,7 +233,61 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         started_at_local_iso: str | None,
         expected_session_id: str | None = None,
     ) -> str | None:
-        _ = project_root, started_at_epoch, started_at_local_iso, expected_session_id
+        _ = started_at_local_iso
+        return detect_pi_session_id_from_session_files(
+            launch_env={
+                "PI_CODING_AGENT_SESSION_DIR": str(
+                    get_user_home() / "meridian-pi" / "sessions"
+                ),
+            },
+            child_cwd=project_root,
+            started_at_epoch=started_at_epoch,
+            expected_session_id=expected_session_id,
+        )
+
+    def observe_session_id(
+        self,
+        *,
+        artifacts: ArtifactStore,
+        spawn_id: SpawnId | None = None,
+        current_session_id: str | None = None,
+        connection_session_id: str | None = None,
+        project_root: Path | None = None,
+        started_at_epoch: float | None = None,
+        started_at_local_iso: str | None = None,
+        expected_session_id: str | None = None,
+    ) -> str | None:
+        def _norm(value: str | None) -> str | None:
+            if not value:
+                return None
+            stripped = value.strip()
+            return stripped or None
+
+        live = _norm(connection_session_id)
+        if live:
+            return live
+
+        if spawn_id is not None:
+            extracted = _norm(self.extract_session_id(artifacts, spawn_id))
+            if extracted:
+                return extracted
+
+        if project_root is not None and started_at_epoch is not None:
+            detected = _norm(
+                self.detect_primary_session_id(
+                    project_root=project_root,
+                    started_at_epoch=started_at_epoch,
+                    started_at_local_iso=started_at_local_iso,
+                    expected_session_id=expected_session_id,
+                )
+            )
+            if detected:
+                return detected
+
+        current = _norm(current_session_id)
+        if current:
+            return current
+
         return None
 
 
@@ -228,7 +299,7 @@ register_harness_bundle(
         extractor=PI_EXTRACTOR,
         connections={TransportId.STREAMING: PiRpcConnection},
         projections=HarnessProjectionPorts(
-            subprocess_cli_args=project_pi_spec_to_cli_args,
+            subprocess_cli_args=_project_pi_subprocess_cli_args,
         ),
     )
 )

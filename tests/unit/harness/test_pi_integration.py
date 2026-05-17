@@ -54,6 +54,11 @@ def test_pi_adapter_registered_with_expected_rpc_contract() -> None:
 
     assert contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
     assert contract.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK
+    assert contract.extraction.session_observation_order == (
+        "artifacts",
+        "primary_detection",
+        "current_session",
+    )
     assert contract.capabilities.supports_session_fork is True
     assert contract.capabilities.supports_primary_launch is True
     assert contract.capabilities.terminal_surface_modes == (TerminalSurfaceMode.PURE_STDIO,)
@@ -92,7 +97,7 @@ def test_pi_launch_env_injects_session_role(interactive: bool, expected_role: st
     assert env["MERIDIAN_PI_SESSION_ROLE"] == expected_role
 
 
-def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_primary_runs(
+def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_native_primary_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -107,13 +112,31 @@ def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_primary_runs(
     )
     assert "--mode" in spawned_command
     assert spawned_command[spawned_command.index("--mode") + 1] == "rpc"
+    assert "--no-extensions" in spawned_command
+    assert "--no-skills" in spawned_command
+    assert "--no-context-files" in spawned_command
+    assert "--no-prompt-templates" in spawned_command
+    spawned_extensions = [
+        spawned_command[index + 1]
+        for index, token in enumerate(spawned_command)
+        if token == "-e"
+    ]
+    assert spawned_extensions == [
+        str(tmp_path / "agent" / "extensions" / "managed-bash" / "index.js"),
+        str(tmp_path / "agent" / "extensions" / "meridian-lifecycle" / "index.js"),
+    ]
 
     primary_command = adapter.build_command(
         SpawnParams(prompt="hello from primary", interactive=True),
         perms,
     )
-    assert "--mode" in primary_command
-    assert primary_command[primary_command.index("--mode") + 1] == "rpc"
+    assert "--mode" not in primary_command
+    assert "--no-extensions" not in primary_command
+    assert "--no-skills" not in primary_command
+    assert "--no-context-files" not in primary_command
+    assert "--no-prompt-templates" not in primary_command
+    assert "-e" not in primary_command
+    assert "--extension" not in primary_command
 
     primary_env = build_harness_env_overrides(
         adapter=adapter,

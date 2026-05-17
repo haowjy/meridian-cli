@@ -35,11 +35,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi runtime diagnostics now emit structured `meridian.pi.runtime.selected`/`meridian.pi.runtime.error` with runtime kind/path/version, session_dir, and auth_policy.
 - Chat snapshots now persist effective harness-specific model; chat and primary-launch surfaces now gate with primary-launch capability.
 - Pi stop seam now uses typed `StopResult` plus progress events so quiescent-stop escalation is visible in stream/reporting.
-- Pi primary now runs through Meridian-managed RPC attach instead of a fail-fast guardrail: human input is sent as RPC prompt messages, Pi events are rendered by Meridian, and primary stays open at quiescence until explicit exit/cancel.
+- Pi primary launch now routes through native Pi TUI process wrapping (no Pi RPC input loop, no `--mode rpc` for primary), while spawned Pi sessions remain RPC-managed with quiescence cleanup semantics.
 - Spawned Pi semantic completion now records success at event-ordered quiescence with micro-drain only (no fixed idle grace) and unblocks `spawn wait` before cleanup.
 - Pi cleanup now runs asynchronously after semantic completion; cleanup status/phases (`cleanup_running|cleanup_completed|cleanup_escalated|cleanup_failed`) are emitted separately from terminal spawn status.
 - Pending continuation tracking now keeps queued/delivered notifications pending until correlated follow-up terminal completion, with timeout failure `pi_notification_timeout:id=...:phase=...:elapsed=...:timeout=...`.
-- Pi launch/policy/integration tests replaced stale primary guardrail expectations with managed primary attach behavior and updated spawned-quiescence assertions for async cleanup + no fixed idle grace.
+- Pi launch/policy/integration tests now assert primary-native Pi command projection and runner routing, while keeping spawned RPC/quiescence assertions intact.
 
 ## [0.1.13] - 2026-05-19
 ### Changed

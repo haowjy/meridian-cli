@@ -12,6 +12,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
+from meridian.lib.launch.constants import PI_WRAPPER_METADATA_PATH_ENV
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.user_paths import get_user_home
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,7 @@ _WRAPPER_AGENT_DIR_ENV = "MERIDIAN_PI_AGENT_DIR"
 _WRAPPER_BINARY_ENV = "MERIDIAN_PI_BINARY"
 _WRAPPER_ALLOW_BUNDLED_FALLBACK_ENV = "MERIDIAN_PI_ALLOW_BUNDLED_FALLBACK"
 _WRAPPER_BUNDLED_AUTH_CONFIRMED_ENV = "MERIDIAN_PI_BUNDLED_AUTH_CONFIRMED"
+_PI_SESSION_ROLE_ENV = "MERIDIAN_PI_SESSION_ROLE"
 _PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 _PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
 _NODE_BIN_ENV = "MERIDIAN_PI_NODE_BIN"
@@ -31,6 +34,7 @@ _SESSION_DIR_FLAG = "--session-dir"
 _WRAPPER_RUNTIME_SCHEMA_VERSION = 1
 _WRAPPER_RUNTIME_SELECTED_EVENT_TYPE = "meridian.pi.runtime.selected"
 _WRAPPER_RUNTIME_ERROR_EVENT_TYPE = "meridian.pi.runtime.error"
+_PRIMARY_SESSION_ROLE = "primary"
 _REQUIRED_HELP_SURFACE_TOKEN_GROUPS: tuple[tuple[str, ...], ...] = (
     ("--mode",),
     ("rpc",),
@@ -202,27 +206,6 @@ def _emit_wrapper_event(payload: Mapping[str, object]) -> None:
         logger.debug("Failed to emit meridian-pi wrapper event", exc_info=True)
 
 
-def _emit_runtime_selected_event(
-    *,
-    runtime_kind: str,
-    command: Sequence[str],
-    session_dir: Path,
-    auth_policy: str,
-    runtime_version: str,
-) -> None:
-    _emit_wrapper_event(
-        {
-            "type": _WRAPPER_RUNTIME_SELECTED_EVENT_TYPE,
-            "schema_version": _WRAPPER_RUNTIME_SCHEMA_VERSION,
-            "runtime_kind": runtime_kind,
-            "runtime_path": command[0] if command else "",
-            "runtime_version": runtime_version,
-            "session_dir": str(session_dir),
-            "auth_policy": auth_policy,
-        }
-    )
-
-
 def _emit_runtime_error_event(
     *,
     error: str,
@@ -245,6 +228,47 @@ def _emit_runtime_error_event(
 
 def _env_truthy(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _runtime_selected_payload(
+    *,
+    runtime_kind: str,
+    command: Sequence[str],
+    session_dir: Path,
+    auth_policy: str,
+    runtime_version: str,
+) -> dict[str, object]:
+    return {
+        "type": _WRAPPER_RUNTIME_SELECTED_EVENT_TYPE,
+        "schema_version": _WRAPPER_RUNTIME_SCHEMA_VERSION,
+        "runtime_kind": runtime_kind,
+        "runtime_path": command[0] if command else "",
+        "runtime_version": runtime_version,
+        "session_dir": str(session_dir),
+        "auth_policy": auth_policy,
+    }
+
+
+def _persist_wrapper_runtime_metadata(
+    env: Mapping[str, str],
+    payload: Mapping[str, object],
+) -> None:
+    metadata_path_value = env.get(PI_WRAPPER_METADATA_PATH_ENV, "").strip()
+    if not metadata_path_value:
+        return
+
+    metadata_path = Path(metadata_path_value).expanduser()
+    try:
+        atomic_write_text(
+            metadata_path,
+            json.dumps(payload, separators=(",", ":")) + "\n",
+        )
+    except OSError:
+        logger.debug("Failed to persist meridian-pi wrapper runtime metadata", exc_info=True)
+
+
+def _is_primary_session_role(env: Mapping[str, str]) -> bool:
+    return env.get(_PI_SESSION_ROLE_ENV, "").strip().lower() == _PRIMARY_SESSION_ROLE
 
 
 def _has_session_dir_flag(args: Sequence[str]) -> bool:
@@ -463,10 +487,13 @@ def _resolve_runtime_command(
 def main() -> None:
     """Launch Pi with Meridian runtime/auth/session resolution policy."""
 
+    emit_wrapper_events = not _is_primary_session_role(os.environ)
+
     try:
         passthrough_args, cli_agent_dir = _strip_agent_dir_flag(sys.argv[1:])
     except ValueError as error:
-        _emit_runtime_error_event(error=str(error), phase="preflight")
+        if emit_wrapper_events:
+            _emit_runtime_error_event(error=str(error), phase="preflight")
         _print_error(str(error))
         raise SystemExit(2) from error
 
@@ -478,7 +505,8 @@ def main() -> None:
         if agent_dir is not None:
             _ensure_agent_dir_layout(agent_dir)
     except OSError as error:
-        _emit_runtime_error_event(error=str(error), phase="preflight")
+        if emit_wrapper_events:
+            _emit_runtime_error_event(error=str(error), phase="preflight")
         if agent_dir is not None:
             _print_error(f"failed to create agent directory '{agent_dir}': {error}")
         else:
@@ -494,7 +522,8 @@ def main() -> None:
             child_env=child_env,
         )
     except RuntimeError as error:
-        _emit_runtime_error_event(error=str(error), phase="preflight")
+        if emit_wrapper_events:
+            _emit_runtime_error_event(error=str(error), phase="preflight")
         _print_error(str(error))
         raise SystemExit(1) from error
 
@@ -504,20 +533,24 @@ def main() -> None:
         else "inherit-runtime-default-auth-config"
     )
     runtime_version = _runtime_version(command, child_env) or "unknown"
-    _log_runtime_diagnostics(
-        runtime_kind=command_kind,
-        command=command,
-        child_env=child_env,
-        agent_dir_policy=agent_dir_policy,
-        runtime_version=runtime_version,
-    )
-    _emit_runtime_selected_event(
+    runtime_selected_payload = _runtime_selected_payload(
         runtime_kind=command_kind,
         command=command,
         session_dir=session_dir,
         auth_policy=agent_dir_policy,
         runtime_version=runtime_version,
     )
+    if emit_wrapper_events:
+        _log_runtime_diagnostics(
+            runtime_kind=command_kind,
+            command=command,
+            child_env=child_env,
+            agent_dir_policy=agent_dir_policy,
+            runtime_version=runtime_version,
+        )
+        _emit_wrapper_event(runtime_selected_payload)
+    else:
+        _persist_wrapper_runtime_metadata(child_env, runtime_selected_payload)
 
     try:
         completed = subprocess.run(command, env=child_env, check=False)
@@ -527,12 +560,13 @@ def main() -> None:
             if command_kind == "node"
             else f"Pi runtime binary not found: {command[0]}"
         )
-        _emit_runtime_error_event(
-            error=runtime_error,
-            phase="exec",
-            runtime_kind=command_kind,
-            runtime_path=command[0],
-        )
+        if emit_wrapper_events:
+            _emit_runtime_error_event(
+                error=runtime_error,
+                phase="exec",
+                runtime_kind=command_kind,
+                runtime_path=command[0],
+            )
         if command_kind == "node":
             _print_error(runtime_error)
         else:
@@ -544,12 +578,13 @@ def main() -> None:
             if command_kind == "node"
             else f"failed to execute Pi runtime binary '{command[0]}': {error}"
         )
-        _emit_runtime_error_event(
-            error=runtime_error,
-            phase="exec",
-            runtime_kind=command_kind,
-            runtime_path=command[0],
-        )
+        if emit_wrapper_events:
+            _emit_runtime_error_event(
+                error=runtime_error,
+                phase="exec",
+                runtime_kind=command_kind,
+                runtime_path=command[0],
+            )
         if command_kind == "node":
             _print_error(runtime_error)
         else:

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-import sys
-import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -26,6 +25,7 @@ from meridian.lib.core.spawn_lifecycle import (
 from meridian.lib.core.spawn_service import SpawnApplicationService
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import (
+    BootstrapMode,
     ForkMaterializationMode,
     HarnessContract,
     HarnessPrelaunchState,
@@ -33,30 +33,29 @@ from meridian.lib.harness.adapter import (
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
-    ConnectionConfig,
     HarnessConnection,
     HarnessEvent,
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
-    StopResult,
 )
-from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.registry import HarnessRegistry
-from meridian.lib.harness.semantics import terminal_outcome
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
+    PI_WRAPPER_METADATA_PATH_ENV,
+    PI_WRAPPER_RUNTIME_META_FILENAME,
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
     start_session,
@@ -112,6 +111,83 @@ class ProcessOutcome(BaseModel):
     primary_started_epoch: float
     primary_started_local_iso: str | None
     resolved_harness_session_id: str
+
+
+def _write_native_primary_metadata(
+    *,
+    spawn_dir: Path,
+    command: tuple[str, ...],
+    launch_cwd: Path,
+    launcher_pid: int,
+    tui_pid: int | None,
+    activity: ActivityState | None,
+    started_at_epoch: float | None,
+    ended_at_epoch: float | None,
+    exit_code: int | None,
+    harness_session_id: str | None,
+    wrapper_metadata_path: Path | None,
+) -> None:
+    """Best-effort metadata projection for native/black-box primary launches."""
+
+    wrapper_runtime = _read_pi_wrapper_runtime_metadata(wrapper_metadata_path)
+
+    try:
+        write_primary_metadata(
+            spawn_dir,
+            PrimaryMetadata(
+                managed_backend=False,
+                launcher_pid=launcher_pid,
+                backend_pid=None,
+                tui_pid=tui_pid,
+                backend_port=None,
+                activity=activity,
+                harness_session_id=(harness_session_id or "").strip() or None,
+                command=command,
+                launch_cwd=str(launch_cwd),
+                started_at_epoch=started_at_epoch,
+                ended_at_epoch=ended_at_epoch,
+                exit_code=exit_code,
+                runtime_kind=wrapper_runtime.get("runtime_kind"),
+                runtime_path=wrapper_runtime.get("runtime_path"),
+                runtime_version=wrapper_runtime.get("runtime_version"),
+                session_dir=wrapper_runtime.get("session_dir"),
+                auth_policy=wrapper_runtime.get("auth_policy"),
+            ),
+        )
+    except Exception:
+        logger.debug("Failed to write native primary metadata", exc_info=True)
+
+
+def _read_pi_wrapper_runtime_metadata(path: Path | None) -> dict[str, str | None]:
+    """Best-effort wrapper metadata sidecar read for native Pi primary launches."""
+
+    if path is None or not path.is_file():
+        return {}
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    payload = cast("dict[str, object]", payload)
+
+    def _normalized_text(field: str) -> str | None:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        return normalized
+
+    return {
+        "runtime_kind": _normalized_text("runtime_kind"),
+        "runtime_path": _normalized_text("runtime_path"),
+        "runtime_version": _normalized_text("runtime_version"),
+        "session_dir": _normalized_text("session_dir"),
+        "auth_policy": _normalized_text("auth_policy"),
+    }
 
 
 RunPrimaryProcessWithCapture = Callable[
@@ -314,189 +390,6 @@ def _persist_blackbox_output_artifact(
         )
 
 
-def _render_pi_primary_event(
-    event: HarnessEvent,
-    *,
-    stdout_write: Callable[[str], None],
-) -> None:
-    if event.event_type == "message_update":
-        assistant_update_raw = event.payload.get("assistantMessageEvent")
-        if isinstance(assistant_update_raw, dict):
-            assistant_update = cast("dict[str, object]", assistant_update_raw)
-            update_type = assistant_update.get("type")
-            if update_type == "text_delta":
-                delta = assistant_update.get("delta")
-                if isinstance(delta, str) and delta:
-                    stdout_write(delta)
-                return
-
-    if event.event_type == "agent_end":
-        stdout_write("\n")
-        return
-
-    if event.event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
-        tool_name = event.payload.get("name")
-        if isinstance(tool_name, str) and tool_name.strip():
-            stdout_write(f"\n[tool] {tool_name.strip()}\n")
-        return
-
-    if event.event_type == "error/connectionClosed":
-        message = event.payload.get("message")
-        detail = message if isinstance(message, str) and message.strip() else "connection closed"
-        stdout_write(f"\nerror: {detail}\n")
-
-
-async def _run_pi_primary_managed_session(
-    *,
-    primary_spawn_id: SpawnId,
-    control_root: Path,
-    task_cwd: Path | None,
-    child_env: dict[str, str],
-    launch_spec: ResolvedLaunchSpec,
-    on_running: Callable[[int], None] | None,
-) -> tuple[int, str | None]:
-    connection = PiRpcConnection()
-    config = ConnectionConfig(
-        spawn_id=primary_spawn_id,
-        harness_id=HarnessId.PI,
-        prompt=launch_spec.prompt,
-        control_root=control_root,
-        env_overrides=child_env,
-        task_cwd=task_cwd,
-        system=launch_spec.appended_system_prompt,
-        pi_session_role="primary",
-    )
-    await connection.start(config, launch_spec)
-    pid = connection.subprocess_pid
-    if pid is not None and on_running is not None:
-        on_running(pid)
-
-    exit_code = 0
-    stop_requested = asyncio.Event()
-    explicit_user_exit = False
-    loop = asyncio.get_running_loop()
-    input_queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
-    input_reader_stop = threading.Event()
-
-    def _stdout_write(text: str) -> None:
-        print(text, end="", flush=True)
-
-    def _emit_shutdown_warning(detail: str) -> None:
-        message = f"warning: pi primary cleanup {detail}"
-        print(message, file=sys.stderr, flush=True)
-        logger.warning("Pi primary managed attach cleanup warning: %s", detail)
-
-    def _input_reader() -> None:
-        while not input_reader_stop.is_set():
-            try:
-                line = input("> ")
-            except EOFError:
-                loop.call_soon_threadsafe(input_queue.put_nowait, ("eof", None))
-                return
-            except Exception as exc:
-                loop.call_soon_threadsafe(
-                    input_queue.put_nowait,
-                    ("error", str(exc)),
-                )
-                return
-            loop.call_soon_threadsafe(input_queue.put_nowait, ("line", line))
-
-    async def _event_pump() -> None:
-        nonlocal exit_code
-        async for event in connection.events():
-            _render_pi_primary_event(event, stdout_write=_stdout_write)
-            outcome = terminal_outcome(event)
-            if outcome is None:
-                continue
-            if outcome.status in {"failed", "cancelled"}:
-                exit_code = outcome.exit_code
-                stop_requested.set()
-                return
-        stop_requested.set()
-
-    async def _input_pump() -> None:
-        nonlocal explicit_user_exit
-        while not stop_requested.is_set():
-            try:
-                kind, payload = await asyncio.wait_for(input_queue.get(), timeout=0.1)
-            except TimeoutError:
-                continue
-            if kind == "eof":
-                explicit_user_exit = True
-                stop_requested.set()
-                return
-            if kind == "error":
-                stop_requested.set()
-                raise RuntimeError(payload or "input reader failed")
-            if kind != "line":
-                continue
-            line = payload or ""
-            command = line.strip().lower()
-            if command in {"exit", "quit", "/exit", "/quit"}:
-                explicit_user_exit = True
-                stop_requested.set()
-                return
-            if line.strip():
-                try:
-                    await connection.send_user_message(line)
-                except Exception:
-                    stop_requested.set()
-                    raise
-
-    input_reader_thread = threading.Thread(
-        target=_input_reader,
-        name=f"pi-primary-input-{primary_spawn_id}",
-        daemon=True,
-    )
-    input_reader_thread.start()
-    event_task = asyncio.create_task(_event_pump())
-    input_task = asyncio.create_task(_input_pump())
-
-    try:
-        await stop_requested.wait()
-        if explicit_user_exit and exit_code == 0:
-            return 0, connection.session_id
-        return exit_code, connection.session_id
-    finally:
-        input_reader_stop.set()
-        for task in (input_task, event_task):
-            if not task.done():
-                task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-        try:
-            stop_result: StopResult = await connection.stop(reason="primary_exit")
-            if stop_result.escalated:
-                _emit_shutdown_warning("escalated during primary_exit")
-        except Exception as exc:
-            _emit_shutdown_warning(f"failed during primary_exit: {exc}")
-
-
-def run_pi_primary_managed_session(
-    *,
-    primary_spawn_id: SpawnId,
-    control_root: Path,
-    task_cwd: Path | None,
-    child_env: dict[str, str],
-    launch_spec: ResolvedLaunchSpec,
-    on_running: Callable[[int], None] | None,
-) -> tuple[int, str | None]:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(
-            _run_pi_primary_managed_session(
-                primary_spawn_id=primary_spawn_id,
-                control_root=control_root,
-                task_cwd=task_cwd,
-                child_env=child_env,
-                launch_spec=launch_spec,
-                on_running=on_running,
-            )
-        )
-    raise PrimaryAttachError("Pi primary managed attach cannot run inside an active event loop")
-
-
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
@@ -515,16 +408,6 @@ def _execute_primary_process(
     on_running: Callable[[int], None],
 ) -> tuple[int, str | None]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
-
-    if harness_id is HarnessId.PI:
-        return run_pi_primary_managed_session(
-            primary_spawn_id=primary_spawn_id,
-            control_root=control_root,
-            task_cwd=task_cwd,
-            child_env=child_env,
-            launch_spec=launch_spec,
-            on_running=on_running,
-        )
 
     use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
@@ -586,6 +469,7 @@ def _finalize_lifecycle_and_observe_session(
     harness_adapter: Any,
     artifacts: LocalStore,
     project_root: Path,
+    launch_child_cwd: Path,
     model_id: str | None,
     runtime_root: Path,
     primary_started: float,
@@ -642,9 +526,10 @@ def _finalize_lifecycle_and_observe_session(
                 artifacts=artifacts,
                 spawn_id=primary_spawn_id,
                 current_session_id=resolved_harness_session_id,
-                project_root=project_root,
+                project_root=launch_child_cwd,
                 started_at_epoch=primary_started_epoch,
                 started_at_local_iso=primary_started_local_iso,
+                expected_session_id=initial_persisted_harness_session_id,
             )
         if (
             observed_harness_session_id is not None
@@ -902,6 +787,7 @@ def run_harness_process(
     primary_started = 0.0
     primary_started_epoch = 0.0
     primary_started_local_iso: str | None = None
+    launch_child_cwd = control_root
     prelaunch_state = HarnessPrelaunchState()
     artifacts = LocalStore(root_dir=runtime_root / "artifacts")
     spawn_service = build_spawn_application_service_from_roots(config_root, runtime_root)
@@ -911,6 +797,9 @@ def run_harness_process(
         preview_request.session.continue_chat_id if session_mode == SessionMode.RESUME else None
     )
     exit_code = 2
+    native_primary_tui_pid: int | None = None
+    write_native_primary_metadata = False
+    pi_wrapper_runtime_meta_path: Path | None = None
     try:
         with session_scope(
             runtime_root=runtime_root,
@@ -936,6 +825,7 @@ def run_harness_process(
                 update_session_work_id_fn=update_session_work_id_fn,
             )
             try:
+                write_native_primary_metadata = False
                 should_fork = (
                     session_mode == SessionMode.FORK
                     and harness_adapter.contract.bootstrap.fork_materialization
@@ -1048,6 +938,7 @@ def run_harness_process(
                 resolved_harness_session_id = (
                     runtime_context.binding.effective_harness_session_id or ""
                 )
+                launch_child_cwd = runtime_context.binding.child_cwd
                 child_env = dict(runtime_context.binding.environment.final_env)
                 if managed.chat_id:
                     child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
@@ -1106,12 +997,49 @@ def run_harness_process(
                 if prelaunch_state.env_overrides:
                     child_env.update(prelaunch_state.env_overrides)
 
+                write_native_primary_metadata = (
+                    harness_id is HarnessId.PI
+                    and harness_adapter.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
+                )
+                if write_native_primary_metadata:
+                    pi_wrapper_runtime_meta_path = log_dir / PI_WRAPPER_RUNTIME_META_FILENAME
+                    child_env[PI_WRAPPER_METADATA_PATH_ENV] = str(pi_wrapper_runtime_meta_path)
+                    _write_native_primary_metadata(
+                        spawn_dir=log_dir,
+                        command=command,
+                        launch_cwd=control_root,
+                        launcher_pid=os.getpid(),
+                        tui_pid=None,
+                        activity="starting",
+                        started_at_epoch=primary_started_epoch,
+                        ended_at_epoch=None,
+                        exit_code=None,
+                        harness_session_id=resolved_harness_session_id,
+                        wrapper_metadata_path=pi_wrapper_runtime_meta_path,
+                    )
+
                 def _record_primary_started(child_pid: int) -> None:
+                    nonlocal native_primary_tui_pid
+                    native_primary_tui_pid = child_pid
                     lifecycle_service.mark_running(
                         primary_spawn_id,
                         launch_mode=FOREGROUND_LAUNCH_MODE,
                         worker_pid=child_pid,
                     )
+                    if write_native_primary_metadata:
+                        _write_native_primary_metadata(
+                            spawn_dir=log_dir,
+                            command=command,
+                            launch_cwd=control_root,
+                            launcher_pid=os.getpid(),
+                            tui_pid=child_pid,
+                            activity="idle",
+                            started_at_epoch=primary_started_epoch,
+                            ended_at_epoch=None,
+                            exit_code=None,
+                            harness_session_id=resolved_harness_session_id,
+                            wrapper_metadata_path=pi_wrapper_runtime_meta_path,
+                        )
 
                 (
                     exit_code,
@@ -1156,6 +1084,7 @@ def run_harness_process(
                     harness_adapter=harness_adapter,
                     artifacts=artifacts,
                     project_root=control_root,
+                    launch_child_cwd=launch_child_cwd,
                     model_id=session_metadata.model,
                     runtime_root=runtime_root,
                     primary_started=primary_started,
@@ -1164,6 +1093,22 @@ def run_harness_process(
                     managed=managed,
                     spawn_service=spawn_service,
                 )
+                if write_native_primary_metadata and primary_spawn_id is not None:
+                    _write_native_primary_metadata(
+                        spawn_dir=resolve_spawn_log_dir(config_root, primary_spawn_id),
+                        command=command,
+                        launch_cwd=control_root,
+                        launcher_pid=os.getpid(),
+                        tui_pid=native_primary_tui_pid,
+                        activity="finalizing",
+                        started_at_epoch=(
+                            primary_started_epoch if primary_started_epoch > 0 else None
+                        ),
+                        ended_at_epoch=time.time(),
+                        exit_code=exit_code,
+                        harness_session_id=resolved_harness_session_id,
+                        wrapper_metadata_path=pi_wrapper_runtime_meta_path,
+                    )
                 if primary_spawn_id is not None:
                     try:
                         harness_adapter.cleanup_prelaunch(

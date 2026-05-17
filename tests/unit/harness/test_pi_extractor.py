@@ -1,14 +1,22 @@
+# qa-validated: pi-rpc-quiescence
 """Pi extractor tests."""
 
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.extractors import pi as pi_extractor_module
-from meridian.lib.harness.extractors.pi import PI_EXTRACTOR, _encode_cwd_for_session_dir
+from meridian.lib.harness.extractors.pi import (
+    PI_EXTRACTOR,
+    _encode_cwd_for_session_dir,
+    detect_pi_session_id_from_session_files,
+)
+from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
@@ -238,3 +246,62 @@ def test_pi_extractor_uses_meridian_pi_sessions_default_root(
     )
 
     assert detected == "ses-from-default-root"
+
+
+def test_detect_pi_session_id_from_session_files_prefers_new_recent_session_for_fork(
+    tmp_path: Path,
+) -> None:
+    child_cwd = tmp_path / "repo"
+    child_cwd.mkdir()
+    session_root = tmp_path / "sessions"
+    session_dir = session_root / _encode_cwd_for_session_dir(child_cwd)
+    session_dir.mkdir(parents=True)
+
+    stale_path = session_dir / "stale.jsonl"
+    stale_path.write_text('{"type":"session","id":"ses-source"}\n', encoding="utf-8")
+    stale_time = time.time() - 120.0
+    os.utime(stale_path, (stale_time, stale_time))
+
+    started_at = time.time()
+    fresh_path = session_dir / "fresh.jsonl"
+    fresh_path.write_text('{"type":"session","id":"ses-child"}\n', encoding="utf-8")
+
+    detected = detect_pi_session_id_from_session_files(
+        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
+        child_cwd=child_cwd,
+        started_at_epoch=started_at,
+        expected_session_id="ses-source",
+    )
+
+    assert detected == "ses-child"
+
+
+def test_pi_adapter_observe_session_id_prefers_primary_detection_before_current_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    child_cwd = tmp_path / "repo"
+    child_cwd.mkdir()
+    user_home = tmp_path / "user-home"
+    session_root = user_home / "meridian-pi" / "sessions"
+    session_dir = session_root / _encode_cwd_for_session_dir(child_cwd)
+    session_dir.mkdir(parents=True)
+
+    (session_dir / "fork-child.jsonl").write_text(
+        '{"type":"session","id":"ses-primary-child"}\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("meridian.lib.harness.pi.get_user_home", lambda: user_home)
+    adapter = PiAdapter()
+    observed = adapter.observe_session_id(
+        artifacts=_MemoryArtifactStore({}),
+        spawn_id=SpawnId("p-pi-primary-fork"),
+        current_session_id="ses-source",
+        project_root=child_cwd,
+        started_at_epoch=time.time() - 1.0,
+        started_at_local_iso=None,
+        expected_session_id="ses-source",
+    )
+
+    assert observed == "ses-primary-child"

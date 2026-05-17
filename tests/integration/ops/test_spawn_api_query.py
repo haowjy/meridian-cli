@@ -295,9 +295,13 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
     "latest_phase",
     [
         "waiting_for_first_pi_event_after_prompt",
-        "waiting_for_notification_completion",
-        "quiescent_stop_escalating",
-        "quiescent_stop_escalated",
+        "waiting_for_continuation_completion",
+        "pi_notification_timeout",
+        "micro_drain_after_agent_end",
+        "semantic_completion_recorded",
+        "cleanup_stop_sent",
+        "cleanup_stop_escalated",
+        "cleanup_failed",
     ],
 )
 def test_spawn_show_includes_latest_pi_lifecycle_phase(
@@ -375,7 +379,7 @@ def test_spawn_show_includes_pi_cleanup_telemetry_and_preserves_escalation(tmp_p
                     {
                         "seq": 0,
                         "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {"phase": "cleanup_running", "cleanup_status": "running"},
+                        "payload": {"phase": "cleanup_stop_sent", "cleanup_status": "running"},
                     }
                 ),
                 json.dumps(
@@ -383,17 +387,10 @@ def test_spawn_show_includes_pi_cleanup_telemetry_and_preserves_escalation(tmp_p
                         "seq": 1,
                         "event_type": "meridian.pi.lifecycle.phase",
                         "payload": {
-                            "phase": "cleanup_escalated",
+                            "phase": "cleanup_stop_escalated",
                             "cleanup_status": "escalated",
                             "reason": "abort_grace_expired",
                         },
-                    }
-                ),
-                json.dumps(
-                    {
-                        "seq": 2,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {"phase": "cleanup_completed", "cleanup_status": "completed"},
                     }
                 ),
             ]
@@ -406,17 +403,17 @@ def test_spawn_show_includes_pi_cleanup_telemetry_and_preserves_escalation(tmp_p
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
     )
     assert detail.pi_cleanup_status == "escalated"
-    assert detail.pi_cleanup_phase == "cleanup_completed"
+    assert detail.pi_cleanup_phase == "cleanup_stop_escalated"
     assert detail.pi_cleanup_reason == "abort_grace_expired"
 
     rendered = detail.format_text()
     assert "Pi cleanup status: escalated" in rendered
-    assert "Pi cleanup phase: cleanup_completed" in rendered
+    assert "Pi cleanup phase: cleanup_stop_escalated" in rendered
     assert "Pi cleanup reason: abort_grace_expired" in rendered
 
     wire = detail.to_cli_wire()
     assert wire["pi_cleanup_status"] == "escalated"
-    assert wire["pi_cleanup_phase"] == "cleanup_completed"
+    assert wire["pi_cleanup_phase"] == "cleanup_stop_escalated"
     assert wire["pi_cleanup_reason"] == "abort_grace_expired"
 
 

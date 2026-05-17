@@ -1,5 +1,5 @@
 # qa-validated: pi-rpc-quiescence
-"""Pi RPC projection tests."""
+"""Pi projection tests."""
 
 from __future__ import annotations
 
@@ -11,8 +11,11 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections import pi_extension_projection
+from meridian.lib.harness.projections.project_pi_native_tui import (
+    project_pi_native_tui_spec_to_cli_args,
+)
 from meridian.lib.harness.projections.project_pi_rpc import project_pi_spec_to_cli_args
-from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
+from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, PRIMARY_BASE_COMMAND_PI
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
 
@@ -112,16 +115,47 @@ def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     assert "hello over stdin" not in command
 
 
-def test_pi_rpc_projection_supports_primary_interactive_projection() -> None:
+def test_pi_native_projection_omits_rpc_flags_and_extensions() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
+        model="openai-codex/gpt-5.4-mini",
+        effort="high",
         prompt="hello",
+        continue_session_id="p123",
+        continue_fork=True,
+        appended_system_prompt="native primary",
+        extra_args=("--provider", "openai"),
         interactive=True,
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
-    command = project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
-    assert command[0:3] == ["meridian-pi", "--mode", "rpc"]
+    command = project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+    assert command[0] == "meridian-pi"
+    assert "--mode" not in command
+    assert "--no-extensions" not in command
+    assert "-e" not in command
+    assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
+    assert command[command.index("--append-system-prompt") + 1] == "native primary"
+    assert command[command.index("--fork") + 1] == "p123"
+    assert command[-2:] == ["--provider", "openai"]
+
+
+def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        continue_session_id="abc1234",
+        continue_fork=False,
+        interactive=True,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    command = project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+    assert command[command.index("--session") + 1] == "abc1234"
+    assert "--fork" not in command
+    assert "--mode" not in command
 
 
 def test_pi_adapter_env_overrides_sets_session_dir_without_default_agent_dir() -> None:
@@ -138,7 +172,21 @@ def test_pi_adapter_build_command_supports_primary_interactive() -> None:
         SpawnParams(prompt="primary should run", interactive=True),
         UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
-    assert command[0:3] == ["meridian-pi", "--mode", "rpc"]
+    assert command[0] == "meridian-pi"
+    assert "--mode" not in command
+    assert "--no-extensions" not in command
+    assert "-e" not in command
+
+
+def test_pi_adapter_resolve_launch_spec_skips_rpc_extension_projection_for_primary() -> None:
+    adapter = PiAdapter()
+
+    spec = adapter.resolve_launch_spec(
+        SpawnParams(prompt="primary should run", interactive=True),
+        UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    assert spec.pi_extension_entrypoints == ()
 
 
 def test_pi_rpc_projection_rejects_user_mode_passthrough(
@@ -161,6 +209,32 @@ def test_pi_rpc_projection_rejects_user_mode_passthrough(
 
     with pytest.raises(ValueError, match="owns --mode"):
         project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+
+
+def test_pi_native_projection_rejects_user_mode_passthrough() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        extra_args=("--mode", "rpc"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="cannot accept --mode"):
+        project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+
+def test_pi_native_projection_rejects_user_session_dir_passthrough() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        extra_args=("--session-dir", "/tmp/user-session-dir"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="cannot accept --session-dir"):
+        project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
 
 
 def test_pi_rpc_projection_rejects_user_session_dir_passthrough(

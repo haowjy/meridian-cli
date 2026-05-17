@@ -104,17 +104,18 @@ Expect:
 - Follow-up turn runs and reports `fast-done`
 - Spawn reaches quiescence only after the follow-up turn completes
 
-## S7: Primary Pi managed attach
+## S7: Primary Pi native TUI wrapper
 
 ```bash
 uv run meridian --harness pi -m <pi-model>
 ```
 
 Expect:
-- Meridian launches a managed primary interactive prompt (`> `)
-- Typing a message sends one RPC prompt and streams assistant text in human-readable form
-- A successful `agent_end` does not auto-exit the primary session; prompt remains available
-- Typing `exit`/`quit` ends the managed primary attach cleanly
+- Meridian launches Pi's native TUI command without `--mode rpc`
+- Meridian does not instantiate `PiRpcConnection` for primary and does not run a fake `input("> ")` loop
+- Human input/rendering happens inside Pi's native TUI, not through Meridian RPC prompt translation
+- Meridian records best-effort native wrapper metadata: primary spawn id, pid, cwd, session dir, exit status, and discovered Pi session id when available
+- No spawned quiescence or RPC `stop(reason="quiescent")` is applied to the primary session
 
 ## S8: Child failure notifies
 
@@ -229,5 +230,5 @@ Expect:
 - Output includes `Pi phase:` while running or after completion
 - A hang is diagnosable as one named phase, for example
   `waiting_for_first_pi_event_after_prompt`,
-  `waiting_for_notification_completion`, `quiescent_stop_escalating`,
-  or `quiescent_stop_escalated`
+  `waiting_for_continuation_completion`, `pi_notification_timeout`,
+  `semantic_completion_recorded`, `cleanup_stop_sent`, or `cleanup_failed`

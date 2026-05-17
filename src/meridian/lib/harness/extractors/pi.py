@@ -68,6 +68,8 @@ def _session_id_from_session_files(
     *,
     launch_env: Mapping[str, str],
     child_cwd: Path,
+    started_at_epoch: float | None = None,
+    expected_session_id: str | None = None,
 ) -> str | None:
     root = _pi_session_root(launch_env)
     if not root.is_dir():
@@ -77,17 +79,14 @@ def _session_id_from_session_files(
     if not session_dir.is_dir():
         return None
 
-    candidates: list[tuple[float, Path]] = []
+    candidates: list[tuple[float, str]] = []
     for session_file in session_dir.glob("*.jsonl"):
         try:
             modified_at = session_file.stat().st_mtime
         except OSError:
             continue
-        candidates.append((modified_at, session_file))
-
-    for _, path in sorted(candidates, key=lambda item: item[0], reverse=True):
         try:
-            first_line = path.read_text(
+            first_line = session_file.read_text(
                 encoding="utf-8",
                 errors="ignore",
             ).splitlines()[0]
@@ -104,9 +103,47 @@ def _session_id_from_session_files(
             continue
         session_id = payload.get("id")
         if isinstance(session_id, str) and session_id.strip():
-            return session_id.strip()
+            candidates.append((modified_at, session_id.strip()))
 
-    return None
+    if not candidates:
+        return None
+
+    sorted_candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
+    normalized_expected_session_id = (expected_session_id or "").strip()
+    if started_at_epoch is not None:
+        recent_threshold = started_at_epoch - 2.0
+        recent_candidates = [
+            candidate for candidate in sorted_candidates if candidate[0] >= recent_threshold
+        ]
+        for _, session_id in recent_candidates:
+            if session_id != normalized_expected_session_id:
+                return session_id
+        if recent_candidates:
+            return recent_candidates[0][1]
+
+    if normalized_expected_session_id:
+        for _, session_id in sorted_candidates:
+            if session_id != normalized_expected_session_id:
+                return session_id
+
+    return sorted_candidates[0][1]
+
+
+def detect_pi_session_id_from_session_files(
+    *,
+    launch_env: Mapping[str, str],
+    child_cwd: Path,
+    started_at_epoch: float | None = None,
+    expected_session_id: str | None = None,
+) -> str | None:
+    """Detect Pi session id from persisted session files for one cwd bucket."""
+
+    return _session_id_from_session_files(
+        launch_env=launch_env,
+        child_cwd=child_cwd,
+        started_at_epoch=started_at_epoch,
+        expected_session_id=expected_session_id,
+    )
 
 
 def _extract_usage_from_message_end(payloads: list[dict[str, object]]) -> TokenUsage:
@@ -190,7 +227,10 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         ):
             return spec.continue_session_id.strip()
 
-        return _session_id_from_session_files(launch_env=launch_env, child_cwd=child_cwd)
+        return detect_pi_session_id_from_session_files(
+            launch_env=launch_env,
+            child_cwd=child_cwd,
+        )
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
@@ -221,4 +261,9 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
 
 PI_EXTRACTOR = PiHarnessExtractor()
 
-__all__ = ["PI_EXTRACTOR", "PiHarnessExtractor", "_encode_cwd_for_session_dir"]
+__all__ = [
+    "PI_EXTRACTOR",
+    "PiHarnessExtractor",
+    "_encode_cwd_for_session_dir",
+    "detect_pi_session_id_from_session_files",
+]

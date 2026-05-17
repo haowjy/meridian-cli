@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from meridian.cli import pi_entrypoint
+from meridian.lib.launch.constants import PI_WRAPPER_METADATA_PATH_ENV
 
 _REAL_PROBE_RUNTIME_COMPATIBILITY = pi_entrypoint._probe_runtime_compatibility
 
@@ -225,6 +226,89 @@ def test_main_emits_runtime_selected_event(
         "meridian-pi",
         "sessions",
     )
+
+
+def test_main_primary_role_suppresses_wrapper_json_events(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    captured_diag: dict[str, object] = {}
+    installed_pi = tmp_path / "pi"
+    installed_pi.write_text("binary")
+    installed_pi.chmod(0o755)
+
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        _ = command, env, check
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_resolve_installed_pi_binary",
+        lambda env: str(installed_pi),
+    )
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_log_runtime_diagnostics",
+        lambda **kwargs: captured_diag.update(kwargs),
+    )
+    monkeypatch.setenv("MERIDIAN_PI_SESSION_ROLE", "primary")
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured_diag == {}
+
+
+def test_main_primary_role_persists_wrapper_runtime_metadata_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    installed_pi = tmp_path / "pi"
+    installed_pi.write_text("binary")
+    installed_pi.chmod(0o755)
+    metadata_path = tmp_path / "pi-wrapper-runtime.json"
+
+    def fake_run(
+        command: list[str], *, env: dict[str, str], check: bool
+    ) -> subprocess.CompletedProcess[str]:
+        _ = command, env, check
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(pi_entrypoint.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_resolve_installed_pi_binary",
+        lambda env: str(installed_pi),
+    )
+    monkeypatch.setattr(
+        pi_entrypoint,
+        "_runtime_version",
+        lambda _command, _env: "pi 9.9.9",
+    )
+    monkeypatch.setenv("MERIDIAN_PI_SESSION_ROLE", "primary")
+    monkeypatch.setenv(PI_WRAPPER_METADATA_PATH_ENV, str(metadata_path))
+    monkeypatch.setattr(pi_entrypoint.sys, "argv", ["meridian-pi", "--help"])
+
+    with pytest.raises(SystemExit) as raised:
+        pi_entrypoint.main()
+
+    assert raised.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert payload["type"] == "meridian.pi.runtime.selected"
+    assert payload["runtime_kind"] == "installed"
+    assert payload["runtime_path"] == str(installed_pi)
+    assert payload["runtime_version"] == "pi 9.9.9"
 
 
 def test_main_emits_runtime_selected_event_with_explicit_agent_dir_auth_policy(
