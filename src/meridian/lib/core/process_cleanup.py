@@ -201,8 +201,10 @@ def _terminate_legacy_worker_pid(
         scope_id="legacy_worker",
     )
     logger.warning(
-        "Terminated legacy worker via degraded fallback.",
+        "Reaper cleaned up stale spawn via legacy worker fallback.",
         spawn_id=spawn_record.id,
+        affected_spawn_id=spawn_record.id,
+        cleanup_target="stale_spawn",
         scope_id=result.scope_id,
         root_pid=worker_pid,
         descendant_count=result.descendant_count,
