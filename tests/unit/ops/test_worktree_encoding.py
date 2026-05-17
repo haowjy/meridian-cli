@@ -94,6 +94,27 @@ def test_run_git_captures_output(tmp_path: Path) -> None:
     assert call_kwargs.get("capture_output") is True
 
 
+def test_run_git_strips_repo_scoped_git_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inherited GIT_DIR/GIT_WORK_TREE must not retarget worktree git calls."""
+    monkeypatch.setenv("GIT_DIR", "/tmp/real-checkout/.git")
+    monkeypatch.setenv("GIT_WORK_TREE", "/tmp/real-checkout")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/tmp/test-gitconfig")
+
+    with patch("subprocess.run", return_value=_mock_completed(stdout="true")) as mock_run:
+        _run_git(
+            tmp_path,
+            ["rev-parse", "--is-inside-work-tree"],
+            error_type=WorktreeRepoResolutionError,
+        )
+
+    call_env = mock_run.call_args.kwargs["env"]
+    assert "GIT_DIR" not in call_env
+    assert "GIT_WORK_TREE" not in call_env
+    assert call_env["GIT_CONFIG_GLOBAL"] == "/tmp/test-gitconfig"
+
+
 # ---------------------------------------------------------------------------
 # Integration: detect_git_repo reads UTF-8 output correctly
 # ---------------------------------------------------------------------------

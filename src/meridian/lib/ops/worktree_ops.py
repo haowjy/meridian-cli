@@ -8,6 +8,7 @@ seam.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,33 @@ from pathlib import Path
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+GIT_LOCAL_ENV_VARS: tuple[str, ...] = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
+
+
+def git_subprocess_env() -> dict[str, str]:
+    """Return env for git subprocesses with repo-scoped overrides removed."""
+
+    env = os.environ.copy()
+    for key in GIT_LOCAL_ENV_VARS:
+        env.pop(key, None)
+    return env
 
 
 class WorktreeError(RuntimeError):
@@ -75,6 +103,7 @@ def _run_git(
             text=True,
             encoding="utf-8",
             check=True,
+            env=git_subprocess_env(),
         )
     except FileNotFoundError as exc:
         raise error_type("git is not installed.") from exc

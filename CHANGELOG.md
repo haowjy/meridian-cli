@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Git subprocess seams strip inherited repo-scoped `GIT_*` environment before invoking git. Worktree operations and `git-autosync` no longer risk retargeting commands into the parent checkout when launched from a git hook or git-managed process.
+
 ## [0.1.10] - 2026-05-16
 
 ### Changed

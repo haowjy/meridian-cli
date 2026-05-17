@@ -28,6 +28,7 @@ from meridian.lib.hooks.builtin.autosync_store import (
     write_conflict,
     write_sync_state,
 )
+from meridian.lib.ops.worktree_ops import git_subprocess_env
 from meridian.plugin_api import (
     Hook,
     HookContext,
@@ -97,7 +98,7 @@ class GitAutosync:
                 text=True,
                 timeout=_REQUIREMENTS_TIMEOUT_SECS,
                 check=False,
-                env={**os.environ, "LC_ALL": "C"},
+                env={**git_subprocess_env(), "LC_ALL": "C"},
             )
         except FileNotFoundError:
             return False, "git CLI not found in PATH."
@@ -1167,7 +1168,7 @@ class GitAutosync:
             text=True,
             timeout=timeout,
             check=False,
-            env={**os.environ, "LC_ALL": "C"},  # Locale-independent
+            env={**git_subprocess_env(), "LC_ALL": "C"},  # Locale-independent
         )
 
     def _result(
