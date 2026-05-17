@@ -35,6 +35,7 @@ logger = structlog.get_logger(__name__)
 
 _STARTUP_GRACE_SECS = 15
 _HEARTBEAT_WINDOW_SECS = 120
+_POST_EXIT_FINALIZATION_GRACE_SECS = 5
 _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     HISTORY_FILENAME,
@@ -62,6 +63,7 @@ class Skip:
 @dataclass(frozen=True)
 class FinalizeFailed:
     error: str
+    exit_code: int = 1
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,14 @@ class FinalizeSucceededFromReport:
     pass
 
 
-type ReconciliationDecision = Skip | FinalizeFailed | FinalizeSucceededFromReport
+@dataclass(frozen=True)
+class FinalizeSucceededFromExit:
+    exit_code: int
+
+
+type ReconciliationDecision = (
+    Skip | FinalizeFailed | FinalizeSucceededFromReport | FinalizeSucceededFromExit
+)
 
 
 def _started_at_epoch(started_at: str | None) -> float | None:
@@ -86,6 +95,12 @@ def _started_at_epoch(started_at: str | None) -> float | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.timestamp()
+
+
+def _exited_at_epoch(exited_at: str | None) -> float | None:
+    """Parse exited_at ISO string to epoch seconds."""
+
+    return _started_at_epoch(exited_at)
 
 
 def _read_completion_report(runtime_root: Path, spawn_id: str) -> str | None:
@@ -195,6 +210,14 @@ def _is_pre_worker_launch_boundary_ghost(
     return runner_pid == parent_observed_launcher_pid
 
 
+def _in_post_exit_finalization_grace(record: SpawnRecord, now: float) -> bool:
+    exited_epoch = _exited_at_epoch(record.exited_at)
+    return (
+        exited_epoch is not None
+        and now - exited_epoch < _POST_EXIT_FINALIZATION_GRACE_SECS
+    )
+
+
 def decide_generic_reconciliation(
     record: SpawnRecord,
     snapshot: ArtifactSnapshot,
@@ -206,6 +229,18 @@ def decide_generic_reconciliation(
         if snapshot.durable_report_completion:
             return FinalizeSucceededFromReport()
         return FinalizeFailed(error="orphan_finalization")
+
+    if record.process_exit_code is not None or record.exited_at is not None:
+        if _in_post_exit_finalization_grace(record, now):
+            return Skip(reason="post_exit_finalization_grace")
+        if snapshot.durable_report_completion:
+            return FinalizeSucceededFromReport()
+        if record.process_exit_code == 0:
+            return FinalizeSucceededFromExit(exit_code=0)
+        return FinalizeFailed(
+            error="orphan_run",
+            exit_code=record.process_exit_code if record.process_exit_code is not None else 1,
+        )
 
     if _is_pre_worker_launch_boundary_ghost(record, snapshot, now):
         if snapshot.durable_report_completion:
@@ -379,13 +414,14 @@ def _finalize_failed(
     error: str,
     snapshot: ArtifactSnapshot,
     now: float,
+    exit_code: int = 1,
 ) -> SpawnRecord:
     return _finalize_and_log(
         project_root,
         runtime_root,
         record,
         status="failed",
-        exit_code=1,
+        exit_code=exit_code,
         error=error,
         reason=error,
         snapshot=snapshot,
@@ -412,6 +448,27 @@ def _finalize_completed_report(
         exit_code=exit_code,
         error=error,
         reason="report_completed",
+        snapshot=snapshot,
+        now=now,
+    )
+
+
+def _finalize_completed_exit(
+    project_root: Path,
+    runtime_root: Path,
+    record: SpawnRecord,
+    decision: FinalizeSucceededFromExit,
+    snapshot: ArtifactSnapshot,
+    now: float,
+) -> SpawnRecord:
+    return _finalize_and_log(
+        project_root,
+        runtime_root,
+        record,
+        status="succeeded",
+        exit_code=decision.exit_code,
+        error=None,
+        reason="process_exited",
         snapshot=snapshot,
         now=now,
     )
@@ -447,6 +504,15 @@ def reconcile_active_spawn(
             project_root,
             runtime_root,
             record,
+            generic_snapshot,
+            now,
+        )
+    if isinstance(decision, FinalizeSucceededFromExit):
+        return _finalize_completed_exit(
+            project_root,
+            runtime_root,
+            record,
+            decision,
             generic_snapshot,
             now,
         )
@@ -505,6 +571,7 @@ def reconcile_active_spawn(
         decision.error,
         generic_snapshot,
         now,
+        exit_code=decision.exit_code,
     )
 
 
