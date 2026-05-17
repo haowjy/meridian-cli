@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-05-17
+
 ### Fixed
 - Reaper reconciles active spawns with recorded process exit metadata after a short finalization grace, instead of waiting for the 120s heartbeat window. `spawn wait` no longer hangs on dead post-exit rows until stale-heartbeat cleanup.
 
