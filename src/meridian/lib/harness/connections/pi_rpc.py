@@ -95,6 +95,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._tracer = None
         self._startup_emitter: StartupPhaseEmitter | None = None
         self._abort_sent = False
+        self._initial_prompt: str = ""
+        self._initial_prompt_sent = False
 
     @property
     def state(self) -> ConnectionState:
@@ -136,6 +138,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             model=spec.model,
             agent=spec.agent_name,
         )
+        self._initial_prompt = config.prompt
+        self._initial_prompt_sent = not bool(config.prompt.strip())
         self._set_state("starting")
 
         try:
@@ -224,6 +228,13 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     if isinstance(session_id, str) and session_id.strip():
                         self._session_id = session_id.strip()
                     self._emit_startup_phase(StartupPhase.HARNESS_READY)
+                    try:
+                        await self._send_initial_prompt_if_pending()
+                    except Exception as exc:
+                        detail = f"Failed to deliver initial Pi prompt over RPC stdin: {exc}"
+                        self._mark_failed(detail)
+                        yield self._error_event(detail)
+                        return
                 yield event
         finally:
             await self._cleanup_resources(terminate_process=False)
@@ -422,6 +433,16 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         except (BrokenPipeError, ConnectionResetError):
             logger.debug("Pi RPC subprocess closed before abort write completed", exc_info=True)
         self._abort_sent = True
+
+    async def _send_initial_prompt_if_pending(self) -> None:
+        if self._initial_prompt_sent:
+            return
+        prompt = self._initial_prompt
+        if not prompt.strip():
+            self._initial_prompt_sent = True
+            return
+        await self.send_user_message(prompt)
+        self._initial_prompt_sent = True
 
     async def _wait_for_process_exit(self, *, timeout: float) -> None:
         process = self._process

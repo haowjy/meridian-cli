@@ -262,6 +262,8 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
     first = await anext(event_iter)
     assert first.event_type == "session"
     assert connection.session_id == "ses-rpc"
+    assert (await anext(event_iter)).event_type == "agent_start"
+    assert (await anext(event_iter)).event_type == "agent_end"
 
     await connection.send_user_message("FIRST")
     assert (await anext(event_iter)).event_type == "agent_start"
@@ -281,7 +283,10 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
     inbound_messages = [
         json.loads(line) for line in inbound_log.read_text(encoding="utf-8").splitlines() if line
     ]
+    assert inbound_messages[0]["type"] == "prompt"
+    assert inbound_messages[0]["message"] == "hello"
     assert [message["type"] for message in inbound_messages] == [
+        "prompt",
         "prompt",
         "prompt",
         "steer",
@@ -343,7 +348,8 @@ async def test_pi_rpc_connection_stop_timeout_terminates_process(
     inbound_messages = [
         json.loads(line) for line in inbound_log.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert [message["type"] for message in inbound_messages] == ["abort"]
+    assert [message["type"] for message in inbound_messages] == ["prompt", "abort"]
+    assert inbound_messages[0]["message"] == "hello"
     assert connection.state == "stopped"
     assert connection.subprocess_pid is None
     with pytest.raises(StopAsyncIteration):
@@ -442,6 +448,99 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
         )
     finally:
         await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_without_inject(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    inbound_log = tmp_path / "pi-inbound.jsonl"
+    shim = bin_dir / "meridian-pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-autoprompt\"}'\n"
+        "while IFS= read -r line; do\n"
+        "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*)\n"
+        "      exit 0\n"
+        "      ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("PI_RPC_INBOUND_LOG", str(inbound_log))
+
+    class NoopControlServer:
+        endpoint = None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> PiRpcConnection:
+        connection = PiRpcConnection()
+        await connection.start(config, spec)
+        return connection
+
+    spawn_id = SpawnId("p-pi-autoprompt-quiesce")
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        pi_quiescence_idle_grace_secs=0.01,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+    )
+
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello auto prompt",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello auto prompt",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=2.0)
+        assert outcome.status == "succeeded"
+        assert outcome.exit_code == 0
+        assert outcome.error is None
+
+        inbound_messages = [
+            json.loads(line)
+            for line in inbound_log.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        assert [message["type"] for message in inbound_messages] == ["prompt", "abort"]
+        assert inbound_messages[0]["message"] == "hello auto prompt"
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio

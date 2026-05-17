@@ -67,7 +67,8 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
         str(extension_target_root / "managed-bash" / "index.js"),
         str(extension_target_root / "meridian-lifecycle" / "index.js"),
     ]
-    assert command[-3:] == ["--provider", "anthropic", "solve this"]
+    assert command[-2:] == ["--provider", "anthropic"]
+    assert "solve this" not in command
 
 
 def test_pi_rpc_projection_uses_session_without_fork_when_continue_fork_false(
@@ -93,6 +94,20 @@ def test_pi_rpc_projection_uses_session_without_fork_when_continue_fork_false(
 
     assert "--session" in command
     assert "--fork" not in command
+
+
+def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello over stdin",
+        extra_args=("--foo", "bar"),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    command = project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+
+    assert command[-2:] == ["--foo", "bar"]
+    assert "hello over stdin" not in command
 
 
 def test_pi_rpc_projection_rejects_user_mode_passthrough(

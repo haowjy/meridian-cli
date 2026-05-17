@@ -18,7 +18,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
     {
         "model",
         "effort",
-        "prompt",
         "continue_session_id",
         "continue_fork",
         "permission_resolver",
@@ -36,6 +35,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "harness",
         "agent_name",
         "agents_payload",
+        "prompt",
         "prompt_file_path",
         "base_instructions",
         "developer_instructions",
@@ -217,10 +217,6 @@ def project_pi_spec_to_cli_args(
 
     command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)
-
-    prompt = spec.prompt or ""
-    if prompt.strip():
-        command.append(prompt)
 
     return command
 
