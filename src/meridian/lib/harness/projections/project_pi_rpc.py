@@ -57,6 +57,7 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--no-skills": ("--no-skills",),
     "--no-context-files": ("--no-context-files",),
     "--no-prompt-templates": ("--no-prompt-templates",),
+    "--session-dir": ("--session-dir",),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -66,6 +67,13 @@ _EFFORT_TO_THINKING: dict[str, str] = {
     "max": "xhigh",
     "xhigh": "xhigh",
 }
+
+_PRIMARY_RPC_ATTACH_GUARDRAIL = (
+    "Pi primary RPC attach is not implemented yet. Use "
+    "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
+    "for Pi's native TUI."
+)
+PI_PRIMARY_RPC_ATTACH_GUARDRAIL = _PRIMARY_RPC_ATTACH_GUARDRAIL
 
 
 def _has_flag(args: Sequence[str], flag: str) -> bool:
@@ -116,6 +124,17 @@ def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
         )
 
 
+def _reject_session_dir_collisions(passthrough_tail: tuple[str, ...]) -> None:
+    if any(
+        _has_flag(passthrough_tail, alias)
+        for alias in _MANAGED_FLAG_ALIASES["--session-dir"]
+    ):
+        raise ValueError(
+            "Pi harness owns --session-dir for Meridian-managed session isolation; "
+            "remove --session-dir from passthrough extra_args"
+        )
+
+
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -134,6 +153,9 @@ def project_pi_spec_to_cli_args(
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered Pi RPC command list."""
 
+    if spec.interactive:
+        raise ValueError(PI_PRIMARY_RPC_ATTACH_GUARDRAIL)
+
     command: list[str] = list(base_command)
 
     model_arg = _project_model_arg(spec)
@@ -150,6 +172,7 @@ def project_pi_spec_to_cli_args(
     passthrough_tail = spec.extra_args
     _reject_mode_collisions(passthrough_tail)
     _reject_extension_collisions(passthrough_tail)
+    _reject_session_dir_collisions(passthrough_tail)
 
     _log_collision_if_needed(
         managed_flag="--model",
@@ -229,6 +252,7 @@ _check_projection_drift(
 
 
 __all__ = [
+    "PI_PRIMARY_RPC_ATTACH_GUARDRAIL",
     "_DELEGATED_FIELDS",
     "_PROJECTED_FIELDS",
     "_check_projection_drift",

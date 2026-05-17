@@ -56,6 +56,12 @@ from meridian.lib.state.user_paths import get_user_home
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     """RPC harness implementation for ``meridian-pi``."""
 
+    _PRIMARY_RPC_ATTACH_GUARDRAIL: ClassVar[str] = (
+        "Pi primary RPC attach is not implemented yet. Use "
+        "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
+        "for Pi's native TUI."
+    )
+
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
     _CONSUMED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -131,7 +137,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_session_fork=True,
             supports_native_skills=False,
             supports_native_agents=False,
-            supports_primary_launch=True,
+            supports_primary_launch=False,
             supports_native_file_injection=False,
             terminal_surface_modes=(TerminalSurfaceMode.PURE_STDIO,),
             default_terminal_surface_mode=TerminalSurfaceMode.PURE_STDIO,
@@ -162,6 +168,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def build_command(self, run: SpawnParams, perms: PermissionResolver) -> list[str]:
+        if run.interactive:
+            raise ValueError(self._PRIMARY_RPC_ATTACH_GUARDRAIL)
         spec = self.resolve_launch_spec(run, perms)
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
         return project_subprocess_spec(self.id, spec, base_command=base_command)
@@ -193,7 +201,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
 
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
         overrides: dict[str, str] = {
-            "PI_CODING_AGENT_DIR": str(get_user_home() / "meridian-pi" / "agent"),
+            "PI_CODING_AGENT_SESSION_DIR": str(get_user_home() / "meridian-pi" / "sessions"),
         }
         if config.pi_launch_config_path:
             overrides["MERIDIAN_PI_LAUNCH_CONFIG"] = config.pi_launch_config_path

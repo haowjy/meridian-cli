@@ -690,6 +690,7 @@ class SpawnDetailOutput(BaseModel):
     report_summary: str | None
     report_body: str | None
     harness_session_id: str | None = None
+    pi_lifecycle_phase: str | None = None
     last_message: str | None = None
     log_path: str | None = None
     last_attempt_exited_at: str | None = None
@@ -742,6 +743,8 @@ class SpawnDetailOutput(BaseModel):
             wire["backend_port"] = self.backend_port
         if self.kind == "primary" and self.harness_session_id is not None:
             wire["harness_session_id"] = self.harness_session_id
+        if self.pi_lifecycle_phase is not None:
+            wire["pi_lifecycle_phase"] = self.pi_lifecycle_phase
         if self.parent_id is not None:
             wire["parent_id"] = self.parent_id
         if self.work_id is not None:
@@ -885,6 +888,7 @@ class SpawnDetailOutput(BaseModel):
             ("TUI pid", None if self.tui_pid is None else str(self.tui_pid)),
             ("Backend port", None if self.backend_port is None else str(self.backend_port)),
             ("Harness session", harness_session_value),
+            ("Pi phase", self.pi_lifecycle_phase),
             ("Last attempt exited at", None if active_status else self.last_attempt_exited_at),
             (
                 "Last attempt exit code",

@@ -1,3 +1,4 @@
+# qa-validated: pi-rpc-quiescence
 import importlib
 import os
 from pathlib import Path
@@ -10,6 +11,9 @@ primary_launch = importlib.import_module("meridian.cli.primary_launch")
 init_ops = importlib.import_module("meridian.lib.ops.init_ops")
 bootstrap_services = importlib.import_module("meridian.lib.bootstrap.services")
 cli_utils = importlib.import_module("meridian.cli.utils")
+PI_PRIMARY_RPC_ATTACH_GUARDRAIL = importlib.import_module(
+    "meridian.lib.harness.projections.project_pi_rpc"
+).PI_PRIMARY_RPC_ATTACH_GUARDRAIL
 
 
 def test_main_harness_shortcut_routes_into_primary_launch(
@@ -357,6 +361,27 @@ def test_main_rejects_from_with_other_session_initiation_modes(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == f"error: {expected}\n"
+
+
+def test_main_pi_primary_launch_reports_guardrail_before_harness_start(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli_main,
+        "maybe_bootstrap_runtime_state",
+        lambda *_args, **_kwargs: tmp_path,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--harness", "pi", "--dry-run"])
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert PI_PRIMARY_RPC_ATTACH_GUARDRAIL in captured.err
+    assert "meridian spawn --harness pi" in captured.err
 
 
 def test_init_alias_link_uses_mars_flow_with_full_link_target_when_called_directly(

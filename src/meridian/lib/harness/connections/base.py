@@ -72,6 +72,16 @@ class ConnectionNotReady(RuntimeError):
 
 
 @dataclass(frozen=True)
+class StopResult:
+    """Normalized stop outcome metadata across harness connections."""
+
+    escalated: bool = False
+
+
+StopProgressCallback = Callable[[str, dict[str, object]], Awaitable[None]]
+
+
+@dataclass(frozen=True)
 class HarnessEvent:
     """One parsed event from a running harness connection.
 
@@ -319,7 +329,12 @@ class HarnessConnection(Generic[SpecT], ABC):
         raise NotImplementedError(f"{self.harness_id.value} does not support runtime user input")
 
     @abstractmethod
-    async def stop(self) -> None: ...
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult: ...
 
     @abstractmethod
     def health(self) -> bool: ...
@@ -352,5 +367,7 @@ __all__ = [
     "PrimaryRuntimeRequestPolicy",
     "PromptTooLargeError",
     "ServerRequestHandler",
+    "StopProgressCallback",
+    "StopResult",
     "validate_prompt_size",
 ]

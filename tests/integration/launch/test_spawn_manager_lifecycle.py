@@ -16,6 +16,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
     HarnessEvent,
+    StopResult,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -117,10 +118,17 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
             self._spawn_id = config.spawn_id
             self.state = "connected"
 
-        async def stop(self) -> None:
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
             cleanup_started.set()
             await release_cleanup.wait()
             self.state = "stopped"
+            return StopResult()
 
         def health(self) -> bool:
             return True
@@ -242,8 +250,15 @@ async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
             self._spawn_id = config.spawn_id
             self.state = "connected"
 
-        async def stop(self) -> None:
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
             self.state = "stopped"
+            return StopResult()
 
         def health(self) -> bool:
             return self.state == "connected"
@@ -348,8 +363,14 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
-        async def stop(self) -> None:
-            return None
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
+            return StopResult()
 
     class FakeControlServer:
         async def stop(self) -> None:
@@ -436,8 +457,15 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             self._spawn_id = config.spawn_id
             self.state = "connected"
 
-        async def stop(self) -> None:
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
             self.state = "stopped"
+            return StopResult()
 
         def health(self) -> bool:
             return self.state == "connected"

@@ -18,13 +18,24 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Reaper legacy-worker cleanup warning now says it cleaned up a stale spawn and identifies the affected spawn explicitly.
+- Pi primary launches now fail fast before raw RPC TTY launch with: "Pi primary RPC attach is not implemented yet. Use `meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly for Pi's native TUI."
+- `meridian-pi` runtime resolution now prefers `MERIDIAN_PI_BINARY`, then installed `pi` on `PATH`; bundled/dev runtime fallback now requires explicit `MERIDIAN_PI_ALLOW_BUNDLED_FALLBACK=1`.
+- `meridian-pi` bundled/dev fallback now also requires explicit auth/config acknowledgement via `MERIDIAN_PI_BUNDLED_AUTH_CONFIRMED=1`; incompatible installed `pi` candidates are diagnosed and skipped to opted-in fallback instead of hard-failing immediately.
+- Pi wrapper no longer forces `PI_CODING_AGENT_DIR` by default; managed session isolation now uses `PI_CODING_AGENT_SESSION_DIR` and `--session-dir` under `~/.meridian/meridian-pi/sessions` (or configured user home).
+- Pi streaming launches now scope `PI_CODING_AGENT_SESSION_DIR` to `<session-root>/<spawn-id>/` so extractor fallback ignores stale sibling launch sessions.
+- Pi extractor session-id fallback now prefers `PI_CODING_AGENT_SESSION_DIR` and defaults to `get_user_home()/meridian-pi/sessions`.
 - Pi harness switched to RPC-only launch (`meridian-pi --mode rpc`) with managed extension projection (`--no-extensions` + Meridian-owned `-e` paths), spawned/primary session-role env wiring, and quiescence-aware drain behavior that keeps spawned sessions alive across tracked child work then auto-stops on quiescence.
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
 - `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
+- `meridian-pi` runtime compatibility probes now require both `--version` and `--help` support for Meridian-required launch surface (`--mode rpc`, `--session-dir`, `--no-extensions`, `-e`/`--extension`) before accepting installed or bundled runtimes.
 - Pi Bun runtime build now copies required sidecar assets (`package.json`, `theme/`, `assets/`, `export-html/`, docs/examples, and `photon_rs_bg.wasm`) into `src/meridian/pi_runtime/bin/` so compiled `meridian-pi` can launch without missing-runtime-asset `ENOENT` failures.
 - `meridian-pi` now fails fast with clear errors when an override/packaged runtime binary exists but cannot execute; Node fallback remains only for missing packaged binaries.
 - `meridian-pi` Node fallback now requires source/dev runtime deps (`runner.mjs` plus `node_modules/@earendil-works/pi-coding-agent`). Installed artifacts without compiled binary now fail early with explicit build/override guidance instead of Node import errors.
+- Pi RPC spawn path now sends prompt immediately after session creation (no preprompt wait) and hard-fails first-event startup on bounded timeout or runtime error.
+- Pi runtime diagnostics now emit structured `meridian.pi.runtime.selected`/`meridian.pi.runtime.error` with runtime kind/path/version, session_dir, and auth_policy.
+- Chat snapshots now persist effective harness-specific model; chat and primary-launch surfaces now gate with primary-launch capability.
+- Pi stop seam now uses typed `StopResult` plus progress events so quiescent-stop escalation is visible in stream/reporting.
 
 ## [0.1.13] - 2026-05-19
 ### Changed

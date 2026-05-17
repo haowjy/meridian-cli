@@ -144,6 +144,13 @@ def _resolve_terminal_surface_mode(*, harness_id: HarnessId) -> TerminalSurfaceM
     return TerminalSurfaceMode.PTY_MEDIATED
 
 
+def _surface_requires_primary_launch_harness(surface: LaunchCompositionSurface) -> bool:
+    return surface in {
+        LaunchCompositionSurface.PRIMARY,
+        LaunchCompositionSurface.CHAT,
+    }
+
+
 def _resolve_final_model(
     *,
     layer_model: str | None,
@@ -614,6 +621,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
                 harness_registry=surface.harness_registry,
             )
     assert materialized is not None
+    if _surface_requires_primary_launch_harness(surface.surface):
+        validate_harness_compatibility(
+            model=compiler_result.model_token or compiler_result.model,
+            harness_id=harness_id,
+            model_entry=resolved_entry,
+            harness_registry=surface.harness_registry,
+        )
 
     model_token = compiler_result.model_token
     if model_token and resolved_entry is None and model_resolution_error is None:

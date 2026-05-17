@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.adapter import SpawnParams
+from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections import pi_extension_projection
 from meridian.lib.harness.projections.project_pi_rpc import project_pi_spec_to_cli_args
 from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
 
 
 def _write_extension_fixture(root: Path) -> None:
@@ -110,6 +112,47 @@ def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     assert "hello over stdin" not in command
 
 
+def test_pi_rpc_projection_rejects_primary_interactive_before_launch() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+
+    assert str(exc_info.value) == (
+        "Pi primary RPC attach is not implemented yet. Use "
+        "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
+        "for Pi's native TUI."
+    )
+
+
+def test_pi_adapter_env_overrides_sets_session_dir_without_default_agent_dir() -> None:
+    overrides = PiAdapter().env_overrides(PermissionConfig())
+
+    assert "PI_CODING_AGENT_DIR" not in overrides
+    assert Path(overrides["PI_CODING_AGENT_SESSION_DIR"]).parts[-2:] == ("meridian-pi", "sessions")
+
+
+def test_pi_adapter_build_command_rejects_primary_interactive_before_launch() -> None:
+    adapter = PiAdapter()
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter.build_command(
+            SpawnParams(prompt="primary should fail", interactive=True),
+            UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        )
+
+    assert str(exc_info.value) == (
+        "Pi primary RPC attach is not implemented yet. Use "
+        "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
+        "for Pi's native TUI."
+    )
+
+
 def test_pi_rpc_projection_rejects_user_mode_passthrough(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +172,28 @@ def test_pi_rpc_projection_rejects_user_mode_passthrough(
     )
 
     with pytest.raises(ValueError, match="owns --mode"):
+        project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+
+
+def test_pi_rpc_projection_rejects_user_session_dir_passthrough(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        extra_args=("--session-dir", "/tmp/user-session-dir"),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="owns --session-dir"):
         project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
 
 

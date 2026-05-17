@@ -19,6 +19,7 @@ _SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
     "@last-completed": ("succeeded",),
 }
 _RUNNING_LOG_MESSAGE_LIMIT = 120
+_PI_PHASE_EVENT_TYPE = "meridian.pi.lifecycle.phase"
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
 
@@ -262,6 +263,41 @@ def _read_running_log_details(
     return stderr_path.as_posix(), extract_last_assistant_message(stderr_text)
 
 
+def _latest_pi_lifecycle_phase(
+    project_root: Path,
+    spawn_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> str | None:
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    history_path = resolved_runtime_root / "spawns" / spawn_id / "history.jsonl"
+    if not history_path.is_file():
+        return None
+
+    last_phase: str | None = None
+    for line in history_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            raw_payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = cast("dict[str, object]", raw_payload)
+        if payload.get("event_type") != _PI_PHASE_EVENT_TYPE:
+            continue
+        raw_event_payload = payload.get("payload")
+        if not isinstance(raw_event_payload, dict):
+            continue
+        event_payload = cast("dict[str, object]", raw_event_payload)
+        phase_value = event_payload.get("phase")
+        if isinstance(phase_value, str) and phase_value.strip():
+            last_phase = phase_value.strip()
+    return last_phase
+
+
 def read_written_files(
     project_root: Path,
     spawn_id: str,
@@ -326,6 +362,11 @@ def detail_from_row(
         report_summary=report_summary,
         report_body=report_body,
         harness_session_id=row.harness_session_id,
+        pi_lifecycle_phase=_latest_pi_lifecycle_phase(
+            project_root,
+            row.id,
+            runtime_root=runtime_root,
+        ),
         last_message=last_message,
         log_path=log_path,
         last_attempt_exited_at=row.last_attempt_exited_at,

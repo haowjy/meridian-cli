@@ -7,6 +7,7 @@ from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.extractors import pi as pi_extractor_module
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR, _encode_cwd_for_session_dir
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -143,3 +144,97 @@ def test_pi_extractor_does_not_return_source_session_for_native_fork(tmp_path: P
     )
 
     assert detected == "ses-fork-child"
+
+
+def test_pi_extractor_prefers_pi_session_dir_env_override(tmp_path: Path) -> None:
+    child_cwd = tmp_path / "repo"
+    child_cwd.mkdir()
+    session_root = tmp_path / "custom-sessions"
+    session_dir = session_root / _encode_cwd_for_session_dir(child_cwd)
+    session_dir.mkdir(parents=True)
+    (session_dir / "20260516_custom.jsonl").write_text(
+        '{"type":"session","id":"ses-from-session-dir-env"}\n',
+        encoding="utf-8",
+    )
+
+    spec = ResolvedLaunchSpec(
+        harness="pi",
+        prompt="",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
+        spec=spec,
+        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
+        child_cwd=child_cwd,
+        runtime_root=tmp_path,
+    )
+
+    assert detected == "ses-from-session-dir-env"
+
+
+def test_pi_extractor_session_dir_override_ignores_stale_sibling_launches(tmp_path: Path) -> None:
+    child_cwd = tmp_path / "repo"
+    child_cwd.mkdir()
+    parent_session_root = tmp_path / "custom-sessions"
+    stale_dir = parent_session_root / _encode_cwd_for_session_dir(child_cwd)
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "20260516_stale.jsonl").write_text(
+        '{"type":"session","id":"ses-stale-sibling"}\n',
+        encoding="utf-8",
+    )
+
+    scoped_launch_root = parent_session_root / "p-current-launch"
+    scoped_dir = scoped_launch_root / _encode_cwd_for_session_dir(child_cwd)
+    scoped_dir.mkdir(parents=True)
+    (scoped_dir / "20260516_current.jsonl").write_text(
+        '{"type":"session","id":"ses-current-launch"}\n',
+        encoding="utf-8",
+    )
+
+    spec = ResolvedLaunchSpec(
+        harness="pi",
+        prompt="",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
+        spec=spec,
+        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(scoped_launch_root)},
+        child_cwd=child_cwd,
+        runtime_root=tmp_path,
+    )
+
+    assert detected == "ses-current-launch"
+
+
+def test_pi_extractor_uses_meridian_pi_sessions_default_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    child_cwd = tmp_path / "repo"
+    child_cwd.mkdir()
+    user_home = tmp_path / "user-home"
+    session_root = user_home / "meridian-pi" / "sessions"
+    session_dir = session_root / _encode_cwd_for_session_dir(child_cwd)
+    session_dir.mkdir(parents=True)
+    (session_dir / "20260516_default.jsonl").write_text(
+        '{"type":"session","id":"ses-from-default-root"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pi_extractor_module, "get_user_home", lambda: user_home)
+
+    spec = ResolvedLaunchSpec(
+        harness="pi",
+        prompt="",
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
+        spec=spec,
+        launch_env={},
+        child_cwd=child_cwd,
+        runtime_root=tmp_path,
+    )
+
+    assert detected == "ses-from-default-root"

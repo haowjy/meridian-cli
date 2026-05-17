@@ -25,6 +25,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionState,
     HarnessConnection,
     HarnessEvent,
+    StopProgressCallback,
+    StopResult,
     validate_prompt_size,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
@@ -168,12 +170,18 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             await self._cleanup_resources(terminate_process=True)
             raise
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
         """Stop the subprocess. Safe to call multiple times."""
+        _ = reason, progress
 
         async with self._stop_lock:
             if self._state == "stopped":
-                return
+                return StopResult()
 
             if self._state not in {"stopping", "failed"}:
                 self._set_state("stopping")
@@ -182,6 +190,7 @@ class ClaudeConnection(HarnessConnection[ResolvedLaunchSpec]):
             self._cancel_requested = False
             self._signal_in_flight = False
             self._set_state("stopped")
+            return StopResult()
 
     def health(self) -> bool:
         return self._state == "connected"

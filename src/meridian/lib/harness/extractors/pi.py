@@ -46,7 +46,7 @@ def _pi_session_root(launch_env: Mapping[str, str]) -> Path:
     if agent_dir:
         return Path(agent_dir).expanduser() / "sessions"
 
-    return get_user_home() / "pi" / "agent" / "sessions"
+    return get_user_home() / "meridian-pi" / "sessions"
 
 
 def _iter_session_id_candidates_from_artifacts(

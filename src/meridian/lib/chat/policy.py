@@ -15,6 +15,7 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.connections.base import ConnectionConfig
+from meridian.lib.harness.projections.project_pi_rpc import PI_PRIMARY_RPC_ATTACH_GUARDRAIL
 from meridian.lib.launch.composition import ComposedLaunchContent, PromptDocument
 from meridian.lib.launch.context import (
     build_child_runtime_env_overrides,
@@ -76,6 +77,7 @@ class ChatPolicySnapshot(BaseModel):
     requested_model_token: str = ""
     selected_model_token: str = ""
     canonical_model_id: str = ""
+    effective_model_id: str = ""
     harness: str
     harness_provenance: str = ""
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
@@ -101,14 +103,21 @@ class ChatPolicySnapshot(BaseModel):
         if not isinstance(value, dict):
             return value
         payload = cast("dict[str, Any]", value).copy()
-        if "execution_policy" in payload:
-            return payload
-        policy_fields: dict[str, Any] = {}
-        for field_name in ("effort", "sandbox", "approval", "autocompact", "autocompact_pct"):
-            if field_name in payload:
-                policy_fields[field_name] = payload.pop(field_name)
-        if policy_fields:
-            payload["execution_policy"] = policy_fields
+        if "execution_policy" not in payload:
+            policy_fields: dict[str, Any] = {}
+            for field_name in ("effort", "sandbox", "approval", "autocompact", "autocompact_pct"):
+                if field_name in payload:
+                    policy_fields[field_name] = payload.pop(field_name)
+            if policy_fields:
+                payload["execution_policy"] = policy_fields
+        if not payload.get("effective_model_id"):
+            harness_model_id = payload.get("harness_model_id")
+            if isinstance(harness_model_id, str) and harness_model_id.strip():
+                payload["effective_model_id"] = harness_model_id
+            else:
+                canonical_model_id = payload.get("canonical_model_id")
+                if isinstance(canonical_model_id, str):
+                    payload["effective_model_id"] = canonical_model_id
         return payload
 
 
@@ -126,6 +135,16 @@ def _supports_launch_autocompact(harness_id: HarnessId) -> bool:
     """Return whether launch-time autocompact env override is supported."""
 
     return harness_id == HarnessId.CLAUDE
+
+
+def ensure_chat_harness_supported(*, harness_id: HarnessId, supports_primary_launch: bool) -> None:
+    """Reject harnesses chat cannot attach to as a primary interactive surface."""
+
+    if supports_primary_launch:
+        return
+    if harness_id is HarnessId.PI:
+        raise ValueError(PI_PRIMARY_RPC_ATTACH_GUARDRAIL)
+    raise ValueError(f"Harness '{harness_id.value}' does not support primary launch.")
 
 
 def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySnapshot:
@@ -185,6 +204,20 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         ),
         canonical_model_id=(
             model_selection.canonical_model_id if model_selection is not None else policy.model
+        ),
+        effective_model_id=(
+            (
+                model_selection.harness_model_id
+                if model_selection is not None
+                and isinstance(model_selection.harness_model_id, str)
+                and model_selection.harness_model_id.strip()
+                else None
+            )
+            or (
+                model_selection.canonical_model_id
+                if model_selection is not None
+                else policy.model
+            )
         ),
         harness=policy.harness.value,
         harness_provenance=(
@@ -255,6 +288,12 @@ def build_chat_backend_launch_plan(
 ) -> ChatBackendLaunchPlan:
     """Build chat launch plan from immutable snapshot + current user prompt."""
 
+    harness_id = HarnessId(snapshot.harness)
+    ensure_chat_harness_supported(
+        harness_id=harness_id,
+        supports_primary_launch=adapter.capabilities.supports_primary_launch,
+    )
+
     composed = ComposedLaunchContent(
         supplemental_documents=tuple(
             document.to_prompt_document() for document in snapshot.prompt_inputs.skill_documents
@@ -269,16 +308,16 @@ def build_chat_backend_launch_plan(
         prior_output="",
     )
     projected = adapter.project_content(composed)
-    harness_id = HarnessId(snapshot.harness)
     prompt_payload = prepare_prompt_payload(
         adhoc_agent_payload=snapshot.prompt_inputs.adhoc_agent_payload,
         projected_content=projected,
     )
     ep = snapshot.execution_policy
+    effective_model_id = snapshot.effective_model_id or snapshot.canonical_model_id
     materialized = materialize_launch_artifacts(
         harness=adapter,
         prompt=projected.user_turn_content.strip() or initial_prompt,
-        model=snapshot.canonical_model_id,
+        model=effective_model_id,
         effort=ep.effort,
         skills=snapshot.skills,
         agent=snapshot.agent_name,
@@ -318,7 +357,9 @@ def build_chat_backend_launch_plan(
     )
     configured_payload: dict[str, object] = {
         "harness": snapshot.harness,
-        "model": snapshot.canonical_model_id,
+        "model": effective_model_id,
+        "canonical_model_id": snapshot.canonical_model_id,
+        "effective_model_id": effective_model_id,
         "requested_model_token": snapshot.requested_model_token,
         "selected_model_token": snapshot.selected_model_token,
         "harness_provenance": snapshot.harness_provenance,
@@ -346,6 +387,7 @@ def default_chat_policy_snapshot(
     return ChatPolicySnapshot(
         snapshot_id="default",
         canonical_model_id=model,
+        effective_model_id=model,
         selected_model_token=model,
         requested_model_token=model,
         harness=harness.value,
@@ -355,12 +397,14 @@ def default_chat_policy_snapshot(
 
 __all__ = [
     "CHAT_POLICY_SNAPSHOT_VERSION",
+    "PI_PRIMARY_RPC_ATTACH_GUARDRAIL",
     "ChatBackendLaunchPlan",
     "ChatPolicySnapshot",
     "ChatPromptDocumentSnapshot",
     "ChatPromptInputsSnapshot",
     "build_chat_backend_launch_plan",
     "default_chat_policy_snapshot",
+    "ensure_chat_harness_supported",
     "read_chat_policy_snapshot",
     "snapshot_from_resolved_policy",
     "write_chat_policy_snapshot",

@@ -8,7 +8,7 @@ import logging
 import os
 import signal
 from asyncio.subprocess import PIPE, Process
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from io import BufferedWriter
 from typing import Final, cast
 
@@ -22,6 +22,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionState,
     HarnessConnection,
     HarnessEvent,
+    StopProgressCallback,
+    StopResult,
     validate_prompt_size,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
@@ -44,6 +46,27 @@ _PROCESS_ABORT_GRACE_SECONDS: Final[float] = 5.0
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 5.0
 _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
 _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
+_PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
+_PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
+_PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
+_PI_WRAPPER_RUNTIME_SELECTED_EVENT_TYPE: Final[str] = "meridian.pi.runtime.selected"
+_PI_WRAPPER_RUNTIME_ERROR_EVENT_TYPE: Final[str] = "meridian.pi.runtime.error"
+_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
+_INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_TIMEOUT_SECONDS: Final[float] = 0.1
+_INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_MAX_LINES: Final[int] = 8
+_REDACTED_ARG_VALUE: Final[str] = "<redacted>"
+_SECRET_FLAG_SEGMENTS: Final[frozenset[str]] = frozenset(
+    {
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "authorization",
+        "apikey",
+        "key",
+        "auth",
+    }
+)
 _PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
     "meridian.subspawn.",
     "meridian.notification.",
@@ -97,6 +120,15 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._abort_sent = False
         self._initial_prompt: str = ""
         self._initial_prompt_sent = False
+        self._waiting_for_first_pi_event_after_prompt = False
+        self._first_pi_event_received = False
+        self._session_event_seen = False
+        self._harness_ready_emitted = False
+        self._pending_lifecycle_phase_events: list[HarnessEvent] = []
+        self._launch_command: tuple[str, ...] = ()
+        self._launch_cwd: str | None = None
+        self._launch_session_role: str | None = None
+        self._runtime_error_detail: str | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -140,28 +172,82 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
         self._initial_prompt = config.prompt
         self._initial_prompt_sent = not bool(config.prompt.strip())
+        self._waiting_for_first_pi_event_after_prompt = False
+        self._first_pi_event_received = False
+        self._session_event_seen = False
+        self._harness_ready_emitted = False
+        self._pending_lifecycle_phase_events = []
+        self._launch_session_role = config.pi_session_role
+        self._runtime_error_detail = None
+        self._validate_initial_prompt_requirement()
         self._set_state("starting")
 
         try:
             await self._start_subprocess(config, spec)
+            self._queue_lifecycle_phase_event(
+                "process_spawned",
+                pid=self.subprocess_pid,
+                session_role=self._launch_session_role,
+                cwd=self._launch_cwd,
+                command=self._redact_command_for_history(self._launch_command),
+            )
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._set_state("connected")
+            sent_initial_prompt = await self._send_initial_prompt_if_pending()
+            prompt_chars = len(self._initial_prompt)
+            prompt_bytes = len(self._initial_prompt.encode("utf-8"))
+            if sent_initial_prompt:
+                self._queue_lifecycle_phase_event(
+                    "initial_prompt_sent",
+                    prompt_chars=prompt_chars,
+                    prompt_bytes=prompt_bytes,
+                )
+                self._waiting_for_first_pi_event_after_prompt = True
+                self._queue_lifecycle_phase_event(
+                    "waiting_for_first_pi_event_after_prompt",
+                    timeout_secs=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
+                )
+            else:
+                self._queue_lifecycle_phase_event(
+                    "no_initial_prompt",
+                    prompt_chars=prompt_chars,
+                    prompt_bytes=prompt_bytes,
+                )
         except Exception:
             self._mark_failed("Pi RPC connection startup failed.")
             await self._cleanup_resources(terminate_process=True)
             raise
 
-    async def stop(self, *, reason: str | None = None) -> None:
-        _ = reason
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        quiescent_stop = reason == "quiescent"
         if self._state == "stopped":
-            return
+            return StopResult(escalated=False)
         if self._state not in {"stopping", "failed"}:
             self._set_state("stopping")
 
         await self._send_abort_message()
-        await self._wait_for_process_exit(timeout=_PROCESS_ABORT_GRACE_SECONDS)
-        await self._cleanup_resources(terminate_process=True)
+        exited_during_abort_grace = await self._wait_for_process_exit(
+            timeout=_PROCESS_ABORT_GRACE_SECONDS
+        )
+        stop_escalated = False
+        if exited_during_abort_grace:
+            await self._cleanup_resources(terminate_process=True)
+        else:
+            if progress is not None:
+                await progress(
+                    "quiescent_stop_escalating",
+                    {"reason": "abort_grace_expired"},
+                )
+            stop_escalated = await self._cleanup_resources(terminate_process=True)
         self._set_state("stopped")
+        if quiescent_stop and stop_escalated:
+            logger.info("Pi RPC quiescent stop escalated to process termination for cleanup")
+        return StopResult(escalated=stop_escalated)
 
     def health(self) -> bool:
         return self._state == "connected"
@@ -195,25 +281,65 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._event_stream_started = True
 
         try:
+            while self._pending_lifecycle_phase_events:
+                yield self._pending_lifecycle_phase_events.pop(0)
             while True:
                 try:
-                    line_bytes = await process.stdout.readline()
+                    if (
+                        self._waiting_for_first_pi_event_after_prompt
+                        and not self._first_pi_event_received
+                    ):
+                        line_bytes = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        line_bytes = await process.stdout.readline()
+                except TimeoutError:
+                    detail = _PI_FIRST_EVENT_TIMEOUT_REASON
+                    if self._runtime_error_detail is not None:
+                        detail = self._runtime_error_detail
+                    self._mark_failed(detail)
+                    yield self._lifecycle_phase_event(
+                        "first_pi_event_timeout",
+                        timeout_secs=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
+                    )
+                    yield self._error_event(detail)
+                    await self._cleanup_resources(terminate_process=True)
+                    break
                 except Exception as exc:
                     if self._state not in {"stopping", "stopped"}:
                         detail = f"Failed to read Pi stdout: {exc}"
                         self._mark_failed(detail)
                         yield self._error_event(detail)
-                    return
+                    break
 
                 if not line_bytes:
                     return_code = process.returncode
                     if return_code is None:
                         return_code = await process.wait()
+                    if (
+                        self._waiting_for_first_pi_event_after_prompt
+                        and not self._first_pi_event_received
+                        and self._state not in {"stopping", "stopped"}
+                    ):
+                        self._waiting_for_first_pi_event_after_prompt = False
+                        detail = _PI_FIRST_EVENT_TIMEOUT_REASON
+                        if self._runtime_error_detail is not None:
+                            detail = self._runtime_error_detail
+                        self._mark_failed(detail)
+                        yield self._lifecycle_phase_event(
+                            "first_pi_event_eof_before_response",
+                            return_code=return_code,
+                        )
+                        yield self._error_event(detail)
+                        await self._cleanup_resources(terminate_process=True)
+                        break
                     if return_code != 0 and self._state not in {"stopping", "stopped"}:
                         detail = f"Pi subprocess exited with code {return_code}."
                         self._mark_failed(detail)
                         yield self._error_event(detail)
-                    return
+                    break
 
                 raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
                 if not raw_text.strip():
@@ -223,19 +349,42 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 event = self._parse_stdout_line(raw_text)
                 if event is None:
                     continue
+                if event.event_type == _PI_WRAPPER_RUNTIME_SELECTED_EVENT_TYPE:
+                    yield event
+                    continue
+                if event.event_type == _PI_WRAPPER_RUNTIME_ERROR_EVENT_TYPE:
+                    detail = self._runtime_error_message(event)
+                    self._runtime_error_detail = detail
+                    self._waiting_for_first_pi_event_after_prompt = False
+                    self._mark_failed(detail)
+                    yield event
+                    yield self._error_event(detail)
+                    await self._cleanup_resources(terminate_process=True)
+                    break
+                self._emit_harness_ready_once()
+                if (
+                    self._waiting_for_first_pi_event_after_prompt
+                    and not self._first_pi_event_received
+                ):
+                    self._first_pi_event_received = True
+                    self._waiting_for_first_pi_event_after_prompt = False
+                    yield self._lifecycle_phase_event(
+                        "first_pi_event_received",
+                        first_event_type=event.event_type,
+                    )
                 if event.event_type == "session":
                     session_id = event.payload.get("id")
                     if isinstance(session_id, str) and session_id.strip():
                         self._session_id = session_id.strip()
-                    self._emit_startup_phase(StartupPhase.HARNESS_READY)
-                    try:
-                        await self._send_initial_prompt_if_pending()
-                    except Exception as exc:
-                        detail = f"Failed to deliver initial Pi prompt over RPC stdin: {exc}"
-                        self._mark_failed(detail)
-                        yield self._error_event(detail)
-                        return
+                    if not self._session_event_seen:
+                        self._session_event_seen = True
+                        yield self._lifecycle_phase_event(
+                            "session_event_seen",
+                            session_id=self._session_id,
+                        )
                 yield event
+            if not self._session_event_seen:
+                yield self._lifecycle_phase_event("session_event_absent")
         finally:
             await self._cleanup_resources(terminate_process=False)
 
@@ -251,6 +400,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             spec,
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
+        self._launch_command = tuple(command)
+        self._launch_cwd = str(config.task_cwd or config.control_root)
         env = inherit_child_env(
             os.environ,
             config.env_overrides,
@@ -260,7 +411,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         try:
             self._process = await asyncio.create_subprocess_exec(
                 *command,
-                cwd=str(config.task_cwd or config.control_root),
+                cwd=self._launch_cwd,
                 env=env,
                 stdin=PIPE,
                 stdout=PIPE,
@@ -368,6 +519,19 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 return int(raw)
         return None
 
+    def _runtime_error_message(self, event: HarnessEvent) -> str:
+        error_value = event.payload.get("error")
+        if isinstance(error_value, str):
+            normalized = error_value.strip()
+            if normalized:
+                return normalized
+        message_value = event.payload.get("message")
+        if isinstance(message_value, str):
+            normalized = message_value.strip()
+            if normalized:
+                return normalized
+        return "pi_wrapper_runtime_error"
+
     def _truncate_parse_error_raw_line(self, raw_line: str) -> str:
         if len(raw_line) <= _PARSE_ERROR_RAW_LINE_LIMIT:
             return raw_line
@@ -434,24 +598,83 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             logger.debug("Pi RPC subprocess closed before abort write completed", exc_info=True)
         self._abort_sent = True
 
-    async def _send_initial_prompt_if_pending(self) -> None:
+    async def _send_initial_prompt_if_pending(self) -> bool:
         if self._initial_prompt_sent:
-            return
+            return False
         prompt = self._initial_prompt
         if not prompt.strip():
             self._initial_prompt_sent = True
-            return
-        await self.send_user_message(prompt)
+            return False
+        try:
+            await self.send_user_message(prompt)
+        except ConnectionNotReady as exc:
+            runtime_error_detail = (
+                await self._drain_immediate_runtime_error_on_prompt_write_failure()
+            )
+            if runtime_error_detail is not None:
+                raise ConnectionNotReady(runtime_error_detail) from exc
+            raise
         self._initial_prompt_sent = True
+        return True
 
-    async def _wait_for_process_exit(self, *, timeout: float) -> None:
+    async def _drain_immediate_runtime_error_on_prompt_write_failure(self) -> str | None:
+        process = self._process
+        if process is None or process.stdout is None:
+            return None
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_TIMEOUT_SECONDS
+        for _ in range(_INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_MAX_LINES):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=remaining)
+            except TimeoutError:
+                break
+            except Exception:
+                logger.debug(
+                    (
+                        "Failed while draining immediate Pi runtime diagnostics after"
+                        " prompt write failure"
+                    ),
+                    exc_info=True,
+                )
+                break
+
+            if not line_bytes:
+                break
+
+            raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+            if not raw_text.strip():
+                continue
+
+            trace_wire_recv(self._tracer, "stdout_line", raw_text, bytes=len(line_bytes))
+            event = self._parse_stdout_line(raw_text)
+            if event is None:
+                continue
+            if event.event_type == _PI_WRAPPER_RUNTIME_ERROR_EVENT_TYPE:
+                detail = self._runtime_error_message(event)
+                self._runtime_error_detail = detail
+                return detail
+        return None
+
+    def _validate_initial_prompt_requirement(self) -> None:
+        if self._launch_session_role != "spawned":
+            return
+        if self._initial_prompt.strip():
+            return
+        raise ValueError(_PI_SPAWNED_PROMPT_REQUIRED_REASON)
+
+    async def _wait_for_process_exit(self, *, timeout: float) -> bool:
         process = self._process
         if process is None or process.returncode is not None:
-            return
+            return True
         try:
             await asyncio.wait_for(process.wait(), timeout=timeout)
+            return True
         except TimeoutError:
-            return
+            return False
 
     def _set_state(self, next_state: ConnectionState) -> None:
         if next_state == self._state:
@@ -479,16 +702,20 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             harness_id=_HARNESS_NAME,
         )
 
-    async def _cleanup_resources(self, *, terminate_process: bool) -> None:
+    async def _cleanup_resources(self, *, terminate_process: bool) -> bool:
+        stop_escalated = False
         if terminate_process:
-            await self._terminate_process()
+            stop_escalated = await self._terminate_process()
         self._close_log_handles()
+        return stop_escalated
 
-    async def _terminate_process(self) -> None:
+    async def _terminate_process(self) -> bool:
         process = self._process
         if process is None:
-            return
+            return False
+        stop_escalated = False
         if process.returncode is None:
+            stop_escalated = True
             if process.stdin is not None:
                 try:
                     process.stdin.close()
@@ -504,6 +731,41 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 process.kill()
                 await process.wait()
         self._process = None
+        return stop_escalated
+
+    def _redact_command_for_history(self, command: Sequence[str]) -> list[str]:
+        redacted: list[str] = []
+        redact_next = False
+        for token in command:
+            if redact_next:
+                redacted.append(_REDACTED_ARG_VALUE)
+                redact_next = False
+                continue
+            flag_token = self._secret_flag_token(token)
+            if flag_token is None:
+                redacted.append(token)
+                continue
+            if "=" in token:
+                redacted.append(f"{flag_token}={_REDACTED_ARG_VALUE}")
+                continue
+            redacted.append(token)
+            redact_next = True
+        return redacted
+
+    def _secret_flag_token(self, token: str) -> str | None:
+        if not token.startswith("-"):
+            return None
+        flag = token.split("=", 1)[0]
+        normalized = flag.lstrip("-").strip().lower().replace("_", "-")
+        if not normalized:
+            return None
+        segments = [segment for segment in normalized.split("-") if segment]
+        if not segments:
+            return None
+        has_secret_segment = any(segment in _SECRET_FLAG_SEGMENTS for segment in segments)
+        if not has_secret_segment:
+            return None
+        return flag
 
     def _close_log_handles(self) -> None:
         if self._stderr_handle is not None:
@@ -514,6 +776,42 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         emitter = self._startup_emitter
         if emitter is not None:
             emitter.emit(phase)
+
+    def _emit_harness_ready_once(self) -> None:
+        if self._harness_ready_emitted:
+            return
+        self._emit_startup_phase(StartupPhase.HARNESS_READY)
+        self._harness_ready_emitted = True
+
+    def _lifecycle_phase_event(
+        self,
+        phase: str,
+        **data: object,
+    ) -> HarnessEvent:
+        payload: dict[str, object] = {
+            "type": _PI_PHASE_EVENT_TYPE,
+            "phase": phase,
+            "schema_version": _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
+        }
+        payload.update(data)
+        if self._spawn_id:
+            payload["spawn_id"] = str(self._spawn_id)
+        event = HarnessEvent(
+            event_type=_PI_PHASE_EVENT_TYPE,
+            payload=payload,
+            harness_id=_HARNESS_NAME,
+            raw_text=None,
+        )
+        if self._tracer is not None:
+            self._tracer.emit(
+                "connection",
+                "pi_lifecycle_phase",
+                data=payload,
+            )
+        return event
+
+    def _queue_lifecycle_phase_event(self, phase: str, **data: object) -> None:
+        self._pending_lifecycle_phase_events.append(self._lifecycle_phase_event(phase, **data))
 
 
 PiConnection = PiRpcConnection

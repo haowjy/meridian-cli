@@ -1,3 +1,4 @@
+# qa-validated: pi-rpc-quiescence
 """spawn stats, list, show, cancel_all, and wait checkpoint behaviors.
 
 spawn_create_sync tests live in test_spawn_api_create.py.
@@ -288,6 +289,67 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
     assert "Goal: ship the migration" in rendered
     wire = detail.to_cli_wire()
     assert wire["goal"] == "ship the migration"
+
+
+@pytest.mark.parametrize(
+    "latest_phase",
+    [
+        "waiting_for_first_pi_event_after_prompt",
+        "waiting_for_notification_completion",
+        "quiescent_stop_escalating",
+        "quiescent_stop_escalated",
+    ],
+)
+def test_spawn_show_includes_latest_pi_lifecycle_phase(
+    tmp_path: Path,
+    latest_phase: str,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p915",
+        chat_id="c915",
+        model="gpt-5.4",
+        agent="coder",
+        harness="pi",
+        prompt="hello",
+    )
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "seq": 0,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {"phase": "initial_prompt_sent"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "seq": 1,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {"phase": latest_phase},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
+    )
+
+    assert detail.pi_lifecycle_phase == latest_phase
+    assert f"Pi phase: {latest_phase}" in detail.format_text()
+    wire = detail.to_cli_wire()
+    assert wire["pi_lifecycle_phase"] == latest_phase
 
 
 def test_wait_yield_default_uses_parent_harness_interval(

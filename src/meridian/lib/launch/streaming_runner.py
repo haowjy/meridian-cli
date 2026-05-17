@@ -97,6 +97,7 @@ _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
 logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
+_PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
 
 
 @dataclass(frozen=True)
@@ -217,6 +218,22 @@ def _truncate_attempt_logs(log_dir: Path) -> None:
         target = log_dir / name
         if target.exists():
             target.unlink()
+
+
+def _scope_pi_session_dir_for_spawn(
+    *,
+    child_env: dict[str, str],
+    spawn_id: SpawnId,
+) -> None:
+    """Scope Pi session storage to one launch to avoid stale session fallback collisions."""
+
+    session_root = child_env.get(_PI_SESSION_DIR_ENV, "").strip()
+    if not session_root:
+        return
+
+    scoped_session_root = Path(session_root).expanduser() / str(spawn_id)
+    scoped_session_root.mkdir(parents=True, exist_ok=True)
+    child_env[_PI_SESSION_DIR_ENV] = str(scoped_session_root)
 
 
 def _persist_attempt_artifacts(
@@ -748,6 +765,11 @@ async def execute_with_streaming(
         child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
+        if resolved_harness_id is HarnessId.PI:
+            _scope_pi_session_dir_for_spawn(
+                child_env=child_env,
+                spawn_id=run.spawn_id,
+            )
         pi_session_role = (
             resolve_pi_session_role(interactive=launch_context.binding.run_params.interactive)
             if resolved_harness_id is HarnessId.PI

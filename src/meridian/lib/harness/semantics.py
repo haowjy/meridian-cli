@@ -44,10 +44,11 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
         return TerminalEventOutcome(status="succeeded", exit_code=0)
 
     if event.event_type == "error/connectionClosed":
+        error = _stringify_terminal_error(event.payload.get("message")) or "connection_closed"
         return TerminalEventOutcome(
             status="failed",
             exit_code=1,
-            error="connection_closed",
+            error=error,
         )
 
     if event.harness_id == HarnessId.CLAUDE.value and event.event_type == "result":
@@ -116,6 +117,12 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
                     )
                 return TerminalEventOutcome(status="succeeded", exit_code=0)
         return TerminalEventOutcome(status="succeeded", exit_code=0)
+
+    if event.harness_id == HarnessId.PI.value and event.event_type == "response":
+        command = str(event.payload.get("command", "")).strip().lower()
+        if command == "prompt" and event.payload.get("success") is False:
+            error = _stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
+            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
 
     return None
 

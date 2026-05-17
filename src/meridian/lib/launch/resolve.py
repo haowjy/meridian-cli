@@ -12,6 +12,7 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.catalog.skill import SkillRegistry
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.harness.projections.project_pi_rpc import PI_PRIMARY_RPC_ATTACH_GUARDRAIL
 from meridian.lib.harness.registry import HarnessRegistry
 
 
@@ -172,6 +173,8 @@ def validate_harness_compatibility(
     )
     supported_primary_set = set(supported_primary_harnesses)
     if harness_id not in supported_primary_set:
+        if harness_id == HarnessId.PI:
+            raise ValueError(PI_PRIMARY_RPC_ATTACH_GUARDRAIL)
         supported_text = ", ".join(str(harness) for harness in supported_primary_harnesses)
         raise ValueError(f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}.")
 

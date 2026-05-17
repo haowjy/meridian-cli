@@ -1,6 +1,6 @@
 # qa-validated: pi-rpc-quiescence
 
-# Pi RPC quiescence smoke (S1-S12)
+# Pi RPC quiescence smoke (S1-S16)
 
 Manual smoke scenarios for Pi RPC quiescence behavior.
 
@@ -104,18 +104,16 @@ Expect:
 - Follow-up turn runs and reports `fast-done`
 - Spawn reaches quiescence only after the follow-up turn completes
 
-## S7: Primary session does not auto-shutdown
+## S7: Primary Pi guardrail until managed attach
 
 ```bash
-uv run meridian -m <pi-model>
+uv run meridian --harness pi -m <pi-model>
 ```
 
-In the session, run tracked background work and wait for completion summary.
-
 Expect:
-- Lifecycle emits `meridian.notification.queued` + `delivered` and resumes the agent
-- Lifecycle can emit `meridian.quiescence.ready` after notification completion
-- Session remains open at quiescence (no auto-close)
+- Meridian exits non-zero instead of launching raw Pi RPC into a human TTY
+- Diagnostic says Pi primary RPC attach is not implemented yet
+- Diagnostic suggests `meridian spawn --harness pi ...` for managed RPC work or direct `pi` for Pi's native TUI
 
 ## S8: Child failure notifies
 
@@ -182,3 +180,53 @@ Expect:
 - Meridian cancels/stops Pi and attempts tracked job cleanup
 - Spawn finalizes timeout/failed, not succeeded
 - Detached jobs remain user-owned and are not killed by quiescence cleanup
+
+## S13: No pre-prompt session event probe
+
+Probe raw Pi RPC without sending a prompt:
+
+```bash
+(sleep 5) | timeout 3s pi --mode rpc --model <pi-model> --no-extensions --no-skills --no-context-files --no-prompt-templates
+```
+
+Expect:
+- Probe may produce no stdout before timeout
+- This confirms Meridian must not wait for a `session` event before writing the first prompt
+
+## S14: Prompt response failure does not hang
+
+Probe an unauthenticated or intentionally misconfigured runtime:
+
+```bash
+(sleep 0.3; printf '{"type":"prompt","message":"say hi"}\n'; sleep 3) | timeout 6s <unauthenticated-pi-runtime> --mode rpc --model <pi-model> --no-extensions --no-skills --no-context-files --no-prompt-templates
+```
+
+Expect:
+- Pi emits `response` with `success:false` and an auth/provider error, or exits with an equivalent error
+- Meridian would finalize failed with that error
+- Spawn does not wait for `agent_end` or `session`
+
+## S15: Runtime selection explains auth source
+
+Setup:
+- Installed `pi` is authenticated for the model
+- Bundled/dev `meridian-pi` is not authenticated
+
+Expect:
+- Meridian selects compatible installed `pi` by default, or fails before launch with explicit selected-runtime/auth diagnostics
+- Launch diagnostics include runtime kind (`override`, `installed`, `packaged`, or `node`), binary path, version if known, session dir, and whether Meridian set `PI_CODING_AGENT_DIR`
+- Runtime does not silently switch to a blank Meridian-owned auth/config directory
+
+## S16: Spawn show exposes Pi phase
+
+```bash
+uv run meridian spawn --harness pi -m <pi-model> --bg -p "Reply OK and run no commands."
+meridian spawn show <spawn-id>
+```
+
+Expect:
+- Output includes `Pi phase:` while running or after completion
+- A hang is diagnosable as one named phase, for example
+  `waiting_for_first_pi_event_after_prompt`,
+  `waiting_for_notification_completion`, `quiescent_stop_escalating`,
+  or `quiescent_stop_escalated`

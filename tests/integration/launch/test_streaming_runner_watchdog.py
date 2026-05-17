@@ -1,4 +1,5 @@
 # qa-validated: test-suite-redesign
+# qa-validated: pi-rpc-quiescence
 """Streaming runner watchdog and lifecycle tests: cleanup, setup failure, and duration guard."""
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
     HarnessEvent,
+    StopProgressCallback,
+    StopResult,
 )
 from meridian.lib.harness.launch_spec import ResolvedLaunchSpec
 from meridian.lib.harness.registry import HarnessRegistry
@@ -86,8 +89,15 @@ class _ReportThenHangConnection:
         self._project_root = config.control_root
         self.state = "connected"
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
         self.state = "stopped"
+        return StopResult()
 
     def health(self) -> bool:
         return self.state == "connected"
@@ -157,9 +167,16 @@ class _PiTimeoutThenTerminalConnection:
         self._project_root = config.control_root
         self.state = "connected"
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
         self.state = "stopped"
         self._stop_event.set()
+        return StopResult()
 
     def health(self) -> bool:
         return self.state == "connected"
@@ -235,8 +252,15 @@ class _PiTimeoutWithoutTerminalConnection:
         self._project_root = config.control_root
         self.state = "connected"
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
         self.state = "stopped"
+        return StopResult()
 
     def health(self) -> bool:
         return self.state == "connected"
@@ -497,8 +521,15 @@ async def test_execute_with_streaming_waits_for_pi_subspawn_drain_after_parent_t
             self._project_root = config.control_root
             self.state = "connected"
 
-        async def stop(self) -> None:
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: StopProgressCallback | None = None,
+        ) -> StopResult:
+            _ = reason, progress
             self.state = "stopped"
+            return StopResult()
 
         def health(self) -> bool:
             return self.state == "connected"
