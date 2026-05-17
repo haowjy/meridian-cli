@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.13-rc.2] - 2026-05-17
+
 ### Changed
 - Routine reaper cleanup logs move to debug; only anomaly diagnostics remain user-visible warnings.
 
