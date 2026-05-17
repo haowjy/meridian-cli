@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import tomllib
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast, get_args
@@ -33,11 +36,57 @@ if TYPE_CHECKING:
 HOOK_SOURCE_PRECEDENCE: tuple[str, ...] = ("builtin", "context", "user", "project", "local")
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 _INTERVAL_PATTERN = re.compile(r"^\d+[smhd]$")
+_HOOK_NAME_COMPONENT_PATTERN = re.compile(r"[^a-z0-9._-]+")
+_HOOK_NAME_REPEATED_DASH_PATTERN = re.compile(r"-+")
 _KNOWN_FAILURE_POLICIES = frozenset({"fail", "warn", "ignore"})
 _KNOWN_SPAWN_STATUSES = frozenset(get_args(SpawnStatus))
 
 # Backward-compatible alias; registry remains the single source of truth.
 BUILTIN_HOOK_DEFAULTS = BUILTIN_HOOK_REGISTRY
+
+
+def _slugify_hook_name_component(raw: str) -> str:
+    normalized = raw.strip().lower()
+    normalized = _HOOK_NAME_COMPONENT_PATTERN.sub("-", normalized)
+    normalized = _HOOK_NAME_REPEATED_DASH_PATTERN.sub("-", normalized)
+    normalized = normalized.strip("-.")
+    # Keep synthesized names readable while avoiding runaway path-like identifiers.
+    return normalized[:48].strip("-.")
+
+
+def _synthesize_builtin_hook_name(
+    *,
+    builtin: str,
+    remote: str | None,
+    options: Mapping[str, object],
+) -> str:
+    identity: dict[str, object] = dict(options)
+    if remote is not None:
+        identity["remote"] = remote
+
+    if not identity:
+        return builtin
+
+    payload = json.dumps(
+        identity,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
+
+    slug_source = ""
+    for candidate_key in ("remote", "path"):
+        candidate = identity.get(candidate_key)
+        if isinstance(candidate, str) and candidate.strip():
+            slug_source = candidate
+            break
+
+    slug = _slugify_hook_name_component(slug_source) if slug_source else ""
+    if slug:
+        return f"{builtin}:{slug}-{digest}"
+    return f"{builtin}:{digest}"
 
 
 @dataclass(frozen=True)
@@ -183,7 +232,11 @@ def _hook_from_row(
     name = cast("str | None", row.get("name"))
     if name is None:
         if builtin is not None:
-            name = builtin
+            name = _synthesize_builtin_hook_name(
+                builtin=builtin,
+                remote=remote,
+                options=options,
+            )
         else:
             raise ValueError(f"Invalid hook config '{row_source}': 'name' is required.")
 
