@@ -1,6 +1,7 @@
 """Raw launch request DTOs persisted across prepare/execute boundaries."""
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -88,6 +89,9 @@ class SpawnRequest(BaseModel):
     extra_args: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
     tools: ToolsField | None = None
+    launch_bundle_provenance: dict[str, str] = Field(default_factory=_empty_agent_metadata)
+    launch_bundle_warnings: tuple[str, ...] = ()
+    launch_bundle_native_config: dict[str, Any] | None = None
 
     # Execution policy carrier (replaces flat effort/sandbox/approval/autocompact/autocompact_pct)
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from typing import Any, cast
 
 from meridian.lib.harness.projections.projection_errors import HarnessCapabilityMismatch
 
@@ -78,9 +79,57 @@ def project_codex_mcp_config_flags(mcp_tools: Iterable[str]) -> tuple[str, ...]:
     return tuple(projected)
 
 
+def _serialize_codex_native_config_value(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, (list, tuple)):
+        list_value = list(cast("list[Any] | tuple[Any, ...]", value))
+        return json.dumps(list_value, separators=(",", ":"))
+    return None
+
+
+def project_codex_native_config_flags(
+    native_config: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Project Mars bundle native_config to deterministic Codex ``-c`` args.
+
+    Returns ``(flags, warnings)`` where warnings contains user-facing messages
+    for skipped values that cannot be represented in this transport.
+    """
+
+    projected: list[str] = []
+    warnings: list[str] = []
+    for key in sorted(native_config):
+        value = native_config[key]
+        if isinstance(value, dict):
+            warnings.append(
+                "native-config key "
+                f"'{key}' has nested map value; Codex -c requires scalar/array values "
+                "or dotted keys. Skipped."
+            )
+            continue
+        serialized = _serialize_codex_native_config_value(value)
+        if serialized is None:
+            warnings.append(
+                "native-config key "
+                f"'{key}' has unsupported value type '{type(value).__name__}' "
+                "for Codex -c. Skipped."
+            )
+            continue
+        projected.extend(("-c", f"{key}={serialized}"))
+    return tuple(projected), tuple(warnings)
+
+
 __all__ = [
     "HarnessCapabilityMismatch",
     "map_codex_approval_policy",
     "map_codex_sandbox_mode",
     "project_codex_mcp_config_flags",
+    "project_codex_native_config_flags",
 ]

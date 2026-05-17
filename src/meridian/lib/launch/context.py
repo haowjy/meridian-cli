@@ -62,7 +62,7 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
-from .composition import ComposedLaunchContent, ProjectedContent, PromptDocument
+from .composition import ComposedLaunchContent, ProjectedContent
 from .cwd import resolve_child_execution_cwd
 from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
@@ -891,6 +891,7 @@ def _resolve_spawn_prepare_projection(
     profile = policy.profile
     harness = policy.adapter
     resolved_skills = policy.resolved_skills
+    launch_bundle = policy.launch_bundle
 
     task_ctx = resolve_task_context_inputs(
         context_from=request.context_from,
@@ -904,28 +905,41 @@ def _resolve_spawn_prepare_projection(
         resolved_template_variables,
     )
 
-    if harness.capabilities.supports_native_skills:
-        supplemental_documents: tuple[PromptDocument, ...] = ()
-    else:
-        supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
-
-    agent_profile_body = ""
-    if (
-        profile is not None
-        and profile.body.strip()
-        and not harness.capabilities.supports_native_agents
-    ):
-        rendered_agent_body = substitute_template_variables(
-            profile.body.strip(),
-            resolved_template_variables,
+    if launch_bundle is not None:
+        supplemental_documents = ()
+        agent_profile_body = launch_bundle.prompt_surface.system_instruction.strip()
+        agent_inventory_prompt, context_prompt = build_launch_context_documents(
+            project_root=project_paths.project_root,
+            alias_catalog=policy.alias_catalog,
+            active_work_dir=active_work_dir,
+            include_inventory=False,
+            include_context=True,
         )
-        agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
+        report_instruction = ""
+    else:
+        if harness.capabilities.supports_native_skills:
+            supplemental_documents = ()
+        else:
+            supplemental_documents = compose_skill_prompt_documents(resolved_skills.loaded_skills)
 
-    agent_inventory_prompt, context_prompt = build_launch_context_documents(
-        project_root=project_paths.project_root,
-        alias_catalog=policy.alias_catalog,
-        active_work_dir=active_work_dir,
-    )
+        agent_profile_body = ""
+        if (
+            profile is not None
+            and profile.body.strip()
+            and not harness.capabilities.supports_native_agents
+        ):
+            rendered_agent_body = substitute_template_variables(
+                profile.body.strip(),
+                resolved_template_variables,
+            )
+            agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
+
+        agent_inventory_prompt, context_prompt = build_launch_context_documents(
+            project_root=project_paths.project_root,
+            alias_catalog=policy.alias_catalog,
+            active_work_dir=active_work_dir,
+        )
+        report_instruction = build_report_instruction()
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
         active_work_dir.name if active_work_dir is not None else ""
@@ -947,7 +961,7 @@ def _resolve_spawn_prepare_projection(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
             agent_profile_body=agent_profile_body,
-            report_instruction=build_report_instruction(),
+            report_instruction=report_instruction,
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
             completion_contract=completion_contract,
@@ -1226,19 +1240,37 @@ def prepare_launch_surface(
             "model_selection_canonical_id": model_selection.canonical_model_id,
             "model_selection_harness_provenance": model_selection.harness_provenance,
         }
-    resolved_agent_name = profile.name if profile is not None else request.agent
+    bundle_agent_name = (
+        (policies.launch_bundle.agent or "").strip()
+        if policies.launch_bundle is not None
+        else None
+    )
+    resolved_agent_name = (
+        profile.name
+        if profile is not None
+        else (bundle_agent_name or policies.routing.agent or request.agent)
+    )
     session_agent_path = resolve_profile_path(profile)
     if resolved_agent_name is not None:
         agent_metadata["session_agent"] = resolved_agent_name
     if session_agent_path:
         agent_metadata["session_agent_path"] = session_agent_path
     adhoc_agent_payload = ""
-    if profile is not None and harness.capabilities.supports_native_agents:
+    if (
+        profile is not None
+        and harness.capabilities.supports_native_agents
+        and policies.launch_bundle is None
+    ):
         adhoc_agent_payload = harness.build_adhoc_agent_payload(
             name=profile.name,
             description=profile.description,
             prompt=profile.body,
         )
+    if policies.launch_bundle is not None:
+        for key, value in sorted(policies.launch_bundle.provenance.items()):
+            if value.strip():
+                agent_metadata[f"launch_bundle_provenance.{key}"] = value
+        agent_metadata["launch_bundle.version"] = str(policies.launch_bundle.version)
     content = PreparedLaunchContent(
         final_prompt=content.final_prompt,
         resolved_context_from=content.resolved_context_from,
@@ -1252,7 +1284,22 @@ def prepare_launch_surface(
         agent_inventory_prompt=content.agent_inventory_prompt,
         context_prompt=content.context_prompt,
     )
-    profile_tools_for_nested_deny = profile.tools if profile is not None else None
+    profile_tools_for_nested_deny = (
+        policies.tools
+        if policies.launch_bundle is not None
+        else profile.tools if profile is not None else None
+    )
+    resolved_mcp_tools = (
+        policies.mcp_tools
+        if policies.launch_bundle is not None
+        else profile.mcp_tools if profile is not None else request.mcp_tools
+    )
+    resolved_tools = (
+        policies.tools
+        if policies.launch_bundle is not None
+        else profile.tools if profile is not None else request.tools
+    )
+    resolved_extra_args = (*final_passthrough_args, *policies.bundle_extra_args)
 
     resolved_request = request.model_copy(
         update={
@@ -1262,10 +1309,17 @@ def prepare_launch_surface(
             "harness": str(policies.harness),
             "agent": resolved_agent_name,
             "skills": resolved_skills.skill_names,
-            "extra_args": final_passthrough_args,
-            "mcp_tools": profile.mcp_tools if profile is not None else request.mcp_tools,
+            "extra_args": resolved_extra_args,
+            "mcp_tools": resolved_mcp_tools,
             "execution_policy": execution_policy,
-            "tools": profile.tools if profile is not None else request.tools,
+            "tools": resolved_tools,
+            "launch_bundle_provenance": (
+                policies.launch_bundle.provenance if policies.launch_bundle is not None else {}
+            ),
+            "launch_bundle_warnings": (
+                policies.launch_bundle.warnings if policies.launch_bundle is not None else ()
+            ),
+            "launch_bundle_native_config": policies.native_config,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,

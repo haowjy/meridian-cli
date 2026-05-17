@@ -13,6 +13,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi runtime TypeScript extensions: `managed-bash` (`bash` override + `bash_bg_list/read/wait/kill`) and `meridian-lifecycle` (tracked child + notification/quiescence events) plus prebuild script `npm run build:extensions` for stable extension artifacts under `src/meridian/pi_runtime/dist/extensions/`.
 
 ### Changed
+
+- Spawn-prepare now tries Mars `build launch-bundle` for agent-profile launches; Meridian consumes bundle routing/policy/tools and keeps bare `-m` launches on legacy path with fallback warning when Mars bundle build is unavailable.
 - Nested spawn reads now apply read-only stale detection after reconciliation when `MERIDIAN_DEPTH>0`: stale rows surface as synthetic terminal (`runner_exit_*`, `stale_nested_read`, `stale_nested_read_no_pid`) without writing reconciler orphan states to disk.
 - Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; stderr remains debug only; primary TUI no longer shows raw lifecycle JSON; no lifecycle JSON leaks to TUI or stderr.
 - Primary Pi session identity now comes from flat `PI_CODING_AGENT_SESSION_DIR/*.jsonl` scanning with first-line JSON parse, cwd/time-window disambiguation, and expected-id suppression; `primary_meta.json` now records `harness_session_discovery` plus `harness_session_discovery_detail` so continue/fork errors can distinguish never-created vs discovery-failed vs legacy empty-id cases.
@@ -86,6 +88,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Unnamed duplicate builtin hooks now synthesize stable identity names, so multiple `git-autosync` remotes no longer override each other.
 - Git subprocess seams strip inherited repo-scoped `GIT_*` environment before invoking git. Worktree operations and `git-autosync` no longer risk retargeting commands into the parent checkout when launched from a git hook or git-managed process.
+
 
 ## [0.1.10] - 2026-05-16
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 from meridian.lib.catalog.agent import AgentProfile, ModelPolicyRule
 from meridian.lib.catalog.catalog_session import CatalogSession
@@ -18,7 +19,11 @@ from meridian.lib.core.overrides import (
 )
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
+from meridian.lib.harness.projections.project_codex_common import (
+    project_codex_native_config_flags,
+)
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.tools import ToolsField
 
 from .compiler import (
     CompilerRequest,
@@ -34,6 +39,11 @@ from .launch_types import (
     ResolvedExecutionPolicy,
     ResolvedLaunchRouting,
     TerminalSurfaceMode,
+)
+from .mars_bundle import (
+    LaunchBundle,
+    MarsLaunchBundleUnavailableError,
+    invoke_mars_build_launch_bundle,
 )
 from .materialize import materialize_harness
 from .request import LaunchCompositionSurface
@@ -126,6 +136,11 @@ class ResolvedLaunchPolicy:
     fallback_chain: tuple[dict[str, object], ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
+    launch_bundle: LaunchBundle | None = None
+    tools: ToolsField | None = None
+    mcp_tools: tuple[str, ...] = ()
+    native_config: dict[str, Any] | None = None
+    bundle_extra_args: tuple[str, ...] = ()
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
@@ -225,6 +240,182 @@ def _policy_warnings(
             ),
         )
     return ()
+
+
+def _supports_bundle_path(surface: SurfacePolicyInput, agent_name: str | None) -> bool:
+    return (
+        surface.surface is LaunchCompositionSurface.SPAWN_PREPARE
+        and bool((agent_name or "").strip())
+    )
+
+
+def _project_bundle_native_config(
+    *,
+    harness_id: HarnessId,
+    native_config: dict[str, Any] | None,
+) -> tuple[tuple[str, ...], tuple[CompositionWarning, ...]]:
+    if not native_config:
+        return (), ()
+    if harness_id is HarnessId.CODEX:
+        args, warnings = project_codex_native_config_flags(native_config)
+        return args, tuple(
+            CompositionWarning(code="native_config_warning", message=warning)
+            for warning in warnings
+        )
+    return (), (
+        CompositionWarning(
+            code="native_config_warning",
+            message=(
+                "Mars launch-bundle native_config is not projected for harness "
+                f"'{harness_id.value}' in this launch slice; ignoring native_config."
+            ),
+        ),
+    )
+
+
+def _resolve_bundle_execution_policy(
+    *,
+    surface: SurfacePolicyInput,
+    bundle: LaunchBundle,
+) -> ResolvedExecutionPolicy:
+    supported_fields = surface.supported_execution_policy_fields
+    bundle_defaults = RuntimeOverrides(
+        effort=bundle.execution_policy.effort,
+        sandbox=bundle.execution_policy.sandbox,
+        approval=bundle.execution_policy.approval,
+        autocompact=bundle.execution_policy.autocompact,
+        autocompact_pct=bundle.execution_policy.autocompact_pct,
+        timeout=bundle.execution_policy.timeout,
+    ).execution_policy_scope(supported_fields)
+    resolved = resolve_policy_fields(
+        surface.cli_overrides.execution_policy_scope(supported_fields),
+        surface.env_overrides.execution_policy_scope(supported_fields),
+        bundle_defaults,
+    )
+    return ResolvedExecutionPolicy(
+        effort=resolved.effort,
+        sandbox=resolved.sandbox,
+        approval=resolved.approval,
+        autocompact=resolved.autocompact,
+        autocompact_pct=resolved.autocompact_pct,
+        timeout=resolved.timeout,
+    )
+
+
+def _bundle_warning_entries(bundle: LaunchBundle) -> tuple[CompositionWarning, ...]:
+    warnings: list[CompositionWarning] = []
+    for item in bundle.warnings:
+        message = item.strip()
+        if message:
+            warnings.append(
+                CompositionWarning(
+                    code="mars_bundle_warning",
+                    message=message,
+                )
+            )
+    if bundle.tools.allowed or bundle.tools.disallowed:
+        try:
+            harness_id = HarnessId(bundle.routing.harness)
+        except ValueError:
+            harness_id = None
+        if harness_id is HarnessId.CODEX:
+            warnings.append(
+                CompositionWarning(
+                    code="tool_projection_warning",
+                    message=(
+                        "Tool-level allow/deny policy is not projected for Codex. "
+                        "Codex tool access is governed by approval mode and sandbox level."
+                    ),
+                )
+            )
+    return tuple(warnings)
+
+
+def _resolve_mars_bundle_policy(
+    *,
+    surface: SurfacePolicyInput,
+    agent_name: str,
+) -> ResolvedLaunchPolicy:
+    bundle = invoke_mars_build_launch_bundle(
+        agent=agent_name,
+        project_root=surface.catalog.project_root,
+        cli_overrides=surface.cli_overrides,
+        env_overrides=surface.env_overrides,
+        requested_skills=surface.requested_skills,
+    )
+    try:
+        harness_id = HarnessId(bundle.routing.harness)
+    except ValueError as exc:
+        raise ValueError(
+            f"Mars launch-bundle returned unsupported harness '{bundle.routing.harness}'."
+        ) from exc
+    try:
+        adapter = surface.harness_registry.get_subprocess_harness(harness_id)
+    except (KeyError, TypeError) as exc:
+        supported = ", ".join(str(h) for h in surface.harness_registry.ids())
+        raise ValueError(
+            "Mars launch-bundle resolved harness "
+            f"'{harness_id}' but Meridian supports only: {supported}"
+        ) from exc
+
+    native_extra_args, native_warnings = _project_bundle_native_config(
+        harness_id=harness_id,
+        native_config=bundle.execution_policy.native_config,
+    )
+    resolved_agent_name = (bundle.agent or "").strip() or agent_name
+    warning_entries = [
+        *_bundle_warning_entries(bundle),
+        *native_warnings,
+    ]
+    selected_model_token = (bundle.routing.model_token or bundle.routing.model).strip()
+    requested_token = (
+        surface.cli_overrides.model
+        or surface.env_overrides.model
+        or selected_model_token
+        or bundle.routing.model
+    )
+    resolved_skills = ResolvedSkills(
+        skill_names=bundle.skills_metadata.loaded,
+        loaded_skills=(),
+        missing_skills=bundle.skills_metadata.missing,
+    )
+    bundle_tools = bundle.tools.to_tools_field()
+    if harness_id is HarnessId.CODEX and bundle_tools is not None:
+        bundle_tools = None
+
+    return ResolvedLaunchPolicy(
+        profile=None,
+        model=bundle.routing.model,
+        harness=harness_id,
+        adapter=adapter,
+        resolved_skills=resolved_skills,
+        routing=ResolvedLaunchRouting(
+            model=selected_model_token or None,
+            harness=harness_id,
+            agent=resolved_agent_name,
+        ),
+        execution_policy=_resolve_bundle_execution_policy(
+            surface=surface,
+            bundle=bundle,
+        ),
+        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=harness_id),
+        model_selection=ModelSelectionContext(
+            requested_token=requested_token,
+            selected_model_token=selected_model_token or bundle.routing.model,
+            canonical_model_id=bundle.routing.model,
+            mars_provided_harness=None,
+            resolved_entry=None,
+            harness_provenance="mars-launch-bundle",
+            harness_model_id=None,
+        ),
+        warnings=tuple(warning_entries),
+        alias_catalog=None,
+        launch_bundle=bundle,
+        tools=bundle_tools,
+        mcp_tools=bundle.tools.mcp,
+        native_config=bundle.execution_policy.native_config,
+        bundle_extra_args=native_extra_args,
+    )
 
 
 def _resolved_model_default_harness(model_entry: AliasEntry | None) -> HarnessId | None:
@@ -475,6 +666,21 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     explicit_user_overrides = resolve(*surface.layers)
     requested_agent = explicit_user_overrides.agent
     configured_default_agent = pre_profile_resolved.agent if not requested_agent else ""
+    bundle_candidate_agent = requested_agent or configured_default_agent
+
+    mars_fallback_warning: str | None = None
+    if _supports_bundle_path(surface, bundle_candidate_agent):
+        assert bundle_candidate_agent is not None
+        try:
+            return _resolve_mars_bundle_policy(
+                surface=surface,
+                agent_name=bundle_candidate_agent,
+            )
+        except MarsLaunchBundleUnavailableError as exc:
+            mars_fallback_warning = (
+                "Mars launch-bundle unavailable; falling back to legacy launch resolution. "
+                f"Reason: {exc}"
+            )
 
     profile, profile_warning = load_agent_profile_with_fallback(
         project_root=project_root,
@@ -756,6 +962,10 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     )
 
     model_warning = "\n".join(compiler_result.warnings).strip() or None
+    if mars_fallback_warning:
+        model_warning = (
+            f"{mars_fallback_warning}\n{model_warning}" if model_warning else mars_fallback_warning
+        )
     policy_warnings = [
         *_policy_warnings(
             profile_warning=profile_warning,

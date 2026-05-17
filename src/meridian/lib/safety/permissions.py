@@ -219,16 +219,17 @@ def compile_tools_to_claude_flags(tools: ToolsField | None) -> tuple[str, ...]:
         tool for tools_ in _CAPABILITY_TO_CLAUDE_TOOLS.values() for tool in tools_
     )
 
+    for raw_key, action in rules.items():
+        if raw_key == "*" or action not in _ASK_AS_ALLOW:
+            continue
+        capability, scope = _split_key(raw_key)
+        mapped = _claude_key_for_capability(capability)
+        if scope is None:
+            allowed.extend(mapped)
+        else:
+            allowed.extend(f"{tool}({scope})" for tool in mapped)
+
     if default_action == "deny":
-        for raw_key, action in rules.items():
-            if raw_key == "*" or action not in _ASK_AS_ALLOW:
-                continue
-            capability, scope = _split_key(raw_key)
-            mapped = _claude_key_for_capability(capability)
-            if scope is None:
-                allowed.extend(mapped)
-            else:
-                allowed.extend(f"{tool}({scope})" for tool in mapped)
         if not allowed:
             # Best-effort representation for "deny everything".
             disallowed.extend(known_all_tools)

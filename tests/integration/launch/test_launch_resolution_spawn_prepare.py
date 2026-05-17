@@ -1,4 +1,5 @@
 # qa-validated: test-suite-redesign
+# qa-validated: mars-launch-bundle-design
 """Spawn prepare surface tests: reference routing, channel manifests, and inventory placement."""
 
 from __future__ import annotations
@@ -9,6 +10,16 @@ import pytest
 
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.mars_bundle import (
+    BundleExecutionPolicy,
+    BundlePromptSurface,
+    BundleRouting,
+    BundleScaffoldSlots,
+    BundleSkillsMetadata,
+    BundleTools,
+    LaunchBundle,
+    MarsLaunchBundleUnavailableError,
+)
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -25,6 +36,53 @@ def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
+    )
+
+
+def _mock_bundle_for_context() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(model="gpt-5.4", model_token="gpt-5.4", harness="codex"),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            sandbox="workspace-write",
+            approval="auto",
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(allowed=("Bash",), disallowed=("Write",), mcp=("github=gh",)),
+        skills_metadata=BundleSkillsMetadata(loaded=("verification",), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
+def _mock_bundle_without_sandbox_with_codex_tools() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(model="gpt-5.4", model_token="gpt-5.4", harness="codex"),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            approval="auto",
+            sandbox=None,
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(allowed=("Bash",), disallowed=(), mcp=()),
+        skills_metadata=BundleSkillsMetadata(loaded=(), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
+def _force_legacy_profile_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: (
+            _ for _ in ()
+        ).throw(MarsLaunchBundleUnavailableError("test uses legacy profile projection")),
     )
 
 
@@ -88,6 +146,104 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     assert "# Meridian Agents" in preview.projected_content.system_prompt
 
 
+def test_spawn_prepare_profile_bundle_uses_bundle_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_skill(
+        tmp_path,
+        "verification",
+        body="Local skill body should not be composed in bundle mode.",
+        description="Verification helper",
+    )
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="gpt-5.4",
+        skills=("verification",),
+    )
+
+    bundle = _mock_bundle_for_context()
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: bundle,
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-system",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness="codex",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.projected_content is not None
+    assert "## Bundle System" in preview.projected_content.system_prompt
+    assert "Local skill body should not be composed" not in preview.projected_content.system_prompt
+    assert preview.resolved_request.agent == "dev-orchestrator"
+    assert preview.resolved_request.agent_metadata.get("session_agent") == "dev-orchestrator"
+    assert preview.resolved_request.launch_bundle_provenance
+    assert preview.resolved_request.skill_paths == ()
+    assert preview.resolved_request.mcp_tools == ("github=gh",)
+    appended = preview.binding.run_params.appended_system_prompt or ""
+    assert "Local skill body should not be composed" not in appended
+    assert preview.resolved_request.tools is None
+
+
+def test_spawn_prepare_codex_bundle_tools_do_not_infer_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="gpt-5.4",
+    )
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_without_sandbox_with_codex_tools(),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-codex-tools-no-sandbox",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness="codex",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.resolved_request.tools is None
+    assert preview.binding.permission_config.sandbox == "default"
+    assert "--sandbox" not in preview.binding.argv
+
+
 @pytest.mark.parametrize(
     ("harness", "model"),
     [
@@ -134,8 +290,10 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
 
 
 def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _force_legacy_profile_path(monkeypatch)
     _write_minimal_mars_config(tmp_path)
     write_skill(
         tmp_path,
@@ -179,7 +337,6 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
 
     assert preview.resolved_request.skill_paths
 
-
     # Claude declares supports_native_skills=True, so skill content is
     # suppressed from supplemental_documents (projected.system_prompt).
     # Skills are delivered via compose_skill_injections() → appended_system_prompt.
@@ -210,8 +367,10 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
 
 
 def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _force_legacy_profile_path(monkeypatch)
     _write_minimal_mars_config(tmp_path)
     write_skill(
         tmp_path,

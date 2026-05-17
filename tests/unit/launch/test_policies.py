@@ -1,4 +1,7 @@
 # qa-validated: orchestrator-opencode-fallback-runtime
+# qa-validated: mars-launch-bundle-design
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,6 +13,20 @@ from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
+from meridian.lib.launch.mars_bundle import (
+    BundleExecutionPolicy,
+    BundlePromptSurface,
+    BundleRouting,
+    BundleScaffoldSlots,
+    BundleSkillsMetadata,
+    BundleTools,
+    LaunchBundle,
+    MarsLaunchBundleError,
+    MarsLaunchBundleUnavailableError,
+    build_launch_bundle_command,
+    invoke_mars_build_launch_bundle,
+    parse_launch_bundle,
+)
 from meridian.lib.launch.policies import (
     ModelSelectionContext,
     SurfacePolicyInput,
@@ -70,6 +87,259 @@ def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
     return registry
 
 
+@pytest.fixture(autouse=True)
+def _default_bundle_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: (
+            _ for _ in ()
+        ).throw(MarsLaunchBundleUnavailableError("mars unavailable in unit tests")),
+    )
+
+
+def _bundle_for_tests(
+    *,
+    model: str = "gpt-5.4",
+    harness: str = "codex",
+    native_config: dict[str, object] | None = None,
+) -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="reviewer",
+        routing=BundleRouting(model=model, model_token=model, harness=harness),
+        execution_policy=BundleExecutionPolicy(
+            effort="high",
+            approval="auto",
+            sandbox="workspace-write",
+            native_config=native_config,
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="Bundle system instruction"),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(
+            allowed=("Bash", "Read"),
+            disallowed=("Write",),
+            mcp=("github=gh",),
+        ),
+        skills_metadata=BundleSkillsMetadata(loaded=("verification",), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=("bundle warning",),
+    )
+
+
+def _bundle_payload_with_slots(scaffold_slots: dict[str, object]) -> str:
+    return json.dumps(
+        {
+            "version": 1,
+            "agent": "reviewer",
+            "routing": {
+                "model": "gpt-5.4",
+                "model_token": "gpt-5.4",
+                "harness": "codex",
+            },
+            "execution_policy": {},
+            "prompt_surface": {
+                "system_instruction": "Rendered by Mars",
+                "supplemental_documents": [
+                    {
+                        "kind": "skill",
+                        "name": "verification",
+                        "content": "doc content",
+                        "skill_type": "reference",
+                    }
+                ],
+                "inventory_prompt": "inventory text",
+            },
+            "scaffold_slots": scaffold_slots,
+            "tools": {},
+            "skills_metadata": {},
+            "provenance": {},
+            "warnings": [],
+        }
+    )
+
+
+def test_build_launch_bundle_command_relays_effective_overrides_and_requested_skills(
+    tmp_path: Path,
+) -> None:
+    command = build_launch_bundle_command(
+        agent="reviewer",
+        project_root=tmp_path,
+        cli_overrides=RuntimeOverrides(
+            model="gpt55",
+            approval="auto",
+            sandbox="workspace-write",
+        ),
+        env_overrides=RuntimeOverrides(
+            model="env-model",
+            harness="opencode",
+            effort="medium",
+            approval="confirm",
+        ),
+        requested_skills=("unit-test", "", "testing-principles"),
+        executable="/usr/bin/mars",
+    )
+
+    assert command == (
+        "/usr/bin/mars",
+        "build",
+        "launch-bundle",
+        "--agent",
+        "reviewer",
+        "--root",
+        tmp_path.as_posix(),
+        "--json",
+        "--model",
+        "gpt55",
+        "--harness",
+        "opencode",
+        "--effort",
+        "medium",
+        "--approval",
+        "auto",
+        "--sandbox",
+        "workspace-write",
+        "--skill",
+        "unit-test",
+        "--skill",
+        "testing-principles",
+    )
+
+
+def test_parse_launch_bundle_accepts_placeholder_scaffold_slots() -> None:
+    raw_json = _bundle_payload_with_slots(
+        {
+            "completion_contract": "###SLOT###",
+            "context_prompt": "",
+            "user_prompt_file": None,
+            "extra_slot": "###SLOT###",
+        }
+    )
+
+    bundle = parse_launch_bundle(raw_json)
+
+    assert bundle.prompt_surface.system_instruction == "Rendered by Mars"
+    assert bundle.prompt_surface.inventory_prompt == "inventory text"
+    assert bundle.prompt_surface.supplemental_documents[0].name == "verification"
+
+
+def test_parse_launch_bundle_preserves_native_config_and_mixed_tools() -> None:
+    payload = json.loads(_bundle_payload_with_slots({}))
+    payload["execution_policy"] = {
+        "native_config": {
+            "sandbox_workspace_write.network_access": True,
+            "allowed_tools": ["Bash", "Read"],
+        }
+    }
+    payload["tools"] = {
+        "allowed": ["Bash", "Read"],
+        "disallowed": ["Write"],
+        "mcp": ["github=gh"],
+    }
+
+    bundle = parse_launch_bundle(json.dumps(payload))
+
+    assert bundle.execution_policy.native_config == {
+        "sandbox_workspace_write.network_access": True,
+        "allowed_tools": ["Bash", "Read"],
+    }
+    assert bundle.tools.allowed == ("Bash", "Read")
+    assert bundle.tools.disallowed == ("Write",)
+    assert bundle.tools.mcp == ("github=gh",)
+    assert bundle.tools.to_tools_field() == {
+        "bash": "allow",
+        "read": "allow",
+        "write": "deny",
+    }
+
+
+def test_parse_launch_bundle_rejects_newer_schema_version() -> None:
+    payload = json.loads(_bundle_payload_with_slots({}))
+    payload["version"] = 2
+
+    with pytest.raises(
+        MarsLaunchBundleError,
+        match="schema version 2 is newer than supported 1",
+    ):
+        parse_launch_bundle(json.dumps(payload))
+
+
+def test_parse_launch_bundle_rejects_prefilled_known_scaffold_slot() -> None:
+    raw_json = _bundle_payload_with_slots({"context_prompt": "already filled"})
+
+    with pytest.raises(
+        MarsLaunchBundleError,
+        match=r"prefilled scaffold slot 'context_prompt'",
+    ):
+        parse_launch_bundle(raw_json)
+
+
+def test_parse_launch_bundle_rejects_prefilled_extra_scaffold_slot() -> None:
+    raw_json = _bundle_payload_with_slots({"future_slot": "already filled"})
+
+    with pytest.raises(
+        MarsLaunchBundleError,
+        match=r"prefilled scaffold slot 'future_slot'",
+    ):
+        parse_launch_bundle(raw_json)
+
+
+def test_invoke_launch_bundle_reclassifies_unsupported_command_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.mars_bundle.resolve_mars_executable",
+        lambda: "mars",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.mars_bundle.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["mars", "build", "launch-bundle"],
+            returncode=2,
+            stdout="",
+            stderr="error: unrecognized subcommand 'launch-bundle'",
+        ),
+    )
+
+    with pytest.raises(
+        MarsLaunchBundleUnavailableError,
+        match="does not support 'build launch-bundle'",
+    ):
+        invoke_mars_build_launch_bundle(
+            agent="reviewer",
+            project_root=tmp_path,
+            cli_overrides=RuntimeOverrides(),
+            env_overrides=RuntimeOverrides(),
+        )
+
+
+def test_invoke_launch_bundle_nonzero_ordinary_error_is_hard_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.mars_bundle.resolve_mars_executable",
+        lambda: "mars",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.mars_bundle.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["mars", "build", "launch-bundle"],
+            returncode=1,
+            stdout="",
+            stderr="failed to resolve profile 'reviewer'",
+        ),
+    )
+
+    with pytest.raises(MarsLaunchBundleError, match="failed to resolve profile"):
+        invoke_mars_build_launch_bundle(
+            agent="reviewer",
+            project_root=tmp_path,
+            cli_overrides=RuntimeOverrides(),
+            env_overrides=RuntimeOverrides(),
+        )
+
+
 def test_model_selection_context_has_harness_model_id_field() -> None:
     context = ModelSelectionContext(
         requested_token="fast",
@@ -94,6 +364,293 @@ def test_model_selection_context_harness_model_id_defaults_to_none() -> None:
     )
 
     assert context.harness_model_id is None
+
+
+def test_resolve_launch_policy_spawn_prepare_agent_bundle_path_skips_profile_loading(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle_for_tests(
+        model="gpt-5.3-codex",
+        harness="codex",
+        native_config={"sandbox_workspace_write.network_access": True},
+    )
+
+    def _fake_bundle(**kwargs: object) -> LaunchBundle:
+        assert kwargs["agent"] == "reviewer"
+        return bundle
+
+    def _compile_should_not_run(*_: object, **__: object) -> object:
+        raise AssertionError("legacy compiler path should not run for bundle launch")
+
+    def _load_should_not_run(*_: object, **__: object) -> object:
+        raise AssertionError("profile loading should not run for bundle launch")
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        _fake_bundle,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.compile_launch_params",
+        _compile_should_not_run,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.load_agent_profile_with_fallback",
+        _load_should_not_run,
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.launch_bundle is not None
+    assert policy.profile is None
+    assert policy.model == "gpt-5.3-codex"
+    assert policy.harness == HarnessId.CODEX
+    assert policy.routing.agent == "reviewer"
+    assert policy.execution_policy.approval == "auto"
+    assert policy.tools is None
+    assert policy.mcp_tools == ("github=gh",)
+    assert policy.bundle_extra_args == ("-c", "sandbox_workspace_write.network_access=true")
+    assert any(
+        "Tool-level allow/deny policy is not projected for Codex" in w.message
+        for w in policy.warnings
+    )
+
+
+def test_resolve_launch_policy_bundle_unavailable_falls_back_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: codex\n",
+    )
+    alias = _mock_alias(alias="codex", model_id="gpt-5.3-codex", harness=HarnessId.CODEX)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={"codex": alias, "gpt-5.3-codex": alias},
+    )
+
+    def _raise_bundle_error(**_: object) -> LaunchBundle:
+        raise MarsLaunchBundleUnavailableError("old mars")
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        _raise_bundle_error,
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.launch_bundle is None
+    assert policy.model == "gpt-5.3-codex"
+    assert any("falling back to legacy launch resolution" in w.message for w in policy.warnings)
+
+
+def test_resolve_launch_policy_bundle_error_raises_without_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def _raise_bundle_error(**_: object) -> LaunchBundle:
+        raise MarsLaunchBundleError("bundle build failed")
+
+    def _load_should_not_run(*_: object, **__: object) -> object:
+        raise AssertionError("legacy fallback should not run for bundle build errors")
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        _raise_bundle_error,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.load_agent_profile_with_fallback",
+        _load_should_not_run,
+    )
+
+    with pytest.raises(MarsLaunchBundleError, match="bundle build failed"):
+        resolve_launch_policy(
+            SurfacePolicyInput(
+                surface=LaunchCompositionSurface.SPAWN_PREPARE,
+                catalog=CatalogSession(tmp_path),
+                layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+                config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+                config=MeridianConfig(),
+                harness_registry=get_default_harness_registry(),
+            )
+        )
+
+
+def test_resolve_launch_policy_bundle_unsupported_harness_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(harness="not-a-harness"),
+    )
+
+    with pytest.raises(ValueError, match="unsupported harness 'not-a-harness'"):
+        resolve_launch_policy(
+            SurfacePolicyInput(
+                surface=LaunchCompositionSurface.SPAWN_PREPARE,
+                catalog=CatalogSession(tmp_path),
+                layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+                config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+                config=MeridianConfig(),
+                harness_registry=get_default_harness_registry(),
+            )
+        )
+
+
+def test_resolve_launch_policy_bundle_non_codex_native_config_warns_and_skips_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(
+            harness="claude",
+            model="claude-sonnet-4-5",
+            native_config={"sandbox_workspace_write.network_access": True},
+        ),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.harness == HarnessId.CLAUDE
+    assert policy.bundle_extra_args == ()
+    assert any(
+        "native_config is not projected for harness 'claude'" in warning.message
+        for warning in policy.warnings
+    )
+
+
+def test_resolve_launch_policy_bundle_non_codex_keeps_tools_projection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(
+            harness="claude",
+            model="claude-sonnet-4-5",
+            native_config=None,
+        ),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.harness == HarnessId.CLAUDE
+    assert policy.tools == {"bash": "allow", "read": "allow", "write": "deny"}
+
+
+def test_resolve_launch_policy_bundle_overlays_explicit_execution_policy_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(
+                    agent="reviewer",
+                    approval="confirm",
+                    autocompact=9000,
+                    timeout=18.5,
+                ),
+                RuntimeOverrides(
+                    effort="low",
+                    sandbox="read-only",
+                    approval="auto",
+                    autocompact_pct=33,
+                    timeout=60.0,
+                ),
+            ),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.execution_policy.effort == "low"
+    assert policy.execution_policy.sandbox == "read-only"
+    assert policy.execution_policy.approval == "confirm"
+    assert policy.execution_policy.autocompact == 9000
+    assert policy.execution_policy.autocompact_pct == 33
+    assert policy.execution_policy.timeout == 18.5
+
+
+def test_resolve_launch_policy_bundle_native_config_flags_are_sorted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(
+            native_config={
+                "z.last": 1,
+                "a.first": True,
+            }
+        ),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.bundle_extra_args == (
+        "-c",
+        "a.first=true",
+        "-c",
+        "z.last=1",
+    )
 
 
 def test_resolve_policy_fields_resolves_per_field_precedence() -> None:

@@ -1,3 +1,4 @@
+# qa-validated: mars-launch-bundle-design
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.mars_bundle import MarsLaunchBundleUnavailableError
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
@@ -66,6 +68,15 @@ def _patch_catalog_models(
 
     monkeypatch.setattr(CatalogSession, "resolve_model", resolve_model)
     monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [cli_entry, overlay_entry])
+
+
+def _force_legacy_profile_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: (
+            _ for _ in ()
+        ).throw(MarsLaunchBundleUnavailableError("test covers legacy overlay resolution")),
+    )
 
 
 def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
@@ -161,6 +172,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _force_legacy_profile_path(monkeypatch)
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n',

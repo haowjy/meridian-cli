@@ -1,3 +1,4 @@
+# qa-validated: mars-launch-bundle-design
 import json
 
 import pytest
@@ -124,6 +125,26 @@ def test_opencode_deny_defaults_and_claude_tool_projection() -> None:
         "bash": "allow",
         "agent": "deny",
     }
+
+
+def test_claude_tools_projection_emits_mixed_allow_and_deny_flags() -> None:
+    _, resolver = resolve_permission_pipeline(
+        sandbox="workspace-write",
+        tools={
+            "bash": "allow",
+            "bash(meridian spawn *)": "allow",
+            "agent": "deny",
+            "edit": "deny",
+            "write": "deny",
+        },
+    )
+
+    assert resolve_permission_flags(resolver, HarnessId.CLAUDE) == (
+        "--allowedTools",
+        "Bash,Bash(meridian spawn *)",
+        "--disallowedTools",
+        "Agent,Edit,Write",
+    )
 
 
 def test_tools_resolver_codex_ignores_claude_tool_flags() -> None:

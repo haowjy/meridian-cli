@@ -3,10 +3,15 @@ from pathlib import Path
 
 import pytest
 
+import meridian.lib.launch.policies as launch_policies
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.launch.mars_bundle import (
+    LaunchBundle,
+    MarsLaunchBundleUnavailableError,
+)
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from tests.support.fixtures import write_agent, write_minimal_mars_config
 
@@ -20,32 +25,25 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
     write_minimal_mars_config(project_root)
     write_agent(project_root, name="reviewer", model="gpt55")
 
-    alias = AliasEntry(
-        alias="gpt55",
-        model_id=ModelId("gpt-5.5"),
-        resolved_harness=HarnessId.CODEX,
-    )
-    canonical = AliasEntry(
-        alias="",
-        model_id=ModelId("gpt-5.5"),
-        resolved_harness=HarnessId.CODEX,
-    )
-
-    policy_calls: list[str] = []
-
-    def policy_resolve_model(self: CatalogSession, name: str) -> AliasEntry:
-        policy_calls.append(name)
-        return {"gpt55": alias, "gpt-5.5": canonical}[name]
+    def bundle_stub(**_: object) -> LaunchBundle:
+        return LaunchBundle.model_validate(
+            {
+                "version": 1,
+                "agent": "reviewer",
+                "routing": {
+                    "model": "gpt-5.5",
+                    "model_token": "gpt55",
+                    "harness": "codex",
+                },
+                "execution_policy": {},
+                "prompt_surface": {"system_instruction": "stub"},
+            }
+        )
 
     monkeypatch.setattr(
-        CatalogSession,
-        "resolve_model",
-        policy_resolve_model,
-    )
-    monkeypatch.setattr(
-        CatalogSession,
-        "load_aliases",
-        lambda self: [alias, canonical],
+        launch_policies,
+        "invoke_mars_build_launch_bundle",
+        bundle_stub,
     )
 
     result = spawn_api.spawn_create_sync(
@@ -61,14 +59,13 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
     assert result.status == "dry-run"
     assert result.model == "gpt-5.5"
     assert result.harness_id == "codex"
-    assert policy_calls == ["gpt55"]
 
     assert result.to_wire()["model_selection"] == {
         "requested_token": "gpt55",
         "canonical_model_id": "gpt-5.5",
-        "harness_provenance": "mars-provided",
+        "harness_provenance": "mars-launch-bundle",
     }
-    assert "Routing: mars-provided" in result.format_text()
+    assert "Routing: mars-launch-bundle" in result.format_text()
 
 
 def test_spawn_create_dry_run_includes_profile_fallback_chain(
@@ -130,6 +127,13 @@ def test_spawn_create_dry_run_includes_profile_fallback_chain(
         CatalogSession,
         "load_aliases",
         lambda self: list(alias_entries.values()),
+    )
+    monkeypatch.setattr(
+        launch_policies,
+        "invoke_mars_build_launch_bundle",
+        lambda **_: (
+            _ for _ in ()
+        ).throw(MarsLaunchBundleUnavailableError("test fallback to legacy")),
     )
 
     result = spawn_api.spawn_create_sync(

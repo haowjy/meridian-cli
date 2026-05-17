@@ -1,3 +1,4 @@
+# qa-validated: mars-launch-bundle-design
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,6 +7,7 @@ from typing import TYPE_CHECKING
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.mars_bundle import MarsLaunchBundleUnavailableError
 from meridian.lib.launch.permissions import (
     CLAUDE_NATIVE_DELEGATION_TOOLS,
     compute_nested_claude_deny_additions,
@@ -63,7 +65,12 @@ def _build_context(
     agent: str | None = None,
     tools: str | dict[str, str] | None = None,
 ) -> SpawnRequest:
-    _ = monkeypatch
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: (
+            _ for _ in ()
+        ).throw(MarsLaunchBundleUnavailableError("test covers legacy profile tool policy")),
+    )
     request = SpawnRequest(
         prompt="test",
         harness=harness.value,
