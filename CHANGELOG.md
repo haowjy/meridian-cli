@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Reaper legacy-worker cleanup no longer emits user-visible warnings during spawn reads.
+- Routine reaper cleanup logs move to debug; only anomaly diagnostics remain user-visible warnings.
 
 ## [0.1.12] - 2026-05-17
 

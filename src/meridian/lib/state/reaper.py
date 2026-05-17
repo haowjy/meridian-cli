@@ -394,7 +394,7 @@ def _finalize_and_log(
         if snapshot.last_activity_epoch is not None
         else None
     )
-    logger.info(
+    logger.debug(
         "Reconciled active spawn.",
         spawn_id=record.id,
         status=status,
@@ -536,7 +536,7 @@ def reconcile_active_spawn(
             include_runtime_children=True,
         )
         if signaled:
-            logger.warning(
+            logger.debug(
                 "Terminated managed primary tracked processes during orphan reconciliation.",
                 spawn_id=record.id,
                 signaled_pids=signaled,
@@ -553,7 +553,7 @@ def reconcile_active_spawn(
                 include_runtime_children=True,
             )
             if signaled:
-                logger.warning(
+                logger.debug(
                     "Terminated managed primary processes during orphan reconciliation.",
                     spawn_id=record.id,
                     signaled_pids=signaled,

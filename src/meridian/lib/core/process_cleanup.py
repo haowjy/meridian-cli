@@ -92,7 +92,7 @@ def terminate_spawn_scopes(
                 degraded_fallback=False,
                 skip_reason="active_session_lease",
             )
-            logger.info(
+            logger.debug(
                 "Skipped process scope cleanup — session lease active.",
                 spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
@@ -109,7 +109,7 @@ def terminate_spawn_scopes(
 
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason=reason)
         mark_scope_released(runtime_root, spawn_id, scope.scope_id)
-        logger.info(
+        logger.debug(
             "Terminated process scope.",
             spawn_id=spawn_record.id,
             scope_id=scope.scope_id,
@@ -151,7 +151,7 @@ def should_skip_cleanup(
         actual = psutil.Process(scope.root_pid).create_time()
         if abs(actual - scope.root_created_at_epoch) > 1.0:
             # PID was recycled by another process after the scope's root died.
-            logger.info(
+            logger.debug(
                 "session_owned scope root PID reused — reclaiming.",
                 spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
@@ -161,7 +161,7 @@ def should_skip_cleanup(
             return False
     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
         # Root process is gone — reclaim despite the session_owned policy.
-        logger.info(
+        logger.debug(
             "session_owned scope root process dead — reclaiming.",
             spawn_id=spawn_record.id,
             scope_id=scope.scope_id,
@@ -245,7 +245,7 @@ def cancel_managed_primary(
                 continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
             mark_scope_released(runtime_root, spawn_id, scope.scope_id)
-            logger.info(
+            logger.debug(
                 "Terminated managed primary launcher scope.",
                 spawn_id=spawn_record.id,
                 scope_id=scope.scope_id,
@@ -294,7 +294,7 @@ def cancel_managed_primary(
             continue
         result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="cancel")
         mark_scope_released(runtime_root, spawn_id, scope.scope_id)
-        logger.info(
+        logger.debug(
             "Terminated managed primary runtime scope.",
             spawn_id=spawn_record.id,
             scope_id=scope.scope_id,
@@ -337,7 +337,7 @@ def reclaim_session_owned_scopes_for_chat(
                 continue
             result = terminate_scope_sync(scope, grace_seconds=grace_seconds, reason="session_exit")
             mark_scope_released(runtime_root, spawn_id, scope.scope_id)
-            logger.info(
+            logger.debug(
                 "Reclaimed session-owned scope at session exit.",
                 spawn_id=record.id,
                 scope_id=scope.scope_id,
