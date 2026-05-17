@@ -112,7 +112,7 @@ def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     assert "hello over stdin" not in command
 
 
-def test_pi_rpc_projection_rejects_primary_interactive_before_launch() -> None:
+def test_pi_rpc_projection_supports_primary_interactive_projection() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
         prompt="hello",
@@ -120,14 +120,8 @@ def test_pi_rpc_projection_rejects_primary_interactive_before_launch() -> None:
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
-    with pytest.raises(ValueError) as exc_info:
-        project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
-
-    assert str(exc_info.value) == (
-        "Pi primary RPC attach is not implemented yet. Use "
-        "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
-        "for Pi's native TUI."
-    )
+    command = project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+    assert command[0:3] == ["meridian-pi", "--mode", "rpc"]
 
 
 def test_pi_adapter_env_overrides_sets_session_dir_without_default_agent_dir() -> None:
@@ -137,20 +131,14 @@ def test_pi_adapter_env_overrides_sets_session_dir_without_default_agent_dir() -
     assert Path(overrides["PI_CODING_AGENT_SESSION_DIR"]).parts[-2:] == ("meridian-pi", "sessions")
 
 
-def test_pi_adapter_build_command_rejects_primary_interactive_before_launch() -> None:
+def test_pi_adapter_build_command_supports_primary_interactive() -> None:
     adapter = PiAdapter()
 
-    with pytest.raises(ValueError) as exc_info:
-        adapter.build_command(
-            SpawnParams(prompt="primary should fail", interactive=True),
-            UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        )
-
-    assert str(exc_info.value) == (
-        "Pi primary RPC attach is not implemented yet. Use "
-        "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
-        "for Pi's native TUI."
+    command = adapter.build_command(
+        SpawnParams(prompt="primary should run", interactive=True),
+        UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
+    assert command[0:3] == ["meridian-pi", "--mode", "rpc"]
 
 
 def test_pi_rpc_projection_rejects_user_mode_passthrough(

@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.ops.reference import resolve_spawn_ref
@@ -22,6 +22,13 @@ _RUNNING_LOG_MESSAGE_LIMIT = 120
 _PI_PHASE_EVENT_TYPE = "meridian.pi.lifecycle.phase"
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
+
+
+class _PiCleanupTelemetry(NamedTuple):
+    status: str | None
+    phase: str | None
+    reason: str | None
+    error: str | None
 
 
 def _select_latest_spawn_id(
@@ -298,6 +305,85 @@ def _latest_pi_lifecycle_phase(
     return last_phase
 
 
+def _pi_cleanup_telemetry(
+    project_root: Path,
+    spawn_id: str,
+    *,
+    runtime_root: Path | None = None,
+) -> _PiCleanupTelemetry:
+    resolved_runtime_root = runtime_root or resolve_runtime_root_for_read(project_root)
+    history_path = resolved_runtime_root / "spawns" / spawn_id / "history.jsonl"
+    if not history_path.is_file():
+        return _PiCleanupTelemetry(None, None, None, None)
+
+    status_rank: dict[str, int] = {"running": 0, "completed": 1, "escalated": 2, "failed": 3}
+    cleanup_status: str | None = None
+    cleanup_phase: str | None = None
+    cleanup_reason: str | None = None
+    cleanup_error: str | None = None
+
+    for line in history_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            raw_payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = cast("dict[str, object]", raw_payload)
+        if payload.get("event_type") != _PI_PHASE_EVENT_TYPE:
+            continue
+        raw_event_payload = payload.get("payload")
+        if not isinstance(raw_event_payload, dict):
+            continue
+        event_payload = cast("dict[str, object]", raw_event_payload)
+        phase_value = event_payload.get("phase")
+        phase = (
+            phase_value.strip()
+            if isinstance(phase_value, str) and phase_value.strip()
+            else None
+        )
+        status_value = event_payload.get("cleanup_status")
+        status = (
+            status_value.strip()
+            if isinstance(status_value, str) and status_value.strip()
+            else None
+        )
+        if phase is None and status is None:
+            continue
+        if phase is not None and not phase.startswith("cleanup_") and status is None:
+            continue
+
+        if phase is not None:
+            cleanup_phase = phase
+            if phase == "cleanup_escalated":
+                status = "escalated"
+            elif phase == "cleanup_failed":
+                status = "failed"
+
+        if status is not None:
+            prior_rank = status_rank.get(cleanup_status or "", -1)
+            current_rank = status_rank.get(status, -1)
+            if current_rank >= prior_rank:
+                cleanup_status = status
+
+        reason_value = event_payload.get("reason")
+        if isinstance(reason_value, str) and reason_value.strip():
+            cleanup_reason = reason_value.strip()
+        error_value = event_payload.get("error")
+        if isinstance(error_value, str) and error_value.strip():
+            cleanup_error = error_value.strip()
+
+    return _PiCleanupTelemetry(
+        status=cleanup_status,
+        phase=cleanup_phase,
+        reason=cleanup_reason,
+        error=cleanup_error,
+    )
+
+
 def read_written_files(
     project_root: Path,
     spawn_id: str,
@@ -336,6 +422,11 @@ def detail_from_row(
             row.id,
             runtime_root=runtime_root,
         )
+    cleanup_telemetry = _pi_cleanup_telemetry(
+        project_root,
+        row.id,
+        runtime_root=runtime_root,
+    )
 
     return SpawnDetailOutput(
         spawn_id=row.id,
@@ -367,6 +458,10 @@ def detail_from_row(
             row.id,
             runtime_root=runtime_root,
         ),
+        pi_cleanup_status=cleanup_telemetry.status,
+        pi_cleanup_phase=cleanup_telemetry.phase,
+        pi_cleanup_reason=cleanup_telemetry.reason,
+        pi_cleanup_error=cleanup_telemetry.error,
         last_message=last_message,
         log_path=log_path,
         last_attempt_exited_at=row.last_attempt_exited_at,

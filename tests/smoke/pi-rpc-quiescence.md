@@ -104,16 +104,17 @@ Expect:
 - Follow-up turn runs and reports `fast-done`
 - Spawn reaches quiescence only after the follow-up turn completes
 
-## S7: Primary Pi guardrail until managed attach
+## S7: Primary Pi managed attach
 
 ```bash
 uv run meridian --harness pi -m <pi-model>
 ```
 
 Expect:
-- Meridian exits non-zero instead of launching raw Pi RPC into a human TTY
-- Diagnostic says Pi primary RPC attach is not implemented yet
-- Diagnostic suggests `meridian spawn --harness pi ...` for managed RPC work or direct `pi` for Pi's native TUI
+- Meridian launches a managed primary interactive prompt (`> `)
+- Typing a message sends one RPC prompt and streams assistant text in human-readable form
+- A successful `agent_end` does not auto-exit the primary session; prompt remains available
+- Typing `exit`/`quit` ends the managed primary attach cleanly
 
 ## S8: Child failure notifies
 

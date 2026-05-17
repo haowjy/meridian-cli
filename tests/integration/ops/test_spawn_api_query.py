@@ -352,6 +352,74 @@ def test_spawn_show_includes_latest_pi_lifecycle_phase(
     assert wire["pi_lifecycle_phase"] == latest_phase
 
 
+def test_spawn_show_includes_pi_cleanup_telemetry_and_preserves_escalation(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-cleanup",
+        chat_id="c-cleanup",
+        model="gpt-5.4",
+        agent="coder",
+        harness="pi",
+        prompt="hello",
+    )
+    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "seq": 0,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {"phase": "cleanup_running", "cleanup_status": "running"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "seq": 1,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {
+                            "phase": "cleanup_escalated",
+                            "cleanup_status": "escalated",
+                            "reason": "abort_grace_expired",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "seq": 2,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {"phase": "cleanup_completed", "cleanup_status": "completed"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
+    )
+    assert detail.pi_cleanup_status == "escalated"
+    assert detail.pi_cleanup_phase == "cleanup_completed"
+    assert detail.pi_cleanup_reason == "abort_grace_expired"
+
+    rendered = detail.format_text()
+    assert "Pi cleanup status: escalated" in rendered
+    assert "Pi cleanup phase: cleanup_completed" in rendered
+    assert "Pi cleanup reason: abort_grace_expired" in rendered
+
+    wire = detail.to_cli_wire()
+    assert wire["pi_cleanup_status"] == "escalated"
+    assert wire["pi_cleanup_phase"] == "cleanup_completed"
+    assert wire["pi_cleanup_reason"] == "abort_grace_expired"
+
+
 def test_wait_yield_default_uses_parent_harness_interval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

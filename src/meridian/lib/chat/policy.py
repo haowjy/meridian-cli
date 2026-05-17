@@ -15,7 +15,6 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.connections.base import ConnectionConfig
-from meridian.lib.harness.projections.project_pi_rpc import PI_PRIMARY_RPC_ATTACH_GUARDRAIL
 from meridian.lib.launch.composition import ComposedLaunchContent, PromptDocument
 from meridian.lib.launch.context import (
     build_child_runtime_env_overrides,
@@ -142,8 +141,6 @@ def ensure_chat_harness_supported(*, harness_id: HarnessId, supports_primary_lau
 
     if supports_primary_launch:
         return
-    if harness_id is HarnessId.PI:
-        raise ValueError(PI_PRIMARY_RPC_ATTACH_GUARDRAIL)
     raise ValueError(f"Harness '{harness_id.value}' does not support primary launch.")
 
 
@@ -397,7 +394,6 @@ def default_chat_policy_snapshot(
 
 __all__ = [
     "CHAT_POLICY_SNAPSHOT_VERSION",
-    "PI_PRIMARY_RPC_ATTACH_GUARDRAIL",
     "ChatBackendLaunchPlan",
     "ChatPolicySnapshot",
     "ChatPromptDocumentSnapshot",

@@ -52,6 +52,7 @@ from meridian.lib.launch.extract import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.resolve import resolve_pi_notification_timeout_seconds
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
 )
@@ -755,6 +756,10 @@ async def execute_with_streaming(
         timeout_seconds = (
             float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None
         )
+        pi_notification_timeout_seconds = resolve_pi_notification_timeout_seconds(
+            explicit_timeout_seconds=timeout_seconds,
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
         max_retries = max(request.retry.max_attempts - 1, 0)
         retry_backoff_seconds = request.retry.backoff_secs
 
@@ -807,6 +812,7 @@ async def execute_with_streaming(
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
+            pi_notification_timeout_seconds=pi_notification_timeout_seconds,
             pi_session_role=pi_session_role,
             debug_tracer=tracer,
         )

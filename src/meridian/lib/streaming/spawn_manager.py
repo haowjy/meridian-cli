@@ -103,8 +103,7 @@ _PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES: tuple[str, ...] = (
     "meridian.quiescence.",
 )
 _PI_PHASE_EVENT_TYPE = "meridian.pi.lifecycle.phase"
-_PI_QUIESCENCE_IDLE_GRACE_SECONDS: float = 2.0
-_PI_QUIESCENCE_EXPIRED_POLL_SECONDS: float = 1e-6
+_PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 1e-6
 
 StartConnectionPort = Callable[
     ["ConnectionConfig", ResolvedLaunchSpec],
@@ -154,22 +153,6 @@ def _event_label_candidates(event: HarnessEvent) -> tuple[str, ...]:
         if payload_label and payload_label not in candidates:
             candidates.append(payload_label)
     return tuple(candidates)
-
-
-def _is_pi_lifecycle_event(event: HarnessEvent) -> bool:
-    labels = set(_event_label_candidates(event))
-    if "meridian.lifecycle.parse_error" in labels:
-        return True
-    if labels & (
-        _PI_SUBSPAWN_START_EVENTS
-        | _PI_SUBSPAWN_END_EVENTS
-        | _PI_NOTIFICATION_QUEUED_EVENTS
-        | _PI_NOTIFICATION_DELIVERED_EVENTS
-        | _PI_NOTIFICATION_COMPLETED_EVENTS
-        | _PI_NOTIFICATION_FAILED_EVENTS
-    ):
-        return True
-    return any(label.startswith(_PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES) for label in labels)
 
 
 def _is_legacy_notification_label(labels: set[str]) -> bool:
@@ -263,6 +246,24 @@ def _pi_notification_failure_error(payload: dict[str, object]) -> str:
     return "pi_notification_failed"
 
 
+def _pi_notification_timeout_error(
+    pending: _PiPendingNotification,
+    *,
+    now_monotonic: float,
+) -> str:
+    timeout_seconds = 0.0
+    if pending.deadline_monotonic is not None:
+        timeout_seconds = max(0.0, pending.deadline_monotonic - pending.started_monotonic)
+    elapsed_seconds = max(0.0, now_monotonic - pending.started_monotonic)
+    return (
+        "pi_notification_timeout:"
+        f"id={pending.notification_id}:"
+        f"phase={pending.phase}:"
+        f"elapsed={elapsed_seconds:.3f}:"
+        f"timeout={timeout_seconds:.3f}"
+    )
+
+
 def _safe_connection_session_id(connection: object) -> str | None:
     """Read optional connection session_id without assuming full HarnessConnection shape."""
 
@@ -310,22 +311,38 @@ def _canonical_lifecycle_label(
 
 
 @dataclass
+class _PiPendingNotification:
+    notification_id: str
+    phase: str
+    started_monotonic: float
+    deadline_monotonic: float | None = None
+
+
+@dataclass
 class _PiSubspawnTracker:
     active_ids: set[str]
     active_process_groups: dict[str, int]
     anonymous_active_count: int = 0
-    pending_notification_ids: set[str] | None = None
+    pending_notifications: dict[str, _PiPendingNotification] | None = None
     anonymous_pending_notifications: int = 0
     notification_failure_error: str | None = None
+    notification_timeout_error: str | None = None
     lifecycle_tracking_invalidated_error: str | None = None
 
     @classmethod
     def empty(cls) -> _PiSubspawnTracker:
-        return cls(active_ids=set(), active_process_groups={}, pending_notification_ids=set())
+        return cls(active_ids=set(), active_process_groups={}, pending_notifications={})
 
-    def observe(self, event: HarnessEvent) -> None:
+    def observe(
+        self,
+        event: HarnessEvent,
+        *,
+        now_monotonic: float | None = None,
+        notification_timeout_seconds: float | None = None,
+    ) -> None:
         if event.harness_id != HarnessId.PI.value:
             return
+        observation_monotonic = now_monotonic if now_monotonic is not None else time.monotonic()
 
         labels = _event_label_candidates(event)
         label_set = set(labels)
@@ -394,8 +411,8 @@ class _PiSubspawnTracker:
                 self.anonymous_active_count -= 1
             return
 
-        pending_notification_ids = self.pending_notification_ids
-        if pending_notification_ids is None:
+        pending_notifications = self.pending_notifications
+        if pending_notifications is None:
             return
 
         is_notification_start = bool(
@@ -404,7 +421,26 @@ class _PiSubspawnTracker:
         if is_notification_start:
             notification_id = _pi_notification_id(event.payload)
             if notification_id is not None:
-                pending_notification_ids.add(notification_id)
+                phase = (
+                    "delivered"
+                    if bool(label_set & _PI_NOTIFICATION_DELIVERED_EVENTS)
+                    else "queued"
+                )
+                current = pending_notifications.get(notification_id)
+                started_monotonic = (
+                    current.started_monotonic if current is not None else observation_monotonic
+                )
+                deadline_monotonic = (
+                    None
+                    if notification_timeout_seconds is None or notification_timeout_seconds <= 0
+                    else started_monotonic + notification_timeout_seconds
+                )
+                pending_notifications[notification_id] = _PiPendingNotification(
+                    notification_id=notification_id,
+                    phase=phase,
+                    started_monotonic=started_monotonic,
+                    deadline_monotonic=deadline_monotonic,
+                )
             elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
                 canonical_label = _canonical_lifecycle_label(
                     label_set,
@@ -424,7 +460,7 @@ class _PiSubspawnTracker:
         if is_notification_end:
             notification_id = _pi_notification_id(event.payload)
             if notification_id is not None:
-                pending_notification_ids.discard(notification_id)
+                pending_notifications.pop(notification_id, None)
             elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
                 canonical_label = _canonical_lifecycle_label(
                     label_set,
@@ -471,12 +507,63 @@ class _PiSubspawnTracker:
         return tuple(sorted(unique))
 
     def has_pending_notifications(self) -> bool:
-        pending_notification_ids = self.pending_notification_ids
-        return bool(pending_notification_ids) or self.anonymous_pending_notifications > 0
+        pending_notifications = self.pending_notifications
+        return bool(pending_notifications) or self.anonymous_pending_notifications > 0
 
     def pending_notification_count(self) -> int:
-        pending_notification_ids = self.pending_notification_ids
-        return len(pending_notification_ids or ()) + self.anonymous_pending_notifications
+        pending_notifications = self.pending_notifications
+        return len(pending_notifications or ()) + self.anonymous_pending_notifications
+
+    def resolve_notification_on_terminal(self, event: HarnessEvent) -> str | None:
+        pending_notifications = self.pending_notifications
+        if pending_notifications is None or not pending_notifications:
+            return None
+
+        notification_id = _pi_notification_id(event.payload)
+        if notification_id is not None and notification_id in pending_notifications:
+            pending_notifications.pop(notification_id, None)
+            return notification_id
+
+        delivered = [
+            pending.notification_id
+            for pending in pending_notifications.values()
+            if pending.phase == "delivered"
+        ]
+        if len(delivered) == 1:
+            resolved_id = delivered[0]
+            pending_notifications.pop(resolved_id, None)
+            return resolved_id
+        return None
+
+    def time_until_next_notification_timeout(self, now_monotonic: float) -> float | None:
+        pending_notifications = self.pending_notifications
+        if pending_notifications is None:
+            return None
+        remaining: float | None = None
+        for pending in pending_notifications.values():
+            deadline = pending.deadline_monotonic
+            if deadline is None:
+                continue
+            current_remaining = deadline - now_monotonic
+            if remaining is None or current_remaining < remaining:
+                remaining = current_remaining
+        return remaining
+
+    def pop_expired_notification(self, now_monotonic: float) -> _PiPendingNotification | None:
+        pending_notifications = self.pending_notifications
+        if pending_notifications is None:
+            return None
+        expired: _PiPendingNotification | None = None
+        for pending in pending_notifications.values():
+            deadline = pending.deadline_monotonic
+            if deadline is None or deadline > now_monotonic:
+                continue
+            if expired is None or pending.started_monotonic < expired.started_monotonic:
+                expired = pending
+        if expired is None:
+            return None
+        pending_notifications.pop(expired.notification_id, None)
+        return expired
 
 
 def _ensure_harness_bootstrap() -> None:
@@ -563,7 +650,6 @@ class SpawnManager:
         *,
         debug: bool = False,
         heartbeat_interval_secs: float = 30.0,
-        pi_quiescence_idle_grace_secs: float = _PI_QUIESCENCE_IDLE_GRACE_SECONDS,
         heartbeat_touch: Callable[[Path, SpawnId], None] | None = None,
         start_connection: StartConnectionPort | None = None,
         control_server_factory: ControlServerFactory | None = None,
@@ -572,7 +658,6 @@ class SpawnManager:
         self._project_root = project_root
         self._debug = debug
         self._heartbeat_interval_secs = heartbeat_interval_secs
-        self._pi_quiescence_idle_grace_secs = max(0.0, pi_quiescence_idle_grace_secs)
         self._heartbeat_touch = heartbeat_touch
         self._start_connection = start_connection or dispatch_start
         self._control_server_factory = control_server_factory or _default_control_server_factory
@@ -688,6 +773,7 @@ class SpawnManager:
                 tracer,
                 drain_policy=resolved_policy,
                 pi_session_role=pi_session_role,
+                notification_timeout_seconds=config.pi_notification_timeout_seconds,
             )
         )
         control_server = self._control_server_factory(
@@ -750,6 +836,7 @@ class SpawnManager:
         tracer: DebugTracer | None = None,
         drain_policy: DrainPolicy | None = None,
         pi_session_role: str | None = None,
+        notification_timeout_seconds: float | None = None,
     ) -> None:
         """Durably append each harness event and fan out to the active subscriber.
 
@@ -769,10 +856,9 @@ class SpawnManager:
         drain_cancelled = False
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
-        pending_terminal_outcome: TerminalEventOutcome | None = None
         last_successful_pi_terminal: TerminalEventOutcome | None = None
-        pi_quiescence_deadline_monotonic: float | None = None
-        pi_quiescent_stop_sent = False
+        pi_quiescence_candidate: TerminalEventOutcome | None = None
+        pi_micro_drain_event_count = 0
         pi_subspawn_tracker = _PiSubspawnTracker.empty()
         pi_tracked_cleanup_reason: str | None = None
         pi_session_seen = False
@@ -851,122 +937,75 @@ class SpawnManager:
         try:
             while True:
                 try:
-                    if pi_quiescence_enabled and pi_quiescence_deadline_monotonic is not None:
-                        remaining = pi_quiescence_deadline_monotonic - time.monotonic()
-                        timeout_secs = (
-                            remaining
-                            if remaining > 0
-                            else _PI_QUIESCENCE_EXPIRED_POLL_SECONDS
-                        )
-                        event = await asyncio.wait_for(anext(events_iter), timeout=timeout_secs)
+                    next_timeout: float | None = None
+                    if pi_quiescence_enabled:
+                        if pi_quiescence_candidate is not None:
+                            next_timeout = _PI_MICRO_DRAIN_TIMEOUT_SECONDS
+                        else:
+                            now_monotonic = time.monotonic()
+                            notification_remaining = (
+                                pi_subspawn_tracker.time_until_next_notification_timeout(
+                                    now_monotonic
+                                )
+                            )
+                            if notification_remaining is not None:
+                                next_timeout = (
+                                    notification_remaining
+                                    if notification_remaining > 0
+                                    else _PI_MICRO_DRAIN_TIMEOUT_SECONDS
+                                )
+                    if next_timeout is not None:
+                        event = await asyncio.wait_for(anext(events_iter), timeout=next_timeout)
                     else:
                         event = await anext(events_iter)
                 except StopAsyncIteration:
-                    if (
-                        pi_quiescence_enabled
-                        and pi_quiescence_deadline_monotonic is not None
-                        and last_successful_pi_terminal is not None
-                        and _is_pi_quiescent()
-                    ):
-                        pi_quiescence_deadline_monotonic = None
-                        self._emit_pi_phase_event(
-                            spawn_id,
-                            receiver,
-                            phase="quiescence_idle_grace_fired",
-                            session_role=normalized_pi_session_role or None,
-                        )
-                        self._emit_pi_phase_event(
-                            spawn_id,
-                            receiver,
-                            phase="quiescent_stop_sent",
-                            session_role=normalized_pi_session_role or None,
-                            reason="quiescent",
-                        )
-                        pi_quiescent_stop_sent = True
-                        try:
-                            quiescent_stop_escalated = await self._stop_connection_for_quiescence(
-                                receiver
-                            )
-                        except Exception as exc:
-                            self._emit_pi_phase_event(
-                                spawn_id,
-                                receiver,
-                                phase="quiescent_stop_escalated",
-                                session_role=normalized_pi_session_role or None,
-                                error=str(exc),
-                            )
-                            if pi_subspawn_tracker.has_pending():
-                                await self._terminate_pi_tracked_subspawns(
-                                    spawn_id,
-                                    pi_subspawn_tracker,
-                                    reason="pi_quiescent_stop_failed",
-                                )
-                                pi_tracked_cleanup_reason = "pi_quiescent_stop_failed"
-                            drain_error = RuntimeError(f"pi_quiescent_stop_failed:{exc}")
-                            break
-                        if quiescent_stop_escalated:
-                            self._emit_pi_phase_event(
-                                spawn_id,
-                                receiver,
-                                phase="quiescent_stop_escalated",
-                                session_role=normalized_pi_session_role or None,
-                                reason="abort_grace_expired",
-                            )
-                        recorded_terminal_outcome = last_successful_pi_terminal
+                    if pi_quiescence_enabled and pi_quiescence_candidate is not None:
+                        recorded_terminal_outcome = pi_quiescence_candidate
                     break
                 except TimeoutError:
-                    if not pi_quiescence_enabled or pi_quiescence_deadline_monotonic is None:
+                    if not pi_quiescence_enabled:
                         raise
-                    pi_quiescence_deadline_monotonic = None
-                    if last_successful_pi_terminal is None:
-                        continue
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="quiescence_idle_grace_fired",
-                        session_role=normalized_pi_session_role or None,
-                    )
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="quiescent_stop_sent",
-                        session_role=normalized_pi_session_role or None,
-                        reason="quiescent",
-                    )
-                    pi_quiescent_stop_sent = True
-                    try:
-                        quiescent_stop_escalated = await self._stop_connection_for_quiescence(
-                            receiver
-                        )
-                    except Exception as exc:
-                        self._emit_pi_phase_event(
-                            spawn_id,
-                            receiver,
-                            phase="quiescent_stop_escalated",
-                            session_role=normalized_pi_session_role or None,
-                            error=str(exc),
-                        )
-                        if pi_subspawn_tracker.has_pending():
-                            await self._terminate_pi_tracked_subspawns(
-                                spawn_id,
-                                pi_subspawn_tracker,
-                                reason="pi_quiescent_stop_failed",
-                            )
-                            pi_tracked_cleanup_reason = "pi_quiescent_stop_failed"
-                        drain_error = RuntimeError(f"pi_quiescent_stop_failed:{exc}")
+                    if pi_quiescence_candidate is not None:
+                        recorded_terminal_outcome = pi_quiescence_candidate
                         break
-                    if quiescent_stop_escalated:
-                        self._emit_pi_phase_event(
-                            spawn_id,
-                            receiver,
-                            phase="quiescent_stop_escalated",
-                            session_role=normalized_pi_session_role or None,
-                            reason="abort_grace_expired",
-                        )
-                    recorded_terminal_outcome = last_successful_pi_terminal
+                    expired_notification = pi_subspawn_tracker.pop_expired_notification(
+                        time.monotonic()
+                    )
+                    if expired_notification is None:
+                        continue
+                    timeout_error = _pi_notification_timeout_error(
+                        expired_notification,
+                        now_monotonic=time.monotonic(),
+                    )
+                    pi_subspawn_tracker.notification_timeout_error = timeout_error
+                    self._emit_pi_phase_event(
+                        spawn_id,
+                        receiver,
+                        phase="pi_notification_timeout",
+                        session_role=normalized_pi_session_role or None,
+                        notification_id=expired_notification.notification_id,
+                        notification_phase=expired_notification.phase,
+                        timeout_seconds=(
+                            (
+                                expired_notification.deadline_monotonic
+                                - expired_notification.started_monotonic
+                            )
+                            if expired_notification.deadline_monotonic is not None
+                            else None
+                        ),
+                    )
+                    recorded_terminal_outcome = TerminalEventOutcome(
+                        status="failed",
+                        exit_code=1,
+                        error=timeout_error,
+                    )
                     break
 
-                pi_subspawn_tracker.observe(event)
+                pi_subspawn_tracker.observe(
+                    event,
+                    now_monotonic=time.monotonic(),
+                    notification_timeout_seconds=notification_timeout_seconds,
+                )
                 if is_pi_connection:
                     if event.event_type == "session":
                         pi_session_seen = True
@@ -1033,20 +1072,17 @@ class SpawnManager:
                         break
                 event_outcome = terminal_outcome(event)
                 self._fan_out_event(spawn_id, event)
-                if (
-                    pi_quiescence_enabled
-                    and pi_quiescence_deadline_monotonic is not None
-                    and (_is_pi_lifecycle_event(event) or event_outcome is not None)
-                ):
+                if pi_quiescence_enabled and pi_quiescence_candidate is not None:
+                    pi_micro_drain_event_count += 1
+                    pi_quiescence_candidate = None
                     self._emit_pi_phase_event(
                         spawn_id,
                         receiver,
-                        phase="quiescence_idle_grace_cancelled",
+                        phase="quiescence_micro_drain_extended",
                         session_role=normalized_pi_session_role or None,
-                        reason="new_lifecycle_or_terminal_event",
                         event_type=event.event_type,
+                        micro_drain_events=pi_micro_drain_event_count,
                     )
-                    pi_quiescence_deadline_monotonic = None
                 if (
                     is_pi_connection
                     and pi_subspawn_tracker.lifecycle_tracking_invalidated_error is not None
@@ -1061,29 +1097,40 @@ class SpawnManager:
                     action: DrainAction = policy.classify(event_outcome)
                     if is_pi_connection and event_outcome.status == "succeeded":
                         last_successful_pi_terminal = event_outcome
+                        completed_notification_id = (
+                            pi_subspawn_tracker.resolve_notification_on_terminal(event)
+                        )
+                        if completed_notification_id is not None:
+                            self._emit_pi_phase_event(
+                                spawn_id,
+                                receiver,
+                                phase="continuation_completed",
+                                session_role=normalized_pi_session_role or None,
+                                notification_id=completed_notification_id,
+                            )
                         _emit_pi_waiting_phases_if_needed()
                     if action.terminate:
-                        if (
-                            pi_quiescence_enabled
-                            and event_outcome.status == "succeeded"
-                        ):
-                            # Defer success termination until the quiescence idle grace window
-                            # elapses without new lifecycle/terminal events.
-                            pass
-                        elif (
-                            is_pi_connection
-                            and event_outcome.status == "succeeded"
-                            and pi_subspawn_tracker.has_pending()
-                        ):
-                            pending_terminal_outcome = event_outcome
-                            logger.info(
-                                "Pi terminal event deferred until subspawn drain boundary "
-                                "for spawn %s "
-                                "(active_subspawns=%s anonymous_subspawns=%d)",
-                                spawn_id,
-                                sorted(pi_subspawn_tracker.active_ids),
-                                pi_subspawn_tracker.anonymous_active_count,
-                            )
+                        if pi_quiescence_enabled and event_outcome.status == "succeeded":
+                            if _is_pi_quiescent():
+                                pi_quiescence_candidate = event_outcome
+                                pi_micro_drain_event_count = 0
+                                self._emit_pi_phase_event(
+                                    spawn_id,
+                                    receiver,
+                                    phase="quiescence_micro_drain_started",
+                                    session_role=normalized_pi_session_role or None,
+                                )
+                            else:
+                                self._emit_pi_phase_event(
+                                    spawn_id,
+                                    receiver,
+                                    phase="quiescence_deferred",
+                                    session_role=normalized_pi_session_role or None,
+                                    active_tracked_count=pi_subspawn_tracker.active_tracked_count(),
+                                    pending_notification_count=(
+                                        pi_subspawn_tracker.pending_notification_count()
+                                    ),
+                                )
                         else:
                             recorded_terminal_outcome = event_outcome
                             break
@@ -1101,40 +1148,31 @@ class SpawnManager:
                         error=pi_subspawn_tracker.notification_failure_error,
                     )
                     break
-
-                if pending_terminal_outcome is not None and not pi_subspawn_tracker.has_pending():
-                    if pi_quiescence_enabled and pending_terminal_outcome.status == "succeeded":
-                        last_successful_pi_terminal = pending_terminal_outcome
-                        pending_terminal_outcome = None
-                        _emit_pi_waiting_phases_if_needed()
-                    else:
-                        recorded_terminal_outcome = pending_terminal_outcome
-                        break
-
-                if pi_quiescence_enabled:
-                    if last_successful_pi_terminal is not None and _is_pi_quiescent():
-                        if pi_quiescence_deadline_monotonic is None:
-                            pi_quiescence_deadline_monotonic = (
-                                time.monotonic() + self._pi_quiescence_idle_grace_secs
-                            )
-                            self._emit_pi_phase_event(
-                                spawn_id,
-                                receiver,
-                                phase="quiescence_idle_grace_armed",
-                                session_role=normalized_pi_session_role or None,
-                                idle_grace_secs=self._pi_quiescence_idle_grace_secs,
-                            )
-                    else:
-                        if pi_quiescence_deadline_monotonic is not None:
-                            self._emit_pi_phase_event(
-                                spawn_id,
-                                receiver,
-                                phase="quiescence_idle_grace_cancelled",
-                                session_role=normalized_pi_session_role or None,
-                                reason="not_quiescent",
-                                event_type=event.event_type,
-                            )
-                        pi_quiescence_deadline_monotonic = None
+                if (
+                    is_pi_connection
+                    and pi_subspawn_tracker.notification_timeout_error is not None
+                ):
+                    recorded_terminal_outcome = TerminalEventOutcome(
+                        status="failed",
+                        exit_code=1,
+                        error=pi_subspawn_tracker.notification_timeout_error,
+                    )
+                    break
+                if (
+                    pi_quiescence_enabled
+                    and pi_quiescence_candidate is None
+                    and recorded_terminal_outcome is None
+                    and last_successful_pi_terminal is not None
+                    and _is_pi_quiescent()
+                ):
+                    pi_quiescence_candidate = last_successful_pi_terminal
+                    pi_micro_drain_event_count = 0
+                    self._emit_pi_phase_event(
+                        spawn_id,
+                        receiver,
+                        phase="quiescence_micro_drain_started",
+                        session_role=normalized_pi_session_role or None,
+                    )
         except asyncio.CancelledError:
             drain_cancelled = True
             raise
@@ -1153,7 +1191,7 @@ class SpawnManager:
                     reason="pi_process_exit_with_tracked_children",
                 )
                 pi_tracked_cleanup_reason = "pi_process_exit_with_tracked_children"
-            session = self._sessions.get(spawn_id)
+            session = self._sessions.pop(spawn_id, None)
             if session is not None:
                 if drain_cancelled:
                     outcome = DrainOutcome(
@@ -1178,7 +1216,6 @@ class SpawnManager:
                 elif (
                     is_pi_connection
                     and recorded_terminal_outcome is None
-                    and last_successful_pi_terminal is not None
                     and pi_subspawn_tracker.has_pending()
                 ):
                     outcome = DrainOutcome(
@@ -1221,16 +1258,6 @@ class SpawnManager:
                         session_role=normalized_pi_session_role or None,
                         session_id=session_id,
                     )
-                if is_pi_connection and pi_quiescent_stop_sent:
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="quiescent_stop_finalized",
-                        session_role=normalized_pi_session_role or None,
-                        status=outcome.status,
-                        exit_code=outcome.exit_code,
-                        error=outcome.error,
-                    )
                 if is_pi_connection:
                     self._emit_pi_phase_event(
                         spawn_id,
@@ -1242,27 +1269,21 @@ class SpawnManager:
                         error=outcome.error,
                     )
                 self._resolve_completion_future(session, outcome)
-                cleanup_task = asyncio.create_task(self._cleanup_completed_session(spawn_id))
+                cleanup_task = asyncio.create_task(
+                    self._cleanup_completed_session(spawn_id, session)
+                )
                 self._cleanup_tasks.add(cleanup_task)
                 cleanup_task.add_done_callback(self._cleanup_tasks.discard)
             self._observers.complete(spawn_id)
-            self._fan_out_event(spawn_id, None)
-
-    async def _stop_connection_for_quiescence(self, receiver: HarnessConnection[Any]) -> bool:
-        async def _stop_progress(stage: str, data: dict[str, object]) -> None:
-            if stage != "quiescent_stop_escalating":
-                return
-            payload = dict(data)
-            payload.setdefault("reason", "abort_grace_expired")
-            self._emit_pi_phase_event(
-                spawn_id=receiver.spawn_id,
-                connection=receiver,
-                phase="quiescent_stop_escalating",
-                **payload,
-            )
-
-        stop_result = await receiver.stop(reason="quiescent", progress=_stop_progress)
-        return stop_result.escalated
+            if session is not None and session.subscriber is not None:
+                while True:
+                    try:
+                        session.subscriber.put_nowait(None)
+                        break
+                    except asyncio.QueueFull:
+                        with suppress(asyncio.QueueEmpty):
+                            session.subscriber.get_nowait()
+                        continue
 
     async def _terminate_pi_tracked_subspawns(
         self,
@@ -1928,14 +1949,14 @@ class SpawnManager:
     def _inbound_log_path(self, spawn_id: SpawnId) -> Path:
         return self._spawn_dir(spawn_id) / "inbound.jsonl"
 
-    async def _cleanup_completed_session(self, spawn_id: SpawnId) -> None:
+    async def _cleanup_completed_session(
+        self,
+        spawn_id: SpawnId,
+        session: SpawnSession,
+    ) -> None:
         """Clean up resources after a receiver drain loop exits naturally."""
 
         await self._stop_heartbeat(spawn_id)
-        session = self._sessions.pop(spawn_id, None)
-        if session is None:
-            await self._observers.shutdown(spawn_id)
-            return
         if session.debug_tracer is not None:
             session.debug_tracer.close()
         if not session.drain_task.done():
@@ -1944,8 +1965,41 @@ class SpawnManager:
         if session.drain_task.done() and not session.drain_task.cancelled():
             with suppress(Exception):
                 session.drain_task.result()
-        with suppress(Exception):
-            await session.connection.stop()
+        if session.connection.harness_id is HarnessId.PI:
+            self._emit_pi_phase_event(
+                spawn_id,
+                session.connection,
+                phase="cleanup_running",
+                cleanup_status="running",
+            )
+            try:
+                stop_result = await session.connection.stop(reason="quiescent")
+                cleanup_status = "escalated" if stop_result.escalated else "completed"
+                if stop_result.escalated:
+                    self._emit_pi_phase_event(
+                        spawn_id,
+                        session.connection,
+                        phase="cleanup_escalated",
+                        cleanup_status="escalated",
+                        reason="abort_grace_expired",
+                    )
+                self._emit_pi_phase_event(
+                    spawn_id,
+                    session.connection,
+                    phase="cleanup_completed",
+                    cleanup_status=cleanup_status,
+                )
+            except Exception as exc:
+                self._emit_pi_phase_event(
+                    spawn_id,
+                    session.connection,
+                    phase="cleanup_failed",
+                    cleanup_status="failed",
+                    error=str(exc),
+                )
+        else:
+            with suppress(Exception):
+                await session.connection.stop()
         with suppress(Exception):
             await session.control_server.stop()
         await self._observers.shutdown(spawn_id)

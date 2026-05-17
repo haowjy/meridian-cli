@@ -33,6 +33,7 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.context import LaunchContext, build_launch_context
 from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.launch.resolve import resolve_pi_notification_timeout_seconds
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
@@ -52,6 +53,33 @@ if TYPE_CHECKING:
 _WAIT_POLL_INTERVAL_SECS = 0.1
 _MANAGED_CANCEL_GRACE_SECS = 5.0
 _MANAGED_CANCEL_FALLBACK_WAIT_SECS = 1.0
+
+
+def _resolve_explicit_timeout_seconds(resolved_request: object) -> float | None:
+    """Extract explicit timeout seconds from resolved request-like objects."""
+
+    budget = getattr(resolved_request, "budget", None)
+    timeout_secs = getattr(budget, "timeout_secs", None)
+    if timeout_secs is None:
+        return None
+    try:
+        return float(timeout_secs)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_config_snapshot(
+    launch_context: object,
+    *,
+    fallback: dict[str, object],
+) -> dict[str, object]:
+    """Extract launch config snapshot with fallback for test doubles."""
+
+    runtime = getattr(launch_context, "runtime", None)
+    config_snapshot = getattr(runtime, "config_snapshot", None)
+    if isinstance(config_snapshot, dict):
+        return cast("dict[str, object]", config_snapshot)
+    return fallback
 
 
 @dataclass(frozen=True)
@@ -378,6 +406,13 @@ class SpawnApplicationService:
             env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
             task_cwd=launch_ctx.task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
+            pi_notification_timeout_seconds=resolve_pi_notification_timeout_seconds(
+                explicit_timeout_seconds=_resolve_explicit_timeout_seconds(resolved_request),
+                config_snapshot=_resolve_config_snapshot(
+                    launch_ctx,
+                    fallback=payload.runtime.config_snapshot,
+                ),
+            ),
             pi_session_role=pi_session_role,
             debug_tracer=payload.debug_tracer,
         )

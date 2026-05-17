@@ -350,7 +350,6 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -377,7 +376,7 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
-        assert fake_connection.stop_reasons == ["quiescent"]
+        assert fake_connection.stop_reasons == []
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
         history = [
             json.loads(line)
@@ -431,7 +430,6 @@ async def test_spawn_manager_pi_emits_notification_wait_phase_without_prior_term
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -515,7 +513,6 @@ async def test_spawn_manager_pi_zero_grace_still_consumes_immediate_notification
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.0,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -615,7 +612,6 @@ async def test_spawn_manager_pi_primary_role_does_not_auto_stop_at_quiescence(
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -649,7 +645,7 @@ async def test_spawn_manager_pi_primary_role_does_not_auto_stop_at_quiescence(
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_quiescent_stop_escalation_preserves_success_terminal(
+async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_success(
     tmp_path: Path,
 ) -> None:
     class _EscalatedButSuccessfulStopConnection(_FakePiConnection):
@@ -684,7 +680,6 @@ async def test_spawn_manager_pi_quiescent_stop_escalation_preserves_success_term
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -711,7 +706,8 @@ async def test_spawn_manager_pi_quiescent_stop_escalation_preserves_success_term
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
-        assert fake_connection.stop_reasons == ["quiescent"]
+        assert fake_connection.stop_reasons == []
+        await asyncio.sleep(0.05)
 
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
         history = [
@@ -719,29 +715,30 @@ async def test_spawn_manager_pi_quiescent_stop_escalation_preserves_success_term
             for line in history_path.read_text(encoding="utf-8").splitlines()
             if line
         ]
-        escalated_phases = [
+        cleanup_escalated_phases = [
             event
             for event in history
             if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "quiescent_stop_escalated"
+            and event.get("payload", {}).get("phase") == "cleanup_escalated"
         ]
-        escalating_phases = [
+        cleanup_running_phases = [
             event
             for event in history
             if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase") == "quiescent_stop_escalating"
+            and event.get("payload", {}).get("phase") == "cleanup_running"
         ]
-        assert escalating_phases
-        assert escalating_phases[-1]["payload"].get("reason") == "abort_grace_expired"
-        assert escalated_phases
-        assert escalated_phases[-1]["payload"].get("reason") == "abort_grace_expired"
-        assert history.index(escalating_phases[-1]) < history.index(escalated_phases[-1])
+        assert cleanup_running_phases
+        assert cleanup_escalated_phases
+        assert cleanup_escalated_phases[-1]["payload"].get("reason") == "abort_grace_expired"
+        assert history.index(cleanup_running_phases[-1]) < history.index(
+            cleanup_escalated_phases[-1]
+        )
     finally:
         await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_quiescent_stop_escalation_marks_spawn_failed(
+async def test_spawn_manager_pi_cleanup_failure_does_not_flip_terminal_success(
     tmp_path: Path,
 ) -> None:
     class _EscalatingStopConnection(_FakePiConnection):
@@ -777,7 +774,6 @@ async def test_spawn_manager_pi_quiescent_stop_escalation_marks_spawn_failed(
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -802,15 +798,109 @@ async def test_spawn_manager_pi_quiescent_stop_escalation_marks_spawn_failed(
     try:
         outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
         assert outcome is not None
-        assert outcome.status == "failed"
-        assert outcome.error == "pi_quiescent_stop_failed:pi_quiescent_stop_escalated"
-        assert fake_connection.stop_reasons == ["quiescent"]
+        assert outcome.status == "succeeded"
+        assert outcome.error is None
+        assert fake_connection.stop_reasons == []
     finally:
         await manager.stop_spawn(spawn_id)
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_quiescence_grace_waits_for_late_notification_events(
+async def test_stop_spawn_ignores_pi_session_already_owned_by_async_cleanup(
+    tmp_path: Path,
+) -> None:
+    cleanup_release = asyncio.Event()
+    cleanup_started = asyncio.Event()
+
+    class _CleanupOwnedConnection(_FakePiConnection):
+        def __init__(self, events: list[HarnessEvent]) -> None:
+            super().__init__(events)
+            self.cancel_calls = 0
+
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: StopProgressCallback | None = None,
+        ) -> StopResult:
+            _ = progress
+            self.stop_reasons.append(reason)
+            if reason == "quiescent":
+                cleanup_started.set()
+                await cleanup_release.wait()
+            self._state = "stopped"
+            return StopResult()
+
+        async def send_cancel(self) -> None:
+            self.cancel_calls += 1
+
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        ),
+    ]
+    fake_connection = _CleanupOwnedConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-cleanup-owned-stop-race")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1.0)
+
+        stop_outcome = await manager.stop_spawn(spawn_id)
+        assert stop_outcome is None
+        assert fake_connection.cancel_calls == 0
+        assert fake_connection.stop_reasons == ["quiescent"]
+
+        cleanup_release.set()
+        await asyncio.sleep(0.05)
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        assert not any(event.get("event_type") == "cancelled" for event in history)
+    finally:
+        cleanup_release.set()
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_quiescence_waits_for_late_notification_events(
     tmp_path: Path,
 ) -> None:
     class _DelayedPiConnection(_FakePiConnection):
@@ -824,7 +914,6 @@ async def test_spawn_manager_pi_quiescence_grace_waits_for_late_notification_eve
                     await asyncio.sleep(delay)
                 yield event
 
-    grace_secs = 0.05
     fake_connection = _DelayedPiConnection(
         [
             (0.0, _pi_event("session", {"id": "ses-pi"})),
@@ -865,7 +954,6 @@ async def test_spawn_manager_pi_quiescence_grace_waits_for_late_notification_eve
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=grace_secs,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -894,8 +982,159 @@ async def test_spawn_manager_pi_quiescence_grace_waits_for_late_notification_eve
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
-        assert elapsed >= grace_secs
-        assert fake_connection.stop_reasons == ["quiescent"]
+        assert elapsed >= 0.02
+        assert fake_connection.stop_reasons == []
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_notification_queued_before_parent_terminal_times_out(
+    tmp_path: Path,
+) -> None:
+    class _StuckQueuedNotificationConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            for event in self._events:
+                yield event
+            await asyncio.sleep(60)
+
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event("meridian.notification.queued", {"notification_id": "n-queued"}),
+        _pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        ),
+    ]
+    fake_connection = _StuckQueuedNotificationConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-queued-parent-terminal-timeout")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            timeout_seconds=None,
+            pi_notification_timeout_seconds=0.02,
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error is not None
+        assert (
+            outcome.error.startswith(
+                "pi_notification_timeout:id=n-queued:phase=queued:elapsed="
+            )
+            and ":timeout=" in outcome.error
+        )
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_notification_timeout_without_explicit_execution_timeout(
+    tmp_path: Path,
+) -> None:
+    class _StuckNotificationConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            for event in self._events:
+                yield event
+            await asyncio.sleep(60)
+
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        ),
+        _pi_event("meridian.notification.queued", {"notification_id": "n-timeout"}),
+        _pi_event("meridian.notification.delivered", {"notification_id": "n-timeout"}),
+    ]
+    fake_connection = _StuckNotificationConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        assert config.timeout_seconds is None
+        assert config.pi_notification_timeout_seconds == pytest.approx(0.02)
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-notification-timeout-default-wait")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            timeout_seconds=None,
+            pi_notification_timeout_seconds=0.02,
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error is not None
+        assert (
+            outcome.error.startswith(
+                "pi_notification_timeout:id=n-timeout:phase=delivered:elapsed="
+            )
+            and ":timeout=" in outcome.error
+        )
+
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        assert any(
+            event.get("event_type") == "meridian.pi.lifecycle.phase"
+            and event.get("payload", {}).get("phase") == "pi_notification_timeout"
+            for event in history
+        )
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -948,7 +1187,6 @@ async def test_spawn_manager_pi_fast_child_completion_waits_for_notification_com
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -975,7 +1213,7 @@ async def test_spawn_manager_pi_fast_child_completion_waits_for_notification_com
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
-        assert fake_connection.stop_reasons == ["quiescent"]
+        assert fake_connection.stop_reasons == []
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -1053,7 +1291,6 @@ async def test_spawn_manager_pi_second_child_wave_reblocks_quiescence(
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -1080,7 +1317,7 @@ async def test_spawn_manager_pi_second_child_wave_reblocks_quiescence(
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
-        assert fake_connection.stop_reasons == ["quiescent"]
+        assert fake_connection.stop_reasons == []
 
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
         history_text = history_path.read_text(encoding="utf-8")
@@ -1120,7 +1357,6 @@ async def test_spawn_manager_pi_notification_failure_marks_spawn_failed(tmp_path
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -1187,7 +1423,6 @@ async def test_spawn_manager_pi_parse_error_invalidates_quiescence_and_fails(
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -1257,7 +1492,6 @@ async def test_spawn_manager_pi_fails_on_canonical_subspawn_without_id_for_quies
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -1317,7 +1551,6 @@ async def test_spawn_manager_pi_pending_children_runs_posix_cleanup_hook(tmp_pat
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -1358,6 +1591,68 @@ async def test_spawn_manager_pi_pending_children_runs_posix_cleanup_hook(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_spawn_manager_pi_pre_terminal_process_exit_with_tracked_children_fails(
+    tmp_path: Path,
+) -> None:
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event(
+            "meridian.subspawn.start",
+            {"subspawn_id": "j-pre-terminal", "wait_policy": "tracked", "pid": 6201},
+        ),
+    ]
+    fake_connection = _FakePiConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    cleanup_calls: list[tuple[int, str]] = []
+
+    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
+        _ = spawn_id
+        cleanup_calls.append((process_group_id, reason))
+
+    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
+
+    spawn_id = SpawnId("p-pi-pre-terminal-pending-child")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_process_exited_with_tracked_children"
+        assert cleanup_calls == [(6201, "pi_process_exit_with_tracked_children")]
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
 async def test_spawn_manager_pi_failed_terminal_does_not_defer_with_pending_children(
     tmp_path: Path,
 ) -> None:
@@ -1384,7 +1679,6 @@ async def test_spawn_manager_pi_failed_terminal_does_not_defer_with_pending_chil
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
@@ -1451,7 +1745,6 @@ async def test_spawn_manager_pi_cancelled_terminal_cleans_up_pending_children(
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )

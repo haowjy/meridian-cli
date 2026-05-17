@@ -15,9 +15,6 @@ from meridian.cli.chat_cmd import run_chat_server
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry, RunnablePath
 from meridian.lib.chat.policy import (
-    PI_PRIMARY_RPC_ATTACH_GUARDRAIL as CHAT_PI_PRIMARY_RPC_ATTACH_GUARDRAIL,
-)
-from meridian.lib.chat.policy import (
     ChatPolicySnapshot,
     build_chat_backend_launch_plan,
     default_chat_policy_snapshot,
@@ -96,38 +93,19 @@ def test_chat_policy_resolution_fails_before_runtime_configure_or_discovery_writ
     assert not (runtime_root / "chat-server.json").exists()
 
 
-def test_chat_policy_resolution_rejects_pi_harness_before_runtime_startup(
-    monkeypatch, tmp_path
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    configured: list[object] = []
-    write_bootstrap_calls: list[Path] = []
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.setattr(chat_cmd, "require_established_project_root", lambda: tmp_path)
-    monkeypatch.setattr(
-        chat_cmd,
-        "prepare_for_runtime_write",
-        lambda root: write_bootstrap_calls.append(root),
+def test_chat_policy_resolution_allows_pi_harness(tmp_path: Path) -> None:
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(  # pyright: ignore[reportPrivateUsage]
+        project_root=tmp_path,
+        model=None,
+        harness="pi",
+        agent=None,
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
     )
-
-    import meridian.lib.chat.server as chat_server
-
-    monkeypatch.setattr(chat_server, "configure", lambda **kwargs: configured.append(kwargs))
-    monkeypatch.setattr(chat_server, "app", object())
-
-    with pytest.raises(ValueError) as exc_info:
-        run_chat_server(
-            harness="pi",
-            port=8765,
-            headless=True,
-            uvicorn_run=lambda *_args, **_kwargs: None,
-            stdout=StringIO(),
-        )
-
-    assert str(exc_info.value) == CHAT_PI_PRIMARY_RPC_ATTACH_GUARDRAIL
-    assert configured == []
-    assert write_bootstrap_calls == []
-    assert not (runtime_root / "chat-server.json").exists()
+    assert snapshot.harness == HarnessId.PI.value
 
 
 def test_chat_policy_snapshot_resolves_alias_to_canonical_model(monkeypatch, tmp_path) -> None:
@@ -570,7 +548,9 @@ def test_chat_policy_snapshot_migrates_missing_effective_model_to_canonical() ->
     assert migrated_legacy_harness_model.effective_model_id == "gpt-5.4-codex"
 
 
-def test_build_chat_launch_plan_rejects_pi_snapshot_before_projection(tmp_path: Path) -> None:
+def test_build_chat_launch_plan_rejects_pi_snapshot_without_primary_support(
+    tmp_path: Path,
+) -> None:
     snapshot = default_chat_policy_snapshot(harness=HarnessId.PI, model="pi-model")
     adapter = cast("SubprocessHarness", _UnsupportedPrimaryAdapter())
 
@@ -584,7 +564,7 @@ def test_build_chat_launch_plan_rejects_pi_snapshot_before_projection(tmp_path: 
             runtime_root=tmp_path / "runtime",
         )
 
-    assert str(exc_info.value) == CHAT_PI_PRIMARY_RPC_ATTACH_GUARDRAIL
+    assert str(exc_info.value) == "Harness 'pi' does not support primary launch."
 
 
 def test_build_chat_launch_plan_rejects_non_pi_without_primary_launch_support(

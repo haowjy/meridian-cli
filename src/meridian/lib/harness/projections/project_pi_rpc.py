@@ -68,13 +68,6 @@ _EFFORT_TO_THINKING: dict[str, str] = {
     "xhigh": "xhigh",
 }
 
-_PRIMARY_RPC_ATTACH_GUARDRAIL = (
-    "Pi primary RPC attach is not implemented yet. Use "
-    "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
-    "for Pi's native TUI."
-)
-PI_PRIMARY_RPC_ATTACH_GUARDRAIL = _PRIMARY_RPC_ATTACH_GUARDRAIL
-
 
 def _has_flag(args: Sequence[str], flag: str) -> bool:
     return any(token == flag or token.startswith(f"{flag}=") for token in args)
@@ -152,9 +145,6 @@ def project_pi_spec_to_cli_args(
     base_command: tuple[str, ...],
 ) -> list[str]:
     """Project one ``ResolvedLaunchSpec`` into an ordered Pi RPC command list."""
-
-    if spec.interactive:
-        raise ValueError(PI_PRIMARY_RPC_ATTACH_GUARDRAIL)
 
     command: list[str] = list(base_command)
 
@@ -252,7 +242,6 @@ _check_projection_drift(
 
 
 __all__ = [
-    "PI_PRIMARY_RPC_ATTACH_GUARDRAIL",
     "_DELEGATED_FIELDS",
     "_PROJECTED_FIELDS",
     "_check_projection_drift",

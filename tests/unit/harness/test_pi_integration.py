@@ -55,7 +55,7 @@ def test_pi_adapter_registered_with_expected_rpc_contract() -> None:
     assert contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
     assert contract.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK
     assert contract.capabilities.supports_session_fork is True
-    assert contract.capabilities.supports_primary_launch is False
+    assert contract.capabilities.supports_primary_launch is True
     assert contract.capabilities.terminal_surface_modes == (TerminalSurfaceMode.PURE_STDIO,)
 
     adapter = registry.get_subprocess_harness(HarnessId.PI)
@@ -92,7 +92,7 @@ def test_pi_launch_env_injects_session_role(interactive: bool, expected_role: st
     assert env["MERIDIAN_PI_SESSION_ROLE"] == expected_role
 
 
-def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_runs_and_rejects_primary_attach(
+def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_primary_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -108,16 +108,12 @@ def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_runs_and_rejects_pri
     assert "--mode" in spawned_command
     assert spawned_command[spawned_command.index("--mode") + 1] == "rpc"
 
-    with pytest.raises(ValueError) as exc_info:
-        adapter.build_command(
-            SpawnParams(prompt="hello from primary", interactive=True),
-            perms,
-        )
-    assert str(exc_info.value) == (
-        "Pi primary RPC attach is not implemented yet. Use "
-        "`meridian spawn --harness pi ...` for managed RPC work, or run `pi` directly "
-        "for Pi's native TUI."
+    primary_command = adapter.build_command(
+        SpawnParams(prompt="hello from primary", interactive=True),
+        perms,
     )
+    assert "--mode" in primary_command
+    assert primary_command[primary_command.index("--mode") + 1] == "rpc"
 
     primary_env = build_harness_env_overrides(
         adapter=adapter,
@@ -522,7 +518,6 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
@@ -627,7 +622,6 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
@@ -659,7 +653,7 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
             for line in inbound_log.read_text(encoding="utf-8").splitlines()
             if line
         ]
-        assert [message["type"] for message in inbound_messages] == ["prompt", "abort"]
+        assert [message["type"] for message in inbound_messages] == ["prompt"]
         assert inbound_messages[0]["message"] == "hello auto prompt"
     finally:
         await manager.shutdown()
@@ -720,7 +714,6 @@ async def test_pi_spawn_manager_without_session_event_still_quiesces_and_records
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
@@ -764,7 +757,7 @@ async def test_pi_spawn_manager_without_session_event_still_quiesces_and_records
         assert "waiting_for_first_pi_event_after_prompt" in phases
         assert "first_pi_event_received" in phases
         assert "session_event_absent" in phases
-        assert "quiescent_stop_sent" in phases
+        assert "quiescence_micro_drain_started" in phases
         assert "finalized" in phases
 
         inbound_messages = [
@@ -772,7 +765,7 @@ async def test_pi_spawn_manager_without_session_event_still_quiesces_and_records
             for line in inbound_log.read_text(encoding="utf-8").splitlines()
             if line
         ]
-        assert [message["type"] for message in inbound_messages] == ["prompt", "abort"]
+        assert [message["type"] for message in inbound_messages] == ["prompt"]
     finally:
         await manager.shutdown()
 
@@ -829,7 +822,6 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
@@ -907,7 +899,6 @@ async def test_pi_spawn_manager_first_event_timeout_fails_and_records_timeout_ph
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
@@ -999,7 +990,6 @@ async def test_pi_spawn_manager_first_event_eof_after_initial_prompt_fails_with_
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
@@ -1369,7 +1359,6 @@ async def test_pi_spawn_manager_runtime_error_event_propagates_specific_wrapper_
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
-        pi_quiescence_idle_grace_secs=0.01,
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )

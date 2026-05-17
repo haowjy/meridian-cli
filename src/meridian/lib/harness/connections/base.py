@@ -217,6 +217,7 @@ class ConnectionConfig:
     task_cwd: Path | None = None
     system: str | None = None
     timeout_seconds: float | None = None
+    pi_notification_timeout_seconds: float | None = None
     ws_bind_host: str = "127.0.0.1"
     ws_port: int = 0
     pi_session_role: PiSessionRole | None = None

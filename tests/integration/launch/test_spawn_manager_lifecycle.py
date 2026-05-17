@@ -325,7 +325,6 @@ async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
     manager = SpawnManager(
         runtime_root=runtime_root,
         project_root=project_root,
-        pi_quiescence_idle_grace_secs=0.01,
     )
     await manager.start_spawn(
         _build_config(spawn_id, project_root, harness_id=HarnessId.PI),

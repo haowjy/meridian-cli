@@ -10,10 +10,11 @@ from pydantic import BaseModel, ConfigDict
 from meridian.lib.catalog.agent import AgentProfile, load_agent_profile
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.catalog.skill import SkillRegistry
+from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.types import HarnessId, ModelId
-from meridian.lib.harness.projections.project_pi_rpc import PI_PRIMARY_RPC_ATTACH_GUARDRAIL
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.utils.time import minutes_to_seconds
 
 
 def dedupe_skill_names(names: Iterable[str]) -> tuple[str, ...]:
@@ -173,8 +174,6 @@ def validate_harness_compatibility(
     )
     supported_primary_set = set(supported_primary_harnesses)
     if harness_id not in supported_primary_set:
-        if harness_id == HarnessId.PI:
-            raise ValueError(PI_PRIMARY_RPC_ATTACH_GUARDRAIL)
         supported_text = ", ".join(str(harness) for harness in supported_primary_harnesses)
         raise ValueError(f"Unsupported harness '{harness_id}'. Expected one of: {supported_text}.")
 
@@ -226,12 +225,39 @@ def select_harness_model_id(
     return canonical_model_id
 
 
+def resolve_pi_notification_timeout_seconds(
+    *,
+    explicit_timeout_seconds: float | None,
+    config_snapshot: dict[str, object] | None,
+) -> float | None:
+    """Resolve Pi continuation-notification timeout from spawn wait semantics.
+
+    Preference order:
+    1) Explicit spawn execution timeout (when provided)
+    2) Configured wait timeout minutes from the launch config snapshot
+    """
+
+    if explicit_timeout_seconds is not None and explicit_timeout_seconds > 0:
+        return float(explicit_timeout_seconds)
+    if not config_snapshot:
+        return None
+    try:
+        config = MeridianConfig.model_validate(config_snapshot)
+    except Exception:
+        return None
+    wait_timeout_seconds = minutes_to_seconds(config.wait_timeout_minutes)
+    if wait_timeout_seconds is None or wait_timeout_seconds <= 0:
+        return None
+    return float(wait_timeout_seconds)
+
+
 __all__ = [
     "ResolvedSkills",
     "dedupe_skill_names",
     "format_missing_skills_warning",
     "load_agent_profile_with_fallback",
     "resolve_harness",
+    "resolve_pi_notification_timeout_seconds",
     "resolve_profile_path",
     "resolve_skill_paths",
     "resolve_skills_from_profile",

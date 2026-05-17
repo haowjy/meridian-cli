@@ -691,6 +691,10 @@ class SpawnDetailOutput(BaseModel):
     report_body: str | None
     harness_session_id: str | None = None
     pi_lifecycle_phase: str | None = None
+    pi_cleanup_status: str | None = None
+    pi_cleanup_phase: str | None = None
+    pi_cleanup_reason: str | None = None
+    pi_cleanup_error: str | None = None
     last_message: str | None = None
     log_path: str | None = None
     last_attempt_exited_at: str | None = None
@@ -745,6 +749,14 @@ class SpawnDetailOutput(BaseModel):
             wire["harness_session_id"] = self.harness_session_id
         if self.pi_lifecycle_phase is not None:
             wire["pi_lifecycle_phase"] = self.pi_lifecycle_phase
+        if self.pi_cleanup_status is not None:
+            wire["pi_cleanup_status"] = self.pi_cleanup_status
+        if self.pi_cleanup_phase is not None:
+            wire["pi_cleanup_phase"] = self.pi_cleanup_phase
+        if self.pi_cleanup_reason is not None:
+            wire["pi_cleanup_reason"] = self.pi_cleanup_reason
+        if self.pi_cleanup_error is not None:
+            wire["pi_cleanup_error"] = self.pi_cleanup_error
         if self.parent_id is not None:
             wire["parent_id"] = self.parent_id
         if self.work_id is not None:
@@ -889,6 +901,10 @@ class SpawnDetailOutput(BaseModel):
             ("Backend port", None if self.backend_port is None else str(self.backend_port)),
             ("Harness session", harness_session_value),
             ("Pi phase", self.pi_lifecycle_phase),
+            ("Pi cleanup status", self.pi_cleanup_status),
+            ("Pi cleanup phase", self.pi_cleanup_phase),
+            ("Pi cleanup reason", self.pi_cleanup_reason),
+            ("Pi cleanup error", self.pi_cleanup_error),
             ("Last attempt exited at", None if active_status else self.last_attempt_exited_at),
             (
                 "Last attempt exit code",

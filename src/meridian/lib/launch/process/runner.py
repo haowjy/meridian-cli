@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -31,16 +33,20 @@ from meridian.lib.harness.adapter import (
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections import get_connection_class
 from meridian.lib.harness.connections.base import (
+    ConnectionConfig,
     HarnessConnection,
     HarnessEvent,
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
+    StopResult,
 )
+from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.harness.semantics import terminal_outcome
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
@@ -308,6 +314,189 @@ def _persist_blackbox_output_artifact(
         )
 
 
+def _render_pi_primary_event(
+    event: HarnessEvent,
+    *,
+    stdout_write: Callable[[str], None],
+) -> None:
+    if event.event_type == "message_update":
+        assistant_update_raw = event.payload.get("assistantMessageEvent")
+        if isinstance(assistant_update_raw, dict):
+            assistant_update = cast("dict[str, object]", assistant_update_raw)
+            update_type = assistant_update.get("type")
+            if update_type == "text_delta":
+                delta = assistant_update.get("delta")
+                if isinstance(delta, str) and delta:
+                    stdout_write(delta)
+                return
+
+    if event.event_type == "agent_end":
+        stdout_write("\n")
+        return
+
+    if event.event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
+        tool_name = event.payload.get("name")
+        if isinstance(tool_name, str) and tool_name.strip():
+            stdout_write(f"\n[tool] {tool_name.strip()}\n")
+        return
+
+    if event.event_type == "error/connectionClosed":
+        message = event.payload.get("message")
+        detail = message if isinstance(message, str) and message.strip() else "connection closed"
+        stdout_write(f"\nerror: {detail}\n")
+
+
+async def _run_pi_primary_managed_session(
+    *,
+    primary_spawn_id: SpawnId,
+    control_root: Path,
+    task_cwd: Path | None,
+    child_env: dict[str, str],
+    launch_spec: ResolvedLaunchSpec,
+    on_running: Callable[[int], None] | None,
+) -> tuple[int, str | None]:
+    connection = PiRpcConnection()
+    config = ConnectionConfig(
+        spawn_id=primary_spawn_id,
+        harness_id=HarnessId.PI,
+        prompt=launch_spec.prompt,
+        control_root=control_root,
+        env_overrides=child_env,
+        task_cwd=task_cwd,
+        system=launch_spec.appended_system_prompt,
+        pi_session_role="primary",
+    )
+    await connection.start(config, launch_spec)
+    pid = connection.subprocess_pid
+    if pid is not None and on_running is not None:
+        on_running(pid)
+
+    exit_code = 0
+    stop_requested = asyncio.Event()
+    explicit_user_exit = False
+    loop = asyncio.get_running_loop()
+    input_queue: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+    input_reader_stop = threading.Event()
+
+    def _stdout_write(text: str) -> None:
+        print(text, end="", flush=True)
+
+    def _emit_shutdown_warning(detail: str) -> None:
+        message = f"warning: pi primary cleanup {detail}"
+        print(message, file=sys.stderr, flush=True)
+        logger.warning("Pi primary managed attach cleanup warning: %s", detail)
+
+    def _input_reader() -> None:
+        while not input_reader_stop.is_set():
+            try:
+                line = input("> ")
+            except EOFError:
+                loop.call_soon_threadsafe(input_queue.put_nowait, ("eof", None))
+                return
+            except Exception as exc:
+                loop.call_soon_threadsafe(
+                    input_queue.put_nowait,
+                    ("error", str(exc)),
+                )
+                return
+            loop.call_soon_threadsafe(input_queue.put_nowait, ("line", line))
+
+    async def _event_pump() -> None:
+        nonlocal exit_code
+        async for event in connection.events():
+            _render_pi_primary_event(event, stdout_write=_stdout_write)
+            outcome = terminal_outcome(event)
+            if outcome is None:
+                continue
+            if outcome.status in {"failed", "cancelled"}:
+                exit_code = outcome.exit_code
+                stop_requested.set()
+                return
+        stop_requested.set()
+
+    async def _input_pump() -> None:
+        nonlocal explicit_user_exit
+        while not stop_requested.is_set():
+            try:
+                kind, payload = await asyncio.wait_for(input_queue.get(), timeout=0.1)
+            except TimeoutError:
+                continue
+            if kind == "eof":
+                explicit_user_exit = True
+                stop_requested.set()
+                return
+            if kind == "error":
+                stop_requested.set()
+                raise RuntimeError(payload or "input reader failed")
+            if kind != "line":
+                continue
+            line = payload or ""
+            command = line.strip().lower()
+            if command in {"exit", "quit", "/exit", "/quit"}:
+                explicit_user_exit = True
+                stop_requested.set()
+                return
+            if line.strip():
+                try:
+                    await connection.send_user_message(line)
+                except Exception:
+                    stop_requested.set()
+                    raise
+
+    input_reader_thread = threading.Thread(
+        target=_input_reader,
+        name=f"pi-primary-input-{primary_spawn_id}",
+        daemon=True,
+    )
+    input_reader_thread.start()
+    event_task = asyncio.create_task(_event_pump())
+    input_task = asyncio.create_task(_input_pump())
+
+    try:
+        await stop_requested.wait()
+        if explicit_user_exit and exit_code == 0:
+            return 0, connection.session_id
+        return exit_code, connection.session_id
+    finally:
+        input_reader_stop.set()
+        for task in (input_task, event_task):
+            if not task.done():
+                task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        try:
+            stop_result: StopResult = await connection.stop(reason="primary_exit")
+            if stop_result.escalated:
+                _emit_shutdown_warning("escalated during primary_exit")
+        except Exception as exc:
+            _emit_shutdown_warning(f"failed during primary_exit: {exc}")
+
+
+def run_pi_primary_managed_session(
+    *,
+    primary_spawn_id: SpawnId,
+    control_root: Path,
+    task_cwd: Path | None,
+    child_env: dict[str, str],
+    launch_spec: ResolvedLaunchSpec,
+    on_running: Callable[[int], None] | None,
+) -> tuple[int, str | None]:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            _run_pi_primary_managed_session(
+                primary_spawn_id=primary_spawn_id,
+                control_root=control_root,
+                task_cwd=task_cwd,
+                child_env=child_env,
+                launch_spec=launch_spec,
+                on_running=on_running,
+            )
+        )
+    raise PrimaryAttachError("Pi primary managed attach cannot run inside an active event loop")
+
+
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
@@ -326,6 +515,16 @@ def _execute_primary_process(
     on_running: Callable[[int], None],
 ) -> tuple[int, str | None]:
     """Run managed attach when eligible, otherwise fall back to black-box launch."""
+
+    if harness_id is HarnessId.PI:
+        return run_pi_primary_managed_session(
+            primary_spawn_id=primary_spawn_id,
+            control_root=control_root,
+            task_cwd=task_cwd,
+            child_env=child_env,
+            launch_spec=launch_spec,
+            on_running=on_running,
+        )
 
     use_managed_backend = harness_contract.bootstrap.mode.value == "managed_primary_attach"
     if use_managed_backend:
