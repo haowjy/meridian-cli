@@ -24,7 +24,7 @@ dependencies = [
   "cyclopts>=3.0",
   "fastapi>=0.115",
   "markdown-it-py>=4.0",
-  "mars-agents==0.4.6",
+  "mars-agents==0.4.7rc1",
   "mcp>=1.0",
   "pathspec>=1.1.0",
   "psutil>=7.2.2",
@@ -68,6 +68,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "src/meridian/__init__.py"
+
+[tool.uv]
+prerelease = "allow"
+
+[tool.uv.sources]
+mars-agents = { url = "https://files.pythonhosted.org/packages/55/2b/aeb786d7bee5da19517ef933c47adecf301ff144e22f0a696503ba153ad0/mars_agents-0.4.7rc1.tar.gz" }
 
 [tool.hatch.build]
 artifacts = ["src/meridian/web_dist/*"]
