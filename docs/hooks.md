@@ -18,11 +18,11 @@ meridian hooks list
 # Validate config before committing changes
 meridian hooks check
 
-# Manually trigger git-autosync
-meridian hooks run git-autosync
+# Manually trigger a named autosync hook
+meridian hooks run sync-notes
 
 # Trigger with a specific event context
-meridian hooks run git-autosync --event work.done
+meridian hooks run sync-notes --event work.done
 ```
 
 `hooks run` bypasses interval throttling. Use it to test hooks or force a sync outside the normal lifecycle.
@@ -51,6 +51,7 @@ Hooks live in any Meridian config file. Precedence is: `builtin < context < user
 # meridian.toml (project) or ~/.meridian/config.toml (user)
 
 [[hooks]]
+name    = "sync-notes"
 builtin = "git-autosync"
 remote  = "git@github.com:team/docs.git"
 
@@ -64,7 +65,7 @@ event   = "spawn.finalized"
 
 | Field | Type | Required | Default | Purpose |
 | ----- | ---- | -------- | ------- | ------- |
-| `name` | str | yes (unless `builtin`) | builtin name | Unique identifier; used by `hooks run NAME` |
+| `name` | str | yes (unless `builtin`) | builtin name or synthesized builtin identity | Unique identifier; used by `hooks run NAME` |
 | `builtin` | str | one of `builtin`/`command` | — | Use a builtin hook |
 | `command` | str | one of `builtin`/`command` | — | Shell command to run |
 | `event` | str | yes (unless builtin supplies defaults) | builtin default | Event that triggers the hook |
@@ -81,6 +82,8 @@ event   = "spawn.finalized"
 | `options.conflict_policy` | str | no | `"leave"` | `git-autosync` only: `"leave"` keeps rebase conflicts for review; `"abort"` restores old abort behavior |
 
 `command` and `builtin` are mutually exclusive.
+
+If you omit `name` for a builtin hook, Meridian may synthesize a stable name from the builtin identity (for example remote/options). That keeps distinct unnamed builtin rows from overriding each other. For predictable `hooks run NAME` usage, set `name` explicitly.
 
 ### Shell Behavior
 
@@ -151,6 +154,7 @@ the rebase on conflict.
 
 ```toml
 [[hooks]]
+name    = "sync-notes"
 builtin = "git-autosync"
 remote  = "git@github.com:team/notes.git"
 ```
@@ -160,6 +164,7 @@ To register only for specific events, set `event` explicitly:
 ```toml
 # Only sync when a work item completes
 [[hooks]]
+name    = "sync-notes"
 builtin = "git-autosync"
 remote  = "git@github.com:team/notes.git"
 event   = "work.done"
@@ -168,7 +173,7 @@ event   = "work.done"
 To run manually at any time:
 
 ```bash
-meridian hooks run git-autosync --event work.done
+meridian hooks run sync-notes --event work.done
 ```
 
 ## MCP
