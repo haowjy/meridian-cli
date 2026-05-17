@@ -1,0 +1,184 @@
+# qa-validated: pi-rpc-quiescence
+
+# Pi RPC quiescence smoke (S1-S12)
+
+Manual smoke scenarios for Pi RPC quiescence behavior.
+
+## Prerequisites
+
+- Pi runtime built and available (`scripts/build-meridian-pi-runtime.sh` or `MERIDIAN_PI_BINARY` override)
+- Pi model auth configured for your provider
+- Use a branch that includes Pi RPC wiring + these extensions
+- For spawned-session checks, run from this repo root
+
+---
+
+## S1: Basic Pi RPC spawn
+
+```bash
+uv run meridian spawn -m <pi-model> -p "Reply OK and run no commands"
+```
+
+Expect:
+- Agent responds normally
+- Spawn reaches `succeeded`
+- Logs show clean quiescent stop path (no hang waiting on child jobs)
+
+## S2: Managed bash blocking command
+
+Prompt:
+
+```text
+Run `printf hello` with bash and report the output.
+```
+
+Expect:
+- `bash` returns `state: "exited"`, `exit_code: 0`, output includes `hello`
+- No `meridian.subspawn.start` event for this short command
+
+## S3: Timeout detaches and drains
+
+Prompt:
+
+```text
+Run `sleep 5 && echo done` with bash using timeout 1000ms, then report the job id.
+```
+
+Expect:
+- `bash` returns `state: "running"` with `job_id`
+- Raw output includes `meridian.subspawn.start` (`wait_policy:"tracked"`)
+- Later includes `meridian.subspawn.end`
+- Spawn remains alive until tracked job drains, then finalizes
+
+## S4: Detached job does not block quiescence
+
+Prompt:
+
+```text
+Start `sleep 30` in the background with wait_policy detached, then say DETACHED.
+```
+
+Expect:
+- Start event uses `wait_policy:"detached"`
+- Session can quiesce without waiting the full 30s
+- Detached job remains user-owned responsibility
+
+## S5: RPC multi-turn manual injection
+
+```bash
+uv run meridian spawn -m <pi-model> --bg -p "Reply FIRST and wait."
+meridian spawn inject <spawn-id> "Reply SECOND."
+meridian spawn wait <spawn-id>
+```
+
+Expect:
+- One spawned Pi process handles both turns
+- Spawn completes after second turn quiesces
+
+## S6: Tracked child completion wakes parent
+
+Prompt:
+
+```text
+Start `sleep 3 && echo child-done` as tracked background work. When it completes, summarize the result.
+```
+
+Expect:
+- Parent turn idles while child runs
+- Lifecycle emits `meridian.notification.queued` + `delivered`
+- Internal extension bus receives `meridian:subspawn:start` / `meridian:subspawn:end` from managed-bash
+- Follow-up turn starts automatically
+- After follow-up `agent_end`, quiescence is reached and spawn completes
+
+## S6b: Fast tracked child completion still triggers follow-up
+
+Prompt:
+
+```text
+Start `sleep 0.1 && echo fast-done` as tracked background work. Continue immediately, then summarize when background work completes.
+```
+
+Expect:
+- Child start and end can both happen before the first `agent_end`
+- Lifecycle still emits `meridian.notification.queued` + `delivered` (not only `meridian.quiescence.ready`)
+- Follow-up turn runs and reports `fast-done`
+- Spawn reaches quiescence only after the follow-up turn completes
+
+## S7: Primary session does not auto-shutdown
+
+```bash
+uv run meridian -m <pi-model>
+```
+
+In the session, run tracked background work and wait for completion summary.
+
+Expect:
+- Lifecycle emits `meridian.notification.queued` + `delivered` and resumes the agent
+- Lifecycle can emit `meridian.quiescence.ready` after notification completion
+- Session remains open at quiescence (no auto-close)
+
+## S8: Child failure notifies
+
+Prompt:
+
+```text
+Start `sh -c 'sleep 1; exit 7'` as tracked background work. Handle the result.
+```
+
+Expect:
+- End event shows non-zero failure (`success:false`, `exit_code:7`)
+- Parent receives failure follow-up turn
+- Spawn outcome depends on parent handling path (successful handled flow vs terminal error)
+
+## S9: Notification delivery failure does not hang
+
+Use a test lifecycle extension variant or fault-injection env that makes
+`sendMessage(..., { triggerTurn: true })` throw after a tracked child drains.
+
+Expect:
+- Raw output includes `meridian.notification.queued`
+- Raw output includes `meridian.notification.failed` with `reason:"sendMessage_error"`
+- Spawn finalizes `failed` once no tracked children remain
+- Spawn does not wait forever on a pending notification
+
+## S10: Pi dies with tracked child pending
+
+Setup:
+
+```bash
+uv run meridian spawn -m <pi-model> --bg -p "Start tracked background work: sleep 30."
+# after meridian.subspawn.start appears:
+kill <pi-process-pid>
+meridian spawn wait <spawn-id>
+```
+
+Expect:
+- Spawn finalizes failed, not succeeded from the earlier `agent_end`
+- Failure reason mentions tracked children / Pi process exit
+- POSIX cleanup attempts tracked process-group termination when pid/pgid metadata exists
+- Detached jobs are not killed by the cleanup path
+
+## S11: Malformed lifecycle event fails closed
+
+Use a test extension variant that emits malformed canonical lifecycle output,
+for example unsupported `schema_version` or missing canonical child id.
+
+Expect:
+- Raw malformed line is preserved diagnostically as `meridian.lifecycle.parse_error`
+- Tracker state is not advanced from the malformed event
+- Spawn fails closed instead of falsely reaching quiescence
+- Unrelated non-lifecycle Pi messages remain observable in history when emitted before failure
+
+## S12: Hard-kill deadline
+
+Prompt with a deliberately long tracked job and low spawn timeout:
+
+```bash
+uv run meridian spawn -m <pi-model> --timeout 3 -p "Start tracked background work: sleep 9999."
+```
+
+Expect:
+- Session stays active until the timeout/deadline
+- Meridian cancels/stops Pi and attempts tracked job cleanup
+- Spawn finalizes timeout/failed, not succeeded
+- Detached jobs remain user-owned and are not killed by quiescence cleanup

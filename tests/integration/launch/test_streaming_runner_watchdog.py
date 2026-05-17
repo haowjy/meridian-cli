@@ -524,9 +524,14 @@ async def test_execute_with_streaming_waits_for_pi_subspawn_drain_after_parent_t
                 payload={"type": "session", "id": self._session_id},
             )
             yield HarnessEvent(
-                event_type="meridian_subspawn_start",
+                event_type="meridian.subspawn.start",
                 harness_id="pi",
-                payload={"type": "meridian_subspawn_start", "subspawn_id": "child-1"},
+                payload={
+                    "type": "meridian.subspawn.start",
+                    "schema_version": 1,
+                    "subspawn_id": "child-1",
+                    "wait_policy": "tracked",
+                },
             )
             yield HarnessEvent(
                 event_type="agent_end",
@@ -538,9 +543,14 @@ async def test_execute_with_streaming_waits_for_pi_subspawn_drain_after_parent_t
             )
             await release_subspawn_drain.wait()
             yield HarnessEvent(
-                event_type="meridian_subspawn_end",
+                event_type="meridian.subspawn.end",
                 harness_id="pi",
-                payload={"type": "meridian_subspawn_end", "subspawn_id": "child-1"},
+                payload={
+                    "type": "meridian.subspawn.end",
+                    "schema_version": 1,
+                    "subspawn_id": "child-1",
+                    "wait_policy": "tracked",
+                },
             )
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)

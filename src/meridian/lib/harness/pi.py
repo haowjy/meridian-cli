@@ -30,9 +30,12 @@ from meridian.lib.harness.bundle import (
     project_subprocess_spec,
     register_harness_bundle,
 )
-from meridian.lib.harness.connections.pi_rpc import PiConnection
+from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
-from meridian.lib.harness.projections.project_pi_subprocess import (
+from meridian.lib.harness.projections.pi_extension_projection import (
+    resolve_pi_extension_entrypoints,
+)
+from meridian.lib.harness.projections.project_pi_rpc import (
     project_pi_spec_to_cli_args,
 )
 from meridian.lib.launch.composition import (
@@ -51,7 +54,7 @@ from meridian.lib.state.user_paths import get_user_home
 
 
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
-    """Subprocess harness implementation for ``meridian-pi``."""
+    """RPC harness implementation for ``meridian-pi``."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
@@ -153,6 +156,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
+            pi_extension_entrypoints=resolve_pi_extension_entrypoints(),
             agent_name=None,
             skills=(),
         )
@@ -222,7 +226,7 @@ register_harness_bundle(
         adapter=PiAdapter(),
         spec_cls=ResolvedLaunchSpec,
         extractor=PI_EXTRACTOR,
-        connections={TransportId.STREAMING: PiConnection},
+        connections={TransportId.STREAMING: PiRpcConnection},
         projections=HarnessProjectionPorts(
             subprocess_cli_args=project_pi_spec_to_cli_args,
         ),

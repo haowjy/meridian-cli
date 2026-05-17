@@ -120,6 +120,9 @@ class ResolvedLaunchSpec(BaseModel):
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
 
+    # Pi only
+    pi_extension_entrypoints: tuple[str, ...] = ()
+
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:
         if self.continue_fork and not self.continue_session_id:

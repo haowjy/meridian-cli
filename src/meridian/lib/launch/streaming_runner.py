@@ -43,6 +43,7 @@ from meridian.lib.launch.constants import (
     TOKENS_FILENAME,
 )
 from meridian.lib.launch.context import LaunchContext
+from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -747,6 +748,11 @@ async def execute_with_streaming(
         child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
+        pi_session_role = (
+            resolve_pi_session_role(interactive=launch_context.binding.run_params.interactive)
+            if resolved_harness_id is HarnessId.PI
+            else None
+        )
 
         spawn_store.update_spawn(
             runtime_root,
@@ -779,6 +785,7 @@ async def execute_with_streaming(
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
+            pi_session_role=pi_session_role,
             debug_tracer=tracer,
         )
 

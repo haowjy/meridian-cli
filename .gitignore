@@ -43,3 +43,4 @@ src/meridian/pi_runtime/package-lock.json
 src/meridian/pi_runtime/bun.lock
 src/meridian/pi_runtime/bun.lockb
 src/meridian/pi_runtime/bin/
+src/meridian/pi_runtime/dist/

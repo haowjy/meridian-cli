@@ -48,6 +48,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "base_instructions",
         "developer_instructions",
         "harness",
+        "pi_extension_entrypoints",
         "prompt_file_path",
         "report_output_path",
         "user_turn_content",

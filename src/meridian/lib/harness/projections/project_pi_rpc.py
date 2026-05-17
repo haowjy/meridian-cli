@@ -1,4 +1,4 @@
-"""Pi subprocess command projection from ``ResolvedLaunchSpec``."""
+"""Pi RPC command projection from ``ResolvedLaunchSpec``."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "mcp_tools",
         "projected_roots",
         "appended_system_prompt",
+        "pi_extension_entrypoints",
     }
 )
 
@@ -51,6 +52,8 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--session": ("--session",),
     "--fork": ("--fork",),
     "--no-extensions": ("--no-extensions",),
+    "--mode": ("--mode",),
+    "-e": ("-e", "--extension"),
     "--no-skills": ("--no-skills",),
     "--no-context-files": ("--no-context-files",),
     "--no-prompt-templates": ("--no-prompt-templates",),
@@ -89,6 +92,30 @@ def _log_collision_if_needed(
     )
 
 
+def _reject_mode_collisions(passthrough_tail: tuple[str, ...]) -> None:
+    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--mode"]):
+        raise ValueError(
+            "Pi harness owns --mode and always launches in RPC mode; "
+            "remove --mode from passthrough extra_args"
+        )
+
+
+def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
+    if any(
+        _has_flag(passthrough_tail, alias)
+        for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
+    ):
+        raise ValueError(
+            "Pi harness owns extension loading for RPC launches; "
+            "remove --no-extensions from passthrough extra_args"
+        )
+    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["-e"]):
+        raise ValueError(
+            "Pi harness owns extension loading for RPC launches; "
+            "remove -e/--extension from passthrough extra_args"
+        )
+
+
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -105,7 +132,7 @@ def project_pi_spec_to_cli_args(
     *,
     base_command: tuple[str, ...],
 ) -> list[str]:
-    """Project one ``ResolvedLaunchSpec`` into an ordered subprocess command list."""
+    """Project one ``ResolvedLaunchSpec`` into an ordered Pi RPC command list."""
 
     command: list[str] = list(base_command)
 
@@ -121,6 +148,9 @@ def project_pi_spec_to_cli_args(
     has_continue_fork = has_continue_session and spec.continue_fork
 
     passthrough_tail = spec.extra_args
+    _reject_mode_collisions(passthrough_tail)
+    _reject_extension_collisions(passthrough_tail)
+
     _log_collision_if_needed(
         managed_flag="--model",
         has_managed_value=model_arg is not None,
@@ -143,6 +173,11 @@ def project_pi_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--no-extensions",
+        has_managed_value=True,
+        passthrough_tail=passthrough_tail,
+    )
+    _log_collision_if_needed(
+        managed_flag="-e",
         has_managed_value=True,
         passthrough_tail=passthrough_tail,
     )
@@ -176,6 +211,9 @@ def project_pi_spec_to_cli_args(
             "--no-prompt-templates",
         )
     )
+
+    for extension_entrypoint in spec.pi_extension_entrypoints:
+        command.extend(("-e", extension_entrypoint))
 
     command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)

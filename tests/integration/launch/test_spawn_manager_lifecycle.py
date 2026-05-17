@@ -34,12 +34,14 @@ def _build_config(
     *,
     harness_id: HarnessId = HarnessId.CODEX,
 ) -> ConnectionConfig:
+    pi_session_role = "spawned" if harness_id is HarnessId.PI else None
     return ConnectionConfig(
         spawn_id=spawn_id,
         harness_id=harness_id,
         prompt="hello",
         control_root=project_root,
         env_overrides={},
+        pi_session_role=pi_session_role,
     )
 
 
@@ -259,9 +261,14 @@ async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
                 payload={"type": "session", "id": "ses-1"},
             )
             yield HarnessEvent(
-                event_type="meridian_subspawn_start",
+                event_type="meridian.subspawn.start",
                 harness_id="pi",
-                payload={"type": "meridian_subspawn_start", "subspawn_id": "child-1"},
+                payload={
+                    "type": "meridian.subspawn.start",
+                    "schema_version": 1,
+                    "subspawn_id": "child-1",
+                    "wait_policy": "tracked",
+                },
             )
             yield HarnessEvent(
                 event_type="agent_end",
@@ -273,9 +280,14 @@ async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
             )
             await allow_child_drain.wait()
             yield HarnessEvent(
-                event_type="meridian_subspawn_end",
+                event_type="meridian.subspawn.end",
                 harness_id="pi",
-                payload={"type": "meridian_subspawn_end", "subspawn_id": "child-1"},
+                payload={
+                    "type": "meridian.subspawn.end",
+                    "schema_version": 1,
+                    "subspawn_id": "child-1",
+                    "wait_policy": "tracked",
+                },
             )
 
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
@@ -295,7 +307,11 @@ async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
         launch_mode="foreground",
         status="running",
     )
-    manager = SpawnManager(runtime_root=runtime_root, project_root=project_root)
+    manager = SpawnManager(
+        runtime_root=runtime_root,
+        project_root=project_root,
+        pi_quiescence_idle_grace_secs=0.01,
+    )
     await manager.start_spawn(
         _build_config(spawn_id, project_root, harness_id=HarnessId.PI),
         _build_spec(),

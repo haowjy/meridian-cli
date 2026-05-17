@@ -64,6 +64,7 @@ class ObserverEndpoint:
 
 
 ConnectionState = Literal["created", "starting", "connected", "stopping", "stopped", "failed"]
+PiSessionRole = Literal["primary", "spawned"]
 
 
 class ConnectionNotReady(RuntimeError):
@@ -208,6 +209,7 @@ class ConnectionConfig:
     timeout_seconds: float | None = None
     ws_bind_host: str = "127.0.0.1"
     ws_port: int = 0
+    pi_session_role: PiSessionRole | None = None
     debug_tracer: DebugTracer | None = None
 
 
@@ -345,6 +347,7 @@ __all__ = [
     "HarnessRequest",
     "InteractiveHandler",
     "ObserverEndpoint",
+    "PiSessionRole",
     "PrimaryRuntimeEventSurface",
     "PrimaryRuntimeRequestPolicy",
     "PromptTooLargeError",

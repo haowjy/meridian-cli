@@ -82,9 +82,7 @@ def _run_bootstrap() -> None:
     from meridian.lib.harness.projections import (
         project_opencode_subprocess as _project_opencode_subprocess,
     )
-    from meridian.lib.harness.projections import (
-        project_pi_subprocess as _project_pi_subprocess,
-    )
+    from meridian.lib.harness.projections import project_pi_rpc as _project_pi_rpc
 
     from meridian.lib.harness.extractors import claude as _claude_extractor
     from meridian.lib.harness.extractors import codex as _codex_extractor
@@ -103,7 +101,7 @@ def _run_bootstrap() -> None:
         _project_codex_streaming,
         _project_opencode_subprocess,
         _project_opencode_streaming,
-        _project_pi_subprocess,
+        _project_pi_rpc,
         _claude_extractor,
         _codex_extractor,
         _opencode_extractor,

@@ -108,6 +108,12 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
                         exit_code=1,
                         error="pi_stop_error",
                     )
+                if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
+                    return TerminalEventOutcome(
+                        status="cancelled",
+                        exit_code=130,
+                        error="cancelled",
+                    )
                 return TerminalEventOutcome(status="succeeded", exit_code=0)
         return TerminalEventOutcome(status="succeeded", exit_code=0)
 

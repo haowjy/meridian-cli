@@ -21,6 +21,7 @@ from meridian.lib.launch.context import (
     materialize_launch_artifacts,
     prepare_prompt_payload,
 )
+from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     ResolvedLaunchSpec,
@@ -297,6 +298,11 @@ def build_chat_backend_launch_plan(
         child_spawn_id=str(spawn_id),
     )
     runtime_env["MERIDIAN_HARNESS"] = snapshot.harness
+    pi_session_role = (
+        resolve_pi_session_role(interactive=True) if harness_id is HarnessId.PI else None
+    )
+    if pi_session_role is not None:
+        runtime_env["MERIDIAN_PI_SESSION_ROLE"] = pi_session_role
     autocompact_supported = _supports_launch_autocompact(harness_id)
     if ep.autocompact is not None and autocompact_supported:
         runtime_env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(ep.autocompact)
@@ -308,6 +314,7 @@ def build_chat_backend_launch_plan(
         control_root=project_root,
         env_overrides=runtime_env,
         system=materialized.run_params.appended_system_prompt,
+        pi_session_role=pi_session_role,
     )
     configured_payload: dict[str, object] = {
         "harness": snapshot.harness,

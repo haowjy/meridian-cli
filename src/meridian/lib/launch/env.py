@@ -7,6 +7,7 @@ from meridian.lib.core.child_env import ALLOWED_CHILD_ENV_KEYS
 from meridian.lib.core.overrides import RUNTIME_OVERRIDE_ENV_VARS
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams, SubprocessHarness
+from meridian.lib.harness.connections.base import PiSessionRole
 from meridian.lib.safety.permissions import PermissionConfig
 
 from .constants import BLOCKED_CHILD_ENV_VARS
@@ -123,7 +124,17 @@ def build_harness_env_overrides(
             # Child spawn with no explicit restriction: allow everything so
             # `opencode run` (subprocess mode) doesn't auto-reject all tool calls.
             merged["OPENCODE_PERMISSION"] = '{"*":"allow"}'
+    if adapter.id == HarnessId.PI:
+        merged["MERIDIAN_PI_SESSION_ROLE"] = resolve_pi_session_role(
+            interactive=run_params.interactive
+        )
     return merged
+
+
+def resolve_pi_session_role(*, interactive: bool) -> PiSessionRole:
+    """Resolve canonical Pi role used by both runtime env and manager policy."""
+
+    return "primary" if interactive else "spawned"
 
 
 def merge_env_overrides(

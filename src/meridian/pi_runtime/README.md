@@ -17,6 +17,21 @@ cd src/meridian/pi_runtime
 bun run build:binary
 ```
 
+Extension artifacts are built ahead of launch (no runtime TypeScript compilation):
+
+```bash
+cd src/meridian/pi_runtime
+npm run build:extensions
+```
+
+This writes stable extension entrypoints under `dist/extensions/`:
+
+- `dist/extensions/managed-bash/index.js`
+- `dist/extensions/meridian-lifecycle/index.js`
+
+Each extension is bundled independently (`--splitting false`) so each copied
+`index.js` is self-contained (no shared chunk sidecar file).
+
 `build:binary` also copies required Pi sidecar assets next to the executable:
 
 - `bin/package.json`

@@ -31,6 +31,7 @@ from meridian.lib.core.telemetry import (
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.context import LaunchContext, build_launch_context
+from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -364,6 +365,11 @@ class SpawnApplicationService:
 
         # SEAM-3: Project ConnectionConfig from LaunchContext
         harness_id = HarnessId(resolved_harness)
+        pi_session_role = (
+            resolve_pi_session_role(interactive=launch_ctx.binding.run_params.interactive)
+            if harness_id is HarnessId.PI
+            else None
+        )
         connection_config = ConnectionConfig(
             spawn_id=final_spawn_id,
             harness_id=harness_id,
@@ -372,6 +378,7 @@ class SpawnApplicationService:
             env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
             task_cwd=launch_ctx.task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
+            pi_session_role=pi_session_role,
             debug_tracer=payload.debug_tracer,
         )
 

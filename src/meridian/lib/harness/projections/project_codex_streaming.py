@@ -73,6 +73,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "agents_payload",
         "appended_system_prompt",
         "harness",
+        "pi_extension_entrypoints",
         "prompt_file_path",
         "reference_items",
         "skills",
