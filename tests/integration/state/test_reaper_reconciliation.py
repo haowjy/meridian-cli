@@ -424,3 +424,67 @@ def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifac
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
     assert latest.error is None
+
+
+def test_reconcile_active_spawn_post_exit_failure_bypasses_recent_activity_after_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+
+    fixed_now = 1_000.0
+    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: fixed_now)
+    monkeypatch.setattr("tests.integration.state.conftest.time.time", lambda: fixed_now)
+    spawn_store.record_spawn_exited(
+        runtime_root,
+        spawn_id,
+        exit_code=3,
+        exited_at="1970-01-01T00:16:30Z",
+    )
+    _write_activity_artifact(runtime_root, spawn_id, "history.jsonl", age_secs=1)
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 3
+    assert reconciled.error == "orphan_run"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.exit_code == 3
+    assert latest.error == "orphan_run"
+
+
+def test_reconcile_active_spawn_post_exit_zero_succeeds_after_grace_without_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+
+    fixed_now = 1_000.0
+    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: fixed_now)
+    spawn_store.record_spawn_exited(
+        runtime_root,
+        spawn_id,
+        exit_code=0,
+        exited_at="1970-01-01T00:16:30Z",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "succeeded"
+    assert reconciled.exit_code == 0
+    assert reconciled.error is None
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "succeeded"
+    assert latest.exit_code == 0
+    assert latest.error is None
