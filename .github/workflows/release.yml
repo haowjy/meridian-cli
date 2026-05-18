@@ -1,14 +1,8 @@
-name: publish-pypi
+name: Release
 
 on:
   push:
-    tags:
-      - "v*"
-  workflow_call:
-    inputs:
-      tag:
-        required: true
-        type: string
+    tags: ["v*"]
 
 jobs:
   verify-provenance:
@@ -17,18 +11,35 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
 
       - name: Verify tag provenance
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
-          PY_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' src/meridian/__init__.py)
+          INIT_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' src/meridian/__init__.py)
 
-          if [[ "$TAG_VERSION" != "$PY_VERSION" ]]; then
-            echo "::error::Tag version ($TAG_VERSION) != __init__.py ($PY_VERSION)"
+          if [[ "$TAG_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+            PYPI_VERSION="${BASH_REMATCH[1]}rc${BASH_REMATCH[2]}"
+            RELEASE_KIND="rc"
+          elif [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            PYPI_VERSION="$TAG_VERSION"
+            RELEASE_KIND="stable"
+          else
+            echo "::error::Tag version ($TAG_VERSION) must be stable X.Y.Z or RC X.Y.Z-rc.N"
+            exit 1
+          fi
+
+          if [[ "$PYPI_VERSION" != "$INIT_VERSION" ]]; then
+            echo "::error::Expected src/meridian/__init__.py version $PYPI_VERSION for $RELEASE_KIND tag $TAG_VERSION, got $INIT_VERSION"
+            exit 1
+          fi
+
+          escaped_tag_version="$(sed 's/[][\\.^$*+?(){}|/-]/\\&/g' <<<"${TAG_VERSION}")"
+          if ! grep -qE "^## \\[${escaped_tag_version}\\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md missing release section for ${TAG_VERSION} (expected '## [${TAG_VERSION}] - YYYY-MM-DD')"
             exit 1
           fi
 
@@ -40,29 +51,24 @@ jobs:
           fi
 
           COMMIT_MSG=$(git log -1 --format=%s "$RELEASE_SHA")
-          if [[ "$TAG_VERSION" == *-rc* ]]; then
-            [[ "$COMMIT_MSG" == "Release candidate $TAG_VERSION" ]] || \
-              echo "::warning::RC commit message doesn't match expected format"
-          else
-            if [[ "$COMMIT_MSG" != "Release $TAG_VERSION" ]]; then
-              echo "::error::Commit message doesn't match: expected 'Release $TAG_VERSION', got '$COMMIT_MSG'"
-              exit 1
-            fi
+          if [[ "$COMMIT_MSG" != "release: v$TAG_VERSION" ]]; then
+            echo "::error::Release commit message doesn't match expected format: release: v$TAG_VERSION"
+            exit 1
           fi
 
-          echo "Provenance verified for v$TAG_VERSION"
+          echo "Provenance verified for v$TAG_VERSION ($RELEASE_KIND)"
 
   build:
+    name: Build distributions
     needs: [verify-provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ github.ref_name }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -91,23 +97,20 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-  publish:
-    needs: build
+  pypi-publish:
+    name: Publish PyPI
+    needs: [build, verify-provenance]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     environment: pypi
-
+    permissions:
+      id-token: write
     steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
       - name: Publish to PyPI
-        run: uv publish --trusted-publishing always
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

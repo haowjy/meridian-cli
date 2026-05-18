@@ -92,7 +92,7 @@ validate_current_release() {
   tag="v$version"
   subject="$(git -C "$ROOT_DIR" log -1 --format=%s)"
 
-  [[ "$subject" == "Release $version" ]] || die "HEAD subject must be 'Release $version', got '$subject'"
+  [[ "$subject" == "release: v$version" ]] || die "HEAD subject must be 'release: v$version', got '$subject'"
   grep -q "^## \\[$version\\] -" "$ROOT_DIR/CHANGELOG.md" || die "CHANGELOG.md missing [$version] release section"
   printf '%s\n' "$tag"
 }
@@ -170,7 +170,7 @@ main() {
   write_version "$version"
   promote_changelog "$version" "$today"
   git add src/meridian/__init__.py CHANGELOG.md
-  git commit -m "Release $version"
+  git commit -m "release: v$version"
   create_tag "$tag"
   [[ "$push" -eq 0 ]] || push_release "$tag"
 }

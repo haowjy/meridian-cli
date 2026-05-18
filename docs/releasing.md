@@ -1,6 +1,7 @@
 # Releasing
 
-meridian-cli stable releases are automatic on every normal push to `main`.
+meridian-cli releases are automatic from normal PR merges to `main` when the PR
+has a `release:*` label.
 
 ## What you do
 
@@ -8,8 +9,9 @@ meridian-cli stable releases are automatic on every normal push to `main`.
 2. Add changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
 3. Open a PR using the PR template
 4. Set one release label:
-   - `release:patch`
-   - `release:skip`
+   - `release:rc` for the default safe prerelease path
+   - `release:patch` or `release:stable` for stable patch release
+   - `release:skip` for no release
 5. Merge the PR to `main`
 
 PR merges without a `release:*` label skip auto-release. Direct pushes to `main`
@@ -22,20 +24,20 @@ when a release label is present.
 
 On push to `main`, `.github/workflows/release-on-merge.yml`:
 
-- Reads the PR label for the pushed commit
+- Reads the selected merged PR label for the pushed commit
+- Defaults unknown `release:*` labels to RC
 - Skips when no `release:*` label is present or when `release:skip` is present
-- Computes the next patch version from git tags
+- Computes the next stable patch or next RC from git tags
 - Updates `src/meridian/__init__.py`
-- Promotes `CHANGELOG.md` `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
-- Creates commit `Release X.Y.Z`
-- Creates and pushes tag `vX.Y.Z`
-- Calls `publish-pypi.yml` directly for PyPI publish
+- Promotes `CHANGELOG.md` `[Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` or `## [X.Y.Z-rc.N] - YYYY-MM-DD`
+- Creates commit `release: vX.Y.Z` or `release: vX.Y.Z-rc.N`
+- Creates and pushes tag `vX.Y.Z` or `vX.Y.Z-rc.N`
+- Lets the tag push trigger `.github/workflows/release.yml` for PyPI publish
 
-`publish-pypi.yml` also runs on manual/backfill `v*` tag pushes.
-Manual tags must point at a valid release commit: version already bumped,
-changelog promoted, and commit subject `Release X.Y.Z`.
+`release.yml` is the only PyPI trusted publishing workflow identity. Manual or
+backfill `v*` tag pushes use the same workflow and provenance checks.
 
-The release workflow ignores its own `Release X.Y.Z` commit so the auto-commit
+The release workflow ignores its own `release: v...` commit so the auto-commit
 does not recursively release again.
 
 ## Post-merge cleanup
