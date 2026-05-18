@@ -28,7 +28,6 @@ from meridian.lib.launch.mars_bundle import (
     parse_launch_bundle,
 )
 from meridian.lib.launch.policies import (
-    ModelSelectionContext,
     SurfacePolicyInput,
     match_model_policy,
     resolve_launch_policy,
@@ -263,6 +262,23 @@ def test_parse_launch_bundle_preserves_native_config_and_mixed_tools() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "tools_payload",
+    (
+        {"allowed": ["Bash", "  "]},
+        {"disallowed": [""]},
+    ),
+)
+def test_parse_launch_bundle_rejects_empty_tool_keys(
+    tools_payload: dict[str, list[str]],
+) -> None:
+    payload = json.loads(_bundle_payload_with_slots({}))
+    payload["tools"] = tools_payload
+
+    with pytest.raises(MarsLaunchBundleError, match="key must not be empty"):
+        parse_launch_bundle(json.dumps(payload))
+
+
 def test_parse_launch_bundle_preserves_routing_harness_model_fields() -> None:
     payload = json.loads(_bundle_payload_with_slots({}))
     payload["routing"] = {
@@ -370,32 +386,6 @@ def test_invoke_launch_bundle_nonzero_ordinary_error_is_hard_failure(
             cli_overrides=RuntimeOverrides(),
             env_overrides=RuntimeOverrides(),
         )
-
-
-def test_model_selection_context_has_harness_model_id_field() -> None:
-    context = ModelSelectionContext(
-        requested_token="fast",
-        selected_model_token="fast",
-        canonical_model_id="fake-model",
-        mars_provided_harness=HarnessId.CODEX,
-        resolved_entry=None,
-        harness_provenance="resolved",
-    )
-
-    assert hasattr(context, "harness_model_id")
-
-
-def test_model_selection_context_harness_model_id_defaults_to_none() -> None:
-    context = ModelSelectionContext(
-        requested_token="fast",
-        selected_model_token="fast",
-        canonical_model_id="fake-model",
-        mars_provided_harness=HarnessId.CODEX,
-        resolved_entry=None,
-        harness_provenance="resolved",
-    )
-
-    assert context.harness_model_id is None
 
 
 def test_resolve_launch_policy_spawn_prepare_agent_bundle_path_skips_profile_loading(

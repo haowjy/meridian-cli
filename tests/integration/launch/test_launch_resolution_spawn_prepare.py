@@ -54,7 +54,7 @@ def _mock_bundle_for_context() -> LaunchBundle:
         tools=BundleTools(allowed=("Bash",), disallowed=("Write",), mcp=("github=gh",)),
         skills_metadata=BundleSkillsMetadata(loaded=("verification",), missing=()),
         provenance={"model_source": "mars"},
-        warnings=(),
+        warnings=("bundle warning",),
     )
 
 
@@ -334,7 +334,13 @@ def test_spawn_prepare_profile_bundle_uses_bundle_system_prompt(
     assert "Local skill body should not be composed" not in preview.projected_content.system_prompt
     assert preview.resolved_request.agent == "dev-orchestrator"
     assert preview.resolved_request.agent_metadata.get("session_agent") == "dev-orchestrator"
-    assert preview.resolved_request.launch_bundle_provenance
+    assert preview.resolved_request.launch_bundle_provenance == {"model_source": "mars"}
+    assert preview.resolved_request.launch_bundle_warnings == ("bundle warning",)
+    assert preview.resolved_request.agent_metadata.get(
+        "launch_bundle_provenance.model_source"
+    ) == "mars"
+    assert preview.resolved_request.agent_metadata.get("launch_bundle.version") == "1"
+    assert "bundle warning" in (preview.resolved_request.warning or "")
     assert preview.resolved_request.skill_paths == ()
     assert preview.resolved_request.mcp_tools == ("github=gh",)
     appended = preview.binding.run_params.appended_system_prompt or ""
@@ -645,6 +651,75 @@ def test_spawn_prepare_bundle_claude_partial_delegation_policy_still_applies_fal
     assert {"TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate"} <= disallowed
 
 
+def test_direct_rebuild_preserves_claude_partial_native_delegation_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="claude-sonnet-4-5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_claude_partial_native_delegation_tools(),
+    )
+
+    prepared = build_launch_context(
+        spawn_id="dry-run-bundle-claude-partial-native-delegation-direct-source",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    persisted_request = SpawnRequest.model_validate_json(
+        prepared.resolved_request.model_dump_json()
+    )
+
+    rebuilt = build_launch_context(
+        spawn_id="direct-rebuild-bundle-claude-partial-native-delegation",
+        request=persisted_request,
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.DIRECT,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=False,
+    )
+
+    assert rebuilt.resolved_request.tools == prepared.resolved_request.tools
+    assert "agent" not in rebuilt.resolved_request.tools
+    assert "task" not in rebuilt.resolved_request.tools
+    assert rebuilt.resolved_request.tools["Agent"] == "allow"
+    assert rebuilt.resolved_request.tools["TaskCreate"] == "allow"
+    for task_tool in ("TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate"):
+        assert rebuilt.resolved_request.tools[task_tool] == "deny"
+
+    allowed_flag_index = rebuilt.binding.argv.index("--allowedTools")
+    allowed = set(rebuilt.binding.argv[allowed_flag_index + 1].split(","))
+    assert {"Agent", "TaskCreate", "mcp__github__create_issue"} <= allowed
+    disallowed_flag_index = rebuilt.binding.argv.index("--disallowedTools")
+    disallowed = set(rebuilt.binding.argv[disallowed_flag_index + 1].split(","))
+    assert "TaskCreate" not in disallowed
+    assert {"TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate"} <= disallowed
+
+
 def test_spawn_prepare_bundle_claude_without_delegation_policy_applies_fallback_deny(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -683,6 +758,73 @@ def test_spawn_prepare_bundle_claude_without_delegation_policy_applies_fallback_
     assert preview.resolved_request.tools == {"*": "allow", "agent": "deny", "task": "deny"}
     disallowed_flag_index = preview.binding.argv.index("--disallowedTools")
     disallowed = set(preview.binding.argv[disallowed_flag_index + 1].split(","))
+    assert {
+        "Agent",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+    } <= disallowed
+
+
+def test_direct_rebuild_preserves_claude_abstract_delegation_fallback_deny(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="claude-sonnet-4-5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_claude_no_delegation_policy_tools(),
+    )
+
+    prepared = build_launch_context(
+        spawn_id="dry-run-bundle-claude-abstract-delegation-direct-source",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    persisted_request = SpawnRequest.model_validate_json(
+        prepared.resolved_request.model_dump_json()
+    )
+
+    rebuilt = build_launch_context(
+        spawn_id="direct-rebuild-bundle-claude-abstract-delegation",
+        request=persisted_request,
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.DIRECT,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=False,
+    )
+
+    assert rebuilt.resolved_request.tools == {"*": "allow", "agent": "deny", "task": "deny"}
+    assert "--allowedTools" not in rebuilt.binding.argv
+    disallowed_flag_index = rebuilt.binding.argv.index("--disallowedTools")
+    disallowed = set(rebuilt.binding.argv[disallowed_flag_index + 1].split(","))
     assert {
         "Agent",
         "TaskCreate",

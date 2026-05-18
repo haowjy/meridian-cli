@@ -1,4 +1,5 @@
 # qa-validated: test-suite-redesign
+# qa-validated: mars-launch-bundle-design
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,9 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
                     "model": "gpt-5.5",
                     "model_token": "gpt55",
                     "harness": "codex",
+                    "harness_model": "openai/gpt-5.5",
+                    "harness_model_source": "candidate-path",
+                    "harness_model_confidence": "high",
                 },
                 "execution_policy": {},
                 "prompt_surface": {"system_instruction": "stub"},
@@ -65,6 +69,9 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
         "selected_model_token": "gpt55",
         "canonical_model_id": "gpt-5.5",
         "harness_provenance": "mars-launch-bundle",
+        "harness_model_id": "openai/gpt-5.5",
+        "harness_model_source": "candidate-path",
+        "harness_model_confidence": "high",
     }
     assert "Routing: mars-launch-bundle" in result.format_text()
 

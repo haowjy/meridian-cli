@@ -195,26 +195,6 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
     assert resolved_request.tools == {"agent": "allow", "task": "deny"}
 
 
-def test_spawn_prepare_claude_with_profile_tools_partial_optout(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _write_agent_profile(
-        tmp_path=tmp_path,
-        name="partial-optout-agent",
-        tools={"agent": "allow"},
-    )
-    resolved_request = _build_context(
-        tmp_path=tmp_path,
-        monkeypatch=monkeypatch,
-        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-        harness=HarnessId.CLAUDE,
-        agent="partial-optout-agent",
-    )
-
-    assert resolved_request.tools == {"agent": "allow", "task": "deny"}
-
-
 def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -343,7 +323,3 @@ def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
     adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CLAUDE)
 
     assert adapter.blocked_child_env_vars() == {"CLAUDECODE"}
-
-
-def test_claude_native_delegation_constant_contains_agent_tool() -> None:
-    assert "Agent" in CLAUDE_NATIVE_DELEGATION_TOOLS

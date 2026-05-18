@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.ops.mars import resolve_mars_executable
@@ -92,6 +92,13 @@ class BundleTools(BaseModel):
     allowed: tuple[str, ...] = ()
     disallowed: tuple[str, ...] = ()
     mcp: tuple[str, ...] = ()
+
+    @field_validator("allowed", "disallowed")
+    @classmethod
+    def _reject_empty_tool_keys(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for name in value:
+            _ensure_nonempty_bundle_tool_key(name, source="mars launch-bundle.tools")
+        return value
 
     def to_tools_field(self) -> ToolsField | None:
         rules: dict[str, ToolAction] = {}
