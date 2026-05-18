@@ -5,34 +5,29 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `docs/harness-integration.md` — end-to-end guide for adding a new harness to Meridian, using Pi as the worked example. Covers probing, adapter/projection/extraction/semantics, wrapper/runtime packaging, session parity, model/catalog/Mars integration, verification checklist, and Pi-specific gap tracking.
+- `docs/harness-integration.md` — end-to-end guide for adding a new harness to Meridian, using Pi as the worked example. Covers probing, adapter/projection/extraction/semantics, native vs RPC launch split, session parity, model/catalog/Mars integration, verification checklist, and Pi-specific gap tracking.
 - Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
-- Pi launch constants for wrapper binary: `meridian-pi` subprocess/json mode and primary base command constants.
 - Pi harness unit tests for projection, extraction, registry/contract wiring, semantics, and CLI shortcut parsing.
-- Real `meridian-pi` wrapper entrypoint: CLI command now resolves Meridian-specific agent dir (`--agent-dir` > `MERIDIAN_PI_AGENT_DIR` > `MERIDIAN_HOME/meridian-pi/agent`), creates required Pi dirs, sets `PI_CODING_AGENT_DIR`, then launches Pi via SDK runner.
-- Minimal Pi SDK runtime package scaffold under `src/meridian/pi_runtime/` with `runner.mjs` dynamic import of `@earendil-works/pi-coding-agent` and clear missing-dependency guidance.
-- Unit tests for `meridian-pi` wrapper arg stripping, agent-dir precedence, env projection, directory creation, and error handling.
-- Bun compile entrypoint/script for Pi runtime (`compile_runner.mjs`, `npm run build:binary`) targeting `src/meridian/pi_runtime/bin/meridian-pi`.
-- `scripts/build-meridian-pi-runtime.sh` helper plus runtime README notes for local Bun binary builds and packaging caveats.
 - Pi runtime TypeScript extensions: `managed-bash` (`bash` override + `bash_bg_list/read/wait/kill`) and `meridian-lifecycle` (tracked child + notification/quiescence events) plus prebuild script `npm run build:extensions` for stable extension artifacts under `src/meridian/pi_runtime/dist/extensions/`.
 
 ### Changed
+- Pi harness now launches installed `pi` directly for both primary native TUI and spawned RPC (`MERIDIAN_PI_BINARY` override first, otherwise `pi` on `PATH`); no `meridian-pi` wrapper process in launch projection.
+- Pi runtime compatibility checks now run in Python prelaunch/connection startup with fail-fast install/update guidance before process launch.
+- Primary Pi metadata sidecar now records resolved runtime selection from Python adapter prelaunch instead of wrapper-emitted runtime metadata.
+- `src/meridian/pi_runtime/` now contains only Meridian extension build artifacts/workflows (`npm run build:extensions`), not Pi runtime wrapper packaging.
 - Reaper legacy-worker cleanup warning now says it cleaned up a stale spawn and identifies the affected spawn explicitly.
-- `meridian-pi` runtime resolution now prefers `MERIDIAN_PI_BINARY`, then installed `pi` on `PATH`; bundled/dev runtime fallback now requires explicit `MERIDIAN_PI_ALLOW_BUNDLED_FALLBACK=1`.
-- `meridian-pi` bundled/dev fallback now also requires explicit auth/config acknowledgement via `MERIDIAN_PI_BUNDLED_AUTH_CONFIRMED=1`; incompatible installed `pi` candidates are diagnosed and skipped to opted-in fallback instead of hard-failing immediately.
+- Pi runtime resolution now prefers `MERIDIAN_PI_BINARY`, then installed `pi` on `PATH`; no bundled/dev runtime fallback path remains.
+- Wrapper-era runtime fallback env flags (`MERIDIAN_PI_ALLOW_BUNDLED_FALLBACK`, `MERIDIAN_PI_BUNDLED_AUTH_CONFIRMED`, `MERIDIAN_PI_NODE_BIN`) no longer influence Pi launch policy.
 - Pi wrapper no longer forces `PI_CODING_AGENT_DIR` by default; managed session isolation now uses `PI_CODING_AGENT_SESSION_DIR` and `--session-dir` under `~/.meridian/meridian-pi/sessions` (or configured user home).
 - Pi streaming launches now scope `PI_CODING_AGENT_SESSION_DIR` to `<session-root>/<spawn-id>/` so extractor fallback ignores stale sibling launch sessions.
 - Pi extractor session-id fallback now prefers `PI_CODING_AGENT_SESSION_DIR` and defaults to `get_user_home()/meridian-pi/sessions`.
-- Pi harness switched to RPC-only launch (`meridian-pi --mode rpc`) with managed extension projection (`--no-extensions` + Meridian-owned `-e` paths), spawned/primary session-role env wiring, and quiescence-aware drain behavior that keeps spawned sessions alive across tracked child work then auto-stops on quiescence.
+- Pi harness switched to RPC-only spawned launch (`pi --mode rpc`) with managed extension projection (`--no-extensions` + Meridian-owned `-e` paths), spawned/primary session-role env wiring, and quiescence-aware drain behavior that keeps spawned sessions alive across tracked child work then auto-stops on quiescence.
 - Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
 - Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
-- `meridian-pi` runtime selection now prefers `MERIDIAN_PI_BINARY`, then packaged Bun binary, then Node runner fallback.
-- `meridian-pi` runtime compatibility probes now require both `--version` and `--help` support for Meridian-required launch surface (`--mode rpc`, `--session-dir`, `--no-extensions`, `-e`/`--extension`) before accepting installed or bundled runtimes.
-- Pi Bun runtime build now copies required sidecar assets (`package.json`, `theme/`, `assets/`, `export-html/`, docs/examples, and `photon_rs_bg.wasm`) into `src/meridian/pi_runtime/bin/` so compiled `meridian-pi` can launch without missing-runtime-asset `ENOENT` failures.
-- `meridian-pi` now fails fast with clear errors when an override/packaged runtime binary exists but cannot execute; Node fallback remains only for missing packaged binaries.
-- `meridian-pi` Node fallback now requires source/dev runtime deps (`runner.mjs` plus `node_modules/@earendil-works/pi-coding-agent`). Installed artifacts without compiled binary now fail early with explicit build/override guidance instead of Node import errors.
+- Pi runtime compatibility probes require both `--version` and `--help` support for Meridian-required launch surface (`--mode rpc`, `--session-dir`/`PI_CODING_AGENT_SESSION_DIR`, `--no-extensions`, `-e`/`--extension`) before launch.
+- Pi runtime resolution now fails fast when the selected override/PATH binary cannot execute or is incompatible, with install/update guidance.
 - Pi RPC spawn path now sends prompt immediately after session creation (no preprompt wait) and hard-fails first-event startup on bounded timeout or runtime error.
-- Pi runtime diagnostics now emit structured `meridian.pi.runtime.selected`/`meridian.pi.runtime.error` with runtime kind/path/version, session_dir, and auth_policy.
+- Pi runtime selection metadata now persists as `pi_runtime_meta.json` from Python prelaunch for both primary and spawned launches; runtime failures surface as prelaunch/connection resolver errors.
 - Chat snapshots now persist effective harness-specific model; chat and primary-launch surfaces now gate with primary-launch capability.
 - Pi stop seam now uses typed `StopResult` plus progress events so quiescent-stop escalation is visible in stream/reporting.
 - Pi primary launch now routes through native Pi TUI process wrapping (no Pi RPC input loop, no `--mode rpc` for primary), while spawned Pi sessions remain RPC-managed with quiescence cleanup semantics.
@@ -40,6 +35,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi cleanup now runs asynchronously after semantic completion; cleanup status/phases (`cleanup_running|cleanup_completed|cleanup_escalated|cleanup_failed`) are emitted separately from terminal spawn status.
 - Pending continuation tracking now keeps queued/delivered notifications pending until correlated follow-up terminal completion, with timeout failure `pi_notification_timeout:id=...:phase=...:elapsed=...:timeout=...`.
 - Pi launch/policy/integration tests now assert primary-native Pi command projection and runner routing, while keeping spawned RPC/quiescence assertions intact.
+
+### Removed
+- `meridian-pi` console entrypoint and wrapper implementation (`src/meridian/cli/pi_entrypoint.py`) plus wrapper-only unit tests.
+- Bundled Pi runtime wrapper launch path artifacts (`compile_runner.mjs`, `runner.mjs`, and `scripts/build-meridian-pi-runtime.sh`).
 
 ## [0.1.13] - 2026-05-19
 ### Changed

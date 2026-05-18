@@ -4,6 +4,12 @@ This guide covers the full process of adding a new AI coding agent as a Meridian
 harness — from initial probe to distribution. Uses the Pi integration as the
 worked example, with specific notes on what differs per harness type.
 
+> **Pi note (2026-05):** Meridian no longer ships or wraps a Pi runtime.
+> The Pi harness launches installed `pi` directly (`MERIDIAN_PI_BINARY`
+> override, then `pi` on `PATH`). Meridian builds only its managed Pi
+> extension JS bundles — no compiled Pi binary, no Bun/Node runtime
+> fallback, no `meridian-pi` console script.
+
 **Audience:** developers integrating a new harness into Meridian. Assumes
 familiarity with the Meridian architecture (`AGENTS.md`, `src/meridian/AGENTS.md`,
 `src/meridian/lib/harness/AGENTS.md`).
@@ -13,7 +19,7 @@ familiarity with the Meridian architecture (`AGENTS.md`, `src/meridian/AGENTS.md
 1. [Architecture Recap](#architecture-recap)
 2. [Phase 0: Probe the Harness](#phase-0-probe-the-harness)
 3. [Phase 1: Minimum Viable Spawn](#phase-1-minimum-viable-spawn)
-4. [Phase 2: Wrapper and Runtime Packaging](#phase-2-wrapper-and-runtime-packaging)
+4. [Phase 2: Runtime Resolution and Extension Build](#phase-2-runtime-resolution-and-extension-build)
 5. [Phase 3: Session and History Parity](#phase-3-session-and-history-parity)
 6. [Phase 4: Model, Catalog, and Mars Integration](#phase-4-model-catalog-and-mars-integration)
 7. [Verification Checklist](#verification-checklist)
@@ -69,7 +75,7 @@ become code.
 | **Session ID** | How is the session ID emitted? Is it in stdout, a file, or both? | First JSONL line: `{"type":"session","id":"..."}`. Also in session files under `sessions/<cwd-escaped>/`. |
 | **Fork/resume** | Can sessions be resumed? Forked? What are the flags? | `--session <id>` for resume, `--fork <id>` for fork. Native support confirmed. |
 | **Permission model** | CLI permission flags? Approval bypass? | No CLI permission flags — permissions via extension event hooks. |
-| **Config isolation** | Can config/data directories be isolated via env var? | `PI_CODING_AGENT_DIR` env var isolates everything. |
+| **Config isolation** | Can session/config paths be isolated via env var? | `PI_CODING_AGENT_SESSION_DIR` scopes Pi session storage for Meridian-managed runs. |
 | **Provider list** | How many providers? Does the list evolve with releases? | 20+ providers, upstream-owned. Don't hardcode — pass `--model` through. |
 | **Skills** | Does the harness have a native skills/concepts system? How does it load them? | Pi implements Agent Skills standard (`--skill`). Deferred Meridian skill projection. |
 | **System prompt** | How is system-level instruction delivered? | `--append-system-prompt <text>` inline. Differs from Claude (temp file path). |
@@ -131,11 +137,11 @@ This gives `meridian pi "task"` as a shorthand for `meridian --harness pi "task"
 Define base commands:
 
 ```python
-BASE_COMMAND_PI_SUBPROCESS: Final = ("meridian-pi", "-p", "--mode", "json")
-PRIMARY_BASE_COMMAND_PI:    Final = ("meridian-pi",)
+BASE_COMMAND_PI_SUBPROCESS: Final = ("pi", "--mode", "rpc")
+PRIMARY_BASE_COMMAND_PI:    Final = ("pi",)
 ```
 
-`-p` is print mode (one-shot, pipe-friendly). `--mode json` enables JSONL output.
+`--mode rpc` enables the JSONL-over-stdio RPC transport for spawned sessions.
 These constants are shared between the adapter, projection, and connection.
 
 ### 1.2 Adapter
@@ -193,8 +199,9 @@ _EXPLICITLY_IGNORED_FIELDS = frozenset({
   (agent body goes via `--append-system-prompt`)
 - `supports_native_file_injection`: `False` for all current harnesses — reference
   content goes inline in the user turn
-- `terminal_surface_modes`: `PURE_STDIO` for subprocess spawns. Add `PTY_MEDIATED`
-  only if interactive primary TUI requires PTY capture
+- `terminal_surface_modes`: include the surfaces the harness actually uses.
+  Pi advertises primary interactive surfaces, preferring `PTY_MEDIATED` with
+  `NATIVE_INHERIT` fallback.
 
 **Bootstrap mode**: Phase 1 uses `BootstrapMode.SUBPROCESS_ONLY`. Upgrade to
 `BootstrapMode.MANAGED_PRIMARY_ATTACH` only when adding interactive primary
@@ -232,13 +239,13 @@ def project_content(self, content: ComposedLaunchContent) -> ProjectedContent:
 ```python
 def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
     return {
-        "PI_CODING_AGENT_DIR": str(get_user_home() / "pi" / "agent"),
+        "PI_CODING_AGENT_SESSION_DIR": str(get_user_home() / "meridian-pi" / "sessions"),
     }
 ```
 
-Pi uses `PI_CODING_AGENT_DIR` to isolate its config/sessions/extensions from
-the default `~/.pi/`. Claude uses `CLAUDE_CONFIG_DIR`. Codex uses `CODEX_HOME`.
-Every harness needs config isolation — find the env var and set it.
+Pi uses `PI_CODING_AGENT_SESSION_DIR` to scope session storage to Meridian-managed
+paths. Claude uses `CLAUDE_CONFIG_DIR`. Codex uses `CODEX_HOME`. Every harness
+needs an explicit isolation contract — find the right env var(s) and set them.
 
 **Bundle registration**: Register as a module-load side effect:
 
@@ -257,13 +264,15 @@ register_harness_bundle(
 )
 ```
 
-### 1.3 Projection
+### 1.3 Projection (RPC + Native TUI)
 
-**File: `src/meridian/lib/harness/projections/project_pi_subprocess.py`**
+**Files:**
+- `src/meridian/lib/harness/projections/project_pi_rpc.py`
+- `src/meridian/lib/harness/projections/project_pi_native_tui.py`
 
-Pure function: `spec` → `(argv_additions)`. Declare `_PROJECTED_FIELDS` (fields
-this projector handles) and `_DELEGATED_FIELDS` (fields owned by the caller).
-The drift guard `check_projection_drift()` runs at import time.
+Each projector maps `spec` → `argv_additions`. Declare `_PROJECTED_FIELDS`
+(fields this projector handles) and `_DELEGATED_FIELDS` (fields owned by the
+caller). The drift guard `check_projection_drift()` runs at import time.
 
 **Command construction**:
 
@@ -291,19 +300,21 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
         else:
             command.extend(("--session", spec.continue_session_id))
 
+    # Meridian-managed Pi session directory
+    command.extend(("--session-dir", "<managed-session-dir>"))
+
     # Suppress ambient discovery
     command.extend(("--no-extensions", "--no-skills",
                      "--no-context-files", "--no-prompt-templates"))
+
+    # Managed Pi extensions (RPC projection)
+    command.extend(("-e", "<managed-bash.js>", "-e", "<lifecycle.js>"))
 
     # Permission flags
     command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
 
     # User extra_args (passthrough, last-wins semantics for collisions)
     command.extend(spec.extra_args)
-
-    # Prompt as final positional arg
-    if spec.prompt.strip():
-        command.append(spec.prompt)
 
     return command
 ```
@@ -327,6 +338,10 @@ def project_pi_spec_to_cli_args(spec, *, base_command) -> list[str]:
 - **Passthrough collision**: When the user's `extra_args` contain a flag that
   the projector also manages, the user value wins (last-wins semantics).
   Log collisions at debug level so they're visible during integration testing.
+- **Projection split**: RPC and native-primary projections are separate files.
+  `project_pi_rpc.py` owns spawned RPC (`--mode rpc`, `--session-dir`, managed
+  extensions). `project_pi_native_tui.py` owns primary launches (no `--mode`,
+  no managed extension flags).
 
 ### 1.4 Extraction
 
@@ -359,7 +374,7 @@ the event list and extract the last assistant text.
 
 **Fallback session ID from files**: If `--continue` was used (resume, not fork),
 the session ID was already known. For fresh spawns where stdout capture fails,
-scan `$PI_CODING_AGENT_DIR/sessions/<cwd-escaped>/` for the most recently
+scan `$PI_CODING_AGENT_SESSION_DIR/<cwd-escaped>/` for the most recently
 modified JSONL file and read its session header. CWD escaping: slashes `/`
 become `--`, directory name ends with `--`.
 
@@ -476,7 +491,8 @@ Add imports to `_run_bootstrap()`:
 
 ```python
 from meridian.lib.harness import pi as _pi
-from meridian.lib.harness.projections import project_pi_subprocess as _project_pi_subprocess
+from meridian.lib.harness.projections import project_pi_rpc as _project_pi_rpc
+from meridian.lib.harness.projections import project_pi_native_tui as _project_pi_native_tui
 from meridian.lib.harness.extractors import pi as _pi_extractor
 ```
 
@@ -496,123 +512,122 @@ in `consumed_fields | explicitly_ignored_fields`. If a field is added to
 This is automatic — the new adapter's fields are checked like any other.
 Just make sure both sets are complete.
 
-## Phase 2: Wrapper and Runtime Packaging
+## Phase 2: Runtime Resolution and Extension Build
 
-Not every harness needs a wrapper binary. You need one when:
+Not every harness needs a wrapper binary. Pi is an installed native binary
+(`pi` on `PATH`), so there is no runtime to bundle or compile. Meridian only
+needs to resolve the installed Pi and build its managed extensions.
 
-- The harness is not installed as a system binary (e.g. npm package that needs a
-  Node/Bun runtime)
-- The harness needs config isolation that can't be set purely via env vars
-  passed to a subprocess
-- The harness needs custom extension/builtin injection that can't be done via
-  CLI flags alone
+### 2.1 Runtime Resolution
 
-### 2.1 Wrapper Entrypoint
+`PiAdapter` resolves the Pi binary with this precedence:
 
-**File: `src/meridian/cli/pi_entrypoint.py`**
+1. `MERIDIAN_PI_BINARY=/path/to/pi` override.
+2. `pi` from `PATH` (via `shutil.which`).
+3. Failure with install guidance.
 
-The Python wrapper is installed as a console script via `pyproject.toml`:
+No bundled runtime fallback. No Node or Bun fallback. No `meridian-pi` console
+script.
 
-```toml
-[project.scripts]
-meridian-pi = "meridian.cli.pi_entrypoint:main"
+Required failure messages:
+
+- Missing runtime:
+  ```
+  Pi is not installed or not on PATH.
+  Install Pi using the official Pi instructions, then run `pi --version` and retry.
+  Set MERIDIAN_PI_BINARY=/path/to/pi to use a non-PATH installation.
+  ```
+- Incompatible runtime:
+  ```
+  Installed Pi at <path> is not compatible with Meridian's Pi harness: <probe failure>.
+  Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary.
+  ```
+
+Configuration/session isolation is done through env vars passed to the child
+process (`PI_CODING_AGENT_SESSION_DIR`) — no wrapper binary needed.
+
+### 2.2 Compatibility Probe
+
+After resolving the binary, `PiAdapter` runs a bounded, side-effect-light probe:
+
+- `pi --version` exits 0.
+- `pi --help` exits 0 and advertises required surfaces:
+  - `--mode` / `rpc` for spawned RPC;
+  - `--model` for model projection;
+  - `--append-system-prompt`, `--session`, and `--fork` for projected spawned controls;
+  - `--session-dir` or supported session-dir env behavior;
+  - extension flags (`--no-extensions`, `-e`/`--extension`) for managed spawned sessions.
+
+Primary can tolerate lack of RPC-specific flags only if the user is not launching
+spawned Pi; spawned Pi must fail before process launch if RPC/extension surface
+is missing.
+
+The probe result (path, version) is stored in spawn/primary metadata for
+observability.
+
+### 2.3 Primary Launch (Native TUI)
+
+```text
+<resolved-pi> [--model <model[:thinking]>] [--append-system-prompt <text>] [--session <id> | --fork <id>] [permission flags] [extra_args...]
 ```
 
-The wrapper:
-1. Strips wrapper-only flags (`--agent-dir`) from argv
-2. Resolves agent directory (CLI flag > env var > default)
-3. Creates required subdirectories (`sessions/`, `extensions/`, `bin/`)
-4. Sets `PI_CODING_AGENT_DIR` in child environment
-5. Passes all other args through to the Pi runtime binary
+Environment:
 
-**Agent dir resolution precedence**:
-
-```python
-def _resolve_agent_dir(cli_agent_dir, env):
-    if cli_agent_dir is not None:
-        return Path(cli_agent_dir).expanduser()
-    env_agent_dir = env.get("MERIDIAN_PI_AGENT_DIR", "").strip()
-    if env_agent_dir:
-        return Path(env_agent_dir).expanduser()
-    meridian_home = env.get("MERIDIAN_HOME", "").strip()
-    if meridian_home:
-        return Path(meridian_home).expanduser() / "pi" / "agent"
-    return get_user_home() / "pi" / "agent"
+```text
+MERIDIAN_PI_SESSION_ROLE=primary
+MERIDIAN_SPAWN_ID=<primary-spawn-id>
+PI_CODING_AGENT_SESSION_DIR=<user_home>/meridian-pi/sessions
+MERIDIAN_PRIMARY_METADATA_PATH=<sidecar path>
 ```
 
-### 2.2 Runtime Binary Selection
+Primary must not pass `--mode rpc`, managed extensions, or any wrapper-only flags.
 
-Decide what the wrapper actually executes:
+### 2.4 Spawned RPC
 
-1. **`MERIDIAN_PI_BINARY` env override** — user-supplied binary path (for
-   development and custom installs)
-2. **Packaged compiled binary** — e.g. `src/meridian/pi_runtime/bin/meridian-pi`
-   (Bun-compiled)
-3. **Node fallback** — source/dev only, runs `runner.mjs` with `node`
-
-The wrapper should fail fast with a clear message when no runtime is available:
-
-```
-compiled meridian-pi runtime is not installed; build it with
-scripts/build-meridian-pi-runtime.sh or set MERIDIAN_PI_BINARY;
-source/dev fallback requires runtime deps installed.
+```text
+<resolved-pi> --mode rpc --model <model[:thinking]> --session-dir <dir> --no-extensions -e <managed-bash.js> -e <lifecycle.js> [session flags] [permission flags]
 ```
 
-### 2.3 Compiled Runtime (Bun)
+Environment:
 
-**File: `src/meridian/pi_runtime/package.json`**
-
-```json
-{
-  "scripts": {
-    "build:binary": "bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi && bun run copy:runtime-metadata",
-    "copy:runtime-metadata": "...copies package.json to bin/package.json..."
-  }
-}
+```text
+MERIDIAN_PI_SESSION_ROLE=spawned
+MERIDIAN_SPAWN_ID=<spawn-id>
+PI_CODING_AGENT_SESSION_DIR=<spawn/session scoped dir>
 ```
 
-The compile entrypoint (`compile_runner.mjs`) dynamically imports the harness
-SDK and calls its `main()` function:
+Spawned prompt delivery is prompt-first over `PiRpcConnection`; no initial prompt
+is embedded in the CLI tail.
 
-```js
-import { main } from "@earendil-works/pi-coding-agent";
-main(process.argv.slice(2), {});
-```
+### 2.5 Extension Build
 
-### 2.4 Sidecar Asset Requirements
+Meridian still ships distributable JS for managed Pi extensions. This is
+separate from the Pi binary — Meridian owns the extension bundles, not Pi.
 
-**Critical discovery from Pi**: The Bun-compiled binary expected `package.json`
-adjacent to the executable at runtime. Without it, the wrapper failed with
-`ENOENT: no such file or directory, open '.../bin/package.json'`.
+Implementation options, in preference order:
 
-**Fix**: The build script now copies `package.json` to `bin/` after compilation:
+1. Ship committed compiled extension JS as package data, built during Meridian
+   release/preflight.
+2. Build extensions during package build from TypeScript sources.
+3. Dev-only rebuild command for contributors.
 
-```bash
-bun build ./compile_runner.mjs --compile --outfile ./bin/meridian-pi
-cp package.json bin/package.json
-```
+Do not require Bun at runtime. Bun may remain a dev/build dependency only if it
+is the simplest way to compile extension bundles. Prefer the existing Node/npm
+toolchain already used by extension tests.
 
-**Lesson**: Always smoke-test the compiled binary path from the wrapper, because
-the harness runtime may expect sidecar assets (package.json, theme files,
-config templates) adjacent to the executable. For Pi, a **theme asset gap**
-was recently discovered: `bin/theme/dark.json` and likely `light.json` are
-also needed. This remains unfixed as of this writing.
+The runtime launch path must only need:
 
-### 2.5 Distribution Caveats
+- Python Meridian package;
+- installed compatible `pi`;
+- extension JS files already present in the Meridian package.
 
-**Generated binaries are not committed** (`src/meridian/pi_runtime/bin/` is in
-`.gitignore`). Built binaries are OS/arch-specific — a Linux x86-64 binary
-doesn't work on macOS ARM64 or Windows. The universal Python wheel intentionally
-does not ship a single prebuilt binary.
+Extension source lives under `src/meridian/pi_runtime/extensions/`:
+- `managed-bash/` — managed bash extension
+- `meridian-lifecycle/` — lifecycle extension
 
-Future release path (deferred):
-- Build per-platform binaries in CI (linux-x64, macos-arm64, macos-x64, win-x64)
-- Lazy-download on first `meridian pi` use
-- `meridian doctor --fix` to install/verify the runtime
-
-The Node fallback path exists for source/dev environments where npm deps are
-installed. For production installs without a compiled binary, the wrapper fails
-fast with clear instructions.
+The compiled output is shipped as package data; the directory name
+(`pi_extensions/` or `harness/pi/extensions/`) no longer implies a bundled
+Pi runtime.
 
 ## Phase 3: Session and History Parity
 
@@ -626,7 +641,7 @@ harness that uses the streaming runner drain loop.
 ### 3.2 Native Session File Resolution
 
 Harnesses store their own session files independently. For Pi, session files
-live under `$PI_CODING_AGENT_DIR/sessions/<cwd-escaped>/<timestamp>_<uuid>.jsonl`.
+live under `$PI_CODING_AGENT_SESSION_DIR/<cwd-escaped>/<timestamp>_<uuid>.jsonl`.
 
 The extractor needs to:
 1. Know where the harness stores session files
@@ -721,7 +736,7 @@ meridian pi -m anthropic/claude-sonnet-4 "task"
 meridian pi -m openai/gpt-5.4-mini "task"
 
 # Or discover available models from the harness directly
-meridian-pi --list-models
+pi --list-models
 ```
 
 ## Verification Checklist
@@ -748,23 +763,20 @@ uv run pytest tests/unit/cli/test_bootstrap_pi_shortcut.py
 ### Fake Harness Smoke
 
 - [ ] `meridian spawn --harness pi -m <model> "Reply with exactly OK"` succeeds
-  with a fake `meridian-pi` binary that emits minimal JSONL and exits 0
+  with a fake `pi` binary that emits minimal JSONL and exits 0
 - [ ] Report text extracted correctly
 - [ ] Usage (tokens) extracted correctly
 - [ ] Session ID captured
 
-Use a shell script as a fake `meridian-pi` that writes a session header and a
+Use a shell script as a fake `pi` that writes a session header and a
 trivial `agent_end` event to stdout.
 
-### Real Wrapper Smoke
+### Runtime Resolution Smoke
 
-- [ ] `meridian-pi --help` exits 0 and shows Pi help text
-- [ ] `meridian-pi --version` exits 0 and shows version
-- [ ] Wrapper creates agent dirs (`sessions/`, `extensions/`, `bin/`)
-- [ ] `MERIDIAN_PI_AGENT_DIR=<tmp>` overrides agent dir
-- [ ] `MERIDIAN_PI_BINARY=<path>` overrides runtime binary
-- [ ] Missing runtime fails fast with clear error
-- [ ] Compiled binary path works (if Bun is installed)
+- [ ] `MERIDIAN_PI_BINARY=/path/to/fake-pi` overrides the runtime binary
+- [ ] Missing `pi` on `PATH` fails fast with install instructions
+- [ ] Incompatible `pi` (missing `--mode rpc` in `--help`) fails with update
+  instructions
 
 ### Real Harness Spawn Smoke
 
@@ -790,8 +802,9 @@ transcript translation is incomplete.
 ### Packaging / Wheel Smoke
 
 - [ ] `uv build --no-sources` succeeds
-- [ ] Installed wheel: `uv run --isolated --no-project --with <wheel> meridian-pi --help`
-  shows appropriate error (runtime not installed) or succeeds if runtime available
+- [ ] Installed wheel: `uv run --isolated --no-project --with <wheel> meridian --help`
+  includes the Pi harness
+- [ ] Extension JS files ship in the wheel package data
 - [ ] `pyright` reports 0 errors
 - [ ] `ruff check .` passes
 
@@ -814,36 +827,33 @@ All must pass. The pre-push hook enforces this automatically.
 |---|---|---|
 | `HarnessId.PI` + CLI shortcut | Done | `meridian pi "task"` works |
 | PiAdapter + bundle registration | Done | Full `HarnessContract`, SpawnParams accounting |
-| Subprocess projection | Done | `meridian-pi -p --mode json`, inline system prompt, isolation flags |
+| Runtime resolution | Done | Resolves `pi` from `MERIDIAN_PI_BINARY` / `PATH`; no bundled fallback |
+| Compatibility probe | Done | `pi --version` + `pi --help` surface check; fail-fast with install/update guidance |
+| Subprocess projection | Done | `pi --mode rpc ...`, inline system prompt, isolation flags |
+| Primary native TUI launch | Done | `pi [--model ...] [--session ...]`, no `--mode`, no extensions |
 | PiConnection (JSONL drain) | Done | Streaming runner drain loop, session ID capture, stderr logging |
 | PiExtractor | Done | Session ID, usage, report from artifacts + events |
 | Event semantics | Done | `agent_end` terminal, activity transitions, signal clearing |
 | Permission flags | Done | Empty tuple (Pi uses extension hooks) |
-| Real `meridian-pi` wrapper | Done | Python entrypoint, config isolation, runtime selection |
-| Bun-compiled runtime | Done | Build script, binary path in wrapper, sidecar metadata fix |
-| Runtime fallback | Done | Node fallback for source/dev, clear fail-fast for missing runtime |
+| Managed extension build | Done | Extension JS bundles ship as package data; dev-rebuild via Node/npm |
+| Config isolation via env | Done | `PI_CODING_AGENT_SESSION_DIR` set by adapter, no wrapper needed |
 
 ### Remaining Gaps
 
 | Gap | Severity | What's needed |
 |---|---|---|
-| **Theme sidecar packaging** | Medium | `bin/theme/dark.json` (and likely `light.json`) must be packaged alongside the compiled binary, same as `package.json`. Currently Pi fails on launch due to missing theme assets. Fix: extend the `build:binary` script to copy `node_modules/@earendil-works/pi-coding-agent/theme/` to `bin/theme/`. |
 | **Full `meridian session log` parity** | Medium | Pi's native JSONL session files are not translated to readable transcripts. A `TranscriptProvider` for Pi session files and a `TranscriptEventParser` for Pi's event schema are needed. Until then, `meridian session log <pi-spawn-id>` falls back to generic rendering. |
 | **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
-| **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions were part of the original requirements. These are Pi-native extensions that need authoring and bundling with the wrapper. |
+| **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
 | **Notifications** | Deferred | Meridian spawn completion notifications surfaced through Pi's UI. |
-| **RPC managed-primary** | Deferred | Phase 3: `meridian-pi --mode rpc` with full `HarnessConnection` — mid-turn steering, prompt injection, session queries over JSONL-over-stdio. |
-| **Lazy download distribution** | Deferred | Phase 5: Per-platform binary downloads. Currently the wrapper expects the binary at a known path or falls back to Node. |
 | **`meridian doctor` integration** | Deferred | Health checks for Pi binary, version, extensions, provider availability. |
 
 ### Quickest Next Fixes
 
-1. **Theme sidecar**: Add `bun run copy:theme-assets` step to `build:binary`
-   that copies the theme directory from the Pi SDK `node_modules` to `bin/theme/`.
-2. **Session log**: Implement `PiTranscriptProvider` (reads Pi session JSONL
+1. **Session log**: Implement `PiTranscriptProvider` (reads Pi session JSONL
    files) and `PiTranscriptParser` (extracts `TranscriptMessage` from Pi event
    schema), then register in `transcript.py`.
-3. **Model aliases**: Add `harness_candidates` with Pi runnable paths to Mars
+2. **Model aliases**: Add `harness_candidates` with Pi runnable paths to Mars
    model definitions for commonly used models.
 
 ## Reference: Pi Integration Files
@@ -852,17 +862,12 @@ All must pass. The pre-push hook enforces this automatically.
 
 ```
 src/meridian/lib/harness/pi.py                                          # Adapter + bundle
-src/meridian/lib/harness/projections/project_pi_subprocess.py           # CLI arg projection
+src/meridian/lib/harness/projections/project_pi_rpc.py                  # Spawned RPC CLI arg projection
+src/meridian/lib/harness/projections/project_pi_native_tui.py           # Primary native TUI CLI arg projection
 src/meridian/lib/harness/extractors/pi.py                               # Artifact extraction
 src/meridian/lib/harness/connections/pi_rpc.py                          # JSONL event drain
-src/meridian/cli/pi_entrypoint.py                                       # Wrapper entrypoint
-src/meridian/pi_runtime/package.json                                    # Runtime package
-src/meridian/pi_runtime/runner.mjs                                      # Node SDK runner
-src/meridian/pi_runtime/compile_runner.mjs                              # Bun compile entry
-src/meridian/pi_runtime/README.md                                       # Runtime readme
-scripts/build-meridian-pi-runtime.sh                                    # Build helper
-tests/unit/cli/test_bootstrap_pi_shortcut.py                            # CLI shortcut tests
-tests/unit/cli/test_pi_entrypoint.py                                    # Wrapper tests
+src/meridian/pi_runtime/extensions/managed-bash/                        # Managed bash extension source
+src/meridian/pi_runtime/extensions/meridian-lifecycle/                  # Lifecycle extension source
 tests/unit/harness/test_pi_projection.py                                # Projection tests
 tests/unit/harness/test_pi_extractor.py                                 # Extractor tests
 tests/unit/harness/test_pi_integration.py                               # Integration tests
@@ -879,6 +884,14 @@ src/meridian/lib/harness/registry.py                                    # + PiAd
 src/meridian/lib/harness/semantics.py                                   # + Pi event cases
 src/meridian/lib/harness/projections/permission_flags.py                # + Pi empty tuple
 src/meridian/lib/launch/launch_types.py                                 # + TerminalSurfaceMode
-src/meridian/lib/safety/permissions.py                                  # + pi_launch_config_path
+src/meridian/lib/harness/pi_runtime_resolver.py                         # + runtime resolution/probe
 ```
 
+### Deleted
+
+```
+src/meridian/cli/pi_entrypoint.py                                       # Wrapper entrypoint (no longer needed)
+src/meridian/pi_runtime/runner.mjs                                      # Node SDK runner (no longer needed)
+src/meridian/pi_runtime/compile_runner.mjs                              # Bun compile entry (no longer needed)
+tests/unit/cli/test_pi_entrypoint.py                                    # Wrapper tests (no longer needed)
+```

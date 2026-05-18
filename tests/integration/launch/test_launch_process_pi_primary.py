@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +10,7 @@ import pytest
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_runtime_resolver import PiRuntimeResolution
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.process.runner import run_harness_process
@@ -73,6 +73,14 @@ def test_run_harness_process_pi_primary_persists_native_metadata_at_runner_bound
         "observe_session_id",
         lambda **_kwargs: "ses-native-observed",
     )
+    monkeypatch.setattr(
+        "meridian.lib.harness.pi.resolve_pi_runtime",
+        lambda **_kwargs: PiRuntimeResolution(
+            binary_path="/usr/local/bin/pi",
+            runtime_kind="path",
+            runtime_version="pi 4.5.6",
+        ),
+    )
 
     captured: dict[str, object] = {}
 
@@ -87,21 +95,6 @@ def test_run_harness_process_pi_primary_persists_native_metadata_at_runner_bound
         captured["cwd"] = cwd
         captured["env"] = dict(env)
         captured["output_log_path"] = output_log_path
-        wrapper_metadata_path = Path(env["MERIDIAN_PI_WRAPPER_METADATA_PATH"])
-        wrapper_metadata_path.write_text(
-            json.dumps(
-                {
-                    "type": "meridian.pi.runtime.selected",
-                    "schema_version": 1,
-                    "runtime_kind": "installed",
-                    "runtime_path": "/usr/local/bin/pi",
-                    "runtime_version": "pi 4.5.6",
-                    "session_dir": "/tmp/pi-sessions",
-                    "auth_policy": "inherit-runtime-default-auth-config",
-                }
-            ),
-            encoding="utf-8",
-        )
         assert callable(on_child_started)
         on_child_started(777)
         return (0, 777)
@@ -117,13 +110,22 @@ def test_run_harness_process_pi_primary_persists_native_metadata_at_runner_bound
     assert outcome.primary_spawn_id is not None
     command = captured["command"]
     assert isinstance(command, tuple)
-    assert command[0] == "meridian-pi"
+    assert command[0] == "/usr/local/bin/pi"
     assert "--mode" not in command
+    assert "--no-extensions" not in command
+    assert "--no-skills" not in command
+    assert "--no-context-files" not in command
+    assert "--no-prompt-templates" not in command
+    assert "-e" not in command
+    assert "--extension" not in command
     assert captured["output_log_path"] is None
     env = captured["env"]
     assert isinstance(env, dict)
+    assert env["MERIDIAN_PI_BINARY"] == "/usr/local/bin/pi"
     assert env["MERIDIAN_PI_SESSION_ROLE"] == "primary"
-    assert "MERIDIAN_PI_WRAPPER_METADATA_PATH" in env
+    assert env["PI_CODING_AGENT_SESSION_DIR"].endswith("meridian-pi/sessions")
+    assert "PI_CODING_AGENT_DIR" not in env
+    assert "MERIDIAN_PI_WRAPPER_METADATA_PATH" not in env
 
     metadata = read_primary_metadata(launch_context.runtime_root, str(outcome.primary_spawn_id))
     assert metadata is not None
@@ -136,8 +138,9 @@ def test_run_harness_process_pi_primary_persists_native_metadata_at_runner_bound
     assert metadata.tui_pid == 777
     assert metadata.activity == "finalizing"
     assert metadata.harness_session_id == "ses-native-observed"
-    assert metadata.runtime_kind == "installed"
+    assert metadata.runtime_kind == "path"
     assert metadata.runtime_path == "/usr/local/bin/pi"
     assert metadata.runtime_version == "pi 4.5.6"
-    assert metadata.session_dir == "/tmp/pi-sessions"
+    assert metadata.session_dir is not None
+    assert metadata.session_dir.endswith("meridian-pi/sessions")
     assert metadata.auth_policy == "inherit-runtime-default-auth-config"

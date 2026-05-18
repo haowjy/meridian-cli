@@ -77,7 +77,7 @@ def test_execute_primary_process_for_pi_uses_native_blackbox_path(
         task_cwd=None,
         child_env={"MERIDIAN_PI_SESSION_ROLE": "primary"},
         launch_spec=_build_spec(),
-        command=("meridian-pi",),
+        command=("pi",),
         harness_contract=PiAdapter().contract,
         managed=_ManagedNoop(),
         runtime_root=tmp_path,
@@ -90,7 +90,7 @@ def test_execute_primary_process_for_pi_uses_native_blackbox_path(
     assert managed_session_id is None
     assert on_running_pids == [4242]
     assert capture_calls == [
-        (("meridian-pi",), tmp_path, {"MERIDIAN_PI_SESSION_ROLE": "primary"}, None)
+        (("pi",), tmp_path, {"MERIDIAN_PI_SESSION_ROLE": "primary"}, None)
     ]
 
 
@@ -128,7 +128,7 @@ def test_execute_primary_process_for_pi_does_not_capture_output_jsonl(tmp_path: 
         task_cwd=None,
         child_env={},
         launch_spec=_build_spec(),
-        command=("meridian-pi",),
+        command=("pi",),
         harness_contract=PiAdapter().contract,
         managed=_ManagedNoop(),
         runtime_root=tmp_path,

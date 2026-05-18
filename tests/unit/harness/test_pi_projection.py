@@ -17,7 +17,8 @@ from meridian.lib.harness.projections.project_pi_native_tui import (
 from meridian.lib.harness.projections.project_pi_rpc import project_pi_spec_to_cli_args
 from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, PRIMARY_BASE_COMMAND_PI
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
+from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from meridian.lib.state.user_paths import get_user_home
 
 
 def _write_extension_fixture(root: Path) -> None:
@@ -55,11 +56,14 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
 
     command = project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
 
-    assert command[0:3] == ["meridian-pi", "--mode", "rpc"]
+    assert command[0:3] == ["pi", "--mode", "rpc"]
     assert command.count("--mode") == 1
     assert command[command.index("--model") + 1] == "anthropic/claude-sonnet-4:high"
     assert command[command.index("--append-system-prompt") + 1] == "You are meridian worker"
     assert command[command.index("--fork") + 1] == "019e3113"
+    assert command[command.index("--session-dir") + 1] == str(
+        get_user_home() / "meridian-pi" / "sessions"
+    )
     assert "--no-extensions" in command
     assert "--no-skills" in command
     assert "--no-context-files" in command
@@ -131,7 +135,7 @@ def test_pi_native_projection_omits_rpc_flags_and_extensions() -> None:
 
     command = project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
 
-    assert command[0] == "meridian-pi"
+    assert command[0] == "pi"
     assert "--mode" not in command
     assert "--no-extensions" not in command
     assert "-e" not in command
@@ -156,26 +160,6 @@ def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false
     assert command[command.index("--session") + 1] == "abc1234"
     assert "--fork" not in command
     assert "--mode" not in command
-
-
-def test_pi_adapter_env_overrides_sets_session_dir_without_default_agent_dir() -> None:
-    overrides = PiAdapter().env_overrides(PermissionConfig())
-
-    assert "PI_CODING_AGENT_DIR" not in overrides
-    assert Path(overrides["PI_CODING_AGENT_SESSION_DIR"]).parts[-2:] == ("meridian-pi", "sessions")
-
-
-def test_pi_adapter_build_command_supports_primary_interactive() -> None:
-    adapter = PiAdapter()
-
-    command = adapter.build_command(
-        SpawnParams(prompt="primary should run", interactive=True),
-        UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-    assert command[0] == "meridian-pi"
-    assert "--mode" not in command
-    assert "--no-extensions" not in command
-    assert "-e" not in command
 
 
 def test_pi_adapter_resolve_launch_spec_skips_rpc_extension_projection_for_primary() -> None:
@@ -336,7 +320,7 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
 
     message = str(exc_info.value)
     assert "meridian-lifecycle/index.js" in message
-    assert "Build runtime extensions first" in message
+    assert "Build Pi extensions first" in message
 
 
 def test_pi_extension_projection_default_target_is_launch_scoped(

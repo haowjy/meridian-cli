@@ -27,6 +27,10 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.pi_runtime_resolver import (
+    PiRuntimeResolutionError,
+    resolve_pi_runtime,
+)
 from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -49,11 +53,7 @@ _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
 _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
-_PI_WRAPPER_RUNTIME_SELECTED_EVENT_TYPE: Final[str] = "meridian.pi.runtime.selected"
-_PI_WRAPPER_RUNTIME_ERROR_EVENT_TYPE: Final[str] = "meridian.pi.runtime.error"
 _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
-_INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_TIMEOUT_SECONDS: Final[float] = 0.1
-_INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_MAX_LINES: Final[int] = 8
 _REDACTED_ARG_VALUE: Final[str] = "<redacted>"
 _SECRET_FLAG_SEGMENTS: Final[frozenset[str]] = frozenset(
     {
@@ -78,6 +78,7 @@ _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "MERIDIAN_ACTIVE_WORK_DIR",
     }
 )
+_PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 
 
 class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -128,7 +129,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._launch_command: tuple[str, ...] = ()
         self._launch_cwd: str | None = None
         self._launch_session_role: str | None = None
-        self._runtime_error_detail: str | None = None
 
     @property
     def state(self) -> ConnectionState:
@@ -178,7 +178,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._harness_ready_emitted = False
         self._pending_lifecycle_phase_events = []
         self._launch_session_role = config.pi_session_role
-        self._runtime_error_detail = None
         self._validate_initial_prompt_requirement()
         self._set_state("starting")
 
@@ -297,8 +296,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         line_bytes = await process.stdout.readline()
                 except TimeoutError:
                     detail = _PI_FIRST_EVENT_TIMEOUT_REASON
-                    if self._runtime_error_detail is not None:
-                        detail = self._runtime_error_detail
                     self._mark_failed(detail)
                     yield self._lifecycle_phase_event(
                         "first_pi_event_timeout",
@@ -325,8 +322,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     ):
                         self._waiting_for_first_pi_event_after_prompt = False
                         detail = _PI_FIRST_EVENT_TIMEOUT_REASON
-                        if self._runtime_error_detail is not None:
-                            detail = self._runtime_error_detail
                         self._mark_failed(detail)
                         yield self._lifecycle_phase_event(
                             "first_pi_event_eof_before_response",
@@ -349,18 +344,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 event = self._parse_stdout_line(raw_text)
                 if event is None:
                     continue
-                if event.event_type == _PI_WRAPPER_RUNTIME_SELECTED_EVENT_TYPE:
-                    yield event
-                    continue
-                if event.event_type == _PI_WRAPPER_RUNTIME_ERROR_EVENT_TYPE:
-                    detail = self._runtime_error_message(event)
-                    self._runtime_error_detail = detail
-                    self._waiting_for_first_pi_event_after_prompt = False
-                    self._mark_failed(detail)
-                    yield event
-                    yield self._error_event(detail)
-                    await self._cleanup_resources(terminate_process=True)
-                    break
                 self._emit_harness_ready_once()
                 if (
                     self._waiting_for_first_pi_event_after_prompt
@@ -400,13 +383,24 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             spec,
             base_command=BASE_COMMAND_PI_SUBPROCESS,
         )
-        self._launch_command = tuple(command)
-        self._launch_cwd = str(config.task_cwd or config.control_root)
         env = inherit_child_env(
             os.environ,
             config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,
         )
+        session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
+        if session_dir:
+            command = self._apply_session_dir_arg(command, session_dir)
+        launch_role = "spawned"
+        if (self._launch_session_role or "").strip().lower() == "primary":
+            launch_role = "primary"
+        try:
+            resolved_runtime = resolve_pi_runtime(env=env, role=launch_role)
+        except PiRuntimeResolutionError as exc:
+            raise ConnectionNotReady(str(exc)) from exc
+        command[0] = resolved_runtime.binary_path
+        self._launch_command = tuple(command)
+        self._launch_cwd = str(config.task_cwd or config.control_root)
 
         try:
             self._process = await asyncio.create_subprocess_exec(
@@ -424,6 +418,28 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 error=exc,
                 binary_name=command[0],
             ) from exc
+
+    def _apply_session_dir_arg(self, command: Sequence[str], session_dir: str) -> list[str]:
+        rewritten: list[str] = []
+        replaced = False
+        i = 0
+        while i < len(command):
+            token = command[i]
+            if token == _PI_SESSION_DIR_FLAG:
+                rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
+                replaced = True
+                i += 2
+                continue
+            if token.startswith(f"{_PI_SESSION_DIR_FLAG}="):
+                rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
+                replaced = True
+                i += 1
+                continue
+            rewritten.append(token)
+            i += 1
+        if not replaced:
+            rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
+        return rewritten
 
     def _parse_stdout_line(self, line: str) -> HarnessEvent | None:
         payload_text = line.strip()
@@ -519,19 +535,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 return int(raw)
         return None
 
-    def _runtime_error_message(self, event: HarnessEvent) -> str:
-        error_value = event.payload.get("error")
-        if isinstance(error_value, str):
-            normalized = error_value.strip()
-            if normalized:
-                return normalized
-        message_value = event.payload.get("message")
-        if isinstance(message_value, str):
-            normalized = message_value.strip()
-            if normalized:
-                return normalized
-        return "pi_wrapper_runtime_error"
-
     def _truncate_parse_error_raw_line(self, raw_line: str) -> str:
         if len(raw_line) <= _PARSE_ERROR_RAW_LINE_LIMIT:
             return raw_line
@@ -605,59 +608,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if not prompt.strip():
             self._initial_prompt_sent = True
             return False
-        try:
-            await self.send_user_message(prompt)
-        except ConnectionNotReady as exc:
-            runtime_error_detail = (
-                await self._drain_immediate_runtime_error_on_prompt_write_failure()
-            )
-            if runtime_error_detail is not None:
-                raise ConnectionNotReady(runtime_error_detail) from exc
-            raise
+        await self.send_user_message(prompt)
         self._initial_prompt_sent = True
         return True
-
-    async def _drain_immediate_runtime_error_on_prompt_write_failure(self) -> str | None:
-        process = self._process
-        if process is None or process.stdout is None:
-            return None
-
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_TIMEOUT_SECONDS
-        for _ in range(_INITIAL_PROMPT_WRITE_FAILURE_STDOUT_DRAIN_MAX_LINES):
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                break
-            try:
-                line_bytes = await asyncio.wait_for(process.stdout.readline(), timeout=remaining)
-            except TimeoutError:
-                break
-            except Exception:
-                logger.debug(
-                    (
-                        "Failed while draining immediate Pi runtime diagnostics after"
-                        " prompt write failure"
-                    ),
-                    exc_info=True,
-                )
-                break
-
-            if not line_bytes:
-                break
-
-            raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
-            if not raw_text.strip():
-                continue
-
-            trace_wire_recv(self._tracer, "stdout_line", raw_text, bytes=len(line_bytes))
-            event = self._parse_stdout_line(raw_text)
-            if event is None:
-                continue
-            if event.event_type == _PI_WRAPPER_RUNTIME_ERROR_EVENT_TYPE:
-                detail = self._runtime_error_message(event)
-                self._runtime_error_detail = detail
-                return detail
-        return None
 
     def _validate_initial_prompt_requirement(self) -> None:
         if self._launch_session_role != "spawned":

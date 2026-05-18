@@ -43,7 +43,7 @@ from meridian.lib.launch.constants import (
     TOKENS_FILENAME,
 )
 from meridian.lib.launch.context import LaunchContext
-from meridian.lib.launch.env import resolve_pi_session_role
+from meridian.lib.launch.env import resolve_pi_session_role, scope_pi_session_dir_for_spawn
 from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -98,7 +98,6 @@ _DEFAULT_CONFIG = MeridianConfig()
 DEFAULT_GUARDRAIL_TIMEOUT_SECONDS = _DEFAULT_CONFIG.guardrail_timeout_minutes * 60.0
 logger = structlog.get_logger(__name__)
 _HEARTBEAT_INTERVAL_SECS = 30.0
-_PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR"
 
 
 @dataclass(frozen=True)
@@ -226,15 +225,9 @@ def _scope_pi_session_dir_for_spawn(
     child_env: dict[str, str],
     spawn_id: SpawnId,
 ) -> None:
-    """Scope Pi session storage to one launch to avoid stale session fallback collisions."""
+    """Scope Pi session storage to one launch to avoid stale fallback collisions."""
 
-    session_root = child_env.get(_PI_SESSION_DIR_ENV, "").strip()
-    if not session_root:
-        return
-
-    scoped_session_root = Path(session_root).expanduser() / str(spawn_id)
-    scoped_session_root.mkdir(parents=True, exist_ok=True)
-    child_env[_PI_SESSION_DIR_ENV] = str(scoped_session_root)
+    scope_pi_session_dir_for_spawn(child_env=child_env, spawn_id=spawn_id)
 
 
 def _persist_attempt_artifacts(

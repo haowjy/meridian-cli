@@ -80,12 +80,12 @@ def test_read_primary_metadata_preserves_native_wrapper_runtime_fields(tmp_path)
             tui_pid=444,
             activity="finalizing",
             harness_session_id="ses-native",
-            command=("meridian-pi", "--session-dir", "/tmp/sessions", "--help"),
+            command=("/usr/local/bin/pi", "--model", "openai-codex/gpt-5.4-mini"),
             launch_cwd="/tmp/project-root",
             started_at_epoch=100.5,
             ended_at_epoch=112.25,
             exit_code=7,
-            runtime_kind="installed",
+            runtime_kind="path",
             runtime_path="/usr/local/bin/pi",
             runtime_version="pi 4.5.6",
             session_dir="/tmp/sessions",
@@ -95,12 +95,12 @@ def test_read_primary_metadata_preserves_native_wrapper_runtime_fields(tmp_path)
 
     metadata = read_primary_metadata(runtime_root, "p3")
     assert metadata is not None
-    assert metadata.command == ("meridian-pi", "--session-dir", "/tmp/sessions", "--help")
+    assert metadata.command == ("/usr/local/bin/pi", "--model", "openai-codex/gpt-5.4-mini")
     assert metadata.launch_cwd == "/tmp/project-root"
     assert metadata.started_at_epoch == 100.5
     assert metadata.ended_at_epoch == 112.25
     assert metadata.exit_code == 7
-    assert metadata.runtime_kind == "installed"
+    assert metadata.runtime_kind == "path"
     assert metadata.runtime_path == "/usr/local/bin/pi"
     assert metadata.runtime_version == "pi 4.5.6"
     assert metadata.session_dir == "/tmp/sessions"

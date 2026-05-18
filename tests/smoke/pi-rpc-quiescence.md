@@ -1,12 +1,12 @@
 # qa-validated: pi-rpc-quiescence
 
-# Pi RPC quiescence smoke (S1-S16)
+# Pi RPC quiescence smoke (S1-S17)
 
 Manual smoke scenarios for Pi RPC quiescence behavior.
 
 ## Prerequisites
 
-- Pi runtime built and available (`scripts/build-meridian-pi-runtime.sh` or `MERIDIAN_PI_BINARY` override)
+- Installed `pi` runtime available on `PATH` (or set `MERIDIAN_PI_BINARY=/path/to/pi`)
 - Pi model auth configured for your provider
 - Use a branch that includes Pi RPC wiring + these extensions
 - For spawned-session checks, run from this repo root
@@ -212,14 +212,26 @@ Expect:
 
 Setup:
 - Installed `pi` is authenticated for the model
-- Bundled/dev `meridian-pi` is not authenticated
+- `MERIDIAN_PI_BINARY` is unset (default PATH resolution path)
 
 Expect:
 - Meridian selects compatible installed `pi` by default, or fails before launch with explicit selected-runtime/auth diagnostics
-- Launch diagnostics include runtime kind (`override`, `installed`, `packaged`, or `node`), binary path, version if known, session dir, and whether Meridian set `PI_CODING_AGENT_DIR`
-- Runtime does not silently switch to a blank Meridian-owned auth/config directory
+- Launch diagnostics include runtime kind (`override` or `path`), binary path, version if known, session dir, and auth policy
+- Runtime auth/config stays with Pi's native defaults (no Meridian-owned auth root fallback)
 
-## S16: Spawn show exposes Pi phase
+## S16: Missing or incompatible installed runtime fails fast
+
+```bash
+PATH=/empty uv run meridian --harness pi -m <pi-model>
+MERIDIAN_PI_BINARY=/bad/pi uv run meridian spawn --harness pi -m <pi-model> -p "hi"
+```
+
+Expect:
+- Empty `PATH` fails before launch with `Pi is not installed or not on PATH` guidance
+- Bad `MERIDIAN_PI_BINARY` fails before launch with `Installed Pi at /bad/pi is not compatible` and `pi update` guidance
+- Neither case starts `meridian-pi`, `node`, `bun`, or a bundled Pi runtime fallback
+
+## S17: Spawn show exposes Pi phase
 
 ```bash
 uv run meridian spawn --harness pi -m <pi-model> --bg -p "Reply OK and run no commands."

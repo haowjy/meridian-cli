@@ -47,13 +47,13 @@ from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
-    PI_WRAPPER_METADATA_PATH_ENV,
-    PI_WRAPPER_RUNTIME_META_FILENAME,
+    PI_RUNTIME_META_FILENAME,
     PRIMARY_META_FILENAME,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.session_store import (
@@ -125,11 +125,11 @@ def _write_native_primary_metadata(
     ended_at_epoch: float | None,
     exit_code: int | None,
     harness_session_id: str | None,
-    wrapper_metadata_path: Path | None,
+    prelaunch_state: HarnessPrelaunchState | None,
 ) -> None:
     """Best-effort metadata projection for native/black-box primary launches."""
 
-    wrapper_runtime = _read_pi_wrapper_runtime_metadata(wrapper_metadata_path)
+    runtime_metadata = _pi_runtime_metadata_from_prelaunch(prelaunch_state)
 
     try:
         write_primary_metadata(
@@ -147,47 +147,81 @@ def _write_native_primary_metadata(
                 started_at_epoch=started_at_epoch,
                 ended_at_epoch=ended_at_epoch,
                 exit_code=exit_code,
-                runtime_kind=wrapper_runtime.get("runtime_kind"),
-                runtime_path=wrapper_runtime.get("runtime_path"),
-                runtime_version=wrapper_runtime.get("runtime_version"),
-                session_dir=wrapper_runtime.get("session_dir"),
-                auth_policy=wrapper_runtime.get("auth_policy"),
+                runtime_kind=runtime_metadata.get("runtime_kind"),
+                runtime_path=runtime_metadata.get("runtime_path"),
+                runtime_version=runtime_metadata.get("runtime_version"),
+                session_dir=runtime_metadata.get("session_dir"),
+                auth_policy=runtime_metadata.get("auth_policy"),
             ),
         )
     except Exception:
         logger.debug("Failed to write native primary metadata", exc_info=True)
 
 
-def _read_pi_wrapper_runtime_metadata(path: Path | None) -> dict[str, str | None]:
-    """Best-effort wrapper metadata sidecar read for native Pi primary launches."""
+def _normalized_prelaunch_metadata_text(
+    prelaunch_state: HarnessPrelaunchState | None,
+    field: str,
+) -> str | None:
+    if prelaunch_state is None:
+        return None
+    value = prelaunch_state.metadata.get(field)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
-    if path is None or not path.is_file():
-        return {}
 
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    payload = cast("dict[str, object]", payload)
-
-    def _normalized_text(field: str) -> str | None:
-        value = payload.get(field)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized
-
+def _pi_runtime_metadata_from_prelaunch(
+    prelaunch_state: HarnessPrelaunchState | None,
+) -> dict[str, str | None]:
     return {
-        "runtime_kind": _normalized_text("runtime_kind"),
-        "runtime_path": _normalized_text("runtime_path"),
-        "runtime_version": _normalized_text("runtime_version"),
-        "session_dir": _normalized_text("session_dir"),
-        "auth_policy": _normalized_text("auth_policy"),
+        "runtime_kind": _normalized_prelaunch_metadata_text(prelaunch_state, "pi_runtime_kind"),
+        "runtime_path": _normalized_prelaunch_metadata_text(prelaunch_state, "pi_runtime_path"),
+        "runtime_version": _normalized_prelaunch_metadata_text(
+            prelaunch_state, "pi_runtime_version"
+        ),
+        "session_dir": _normalized_prelaunch_metadata_text(
+            prelaunch_state, "pi_runtime_session_dir"
+        ),
+        "auth_policy": _normalized_prelaunch_metadata_text(
+            prelaunch_state, "pi_runtime_auth_policy"
+        ),
     }
+
+
+def _resolve_pi_runtime_command(
+    *,
+    harness_id: HarnessId,
+    command: tuple[str, ...],
+    prelaunch_state: HarnessPrelaunchState,
+) -> tuple[str, ...]:
+    if harness_id is not HarnessId.PI:
+        return command
+    if not command:
+        return command
+    runtime_path = (prelaunch_state.metadata.get("pi_runtime_path") or "").strip()
+    if not runtime_path:
+        return command
+    return (runtime_path, *command[1:])
+
+
+def _persist_pi_runtime_metadata_from_prelaunch(
+    *,
+    metadata_path: Path,
+    prelaunch_state: HarnessPrelaunchState,
+) -> None:
+    payload = _pi_runtime_metadata_from_prelaunch(prelaunch_state)
+    runtime_path = payload.get("runtime_path")
+    if runtime_path is None:
+        return
+    metadata_payload = {"schema_version": 1, **payload}
+    try:
+        atomic_write_text(
+            metadata_path,
+            json.dumps(metadata_payload, separators=(",", ":")) + "\n",
+        )
+    except OSError:
+        logger.debug("Failed to persist resolved Pi runtime metadata sidecar", exc_info=True)
 
 
 RunPrimaryProcessWithCapture = Callable[
@@ -799,7 +833,6 @@ def run_harness_process(
     exit_code = 2
     native_primary_tui_pid: int | None = None
     write_native_primary_metadata = False
-    pi_wrapper_runtime_meta_path: Path | None = None
     try:
         with session_scope(
             runtime_root=runtime_root,
@@ -996,14 +1029,21 @@ def run_harness_process(
                 )
                 if prelaunch_state.env_overrides:
                     child_env.update(prelaunch_state.env_overrides)
+                command = _resolve_pi_runtime_command(
+                    harness_id=harness_id,
+                    command=command,
+                    prelaunch_state=prelaunch_state,
+                )
 
                 write_native_primary_metadata = (
                     harness_id is HarnessId.PI
                     and harness_adapter.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
                 )
                 if write_native_primary_metadata:
-                    pi_wrapper_runtime_meta_path = log_dir / PI_WRAPPER_RUNTIME_META_FILENAME
-                    child_env[PI_WRAPPER_METADATA_PATH_ENV] = str(pi_wrapper_runtime_meta_path)
+                    _persist_pi_runtime_metadata_from_prelaunch(
+                        metadata_path=log_dir / PI_RUNTIME_META_FILENAME,
+                        prelaunch_state=prelaunch_state,
+                    )
                     _write_native_primary_metadata(
                         spawn_dir=log_dir,
                         command=command,
@@ -1015,7 +1055,7 @@ def run_harness_process(
                         ended_at_epoch=None,
                         exit_code=None,
                         harness_session_id=resolved_harness_session_id,
-                        wrapper_metadata_path=pi_wrapper_runtime_meta_path,
+                        prelaunch_state=prelaunch_state,
                     )
 
                 def _record_primary_started(child_pid: int) -> None:
@@ -1038,7 +1078,7 @@ def run_harness_process(
                             ended_at_epoch=None,
                             exit_code=None,
                             harness_session_id=resolved_harness_session_id,
-                            wrapper_metadata_path=pi_wrapper_runtime_meta_path,
+                            prelaunch_state=prelaunch_state,
                         )
 
                 (
@@ -1107,7 +1147,7 @@ def run_harness_process(
                         ended_at_epoch=time.time(),
                         exit_code=exit_code,
                         harness_session_id=resolved_harness_session_id,
-                        wrapper_metadata_path=pi_wrapper_runtime_meta_path,
+                        prelaunch_state=prelaunch_state,
                     )
                 if primary_spawn_id is not None:
                     try:

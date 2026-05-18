@@ -11,6 +11,7 @@ from meridian.lib.harness.projections._guards import (
 )
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.state.user_paths import get_user_home
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,10 @@ def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     return model
 
 
+def _default_pi_session_dir() -> str:
+    return str(get_user_home() / "meridian-pi" / "sessions")
+
+
 def project_pi_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -209,12 +214,19 @@ def project_pi_spec_to_cli_args(
         has_managed_value=True,
         passthrough_tail=passthrough_tail,
     )
+    _log_collision_if_needed(
+        managed_flag="--session-dir",
+        has_managed_value=True,
+        passthrough_tail=passthrough_tail,
+    )
 
     if has_continue_session:
         if has_continue_fork:
             command.extend(("--fork", continue_session_id))
         else:
             command.extend(("--session", continue_session_id))
+
+    command.extend(("--session-dir", _default_pi_session_dir()))
 
     command.extend(
         (

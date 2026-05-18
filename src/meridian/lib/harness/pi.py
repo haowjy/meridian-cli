@@ -17,10 +17,13 @@ from meridian.lib.harness.adapter import (
     ForkMaterializationMode,
     HarnessCapabilities,
     HarnessContract,
+    HarnessPrelaunchState,
     McpConfig,
     PermissionResolver,
     ProjectionContract,
     ProjectionMode,
+    RecordConfigDirFn,
+    SessionRequest,
     SpawnParams,
     TransportContract,
 )
@@ -33,6 +36,10 @@ from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
     detect_pi_session_id_from_session_files,
+)
+from meridian.lib.harness.pi_runtime_resolver import (
+    PiRuntimeResolutionError,
+    resolve_pi_runtime,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
     resolve_pi_extension_entrypoints,
@@ -53,6 +60,7 @@ from meridian.lib.launch.composition import (
     render_task_context,
 )
 from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, PRIMARY_BASE_COMMAND_PI
+from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.user_paths import get_user_home
@@ -69,7 +77,7 @@ def _project_pi_subprocess_cli_args(
 
 
 class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
-    """Pi harness implementation for ``meridian-pi``."""
+    """Pi harness implementation for native installed ``pi`` launches."""
 
     BASE_COMMAND: ClassVar[tuple[str, ...]] = BASE_COMMAND_PI_SUBPROCESS
     PRIMARY_BASE_COMMAND: ClassVar[tuple[str, ...]] = PRIMARY_BASE_COMMAND_PI
@@ -148,8 +156,11 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             supports_native_agents=False,
             supports_primary_launch=True,
             supports_native_file_injection=False,
-            terminal_surface_modes=(TerminalSurfaceMode.PURE_STDIO,),
-            default_terminal_surface_mode=TerminalSurfaceMode.PURE_STDIO,
+            terminal_surface_modes=(
+                TerminalSurfaceMode.PTY_MEDIATED,
+                TerminalSurfaceMode.NATIVE_INHERIT,
+            ),
+            default_terminal_surface_mode=TerminalSurfaceMode.PTY_MEDIATED,
         )
 
     def resolve_launch_spec(
@@ -183,6 +194,58 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         base_command = self.PRIMARY_BASE_COMMAND if spec.interactive else self.BASE_COMMAND
         return _project_pi_subprocess_cli_args(spec, base_command=base_command)
 
+    def prepare_prelaunch(
+        self,
+        *,
+        runtime_root: Path,
+        spawn_id: SpawnId,
+        session: SessionRequest,
+        child_cwd: Path,
+        child_env: dict[str, str],
+        resolved_harness_session_id: str,
+        record_effective_config_dir: RecordConfigDirFn | None = None,
+    ) -> HarnessPrelaunchState:
+        _ = (
+            runtime_root,
+            spawn_id,
+            session,
+            resolved_harness_session_id,
+            record_effective_config_dir,
+        )
+        role = child_env.get("MERIDIAN_PI_SESSION_ROLE", "").strip().lower()
+        launch_role = "primary" if role == "primary" else "spawned"
+        try:
+            resolved_runtime = resolve_pi_runtime(env=child_env, role=launch_role)
+        except PiRuntimeResolutionError:
+            raise
+        except Exception as exc:
+            raise PiRuntimeResolutionError(str(exc)) from exc
+
+        scoped_session_dir: str | None = None
+        if launch_role == "spawned":
+            scoped_session_dir = scope_pi_session_dir_for_spawn(
+                child_env=child_env,
+                spawn_id=spawn_id,
+            )
+
+        session_dir = child_env.get("PI_CODING_AGENT_SESSION_DIR", "").strip() or str(
+            get_user_home() / "meridian-pi" / "sessions"
+        )
+        env_overrides = {"MERIDIAN_PI_BINARY": resolved_runtime.binary_path}
+        if scoped_session_dir is not None:
+            env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
+
+        return HarnessPrelaunchState(
+            env_overrides=env_overrides,
+            metadata={
+                "pi_runtime_kind": resolved_runtime.runtime_kind,
+                "pi_runtime_path": resolved_runtime.binary_path,
+                "pi_runtime_version": resolved_runtime.runtime_version,
+                "pi_runtime_session_dir": session_dir,
+                "pi_runtime_auth_policy": "inherit-runtime-default-auth-config",
+            },
+        )
+
     def mcp_config(self, run: SpawnParams) -> McpConfig | None:
         _ = run
         return None
@@ -209,12 +272,10 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
 
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
-        overrides: dict[str, str] = {
+        _ = config
+        return {
             "PI_CODING_AGENT_SESSION_DIR": str(get_user_home() / "meridian-pi" / "sessions"),
         }
-        if config.pi_launch_config_path:
-            overrides["MERIDIAN_PI_LAUNCH_CONFIG"] = config.pi_launch_config_path
-        return overrides
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
         return PI_EXTRACTOR.extract_usage(artifacts, spawn_id)

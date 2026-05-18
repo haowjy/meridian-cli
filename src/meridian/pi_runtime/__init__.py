@@ -1,1 +1,1 @@
-"""Runtime assets for the meridian-pi wrapper."""
+"""Meridian-managed Pi extension assets."""

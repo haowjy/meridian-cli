@@ -37,9 +37,8 @@ def resolve_pi_extension_entrypoints() -> tuple[str, ...]:
         if not source_path.is_file():
             raise PiExtensionProjectionError(
                 "Missing Pi extension artifact: "
-                f"{source_path}. Build runtime extensions first "
-                "(scripts/build-meridian-pi-runtime.sh or "
-                "cd src/meridian/pi_runtime && bun run build:extensions)."
+                f"{source_path}. Build Pi extensions first "
+                "(cd src/meridian/pi_runtime && npm run build:extensions)."
             )
         target_path = target_root / extension_name / "index.js"
         target_path.parent.mkdir(parents=True, exist_ok=True)

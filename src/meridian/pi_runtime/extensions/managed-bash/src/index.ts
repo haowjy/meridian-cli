@@ -4,8 +4,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { ExtensionAPI } from "../../types";
 
 type WaitPolicy = "tracked" | "detached";
 type JobStatus = "running" | "exited" | "killed";

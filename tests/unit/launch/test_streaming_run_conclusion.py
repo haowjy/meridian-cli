@@ -1,14 +1,15 @@
+# qa-validated: pi-rpc-quiescence
 import signal
 from pathlib import Path
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.extract import FinalizeExtraction
 from meridian.lib.launch.report import ExtractedReport
 from meridian.lib.launch.streaming_runner import (
     StreamingRunConclusion,
     _AttemptRuntime,
-    _scope_pi_session_dir_for_spawn,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -99,7 +100,7 @@ def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_pa
     session_root = tmp_path / "sessions"
     child_env = {"PI_CODING_AGENT_SESSION_DIR": str(session_root)}
 
-    _scope_pi_session_dir_for_spawn(
+    scope_pi_session_dir_for_spawn(
         child_env=child_env,
         spawn_id=SpawnId("p-pi-scope"),
     )
@@ -112,9 +113,23 @@ def test_scope_pi_session_dir_for_spawn_updates_env_and_creates_directory(tmp_pa
 def test_scope_pi_session_dir_for_spawn_is_noop_without_session_root() -> None:
     child_env: dict[str, str] = {}
 
-    _scope_pi_session_dir_for_spawn(
+    scope_pi_session_dir_for_spawn(
         child_env=child_env,
         spawn_id=SpawnId("p-pi-scope-noop"),
     )
 
     assert child_env == {}
+
+
+def test_scope_pi_session_dir_for_spawn_is_idempotent_for_already_scoped_path(
+    tmp_path: Path,
+) -> None:
+    scoped_root = tmp_path / "sessions" / "p-pi-scope-idempotent"
+    child_env = {"PI_CODING_AGENT_SESSION_DIR": str(scoped_root)}
+
+    scope_pi_session_dir_for_spawn(
+        child_env=child_env,
+        spawn_id=SpawnId("p-pi-scope-idempotent"),
+    )
+
+    assert Path(child_env["PI_CODING_AGENT_SESSION_DIR"]) == scoped_root

@@ -378,8 +378,9 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert "meridian-pi" in captured.out
+    assert "pi" in captured.out
     assert "--mode" not in captured.out
+    assert "--mode rpc" not in captured.out
 
 
 def test_init_alias_link_uses_mars_flow_with_full_link_target_when_called_directly(

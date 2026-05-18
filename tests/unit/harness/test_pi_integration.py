@@ -16,12 +16,21 @@ from meridian.lib.harness.adapter import BootstrapMode, ForkMaterializationMode,
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import ConnectionConfig, ConnectionNotReady, HarnessEvent
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
+from meridian.lib.harness.pi_runtime_resolver import PiRuntimeResolution
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
 from meridian.lib.launch.env import build_harness_env_overrides
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
+from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
 from meridian.lib.streaming.spawn_manager import SpawnManager
+
+_PI_HELP_SURFACE = (
+    "--mode rpc --model --append-system-prompt --session --fork "
+    "--session-dir --no-extensions --no-skills "
+    "--no-context-files --no-prompt-templates -e --extension "
+    "PI_CODING_AGENT_SESSION_DIR"
+)
 
 
 def _is_pi_phase_event(event: HarnessEvent) -> bool:
@@ -61,20 +70,19 @@ def test_pi_adapter_registered_with_expected_rpc_contract() -> None:
     )
     assert contract.capabilities.supports_session_fork is True
     assert contract.capabilities.supports_primary_launch is True
-    assert contract.capabilities.terminal_surface_modes == (TerminalSurfaceMode.PURE_STDIO,)
+    assert contract.capabilities.terminal_surface_modes == (
+        TerminalSurfaceMode.PTY_MEDIATED,
+        TerminalSurfaceMode.NATIVE_INHERIT,
+    )
+    assert contract.capabilities.default_terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
 
     adapter = registry.get_subprocess_harness(HarnessId.PI)
-    overrides = adapter.env_overrides(
-        PermissionConfig(
-            pi_launch_config_path="/tmp/pi-launch-config.json",
-        )
-    )
+    overrides = adapter.env_overrides(PermissionConfig())
     assert "PI_CODING_AGENT_DIR" not in overrides
     assert Path(overrides["PI_CODING_AGENT_SESSION_DIR"]).parts[-2:] == (
         "meridian-pi",
         "sessions",
     )
-    assert overrides["MERIDIAN_PI_LAUNCH_CONFIG"] == "/tmp/pi-launch-config.json"
 
 
 @pytest.mark.parametrize(
@@ -97,6 +105,76 @@ def test_pi_launch_env_injects_session_role(interactive: bool, expected_role: st
     assert env["MERIDIAN_PI_SESSION_ROLE"] == expected_role
 
 
+def test_pi_prepare_prelaunch_scopes_spawned_session_dir_for_runtime_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = HarnessRegistry.with_defaults()
+    adapter = registry.get_subprocess_harness(HarnessId.PI)
+
+    def _resolve_runtime(**_kwargs: object) -> PiRuntimeResolution:
+        return PiRuntimeResolution(
+            binary_path="/usr/local/bin/pi",
+            runtime_kind="path",
+            runtime_version="pi 1.2.3",
+        )
+
+    monkeypatch.setattr("meridian.lib.harness.pi.resolve_pi_runtime", _resolve_runtime)
+    child_env = {
+        "MERIDIAN_PI_SESSION_ROLE": "spawned",
+        "PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "pi-sessions"),
+    }
+
+    prelaunch = adapter.prepare_prelaunch(
+        runtime_root=tmp_path / ".runtime",
+        spawn_id=SpawnId("p-pi-prelaunch-scope"),
+        session=SessionRequest(),
+        child_cwd=tmp_path,
+        child_env=child_env,
+        resolved_harness_session_id="",
+    )
+
+    expected_scoped = tmp_path / "pi-sessions" / "p-pi-prelaunch-scope"
+    assert child_env["PI_CODING_AGENT_SESSION_DIR"] == str(expected_scoped)
+    assert prelaunch.env_overrides["PI_CODING_AGENT_SESSION_DIR"] == str(expected_scoped)
+    assert prelaunch.metadata["pi_runtime_session_dir"] == str(expected_scoped)
+
+
+def test_pi_prepare_prelaunch_does_not_double_append_spawn_id_in_session_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = HarnessRegistry.with_defaults()
+    adapter = registry.get_subprocess_harness(HarnessId.PI)
+
+    def _resolve_runtime(**_kwargs: object) -> PiRuntimeResolution:
+        return PiRuntimeResolution(
+            binary_path="/usr/local/bin/pi",
+            runtime_kind="path",
+            runtime_version="pi 1.2.3",
+        )
+
+    monkeypatch.setattr("meridian.lib.harness.pi.resolve_pi_runtime", _resolve_runtime)
+    already_scoped = tmp_path / "pi-sessions" / "p-pi-prelaunch-idempotent"
+    child_env = {
+        "MERIDIAN_PI_SESSION_ROLE": "spawned",
+        "PI_CODING_AGENT_SESSION_DIR": str(already_scoped),
+    }
+
+    prelaunch = adapter.prepare_prelaunch(
+        runtime_root=tmp_path / ".runtime",
+        spawn_id=SpawnId("p-pi-prelaunch-idempotent"),
+        session=SessionRequest(),
+        child_cwd=tmp_path,
+        child_env=child_env,
+        resolved_harness_session_id="",
+    )
+
+    assert child_env["PI_CODING_AGENT_SESSION_DIR"] == str(already_scoped)
+    assert prelaunch.env_overrides["PI_CODING_AGENT_SESSION_DIR"] == str(already_scoped)
+    assert prelaunch.metadata["pi_runtime_session_dir"] == str(already_scoped)
+
+
 def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_native_primary_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -116,6 +194,10 @@ def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_native_primary_r
     assert "--no-skills" in spawned_command
     assert "--no-context-files" in spawned_command
     assert "--no-prompt-templates" in spawned_command
+    assert Path(spawned_command[spawned_command.index("--session-dir") + 1]).parts[-2:] == (
+        "meridian-pi",
+        "sessions",
+    )
     spawned_extensions = [
         spawned_command[index + 1]
         for index, token in enumerate(spawned_command)
@@ -293,9 +375,11 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
     bin_dir.mkdir()
     inbound_log = tmp_path / "pi-inbound.jsonl"
 
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-rpc\"}'\n"
         "while IFS= read -r line; do\n"
         "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
@@ -373,6 +457,120 @@ async def test_pi_rpc_connection_supports_multi_turn_injection_and_abort(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_dir_and_managed_extensions(  # noqa: E501
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    fake_pi = tmp_path / "bin" / "pi-fake"
+    fake_pi.parent.mkdir(parents=True, exist_ok=True)
+    observed_path = tmp_path / "pi-runtime-observed.json"
+    fake_pi.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "if len(sys.argv) > 1 and sys.argv[1] == '--version':\n"
+        "    print('pi 3.0.0')\n"
+        "    raise SystemExit(0)\n"
+        "if len(sys.argv) > 1 and sys.argv[1] == '--help':\n"
+        f"    print({json.dumps(_PI_HELP_SURFACE)})\n"
+        "    raise SystemExit(0)\n"
+        "observed_path = os.environ.get('PI_RPC_OBSERVED_PATH', '').strip()\n"
+        "if observed_path:\n"
+        "    env_keys = (\n"
+        "        'MERIDIAN_PI_BINARY',\n"
+        "        'MERIDIAN_PI_SESSION_ROLE',\n"
+        "        'PI_CODING_AGENT_SESSION_DIR',\n"
+        "        'PI_CODING_AGENT_DIR',\n"
+        "    )\n"
+        "    observed_env = {key: os.environ[key] for key in env_keys if key in os.environ}\n"
+        "    with open(observed_path, 'w', encoding='utf-8') as handle:\n"
+        "        json.dump({'argv': sys.argv, 'env': observed_env}, handle)\n"
+        "for line in sys.stdin:\n"
+        "    payload = json.loads(line)\n"
+        "    payload_type = payload.get('type')\n"
+        "    if payload_type == 'prompt':\n"
+        "        print(json.dumps({'type': 'agent_start'}), flush=True)\n"
+        "        print(\n"
+        "            json.dumps(\n"
+        "                {\n"
+        "                    'type': 'agent_end',\n"
+        "                    'messages': [{'role': 'assistant', 'stopReason': 'stop'}],\n"
+        "                }\n"
+        "            ),\n"
+        "            flush=True,\n"
+        "        )\n"
+        "        continue\n"
+        "    if payload_type == 'abort':\n"
+        "        raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    fake_pi.chmod(0o755)
+
+    scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
+    managed_entrypoints = (
+        str(tmp_path / "agent" / "extensions" / "managed-bash" / "index.js"),
+        str(tmp_path / "agent" / "extensions" / "meridian-lifecycle" / "index.js"),
+    )
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=SpawnId("p-pi-direct-runtime"),
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={
+                "MERIDIAN_PI_BINARY": str(fake_pi),
+                "MERIDIAN_PI_SESSION_ROLE": "spawned",
+                "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
+                "PI_RPC_OBSERVED_PATH": str(observed_path),
+            },
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            pi_extension_entrypoints=managed_entrypoints,
+        ),
+    )
+
+    event_iter = connection.events()
+    assert (await _next_non_phase_event(event_iter)).event_type == "agent_start"
+    assert (await _next_non_phase_event(event_iter)).event_type == "agent_end"
+    await connection.send_cancel()
+    _ = [event async for event in event_iter]
+
+    observed = json.loads(observed_path.read_text(encoding="utf-8"))
+    argv = observed["argv"]
+    assert argv[0] == str(fake_pi)
+    assert argv.count("--mode") == 1
+    assert argv[argv.index("--mode") + 1] == "rpc"
+    assert argv.count("--session-dir") == 1
+    assert argv[argv.index("--session-dir") + 1] == str(scoped_session_dir)
+    assert "--no-extensions" in argv
+    assert "--no-skills" in argv
+    assert "--no-context-files" in argv
+    assert "--no-prompt-templates" in argv
+    assert [argv[index + 1] for index, token in enumerate(argv) if token == "-e"] == list(
+        managed_entrypoints
+    )
+    assert "node" not in argv
+    assert "bun" not in argv
+    assert "meridian-pi" not in argv
+
+    observed_env = observed["env"]
+    assert observed_env["MERIDIAN_PI_BINARY"] == str(fake_pi)
+    assert observed_env["MERIDIAN_PI_SESSION_ROLE"] == "spawned"
+    assert observed_env["PI_CODING_AGENT_SESSION_DIR"] == str(scoped_session_dir)
+    assert "PI_CODING_AGENT_DIR" not in observed_env
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
 async def test_pi_rpc_connection_stop_timeout_terminates_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -385,9 +583,11 @@ async def test_pi_rpc_connection_stop_timeout_terminates_process(
     bin_dir.mkdir()
     inbound_log = tmp_path / "pi-inbound.jsonl"
 
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-stop-timeout\"}'\n"
         "while IFS= read -r line; do\n"
         "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
@@ -452,9 +652,11 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-redacted\"}'\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
@@ -467,13 +669,16 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     connection = PiRpcConnection()
+    scoped_session_dir = tmp_path / "sessions" / "p-pi-redacted-argv"
     await connection.start(
         ConnectionConfig(
             spawn_id=SpawnId("p-pi-redacted-argv"),
             harness_id=HarnessId.PI,
             prompt="hello",
             control_root=tmp_path,
-            env_overrides={},
+            env_overrides={
+                "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
+            },
         ),
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
@@ -489,6 +694,7 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
     assert first.payload.get("phase") == "process_spawned"
     command = first.payload.get("command")
     assert isinstance(command, list)
+    assert command[command.index("--session-dir") + 1] == str(scoped_session_dir)
     assert "--api-key" in command
     assert "secret-value" not in command
     assert "<redacted>" in command
@@ -507,9 +713,11 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-malformed\"}'\n"
         "printf '%s\\n' '{\"type\":\"message_update\",\"delta\":\"before malformed\"}'\n"
         "printf '%s\\n' '{\"type\":\"meridian.subspawn.start\",\"schema_version\":2}'\n"
@@ -601,9 +809,11 @@ async def test_pi_spawn_manager_auto_delivers_initial_prompt_and_quiesces_withou
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     inbound_log = tmp_path / "pi-inbound.jsonl"
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-autoprompt\"}'\n"
         "while IFS= read -r line; do\n"
         "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
@@ -694,9 +904,11 @@ async def test_pi_spawn_manager_without_session_event_still_quiesces_and_records
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     inbound_log = tmp_path / "pi-inbound.jsonl"
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "while IFS= read -r line; do\n"
         "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
         "  case \"$line\" in\n"
@@ -803,9 +1015,11 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
@@ -887,9 +1101,11 @@ async def test_pi_spawn_manager_first_event_timeout_fails_and_records_timeout_ph
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*) sleep 30 ;;\n"
@@ -978,9 +1194,11 @@ async def test_pi_spawn_manager_first_event_eof_after_initial_prompt_fails_with_
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*) exit 0 ;;\n"
@@ -1072,9 +1290,11 @@ async def test_pi_connection_launches_in_task_cwd_when_provided(
     task_cwd.mkdir()
     control_root = tmp_path / "control"
     control_root.mkdir()
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "pwd > \"$PI_TEST_CWD_FILE\"\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-task-cwd\"}'\n"
         "printf '%s\\n' '{\"type\":\"abort\"}' > /dev/null\n",
@@ -1123,9 +1343,11 @@ async def test_pi_rpc_connection_times_out_waiting_for_first_event_after_initial
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     inbound_log = tmp_path / "pi-inbound.jsonl"
-    shim = bin_dir / "meridian-pi"
+    shim = bin_dir / "pi"
     shim.write_text(
         "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "while IFS= read -r line; do\n"
         "  printf '%s\\n' \"$line\" >> \"$PI_RPC_INBOUND_LOG\"\n"
         "  case \"$line\" in\n"
@@ -1167,160 +1389,24 @@ async def test_pi_rpc_connection_times_out_waiting_for_first_event_after_initial
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_runtime_selected_event_does_not_satisfy_first_response_deadline(
+async def test_pi_rpc_connection_start_fails_fast_when_runtime_resolution_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
-    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
-    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
+    expected_error = "runtime probe failed before launch"
 
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' "
-        '\'{\"type\":\"meridian.pi.runtime.selected\",\"schema_version\":1,\"runtime_kind\":\"installed\",'
-        '\"runtime_path\":\"/fake/pi\",\"runtime_version\":\"pi 1.2.3\",'
-        '\"session_dir\":\"/tmp/ses\",'
-        '\"auth_policy\":\"inherit-runtime-default-auth-config\"}\'\n'
-        "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        "    *'\"type\":\"prompt\"'*) sleep 30 ;;\n"
-        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
-        "  esac\n"
-        "done\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    def _fail_resolve_runtime(*, env: dict[str, str], role: str) -> object:
+        _ = env, role
+        raise pi_rpc_module.PiRuntimeResolutionError(expected_error)
+
+    monkeypatch.setattr(pi_rpc_module, "resolve_pi_runtime", _fail_resolve_runtime)
 
     connection = PiRpcConnection()
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=SpawnId("p-pi-runtime-selected-timeout"),
-            harness_id=HarnessId.PI,
-            prompt="hello timeout",
-            control_root=tmp_path,
-            env_overrides={},
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello timeout",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    events = [event async for event in connection.events()]
-    assert any(event.event_type == "meridian.pi.runtime.selected" for event in events)
-    assert any(
-        event.event_type == "error/connectionClosed"
-        and event.payload.get("message") == "pi_rpc_no_response_after_initial_prompt"
-        for event in events
-    )
-    phases = [
-        event.payload.get("phase")
-        for event in events
-        if event.event_type == "meridian.pi.lifecycle.phase"
-    ]
-    assert "waiting_for_first_pi_event_after_prompt" in phases
-    assert "first_pi_event_timeout" in phases
-    assert "first_pi_event_received" not in phases
-    assert connection.state == "failed"
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_runtime_error_event_fails_with_specific_error_not_generic(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' "
-        '\'{\"type\":\"meridian.pi.runtime.error\",\"schema_version\":1,\"phase\":\"preflight\",'
-        '\"error\":\"no compatible installed `pi` runtime found on PATH\"}\'\n'
-        "exit 1\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    connection = PiRpcConnection()
-    await connection.start(
-        ConnectionConfig(
-            spawn_id=SpawnId("p-pi-runtime-error"),
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    events = [event async for event in connection.events()]
-    assert any(event.event_type == "meridian.pi.runtime.error" for event in events)
-    assert any(
-        event.event_type == "error/connectionClosed"
-        and event.payload.get("message")
-        == "no compatible installed `pi` runtime found on PATH"
-        for event in events
-    )
-    assert not any(
-        event.event_type == "error/connectionClosed"
-        and event.payload.get("message") == "pi_rpc_no_response_after_initial_prompt"
-        for event in events
-    )
-    assert connection.state == "failed"
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_initial_prompt_write_failure_prefers_runtime_error_detail(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _configure_extension_projection(monkeypatch, tmp_path)
-
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        "exec 0<&-\n"
-        "printf '%s\\n' "
-        '\'{\"type\":\"meridian.pi.runtime.error\",\"schema_version\":1,\"phase\":\"preflight\",'
-        '\"error\":\"fast preflight runtime failure\"}\'\n'
-        "sleep 0.2\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    connection = PiRpcConnection()
-    original_send_user_message = PiRpcConnection.send_user_message
-
-    async def _delayed_send_user_message(text: str) -> None:
-        await asyncio.sleep(0.05)
-        await original_send_user_message(connection, text)
-
-    monkeypatch.setattr(connection, "send_user_message", _delayed_send_user_message)
-    with pytest.raises(ConnectionNotReady, match=r"^fast preflight runtime failure$") as exc_info:
+    with pytest.raises(ConnectionNotReady, match=rf"^{expected_error}$"):
         await connection.start(
             ConnectionConfig(
-                spawn_id=SpawnId("p-pi-runtime-error-start-failure"),
+                spawn_id=SpawnId("p-pi-runtime-resolution-error"),
                 harness_id=HarnessId.PI,
                 prompt="hello",
                 control_root=tmp_path,
@@ -1333,33 +1419,24 @@ async def test_pi_rpc_connection_initial_prompt_write_failure_prefers_runtime_er
             ),
         )
 
-    assert str(exc_info.value) == "fast preflight runtime failure"
-    assert "Pi RPC subprocess stdin closed" not in str(exc_info.value)
-    assert "pi_rpc_no_response_after_initial_prompt" not in str(exc_info.value)
     assert connection.state == "failed"
+    assert connection.subprocess_pid is None
+    assert connection.session_id is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_spawn_manager_runtime_error_event_propagates_specific_wrapper_error(
+async def test_pi_spawn_manager_runtime_resolution_failure_propagates_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
+    expected_error = "runtime probe failed before launch"
 
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    shim = bin_dir / "meridian-pi"
-    shim.write_text(
-        "#!/bin/sh\n"
-        "printf '%s\\n' "
-        '\'{\"type\":\"meridian.pi.runtime.error\",\"schema_version\":1,\"phase\":\"preflight\",'
-        '\"error\":\"bundled/dev fallback requires explicit auth/config confirmation\"}\'\n'
-        "exit 1\n",
-        encoding="utf-8",
-    )
-    shim.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    def _fail_resolve_runtime(*, env: dict[str, str], role: str) -> object:
+        _ = env, role
+        raise pi_rpc_module.PiRuntimeResolutionError(expected_error)
+
+    monkeypatch.setattr(pi_rpc_module, "resolve_pi_runtime", _fail_resolve_runtime)
 
     class NoopControlServer:
         endpoint = None
@@ -1386,30 +1463,21 @@ async def test_pi_spawn_manager_runtime_error_event_propagates_specific_wrapper_
         control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
     )
 
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
-        assert outcome is not None
-        assert outcome.status == "failed"
-        assert (
-            outcome.error
-            == "bundled/dev fallback requires explicit auth/config confirmation"
+    with pytest.raises(ConnectionNotReady, match=rf"^{expected_error}$"):
+        await manager.start_spawn(
+            ConnectionConfig(
+                spawn_id=spawn_id,
+                harness_id=HarnessId.PI,
+                prompt="hello",
+                control_root=tmp_path,
+                env_overrides={},
+                pi_session_role="spawned",
+            ),
+            ResolvedLaunchSpec(
+                harness=HarnessId.PI,
+                prompt="hello",
+                permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+            ),
         )
-        assert outcome.error != "pi_rpc_no_response_after_initial_prompt"
-    finally:
-        await manager.shutdown()
+
+    await manager.shutdown()
