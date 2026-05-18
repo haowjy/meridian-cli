@@ -62,6 +62,7 @@ def test_spawn_create_dry_run_threads_model_selection_through_prepare_and_launch
 
     assert result.to_wire()["model_selection"] == {
         "requested_token": "gpt55",
+        "selected_model_token": "gpt55",
         "canonical_model_id": "gpt-5.5",
         "harness_provenance": "mars-launch-bundle",
     }

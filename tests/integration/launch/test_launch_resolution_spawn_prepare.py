@@ -77,6 +77,145 @@ def _mock_bundle_without_sandbox_with_codex_tools() -> LaunchBundle:
     )
 
 
+def _mock_bundle_with_opencode_harness_model() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness="opencode",
+            harness_model="openai/gpt-5.5",
+            harness_model_source="candidate-path",
+            harness_model_confidence="high",
+        ),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            approval="auto",
+            sandbox="workspace-write",
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(allowed=(), disallowed=(), mcp=()),
+        skills_metadata=BundleSkillsMetadata(loaded=(), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
+def _mock_bundle_with_claude_native_tool_keys() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(
+            model="claude-sonnet-4-5",
+            model_token="claude-sonnet-4-5",
+            harness="claude",
+        ),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            sandbox="workspace-write",
+            approval="auto",
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(
+            allowed=("Bash(grep -R)", "mcp__github__create_issue"),
+            disallowed=("Write(File)",),
+            mcp=(),
+        ),
+        skills_metadata=BundleSkillsMetadata(loaded=(), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
+def _mock_bundle_with_claude_native_delegation_allow_tools() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(
+            model="claude-sonnet-4-5",
+            model_token="claude-sonnet-4-5",
+            harness="claude",
+        ),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            sandbox="workspace-write",
+            approval="auto",
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(
+            allowed=(
+                "Agent",
+                "TaskCreate",
+                "TaskGet",
+                "TaskList",
+                "TaskOutput",
+                "TaskStop",
+                "TaskUpdate",
+                "mcp__github__create_issue",
+            ),
+            disallowed=(),
+            mcp=(),
+        ),
+        skills_metadata=BundleSkillsMetadata(loaded=(), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
+def _mock_bundle_with_claude_partial_native_delegation_tools() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(
+            model="claude-sonnet-4-5",
+            model_token="claude-sonnet-4-5",
+            harness="claude",
+        ),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            sandbox="workspace-write",
+            approval="auto",
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(
+            allowed=("Agent", "TaskCreate", "mcp__github__create_issue"),
+            disallowed=(),
+            mcp=(),
+        ),
+        skills_metadata=BundleSkillsMetadata(loaded=(), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
+def _mock_bundle_with_claude_no_delegation_policy_tools() -> LaunchBundle:
+    return LaunchBundle(
+        version=1,
+        agent="dev-orchestrator",
+        routing=BundleRouting(
+            model="claude-sonnet-4-5",
+            model_token="claude-sonnet-4-5",
+            harness="claude",
+        ),
+        execution_policy=BundleExecutionPolicy(
+            effort="medium",
+            sandbox="workspace-write",
+            approval="auto",
+        ),
+        prompt_surface=BundlePromptSurface(system_instruction="## Bundle System\nFollow bundle."),
+        scaffold_slots=BundleScaffoldSlots(),
+        tools=BundleTools(allowed=(), disallowed=(), mcp=()),
+        skills_metadata=BundleSkillsMetadata(loaded=(), missing=()),
+        provenance={"model_source": "mars"},
+        warnings=(),
+    )
+
+
 def _force_legacy_profile_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
@@ -242,6 +381,317 @@ def test_spawn_prepare_codex_bundle_tools_do_not_infer_sandbox(
     assert preview.resolved_request.tools is None
     assert preview.binding.permission_config.sandbox == "default"
     assert "--sandbox" not in preview.binding.argv
+
+
+def test_spawn_prepare_bundle_harness_model_routes_to_opencode_command_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="gpt-5.5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_opencode_harness_model(),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-opencode-harness-model",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="gpt-5.5",
+            harness="opencode",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    argv = preview.binding.argv
+    assert "--model" in argv
+    model_flag_index = argv.index("--model")
+    assert argv[model_flag_index + 1] == "openai/gpt-5.5"
+    assert preview.resolved_request.model == "gpt-5.5"
+    assert preview.resolved_request.model_selection_selected_token == "gpt55"
+    assert preview.resolved_request.model_selection_harness_model_id == "openai/gpt-5.5"
+    assert preview.resolved_request.model_selection_harness_model_source == "candidate-path"
+    assert preview.resolved_request.model_selection_harness_model_confidence == "high"
+
+
+def test_direct_rebuild_uses_persisted_harness_model_id_for_opencode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="gpt-5.5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_opencode_harness_model(),
+    )
+
+    prepared = build_launch_context(
+        spawn_id="dry-run-bundle-opencode-persisted",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="gpt-5.5",
+            harness="opencode",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    persisted_request = SpawnRequest.model_validate_json(
+        prepared.resolved_request.model_dump_json()
+    )
+
+    rebuilt = build_launch_context(
+        spawn_id="direct-rebuild-bundle-opencode-persisted",
+        request=persisted_request,
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.DIRECT,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=False,
+    )
+
+    argv = rebuilt.binding.argv
+    assert "--model" in argv
+    model_flag_index = argv.index("--model")
+    assert argv[model_flag_index + 1] == "openai/gpt-5.5"
+    assert rebuilt.resolved_request.model == "gpt-5.5"
+    assert rebuilt.model_selection is not None
+    assert rebuilt.model_selection.selected_model_token == "gpt55"
+    assert rebuilt.model_selection.harness_model_id == "openai/gpt-5.5"
+    assert rebuilt.model_selection.harness_model_source == "candidate-path"
+    assert rebuilt.model_selection.harness_model_confidence == "high"
+
+
+def test_spawn_prepare_bundle_claude_preserves_native_tool_keys_in_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="claude-sonnet-4-5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_claude_native_tool_keys(),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-claude-native-tools",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    allowed_flag_index = preview.binding.argv.index("--allowedTools")
+    assert (
+        preview.binding.argv[allowed_flag_index + 1]
+        == "Bash(grep -R),mcp__github__create_issue"
+    )
+    disallowed_flag_index = preview.binding.argv.index("--disallowedTools")
+    assert "Write(File)" in preview.binding.argv[disallowed_flag_index + 1]
+
+
+def test_spawn_prepare_bundle_claude_skips_abstract_nested_deny_synthesis(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="claude-sonnet-4-5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_claude_native_delegation_allow_tools(),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-claude-native-delegation-tools",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.resolved_request.tools == {
+        "Agent": "allow",
+        "TaskCreate": "allow",
+        "TaskGet": "allow",
+        "TaskList": "allow",
+        "TaskOutput": "allow",
+        "TaskStop": "allow",
+        "TaskUpdate": "allow",
+        "mcp__github__create_issue": "allow",
+    }
+    assert "agent" not in preview.resolved_request.tools
+    assert "task" not in preview.resolved_request.tools
+    allowed_flag_index = preview.binding.argv.index("--allowedTools")
+    assert (
+        preview.binding.argv[allowed_flag_index + 1]
+        == (
+            "Agent,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,"
+            "mcp__github__create_issue"
+        )
+    )
+
+
+def test_spawn_prepare_bundle_claude_partial_delegation_policy_still_applies_fallback_deny(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="claude-sonnet-4-5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_claude_partial_native_delegation_tools(),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-claude-partial-native-delegation-tools",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.resolved_request.tools == {
+        "Agent": "allow",
+        "TaskCreate": "allow",
+        "mcp__github__create_issue": "allow",
+        "TaskGet": "deny",
+        "TaskList": "deny",
+        "TaskOutput": "deny",
+        "TaskStop": "deny",
+        "TaskUpdate": "deny",
+    }
+    disallowed_flag_index = preview.binding.argv.index("--disallowedTools")
+    disallowed = set(preview.binding.argv[disallowed_flag_index + 1].split(","))
+    assert "TaskCreate" not in disallowed
+    assert {"TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate"} <= disallowed
+
+
+def test_spawn_prepare_bundle_claude_without_delegation_policy_applies_fallback_deny(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    write_agent(
+        tmp_path,
+        name="dev-orchestrator",
+        model="claude-sonnet-4-5",
+    )
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _mock_bundle_with_claude_no_delegation_policy_tools(),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-bundle-claude-no-delegation-policy",
+        request=SpawnRequest(
+            prompt="bundle task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+            agent="dev-orchestrator",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.resolved_request.tools == {"*": "allow", "agent": "deny", "task": "deny"}
+    disallowed_flag_index = preview.binding.argv.index("--disallowedTools")
+    disallowed = set(preview.binding.argv[disallowed_flag_index + 1].split(","))
+    assert {
+        "Agent",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+    } <= disallowed
 
 
 @pytest.mark.parametrize(

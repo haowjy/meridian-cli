@@ -118,8 +118,12 @@ class SpawnRequest(BaseModel):
     # Resolved metadata (computed at prepare time; NOT used by executors for composition)
     skill_paths: tuple[str, ...] = ()
     model_selection_requested_token: str | None = None
+    model_selection_selected_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    model_selection_harness_model_id: str | None = None
+    model_selection_harness_model_source: str | None = None
+    model_selection_harness_model_confidence: str | None = None
     fallback_chain: tuple[dict[str, object], ...] = ()
     terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.

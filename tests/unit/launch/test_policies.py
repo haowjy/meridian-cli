@@ -100,13 +100,24 @@ def _default_bundle_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
 def _bundle_for_tests(
     *,
     model: str = "gpt-5.4",
+    model_token: str | None = None,
     harness: str = "codex",
+    harness_model: str | None = None,
+    harness_model_source: str | None = None,
+    harness_model_confidence: str | None = None,
     native_config: dict[str, object] | None = None,
 ) -> LaunchBundle:
     return LaunchBundle(
         version=1,
         agent="reviewer",
-        routing=BundleRouting(model=model, model_token=model, harness=harness),
+        routing=BundleRouting(
+            model=model,
+            model_token=model_token or model,
+            harness=harness,
+            harness_model=harness_model,
+            harness_model_source=harness_model_source,
+            harness_model_confidence=harness_model_confidence,
+        ),
         execution_policy=BundleExecutionPolicy(
             effort="high",
             approval="auto",
@@ -246,10 +257,31 @@ def test_parse_launch_bundle_preserves_native_config_and_mixed_tools() -> None:
     assert bundle.tools.disallowed == ("Write",)
     assert bundle.tools.mcp == ("github=gh",)
     assert bundle.tools.to_tools_field() == {
-        "bash": "allow",
-        "read": "allow",
-        "write": "deny",
+        "Bash": "allow",
+        "Read": "allow",
+        "Write": "deny",
     }
+
+
+def test_parse_launch_bundle_preserves_routing_harness_model_fields() -> None:
+    payload = json.loads(_bundle_payload_with_slots({}))
+    payload["routing"] = {
+        "model": "gpt-5.5",
+        "model_token": "gpt55",
+        "harness": "opencode",
+        "harness_model": "openai/gpt-5.5",
+        "harness_model_source": "candidate-path",
+        "harness_model_confidence": "high",
+    }
+
+    bundle = parse_launch_bundle(json.dumps(payload))
+
+    assert bundle.routing.model == "gpt-5.5"
+    assert bundle.routing.model_token == "gpt55"
+    assert bundle.routing.harness == "opencode"
+    assert bundle.routing.harness_model == "openai/gpt-5.5"
+    assert bundle.routing.harness_model_source == "candidate-path"
+    assert bundle.routing.harness_model_confidence == "high"
 
 
 def test_parse_launch_bundle_rejects_newer_schema_version() -> None:
@@ -575,7 +607,44 @@ def test_resolve_launch_policy_bundle_non_codex_keeps_tools_projection(
     )
 
     assert policy.harness == HarnessId.CLAUDE
-    assert policy.tools == {"bash": "allow", "read": "allow", "write": "deny"}
+    assert policy.tools == {"Bash": "allow", "Read": "allow", "Write": "deny"}
+
+
+def test_resolve_launch_policy_bundle_preserves_mars_tool_keys_without_normalizing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(
+            harness="claude",
+            model="claude-sonnet-4-5",
+        ).model_copy(
+            update={
+                "tools": BundleTools(
+                    allowed=("Bash(grep -R)", "mcp__github__create_issue"),
+                    disallowed=("Write(File)",),
+                )
+            }
+        ),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.tools == {
+        "Bash(grep -R)": "allow",
+        "mcp__github__create_issue": "allow",
+        "Write(File)": "deny",
+    }
 
 
 def test_resolve_launch_policy_bundle_overlays_explicit_execution_policy_fields(
@@ -618,6 +687,145 @@ def test_resolve_launch_policy_bundle_overlays_explicit_execution_policy_fields(
     assert policy.execution_policy.autocompact == 9000
     assert policy.execution_policy.autocompact_pct == 33
     assert policy.execution_policy.timeout == 18.5
+
+
+def test_resolve_launch_policy_bundle_execution_policy_uses_config_defaults_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests().model_copy(
+            update={
+                "execution_policy": BundleExecutionPolicy(),
+            }
+        ),
+    )
+    config = MeridianConfig.model_validate(
+        {
+            "primary": {
+                "effort": "high",
+                "sandbox": "read-only",
+                "approval": "confirm",
+                "autocompact_pct": 41,
+                "timeout": 75.0,
+            }
+        }
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(
+                    agent="reviewer",
+                    approval="auto",
+                ),
+                RuntimeOverrides(
+                    effort="low",
+                    approval="confirm",
+                ),
+            ),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.execution_policy.effort == "low"
+    assert policy.execution_policy.sandbox == "read-only"
+    assert policy.execution_policy.approval == "auto"
+    assert policy.execution_policy.autocompact_pct == 41
+    assert policy.execution_policy.timeout == 75.0
+
+
+def test_resolve_launch_policy_bundle_execution_policy_overrides_config_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests().model_copy(
+            update={
+                "execution_policy": BundleExecutionPolicy(
+                    effort="medium",
+                    sandbox="workspace-write",
+                    approval="auto",
+                    autocompact=62000,
+                    autocompact_pct=52,
+                    timeout=42.0,
+                ),
+            }
+        ),
+    )
+    config = MeridianConfig.model_validate(
+        {
+            "primary": {
+                "effort": "high",
+                "sandbox": "read-only",
+                "approval": "confirm",
+                "autocompact": 18000,
+                "autocompact_pct": 11,
+                "timeout": 9.5,
+            }
+        }
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.execution_policy.effort == "medium"
+    assert policy.execution_policy.sandbox == "workspace-write"
+    assert policy.execution_policy.approval == "auto"
+    assert policy.execution_policy.autocompact == 62000
+    assert policy.execution_policy.autocompact_pct == 52
+    assert policy.execution_policy.timeout == 42.0
+
+
+def test_resolve_launch_policy_bundle_uses_harness_model_for_adapter_id_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.invoke_mars_build_launch_bundle",
+        lambda **_: _bundle_for_tests(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness="opencode",
+            harness_model=" openai/gpt-5.5 ",
+            harness_model_source=" candidate-path ",
+            harness_model_confidence=" high ",
+        ),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.model == "gpt-5.5"
+    assert policy.routing.model == "gpt55"
+    assert policy.model_selection is not None
+    assert policy.model_selection.selected_model_token == "gpt55"
+    assert policy.model_selection.canonical_model_id == "gpt-5.5"
+    assert policy.model_selection.harness_model_id == "openai/gpt-5.5"
+    assert policy.model_selection.harness_model_source == "candidate-path"
+    assert policy.model_selection.harness_model_confidence == "high"
 
 
 def test_resolve_launch_policy_bundle_native_config_flags_are_sorted(

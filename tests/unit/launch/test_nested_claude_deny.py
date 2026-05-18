@@ -11,6 +11,7 @@ from meridian.lib.launch.mars_bundle import MarsLaunchBundleUnavailableError
 from meridian.lib.launch.permissions import (
     CLAUDE_NATIVE_DELEGATION_TOOLS,
     compute_nested_claude_deny_additions,
+    tools_field_declares_claude_delegation_policy,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
 
@@ -112,6 +113,36 @@ def test_compute_nested_deny_excludes_opted_out_agent_tool() -> None:
     )
 
     assert set(deny_additions) == {"task"}
+
+
+def test_compute_nested_deny_excludes_case_variant_opted_out_agent_tool() -> None:
+    deny_additions = compute_nested_claude_deny_additions(
+        profile_tools={"Agent": "allow"},
+        existing_tools=None,
+    )
+
+    assert set(deny_additions) == {"task"}
+
+
+def test_tools_field_declares_claude_delegation_policy_for_abstract_keys() -> None:
+    assert tools_field_declares_claude_delegation_policy(
+        {"agent": "allow", "task": "deny"}
+    )
+
+
+def test_tools_field_declares_claude_delegation_policy_for_full_native_keys() -> None:
+    native_tools = {tool: "allow" for tool in CLAUDE_NATIVE_DELEGATION_TOOLS}
+    assert tools_field_declares_claude_delegation_policy(native_tools)
+
+
+def test_tools_field_declares_claude_delegation_policy_rejects_partial_native_keys() -> None:
+    assert not tools_field_declares_claude_delegation_policy(
+        {"Agent": "allow", "TaskCreate": "allow"}
+    )
+
+
+def test_tools_field_ignores_non_delegation_keys() -> None:
+    assert not tools_field_declares_claude_delegation_policy({"bash": "allow"})
 
 
 def test_primary_surface_claude_does_not_add_implicit_deny(
@@ -241,6 +272,71 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
     }
     allowed_flag_index = context.binding.argv.index("--allowedTools")
     assert context.binding.argv[allowed_flag_index + 1] == "Bash"
+
+
+def test_adhoc_allowed_tools_preserves_native_key_casing_in_claude_flags(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _ = monkeypatch
+    request = SpawnRequest(
+        prompt="test",
+        harness=HarnessId.CLAUDE.value,
+        tools={"*": "deny", "mcp__github__create_issue": "allow"},
+    )
+
+    context = build_launch_context(
+        spawn_id="p-adhoc-native-key",
+        request=request,
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    allowed_flag_index = context.binding.argv.index("--allowedTools")
+    assert context.binding.argv[allowed_flag_index + 1] == "mcp__github__create_issue"
+
+
+def test_adhoc_case_varied_native_task_key_triggers_native_task_deny_expansion(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _ = monkeypatch
+    request = SpawnRequest(
+        prompt="test",
+        harness=HarnessId.CLAUDE.value,
+        tools={"*": "allow", "taskcreate": "allow"},
+    )
+
+    context = build_launch_context(
+        spawn_id="p-adhoc-native-task-lower",
+        request=request,
+        runtime=_build_launch_runtime(
+            tmp_path=tmp_path,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert context.resolved_request.tools == {
+        "*": "allow",
+        "taskcreate": "allow",
+        "agent": "deny",
+        "TaskGet": "deny",
+        "TaskList": "deny",
+        "TaskOutput": "deny",
+        "TaskStop": "deny",
+        "TaskUpdate": "deny",
+    }
+    assert "task" not in context.resolved_request.tools
+    allowed_flag_index = context.binding.argv.index("--allowedTools")
+    assert context.binding.argv[allowed_flag_index + 1] == "TaskCreate"
+    disallowed_flag_index = context.binding.argv.index("--disallowedTools")
+    assert "TaskCreate" not in context.binding.argv[disallowed_flag_index + 1].split(",")
 
 
 def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:

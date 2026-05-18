@@ -78,6 +78,14 @@ def tools_field_to_map(tools: ToolsField | None) -> dict[str, ToolAction]:
     return dict(tools)
 
 
+def _split_capability_key(raw_key: str) -> tuple[str, str | None]:
+    key = raw_key.strip()
+    scoped_start = key.find("(")
+    if scoped_start <= 0 or not key.endswith(")"):
+        return key.lower(), None
+    return key[:scoped_start].strip().lower(), key[scoped_start + 1 : -1]
+
+
 def resolve_tool_action(
     *,
     tools: ToolsField | None,
@@ -94,4 +102,8 @@ def resolve_tool_action(
     rules = tools_field_to_map(tools)
     if normalized_capability in rules:
         return rules[normalized_capability]
+    for raw_key, action in rules.items():
+        key_capability, key_scope = _split_capability_key(raw_key)
+        if key_scope is None and key_capability == normalized_capability:
+            return action
     return rules.get("*")

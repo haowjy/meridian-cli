@@ -70,6 +70,7 @@ from .permissions import (
     CLAUDE_NATIVE_DELEGATION_TOOLS,
     resolve_nested_claude_permission_request,
     resolve_permission_pipeline,
+    tools_field_declares_claude_delegation_policy,
 )
 from .policies import (
     ModelSelectionContext,
@@ -264,6 +265,7 @@ class PreparedLaunchSurface:
     composition_warnings: tuple[CompositionWarning, ...]
     content: PreparedLaunchContent
     runtime_seeds: PreparedLaunchRuntimeSeeds
+    apply_nested_claude_deny: bool
     profile_tools_for_nested_deny: ToolsField | None
     has_profile_for_nested_deny: bool
     model_selection: ModelSelectionContext | None
@@ -1231,14 +1233,22 @@ def prepare_launch_surface(
     agent_metadata = dict(request.agent_metadata)
     model_selection_update: dict[str, str | None] = {
         "model_selection_requested_token": None,
+        "model_selection_selected_token": None,
         "model_selection_canonical_id": None,
         "model_selection_harness_provenance": None,
+        "model_selection_harness_model_id": None,
+        "model_selection_harness_model_source": None,
+        "model_selection_harness_model_confidence": None,
     }
     if model_selection is not None:
         model_selection_update = {
             "model_selection_requested_token": model_selection.requested_token,
+            "model_selection_selected_token": model_selection.selected_model_token,
             "model_selection_canonical_id": model_selection.canonical_model_id,
             "model_selection_harness_provenance": model_selection.harness_provenance,
+            "model_selection_harness_model_id": model_selection.harness_model_id,
+            "model_selection_harness_model_source": model_selection.harness_model_source,
+            "model_selection_harness_model_confidence": model_selection.harness_model_confidence,
         }
     bundle_agent_name = (
         (policies.launch_bundle.agent or "").strip()
@@ -1300,6 +1310,10 @@ def prepare_launch_surface(
         else profile.tools if profile is not None else request.tools
     )
     resolved_extra_args = (*final_passthrough_args, *policies.bundle_extra_args)
+    bundle_declares_claude_delegation_policy = (
+        policies.launch_bundle is not None
+        and tools_field_declares_claude_delegation_policy(resolved_tools)
+    )
 
     resolved_request = request.model_copy(
         update={
@@ -1345,6 +1359,9 @@ def prepare_launch_surface(
             seed_harness_session_id=seed_harness_session_id,
             seed_session_args=seed_session_args,
         ),
+        apply_nested_claude_deny=(
+            policies.launch_bundle is None or not bundle_declares_claude_delegation_policy
+        ),
         profile_tools_for_nested_deny=profile_tools_for_nested_deny,
         has_profile_for_nested_deny=has_profile,
         model_selection=model_selection,
@@ -1375,6 +1392,51 @@ def _build_direct_surface(
         request.reference_files,
         base_dir=resolved_project_root,
     )
+    persisted_requested_token = (request.model_selection_requested_token or "").strip()
+    persisted_selected_token = (request.model_selection_selected_token or "").strip()
+    persisted_canonical_id = (request.model_selection_canonical_id or "").strip()
+    persisted_harness_provenance = (request.model_selection_harness_provenance or "").strip()
+    persisted_harness_model_id = (request.model_selection_harness_model_id or "").strip() or None
+    persisted_harness_model_source = (
+        (request.model_selection_harness_model_source or "").strip() or None
+    )
+    persisted_harness_model_confidence = (
+        (request.model_selection_harness_model_confidence or "").strip() or None
+    )
+    has_persisted_model_selection = any(
+        (
+            persisted_requested_token,
+            persisted_selected_token,
+            persisted_canonical_id,
+            persisted_harness_provenance,
+            persisted_harness_model_id,
+            persisted_harness_model_source,
+            persisted_harness_model_confidence,
+        )
+    )
+    persisted_model = (request.model or "").strip()
+    model_selection: ModelSelectionContext | None = None
+    if has_persisted_model_selection:
+        requested_token = persisted_requested_token or persisted_model
+        selected_model_token = (
+            persisted_selected_token
+            or requested_token
+            or persisted_canonical_id
+            or persisted_model
+        )
+        canonical_model_id = persisted_canonical_id or persisted_model or selected_model_token
+        if selected_model_token and canonical_model_id:
+            model_selection = ModelSelectionContext(
+                requested_token=requested_token or canonical_model_id,
+                selected_model_token=selected_model_token,
+                canonical_model_id=canonical_model_id,
+                mars_provided_harness=None,
+                resolved_entry=None,
+                harness_provenance=persisted_harness_provenance,
+                harness_model_id=persisted_harness_model_id,
+                harness_model_source=persisted_harness_model_source,
+                harness_model_confidence=persisted_harness_model_confidence,
+            )
 
     return PreparedLaunchSurface(
         request=request,
@@ -1396,9 +1458,10 @@ def _build_direct_surface(
             ),
             seed_session_args=(),
         ),
+        apply_nested_claude_deny=False,
         profile_tools_for_nested_deny=None,
         has_profile_for_nested_deny=False,
-        model_selection=None,
+        model_selection=model_selection,
         alias_catalog=None,
         launch_request=request,
     )
@@ -1444,6 +1507,7 @@ def bind_launch_context(
     loaded_references = prepared.loaded_references
     profile_tools_for_nested_deny = prepared.profile_tools_for_nested_deny
     has_profile_for_nested_deny = prepared.has_profile_for_nested_deny
+    apply_nested_claude_deny = prepared.apply_nested_claude_deny
     projected_content = prepared.projected_content
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
@@ -1541,6 +1605,7 @@ def bind_launch_context(
     if (
         runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
         and harness.id == HarnessId.CLAUDE
+        and apply_nested_claude_deny
         and CLAUDE_NATIVE_DELEGATION_TOOLS
     ):
         tools = resolve_nested_claude_permission_request(

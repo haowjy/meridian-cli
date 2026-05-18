@@ -418,10 +418,26 @@ def spawn_create_sync(
             context_from_resolved=tuple(prepared_request.context_from or ()),
             composed_prompt=prepared_request.prompt,
             goal=prepared_goal,
-            model_selection_requested_token=prepared_request.model_selection_requested_token,
-            model_selection_canonical_id=prepared_request.model_selection_canonical_id,
-            model_selection_harness_provenance=(
-                prepared_request.model_selection_harness_provenance
+            model_selection_requested_token=getattr(
+                prepared_request, "model_selection_requested_token", None
+            ),
+            model_selection_selected_token=getattr(
+                prepared_request, "model_selection_selected_token", None
+            ),
+            model_selection_canonical_id=getattr(
+                prepared_request, "model_selection_canonical_id", None
+            ),
+            model_selection_harness_provenance=getattr(
+                prepared_request, "model_selection_harness_provenance", None
+            ),
+            model_selection_harness_model_id=getattr(
+                prepared_request, "model_selection_harness_model_id", None
+            ),
+            model_selection_harness_model_source=getattr(
+                prepared_request, "model_selection_harness_model_source", None
+            ),
+            model_selection_harness_model_confidence=getattr(
+                prepared_request, "model_selection_harness_model_confidence", None
             ),
             fallback_chain=tuple(getattr(prepared_request, "fallback_chain", ()) or ()),
             terminal_surface_mode=(

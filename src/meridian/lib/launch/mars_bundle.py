@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.ops.mars import resolve_mars_executable
-from meridian.lib.tools import ToolAction, ToolsField, normalize_tool_key
+from meridian.lib.tools import ToolAction, ToolsField
 
 SUPPORTED_LAUNCH_BUNDLE_VERSION = 1
 MARS_LAUNCH_BUNDLE_TIMEOUT_SECS = 60
@@ -32,6 +32,9 @@ class BundleRouting(BaseModel):
     model: str
     model_token: str | None = None
     harness: str
+    harness_model: str | None = None
+    harness_model_source: str | None = None
+    harness_model_confidence: str | None = None
 
 
 class BundleExecutionPolicy(BaseModel):
@@ -93,12 +96,17 @@ class BundleTools(BaseModel):
     def to_tools_field(self) -> ToolsField | None:
         rules: dict[str, ToolAction] = {}
         for name in self.allowed:
-            normalized = normalize_tool_key(name, source="mars launch-bundle.tools.allowed")
-            rules[normalized] = "allow"
+            _ensure_nonempty_bundle_tool_key(name, source="mars launch-bundle.tools.allowed")
+            rules[name] = "allow"
         for name in self.disallowed:
-            normalized = normalize_tool_key(name, source="mars launch-bundle.tools.disallowed")
-            rules[normalized] = "deny"
+            _ensure_nonempty_bundle_tool_key(name, source="mars launch-bundle.tools.disallowed")
+            rules[name] = "deny"
         return rules or None
+
+
+def _ensure_nonempty_bundle_tool_key(name: str, *, source: str) -> None:
+    if not name.strip():
+        raise ValueError(f"Invalid tools key for '{source}': key must not be empty.")
 
 
 class BundleSkillsMetadata(BaseModel):

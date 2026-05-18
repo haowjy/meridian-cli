@@ -155,6 +155,10 @@ _CAPABILITY_TO_CLAUDE_TOOLS: dict[str, ClaudeToolList] = {
     "mcp": (),
 }
 
+_CLAUDE_NATIVE_TOOL_CANONICAL_BY_LOWER: dict[str, str] = {
+    tool.lower(): tool for tools in _CAPABILITY_TO_CLAUDE_TOOLS.values() for tool in tools
+}
+
 
 def _dedupe(values: Iterable[str]) -> tuple[str, ...]:
     seen: set[str] = set()
@@ -178,11 +182,25 @@ def _split_key(raw_key: str) -> tuple[str, str | None]:
 
 def _claude_key_for_capability(capability: str) -> ClaudeToolList:
     mapped = _CAPABILITY_TO_CLAUDE_TOOLS.get(capability.lower())
-    if mapped is not None:
-        return mapped
-    if not capability:
+    return mapped or ()
+
+
+def _claude_tools_for_rule_key(raw_key: str) -> tuple[str, ...]:
+    key = raw_key.strip()
+    if not key:
         return ()
-    return (capability[:1].upper() + capability[1:],)
+    capability, scope = _split_key(key)
+    mapped = _claude_key_for_capability(capability)
+    if not mapped:
+        canonical_native = _CLAUDE_NATIVE_TOOL_CANONICAL_BY_LOWER.get(capability)
+        if canonical_native is None:
+            return (key,)
+        if scope is None:
+            return (canonical_native,)
+        return (f"{canonical_native}({scope})",)
+    if scope is None:
+        return mapped
+    return tuple(f"{tool}({scope})" for tool in mapped)
 
 
 def _expand_web_opencode_key(key: str) -> tuple[str, ...]:
@@ -194,13 +212,45 @@ def _expand_web_opencode_key(key: str) -> tuple[str, ...]:
     return (f"websearch({scope})", f"webfetch({scope})")
 
 
+_ABSTRACT_OPENCODE_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "*",
+        "agent",
+        "bash",
+        "edit",
+        "external_directory",
+        "glob",
+        "grep",
+        "list",
+        "mcp",
+        "read",
+        "task",
+        "web",
+        "write",
+    }
+)
+
+
+def _normalize_opencode_permission_key(raw_key: str) -> str:
+    key = raw_key.strip()
+    if not key:
+        return key
+    capability, scope = _split_key(key)
+    if capability not in _ABSTRACT_OPENCODE_CAPABILITIES:
+        return key
+    if scope is None:
+        return capability
+    return f"{capability}({scope})"
+
+
 def compile_tools_to_opencode_permission(tools: ToolsField) -> str:
     """Compile abstract ToolsField to OPENCODE_PERMISSION JSON."""
 
     rules = tools_field_to_map(tools)
     permissions: dict[str, str] = {}
     for raw_key, action in rules.items():
-        for key in _expand_web_opencode_key(raw_key):
+        normalized_key = _normalize_opencode_permission_key(raw_key)
+        for key in _expand_web_opencode_key(normalized_key):
             permissions[key] = action
     return json.dumps(permissions, sort_keys=True, separators=(",", ":"))
 
@@ -222,12 +272,7 @@ def compile_tools_to_claude_flags(tools: ToolsField | None) -> tuple[str, ...]:
     for raw_key, action in rules.items():
         if raw_key == "*" or action not in _ASK_AS_ALLOW:
             continue
-        capability, scope = _split_key(raw_key)
-        mapped = _claude_key_for_capability(capability)
-        if scope is None:
-            allowed.extend(mapped)
-        else:
-            allowed.extend(f"{tool}({scope})" for tool in mapped)
+        allowed.extend(_claude_tools_for_rule_key(raw_key))
 
     if default_action == "deny":
         if not allowed:
@@ -237,12 +282,7 @@ def compile_tools_to_claude_flags(tools: ToolsField | None) -> tuple[str, ...]:
         for raw_key, action in rules.items():
             if raw_key == "*" or action != "deny":
                 continue
-            capability, scope = _split_key(raw_key)
-            mapped = _claude_key_for_capability(capability)
-            if scope is None:
-                disallowed.extend(mapped)
-            else:
-                disallowed.extend(f"{tool}({scope})" for tool in mapped)
+            disallowed.extend(_claude_tools_for_rule_key(raw_key))
 
     deduped_allowed = _dedupe(allowed)
     deduped_disallowed = _dedupe(disallowed)

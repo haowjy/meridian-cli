@@ -157,8 +157,12 @@ class SpawnActionOutput(BaseModel):
     composed_prompt: str | None = None
     goal: str | None = None
     model_selection_requested_token: str | None = None
+    model_selection_selected_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    model_selection_harness_model_id: str | None = None
+    model_selection_harness_model_source: str | None = None
+    model_selection_harness_model_confidence: str | None = None
     fallback_chain: tuple[dict[str, object], ...] = ()
     terminal_surface_mode: str | None = None
     project_root: str | None = None
@@ -244,11 +248,28 @@ class SpawnActionOutput(BaseModel):
             if goal_contract_preview is not None:
                 wire["goal_contract_preview"] = goal_contract_preview
             if self.model_selection_requested_token is not None:
-                wire["model_selection"] = {
+                model_selection_wire = {
                     "requested_token": self.model_selection_requested_token,
                     "canonical_model_id": self.model_selection_canonical_id,
                     "harness_provenance": self.model_selection_harness_provenance,
                 }
+                if self.model_selection_selected_token is not None:
+                    model_selection_wire["selected_model_token"] = (
+                        self.model_selection_selected_token
+                    )
+                if self.model_selection_harness_model_id is not None:
+                    model_selection_wire["harness_model_id"] = (
+                        self.model_selection_harness_model_id
+                    )
+                if self.model_selection_harness_model_source is not None:
+                    model_selection_wire["harness_model_source"] = (
+                        self.model_selection_harness_model_source
+                    )
+                if self.model_selection_harness_model_confidence is not None:
+                    model_selection_wire["harness_model_confidence"] = (
+                        self.model_selection_harness_model_confidence
+                    )
+                wire["model_selection"] = model_selection_wire
             if self.fallback_chain:
                 wire["fallback_chain"] = list(self.fallback_chain)
             if self.terminal_surface_mode is not None:

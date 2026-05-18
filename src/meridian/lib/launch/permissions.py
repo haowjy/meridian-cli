@@ -39,12 +39,46 @@ and policy enforcement. Profiles can opt out per tool via `tools:`.
 
 
 _NESTED_CLAUDE_DELEGATION_CAPABILITIES: frozenset[str] = frozenset({"agent", "task"})
+_CLAUDE_NATIVE_DELEGATION_TOOL_KEYS: frozenset[str] = frozenset(
+    tool.lower() for tool in CLAUDE_NATIVE_DELEGATION_TOOLS
+)
+_CLAUDE_NATIVE_TASK_TOOL_KEYS: frozenset[str] = frozenset(
+    tool.lower() for tool in CLAUDE_NATIVE_DELEGATION_TOOLS if tool != "Agent"
+)
+_CLAUDE_NATIVE_TASK_TOOLS: tuple[str, ...] = tuple(
+    sorted(tool for tool in CLAUDE_NATIVE_DELEGATION_TOOLS if tool != "Agent")
+)
 
 
 def _resolve_opencode_override(*, tools: ToolsField | None) -> str | None:
     if tools is None:
         return None
     return compile_tools_to_opencode_permission(tools)
+
+
+def _tool_capability(raw_key: str) -> str:
+    key = raw_key.strip()
+    scoped_start = key.find("(")
+    if scoped_start <= 0 or not key.endswith(")"):
+        return key.lower()
+    return key[:scoped_start].strip().lower()
+
+
+def tools_field_declares_claude_delegation_policy(tools: ToolsField | None) -> bool:
+    """Whether tools fully declare policy for both Claude delegation classes."""
+
+    if tools is None:
+        return False
+
+    declared_keys = {_tool_capability(raw_key) for raw_key in tools_field_to_map(tools)}
+    if not declared_keys:
+        return False
+
+    has_agent_coverage = "agent" in declared_keys
+    has_task_coverage = "task" in declared_keys or (
+        _CLAUDE_NATIVE_TASK_TOOL_KEYS.issubset(declared_keys)
+    )
+    return has_agent_coverage and has_task_coverage
 
 
 def compute_nested_claude_deny_additions(
@@ -92,8 +126,20 @@ def _apply_nested_claude_denies(
     rules = tools_field_to_map(tools)
     if not rules:
         rules["*"] = "allow"
+    declared_capabilities = {_tool_capability(raw_key) for raw_key in rules}
+    has_native_task_keys = any(
+        capability in _CLAUDE_NATIVE_TASK_TOOL_KEYS for capability in declared_capabilities
+    )
     for capability in denied_capabilities:
+        if capability == "task" and has_native_task_keys:
+            for task_tool in _CLAUDE_NATIVE_TASK_TOOLS:
+                if task_tool.lower() in declared_capabilities:
+                    continue
+                rules[task_tool] = "deny"
+                declared_capabilities.add(task_tool.lower())
+            continue
         rules[capability] = "deny"
+        declared_capabilities.add(capability)
     return rules
 
 
@@ -148,4 +194,5 @@ __all__ = [
     "compute_nested_claude_deny_additions",
     "resolve_nested_claude_permission_request",
     "resolve_permission_pipeline",
+    "tools_field_declares_claude_delegation_policy",
 ]

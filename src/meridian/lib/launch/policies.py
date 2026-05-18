@@ -73,6 +73,8 @@ class ModelSelectionContext:
     resolved_entry: AliasEntry | None
     harness_provenance: str
     harness_model_id: str | None = None
+    harness_model_source: str | None = None
+    harness_model_confidence: str | None = None
 
 
 @dataclass(frozen=True)
@@ -279,6 +281,7 @@ def _resolve_bundle_execution_policy(
     bundle: LaunchBundle,
 ) -> ResolvedExecutionPolicy:
     supported_fields = surface.supported_execution_policy_fields
+    config_defaults = surface.config_overrides.execution_policy_scope(supported_fields)
     bundle_defaults = RuntimeOverrides(
         effort=bundle.execution_policy.effort,
         sandbox=bundle.execution_policy.sandbox,
@@ -291,6 +294,7 @@ def _resolve_bundle_execution_policy(
         surface.cli_overrides.execution_policy_scope(supported_fields),
         surface.env_overrides.execution_policy_scope(supported_fields),
         bundle_defaults,
+        config_defaults,
     )
     return ResolvedExecutionPolicy(
         effort=resolved.effort,
@@ -382,6 +386,11 @@ def _resolve_mars_bundle_policy(
     bundle_tools = bundle.tools.to_tools_field()
     if harness_id is HarnessId.CODEX and bundle_tools is not None:
         bundle_tools = None
+    harness_model_id = (bundle.routing.harness_model or "").strip() or None
+    harness_model_source = (bundle.routing.harness_model_source or "").strip() or None
+    harness_model_confidence = (
+        (bundle.routing.harness_model_confidence or "").strip() or None
+    )
 
     return ResolvedLaunchPolicy(
         profile=None,
@@ -406,7 +415,9 @@ def _resolve_mars_bundle_policy(
             mars_provided_harness=None,
             resolved_entry=None,
             harness_provenance="mars-launch-bundle",
-            harness_model_id=None,
+            harness_model_id=harness_model_id,
+            harness_model_source=harness_model_source,
+            harness_model_confidence=harness_model_confidence,
         ),
         warnings=tuple(warning_entries),
         alias_catalog=None,

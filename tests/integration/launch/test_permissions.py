@@ -76,6 +76,24 @@ def test_opencode_tools_map_normalizes_and_sets_explicit_override() -> None:
     }
 
 
+def test_opencode_tools_map_normalizes_known_scoped_capability_casing() -> None:
+    normalized = json.loads(
+        compile_tools_to_opencode_permission(
+            {
+                "Bash(git status)": "allow",
+                "Read": "allow",
+                "mcp__github__create_issue": "deny",
+            }
+        )
+    )
+
+    assert normalized == {
+        "bash(git status)": "allow",
+        "read": "allow",
+        "mcp__github__create_issue": "deny",
+    }
+
+
 def test_opencode_deny_defaults_and_claude_tool_projection() -> None:
     normalized = json.loads(
         compile_tools_to_opencode_permission(
@@ -144,6 +162,21 @@ def test_claude_tools_projection_emits_mixed_allow_and_deny_flags() -> None:
         "Bash,Bash(meridian spawn *)",
         "--disallowedTools",
         "Agent,Edit,Write",
+    )
+
+
+def test_claude_tools_projection_canonicalizes_native_case_variants() -> None:
+    _, resolver = resolve_permission_pipeline(
+        sandbox="workspace-write",
+        tools={
+            "taskcreate(Meridian Spawn *)": "allow",
+            "mcp__github__create_issue": "allow",
+        },
+    )
+
+    assert resolve_permission_flags(resolver, HarnessId.CLAUDE) == (
+        "--allowedTools",
+        "TaskCreate(Meridian Spawn *),mcp__github__create_issue",
     )
 
 
