@@ -130,7 +130,7 @@ def test_run_harness_process_writes_opencode_system_field_primary_projection_man
         request=SpawnRequest(
             prompt=f"{harness_id.value} primary prompt",
             prompt_is_composed=False,
-            model="gemini-2.5-pro",
+            model="kimi-k2.6",
             harness=harness_id.value,
             extra_args=(f"--append-system-prompt={harness_id.value} passthrough system prompt",),
             session=SessionRequest(
@@ -196,7 +196,7 @@ def test_run_harness_process_opencode_primary_routes_to_managed_path(
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="gemini-2.5-pro",
+        model="kimi-k2.6",
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
             continue_chat_id="c-opencode",
@@ -259,7 +259,7 @@ def test_run_harness_process_opencode_managed_attach_uses_control_root_with_dist
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="gemini-2.5-pro",
+        model="kimi-k2.6",
         execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
@@ -321,7 +321,7 @@ def test_run_harness_process_opencode_fork_uses_managed_path(
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="gemini-2.5-pro",
+        model="kimi-k2.6",
         session=SessionRequest(
             requested_harness_session_id="source-session",
             continue_chat_id="c17",
@@ -376,7 +376,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
-        model="gemini-2.5-pro",
+        model="kimi-k2.6",
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
             continue_chat_id="c-opencode",
@@ -482,7 +482,7 @@ def test_opencode_non_interactive_projection_includes_variant_from_effort(
         request=SpawnRequest(
             prompt="run task",
             prompt_is_composed=False,
-            model="gemini-2.5-pro",
+            model="kimi-k2.6",
             harness=HarnessId.OPENCODE.value,
             execution_policy=ResolvedExecutionPolicy(effort="medium"),
         ),
@@ -510,14 +510,14 @@ def test_opencode_streaming_logs_effort_warning_without_failure(
     caplog.set_level("DEBUG")
     payload = project_opencode_spec_to_session_payload(
         ResolvedLaunchSpec(
-            model="gemini-2.5-pro",
+            model="kimi-k2.6",
             effort="medium",
             permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
         )
     )
 
-    assert payload["model"] == "gemini-2.5-pro"
-    assert payload["modelID"] == "gemini-2.5-pro"
+    assert payload["model"] == "kimi-k2.6"
+    assert payload["modelID"] == "kimi-k2.6"
     assert "effort" not in payload
     assert (
         "OpenCode streaming does not support effort override; ignoring effort=medium"

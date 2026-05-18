@@ -242,7 +242,7 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         request=SpawnRequest(
             prompt="task prompt",
             prompt_is_composed=False,
-            model="gemini-2.5-pro",
+            model="kimi-k2.6",
             harness="opencode",
             reference_files=(file_ref.as_posix(), dir_ref.as_posix()),
         ),
@@ -840,7 +840,7 @@ def test_direct_rebuild_preserves_claude_abstract_delegation_fallback_deny(
     ("harness", "model"),
     [
         ("codex", "gpt-5.4"),
-        ("opencode", "gemini-2.5-pro"),
+        ("opencode", "kimi-k2.6"),
     ],
 )
 def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_prompt(

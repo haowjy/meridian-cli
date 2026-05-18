@@ -18,6 +18,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Mars launch-bundle routing now accepts optional harness-specific model IDs; Meridian keeps canonical `routing.model`/`model_token` for provenance while passing `routing.harness_model` to harness adapters when present.
 - Mars-provided bundle tool keys are now preserved as-is in projection (no Meridian key renormalization).
+
+- OpenCode default model visibility/routing patterns now use `deepseek*`, `kimi*`, `qwen*`, and `opencode-go/*`; Meridian docs/fixtures no longer advertise a dedicated OpenCode family alias.
 - Nested spawn reads now apply read-only stale detection after reconciliation when `MERIDIAN_DEPTH>0`: stale rows surface as synthetic terminal (`runner_exit_*`, `stale_nested_read`, `stale_nested_read_no_pid`) without writing reconciler orphan states to disk.
 - Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; stderr remains debug only; primary TUI no longer shows raw lifecycle JSON; no lifecycle JSON leaks to TUI or stderr.
 - Primary Pi session identity now comes from flat `PI_CODING_AGENT_SESSION_DIR/*.jsonl` scanning with first-line JSON parse, cwd/time-window disambiguation, and expected-id suppression; `primary_meta.json` now records `harness_session_discovery` plus `harness_session_discovery_detail` so continue/fork errors can distinguish never-created vs discovery-failed vs legacy empty-id cases.
@@ -91,6 +93,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Unnamed duplicate builtin hooks now synthesize stable identity names, so multiple `git-autosync` remotes no longer override each other.
 - Git subprocess seams strip inherited repo-scoped `GIT_*` environment before invoking git. Worktree operations and `git-autosync` no longer risk retargeting commands into the parent checkout when launched from a git hook or git-managed process.
+
 
 
 

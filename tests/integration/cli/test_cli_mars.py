@@ -156,3 +156,21 @@ def test_main_mars_honors_explicit_text_in_agent_mode(
     assert exc_info.value.code == 0
     assert captured["args"] == ("list",)
     assert captured["output_format"] == "text"
+
+
+def test_parse_mars_passthrough_applies_hidden_alias_exclude_for_models_list() -> None:
+    request = mars_passthrough.parse_mars_passthrough(
+        ["models", "list"],
+        executable="/usr/bin/mars",
+    )
+
+    assert request.mars_args[-2:] == ("--exclude", "gemini*")
+
+
+def test_parse_mars_passthrough_respects_explicit_exclude_for_models_list() -> None:
+    request = mars_passthrough.parse_mars_passthrough(
+        ["models", "list", "--exclude", "qwen*"],
+        executable="/usr/bin/mars",
+    )
+
+    assert request.mars_args == ("models", "list", "--exclude", "qwen*")

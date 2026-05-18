@@ -179,7 +179,7 @@ model = "gpt-5.3-codex"
 [harness]
 claude = "claude-opus-4-6"
 codex = "gpt-5.3-codex"
-opencode = "gemini-3.1-pro"
+opencode = "opencode-go/kimi-k2.6"
 
 [output]
 show = ["lifecycle", "error"]
@@ -403,7 +403,7 @@ When `source = "git"`, Meridian clones the remote into a local cache and resolve
 
 `meridian mars models list` shows the current model catalog. Use `--all` to include hidden/superseded models, or `--show-superseded` to see older lineage variants.
 
-Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) auto-resolve to the latest model per family. The default list filters aggressively:
+Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `opencode`) auto-resolve to the latest model per family. The default list filters aggressively:
 
 - Date-suffixed variants hidden when base model exists
 - Superseded models hidden when a newer lineage successor exists

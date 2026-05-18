@@ -12,7 +12,7 @@ wait_minutes = 15.0
 [harness]
 claude = "claude-sonnet-4-6"
 codex = "gpt-5.3-codex"
-opencode = "gemini-3.1-pro"
+opencode = "opencode-go/kimi-k2.6"
 
 [primary]
 autocompact = 61000

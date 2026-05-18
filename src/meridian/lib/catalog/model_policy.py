@@ -19,7 +19,6 @@ class ModelVisibilityConfig(BaseModel):
     exclude: tuple[str, ...] = (
         "*-latest",
         "*-deep-research",
-        "gemini-live-*",
         "o1*",
         "o3*",
         "o4*",
@@ -33,7 +32,7 @@ class ModelVisibilityConfig(BaseModel):
 DEFAULT_HARNESS_PATTERNS: dict[HarnessId, tuple[str, ...]] = {
     HarnessId.CLAUDE: ("claude-*", "opus*", "sonnet*", "haiku*"),
     HarnessId.CODEX: ("gpt-*", "o1*", "o3*", "o4*", "codex*"),
-    HarnessId.OPENCODE: ("gemini*",),
+    HarnessId.OPENCODE: ("deepseek*", "kimi*", "qwen*", "opencode-go/*"),
 }
 
 DEFAULT_MODEL_VISIBILITY = ModelVisibilityConfig()

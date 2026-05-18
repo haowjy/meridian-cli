@@ -143,7 +143,7 @@ def test_build_primary_spawn_request_copies_context_from() -> None:
     [
         ("claude-sonnet-4", False),
         ("gpt-5.4", True),
-        ("gemini-2.5-pro", False),
+        ("kimi-k2.6", False),
         ("", False),
     ],
     ids=["claude-model", "codex-model", "opencode-model", "no-model"],
@@ -182,7 +182,7 @@ def test_build_primary_spawn_request_infers_prompt_requirement_from_model(
             "Spawn helper",
         ),
         (
-            "gemini-2.5-pro",
+            "kimi-k2.6",
             "smoke-tester",
             "claude-sonnet-4",
             "verification",
@@ -267,7 +267,7 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     [
         ("claude-sonnet-4", HarnessId.CLAUDE),
         ("gpt-5.4", HarnessId.CODEX),
-        ("gemini-2.5-pro", HarnessId.OPENCODE),
+        ("kimi-k2.6", HarnessId.OPENCODE),
     ],
     ids=["claude", "codex", "opencode"],
 )

@@ -55,10 +55,10 @@ def test_models_list_uses_visibility_rules_and_keeps_aliased_models_visible(
         lambda project_root=None: [
             _model("gpt-5.4"),
             _model(
-                "gemini-3.1-pro",
-                provider="google",
+                "kimi-k2.6",
+                provider="moonshot",
                 harness=HarnessId.OPENCODE,
-                matched_aliases=["gem"],
+                matched_aliases=["opencode"],
             ),
             _model(
                 "claude-expensive",
@@ -77,7 +77,7 @@ def test_models_list_uses_visibility_rules_and_keeps_aliased_models_visible(
 
     output = models_list_sync(ModelsListInput(project_root=project_root.as_posix()))
     model_ids = {str(model.model_id) for model in output.models}
-    assert model_ids == {"gpt-5.4", "gemini-3.1-pro"}
+    assert model_ids == {"gpt-5.4", "kimi-k2.6"}
 
 
 @pytest.mark.parametrize(

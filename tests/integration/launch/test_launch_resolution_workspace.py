@@ -217,7 +217,7 @@ def test_named_workspace_roots_project_through_opencode_launch_context(
         spawn_id="dry-run-opencode-named-workspace",
         request=SpawnRequest(
             prompt="workspace projection",
-            model="gemini-2.5-pro",
+            model="kimi-k2.6",
             harness="opencode",
         ),
         runtime=LaunchRuntime(
@@ -269,7 +269,7 @@ def test_opencode_workspace_projection_merges_parent_env(
         spawn_id="dry-run-opencode-workspace-suppressed",
         request=SpawnRequest(
             prompt="workspace projection",
-            model="gemini-2.5-pro",
+            model="kimi-k2.6",
             harness="opencode",
         ),
         runtime=LaunchRuntime(
