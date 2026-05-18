@@ -31,41 +31,6 @@ class MarsPassthroughResult:
     stderr_text: str = ""
 
 
-def _mars_positionals(args: Sequence[str]) -> tuple[str, ...]:
-    """Return positional Mars args, excluding global flags."""
-    positionals: list[str] = []
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--":
-            break
-        if token == "--root":
-            index += 2
-            continue
-        if token.startswith("--root="):
-            index += 1
-            continue
-        if token.startswith("-"):
-            index += 1
-            continue
-        positionals.append(token)
-        index += 1
-    return tuple(positionals)
-
-
-def mars_applies_hidden_alias_exclude(args: Sequence[str]) -> bool:
-    """Whether Meridian should apply hidden-alias filtering for Mars model listings."""
-    positionals = _mars_positionals(args)
-    if len(positionals) < 2 or positionals[0] != "models" or positionals[1] != "list":
-        return False
-    for token in args:
-        if token in {"--include", "--exclude"}:
-            return False
-        if token.startswith("--include=") or token.startswith("--exclude="):
-            return False
-    return True
-
-
 def mars_requested_json(args: Sequence[str]) -> bool:
     return any(token == "--json" for token in args)
 
@@ -133,8 +98,6 @@ def parse_mars_passthrough(
     """Build an executable Mars passthrough request without side effects."""
 
     mars_args = list(args)
-    if mars_applies_hidden_alias_exclude(mars_args):
-        mars_args.extend(("--exclude", "gemini*"))
     is_sync = mars_subcommand(mars_args) == "sync"
     wants_json = mars_requested_json(mars_args) or output_format == "json"
     if wants_json and not mars_requested_json(mars_args):
