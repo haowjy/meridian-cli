@@ -130,6 +130,15 @@ This applies to **every resolved field independently** — model, harness, appro
 - **Platform coverage is required**: When a change touches paths, process launching, signals, shells, filesystem semantics, locking, or config discovery, explicitly consider Windows behavior up front. Prefer cross-platform libraries and crates over platform-specific implementations. Add or update tests so the intended behavior is clear on Windows, not merely inferred from POSIX-only coverage.
 - **Smoke tests** (`tests/smoke/`): Organized markdown guides for manually testing CLI behavior. Prefer the project-specific scenarios in `tests/smoke/` as the source of truth for what to verify. Run `uv run meridian` to test the CLI in its current state.
 - **Unit tests** (focused): Only for logic that's hard to smoke test — signals, concurrency, security/env sanitization, sync engine algorithms, parsing edge cases. Run with `uv run pytest-llm`.
+
+When writing unit/integration tests for platform-sensitive behavior, make the OS contract explicit:
+
+- Test through project path/env abstractions (`get_user_home()`, `get_home_path()`, `Path`, temp dirs), not hardcoded POSIX paths like `~/.meridian`, `/tmp`, or `:`-joined `PATH`.
+- If the code resolves OS cache/config/data dirs, set the explicit override env var in the test (`MERIDIAN_HOME`, `MARS_CACHE_DIR`, etc.) instead of assuming XDG paths also apply on Windows.
+- When testing executables on `PATH`, create platform-appropriate fake binaries (`.bat`/`.cmd` on Windows, executable shell file on Unix) and preserve/construct `PATH` with `os.pathsep`.
+- Cover separator and root semantics intentionally: Windows drive paths/UNC where relevant, POSIX roots where relevant, and never assert raw string paths unless normalized.
+- For shell/process tests, avoid Unix-only shell syntax unless the test is explicitly POSIX-only and named/documented that way; prefer argv arrays and cross-platform helpers.
+- Before declaring a test “cross-platform,” ask: would this still pass if the runner ignored `HOME`, used `%LOCALAPPDATA%`, required `.exe/.bat` resolution, and used `;` as `PATH` separator?
 - **Linting**: `uv run ruff check .`
 - **Type checking**: `uv run pyright` (must be 0 errors)
 
