@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -225,6 +226,42 @@ def select_harness_model_id(
     return canonical_model_id
 
 
+def _coerce_positive_timeout_seconds(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        timeout = float(value)
+        return timeout if timeout > 0 else None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            timeout = float(normalized)
+        except ValueError:
+            return None
+        return timeout if timeout > 0 else None
+    return None
+
+
+def _resolve_pi_child_wave_timeout_from_config_snapshot(
+    config_snapshot: dict[str, object],
+) -> float | None:
+    raw_seconds = config_snapshot.get("pi_child_wave_timeout_seconds")
+    timeout_seconds = _coerce_positive_timeout_seconds(raw_seconds)
+    if timeout_seconds is not None:
+        return timeout_seconds
+
+    timeouts_section = config_snapshot.get("timeouts")
+    if isinstance(timeouts_section, dict):
+        typed_timeouts_section = cast("dict[str, object]", timeouts_section)
+        section_value = typed_timeouts_section.get("pi_child_wave_timeout_seconds")
+        timeout_seconds = _coerce_positive_timeout_seconds(section_value)
+        if timeout_seconds is not None:
+            return timeout_seconds
+    return None
+
+
 def resolve_pi_notification_timeout_seconds(
     *,
     explicit_timeout_seconds: float | None,
@@ -251,12 +288,35 @@ def resolve_pi_notification_timeout_seconds(
     return float(wait_timeout_seconds)
 
 
+def resolve_pi_child_wave_timeout_seconds(
+    *,
+    explicit_timeout_seconds: float | None,
+    config_snapshot: dict[str, object] | None,
+) -> float:
+    """Resolve Pi tracked-child wave timeout in seconds.
+
+    Preference order:
+    1) Explicit per-spawn override (when provided)
+    2) Configured timeout from launch config snapshot
+    3) Default 300s
+    """
+
+    if explicit_timeout_seconds is not None and explicit_timeout_seconds > 0:
+        return float(explicit_timeout_seconds)
+    if config_snapshot:
+        timeout_from_config = _resolve_pi_child_wave_timeout_from_config_snapshot(config_snapshot)
+        if timeout_from_config is not None:
+            return timeout_from_config
+    return 300.0
+
+
 __all__ = [
     "ResolvedSkills",
     "dedupe_skill_names",
     "format_missing_skills_warning",
     "load_agent_profile_with_fallback",
     "resolve_harness",
+    "resolve_pi_child_wave_timeout_seconds",
     "resolve_pi_notification_timeout_seconds",
     "resolve_profile_path",
     "resolve_skill_paths",

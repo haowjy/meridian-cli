@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
+import time
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator, Sequence
 from io import BufferedWriter
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
@@ -72,6 +74,31 @@ _PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
     "meridian.notification.",
     "meridian.quiescence.",
 )
+_PI_STDERR_LIFECYCLE_ALLOWLIST: Final[frozenset[str]] = frozenset(
+    {
+        "meridian.subspawn.start",
+        "meridian.subspawn.end",
+        "meridian.notification.queued",
+        "meridian.notification.delivered",
+        "meridian.notification.completed",
+        "meridian.notification.failed",
+        "meridian.quiescence.ready",
+    }
+)
+_PI_STDERR_SUBSPAWN_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "meridian.subspawn.start",
+        "meridian.subspawn.end",
+    }
+)
+_PI_STDERR_NOTIFICATION_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "meridian.notification.queued",
+        "meridian.notification.delivered",
+        "meridian.notification.completed",
+        "meridian.notification.failed",
+    }
+)
 _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
     {
         "MERIDIAN_ACTIVE_WORK_ID",
@@ -79,6 +106,12 @@ _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
     }
 )
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
+_PI_CHILD_WAVE_TIMEOUT_MS_ENV: Final[str] = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
+_STDIO_SOURCE_STDOUT: Final[Literal["stdout"]] = "stdout"
+_STDIO_SOURCE_STDERR: Final[Literal["stderr"]] = "stderr"
+_STREAM_LINE_KIND: Final[Literal["line"]] = "line"
+_STREAM_EOF_KIND: Final[Literal["eof"]] = "eof"
+_STREAM_ERROR_KIND: Final[Literal["error"]] = "error"
 
 
 class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -129,6 +162,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._launch_command: tuple[str, ...] = ()
         self._launch_cwd: str | None = None
         self._launch_session_role: str | None = None
+        self._stderr_lifecycle_enabled = False
+        self._events_stream_active = False
 
     @property
     def state(self) -> ConnectionState:
@@ -178,6 +213,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._harness_ready_emitted = False
         self._pending_lifecycle_phase_events = []
         self._launch_session_role = config.pi_session_role
+        self._stderr_lifecycle_enabled = False
+        self._events_stream_active = False
         self._validate_initial_prompt_requirement()
         self._set_state("starting")
 
@@ -278,40 +315,91 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._event_stream_started:
             raise RuntimeError("events() iterator already consumed")
         self._event_stream_started = True
+        self._events_stream_active = True
+        stream_queue: asyncio.Queue[
+            tuple[
+                Literal["line", "eof", "error"],
+                Literal["stdout", "stderr"],
+                bytes | BaseException | None,
+            ]
+        ] = asyncio.Queue()
+        stream_tasks = [
+            asyncio.create_task(
+                self._read_stdio_stream(
+                    process.stdout,
+                    source=_STDIO_SOURCE_STDOUT,
+                    queue=stream_queue,
+                )
+            )
+        ]
+        if process.stderr is not None:
+            stream_tasks.append(
+                asyncio.create_task(
+                    self._read_stdio_stream(
+                        process.stderr,
+                        source=_STDIO_SOURCE_STDERR,
+                        queue=stream_queue,
+                    )
+                )
+            )
+        first_stdout_deadline_monotonic: float | None = None
 
         try:
             while self._pending_lifecycle_phase_events:
                 yield self._pending_lifecycle_phase_events.pop(0)
             while True:
                 try:
+                    timeout_secs: float | None = None
                     if (
                         self._waiting_for_first_pi_event_after_prompt
                         and not self._first_pi_event_received
                     ):
-                        line_bytes = await asyncio.wait_for(
-                            process.stdout.readline(),
-                            timeout=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
-                        )
+                        if first_stdout_deadline_monotonic is None:
+                            first_stdout_deadline_monotonic = (
+                                time.monotonic()
+                                + _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS
+                            )
+                        timeout_secs = first_stdout_deadline_monotonic - time.monotonic()
+                        if timeout_secs <= 0:
+                            raise TimeoutError
                     else:
-                        line_bytes = await process.stdout.readline()
+                        first_stdout_deadline_monotonic = None
+                    if timeout_secs is None:
+                        stream_kind, source, payload = await stream_queue.get()
+                    else:
+                        stream_kind, source, payload = await asyncio.wait_for(
+                            stream_queue.get(),
+                            timeout=timeout_secs,
+                        )
                 except TimeoutError:
                     detail = _PI_FIRST_EVENT_TIMEOUT_REASON
                     self._mark_failed(detail)
+                    self._waiting_for_first_pi_event_after_prompt = False
                     yield self._lifecycle_phase_event(
                         "first_pi_event_timeout",
                         timeout_secs=_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS,
                     )
                     yield self._error_event(detail)
-                    await self._cleanup_resources(terminate_process=True)
+                    await self._terminate_process()
                     break
                 except Exception as exc:
                     if self._state not in {"stopping", "stopped"}:
-                        detail = f"Failed to read Pi stdout: {exc}"
+                        detail = f"Failed to read Pi stdio stream: {exc}"
                         self._mark_failed(detail)
                         yield self._error_event(detail)
                     break
 
-                if not line_bytes:
+                if stream_kind == _STREAM_ERROR_KIND:
+                    stream_error = payload
+                    if self._state not in {"stopping", "stopped"}:
+                        detail = f"Failed to read Pi {source}: {stream_error}"
+                        self._mark_failed(detail)
+                        yield self._error_event(detail)
+                    break
+
+                if stream_kind == _STREAM_EOF_KIND:
+                    if source == _STDIO_SOURCE_STDERR:
+                        continue
                     return_code = process.returncode
                     if return_code is None:
                         return_code = await process.wait()
@@ -328,7 +416,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                             return_code=return_code,
                         )
                         yield self._error_event(detail)
-                        await self._cleanup_resources(terminate_process=True)
+                        await self._terminate_process()
                         break
                     if return_code != 0 and self._state not in {"stopping", "stopped"}:
                         detail = f"Pi subprocess exited with code {return_code}."
@@ -336,7 +424,18 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         yield self._error_event(detail)
                     break
 
+                if not isinstance(payload, bytes):
+                    continue
+                line_bytes = payload
                 raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
+                if source == _STDIO_SOURCE_STDERR:
+                    self._write_stderr_line(line_bytes)
+                    if not raw_text.strip():
+                        continue
+                    stderr_event = self._parse_stderr_lifecycle_line(raw_text)
+                    if stderr_event is not None:
+                        yield stderr_event
+                    continue
                 if not raw_text.strip():
                     continue
 
@@ -369,6 +468,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             if not self._session_event_seen:
                 yield self._lifecycle_phase_event("session_event_absent")
         finally:
+            for task in stream_tasks:
+                task.cancel()
+            await asyncio.gather(*stream_tasks, return_exceptions=True)
+            self._events_stream_active = False
             await self._cleanup_resources(terminate_process=False)
 
     async def _start_subprocess(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
@@ -394,6 +497,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         launch_role = "spawned"
         if (self._launch_session_role or "").strip().lower() == "primary":
             launch_role = "primary"
+        self._apply_pi_child_wave_timeout_env(
+            env=env,
+            launch_role=launch_role,
+            timeout_seconds=config.pi_child_wave_timeout_seconds,
+        )
         try:
             resolved_runtime = resolve_pi_runtime(env=env, role=launch_role)
         except PiRuntimeResolutionError as exc:
@@ -403,13 +511,17 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._launch_cwd = str(config.task_cwd or config.control_root)
 
         try:
+            self._stderr_lifecycle_enabled = launch_role == "spawned"
+            stderr_target: int | BufferedWriter = self._stderr_handle
+            if self._stderr_lifecycle_enabled:
+                stderr_target = PIPE
             self._process = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=self._launch_cwd,
                 env=env,
                 stdin=PIPE,
                 stdout=PIPE,
-                stderr=self._stderr_handle,
+                stderr=stderr_target,
                 limit=_STDOUT_READLINE_LIMIT,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
@@ -418,6 +530,31 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 error=exc,
                 binary_name=command[0],
             ) from exc
+
+    async def _read_stdio_stream(
+        self,
+        stream: asyncio.StreamReader,
+        *,
+        source: Literal["stdout", "stderr"],
+        queue: asyncio.Queue[
+            tuple[
+                Literal["line", "eof", "error"],
+                Literal["stdout", "stderr"],
+                bytes | BaseException | None,
+            ]
+        ],
+    ) -> None:
+        try:
+            while True:
+                line_bytes = await stream.readline()
+                if not line_bytes:
+                    await queue.put((_STREAM_EOF_KIND, source, None))
+                    return
+                await queue.put((_STREAM_LINE_KIND, source, line_bytes))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await queue.put((_STREAM_ERROR_KIND, source, exc))
 
     def _apply_session_dir_arg(self, command: Sequence[str], session_dir: str) -> list[str]:
         rewritten: list[str] = []
@@ -440,6 +577,20 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if not replaced:
             rewritten.extend((_PI_SESSION_DIR_FLAG, session_dir))
         return rewritten
+
+    def _apply_pi_child_wave_timeout_env(
+        self,
+        *,
+        env: dict[str, str],
+        launch_role: str,
+        timeout_seconds: float | None,
+    ) -> None:
+        if launch_role != "spawned":
+            return
+        if timeout_seconds is None or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            return
+        timeout_ms = max(1, int(timeout_seconds * 1000))
+        env[_PI_CHILD_WAVE_TIMEOUT_MS_ENV] = str(timeout_ms)
 
     def _parse_stdout_line(self, line: str) -> HarnessEvent | None:
         payload_text = line.strip()
@@ -495,6 +646,88 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             harness_id=_HARNESS_NAME,
             raw_text=line,
         )
+
+    def _parse_stderr_lifecycle_line(self, line: str) -> HarnessEvent | None:
+        if not self._stderr_lifecycle_enabled:
+            return None
+        payload_text = line.strip()
+        if not payload_text:
+            return None
+        try:
+            payload_obj = json.loads(payload_text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload_obj, dict):
+            return None
+
+        payload = cast("dict[str, object]", payload_obj)
+        event_type = payload.get("type")
+        if not isinstance(event_type, str) or not event_type.strip():
+            return None
+        normalized_type = event_type.strip()
+        if normalized_type not in _PI_STDERR_LIFECYCLE_ALLOWLIST:
+            return None
+
+        invalid_reason = self._validate_stderr_lifecycle_payload(
+            event_type=normalized_type,
+            payload=payload,
+        )
+        if invalid_reason is not None:
+            trace_parse_error(
+                self._tracer,
+                "pi",
+                payload_text,
+                error=invalid_reason,
+            )
+            return self._lifecycle_parse_error_event(
+                reason=invalid_reason,
+                error=invalid_reason,
+                raw_type=normalized_type,
+                raw_line=payload_text,
+            )
+
+        return HarnessEvent(
+            event_type=normalized_type,
+            payload=payload,
+            harness_id=_HARNESS_NAME,
+            raw_text=line,
+        )
+
+    def _validate_stderr_lifecycle_payload(
+        self,
+        *,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> str | None:
+        schema_version = self._coerce_int(payload.get("schema_version"))
+        if schema_version != _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION:
+            return "unsupported_schema_version"
+
+        parent_spawn_id = payload.get("parent_spawn_id")
+        if not isinstance(parent_spawn_id, str) or not parent_spawn_id.strip():
+            return "missing_parent_spawn_id"
+        if parent_spawn_id.strip() != str(self._spawn_id):
+            return "parent_spawn_id_mismatch"
+
+        correlation_id = payload.get("correlation_id")
+        if not isinstance(correlation_id, str) or not correlation_id.strip():
+            return "missing_correlation_id"
+
+        emitted_at_ms = self._coerce_int(payload.get("emitted_at_ms"))
+        if emitted_at_ms is None:
+            return "invalid_emitted_at_ms"
+
+        if event_type in _PI_STDERR_SUBSPAWN_TYPES:
+            subspawn_id = payload.get("subspawn_id")
+            if not isinstance(subspawn_id, str) or not subspawn_id.strip():
+                return "missing_subspawn_id"
+
+        if event_type in _PI_STDERR_NOTIFICATION_TYPES:
+            notification_id = payload.get("notification_id")
+            if not isinstance(notification_id, str) or not notification_id.strip():
+                return "missing_notification_id"
+
+        return None
 
     def _has_unsupported_lifecycle_schema_version(
         self,
@@ -659,7 +892,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         stop_escalated = False
         if terminate_process:
             stop_escalated = await self._terminate_process()
-        self._close_log_handles()
+        if not self._events_stream_active:
+            self._close_log_handles()
         return stop_escalated
 
     async def _terminate_process(self) -> bool:
@@ -724,6 +958,16 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._stderr_handle is not None:
             self._stderr_handle.close()
             self._stderr_handle = None
+
+    def _write_stderr_line(self, line_bytes: bytes) -> None:
+        handle = self._stderr_handle
+        if handle is None:
+            return
+        try:
+            handle.write(line_bytes)
+            handle.flush()
+        except Exception:
+            logger.debug("Failed to write Pi stderr line to stderr.log", exc_info=True)
 
     def _emit_startup_phase(self, phase: StartupPhase) -> None:
         emitter = self._startup_emitter

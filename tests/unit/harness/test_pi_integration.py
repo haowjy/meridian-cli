@@ -23,6 +23,7 @@ from meridian.lib.launch.env import build_harness_env_overrides
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.safety.permissions import PermissionConfig, UnsafeNoOpPermissionResolver
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 _PI_HELP_SURFACE = (
@@ -482,6 +483,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "    env_keys = (\n"
         "        'MERIDIAN_PI_BINARY',\n"
         "        'MERIDIAN_PI_SESSION_ROLE',\n"
+        "        'MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS',\n"
         "        'PI_CODING_AGENT_SESSION_DIR',\n"
         "        'PI_CODING_AGENT_DIR',\n"
         "    )\n"
@@ -528,6 +530,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
                 "PI_CODING_AGENT_SESSION_DIR": str(scoped_session_dir),
                 "PI_RPC_OBSERVED_PATH": str(observed_path),
             },
+            pi_child_wave_timeout_seconds=12.5,
             pi_session_role="spawned",
         ),
         ResolvedLaunchSpec(
@@ -565,6 +568,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     observed_env = observed["env"]
     assert observed_env["MERIDIAN_PI_BINARY"] == str(fake_pi)
     assert observed_env["MERIDIAN_PI_SESSION_ROLE"] == "spawned"
+    assert observed_env["MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"] == "12500"
     assert observed_env["PI_CODING_AGENT_SESSION_DIR"] == str(scoped_session_dir)
     assert "PI_CODING_AGENT_DIR" not in observed_env
 
@@ -705,6 +709,421 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_ingests_allowlisted_stderr_lifecycle_events_and_tees_stderr_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-stderr-lifecycle")
+    lifecycle_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-stderr-lifecycle","correlation_id":"j-1",'
+        '"subspawn_id":"j-1","emitted_at_ms":1760000000000}'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-stderr-events\"}'\n"
+        f"printf '%s\\n' '{lifecycle_line}' >&2\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    event_iter = connection.events()
+    non_phase_events: list[HarnessEvent] = []
+    while True:
+        event = await _next_non_phase_event(event_iter)
+        non_phase_events.append(event)
+        if event.event_type == "agent_end":
+            break
+    await connection.send_cancel()
+    non_phase_events.extend(
+        [event async for event in event_iter if not _is_pi_phase_event(event)]
+    )
+
+    lifecycle_events = [
+        event for event in non_phase_events if event.event_type == "meridian.subspawn.start"
+    ]
+    assert len(lifecycle_events) == 1
+    assert lifecycle_events[0].payload["subspawn_id"] == "j-1"
+    assert lifecycle_events[0].payload["parent_spawn_id"] == str(spawn_id)
+    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    assert lifecycle_line in stderr_log.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-stderr-ignore")
+    plain_stderr = "warning from stderr"
+    non_allowlisted_json = '{"type":"pi.runtime.warn","message":"ignore-me"}'
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-stderr-ignore\"}'\n"
+        f"printf '%s\\n' '{plain_stderr}' >&2\n"
+        f"printf '%s\\n' '{non_allowlisted_json}' >&2\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    event_iter = connection.events()
+    non_phase_events: list[HarnessEvent] = []
+    while True:
+        event = await _next_non_phase_event(event_iter)
+        non_phase_events.append(event)
+        if event.event_type == "agent_end":
+            break
+    await connection.send_cancel()
+    non_phase_events.extend(
+        [event async for event in event_iter if not _is_pi_phase_event(event)]
+    )
+
+    assert not any(event.event_type == "pi.runtime.warn" for event in non_phase_events)
+    assert not any(
+        event.event_type == "meridian.lifecycle.parse_error"
+        for event in non_phase_events
+    )
+    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    stderr_text = stderr_log.read_text(encoding="utf-8")
+    assert plain_stderr in stderr_text
+    assert non_allowlisted_json in stderr_text
+
+
+def _parse_stderr_lifecycle_candidate(line: str) -> HarnessEvent | None:
+    connection = PiRpcConnection()
+    connection._spawn_id = SpawnId("p-pi-stderr-validation")
+    connection._stderr_lifecycle_enabled = True
+    return connection._parse_stderr_lifecycle_line(line)
+
+
+@pytest.mark.parametrize(
+    ("line", "expected_reason"),
+    [
+        (
+            '{"type":"meridian.subspawn.start","schema_version":2,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
+            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
+            "unsupported_schema_version",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":"not-an-int",'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
+            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
+            "unsupported_schema_version",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"correlation_id":"j-1","subspawn_id":"j-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_parent_spawn_id",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"   ","correlation_id":"j-1",'
+            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
+            "missing_parent_spawn_id",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","subspawn_id":"j-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_correlation_id",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"  ",'
+            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
+            "missing_correlation_id",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
+            '"subspawn_id":"j-1"}',
+            "invalid_emitted_at_ms",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
+            '"subspawn_id":"j-1","emitted_at_ms":"not-an-int"}',
+            "invalid_emitted_at_ms",
+        ),
+        (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_subspawn_id",
+        ),
+        (
+            '{"type":"meridian.notification.queued","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_notification_id",
+        ),
+        (
+            '{"type":"meridian.notification.delivered","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_notification_id",
+        ),
+        (
+            '{"type":"meridian.notification.completed","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_notification_id",
+        ),
+        (
+            '{"type":"meridian.notification.failed","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
+            '"emitted_at_ms":1760000000000}',
+            "missing_notification_id",
+        ),
+    ],
+)
+def test_pi_rpc_connection_rejects_invalid_allowlisted_stderr_lifecycle_candidates(
+    line: str,
+    expected_reason: str,
+) -> None:
+    event = _parse_stderr_lifecycle_candidate(line)
+
+    assert event is not None
+    assert event.event_type == "meridian.lifecycle.parse_error"
+    assert event.payload["reason"] == expected_reason
+    assert event.payload["raw_type"] == json.loads(line)["type"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "type": "meridian.subspawn.start",
+            "subspawn_id": "j-1",
+        },
+        {
+            "type": "meridian.subspawn.end",
+            "subspawn_id": "j-1",
+        },
+        {
+            "type": "meridian.notification.queued",
+            "notification_id": "n-1",
+        },
+        {
+            "type": "meridian.notification.delivered",
+            "notification_id": "n-1",
+        },
+        {
+            "type": "meridian.notification.completed",
+            "notification_id": "n-1",
+        },
+        {
+            "type": "meridian.notification.failed",
+            "notification_id": "n-1",
+        },
+        {
+            "type": "meridian.quiescence.ready",
+            "tracked_count": 0,
+            "pending_notification_count": 0,
+        },
+    ],
+)
+def test_pi_rpc_connection_accepts_all_valid_allowlisted_stderr_lifecycle_types(
+    payload: dict[str, object],
+) -> None:
+    candidate = {
+        "schema_version": 1,
+        "parent_spawn_id": "p-pi-stderr-validation",
+        "correlation_id": "c-1",
+        "emitted_at_ms": 1760000000000,
+        **payload,
+    }
+    event = _parse_stderr_lifecycle_candidate(
+        json.dumps(candidate, separators=(",", ":"))
+    )
+
+    assert event is not None
+    assert event.event_type == candidate["type"]
+    assert event.payload["parent_spawn_id"] == "p-pi-stderr-validation"
+    assert event.payload["correlation_id"] == "c-1"
+
+
+def test_pi_rpc_connection_ignores_legacy_underscore_lifecycle_names_on_stderr() -> None:
+    event = _parse_stderr_lifecycle_candidate(
+        '{"type":"meridian_subspawn_start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
+        '"subspawn_id":"j-1","emitted_at_ms":1760000000000}'
+    )
+
+    assert event is None
+
+
+def test_pi_rpc_connection_ignores_stderr_lifecycle_when_ingestion_disabled() -> None:
+    connection = PiRpcConnection()
+    connection._spawn_id = SpawnId("p-pi-stderr-disabled")
+
+    event = connection._parse_stderr_lifecycle_line(
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-stderr-disabled","correlation_id":"j-1",'
+        '"subspawn_id":"j-1","emitted_at_ms":1760000000000}'
+    )
+
+    assert event is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_stderr_lifecycle_parent_mismatch_emits_parse_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-parent-mismatch")
+    mismatched_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-someone-else","correlation_id":"j-2",'
+        '"subspawn_id":"j-2","emitted_at_ms":1760000000000}'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-parent-mismatch\"}'\n"
+        f"printf '%s\\n' '{mismatched_line}' >&2\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    event_iter = connection.events()
+    non_phase_events: list[HarnessEvent] = []
+    while True:
+        event = await _next_non_phase_event(event_iter)
+        non_phase_events.append(event)
+        if event.event_type == "agent_end":
+            break
+    await connection.send_cancel()
+    non_phase_events.extend(
+        [event async for event in event_iter if not _is_pi_phase_event(event)]
+    )
+
+    assert not any(event.event_type == "meridian.subspawn.start" for event in non_phase_events)
+    parse_errors = [
+        event
+        for event in non_phase_events
+        if event.event_type == "meridian.lifecycle.parse_error"
+    ]
+    assert len(parse_errors) == 1
+    assert parse_errors[0].payload["reason"] == "parent_spawn_id_mismatch"
+    assert parse_errors[0].payload["raw_type"] == "meridian.subspawn.start"
+    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    assert mismatched_line in stderr_log.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
 async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_manager(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -796,6 +1215,312 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
         )
     finally:
         await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_spawn_manager_deduplicates_stdout_and_stderr_lifecycle_by_correlation_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-dual-surface-dedup")
+    start_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-dual-surface-dedup","correlation_id":"corr-start",'
+        '"subspawn_id":"j-dupe","emitted_at_ms":1760000000000}'
+    )
+    end_line = (
+        '{"type":"meridian.subspawn.end","schema_version":1,'
+        '"parent_spawn_id":"p-pi-dual-surface-dedup","correlation_id":"corr-end",'
+        '"subspawn_id":"j-dupe","emitted_at_ms":1760000000001}'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-dual-surface\"}'\n"
+        f"printf '%s\\n' '{start_line}'\n"
+        f"printf '%s\\n' '{start_line}' >&2\n"
+        f"printf '%s\\n' '{end_line}'\n"
+        f"printf '%s\\n' '{end_line}' >&2\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    class NoopControlServer:
+        endpoint = None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> PiRpcConnection:
+        connection = PiRpcConnection()
+        await connection.start(config, spec)
+        return connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+    )
+
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        starts = [
+            event
+            for event in history
+            if event["event_type"] == "meridian.subspawn.start"
+            and event["payload"]["subspawn_id"] == "j-dupe"
+        ]
+        ends = [
+            event
+            for event in history
+            if event["event_type"] == "meridian.subspawn.end"
+            and event["payload"]["subspawn_id"] == "j-dupe"
+        ]
+        assert len(starts) == 1
+        assert len(ends) == 1
+
+        stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+        stderr_text = stderr_log.read_text(encoding="utf-8")
+        assert start_line in stderr_text
+        assert end_line in stderr_text
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-stderr-only-manager")
+    lifecycle_lines = {
+        "start": (
+            '{"type":"meridian.subspawn.start","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"j-1-start",'
+            '"subspawn_id":"j-1","wait_policy":"tracked","emitted_at_ms":1760000000000}'
+        ),
+        "end": (
+            '{"type":"meridian.subspawn.end","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"j-1-end",'
+            '"subspawn_id":"j-1","wait_policy":"tracked","emitted_at_ms":1760000000001}'
+        ),
+        "queued": (
+            '{"type":"meridian.notification.queued","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"n-1-queued",'
+            '"notification_id":"n-1","emitted_at_ms":1760000000002}'
+        ),
+        "delivered": (
+            '{"type":"meridian.notification.delivered","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"n-1-delivered",'
+            '"notification_id":"n-1","emitted_at_ms":1760000000003}'
+        ),
+        "completed": (
+            '{"type":"meridian.notification.completed","schema_version":1,'
+            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"n-1-completed",'
+            '"notification_id":"n-1","emitted_at_ms":1760000000004}'
+        ),
+    }
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import sys\n"
+        "import time\n"
+        "if len(sys.argv) > 1 and sys.argv[1] == '--version':\n"
+        "    print('pi 1.2.3')\n"
+        "    raise SystemExit(0)\n"
+        "if len(sys.argv) > 1 and sys.argv[1] == '--help':\n"
+        f"    print({json.dumps(_PI_HELP_SURFACE)})\n"
+        "    raise SystemExit(0)\n"
+        "def emit_stdout(payload):\n"
+        "    print(json.dumps(payload), flush=True)\n"
+        "def emit_stderr(line):\n"
+        "    sys.stderr.write(line + '\\n')\n"
+        "    sys.stderr.flush()\n"
+        "emit_stdout({'type': 'session', 'id': 'ses-stderr-only-manager'})\n"
+        "terminal_event = {\n"
+        "    'type': 'agent_end',\n"
+        "    'messages': [{'role': 'assistant', 'stopReason': 'stop'}],\n"
+        "}\n"
+        "for line in sys.stdin:\n"
+        "    payload = json.loads(line)\n"
+        "    payload_type = payload.get('type')\n"
+        "    if payload_type == 'prompt':\n"
+        f"        emit_stderr({json.dumps(lifecycle_lines['start'])})\n"
+        "        time.sleep(0.03)\n"
+        "        emit_stdout({'type': 'agent_start'})\n"
+        "        emit_stdout(terminal_event)\n"
+        "        time.sleep(0.03)\n"
+        f"        emit_stderr({json.dumps(lifecycle_lines['end'])})\n"
+        f"        emit_stderr({json.dumps(lifecycle_lines['queued'])})\n"
+        f"        emit_stderr({json.dumps(lifecycle_lines['delivered'])})\n"
+        "        time.sleep(0.03)\n"
+        "        emit_stdout({'type': 'agent_start'})\n"
+        "        emit_stdout(terminal_event)\n"
+        f"        emit_stderr({json.dumps(lifecycle_lines['completed'])})\n"
+        "        continue\n"
+        "    if payload_type == 'abort':\n"
+        "        raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    class NoopControlServer:
+        endpoint = None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> PiRpcConnection:
+        connection = PiRpcConnection()
+        await connection.start(config, spec)
+        return connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: NoopControlServer(),
+    )
+
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        phases = [
+            event["payload"]["phase"]
+            for event in history
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+        ]
+        assert "waiting_for_tracked_children" in phases
+        assert "waiting_for_notification_completion" in phases
+        agent_end_indices = [
+            index for index, event in enumerate(history) if event["event_type"] == "agent_end"
+        ]
+        finalized_index = next(
+            index
+            for index, event in enumerate(history)
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+            and event["payload"]["phase"] == "finalized"
+        )
+        waiting_child_index = next(
+            index
+            for index, event in enumerate(history)
+            if event["event_type"] == "meridian.pi.lifecycle.phase"
+            and event["payload"]["phase"] == "waiting_for_tracked_children"
+        )
+        assert len(agent_end_indices) == 2
+        assert waiting_child_index < agent_end_indices[1]
+        assert finalized_index > agent_end_indices[1]
+
+        for event_type, event_id_field, event_id in [
+            ("meridian.subspawn.start", "subspawn_id", "j-1"),
+            ("meridian.subspawn.end", "subspawn_id", "j-1"),
+            ("meridian.notification.queued", "notification_id", "n-1"),
+            ("meridian.notification.delivered", "notification_id", "n-1"),
+            ("meridian.notification.completed", "notification_id", "n-1"),
+        ]:
+            matches = [
+                event
+                for event in history
+                if event["event_type"] == event_type
+                and event["payload"][event_id_field] == event_id
+            ]
+            assert len(matches) == 1
+
+        stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+        stderr_text = stderr_log.read_text(encoding="utf-8")
+        for line in lifecycle_lines.values():
+            assert line in stderr_text
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio
@@ -1327,6 +2052,74 @@ async def test_pi_connection_launches_in_task_cwd_when_provided(
     _ = [event async for event in event_iter]
 
     assert observed_cwd.read_text(encoding="utf-8").strip() == str(task_cwd)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_stderr_lifecycle_does_not_satisfy_first_stdout_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
+
+    spawn_id = SpawnId("p-pi-stderr-no-stdout-timeout")
+    lifecycle_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-stderr-no-stdout-timeout","correlation_id":"j-timeout",'
+        '"subspawn_id":"j-timeout","emitted_at_ms":1760000000000}'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        f"      printf '%s\\n' '{lifecycle_line}' >&2\n"
+        "      sleep 30\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello timeout",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello timeout",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    events = [event async for event in connection.events()]
+    lifecycle_events = [event for event in events if event.event_type == "meridian.subspawn.start"]
+    assert len(lifecycle_events) == 1
+    assert any(
+        event.event_type == "error/connectionClosed"
+        and event.payload.get("message") == "pi_rpc_no_response_after_initial_prompt"
+        for event in events
+    )
+    assert connection.state == "failed"
+    assert connection.subprocess_pid is None
 
 
 @pytest.mark.asyncio

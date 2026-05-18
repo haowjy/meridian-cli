@@ -34,6 +34,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawned Pi semantic completion now records success at event-ordered quiescence with micro-drain only (no fixed idle grace) and unblocks `spawn wait` before cleanup.
 - Pi cleanup now runs asynchronously after semantic completion; cleanup status/phases (`cleanup_running|cleanup_completed|cleanup_escalated|cleanup_failed`) are emitted separately from terminal spawn status.
 - Pending continuation tracking now keeps queued/delivered notifications pending until correlated follow-up terminal completion, with timeout failure `pi_notification_timeout:id=...:phase=...:elapsed=...:timeout=...`.
+- Spawned Pi now ingests allowlisted lifecycle events from stderr only; unrelated stderr noise no longer drives lifecycle behavior.
+- Tracked child waves now trigger one aggregate auto-resume with per-child status summary, not one resume per child.
+- Pi child-wave timeout now separate from notification timeout; timed-out tracked children are canceled before resume.
 - Pi launch/policy/integration tests now assert primary-native Pi command projection and runner routing, while keeping spawned RPC/quiescence assertions intact.
 
 ### Removed

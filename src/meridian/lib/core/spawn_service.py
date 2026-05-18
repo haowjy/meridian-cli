@@ -33,7 +33,10 @@ from meridian.lib.harness.connections.base import ConnectionConfig
 from meridian.lib.launch.context import LaunchContext, build_launch_context
 from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
-from meridian.lib.launch.resolve import resolve_pi_notification_timeout_seconds
+from meridian.lib.launch.resolve import (
+    resolve_pi_child_wave_timeout_seconds,
+    resolve_pi_notification_timeout_seconds,
+)
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
@@ -398,6 +401,10 @@ class SpawnApplicationService:
             if harness_id is HarnessId.PI
             else None
         )
+        launch_config_snapshot = _resolve_config_snapshot(
+            launch_ctx,
+            fallback=payload.runtime.config_snapshot,
+        )
         connection_config = ConnectionConfig(
             spawn_id=final_spawn_id,
             harness_id=harness_id,
@@ -408,10 +415,11 @@ class SpawnApplicationService:
             system=launch_ctx.binding.run_params.appended_system_prompt,
             pi_notification_timeout_seconds=resolve_pi_notification_timeout_seconds(
                 explicit_timeout_seconds=_resolve_explicit_timeout_seconds(resolved_request),
-                config_snapshot=_resolve_config_snapshot(
-                    launch_ctx,
-                    fallback=payload.runtime.config_snapshot,
-                ),
+                config_snapshot=launch_config_snapshot,
+            ),
+            pi_child_wave_timeout_seconds=resolve_pi_child_wave_timeout_seconds(
+                explicit_timeout_seconds=None,
+                config_snapshot=launch_config_snapshot,
             ),
             pi_session_role=pi_session_role,
             debug_tracer=payload.debug_tracer,

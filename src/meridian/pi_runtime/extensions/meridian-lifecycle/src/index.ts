@@ -16,6 +16,9 @@ type InternalSubspawnEvent = {
   success?: boolean;
   reason?: string;
   log_path?: string;
+  exit_code?: unknown;
+  signal?: unknown;
+  pid?: unknown;
 };
 
 type ToolContentPart = {
@@ -36,6 +39,7 @@ type ToolResultEvent = {
     state?: string;
     wait_policy?: WaitPolicy;
     job_id?: string;
+    pid?: number;
     command?: string;
     stdout_tail?: string;
     stderr_tail?: string;
@@ -66,12 +70,31 @@ type ChildState = {
   kind: "bash" | "meridian_spawn";
   waitPolicy: WaitPolicy;
   startedAtMs: number;
+  pid: number | null;
 };
 
 type NotificationState = {
   id: string;
   queuedAtMs: number;
   delivered: boolean;
+};
+
+type ChildOutcomeStatus = "succeeded" | "failed" | "cancelled" | "timed_out";
+
+type ChildOutcome = {
+  subspawn_id: string;
+  status: ChildOutcomeStatus;
+  success: boolean;
+  reason?: string;
+};
+
+type ActiveWaveState = {
+  id: string;
+  startedAtMs: number;
+  deadlineAtMs: number;
+  deadlineTimer: NodeJS.Timeout | null;
+  trackedChildIds: Set<string>;
+  outcomes: Map<string, ChildOutcome>;
 };
 
 type CommandResult = {
@@ -91,10 +114,19 @@ const MERIDIAN_SPAWN_ID_PATTERN = /\bp\d+\b/g;
 const TERMINAL_MERIDIAN_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const CHILD_STATUS_POLL_INTERVAL_MS = 2_500;
 const CHILD_STATUS_POLL_TIMEOUT_MS = 8_000;
+const CHILD_SPAWN_CANCEL_TIMEOUT_MS = 8_000;
 const CLI_UNAVAILABLE_BACKOFF_MS = 30_000;
 const MAX_TEXT_SNIPPETS = 96;
 const MAX_TEXT_DEPTH = 5;
 const WRAPPER_LOG_TAIL_BYTES = 64 * 1024;
+const DEFAULT_CHILD_WAVE_TIMEOUT_MS = 300_000;
+const MIN_CHILD_WAVE_TIMEOUT_MS = 1;
+const MAX_CHILD_WAVE_TIMEOUT_MS = 60 * 60 * 1_000;
+const DEFAULT_WAVE_KILL_GRACE_MS = 2_000;
+const MAX_WAVE_KILL_GRACE_MS = 30_000;
+const MAX_WAVE_NOTIFICATION_OUTCOME_COUNT = 12;
+const MAX_WAVE_NOTIFICATION_REASON_CHARS = 72;
+const MAX_WAVE_NOTIFICATION_SUMMARY_CHARS = 384;
 
 function nowMs(): number {
   return Date.now();
@@ -102,6 +134,69 @@ function nowMs(): number {
 
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseEnvInteger(name: string): number | null {
+  const raw = process.env[name];
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return "";
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  if (maxChars === 1) {
+    return "…";
+  }
+  return `${value.slice(0, maxChars - 1)}…`;
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function resolveChildWaveTimeoutMs(): number {
+  const explicitMs = parseEnvInteger("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS");
+  if (explicitMs != null) {
+    return clamp(explicitMs, MIN_CHILD_WAVE_TIMEOUT_MS, MAX_CHILD_WAVE_TIMEOUT_MS);
+  }
+
+  const explicitSeconds = parseEnvInteger("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS");
+  if (explicitSeconds != null) {
+    return clamp(
+      explicitSeconds * 1_000,
+      MIN_CHILD_WAVE_TIMEOUT_MS,
+      MAX_CHILD_WAVE_TIMEOUT_MS,
+    );
+  }
+
+  return DEFAULT_CHILD_WAVE_TIMEOUT_MS;
+}
+
+function resolveWaveKillGraceMs(): number {
+  const explicit = parseEnvInteger("MERIDIAN_PI_CHILD_WAVE_KILL_GRACE_MS");
+  if (explicit != null) {
+    return clamp(explicit, 100, MAX_WAVE_KILL_GRACE_MS);
+  }
+  return DEFAULT_WAVE_KILL_GRACE_MS;
 }
 
 function parentSpawnIdFromEnv(): string | null {
@@ -168,17 +263,79 @@ function normalizedStatus(value: unknown): string | null {
   return status.length > 0 ? status : null;
 }
 
-function isFailedSubspawnOutcome(event: InternalSubspawnEvent): boolean {
-  if (event.success === false) {
-    return true;
+function intFromUnknown(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
   }
-  const status = normalizedStatus(event.status);
-  return status === "failed" || status === "cancelled";
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function stringFromUnknown(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sendSignalBestEffort(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+    return;
+  } catch {
+    // fall through
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // ignore
+  }
+}
+
+async function cancelTrackedPid(pid: number, killGraceMs: number): Promise<void> {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+
+  sendSignalBestEffort(pid, "SIGTERM");
+  if (!isProcessAlive(pid)) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, Math.max(1, killGraceMs));
+    timer.unref?.();
+  });
+  if (isProcessAlive(pid)) {
+    sendSignalBestEffort(pid, "SIGKILL");
+  }
 }
 
 function failureReasonFromInternalEvent(event: InternalSubspawnEvent): string | null {
   if (typeof event.reason === "string" && event.reason.trim().length > 0) {
     return event.reason.trim();
+  }
+  const exitCode = intFromUnknown(event.exit_code);
+  if (exitCode != null && exitCode !== 0) {
+    return `exit_code_${exitCode}`;
+  }
+  const signal = stringFromUnknown(event.signal);
+  if (signal) {
+    return `signal_${signal}`;
   }
   const status = normalizedStatus(event.status);
   if (status === "failed" || status === "cancelled") {
@@ -186,6 +343,54 @@ function failureReasonFromInternalEvent(event: InternalSubspawnEvent): string | 
   }
   if (event.success === false) {
     return "failed";
+  }
+  return null;
+}
+
+function outcomeFromTerminalEvent(event: InternalSubspawnEvent): ChildOutcome | null {
+  const subspawnId = event.subspawn_id;
+  if (!subspawnId) {
+    return null;
+  }
+
+  const status = normalizedStatus(event.status);
+  if (status === "cancelled") {
+    return {
+      subspawn_id: subspawnId,
+      status: "cancelled",
+      success: false,
+      reason: failureReasonFromInternalEvent(event) ?? "cancelled",
+    };
+  }
+  if (status === "failed") {
+    return {
+      subspawn_id: subspawnId,
+      status: "failed",
+      success: false,
+      reason: failureReasonFromInternalEvent(event) ?? "failed",
+    };
+  }
+  if (status === "succeeded") {
+    return {
+      subspawn_id: subspawnId,
+      status: "succeeded",
+      success: true,
+    };
+  }
+  if (event.success === true) {
+    return {
+      subspawn_id: subspawnId,
+      status: "succeeded",
+      success: true,
+    };
+  }
+  if (event.success === false) {
+    return {
+      subspawn_id: subspawnId,
+      status: "failed",
+      success: false,
+      reason: failureReasonFromInternalEvent(event) ?? "failed",
+    };
   }
   return null;
 }
@@ -438,19 +643,19 @@ async function runCommand(command: string, args: string[], timeoutMs: number): P
 }
 
 export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
+  const childWaveTimeoutMs = resolveChildWaveTimeoutMs();
+  const childWaveKillGraceMs = resolveWaveKillGraceMs();
+
   const session = {
     sessionId: makeId("session"),
     parentSpawnId: parentSpawnIdFromEnv(),
     trackedChildren: new Map<string, ChildState>(),
     meridianSpawnWrapperJobs: new Set<string>(),
     knownMeridianSpawnIds: new Set<string>(),
+    activeWave: null as ActiveWaveState | null,
     pendingNotification: null as NotificationState | null,
     parentIdle: false,
     awaitingNotificationCompletion: false,
-    hadTrackedSinceNotificationCycle: false,
-    pendingFailureCount: 0,
-    lastFailureSubspawnId: null as string | null,
-    lastFailureReason: null as string | null,
     childStatusPollTimer: null as NodeJS.Timeout | null,
     childStatusPollInFlight: false,
     cliUnavailableUntilMs: 0,
@@ -537,95 +742,95 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     session.childStatusPollTimer = null;
   };
 
-  const maybeQueueNotification = (): void => {
+  const clearWaveTimer = (wave: ActiveWaveState | null): void => {
+    if (!wave?.deadlineTimer) {
+      return;
+    }
+    clearTimeout(wave.deadlineTimer);
+    wave.deadlineTimer = null;
+  };
+
+  const clearActiveWave = (): void => {
+    if (session.activeWave == null) {
+      return;
+    }
+    clearWaveTimer(session.activeWave);
+    session.activeWave = null;
+  };
+
+  const trackedChildIds = (): string[] => {
+    const ids: string[] = [];
+    for (const [childId, child] of session.trackedChildren.entries()) {
+      if (child.waitPolicy === "tracked") {
+        ids.push(childId);
+      }
+    }
+    return ids;
+  };
+
+  const attachChildToActiveWave = (childId: string): void => {
     if (!session.parentIdle) {
       return;
     }
-    if (session.pendingNotification) {
+    if (session.activeWave == null) {
       return;
     }
-
-    const tracked = trackedCount();
-    if (session.pendingFailureCount > 0) {
-      const notificationId = makeId("n");
-      const failureCount = session.pendingFailureCount;
-      const failedSubspawnId = session.lastFailureSubspawnId;
-      const failureReason = session.lastFailureReason;
-      session.pendingFailureCount = 0;
-      session.lastFailureSubspawnId = null;
-      session.lastFailureReason = null;
-      session.hadTrackedSinceNotificationCycle = tracked > 0;
-      session.pendingNotification = {
-        id: notificationId,
-        queuedAtMs: nowMs(),
-        delivered: false,
-      };
-
-      emitRaw({
-        type: "meridian.notification.queued",
-        ...envelope(notificationId),
-        notification_id: notificationId,
-        reason: "child_failed",
-        tracked_count: tracked,
-        failure_count: failureCount,
-        failed_subspawn_id: failedSubspawnId,
-        failure_reason: failureReason,
-      });
-
-      try {
-        pi.sendMessage(
-          {
-            customType: "meridian-lifecycle",
-            content:
-              "A background child task failed. Check failure details and decide recovery while remaining work may continue.",
-            display: true,
-            details: {
-              kind: "child_failed",
-              tracked_count: tracked,
-              failure_count: failureCount,
-              failed_subspawn_id: failedSubspawnId,
-              failure_reason: failureReason,
-            },
-          },
-          {
-            deliverAs: "followUp",
-            triggerTurn: true,
-          },
-        );
-
-        session.pendingNotification.delivered = true;
-        session.awaitingNotificationCompletion = true;
-        emitRaw({
-          type: "meridian.notification.delivered",
-          ...envelope(notificationId),
-          notification_id: notificationId,
-          deliver_as: "followUp",
-          trigger_turn: true,
-        });
-      } catch (error) {
-        emitRaw({
-          type: "meridian.notification.failed",
-          ...envelope(notificationId),
-          notification_id: notificationId,
-          reason: "sendMessage_error",
-          error: error instanceof Error ? error.message : String(error),
-        });
-        session.pendingNotification = null;
-        session.awaitingNotificationCompletion = false;
-      }
+    if (!session.trackedChildren.has(childId)) {
       return;
     }
+    session.activeWave.trackedChildIds.add(childId);
+  };
 
-    if (tracked > 0) {
+  const buildWaveOutcomes = (wave: ActiveWaveState): ChildOutcome[] => {
+    const outcomes = [...wave.outcomes.values()];
+    outcomes.sort((left, right) => left.subspawn_id.localeCompare(right.subspawn_id));
+    return outcomes;
+  };
+
+  const formatWaveOutcomeSummary = (outcome: ChildOutcome): string => {
+    const base = `${outcome.subspawn_id} ${outcome.status}`;
+    if (typeof outcome.reason !== "string" || outcome.reason.trim().length === 0) {
+      return base;
+    }
+    const normalizedReason = normalizeWhitespace(outcome.reason);
+    if (normalizedReason.length === 0) {
+      return base;
+    }
+    const shortReason = truncateText(normalizedReason, MAX_WAVE_NOTIFICATION_REASON_CHARS);
+    return `${base} (${shortReason})`;
+  };
+
+  const buildWaveNotificationContent = (childOutcomes: ChildOutcome[]): string => {
+    const childCount = childOutcomes.length;
+    if (childCount === 0) {
+      return "Background work completed. 0 children finished.";
+    }
+
+    const cappedOutcomes = childOutcomes
+      .slice(0, MAX_WAVE_NOTIFICATION_OUTCOME_COUNT)
+      .map(formatWaveOutcomeSummary);
+    const remainingCount = childCount - cappedOutcomes.length;
+    if (remainingCount > 0) {
+      cappedOutcomes.push(`+${remainingCount} more`);
+    }
+
+    const summary = truncateText(
+      cappedOutcomes.join("; "),
+      MAX_WAVE_NOTIFICATION_SUMMARY_CHARS,
+    );
+    return `Background work completed. ${childCount} children finished: ${summary}.`;
+  };
+
+  const sendWaveNotification = (waveReason: "children_drained" | "wave_deadline", trackedForPayload: number): void => {
+    const wave = session.activeWave;
+    if (wave == null) {
       return;
     }
-    if (!session.hadTrackedSinceNotificationCycle) {
-      emitQuiescenceReady();
-      return;
-    }
-
     const notificationId = makeId("n");
-    session.hadTrackedSinceNotificationCycle = false;
+    const childOutcomes = buildWaveOutcomes(wave);
+    const hadFailures = childOutcomes.some((outcome) => outcome.success === false);
+    const hadTimeouts = childOutcomes.some((outcome) => outcome.status === "timed_out");
+
     session.pendingNotification = {
       id: notificationId,
       queuedAtMs: nowMs(),
@@ -636,20 +841,23 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       type: "meridian.notification.queued",
       ...envelope(notificationId),
       notification_id: notificationId,
-      reason: "children_drained",
-      tracked_count: 0,
+      reason: waveReason,
+      tracked_count: trackedForPayload,
     });
 
     try {
       pi.sendMessage(
         {
           customType: "meridian-lifecycle",
-          content:
-            "Background work completed. Summarize status and decide next action or finalize.",
+          content: buildWaveNotificationContent(childOutcomes),
           display: true,
           details: {
-            kind: "children_drained",
-            tracked_count: 0,
+            kind: "wave_completed",
+            tracked_count: trackedForPayload,
+            child_outcomes: childOutcomes,
+            had_failures: hadFailures,
+            had_timeouts: hadTimeouts,
+            wave_reason: waveReason,
           },
         },
         {
@@ -677,56 +885,259 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       });
       session.pendingNotification = null;
       session.awaitingNotificationCompletion = false;
+    } finally {
+      clearActiveWave();
     }
   };
 
+  const maybeCompleteWaveByDrain = (): void => {
+    if (session.activeWave == null) {
+      return;
+    }
+    if (session.activeWave.trackedChildIds.size > 0) {
+      return;
+    }
+    sendWaveNotification("children_drained", 0);
+  };
+
+  const startWave = (): void => {
+    if (!session.parentIdle || session.activeWave != null || session.pendingNotification != null) {
+      return;
+    }
+    const ids = trackedChildIds();
+    if (ids.length === 0) {
+      return;
+    }
+
+    const waveId = makeId("w");
+    const wave: ActiveWaveState = {
+      id: waveId,
+      startedAtMs: nowMs(),
+      deadlineAtMs: nowMs() + childWaveTimeoutMs,
+      deadlineTimer: null,
+      trackedChildIds: new Set(ids),
+      outcomes: new Map<string, ChildOutcome>(),
+    };
+    wave.deadlineTimer = setTimeout(() => {
+      void handleWaveDeadline(waveId);
+    }, childWaveTimeoutMs);
+    wave.deadlineTimer.unref?.();
+    session.activeWave = wave;
+
+    emitRaw({
+      type: "meridian.lifecycle.wave.started",
+      ...envelope(waveId),
+      wave_id: waveId,
+      tracked_count: ids.length,
+      timeout_ms: childWaveTimeoutMs,
+      started_at_ms: wave.startedAtMs,
+      deadline_at_ms: wave.deadlineAtMs,
+    });
+  };
+
+  const maybeQueueNotification = (): void => {
+    if (!session.parentIdle) {
+      return;
+    }
+    if (session.pendingNotification) {
+      return;
+    }
+    if (session.activeWave != null) {
+      maybeCompleteWaveByDrain();
+      return;
+    }
+
+    if (trackedCount() > 0) {
+      startWave();
+      return;
+    }
+    emitQuiescenceReady();
+  };
+
   const addTrackedChild = (childId: string, waitPolicy: WaitPolicy, kind: "bash" | "meridian_spawn"): void => {
+    const existing = session.trackedChildren.get(childId);
     session.trackedChildren.set(childId, {
       waitPolicy,
       kind,
       startedAtMs: nowMs(),
+      pid: existing?.pid ?? null,
     });
     if (waitPolicy === "tracked") {
-      session.hadTrackedSinceNotificationCycle = true;
+      attachChildToActiveWave(childId);
+      maybeQueueNotification();
     }
   };
 
-  const maybeRemoveChild = (childId: string): void => {
+  const recordWaveOutcome = (outcome: ChildOutcome): void => {
+    const wave = session.activeWave;
+    if (wave == null) {
+      return;
+    }
+    if (!wave.trackedChildIds.has(outcome.subspawn_id)) {
+      return;
+    }
+    if (wave.outcomes.has(outcome.subspawn_id)) {
+      emitRaw({
+        type: "meridian.lifecycle.duplicate_child_outcome_ignored",
+        ...envelope(outcome.subspawn_id),
+        subspawn_id: outcome.subspawn_id,
+      });
+      return;
+    }
+    wave.outcomes.set(outcome.subspawn_id, outcome);
+    wave.trackedChildIds.delete(outcome.subspawn_id);
+  };
+
+  const settleTrackedChildTerminalOutcome = (
+    childId: string,
+    outcome: ChildOutcome,
+  ): void => {
+    const childState = session.trackedChildren.get(childId);
+    if (childState?.waitPolicy === "tracked") {
+      recordWaveOutcome(outcome);
+    }
+    maybeRemoveChild(childId);
+    session.meridianSpawnWrapperJobs.delete(childId);
+    if (isMeridianSpawnId(childId)) {
+      session.knownMeridianSpawnIds.delete(childId);
+    }
+    if (trackedMeridianSpawnIds().length === 0) {
+      stopChildStatusPoller();
+    }
+  };
+
+  const setChildPid = (childId: string, pid: number | null): void => {
+    if (pid == null) {
+      return;
+    }
+    const child = session.trackedChildren.get(childId);
+    if (!child) {
+      return;
+    }
+    child.pid = pid;
+    session.trackedChildren.set(childId, child);
+  };
+
+  const dropWaveChild = (childId: string): void => {
+    const wave = session.activeWave;
+    if (!wave) {
+      return;
+    }
+    wave.trackedChildIds.delete(childId);
+    wave.outcomes.delete(childId);
+  };
+
+  const maybeRemoveChild = (childId: string, options?: { dropWaveChild?: boolean }): void => {
     if (!session.trackedChildren.has(childId)) {
       return;
+    }
+    if (options?.dropWaveChild === true) {
+      dropWaveChild(childId);
     }
     session.trackedChildren.delete(childId);
     maybeQueueNotification();
   };
 
-  const noteTrackedChildFailure = (event: InternalSubspawnEvent): void => {
-    const childId = event.subspawn_id;
-    if (!childId) {
-      return;
-    }
-    const childState = session.trackedChildren.get(childId);
-    if (!childState || childState.waitPolicy !== "tracked") {
-      return;
-    }
-    if (!isFailedSubspawnOutcome(event)) {
+  const cancelTrackedMeridianSpawn = async (spawnId: string): Promise<void> => {
+    const result = await runCommand(
+      "meridian",
+      ["spawn", "cancel", spawnId],
+      CHILD_SPAWN_CANCEL_TIMEOUT_MS,
+    );
+
+    if (result.timedOut) {
+      emitRaw({
+        type: "meridian.lifecycle.child_cancel_failed",
+        ...envelope(spawnId),
+        subspawn_id: spawnId,
+        reason: "cancel_timeout",
+        timeout_ms: CHILD_SPAWN_CANCEL_TIMEOUT_MS,
+      });
       return;
     }
 
-    session.pendingFailureCount += 1;
-    session.lastFailureSubspawnId = childId;
-    session.lastFailureReason = failureReasonFromInternalEvent(event);
+    if (result.spawnError) {
+      emitRaw({
+        type: "meridian.lifecycle.child_cancel_failed",
+        ...envelope(spawnId),
+        subspawn_id: spawnId,
+        reason: "cancel_spawn_error",
+        error: result.spawnError,
+      });
+      return;
+    }
+
+    if (result.exitCode !== 0) {
+      emitRaw({
+        type: "meridian.lifecycle.child_cancel_failed",
+        ...envelope(spawnId),
+        subspawn_id: spawnId,
+        reason: "cancel_nonzero_exit",
+        exit_code: result.exitCode,
+        signal: result.signal,
+        stderr: truncateText(result.stderr, 256),
+      });
+    }
   };
 
-  const registerMeridianSpawnId = (spawnId: string): void => {
+  const handleWaveDeadline = async (waveId: string): Promise<void> => {
+    if (session.shuttingDown) {
+      return;
+    }
+    const wave = session.activeWave;
+    if (!session.parentIdle || wave == null || wave.id !== waveId || session.pendingNotification != null) {
+      return;
+    }
+
+    clearWaveTimer(wave);
+
+    const timedOutChildIds = [...wave.trackedChildIds];
+    const trackedCountAtDeadline = timedOutChildIds.length;
+    const killTasks: Promise<void>[] = [];
+    for (const childId of timedOutChildIds) {
+      if (!wave.outcomes.has(childId)) {
+        wave.outcomes.set(childId, {
+          subspawn_id: childId,
+          status: "timed_out",
+          success: false,
+          reason: "wave_deadline",
+        });
+      }
+      const child = session.trackedChildren.get(childId);
+      if (child?.waitPolicy === "tracked") {
+        if (child.pid != null) {
+          killTasks.push(cancelTrackedPid(child.pid, childWaveKillGraceMs));
+        }
+        if (child.kind === "meridian_spawn" && isMeridianSpawnId(childId)) {
+          killTasks.push(cancelTrackedMeridianSpawn(childId));
+        }
+      }
+      maybeRemoveChild(childId);
+      session.meridianSpawnWrapperJobs.delete(childId);
+      if (isMeridianSpawnId(childId)) {
+        session.knownMeridianSpawnIds.delete(childId);
+      }
+    }
+
+    if (killTasks.length > 0) {
+      await Promise.allSettled(killTasks);
+    }
+
+    wave.trackedChildIds.clear();
+    sendWaveNotification("wave_deadline", trackedCountAtDeadline);
+  };
+
+  const registerMeridianSpawnId = (spawnId: string, waitPolicy: WaitPolicy): void => {
     if (!isMeridianSpawnId(spawnId)) {
       return;
     }
+    addTrackedChild(spawnId, waitPolicy, "meridian_spawn");
     if (session.knownMeridianSpawnIds.has(spawnId)) {
       return;
     }
 
     session.knownMeridianSpawnIds.add(spawnId);
-    emitCanonicalSubspawnStart(spawnId, "meridian_spawn", "tracked");
+    emitCanonicalSubspawnStart(spawnId, "meridian_spawn", waitPolicy);
   };
 
   const discoverMeridianSpawnIdsFromWrapperEnd = async (event: InternalSubspawnEvent): Promise<string[]> => {
@@ -750,14 +1161,31 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     return [...ids];
   };
 
-  const handleObservedMeridianSpawnOutput = (event: ToolResultEvent, associatedToMeridianSpawn: boolean): void => {
+  const handleObservedMeridianSpawnOutput = (
+    event: ToolResultEvent,
+    associatedToMeridianSpawn: boolean,
+    sourceJobId?: string | null,
+  ): string[] => {
     if (!associatedToMeridianSpawn) {
-      return;
+      return [];
     }
     const spawnIds = extractMeridianSpawnIds(event);
+    const sourceWaitPolicy =
+      sourceJobId != null && session.trackedChildren.get(sourceJobId)?.waitPolicy === "detached"
+        ? "detached"
+        : "tracked";
     for (const spawnId of spawnIds) {
-      registerMeridianSpawnId(spawnId);
+      registerMeridianSpawnId(spawnId, sourceWaitPolicy);
     }
+    if (
+      spawnIds.length > 0 &&
+      sourceJobId != null &&
+      session.meridianSpawnWrapperJobs.has(sourceJobId)
+    ) {
+      maybeRemoveChild(sourceJobId, { dropWaveChild: true });
+      session.meridianSpawnWrapperJobs.delete(sourceJobId);
+    }
+    return spawnIds;
   };
 
   const pollMeridianSpawnStatuses = async (): Promise<void> => {
@@ -802,6 +1230,14 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
           parseStatusFromOutput(result.stderr);
 
         if (status && TERMINAL_MERIDIAN_STATUSES.has(status)) {
+          const outcome = outcomeFromTerminalEvent({
+            subspawn_id: spawnId,
+            status,
+            success: status === "succeeded",
+          });
+          if (outcome != null) {
+            settleTrackedChildTerminalOutcome(spawnId, outcome);
+          }
           emitCanonicalSubspawnEnd(spawnId, "meridian_spawn", {
             status,
             success: status === "succeeded",
@@ -821,6 +1257,15 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
         if (result.exitCode !== 0 && status == null) {
           const combined = `${result.stdout}\n${result.stderr}`;
           if (/not found|unknown spawn|no such spawn/i.test(combined)) {
+            const outcome = outcomeFromTerminalEvent({
+              subspawn_id: spawnId,
+              status: "failed",
+              success: false,
+              reason: "spawn_not_found",
+            });
+            if (outcome != null) {
+              settleTrackedChildTerminalOutcome(spawnId, outcome);
+            }
             emitCanonicalSubspawnEnd(spawnId, "meridian_spawn", {
               status: "failed",
               success: false,
@@ -885,6 +1330,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
         event.wait_policy === "detached" ? "detached" : "tracked",
         kind,
       );
+      setChildPid(event.subspawn_id, intFromUnknown(event.pid));
 
       if (kind === "meridian_spawn") {
         if (isMeridianSpawnId(event.subspawn_id)) {
@@ -906,28 +1352,48 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       }
 
       void (async () => {
-        noteTrackedChildFailure(event);
-
         const subspawnId = event.subspawn_id;
+        const childState = session.trackedChildren.get(subspawnId);
+        const isTracked = childState?.waitPolicy === "tracked";
         const isMeridianWrapper =
           session.meridianSpawnWrapperJobs.has(subspawnId) ||
           (kindFromInternalEvent(event) === "meridian_spawn" && !isMeridianSpawnId(subspawnId));
 
+        let wrapperHandoffSucceeded = false;
         if (isMeridianWrapper) {
+          const wrapperWaitPolicy = childState?.waitPolicy === "detached" ? "detached" : "tracked";
           const childSpawnIds = await discoverMeridianSpawnIdsFromWrapperEnd(event);
           for (const spawnId of childSpawnIds) {
-            registerMeridianSpawnId(spawnId);
+            registerMeridianSpawnId(spawnId, wrapperWaitPolicy);
           }
           if (childSpawnIds.length > 0) {
+            wrapperHandoffSucceeded = true;
             ensureChildStatusPoller();
+          } else if (isTracked) {
+            emitRaw({
+              type: "meridian.lifecycle.wrapper_handoff_missing_child_id",
+              ...envelope(subspawnId),
+              subspawn_id: subspawnId,
+            });
           }
         }
 
-        maybeRemoveChild(subspawnId);
+        if (isMeridianWrapper && !wrapperHandoffSucceeded && isTracked) {
+          maybeQueueNotification();
+          return;
+        }
+
+        const outcome = outcomeFromTerminalEvent(event);
+        if (isTracked && outcome != null) {
+          recordWaveOutcome(outcome);
+        }
+
+        maybeRemoveChild(subspawnId, { dropWaveChild: wrapperHandoffSucceeded });
         session.meridianSpawnWrapperJobs.delete(subspawnId);
         if (isMeridianSpawnId(subspawnId)) {
           session.knownMeridianSpawnIds.delete(subspawnId);
         }
+
         if (trackedMeridianSpawnIds().length === 0) {
           stopChildStatusPoller();
         }
@@ -945,6 +1411,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async () => {
     session.shuttingDown = true;
     stopChildStatusPoller();
+    clearActiveWave();
     unsubscribeInternalSubspawnStart();
     unsubscribeInternalSubspawnEnd();
   });
@@ -969,6 +1436,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
         if (jobId) {
           const kind = commandLooksLikeMeridianSpawn ? "meridian_spawn" : "bash";
           addTrackedChild(jobId, waitPolicyFrom(event), kind);
+          setChildPid(jobId, intFromUnknown(event.details?.pid));
           if (commandLooksLikeMeridianSpawn) {
             session.meridianSpawnWrapperJobs.add(jobId);
           }
@@ -979,15 +1447,16 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
         commandLooksLikeMeridianSpawn ||
         (resultJobId != null && session.meridianSpawnWrapperJobs.has(resultJobId))
       ) {
-        handleObservedMeridianSpawnOutput(event, true);
+        handleObservedMeridianSpawnOutput(event, true, resultJobId);
         ensureChildStatusPoller();
       }
 
       if (event.details?.state === "exited") {
         const jobId = resultJobId;
         if (jobId) {
-          maybeRemoveChild(jobId);
-          session.meridianSpawnWrapperJobs.delete(jobId);
+          if (!session.meridianSpawnWrapperJobs.has(jobId)) {
+            maybeRemoveChild(jobId);
+          }
         }
       }
       return;
@@ -996,12 +1465,13 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     if (toolName === "bash_bg_wait" || toolName === "bash_bg_kill") {
       const jobId = resultJobId;
       const meridianAssociated = !!jobId && session.meridianSpawnWrapperJobs.has(jobId);
-      handleObservedMeridianSpawnOutput(event, meridianAssociated);
+      handleObservedMeridianSpawnOutput(event, meridianAssociated, jobId);
       if (jobId && event.details?.found !== false) {
         const status = event.details?.job?.status;
         if (status && status !== "running") {
-          maybeRemoveChild(jobId);
-          session.meridianSpawnWrapperJobs.delete(jobId);
+          if (!session.meridianSpawnWrapperJobs.has(jobId)) {
+            maybeRemoveChild(jobId);
+          }
         }
       }
       ensureChildStatusPoller();
@@ -1011,7 +1481,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     if (toolName === "bash_bg_read") {
       const jobId = resultJobId;
       const meridianAssociated = !!jobId && session.meridianSpawnWrapperJobs.has(jobId);
-      handleObservedMeridianSpawnOutput(event, meridianAssociated);
+      handleObservedMeridianSpawnOutput(event, meridianAssociated, jobId);
       ensureChildStatusPoller();
       return;
     }
@@ -1038,11 +1508,12 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
             session.meridianSpawnWrapperJobs.add(jobId);
           }
         } else {
-          maybeRemoveChild(jobId);
-          session.meridianSpawnWrapperJobs.delete(jobId);
+          if (!session.meridianSpawnWrapperJobs.has(jobId)) {
+            maybeRemoveChild(jobId);
+          }
         }
       }
-      handleObservedMeridianSpawnOutput(event, hasMeridianWrapper);
+      handleObservedMeridianSpawnOutput(event, hasMeridianWrapper, resultJobId);
       ensureChildStatusPoller();
     }
   });

@@ -218,6 +218,82 @@ def test_pi_subspawn_tracker_invalidates_missing_canonical_ids() -> None:
     )
 
 
+def test_pi_subspawn_tracker_deduplicates_canonical_start_by_correlation_key() -> None:
+    tracker = _PiSubspawnTracker.empty()
+
+    duplicate = tracker.observe(
+        _pi_event(
+            "meridian.subspawn.start",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-dup",
+                "correlation_id": "corr-dup",
+                "wait_policy": "tracked",
+                "pid": 4401,
+            },
+        )
+    )
+    assert duplicate is False
+    duplicate = tracker.observe(
+        _pi_event(
+            "meridian.subspawn.start",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-dup",
+                "correlation_id": "corr-dup",
+                "wait_policy": "tracked",
+                "pid": 5501,
+            },
+        )
+    )
+    assert duplicate is True
+
+    assert tracker.active_tracked_count() == 1
+    assert tracker.active_tracked_pgid_candidates() == (4401,)
+
+
+def test_pi_subspawn_tracker_subspawn_end_first_terminal_outcome_wins() -> None:
+    tracker = _PiSubspawnTracker.empty()
+
+    tracker.observe(
+        _pi_event(
+            "meridian.subspawn.start",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-terminal",
+                "correlation_id": "corr-terminal",
+                "wait_policy": "tracked",
+                "pid": 4601,
+            },
+        )
+    )
+    tracker.observe(
+        _pi_event(
+            "meridian.subspawn.end",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-terminal",
+                "correlation_id": "corr-terminal",
+                "wait_policy": "tracked",
+            },
+        )
+    )
+    tracker.observe(
+        _pi_event(
+            "meridian.subspawn.end",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-terminal",
+                "correlation_id": "corr-terminal-duplicate",
+                "wait_policy": "tracked",
+            },
+        )
+    )
+
+    assert tracker.has_pending() is False
+    assert tracker.active_tracked_pgid_candidates() == ()
+
+
 def test_pi_subspawn_tracker_tracks_meridian_spawn_kind_by_spawn_id() -> None:
     tracker = _PiSubspawnTracker.empty()
 
@@ -246,6 +322,115 @@ def test_pi_subspawn_tracker_tracks_meridian_spawn_kind_by_spawn_id() -> None:
         )
     )
     assert tracker.has_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_drops_duplicate_canonical_lifecycle_events_from_history(
+    tmp_path: Path,
+) -> None:
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event(
+            "meridian.subspawn.start",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-dup",
+                "correlation_id": "corr-start",
+                "wait_policy": "tracked",
+            },
+        ),
+        _pi_event(
+            "meridian.subspawn.start",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-dup",
+                "correlation_id": "corr-start",
+                "wait_policy": "tracked",
+            },
+        ),
+        _pi_event(
+            "meridian.subspawn.end",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-dup",
+                "correlation_id": "corr-end",
+                "wait_policy": "tracked",
+            },
+        ),
+        _pi_event(
+            "meridian.subspawn.end",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-dup",
+                "correlation_id": "corr-end",
+                "wait_policy": "tracked",
+            },
+        ),
+        _pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        ),
+    ]
+    fake_connection = _FakePiConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-drop-duplicate-canonical")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        starts = [
+            event
+            for event in history
+            if event.get("event_type") == "meridian.subspawn.start"
+            and event.get("payload", {}).get("subspawn_id") == "j-dup"
+        ]
+        ends = [
+            event
+            for event in history
+            if event.get("event_type") == "meridian.subspawn.end"
+            and event.get("payload", {}).get("subspawn_id") == "j-dup"
+        ]
+        assert len(starts) == 1
+        assert len(ends) == 1
+    finally:
+        await manager.stop_spawn(spawn_id)
 
 
 def test_pi_subspawn_tracker_marks_lifecycle_tracking_invalid_on_unsupported_schema() -> None:
@@ -1052,6 +1237,190 @@ async def test_spawn_manager_pi_notification_queued_before_parent_terminal_times
             )
             and ":timeout=" in outcome.error
         )
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_fails(
+    tmp_path: Path,
+) -> None:
+    class _StuckWaveTimeoutConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            for event in self._events:
+                yield event
+            await asyncio.sleep(60)
+
+    events = [
+        _pi_event("session", {"id": "ses-pi"}),
+        _pi_event(
+            "meridian.subspawn.start",
+            {
+                "schema_version": 1,
+                "subspawn_id": "j-wave-timeout",
+                "correlation_id": "j-wave-timeout",
+                "wait_policy": "tracked",
+                "pid": 7701,
+            },
+        ),
+        _pi_event(
+            "agent_end",
+            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+        ),
+    ]
+    fake_connection = _StuckWaveTimeoutConnection(events)
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+    cleanup_calls: list[tuple[int, str]] = []
+
+    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
+        _ = spawn_id
+        cleanup_calls.append((process_group_id, reason))
+
+    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
+
+    spawn_id = SpawnId("p-pi-child-wave-timeout")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+            pi_child_wave_timeout_seconds=0.02,
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_child_wave_timeout"
+        assert cleanup_calls == [(7701, "pi_child_wave_timeout")]
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        timeout_events = [
+            event
+            for event in history
+            if event.get("event_type") == "meridian.pi.lifecycle.phase"
+            and event.get("payload", {}).get("phase") == "pi_child_wave_timeout"
+        ]
+        assert timeout_events
+        assert timeout_events[-1]["payload"].get("active_tracked_count") == 1
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
+    tmp_path: Path,
+) -> None:
+    class _DelayedWaveTimeoutConnection(_FakePiConnection):
+        def __init__(self, delayed_events: list[tuple[float, HarnessEvent]]) -> None:
+            super().__init__([])
+            self._delayed_events = delayed_events
+
+        async def events(self):  # type: ignore[no-untyped-def]
+            for delay, event in self._delayed_events:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                yield event
+            await asyncio.sleep(60)
+
+    fake_connection = _DelayedWaveTimeoutConnection(
+        [
+            (0.0, _pi_event("session", {"id": "ses-pi"})),
+            (
+                0.0,
+                _pi_event(
+                    "meridian.subspawn.start",
+                    {
+                        "schema_version": 1,
+                        "subspawn_id": "j-wave-timeout-latch",
+                        "correlation_id": "corr-wave-timeout-latch",
+                        "wait_policy": "tracked",
+                        "pid": 8801,
+                    },
+                ),
+            ),
+            (
+                0.0,
+                _pi_event(
+                    "agent_end",
+                    {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+                ),
+            ),
+            (0.03, _pi_event("agent_start", {})),
+        ]
+    )
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+    cleanup_calls: list[tuple[int, str]] = []
+
+    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
+        _ = spawn_id
+        cleanup_calls.append((process_group_id, reason))
+
+    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
+
+    spawn_id = SpawnId("p-pi-child-wave-timeout-turn-active")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+            pi_child_wave_timeout_seconds=0.02,
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_child_wave_timeout"
+        assert cleanup_calls == [(8801, "pi_child_wave_timeout")]
     finally:
         await manager.stop_spawn(spawn_id)
 

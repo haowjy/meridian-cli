@@ -115,6 +115,7 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
     assert row.goal == "keep scope tight"
     assert prepared.connection_config.control_root == tmp_path
     assert prepared.connection_config.task_cwd == child_cwd
+    assert prepared.connection_config.pi_child_wave_timeout_seconds == 300.0
 
 
 @pytest.mark.asyncio
@@ -269,7 +270,12 @@ async def test_prepare_sets_pi_notification_timeout_from_wait_timeout_config(
     )
 
     runtime = _runtime_request(tmp_path, runtime_root).model_copy(
-        update={"config_snapshot": {"wait_timeout_minutes": 30.0}}
+        update={
+            "config_snapshot": {
+                "wait_timeout_minutes": 30.0,
+                "pi_child_wave_timeout_seconds": 45.0,
+            }
+        }
     )
     service = _service(runtime_root)
     prepared = await service.prepare(
@@ -287,3 +293,4 @@ async def test_prepare_sets_pi_notification_timeout_from_wait_timeout_config(
 
     assert prepared.connection_config.timeout_seconds is None
     assert prepared.connection_config.pi_notification_timeout_seconds == 1800.0
+    assert prepared.connection_config.pi_child_wave_timeout_seconds == 45.0
