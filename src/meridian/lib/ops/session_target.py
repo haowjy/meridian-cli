@@ -22,8 +22,13 @@ from meridian.lib.ops.spawn.query import (
 )
 from meridian.lib.state import session_store
 from meridian.lib.state.paths import spawn_output_path
-from meridian.lib.state.primary_meta import is_managed_primary, read_primary_harness_session_id
+from meridian.lib.state.primary_meta import (
+    is_managed_primary,
+    read_primary_harness_session_id,
+    read_primary_metadata,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
+from meridian.lib.state.user_paths import get_user_home
 
 _CODEX_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
@@ -322,10 +327,17 @@ def _resolve_transcript_from_candidates(
 def _detect_primary_session_id(
     *,
     project_root: Path,
+    runtime_root: Path,
     spawn_row: SpawnRecord | None,
     harness: str | None,
 ) -> str | None:
     if spawn_row is None:
+        return None
+    if _skip_primary_default_root_detection(
+        runtime_root=runtime_root,
+        spawn_row=spawn_row,
+        harness=harness,
+    ):
         return None
     detected_session_id = _detect_primary_harness_session_id(
         project_root=project_root,
@@ -334,6 +346,43 @@ def _detect_primary_session_id(
     )
     normalized_detected_session_id = (detected_session_id or "").strip()
     return normalized_detected_session_id or None
+
+
+def _normalized_path_text(path: str | Path) -> str | None:
+    try:
+        normalized = Path(path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        try:
+            normalized = Path(path).expanduser().absolute()
+        except (OSError, RuntimeError, ValueError):
+            return None
+    return normalized.as_posix().rstrip("/").lower()
+
+
+def _skip_primary_default_root_detection(
+    *,
+    runtime_root: Path,
+    spawn_row: SpawnRecord,
+    harness: str | None,
+) -> bool:
+    if spawn_row.kind != "primary":
+        return False
+    normalized_harness = (harness or spawn_row.harness or "").strip().lower()
+    if normalized_harness != HarnessId.PI.value:
+        return False
+    metadata = read_primary_metadata(runtime_root, spawn_row.id)
+    if metadata is None:
+        return False
+    if metadata.harness_session_discovery == "never_created":
+        return True
+    session_dir = (metadata.session_dir or "").strip()
+    if not session_dir:
+        return False
+    configured_session_dir = _normalized_path_text(session_dir)
+    default_session_dir = _normalized_path_text(get_user_home() / "meridian-pi" / "sessions")
+    if configured_session_dir is None or default_session_dir is None:
+        return False
+    return configured_session_dir != default_session_dir
 
 
 def _repair_target_from_detected_session_id(
@@ -394,6 +443,7 @@ def _resolve_from_chat_id(
             raise ValueError(_primary_transcript_unavailable_message(chat_id))
         normalized_session_id = _detect_primary_session_id(
             project_root=project_root,
+            runtime_root=runtime_root,
             spawn_row=primary_spawn,
             harness=normalized_harness,
         )
@@ -417,6 +467,7 @@ def _resolve_from_chat_id(
 
     detected_session_id = _detect_primary_session_id(
         project_root=project_root,
+        runtime_root=runtime_root,
         spawn_row=primary_spawn,
         harness=normalized_harness,
     )
@@ -493,6 +544,7 @@ def _resolve_from_spawn_id(
         if is_primary_spawn:
             detected_session_id = _detect_primary_session_id(
                 project_root=project_root,
+                runtime_root=runtime_root,
                 spawn_row=row,
                 harness=harness,
             )
@@ -543,6 +595,7 @@ def _resolve_from_spawn_id(
     if is_primary_spawn:
         detected_session_id = _detect_primary_session_id(
             project_root=project_root,
+            runtime_root=runtime_root,
             spawn_row=row,
             harness=harness,
         )
@@ -647,6 +700,7 @@ def _resolve_repair_from_chat_id(
 
     detected_session_id = _detect_primary_session_id(
         project_root=project_root,
+        runtime_root=runtime_root,
         spawn_row=primary_spawn,
         harness=harness,
     )
@@ -740,6 +794,7 @@ def _resolve_repair_from_spawn_id(
 
     detected_session_id = _detect_primary_session_id(
         project_root=project_root,
+        runtime_root=runtime_root,
         spawn_row=row,
         harness=harness,
     )

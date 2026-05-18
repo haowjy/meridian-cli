@@ -24,6 +24,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "extra_args",
         "interactive",
         "appended_system_prompt",
+        "pi_extension_entrypoints",
     }
 )
 
@@ -42,7 +43,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "reference_items",
         "mcp_tools",
         "projected_roots",
-        "pi_extension_entrypoints",
     }
 )
 
@@ -53,6 +53,8 @@ _MANAGED_FLAG_ALIASES: dict[str, tuple[str, ...]] = {
     "--fork": ("--fork",),
     "--mode": ("--mode",),
     "--session-dir": ("--session-dir",),
+    "--no-extensions": ("--no-extensions",),
+    "-e": ("-e", "--extension"),
 }
 
 _EFFORT_TO_THINKING: dict[str, str] = {
@@ -65,7 +67,12 @@ _EFFORT_TO_THINKING: dict[str, str] = {
 
 
 def _has_flag(args: Sequence[str], flag: str) -> bool:
-    return any(token == flag or token.startswith(f"{flag}=") for token in args)
+    for token in args:
+        if token == flag or token.startswith(f"{flag}="):
+            return True
+        if flag == "-e" and token.startswith("-e") and token != "-e":
+            return True
+    return False
 
 
 def _log_collision_if_needed(
@@ -103,6 +110,35 @@ def _reject_mode_collisions(passthrough_tail: tuple[str, ...]) -> None:
         )
 
 
+def _reject_continue_collisions(passthrough_tail: tuple[str, ...]) -> None:
+    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--session"]):
+        raise ValueError(
+            "Pi native primary launches cannot accept --session from passthrough extra_args; "
+            "Meridian owns continue-session selection"
+        )
+    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["--fork"]):
+        raise ValueError(
+            "Pi native primary launches cannot accept --fork from passthrough extra_args; "
+            "Meridian owns continue-fork session selection"
+        )
+
+
+def _reject_extension_collisions(passthrough_tail: tuple[str, ...]) -> None:
+    if any(
+        _has_flag(passthrough_tail, alias)
+        for alias in _MANAGED_FLAG_ALIASES["--no-extensions"]
+    ):
+        raise ValueError(
+            "Pi native primary launches cannot accept --no-extensions from passthrough extra_args; "
+            "Meridian requires lifecycle extension loading"
+        )
+    if any(_has_flag(passthrough_tail, alias) for alias in _MANAGED_FLAG_ALIASES["-e"]):
+        raise ValueError(
+            "Pi native primary launches cannot accept -e/--extension from passthrough extra_args; "
+            "Meridian requires lifecycle extension loading"
+        )
+
+
 def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
     model = (spec.model or "").strip()
     if not model:
@@ -136,6 +172,8 @@ def project_pi_native_tui_spec_to_cli_args(
 
     passthrough_tail = spec.extra_args
     _reject_mode_collisions(passthrough_tail)
+    _reject_continue_collisions(passthrough_tail)
+    _reject_extension_collisions(passthrough_tail)
 
     _log_collision_if_needed(
         managed_flag="--model",
@@ -148,13 +186,8 @@ def project_pi_native_tui_spec_to_cli_args(
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(
-        managed_flag="--session",
-        has_managed_value=has_continue_session,
-        passthrough_tail=passthrough_tail,
-    )
-    _log_collision_if_needed(
-        managed_flag="--fork",
-        has_managed_value=has_continue_fork,
+        managed_flag="-e",
+        has_managed_value=bool(spec.pi_extension_entrypoints),
         passthrough_tail=passthrough_tail,
     )
 
@@ -163,6 +196,9 @@ def project_pi_native_tui_spec_to_cli_args(
             command.extend(("--fork", continue_session_id))
         else:
             command.extend(("--session", continue_session_id))
+
+    for extension_entrypoint in spec.pi_extension_entrypoints:
+        command.extend(("-e", extension_entrypoint))
 
     command.extend(resolve_permission_flags(spec.permission_resolver, HarnessId.PI))
     command.extend(passthrough_tail)

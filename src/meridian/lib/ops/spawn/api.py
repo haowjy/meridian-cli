@@ -1627,6 +1627,7 @@ def _build_fork_create_input(
             source_control_root=resolved_reference.source_control_root,
             source_execution_cwd=resolved_reference.source_execution_cwd,
             source_claude_config_dir=resolved_reference.source_claude_config_dir,
+            source_pi_session_dir=resolved_reference.source_pi_session_dir,
         ),
         **launch_options,
     )
@@ -1801,6 +1802,7 @@ def spawn_continue_sync(
             source_control_root=resolved_reference.source_control_root,
             source_execution_cwd=resolved_reference.source_execution_cwd,
             source_claude_config_dir=resolved_reference.source_claude_config_dir,
+            source_pi_session_dir=resolved_reference.source_pi_session_dir,
         ),
         **launch_options,
     )

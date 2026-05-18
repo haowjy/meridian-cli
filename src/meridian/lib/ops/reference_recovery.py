@@ -13,6 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.extractors.pi import detect_pi_session_id_from_session_files
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.state import primary_meta, session_store, spawn_store
 from meridian.lib.state.spawn.model import SpawnRecord
@@ -84,6 +85,7 @@ def _started_at_observation_window(started_at: str | None) -> tuple[float | None
 def _detect_primary_harness_session_id(
     *,
     project_root: Path,
+    runtime_root: Path,
     spawn_row: SpawnRecord,
     harness_hint: str | None,
 ) -> str | None:
@@ -96,6 +98,15 @@ def _detect_primary_harness_session_id(
     if started_at_epoch is None:
         return None
 
+    metadata = primary_meta.read_primary_metadata(runtime_root, spawn_row.id)
+    detection_cwd = (
+        (spawn_row.execution_cwd or "").strip()
+        or (spawn_row.task_cwd or "").strip()
+        or ((metadata.launch_cwd or "").strip() if metadata is not None else "")
+        or str(project_root)
+    )
+    resolved_detection_cwd = Path(detection_cwd).expanduser()
+
     registry = get_default_harness_registry()
     try:
         harness_id = HarnessId(normalized_harness)
@@ -103,11 +114,28 @@ def _detect_primary_harness_session_id(
     except (KeyError, TypeError, ValueError):
         return None
 
+    expected_session_id = (spawn_row.harness_session_id or "").strip() or None
+    if harness_id is HarnessId.PI:
+        launch_env: dict[str, str] = {}
+        session_dir = (metadata.session_dir or "").strip() if metadata is not None else ""
+        if session_dir:
+            launch_env["PI_CODING_AGENT_SESSION_DIR"] = session_dir
+        detected = detect_pi_session_id_from_session_files(
+            launch_env=launch_env,
+            child_cwd=resolved_detection_cwd,
+            started_at_epoch=started_at_epoch,
+            expected_session_id=expected_session_id,
+        )
+        normalized_detected = _normalize(detected)
+        if normalized_detected:
+            return normalized_detected
+
     detected_harness_session_id = (
         adapter.detect_primary_session_id(
-            project_root=project_root,
+            project_root=resolved_detection_cwd,
             started_at_epoch=started_at_epoch,
             started_at_local_iso=started_at_local_iso,
+            expected_session_id=expected_session_id,
         )
         or ""
     ).strip()
@@ -172,6 +200,7 @@ def _recover_from_detection(
         return None
     detected = _detect_primary_harness_session_id(
         project_root=project_root,
+        runtime_root=runtime_root,
         spawn_row=primary_spawn,
         harness_hint=harness_hint,
     )

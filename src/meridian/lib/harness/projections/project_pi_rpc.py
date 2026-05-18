@@ -71,7 +71,12 @@ _EFFORT_TO_THINKING: dict[str, str] = {
 
 
 def _has_flag(args: Sequence[str], flag: str) -> bool:
-    return any(token == flag or token.startswith(f"{flag}=") for token in args)
+    for token in args:
+        if token == flag or token.startswith(f"{flag}="):
+            return True
+        if flag == "-e" and token.startswith("-e") and token != "-e":
+            return True
+    return False
 
 
 def _log_collision_if_needed(

@@ -39,9 +39,14 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeRequestPolicy,
 )
 from meridian.lib.harness.cost import estimate_usage_cost
+from meridian.lib.harness.extractors.pi import detect_pi_session_discovery_from_session_files
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.permission_broker import PermissionBroker
+from meridian.lib.harness.pi_lifecycle_events import (
+    parse_pi_stderr_lifecycle_line,
+    redact_pi_command_for_history,
+)
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
@@ -54,8 +59,14 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_text
+from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.paths import resolve_spawn_log_dir
-from meridian.lib.state.primary_meta import ActivityState, PrimaryMetadata, write_primary_metadata
+from meridian.lib.state.primary_meta import (
+    ActivityState,
+    HarnessSessionDiscovery,
+    PrimaryMetadata,
+    write_primary_metadata,
+)
 from meridian.lib.state.session_store import (
     get_session_active_work_id,
     start_session,
@@ -78,6 +89,7 @@ from ..request import LaunchCompositionSurface
 from ..session_scope import session_scope
 from ..types import SessionMode
 from .ports import (
+    PRIMARY_STDERR_LOG_PATH_ENV,
     ProcessBackendId,
     ProcessLauncher,
     ProcessLauncherSelector,
@@ -125,12 +137,14 @@ def _write_native_primary_metadata(
     ended_at_epoch: float | None,
     exit_code: int | None,
     harness_session_id: str | None,
-    prelaunch_state: HarnessPrelaunchState | None,
+    prelaunch_state: HarnessPrelaunchState | None = None,
+    harness_session_discovery: HarnessSessionDiscovery | None = None,
+    harness_session_discovery_detail: str | None = None,
 ) -> None:
     """Best-effort metadata projection for native/black-box primary launches."""
 
     runtime_metadata = _pi_runtime_metadata_from_prelaunch(prelaunch_state)
-
+    redacted_command = tuple(redact_pi_command_for_history(command))
     try:
         write_primary_metadata(
             spawn_dir,
@@ -142,7 +156,11 @@ def _write_native_primary_metadata(
                 backend_port=None,
                 activity=activity,
                 harness_session_id=(harness_session_id or "").strip() or None,
-                command=command,
+                harness_session_discovery=harness_session_discovery,
+                harness_session_discovery_detail=(
+                    (harness_session_discovery_detail or "").strip() or None
+                ),
+                command=redacted_command,
                 launch_cwd=str(launch_cwd),
                 started_at_epoch=started_at_epoch,
                 ended_at_epoch=ended_at_epoch,
@@ -374,7 +392,7 @@ def _execute_via_managed_attach(
 def _execute_via_blackbox(
     *,
     command: tuple[str, ...],
-    control_root: Path,
+    launch_cwd: Path,
     child_env: dict[str, str],
     output_log_path: Path | None,
     run_primary_process_with_capture_fn: RunPrimaryProcessWithCapture,
@@ -384,7 +402,7 @@ def _execute_via_blackbox(
 
     exit_code, _child_pid = run_primary_process_with_capture_fn(
         command,
-        control_root,
+        launch_cwd,
         child_env,
         output_log_path,
         on_running,
@@ -424,12 +442,49 @@ def _persist_blackbox_output_artifact(
         )
 
 
+def _persist_pi_primary_stderr_diagnostics(
+    *,
+    spawn_id: SpawnId | None,
+    log_dir: Path,
+) -> None:
+    """Parse allowlisted Pi lifecycle stderr lines into primary history diagnostics."""
+
+    if spawn_id is None:
+        return
+    stderr_path = log_dir / "stderr.log"
+    if not stderr_path.is_file():
+        return
+
+    history_writer = HarnessHistoryWriter(log_dir / HISTORY_FILENAME)
+    try:
+        with stderr_path.open(encoding="utf-8", errors="replace") as stderr_handle:
+            for line in stderr_handle:
+                event = parse_pi_stderr_lifecycle_line(
+                    line,
+                    expected_parent_spawn_id=spawn_id,
+                    harness_id=HarnessId.PI.value,
+                    enabled=True,
+                )
+                if event is None:
+                    continue
+                write_result = history_writer.write(event)
+                if not write_result.success:
+                    logger.debug(
+                        "Failed to append Pi primary stderr lifecycle diagnostic event",
+                        extra={"spawn_id": str(spawn_id), "error": write_result.error},
+                    )
+                    return
+    except OSError:
+        logger.debug("Failed to parse Pi primary stderr lifecycle diagnostics", exc_info=True)
+
+
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
     primary_spawn_id: SpawnId,
     log_dir: Path,
     control_root: Path,
+    launch_cwd: Path,
     task_cwd: Path | None,
     child_env: dict[str, str],
     launch_spec: ResolvedLaunchSpec,
@@ -479,11 +534,17 @@ def _execute_primary_process(
             )
             else None
         )
+        blackbox_env = dict(child_env)
+        if (
+            harness_id is HarnessId.PI
+            and harness_contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
+        ):
+            blackbox_env[PRIMARY_STDERR_LOG_PATH_ENV] = str(log_dir / "stderr.log")
         return (
             _execute_via_blackbox(
                 command=command,
-                control_root=control_root,
-                child_env=child_env,
+                launch_cwd=launch_cwd,
+                child_env=blackbox_env,
                 output_log_path=output_log_path,
                 run_primary_process_with_capture_fn=run_primary_process_with_capture_fn,
                 on_running=on_running,
@@ -511,6 +572,7 @@ def _finalize_lifecycle_and_observe_session(
     primary_started_local_iso: str | None,
     managed: Any,
     spawn_service: SpawnApplicationService,
+    observe_adapter_session_id: bool = True,
 ) -> tuple[int, str]:
     """Finalize lifecycle state and persist best-effort observed session ids."""
 
@@ -555,7 +617,7 @@ def _finalize_lifecycle_and_observe_session(
             )
     try:
         observed_harness_session_id = None
-        if primary_started_epoch > 0.0:
+        if observe_adapter_session_id and primary_started_epoch > 0.0:
             observed_harness_session_id = harness_adapter.observe_session_id(
                 artifacts=artifacts,
                 spawn_id=primary_spawn_id,
@@ -805,6 +867,9 @@ def run_harness_process(
     command = preview_context.binding.argv
     spawn_request = preview_context.request
     preview_request = preview_context.resolved_request
+    requested_harness_session_id = (
+        preview_request.session.requested_harness_session_id or ""
+    ).strip()
     session_mode = resolve_primary_session_mode(preview_context)
     session_metadata = build_session_metadata(preview_request)
     resolved_harness_session_id = preview_context.binding.effective_harness_session_id or ""
@@ -833,6 +898,8 @@ def run_harness_process(
     exit_code = 2
     native_primary_tui_pid: int | None = None
     write_native_primary_metadata = False
+    native_primary_metadata_command: tuple[str, ...] = command
+    child_env: dict[str, str] = {}
     try:
         with session_scope(
             runtime_root=runtime_root,
@@ -1022,7 +1089,7 @@ def run_harness_process(
                     runtime_root=runtime_root,
                     spawn_id=primary_spawn_id,
                     session=preview_request.session,
-                    child_cwd=control_root,
+                    child_cwd=launch_child_cwd,
                     child_env=child_env,
                     resolved_harness_session_id=resolved_harness_session_id,
                     record_effective_config_dir=_record_effective_config_dir,
@@ -1035,19 +1102,23 @@ def run_harness_process(
                     prelaunch_state=prelaunch_state,
                 )
 
-                write_native_primary_metadata = (
+                is_pi_native_primary_launch = (
                     harness_id is HarnessId.PI
                     and harness_adapter.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
                 )
+                write_native_primary_metadata = is_pi_native_primary_launch
                 if write_native_primary_metadata:
+                    native_primary_metadata_command = tuple(
+                        redact_pi_command_for_history(command)
+                    )
                     _persist_pi_runtime_metadata_from_prelaunch(
                         metadata_path=log_dir / PI_RUNTIME_META_FILENAME,
                         prelaunch_state=prelaunch_state,
                     )
                     _write_native_primary_metadata(
                         spawn_dir=log_dir,
-                        command=command,
-                        launch_cwd=control_root,
+                        command=native_primary_metadata_command,
+                        launch_cwd=launch_child_cwd,
                         launcher_pid=os.getpid(),
                         tui_pid=None,
                         activity="starting",
@@ -1069,8 +1140,8 @@ def run_harness_process(
                     if write_native_primary_metadata:
                         _write_native_primary_metadata(
                             spawn_dir=log_dir,
-                            command=command,
-                            launch_cwd=control_root,
+                            command=native_primary_metadata_command,
+                            launch_cwd=launch_child_cwd,
                             launcher_pid=os.getpid(),
                             tui_pid=child_pid,
                             activity="idle",
@@ -1089,6 +1160,9 @@ def run_harness_process(
                     primary_spawn_id=primary_spawn_id,
                     log_dir=log_dir,
                     control_root=control_root,
+                    launch_cwd=(
+                        launch_child_cwd if is_pi_native_primary_launch else control_root
+                    ),
                     task_cwd=task_cwd,
                     child_env=child_env,
                     launch_spec=launch_spec,
@@ -1107,6 +1181,11 @@ def run_harness_process(
                     spawn_id=primary_spawn_id,
                     log_dir=log_dir,
                 )
+                if harness_id is HarnessId.PI and write_native_primary_metadata:
+                    _persist_pi_primary_stderr_diagnostics(
+                        spawn_id=primary_spawn_id,
+                        log_dir=log_dir,
+                    )
                 with suppress(Exception):
                     lifecycle_service.record_exited(
                         primary_spawn_id,
@@ -1132,12 +1211,70 @@ def run_harness_process(
                     primary_started_local_iso=primary_started_local_iso,
                     managed=managed,
                     spawn_service=spawn_service,
+                    observe_adapter_session_id=not (
+                        harness_id is HarnessId.PI and write_native_primary_metadata
+                    ),
                 )
                 if write_native_primary_metadata and primary_spawn_id is not None:
+                    discovery_status: HarnessSessionDiscovery | None = None
+                    discovery_detail: str | None = None
+                    if harness_id is HarnessId.PI:
+                        discovery_outcome = detect_pi_session_discovery_from_session_files(
+                            launch_env=child_env,
+                            child_cwd=launch_child_cwd,
+                            started_at_epoch=(
+                                primary_started_epoch if primary_started_epoch > 0.0 else None
+                            ),
+                            expected_session_id=initial_persisted_harness_session_id,
+                        )
+                        discovered_harness_session_id = (discovery_outcome.session_id or "").strip()
+                        current_resolved_harness_session_id = resolved_harness_session_id.strip()
+                        if (
+                            discovered_harness_session_id
+                            and discovered_harness_session_id
+                            != current_resolved_harness_session_id
+                        ):
+                            if not current_resolved_harness_session_id:
+                                logger.debug(
+                                    "Harness session ID discovered from Pi session files: %s",
+                                    discovered_harness_session_id,
+                                )
+                            else:
+                                logger.warning(
+                                    "Harness session ID overwritten by launch-env Pi session "
+                                    "discovery: observed=%s discovered=%s",
+                                    current_resolved_harness_session_id,
+                                    discovered_harness_session_id,
+                                )
+                            resolved_harness_session_id = discovered_harness_session_id
+                            managed.record_harness_session_id(discovered_harness_session_id)
+                            spawn_store.update_spawn(
+                                runtime_root,
+                                primary_spawn_id,
+                                harness_session_id=discovered_harness_session_id,
+                            )
+                        if (
+                            "--no-session" in command
+                            and discovery_outcome.session_id is None
+                        ):
+                            discovery_status = "never_created"
+                            discovery_detail = "ephemeral_session"
+                        elif (
+                            discovery_outcome.session_id is not None
+                            or (
+                                bool(requested_harness_session_id)
+                                and exit_code == 0
+                                and bool(resolved_harness_session_id.strip())
+                            )
+                        ):
+                            discovery_status = "ok"
+                        else:
+                            discovery_status = discovery_outcome.discovery
+                            discovery_detail = discovery_outcome.detail
                     _write_native_primary_metadata(
                         spawn_dir=resolve_spawn_log_dir(config_root, primary_spawn_id),
-                        command=command,
-                        launch_cwd=control_root,
+                        command=native_primary_metadata_command,
+                        launch_cwd=launch_child_cwd,
                         launcher_pid=os.getpid(),
                         tui_pid=native_primary_tui_pid,
                         activity="finalizing",
@@ -1147,6 +1284,8 @@ def run_harness_process(
                         ended_at_epoch=time.time(),
                         exit_code=exit_code,
                         harness_session_id=resolved_harness_session_id,
+                        harness_session_discovery=discovery_status,
+                        harness_session_discovery_detail=discovery_detail,
                         prelaunch_state=prelaunch_state,
                     )
                 if primary_spawn_id is not None:

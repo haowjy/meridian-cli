@@ -951,7 +951,9 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       startWave();
       return;
     }
-    emitQuiescenceReady();
+    if (ROLE === "spawned") {
+      emitQuiescenceReady();
+    }
   };
 
   const addTrackedChild = (childId: string, waitPolicy: WaitPolicy, kind: "bash" | "meridian_spawn"): void => {
@@ -1094,6 +1096,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     const timedOutChildIds = [...wave.trackedChildIds];
     const trackedCountAtDeadline = timedOutChildIds.length;
     const killTasks: Promise<void>[] = [];
+    const shouldCleanupTrackedChildren = ROLE === "spawned";
     for (const childId of timedOutChildIds) {
       if (!wave.outcomes.has(childId)) {
         wave.outcomes.set(childId, {
@@ -1104,7 +1107,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
         });
       }
       const child = session.trackedChildren.get(childId);
-      if (child?.waitPolicy === "tracked") {
+      if (shouldCleanupTrackedChildren && child?.waitPolicy === "tracked") {
         if (child.pid != null) {
           killTasks.push(cancelTrackedPid(child.pid, childWaveKillGraceMs));
         }

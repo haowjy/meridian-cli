@@ -176,6 +176,41 @@ def test_pi_prepare_prelaunch_does_not_double_append_spawn_id_in_session_dir(
     assert prelaunch.metadata["pi_runtime_session_dir"] == str(already_scoped)
 
 
+def test_pi_prepare_prelaunch_primary_uses_source_session_dir_for_continue_or_fork(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = HarnessRegistry.with_defaults()
+    adapter = registry.get_subprocess_harness(HarnessId.PI)
+
+    def _resolve_runtime(**_kwargs: object) -> PiRuntimeResolution:
+        return PiRuntimeResolution(
+            binary_path="/usr/local/bin/pi",
+            runtime_kind="path",
+            runtime_version="pi 1.2.3",
+        )
+
+    monkeypatch.setattr("meridian.lib.harness.pi.resolve_pi_runtime", _resolve_runtime)
+    source_session_dir = tmp_path / "source-sessions"
+    child_env = {
+        "MERIDIAN_PI_SESSION_ROLE": "primary",
+        "PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "default-sessions"),
+    }
+
+    prelaunch = adapter.prepare_prelaunch(
+        runtime_root=tmp_path / ".runtime",
+        spawn_id=SpawnId("p-pi-primary-source-dir"),
+        session=SessionRequest(source_pi_session_dir=str(source_session_dir)),
+        child_cwd=tmp_path,
+        child_env=child_env,
+        resolved_harness_session_id="ses-existing",
+    )
+
+    assert child_env["PI_CODING_AGENT_SESSION_DIR"] == str(source_session_dir)
+    assert prelaunch.env_overrides["PI_CODING_AGENT_SESSION_DIR"] == str(source_session_dir)
+    assert prelaunch.metadata["pi_runtime_session_dir"] == str(source_session_dir)
+
+
 def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_native_primary_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -218,8 +253,17 @@ def test_pi_adapter_build_command_uses_rpc_mode_for_spawned_and_native_primary_r
     assert "--no-skills" not in primary_command
     assert "--no-context-files" not in primary_command
     assert "--no-prompt-templates" not in primary_command
-    assert "-e" not in primary_command
-    assert "--extension" not in primary_command
+    primary_extensions = [
+        primary_command[index + 1]
+        for index, token in enumerate(primary_command)
+        if token == "-e"
+    ]
+    assert primary_extensions == [
+        str(tmp_path / "agent" / "extensions" / "meridian-lifecycle" / "index.js"),
+    ]
+    assert str(tmp_path / "agent" / "extensions" / "managed-bash" / "index.js") not in (
+        primary_extensions
+    )
 
     primary_env = build_harness_env_overrides(
         adapter=adapter,

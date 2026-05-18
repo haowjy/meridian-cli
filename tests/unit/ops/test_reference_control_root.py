@@ -9,6 +9,7 @@ from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.spawn import api as spawn_api
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput
 from meridian.lib.state import session_store
+from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.spawn_store import start_spawn
 
 
@@ -204,3 +205,93 @@ def test_resolve_spawn_reference_legacy_rows_fall_back_to_current_control_root(
 
     assert resolved.source_control_root == current_control_root.as_posix()
     assert resolved.source_execution_cwd == legacy_task_cwd.as_posix()
+
+
+def test_resolve_spawn_reference_for_pi_primary_includes_source_session_dir(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    current_control_root = tmp_path / "current-control"
+    current_control_root.mkdir(parents=True, exist_ok=True)
+    custom_session_dir = tmp_path / "custom-pi-sessions"
+
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c-pi-primary",
+            model="openai-codex/gpt-5.4-mini",
+            agent="coder",
+            harness="pi",
+            kind="primary",
+            prompt="seed",
+            harness_session_id="ses-pi-primary",
+        )
+    )
+    spawn_dir = runtime_root / "spawns" / spawn_id
+    spawn_dir.mkdir(parents=True, exist_ok=True)
+    write_primary_metadata(
+        spawn_dir,
+        PrimaryMetadata(
+            managed_backend=False,
+            harness_session_id="ses-pi-primary",
+            session_dir=custom_session_dir.as_posix(),
+        ),
+    )
+
+    resolved = resolve_session_reference(
+        current_control_root,
+        spawn_id,
+        runtime_root=runtime_root,
+    )
+
+    assert resolved.source_pi_session_dir == custom_session_dir.as_posix()
+
+
+def test_resolve_chat_reference_for_pi_includes_source_session_dir(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    current_control_root = tmp_path / "current-control"
+    current_control_root.mkdir(parents=True, exist_ok=True)
+    custom_session_dir = tmp_path / "custom-pi-sessions"
+
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="pi",
+        harness_session_id="ses-pi-chat",
+        model="openai-codex/gpt-5.4-mini",
+        chat_id="c77",
+    )
+    try:
+        spawn_id = str(
+            start_spawn(
+                runtime_root,
+                chat_id=chat_id,
+                model="openai-codex/gpt-5.4-mini",
+                agent="coder",
+                harness="pi",
+                kind="primary",
+                prompt="seed",
+                harness_session_id="ses-pi-chat",
+            )
+        )
+        spawn_dir = runtime_root / "spawns" / spawn_id
+        spawn_dir.mkdir(parents=True, exist_ok=True)
+        write_primary_metadata(
+            spawn_dir,
+            PrimaryMetadata(
+                managed_backend=False,
+                harness_session_id="ses-pi-chat",
+                session_dir=custom_session_dir.as_posix(),
+            ),
+        )
+
+        resolved = resolve_session_reference(
+            current_control_root,
+            chat_id,
+            runtime_root=runtime_root,
+        )
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
+
+    assert resolved.source_pi_session_dir == custom_session_dir.as_posix()

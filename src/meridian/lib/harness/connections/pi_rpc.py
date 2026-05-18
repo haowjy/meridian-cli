@@ -29,6 +29,12 @@ from meridian.lib.harness.connections.base import (
     validate_prompt_size,
 )
 from meridian.lib.harness.errors import HarnessBinaryNotFound
+from meridian.lib.harness.pi_lifecycle_events import (
+    PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
+    has_unsupported_pi_lifecycle_schema_version,
+    parse_pi_stderr_lifecycle_line,
+    redact_pi_command_for_history,
+)
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
@@ -51,54 +57,10 @@ _STDOUT_READLINE_LIMIT: Final[int] = 10 * 1024 * 1024
 _PROCESS_ABORT_GRACE_SECONDS: Final[float] = 5.0
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 5.0
 _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
-_PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION: Final[int] = 1
 _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
 _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
-_REDACTED_ARG_VALUE: Final[str] = "<redacted>"
-_SECRET_FLAG_SEGMENTS: Final[frozenset[str]] = frozenset(
-    {
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "authorization",
-        "apikey",
-        "key",
-        "auth",
-    }
-)
-_PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
-    "meridian.subspawn.",
-    "meridian.notification.",
-    "meridian.quiescence.",
-)
-_PI_STDERR_LIFECYCLE_ALLOWLIST: Final[frozenset[str]] = frozenset(
-    {
-        "meridian.subspawn.start",
-        "meridian.subspawn.end",
-        "meridian.notification.queued",
-        "meridian.notification.delivered",
-        "meridian.notification.completed",
-        "meridian.notification.failed",
-        "meridian.quiescence.ready",
-    }
-)
-_PI_STDERR_SUBSPAWN_TYPES: Final[frozenset[str]] = frozenset(
-    {
-        "meridian.subspawn.start",
-        "meridian.subspawn.end",
-    }
-)
-_PI_STDERR_NOTIFICATION_TYPES: Final[frozenset[str]] = frozenset(
-    {
-        "meridian.notification.queued",
-        "meridian.notification.delivered",
-        "meridian.notification.completed",
-        "meridian.notification.failed",
-    }
-)
 _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
     {
         "MERIDIAN_ACTIVE_WORK_ID",
@@ -225,7 +187,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 pid=self.subprocess_pid,
                 session_role=self._launch_session_role,
                 cwd=self._launch_cwd,
-                command=self._redact_command_for_history(self._launch_command),
+                command=redact_pi_command_for_history(self._launch_command),
             )
             self._emit_startup_phase(StartupPhase.WAITING_FOR_CONNECTION)
             self._set_state("connected")
@@ -648,86 +610,22 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         )
 
     def _parse_stderr_lifecycle_line(self, line: str) -> HarnessEvent | None:
-        if not self._stderr_lifecycle_enabled:
-            return None
-        payload_text = line.strip()
-        if not payload_text:
-            return None
-        try:
-            payload_obj = json.loads(payload_text)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(payload_obj, dict):
-            return None
-
-        payload = cast("dict[str, object]", payload_obj)
-        event_type = payload.get("type")
-        if not isinstance(event_type, str) or not event_type.strip():
-            return None
-        normalized_type = event_type.strip()
-        if normalized_type not in _PI_STDERR_LIFECYCLE_ALLOWLIST:
-            return None
-
-        invalid_reason = self._validate_stderr_lifecycle_payload(
-            event_type=normalized_type,
-            payload=payload,
+        event = parse_pi_stderr_lifecycle_line(
+            line,
+            expected_parent_spawn_id=self._spawn_id,
+            harness_id=_HARNESS_NAME,
+            enabled=self._stderr_lifecycle_enabled,
         )
-        if invalid_reason is not None:
+        if event is not None and event.event_type == "meridian.lifecycle.parse_error":
+            raw_line = event.payload.get("raw_line")
+            raw_text = raw_line if isinstance(raw_line, str) else ""
             trace_parse_error(
                 self._tracer,
                 "pi",
-                payload_text,
-                error=invalid_reason,
+                raw_text,
+                error=str(event.payload.get("reason", "unknown_parse_error")),
             )
-            return self._lifecycle_parse_error_event(
-                reason=invalid_reason,
-                error=invalid_reason,
-                raw_type=normalized_type,
-                raw_line=payload_text,
-            )
-
-        return HarnessEvent(
-            event_type=normalized_type,
-            payload=payload,
-            harness_id=_HARNESS_NAME,
-            raw_text=line,
-        )
-
-    def _validate_stderr_lifecycle_payload(
-        self,
-        *,
-        event_type: str,
-        payload: dict[str, object],
-    ) -> str | None:
-        schema_version = self._coerce_int(payload.get("schema_version"))
-        if schema_version != _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION:
-            return "unsupported_schema_version"
-
-        parent_spawn_id = payload.get("parent_spawn_id")
-        if not isinstance(parent_spawn_id, str) or not parent_spawn_id.strip():
-            return "missing_parent_spawn_id"
-        if parent_spawn_id.strip() != str(self._spawn_id):
-            return "parent_spawn_id_mismatch"
-
-        correlation_id = payload.get("correlation_id")
-        if not isinstance(correlation_id, str) or not correlation_id.strip():
-            return "missing_correlation_id"
-
-        emitted_at_ms = self._coerce_int(payload.get("emitted_at_ms"))
-        if emitted_at_ms is None:
-            return "invalid_emitted_at_ms"
-
-        if event_type in _PI_STDERR_SUBSPAWN_TYPES:
-            subspawn_id = payload.get("subspawn_id")
-            if not isinstance(subspawn_id, str) or not subspawn_id.strip():
-                return "missing_subspawn_id"
-
-        if event_type in _PI_STDERR_NOTIFICATION_TYPES:
-            notification_id = payload.get("notification_id")
-            if not isinstance(notification_id, str) or not notification_id.strip():
-                return "missing_notification_id"
-
-        return None
+        return event
 
     def _has_unsupported_lifecycle_schema_version(
         self,
@@ -735,38 +633,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         event_type: str,
         payload: dict[str, object],
     ) -> bool:
-        if not event_type.startswith(_PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES):
-            return False
-        raw_schema_version = payload.get("schema_version")
-        if raw_schema_version is None:
-            return False
-        schema_version = self._coerce_int(raw_schema_version)
-        if schema_version is None:
-            return True
-        return schema_version != _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION
-
-    def _coerce_int(self, value: object) -> int | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if value.is_integer():
-                return int(value)
-            return None
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return None
-            if raw.startswith(("+", "-")):
-                sign = raw[0]
-                digits = raw[1:]
-                if digits.isdigit():
-                    return int(f"{sign}{digits}")
-                return None
-            if raw.isdigit():
-                return int(raw)
-        return None
+        return has_unsupported_pi_lifecycle_schema_version(
+            event_type=event_type,
+            payload=payload,
+        )
 
     def _truncate_parse_error_raw_line(self, raw_line: str) -> str:
         if len(raw_line) <= _PARSE_ERROR_RAW_LINE_LIMIT:
@@ -784,7 +654,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
     ) -> HarnessEvent:
         payload: dict[str, object] = {
             "type": "meridian.lifecycle.parse_error",
-            "schema_version": _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
+            "schema_version": PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
             "reason": reason,
             "raw_line": self._truncate_parse_error_raw_line(raw_line),
         }
@@ -920,40 +790,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._process = None
         return stop_escalated
 
-    def _redact_command_for_history(self, command: Sequence[str]) -> list[str]:
-        redacted: list[str] = []
-        redact_next = False
-        for token in command:
-            if redact_next:
-                redacted.append(_REDACTED_ARG_VALUE)
-                redact_next = False
-                continue
-            flag_token = self._secret_flag_token(token)
-            if flag_token is None:
-                redacted.append(token)
-                continue
-            if "=" in token:
-                redacted.append(f"{flag_token}={_REDACTED_ARG_VALUE}")
-                continue
-            redacted.append(token)
-            redact_next = True
-        return redacted
-
-    def _secret_flag_token(self, token: str) -> str | None:
-        if not token.startswith("-"):
-            return None
-        flag = token.split("=", 1)[0]
-        normalized = flag.lstrip("-").strip().lower().replace("_", "-")
-        if not normalized:
-            return None
-        segments = [segment for segment in normalized.split("-") if segment]
-        if not segments:
-            return None
-        has_secret_segment = any(segment in _SECRET_FLAG_SEGMENTS for segment in segments)
-        if not has_secret_segment:
-            return None
-        return flag
-
     def _close_log_handles(self) -> None:
         if self._stderr_handle is not None:
             self._stderr_handle.close()
@@ -988,7 +824,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         payload: dict[str, object] = {
             "type": _PI_PHASE_EVENT_TYPE,
             "phase": phase,
-            "schema_version": _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
+            "schema_version": PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
         }
         payload.update(data)
         if self._spawn_id:

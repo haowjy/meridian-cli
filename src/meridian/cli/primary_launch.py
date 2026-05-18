@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from meridian.cli.argv_normalization import validate_fork_mode
-from meridian.cli.utils import missing_fork_session_error
+from meridian.cli.utils import missing_fork_session_error_with_discovery
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.registry import get_default_harness_registry
@@ -72,6 +72,7 @@ class _ResolvedSessionTarget(BaseModel):
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
+    source_pi_session_dir: str | None = None
     tracked: bool = False
     warning: str | None = None
 
@@ -103,6 +104,7 @@ def resolve_session_target(
         source_control_root=resolved.source_control_root,
         source_execution_cwd=resolved.source_execution_cwd,
         source_claude_config_dir=resolved.source_claude_config_dir,
+        source_pi_session_dir=resolved.source_pi_session_dir,
         tracked=resolved.tracked,
         warning=resolved.warning,
     )
@@ -190,6 +192,7 @@ def run_primary_launch(
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
+    source_pi_session_dir: str | None = None
     continue_source_tracked = False
     continue_source_ref: str | None = None
     output_forked_from: str | None = None
@@ -207,7 +210,14 @@ def run_primary_launch(
             project_root=project_root, continue_ref=resume_target
         )
         if resolved_continue.missing_harness_session_id:
-            raise ValueError(missing_fork_session_error(resume_target))
+            raise ValueError(
+                missing_fork_session_error_with_discovery(
+                    source_ref=resume_target,
+                    project_root=project_root,
+                    source_harness=resolved_continue.harness,
+                    source_chat_id=resolved_continue.chat_id,
+                )
+            )
         source_harness = (
             resolved_continue.harness.strip()
             if resolved_continue.harness is not None and resolved_continue.harness.strip()
@@ -235,6 +245,7 @@ def run_primary_launch(
         source_control_root = resolved_continue.source_control_root
         source_execution_cwd = resolved_continue.source_execution_cwd
         source_claude_config_dir = resolved_continue.source_claude_config_dir
+        source_pi_session_dir = resolved_continue.source_pi_session_dir
         continue_source_tracked = resolved_continue.tracked
         continue_source_ref = resume_target
         session_mode = SessionMode.RESUME
@@ -243,7 +254,14 @@ def run_primary_launch(
             project_root=project_root, continue_ref=selected_fork_target
         )
         if resolved_fork.missing_harness_session_id:
-            raise ValueError(missing_fork_session_error(selected_fork_target))
+            raise ValueError(
+                missing_fork_session_error_with_discovery(
+                    source_ref=selected_fork_target,
+                    project_root=project_root,
+                    source_harness=resolved_fork.harness,
+                    source_chat_id=resolved_fork.chat_id,
+                )
+            )
 
         source_harness = (
             resolved_fork.harness.strip()
@@ -274,6 +292,7 @@ def run_primary_launch(
         source_control_root = resolved_fork.source_control_root
         source_execution_cwd = resolved_fork.source_execution_cwd
         source_claude_config_dir = resolved_fork.source_claude_config_dir
+        source_pi_session_dir = resolved_fork.source_pi_session_dir
         continue_source_tracked = resolved_fork.tracked
         continue_source_ref = selected_fork_target
         output_forked_from = resolved_fork.chat_id or selected_fork_target
@@ -321,6 +340,7 @@ def run_primary_launch(
                 source_control_root=source_control_root,
                 source_execution_cwd=source_execution_cwd,
                 source_claude_config_dir=source_claude_config_dir,
+                source_pi_session_dir=source_pi_session_dir,
                 continue_source_tracked=continue_source_tracked,
                 continue_source_ref=continue_source_ref,
             ),

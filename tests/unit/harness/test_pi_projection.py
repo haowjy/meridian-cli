@@ -119,17 +119,27 @@ def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     assert "hello over stdin" not in command
 
 
-def test_pi_native_projection_omits_rpc_flags_and_extensions() -> None:
+def test_pi_native_projection_loads_lifecycle_extension_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
         model="openai-codex/gpt-5.4-mini",
         effort="high",
         prompt="hello",
-        continue_session_id="p123",
+        continue_session_id="019e3113-edc8-7751-bb29-9648304465d5",
         continue_fork=True,
         appended_system_prompt="native primary",
         extra_args=("--provider", "openai"),
         interactive=True,
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_lifecycle_extension_entrypoint(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -138,10 +148,16 @@ def test_pi_native_projection_omits_rpc_flags_and_extensions() -> None:
     assert command[0] == "pi"
     assert "--mode" not in command
     assert "--no-extensions" not in command
-    assert "-e" not in command
+    extension_values = [
+        command[index + 1] for index, token in enumerate(command) if token == "-e"
+    ]
+    assert extension_values == [
+        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+    ]
+    assert str(extension_target_root / "managed-bash" / "index.js") not in extension_values
     assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
     assert command[command.index("--append-system-prompt") + 1] == "native primary"
-    assert command[command.index("--fork") + 1] == "p123"
+    assert command[command.index("--fork") + 1] == "019e3113-edc8-7751-bb29-9648304465d5"
     assert command[-2:] == ["--provider", "openai"]
 
 
@@ -162,7 +178,64 @@ def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false
     assert "--mode" not in command
 
 
-def test_pi_adapter_resolve_launch_spec_skips_rpc_extension_projection_for_primary() -> None:
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ("--session", "user-session"),
+        ("--session=user-session",),
+    ],
+)
+def test_pi_native_projection_rejects_user_session_passthrough(
+    extra_args: tuple[str, ...],
+) -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        continue_session_id="managed-session",
+        continue_fork=False,
+        extra_args=extra_args,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="cannot accept --session"):
+        project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ("--fork", "user-session"),
+        ("--fork=user-session",),
+    ],
+)
+def test_pi_native_projection_rejects_user_fork_passthrough(
+    extra_args: tuple[str, ...],
+) -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        continue_session_id="managed-session",
+        continue_fork=True,
+        extra_args=extra_args,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="cannot accept --fork"):
+        project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+
+def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+
     adapter = PiAdapter()
 
     spec = adapter.resolve_launch_spec(
@@ -170,7 +243,9 @@ def test_pi_adapter_resolve_launch_spec_skips_rpc_extension_projection_for_prima
         UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
-    assert spec.pi_extension_entrypoints == ()
+    assert spec.pi_extension_entrypoints == (
+        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+    )
 
 
 def test_pi_rpc_projection_rejects_user_mode_passthrough(
@@ -221,6 +296,43 @@ def test_pi_native_projection_rejects_user_session_dir_passthrough() -> None:
         project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
 
 
+def test_pi_native_projection_rejects_user_no_extensions_passthrough() -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        extra_args=("--no-extensions",),
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="cannot accept --no-extensions"):
+        project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ("-e", "/tmp/custom-extension.js"),
+        ("--extension", "/tmp/custom-extension.js"),
+        ("-ecustom.js",),
+        ("-e/tmp/custom-extension.js",),
+    ],
+)
+def test_pi_native_projection_rejects_user_extension_passthrough(
+    extra_args: tuple[str, ...],
+) -> None:
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        interactive=True,
+        extra_args=extra_args,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    with pytest.raises(ValueError, match="-e/--extension"):
+        project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
+
+
 def test_pi_rpc_projection_rejects_user_session_dir_passthrough(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -249,6 +361,8 @@ def test_pi_rpc_projection_rejects_user_session_dir_passthrough(
         (("--no-extensions",), "extension loading"),
         (("-e", "/tmp/custom-extension.js"), "-e/--extension"),
         (("--extension", "/tmp/custom-extension.js"), "-e/--extension"),
+        (("-ecustom.js",), "-e/--extension"),
+        (("-e/tmp/custom-extension.js",), "-e/--extension"),
     ],
 )
 def test_pi_rpc_projection_rejects_passthrough_extension_flags(

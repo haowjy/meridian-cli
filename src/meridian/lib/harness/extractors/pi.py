@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import SpawnId
@@ -20,6 +21,17 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state.user_paths import get_user_home
 
 from .base import HarnessExtractor
+
+PiSessionDiscovery = Literal["ok", "never_created", "discovery_failed"]
+
+
+@dataclass(frozen=True)
+class PiSessionDiscoveryResult:
+    """Outcome of one primary Pi session-id discovery attempt."""
+
+    session_id: str | None
+    discovery: PiSessionDiscovery
+    detail: str | None = None
 
 
 def _safe_resolve(path: Path) -> Path:
@@ -64,37 +76,71 @@ def _iter_session_id_candidates_from_artifacts(
     return session_ids
 
 
-def _session_id_from_session_files(
+def _normalize_cwd_for_matching(value: Path | str) -> str | None:
+    try:
+        raw_path = value if isinstance(value, Path) else Path(value)
+    except (TypeError, ValueError):
+        return None
+    normalized = str(_safe_resolve(raw_path)).replace("\\", "/").rstrip("/")
+    return normalized or "/"
+
+
+def _session_discovery_result_from_session_files(
     *,
     launch_env: Mapping[str, str],
     child_cwd: Path,
     started_at_epoch: float | None = None,
     expected_session_id: str | None = None,
-) -> str | None:
-    root = _pi_session_root(launch_env)
+) -> PiSessionDiscoveryResult:
+    root = _pi_session_root(launch_env).expanduser()
     if not root.is_dir():
-        return None
+        return PiSessionDiscoveryResult(
+            session_id=None,
+            discovery="never_created",
+            detail=f"session_dir_missing: {root}",
+        )
 
-    session_dir = root / _encode_cwd_for_session_dir(child_cwd)
-    if not session_dir.is_dir():
-        return None
+    session_files = list(root.glob("*.jsonl"))
+    if not session_files:
+        return PiSessionDiscoveryResult(
+            session_id=None,
+            discovery="never_created",
+            detail=f"no_session_files_in_dir: {root}",
+        )
 
     candidates: list[tuple[float, str]] = []
-    for session_file in session_dir.glob("*.jsonl"):
+    parse_error_detail: str | None = None
+    normalized_child_cwd = _normalize_cwd_for_matching(child_cwd)
+    if normalized_child_cwd is None:
+        no_match_after = started_at_epoch - 2.0 if started_at_epoch is not None else "any"
+        return PiSessionDiscoveryResult(
+            session_id=None,
+            discovery="discovery_failed",
+            detail=f"no_matching_session: cwd={child_cwd} after={no_match_after}",
+        )
+
+    recent_threshold = started_at_epoch - 2.0 if started_at_epoch is not None else None
+    for session_file in session_files:
         try:
             modified_at = session_file.stat().st_mtime
         except OSError:
             continue
+        if recent_threshold is not None and modified_at < recent_threshold:
+            continue
         try:
-            first_line = session_file.read_text(
-                encoding="utf-8",
-                errors="ignore",
-            ).splitlines()[0]
-        except (OSError, IndexError):
+            with session_file.open(encoding="utf-8", errors="ignore") as handle:
+                first_line = handle.readline()
+        except OSError as exc:
+            if parse_error_detail is None:
+                parse_error_detail = f"{session_file.name}: {exc}"
+            continue
+        if not first_line.strip():
             continue
         try:
             payload_obj = json.loads(first_line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            if parse_error_detail is None:
+                parse_error_detail = f"{session_file.name}: {exc.msg}"
             continue
         if not isinstance(payload_obj, dict):
             continue
@@ -102,31 +148,71 @@ def _session_id_from_session_files(
         if str(payload.get("type", "")).strip().lower() != "session":
             continue
         session_id = payload.get("id")
-        if isinstance(session_id, str) and session_id.strip():
-            candidates.append((modified_at, session_id.strip()))
+        if not isinstance(session_id, str) or not session_id.strip():
+            continue
+
+        session_cwd = payload.get("cwd")
+        if not isinstance(session_cwd, str):
+            continue
+        normalized_session_cwd = _normalize_cwd_for_matching(session_cwd)
+        if normalized_session_cwd != normalized_child_cwd:
+            continue
+
+        candidates.append((modified_at, session_id.strip()))
 
     if not candidates:
-        return None
+        if parse_error_detail is not None:
+            return PiSessionDiscoveryResult(
+                session_id=None,
+                discovery="discovery_failed",
+                detail=f"session_file_parse_error: {parse_error_detail}",
+            )
+        return PiSessionDiscoveryResult(
+            session_id=None,
+            discovery="discovery_failed",
+            detail=(
+                f"no_matching_session: cwd={normalized_child_cwd} "
+                f"after={recent_threshold if recent_threshold is not None else 'any'}"
+            ),
+        )
 
     sorted_candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
     normalized_expected_session_id = (expected_session_id or "").strip()
-    if started_at_epoch is not None:
-        recent_threshold = started_at_epoch - 2.0
-        recent_candidates = [
-            candidate for candidate in sorted_candidates if candidate[0] >= recent_threshold
-        ]
-        for _, session_id in recent_candidates:
-            if session_id != normalized_expected_session_id:
-                return session_id
-        if recent_candidates:
-            return recent_candidates[0][1]
+    filtered_candidates = (
+        [item for item in sorted_candidates if item[1] != normalized_expected_session_id]
+        if normalized_expected_session_id
+        else sorted_candidates
+    )
+    if not filtered_candidates:
+        return PiSessionDiscoveryResult(
+            session_id=None,
+            discovery="discovery_failed",
+            detail=(
+                f"no_matching_session: cwd={normalized_child_cwd} "
+                f"after={recent_threshold if recent_threshold is not None else 'any'}"
+            ),
+        )
 
-    if normalized_expected_session_id:
-        for _, session_id in sorted_candidates:
-            if session_id != normalized_expected_session_id:
-                return session_id
+    return PiSessionDiscoveryResult(
+        session_id=filtered_candidates[0][1],
+        discovery="ok",
+        detail=None,
+    )
 
-    return sorted_candidates[0][1]
+
+def _session_id_from_session_files(
+    *,
+    launch_env: Mapping[str, str],
+    child_cwd: Path,
+    started_at_epoch: float | None = None,
+    expected_session_id: str | None = None,
+) -> str | None:
+    return _session_discovery_result_from_session_files(
+        launch_env=launch_env,
+        child_cwd=child_cwd,
+        started_at_epoch=started_at_epoch,
+        expected_session_id=expected_session_id,
+    ).session_id
 
 
 def detect_pi_session_id_from_session_files(
@@ -139,6 +225,23 @@ def detect_pi_session_id_from_session_files(
     """Detect Pi session id from persisted session files for one cwd bucket."""
 
     return _session_id_from_session_files(
+        launch_env=launch_env,
+        child_cwd=child_cwd,
+        started_at_epoch=started_at_epoch,
+        expected_session_id=expected_session_id,
+    )
+
+
+def detect_pi_session_discovery_from_session_files(
+    *,
+    launch_env: Mapping[str, str],
+    child_cwd: Path,
+    started_at_epoch: float | None = None,
+    expected_session_id: str | None = None,
+) -> PiSessionDiscoveryResult:
+    """Detect Pi session id + discovery status from persisted flat session files."""
+
+    return _session_discovery_result_from_session_files(
         launch_env=launch_env,
         child_cwd=child_cwd,
         started_at_epoch=started_at_epoch,
@@ -265,5 +368,6 @@ __all__ = [
     "PI_EXTRACTOR",
     "PiHarnessExtractor",
     "_encode_cwd_for_session_dir",
+    "detect_pi_session_discovery_from_session_files",
     "detect_pi_session_id_from_session_files",
 ]

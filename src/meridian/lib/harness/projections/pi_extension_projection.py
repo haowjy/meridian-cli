@@ -15,9 +15,14 @@ from meridian.lib.state.user_paths import get_user_home
 _EXTENSION_SOURCE_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_SOURCE_ROOT"
 _EXTENSION_TARGET_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_TARGET_ROOT"
 
-_REQUIRED_EXTENSION_RELATIVE_PATHS: Final[tuple[tuple[str, str], ...]] = (
+_LIFECYCLE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "meridian-lifecycle",
+    "meridian-lifecycle/index.js",
+)
+
+_ALL_REQUIRED_EXTENSION_RELATIVE_PATHS: Final[tuple[tuple[str, str], ...]] = (
     ("managed-bash", "managed-bash/index.js"),
-    ("meridian-lifecycle", "meridian-lifecycle/index.js"),
+    _LIFECYCLE_EXTENSION_RELATIVE_PATH,
 )
 
 
@@ -25,27 +30,48 @@ class PiExtensionProjectionError(RuntimeError):
     """Raised when required Pi extension artifacts cannot be projected."""
 
 
-def resolve_pi_extension_entrypoints() -> tuple[str, ...]:
-    """Resolve and materialize Meridian-owned Pi extension entrypoints."""
+def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
+    """Resolve and materialize the Meridian lifecycle Pi extension entrypoint."""
 
     source_root = _resolve_extension_source_root()
     target_root = _resolve_extension_target_root()
+    return (_materialize_entrypoint(source_root, target_root, *_LIFECYCLE_EXTENSION_RELATIVE_PATH),)
 
-    resolved_entrypoints: list[str] = []
-    for extension_name, relative_path in _REQUIRED_EXTENSION_RELATIVE_PATHS:
-        source_path = source_root / relative_path
-        if not source_path.is_file():
-            raise PiExtensionProjectionError(
-                "Missing Pi extension artifact: "
-                f"{source_path}. Build Pi extensions first "
-                "(cd src/meridian/pi_runtime && npm run build:extensions)."
-            )
-        target_path = target_root / extension_name / "index.js"
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_copy2(source_path, target_path)
-        resolved_entrypoints.append(str(target_path))
 
-    return tuple(resolved_entrypoints)
+def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
+    """Resolve and materialize all Meridian-owned Pi extension entrypoints."""
+
+    source_root = _resolve_extension_source_root()
+    target_root = _resolve_extension_target_root()
+    return tuple(
+        _materialize_entrypoint(source_root, target_root, extension_name, relative_path)
+        for extension_name, relative_path in _ALL_REQUIRED_EXTENSION_RELATIVE_PATHS
+    )
+
+
+def resolve_pi_extension_entrypoints() -> tuple[str, ...]:
+    """Backward-compatible alias for all Meridian-owned Pi extension entrypoints."""
+
+    return resolve_pi_all_extension_entrypoints()
+
+
+def _materialize_entrypoint(
+    source_root: Path,
+    target_root: Path,
+    extension_name: str,
+    relative_path: str,
+) -> str:
+    source_path = source_root / relative_path
+    if not source_path.is_file():
+        raise PiExtensionProjectionError(
+            "Missing Pi extension artifact: "
+            f"{source_path}. Build Pi extensions first "
+            "(cd src/meridian/pi_runtime && npm run build:extensions)."
+        )
+    target_path = target_root / extension_name / "index.js"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_copy2(source_path, target_path)
+    return str(target_path)
 
 
 def _resolve_extension_source_root() -> Path:
@@ -86,5 +112,7 @@ def _resolve_extension_target_root() -> Path:
 
 __all__ = [
     "PiExtensionProjectionError",
+    "resolve_pi_all_extension_entrypoints",
     "resolve_pi_extension_entrypoints",
+    "resolve_pi_lifecycle_extension_entrypoint",
 ]

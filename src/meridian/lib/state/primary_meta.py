@@ -11,6 +11,7 @@ from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.state.atomic import atomic_write_text
 
 ActivityState = Literal["starting", "idle", "turn_active", "finalizing"]
+HarnessSessionDiscovery = Literal["ok", "never_created", "discovery_failed"]
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,8 @@ class PrimaryMetadata:
     backend_port: int | None = None
     activity: ActivityState | None = None
     harness_session_id: str | None = None
+    harness_session_discovery: HarnessSessionDiscovery | None = None
+    harness_session_discovery_detail: str | None = None
     command: tuple[str, ...] | None = None
     launch_cwd: str | None = None
     started_at_epoch: float | None = None
@@ -46,6 +49,8 @@ class PrimarySurfaceMetadata:
     tui_pid: int | None
     backend_port: int | None
     harness_session_id: str | None
+    harness_session_discovery: HarnessSessionDiscovery | None
+    harness_session_discovery_detail: str | None
     command: tuple[str, ...] | None
     launch_cwd: str | None
     started_at_epoch: float | None
@@ -113,6 +118,15 @@ def _coerce_activity_state(value: object) -> ActivityState | None:
     return cast("ActivityState", normalized)
 
 
+def _coerce_harness_session_discovery(value: object) -> HarnessSessionDiscovery | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized not in {"ok", "never_created", "discovery_failed"}:
+        return None
+    return cast("HarnessSessionDiscovery", normalized)
+
+
 def _coerce_optional_text(value: object) -> str | None:
     if not isinstance(value, str):
         return None
@@ -165,6 +179,12 @@ def read_primary_metadata(runtime_root: Path, spawn_id: str) -> PrimaryMetadata 
         backend_port=_coerce_positive_int(payload.get("backend_port")),
         activity=_coerce_activity_state(payload.get("activity")),
         harness_session_id=_coerce_optional_text(payload.get("harness_session_id")),
+        harness_session_discovery=_coerce_harness_session_discovery(
+            payload.get("harness_session_discovery")
+        ),
+        harness_session_discovery_detail=_coerce_optional_text(
+            payload.get("harness_session_discovery_detail")
+        ),
         command=_coerce_command(payload.get("command")),
         launch_cwd=_coerce_optional_text(payload.get("launch_cwd")),
         started_at_epoch=_coerce_nonnegative_float(payload.get("started_at_epoch")),
@@ -189,6 +209,8 @@ def write_primary_metadata(spawn_dir: Path, metadata: PrimaryMetadata) -> None:
         "backend_port": metadata.backend_port,
         "activity": metadata.activity,
         "harness_session_id": metadata.harness_session_id,
+        "harness_session_discovery": metadata.harness_session_discovery,
+        "harness_session_discovery_detail": metadata.harness_session_discovery_detail,
         "command": list(metadata.command) if metadata.command is not None else None,
         "launch_cwd": metadata.launch_cwd,
         "started_at_epoch": metadata.started_at_epoch,
@@ -218,6 +240,8 @@ def read_primary_surface_metadata(runtime_root: Path, spawn_id: str) -> PrimaryS
             tui_pid=None,
             backend_port=None,
             harness_session_id=None,
+            harness_session_discovery=None,
+            harness_session_discovery_detail=None,
             command=None,
             launch_cwd=None,
             started_at_epoch=None,
@@ -236,6 +260,8 @@ def read_primary_surface_metadata(runtime_root: Path, spawn_id: str) -> PrimaryS
         tui_pid=metadata.tui_pid,
         backend_port=metadata.backend_port,
         harness_session_id=metadata.harness_session_id,
+        harness_session_discovery=metadata.harness_session_discovery,
+        harness_session_discovery_detail=metadata.harness_session_discovery_detail,
         command=metadata.command,
         launch_cwd=metadata.launch_cwd,
         started_at_epoch=metadata.started_at_epoch,
@@ -258,6 +284,18 @@ def read_primary_harness_session_id(runtime_root: Path, spawn_id: str) -> str | 
     return metadata.harness_session_id
 
 
+def read_primary_harness_session_discovery(
+    runtime_root: Path,
+    spawn_id: str,
+) -> tuple[HarnessSessionDiscovery | None, str | None]:
+    """Read primary harness-session discovery status and diagnostic detail."""
+
+    metadata = read_primary_metadata(runtime_root, spawn_id)
+    if metadata is None:
+        return (None, None)
+    return (metadata.harness_session_discovery, metadata.harness_session_discovery_detail)
+
+
 def is_managed_primary(runtime_root: Path, spawn_id: str) -> bool:
     """Check if spawn is a managed primary."""
 
@@ -267,10 +305,12 @@ def is_managed_primary(runtime_root: Path, spawn_id: str) -> bool:
 
 __all__ = [
     "ActivityState",
+    "HarnessSessionDiscovery",
     "PrimaryMetadata",
     "PrimarySurfaceMetadata",
     "is_managed_primary",
     "primary_meta_path",
+    "read_primary_harness_session_discovery",
     "read_primary_harness_session_id",
     "read_primary_metadata",
     "read_primary_surface_metadata",

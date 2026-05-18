@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi runtime TypeScript extensions: `managed-bash` (`bash` override + `bash_bg_list/read/wait/kill`) and `meridian-lifecycle` (tracked child + notification/quiescence events) plus prebuild script `npm run build:extensions` for stable extension artifacts under `src/meridian/pi_runtime/dist/extensions/`.
 
 ### Changed
+- Primary Pi session identity now comes from flat `PI_CODING_AGENT_SESSION_DIR/*.jsonl` scanning with first-line JSON parse, cwd/time-window disambiguation, and expected-id suppression; `primary_meta.json` now records `harness_session_discovery` plus `harness_session_discovery_detail` so continue/fork errors can distinguish never-created vs discovery-failed vs legacy empty-id cases.
 - Pi harness now launches installed `pi` directly for both primary native TUI and spawned RPC (`MERIDIAN_PI_BINARY` override first, otherwise `pi` on `PATH`); no `meridian-pi` wrapper process in launch projection.
 - Pi runtime compatibility checks now run in Python prelaunch/connection startup with fail-fast install/update guidance before process launch.
 - Primary Pi metadata sidecar now records resolved runtime selection from Python adapter prelaunch instead of wrapper-emitted runtime metadata.
@@ -38,6 +39,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Tracked child waves now trigger one aggregate auto-resume with per-child status summary, not one resume per child.
 - Pi child-wave timeout now separate from notification timeout; timed-out tracked children are canceled before resume.
 - Pi launch/policy/integration tests now assert primary-native Pi command projection and runner routing, while keeping spawned RPC/quiescence assertions intact.
+- Primary native Pi now projects lifecycle extension only (`-e meridian-lifecycle`) with explicit passthrough rejection for `--no-extensions`; spawned RPC keeps managed-bash+lifecycle projection and lifecycle role-gates quiescence-ready/cancel-on-deadline to spawned sessions only.
+- Primary native Pi now also rejects passthrough `-e/--extension`; lifecycle-only extension policy cannot be overridden from `extra_args`.
+- Primary native Pi black-box launches now use resolved runtime child cwd consistently for launch execution, metadata, and session-file discovery matching.
+- Primary native Pi now records best-effort lifecycle diagnostics from `stderr.log` into `history.jsonl` when stderr is separately capturable; PTY/merged-stderr launches degrade cleanly without diagnostic ingestion.
+- Primary native Pi discovery metadata now labels `--no-session` runs as `never_created`/`ephemeral_session` when no new session id appears, and treats retained continue/resume session ids as authoritative (`ok`) when no new file is discovered.
 
 ### Removed
 - `meridian-pi` console entrypoint and wrapper implementation (`src/meridian/cli/pi_entrypoint.py`) plus wrapper-only unit tests.

@@ -8,6 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+PRIMARY_STDERR_LOG_PATH_ENV = "MERIDIAN_PRIMARY_STDERR_LOG_PATH"
+
 
 @dataclass(frozen=True)
 class LaunchedProcess:
@@ -72,6 +74,7 @@ ProcessLauncherSelector = Callable[[Path | None], ProcessLauncher]
 
 
 __all__ = [
+    "PRIMARY_STDERR_LOG_PATH_ENV",
     "ChildStartedHook",
     "LaunchedProcess",
     "ProcessBackendId",

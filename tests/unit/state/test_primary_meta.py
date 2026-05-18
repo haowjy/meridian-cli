@@ -6,6 +6,7 @@ from __future__ import annotations
 from meridian.lib.state.primary_meta import (
     PrimaryMetadata,
     is_managed_primary,
+    read_primary_harness_session_discovery,
     read_primary_harness_session_id,
     read_primary_metadata,
     read_primary_surface_metadata,
@@ -28,6 +29,7 @@ def test_read_primary_metadata_accepts_native_blackbox_payload(tmp_path) -> None
             backend_port=None,
             activity="idle",
             harness_session_id="ses-pi-native",
+            harness_session_discovery="ok",
         ),
     )
 
@@ -39,6 +41,8 @@ def test_read_primary_metadata_accepts_native_blackbox_payload(tmp_path) -> None
     assert metadata.tui_pid == 202
     assert metadata.activity == "idle"
     assert metadata.harness_session_id == "ses-pi-native"
+    assert metadata.harness_session_discovery == "ok"
+    assert metadata.harness_session_discovery_detail is None
 
 
 def test_primary_surface_and_session_id_projection_support_native_metadata(tmp_path) -> None:
@@ -54,6 +58,8 @@ def test_primary_surface_and_session_id_projection_support_native_metadata(tmp_p
             tui_pid=222,
             activity="finalizing",
             harness_session_id="ses-native",
+            harness_session_discovery="discovery_failed",
+            harness_session_discovery_detail="no_matching_session: cwd=/tmp/repo after=100.0",
         ),
     )
 
@@ -63,7 +69,16 @@ def test_primary_surface_and_session_id_projection_support_native_metadata(tmp_p
     assert surface.activity == "finalizing"
     assert surface.tui_pid == 222
     assert surface.harness_session_id == "ses-native"
+    assert surface.harness_session_discovery == "discovery_failed"
+    assert (
+        surface.harness_session_discovery_detail
+        == "no_matching_session: cwd=/tmp/repo after=100.0"
+    )
     assert read_primary_harness_session_id(runtime_root, "p2") == "ses-native"
+    assert read_primary_harness_session_discovery(runtime_root, "p2") == (
+        "discovery_failed",
+        "no_matching_session: cwd=/tmp/repo after=100.0",
+    )
     assert is_managed_primary(runtime_root, "p2") is False
 
 

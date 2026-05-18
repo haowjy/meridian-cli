@@ -777,6 +777,124 @@ originalWrite(
     sys.platform == "win32",
     reason="uses a POSIX shell stub/chmod/PATH shim for meridian wrapper interception",
 )
+def test_lifecycle_primary_wave_timeout_reports_without_child_cleanup(
+    tmp_path: Path,
+) -> None:
+    output = _run_node_harness(
+        tmp_path,
+        r'''
+process.env.MERIDIAN_PI_SESSION_ROLE = "primary";
+process.env.MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS = "120";
+const fs = await import("node:fs/promises");
+const path = await import("node:path");
+
+const testTmp = process.env.MERIDIAN_TEST_TMP;
+const commandLog = path.join(testTmp, "meridian-commands.log");
+const binDir = path.join(testTmp, "bin");
+await fs.mkdir(binDir, { recursive: true });
+const meridian = path.join(binDir, "meridian");
+await fs.writeFile(
+  meridian,
+  "#!/bin/sh\n"
+    + "printf '%s\\n' \"$*\" >> \"$MERIDIAN_COMMAND_LOG\"\n"
+    + "if [ \"$1\" = \"--json\" ]; then printf '%s\\n' '{\"status\":\"running\"}'; fi\n"
+    + "exit 0\n",
+  "utf-8",
+);
+await fs.chmod(meridian, 0o755);
+process.env.MERIDIAN_COMMAND_LOG = commandLog;
+process.env.PATH = binDir + ":" + process.env.PATH;
+
+const originalKill = process.kill;
+const killCalls = [];
+process.kill = (pid, signal) => {
+  killCalls.push({ pid, signal });
+  return true;
+};
+
+const originalWrite = process.stdout.write.bind(process.stdout);
+const rawWrites = [];
+process.stdout.write = (chunk, encoding, callback) => {
+  rawWrites.push(String(chunk));
+  if (typeof encoding === "function") encoding();
+  if (typeof callback === "function") callback();
+  return true;
+};
+const handlers = new Map();
+const internalHandlers = new Map();
+const sentMessages = [];
+function addHandler(map, name, cb) {
+  const list = map.get(name) ?? [];
+  list.push(cb);
+  map.set(name, list);
+  return () => undefined;
+}
+async function emit(map, name, ...args) {
+  for (const cb of map.get(name) ?? []) await cb(...args);
+}
+const pi = {
+  on(name, cb) { return addHandler(handlers, name, cb); },
+  events: {
+    on(name, cb) { return addHandler(internalHandlers, name, cb); },
+    emit(name, payload) { void emit(internalHandlers, name, payload); },
+  },
+  sendMessage(message, options) { sentMessages.push({ message, options }); },
+};
+const { default: lifecycle } = await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
+lifecycle(pi);
+await emit(
+  internalHandlers,
+  "meridian:subspawn:start",
+  { subspawn_id: "p321", wait_policy: "tracked", kind: "meridian_spawn", pid: 43210 },
+);
+await emit(handlers, "agent_end", {});
+for (let attempt = 0; attempt < 24; attempt += 1) {
+  if (sentMessages.length > 0) break;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+process.kill = originalKill;
+let commandLines = [];
+try {
+  commandLines = (await fs.readFile(commandLog, "utf-8"))
+    .split(/\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+} catch {
+  commandLines = [];
+}
+const lifecycleEvents = rawWrites
+  .flatMap((chunk) => chunk.split(/\n/))
+  .filter(Boolean)
+  .map((line) => JSON.parse(line));
+originalWrite(
+  "@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents, commandLines, killCalls }) + "\n"
+);
+''',
+    )
+
+    assert len(output["sentMessages"]) == 1
+    details = output["sentMessages"][0]["message"]["details"]
+    assert details["wave_reason"] == "wave_deadline"
+    assert details["had_timeouts"] is True
+    assert details["child_outcomes"] == [
+        {
+            "subspawn_id": "p321",
+            "status": "timed_out",
+            "success": False,
+            "reason": "wave_deadline",
+        }
+    ]
+    cancel_commands = [
+        command for command in output["commandLines"] if command.startswith("spawn cancel ")
+    ]
+    assert cancel_commands == []
+    assert output["killCalls"] == []
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="uses a POSIX shell stub/chmod/PATH shim for meridian wrapper interception",
+)
 def test_lifecycle_wave_timeout_does_not_cancel_wrapper_discovered_detached_meridian_spawn_child(
     tmp_path: Path,
 ) -> None:
@@ -970,7 +1088,7 @@ originalWrite("@@RESULT@@" + JSON.stringify({ lifecycleEvents }) + "\n");
     assert failed[0]["error"] == "boom"
 
 
-def test_lifecycle_primary_role_emits_quiescence_ready_without_parent_resume(
+def test_lifecycle_primary_role_does_not_emit_quiescence_ready_without_tracked_children(
     tmp_path: Path,
 ) -> None:
     output = _run_node_harness(
@@ -1021,10 +1139,7 @@ originalWrite("@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents }) +
         for event in output["lifecycleEvents"]
         if event["type"] == "meridian.quiescence.ready"
     ]
-    assert len(ready_events) == 1
-    assert ready_events[0]["role"] == "primary"
-    assert ready_events[0]["tracked_count"] == 0
-    assert ready_events[0]["pending_notification_count"] == 0
+    assert ready_events == []
     assert output["sentMessages"] == []
 
 

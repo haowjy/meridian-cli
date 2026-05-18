@@ -42,7 +42,8 @@ from meridian.lib.harness.pi_runtime_resolver import (
     resolve_pi_runtime,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
-    resolve_pi_extension_entrypoints,
+    resolve_pi_all_extension_entrypoints,
+    resolve_pi_lifecycle_extension_entrypoint,
 )
 from meridian.lib.harness.projections.project_pi_native_tui import (
     project_pi_native_tui_spec_to_cli_args,
@@ -183,7 +184,9 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             pi_extension_entrypoints=(
-                () if run.interactive else resolve_pi_extension_entrypoints()
+                resolve_pi_lifecycle_extension_entrypoint()
+                if run.interactive
+                else resolve_pi_all_extension_entrypoints()
             ),
             agent_name=None,
             skills=(),
@@ -227,10 +230,17 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 child_env=child_env,
                 spawn_id=spawn_id,
             )
+        elif launch_role == "primary":
+            source_session_dir = (session.source_pi_session_dir or "").strip()
+            if source_session_dir:
+                child_env["PI_CODING_AGENT_SESSION_DIR"] = source_session_dir
+                scoped_session_dir = source_session_dir
 
         session_dir = child_env.get("PI_CODING_AGENT_SESSION_DIR", "").strip() or str(
             get_user_home() / "meridian-pi" / "sessions"
         )
+        if scoped_session_dir is not None:
+            session_dir = scoped_session_dir
         env_overrides = {"MERIDIAN_PI_BINARY": resolved_runtime.binary_path}
         if scoped_session_dir is not None:
             env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir

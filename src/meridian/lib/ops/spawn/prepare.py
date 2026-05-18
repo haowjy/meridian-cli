@@ -231,6 +231,7 @@ def build_create_payload(
                 source_control_root=payload.session.source_control_root,
                 source_execution_cwd=payload.session.source_execution_cwd,
                 source_claude_config_dir=payload.session.source_claude_config_dir,
+                source_pi_session_dir=payload.session.source_pi_session_dir,
                 forked_from_chat_id=payload.session.forked_from_chat_id,
                 continue_harness=payload.session.continue_harness,
                 continue_source_tracked=payload.session.continue_source_tracked,
