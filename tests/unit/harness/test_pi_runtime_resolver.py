@@ -456,3 +456,45 @@ def test_resolve_pi_runtime_primary_requires_session_dir_surface(
         "PI_CODING_AGENT_SESSION_DIR.\n"
         "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary."
     )
+
+
+def test_resolve_pi_runtime_accepts_comma_separated_help_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_run(
+        command: list[str],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        env: dict[str, str],
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = check, capture_output, text, env, timeout
+        if command[1] == "--version":
+            return _completed(command, stdout="pi 1.0.0\n")
+        return _completed(
+            command,
+            stdout=(
+                "--mode <mode> Output mode: text, json, or rpc\n"
+                "--model <pattern>\n"
+                "--append-system-prompt <text>\n"
+                "--session <path|id>\n"
+                "--fork <path|id>\n"
+                "--session-dir <dir>\n"
+                "--no-extensions, -ne Disable extension discovery\n"
+                "--no-skills, -ns Disable skills discovery\n"
+                "--no-context-files, -nc Disable AGENTS.md discovery\n"
+                "--no-prompt-templates, -np Disable prompt templates\n"
+                "--extension, -e <path> Load extension\n"
+            ),
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    resolved = resolve_pi_runtime(
+        env={"PATH": "/fake/path", "MERIDIAN_PI_BINARY": "/tmp/pi"},
+        role="spawned",
+    )
+
+    assert resolved.binary_path == "/tmp/pi"

@@ -170,7 +170,7 @@ def _probe_failure_detail(flag: str, probe: subprocess.CompletedProcess[str]) ->
 
 def _help_surface_contains_token(help_surface: str, token: str) -> bool:
     if token.startswith("-"):
-        pattern = re.compile(rf"(?<!\S){re.escape(token)}(?:[=\s]|$)")
+        pattern = re.compile(rf"(?<!\S){re.escape(token)}(?:[=,\s]|$)")
         return pattern.search(help_surface) is not None
     pattern = re.compile(rf"(?<![A-Za-z0-9_/-]){re.escape(token)}(?![A-Za-z0-9_/-])")
     return pattern.search(help_surface) is not None
