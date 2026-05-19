@@ -101,7 +101,7 @@ jobs:
         run: corepack enable
 
       - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+        run: cd src/meridian/pi_runtime && pnpm install --no-frozen-lockfile && pnpm run build:extensions
 
       - name: Run fast gate
         run: uv run pytest -n auto -m "not slow"
@@ -134,7 +134,7 @@ jobs:
         run: corepack enable
 
       - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+        run: cd src/meridian/pi_runtime && pnpm install --no-frozen-lockfile && pnpm run build:extensions
 
       - name: Run full gate
         run: scripts/preflight.sh full
@@ -167,7 +167,7 @@ jobs:
         run: corepack enable
 
       - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+        run: cd src/meridian/pi_runtime && pnpm install --no-frozen-lockfile && pnpm run build:extensions
 
       - name: Run compatibility gate
         run: uv run pytest -n auto -m "not windows_only"
@@ -200,7 +200,7 @@ jobs:
         run: corepack enable
 
       - name: Build Pi extensions
-        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+        run: cd src/meridian/pi_runtime && pnpm install --no-frozen-lockfile && pnpm run build:extensions
 
       - name: Run Windows gate
         run: uv run pytest -n auto -m "not slow"
