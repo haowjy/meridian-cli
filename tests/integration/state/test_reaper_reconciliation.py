@@ -459,6 +459,41 @@ def test_reconcile_active_spawn_post_exit_failure_bypasses_recent_activity_after
     assert latest.error == "orphan_run"
 
 
+def test_reconcile_active_spawn_post_exit_with_live_runner_skips(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recorded attempt exit must not finalize a spawn whose runner is alive.
+
+    The runner records process_exit_code/exited_at after every attempt drains,
+    including between retries and before post-attempt guardrails run. While the
+    runner process is still alive it owns finalization, so the reaper must skip
+    rather than orphan it.
+    """
+    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
+
+    fixed_now = 1_000.0
+    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: fixed_now)
+    spawn_store.record_spawn_exited(
+        runtime_root,
+        spawn_id,
+        exit_code=1,
+        exited_at="1970-01-01T00:00:30Z",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: True,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled == record
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "running"
+    assert latest.error is None
+
+
 def test_reconcile_active_spawn_post_exit_zero_succeeds_after_grace_without_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

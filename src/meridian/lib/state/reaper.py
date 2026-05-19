@@ -231,6 +231,13 @@ def decide_generic_reconciliation(
         return FinalizeFailed(error="orphan_finalization")
 
     if record.process_exit_code is not None or record.exited_at is not None:
+        # A recorded process exit is attempt-level bookkeeping: the runner writes
+        # process_exit_code/exited_at after every attempt drains, including
+        # between retries. While the runner process is still alive it owns
+        # finalization — it may be mid retry backoff about to start another
+        # attempt — so the reaper must not preempt it as an orphan.
+        if snapshot.runner_pid_alive:
+            return Skip(reason="runner_alive")
         if _in_post_exit_finalization_grace(record, now):
             return Skip(reason="post_exit_finalization_grace")
         if snapshot.durable_report_completion:
