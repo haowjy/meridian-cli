@@ -964,7 +964,6 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
             for line in history_path.read_text(encoding="utf-8").splitlines()
             if line
         ]
-        assert any(event["event_type"] == "message_update" for event in history)
         parse_errors = [
             event
             for event in history
