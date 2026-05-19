@@ -104,6 +104,30 @@ Expect:
 - Follow-up turn runs and reports `fast-done`
 - Spawn reaches quiescence only after the follow-up turn completes
 
+## S6c: Nested auto-wait stale detection is bounded
+
+Setup:
+
+1. Start a spawned Pi RPC run that launches tracked work, then force-kill the
+   runner process after the spawn row is created (fault-injection path).
+2. From a nested Meridian shell (`MERIDIAN_DEPTH=1`), run:
+
+```bash
+meridian spawn wait <spawn-id>
+```
+
+Expect:
+- Stale shaping applies only after grace windows: startup grace (~15s) and
+  recent-activity grace (~120s heartbeat/history/lifecycle mtime). Before those
+  windows expire, nested wait/show can still report `running`.
+- Wait does not hang forever in nested mode
+- `spawn show`/`spawn wait` resolves using read-only stale detection
+- Status surfaces as failed with `stale_nested_read` (or
+  `stale_nested_read_no_pid` when runner pid metadata is absent)
+- On-disk spawn row is not reconciler-finalized by the nested read path; verify
+  `<runtime-root>/spawns/<spawn-id>/state.json` still has active status
+  (`"status":"running"`) after nested `spawn wait` returns synthetic failed
+
 ## S7: Primary Pi native TUI wrapper
 
 ```bash

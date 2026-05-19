@@ -1285,48 +1285,53 @@ class SpawnManager:
                         direction="inbound",
                         data={"event_type": event.event_type, "harness_id": event.harness_id},
                     )
-                try:
-                    write_result = self._history_writers[spawn_id].write(event)
-                    if not write_result.success:
-                        raise RuntimeError(write_result.error or "history write failed")
-                    consecutive_write_failures = 0
-                    if tracer is not None:
-                        tracer.emit(
-                            "drain",
-                            "event_persisted",
-                            data={"event_type": event.event_type},
-                        )
-                    self._observers.dispatch(spawn_id, event)
-                except Exception as persist_exc:
-                    consecutive_write_failures += 1
-                    if tracer is not None:
-                        tracer.emit(
-                            "drain",
-                            "persist_error",
-                            data={
-                                "event_type": event.event_type,
-                                "error": str(persist_exc),
-                                "consecutive_failures": consecutive_write_failures,
-                            },
-                        )
-                    logger.warning(
-                        "Failed to persist event for spawn %s (%d/%d consecutive failures)",
-                        spawn_id,
-                        consecutive_write_failures,
-                        max_consecutive_failures,
-                        exc_info=True,
-                    )
-                    if consecutive_write_failures >= max_consecutive_failures:
-                        logger.error(
-                            "Aborting drain loop for spawn %s after %d consecutive write failures",
+                history_writer = self._history_writers.get(spawn_id)
+                if history_writer is not None:
+                    try:
+                        write_result = history_writer.write(event)
+                        if not write_result.success:
+                            raise RuntimeError(write_result.error or "history write failed")
+                        consecutive_write_failures = 0
+                        if tracer is not None:
+                            tracer.emit(
+                                "drain",
+                                "event_persisted",
+                                data={"event_type": event.event_type},
+                            )
+                        self._observers.dispatch(spawn_id, event)
+                    except Exception as persist_exc:
+                        consecutive_write_failures += 1
+                        if tracer is not None:
+                            tracer.emit(
+                                "drain",
+                                "persist_error",
+                                data={
+                                    "event_type": event.event_type,
+                                    "error": str(persist_exc),
+                                    "consecutive_failures": consecutive_write_failures,
+                                },
+                            )
+                        logger.warning(
+                            "Failed to persist event for spawn %s (%d/%d consecutive failures)",
                             spawn_id,
+                            consecutive_write_failures,
                             max_consecutive_failures,
+                            exc_info=True,
                         )
-                        drain_error = RuntimeError(
-                            "Aborted drain loop after repeated output persistence failures"
-                        )
-                        self._fan_out_event(spawn_id, event)
-                        break
+                        if consecutive_write_failures >= max_consecutive_failures:
+                            logger.error(
+                                (
+                                    "Aborting drain loop for spawn %s after %d "
+                                    "consecutive write failures"
+                                ),
+                                spawn_id,
+                                max_consecutive_failures,
+                            )
+                            drain_error = RuntimeError(
+                                "Aborted drain loop after repeated output persistence failures"
+                            )
+                            self._fan_out_event(spawn_id, event)
+                            break
                 event_outcome = terminal_outcome(event)
                 self._fan_out_event(spawn_id, event)
                 if pi_quiescence_enabled and pi_quiescence_candidate is not None:

@@ -216,7 +216,6 @@ def _install_signal_handlers(
 def _truncate_attempt_logs(log_dir: Path) -> None:
     for name in (
         HISTORY_FILENAME,
-        PI_LIFECYCLE_EVENTS_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
         REPORT_FILENAME,
@@ -256,6 +255,29 @@ def _persist_attempt_artifacts(
         if name in {HISTORY_FILENAME, PI_LIFECYCLE_EVENTS_FILENAME, STDERR_FILENAME}:
             payload = redact_secret_bytes(payload, secrets)
         artifacts.put(make_artifact_key(spawn_id, name), payload)
+
+
+def _pi_sidecar_has_subspawn_start(log_dir: Path) -> bool:
+    sidecar_path = log_dir / PI_LIFECYCLE_EVENTS_FILENAME
+    if not sidecar_path.exists():
+        return False
+    try:
+        sidecar_text = sidecar_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(
+        marker in sidecar_text
+        for marker in (
+            "meridian.subspawn.start",
+            "meridian_subspawn_start",
+        )
+    )
+
+
+def _retry_blocked_after_pi_subspawn_start(*, harness_id: HarnessId, log_dir: Path) -> bool:
+    """Return whether retrying would orphan already-started Pi subspawn work."""
+
+    return harness_id is HarnessId.PI and _pi_sidecar_has_subspawn_start(log_dir)
 
 
 def _line_from_harness_event(event: HarnessEvent) -> str:
@@ -1114,6 +1136,13 @@ async def execute_with_streaming(
                         secrets=secrets,
                     )
 
+                    if _retry_blocked_after_pi_subspawn_start(
+                        harness_id=resolved_harness_id,
+                        log_dir=log_dir,
+                    ):
+                        conclusion.exit_code = 1
+                        break
+
                     if conclusion.retries_attempted >= max_retries:
                         conclusion.exit_code = 1
                         break
@@ -1149,6 +1178,14 @@ async def execute_with_streaming(
                     conclusion.failure_reason = "timeout"
                 elif category == ErrorCategory.STRATEGY_CHANGE:
                     conclusion.failure_reason = "strategy_change"
+
+                # Retrying after Pi already launched lifecycle-managed subspawn work is unsafe:
+                # children cannot be re-adopted by a new parent retry attempt.
+                if _retry_blocked_after_pi_subspawn_start(
+                    harness_id=resolved_harness_id,
+                    log_dir=log_dir,
+                ):
+                    break
 
                 if not should_retry(
                     exit_code=conclusion.exit_code,
