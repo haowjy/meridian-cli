@@ -611,8 +611,7 @@ Implementation options, in preference order:
 2. Build extensions during package build from TypeScript sources.
 3. Dev-only rebuild command for contributors.
 
-Do not require Bun at runtime. Bun may remain a dev/build dependency only if it
-is the simplest way to compile extension bundles. Prefer the existing Node/npm
+Do not require Bun at runtime or build time. Use the existing Node/npm
 toolchain already used by extension tests.
 
 The runtime launch path must only need:
