@@ -2,17 +2,17 @@ version = 2
 
 [dependencies.anthropic-skills]
 url = "github.com/anthropics/skills"
-commit = "f458cee31a7577a47ba0c9a101976fa599385174"
+commit = "6a5bb06904ab164a345e41c381fc9097954b83da"
 
 [dependencies.meridian-base]
 url = "github.com/meridian-flow/meridian-base"
-version = "v0.4.11"
-commit = "908a53cabb33480b478a75741d9c0110a4ee39c3"
+version = "v0.4.12"
+commit = "bd28543f5a7af4bfb5fa4eab768972c8e36859ff"
 
 [dependencies.meridian-dev-workflow]
 url = "github.com/haowjy/meridian-dev-workflow"
-version = "v0.7.10"
-commit = "e9288b6c8ce1f18079ca4bb342c500b3c38b01ff"
+version = "v0.7.12"
+commit = "133ffed516444e8cd964558c676895293f2a34ce"
 
 [dependencies.meridian-prompter]
 url = "github.com/meridian-flow/meridian-prompter"
@@ -183,13 +183,13 @@ installed_checksum = "sha256:bbde976e20d92812073c92ffa3ae92cbf2b0f27322b681d533a
 [items."agent/kb-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.7"
-source_checksum = "sha256:bb06c9e3681318d024a3fb28921d54bb3c056ad50605ee7dda8e6290b0f8d49e"
+version = "v0.7.12"
+source_checksum = "sha256:37f6c80e0f180871271d6ea1f7e25377f5653ccc2ae31a55fea95501d154b2b2"
 
 [[items."agent/kb-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/kb-lead.md"
-installed_checksum = "sha256:bb06c9e3681318d024a3fb28921d54bb3c056ad50605ee7dda8e6290b0f8d49e"
+installed_checksum = "sha256:37f6c80e0f180871271d6ea1f7e25377f5653ccc2ae31a55fea95501d154b2b2"
 
 [items."agent/kb-maintainer"]
 source = "meridian-base"
@@ -312,27 +312,16 @@ target_root = ".mars"
 dest_path = "agents/python-tool-writer.md"
 installed_checksum = "sha256:7c454478fad4d27e40c66d0047bd42e403d83cb4334d239f0972d5cde016fe67"
 
-[items."agent/qa-designer"]
-source = "meridian-dev-workflow"
-kind = "agent"
-version = "v0.7.10"
-source_checksum = "sha256:e626df04a91b374f08c66a222dd933c8d23e3569a2e80dbe1d15d57127c5f928"
-
-[[items."agent/qa-designer".outputs]]
-target_root = ".mars"
-dest_path = "agents/qa-designer.md"
-installed_checksum = "sha256:e626df04a91b374f08c66a222dd933c8d23e3569a2e80dbe1d15d57127c5f928"
-
 [items."agent/qa-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.10"
-source_checksum = "sha256:2e95453360eaac53db81b54efae836515fd7b5aadb0a3580e9d748c93df968f6"
+version = "v0.7.12"
+source_checksum = "sha256:f9b2e5d6b9d365f5892cb7ebbe4875c1faee9ac4f1181c1e80bbf08a9a25b04a"
 
 [[items."agent/qa-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/qa-lead.md"
-installed_checksum = "sha256:2e95453360eaac53db81b54efae836515fd7b5aadb0a3580e9d748c93df968f6"
+installed_checksum = "sha256:f9b2e5d6b9d365f5892cb7ebbe4875c1faee9ac4f1181c1e80bbf08a9a25b04a"
 
 [items."agent/reviewer"]
 source = "meridian-dev-workflow"
@@ -742,13 +731,13 @@ installed_checksum = "sha256:2baabb91a1d2351018089ac76c5ea308c729f77068419193c20
 [items."skill/meridian-spawn"]
 source = "meridian-base"
 kind = "skill"
-version = "v0.4.11"
-source_checksum = "sha256:729e14382b143c6805fe4c6032a914859a2473f955463fd866c02e093824da13"
+version = "v0.4.12"
+source_checksum = "sha256:3030ef25d68ff8799576c1cb5534095e2135fd2d2bc8334e2026c524d2a42f90"
 
 [[items."skill/meridian-spawn".outputs]]
 target_root = ".mars"
 dest_path = "skills/meridian-spawn"
-installed_checksum = "sha256:729e14382b143c6805fe4c6032a914859a2473f955463fd866c02e093824da13"
+installed_checksum = "sha256:3030ef25d68ff8799576c1cb5534095e2135fd2d2bc8334e2026c524d2a42f90"
 
 [items."skill/meridian-work-coordination"]
 source = "meridian-base"
@@ -781,6 +770,17 @@ source_checksum = "sha256:108643971d8746de2557285863d6f28ad40bcd6fbf406a5ca1d879
 target_root = ".mars"
 dest_path = "skills/playwright-cli"
 installed_checksum = "sha256:108643971d8746de2557285863d6f28ad40bcd6fbf406a5ca1d8797b34357f1e"
+
+[items."skill/post-impl-capture"]
+source = "meridian-dev-workflow"
+kind = "skill"
+version = "v0.7.12"
+source_checksum = "sha256:9da7585ab7d06392cdfcabc305a6096c5c4117032724df665e0b1c4bf2c4aad1"
+
+[[items."skill/post-impl-capture".outputs]]
+target_root = ".mars"
+dest_path = "skills/post-impl-capture"
+installed_checksum = "sha256:9da7585ab7d06392cdfcabc305a6096c5c4117032724df665e0b1c4bf2c4aad1"
 
 [items."skill/prompt-principles"]
 source = "meridian-prompter"
