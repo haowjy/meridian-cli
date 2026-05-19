@@ -255,15 +255,16 @@ Expect:
 - Auth/config remains Pi-owned; Meridian does not set a fake auth root
 - Spawned `spawn show` exposes a useful Pi phase during startup and cleanup
 
-## S20-S22: Stderr lifecycle ingestion and dedup
+## S20-S22: Sidecar lifecycle ingestion and stderr isolation
 
 Use a fake/test Pi runtime or extension variant that can emit lifecycle events
-on stdout, stderr, or both.
+to `pi-lifecycle-events.jsonl` (path from `MERIDIAN_PI_LIFECYCLE_EVENT_FILE`),
+plus optional stdout/stderr noise.
 
 Expect:
-- Spawned RPC treats allowlisted stderr lifecycle JSON as machine input
+- Spawned RPC treats sidecar lifecycle JSONL as machine input
 - Non-lifecycle stderr remains log-only and does not mutate quiescence state
-- Duplicate stdout/stderr lifecycle events are recorded once in history/tracker state
+- Duplicate stdout/sidecar lifecycle events are recorded once in history/tracker state
 
 ## S23-S28: Child-wave batching and timeout behavior
 
@@ -289,6 +290,7 @@ Expect:
 - Primary argv loads the lifecycle extension but not managed-bash, `--mode rpc`, or `--no-extensions`
 - Child completion can trigger a native Pi follow-up/notification
 - Primary does not auto-finalize or exit at quiescence; user remains in the TUI
+- Lifecycle events are written to `pi-lifecycle-events.jsonl` sidecar, not stdio
 - Raw lifecycle JSON (`parent_spawn_id`, `correlation_id`, `emitted_at_ms`,
   `meridian.notification.*`, etc.) does **not** appear in the visible TUI
 - Primary lifecycle diagnostics, if captured, are diagnostic-only and do not drive spawned quiescence

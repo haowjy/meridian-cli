@@ -246,6 +246,7 @@ async def test_launch_prepared_spawn_persists_pi_runtime_metadata_with_scoped_se
 
     expected_scoped_session_dir = str(base_session_dir / str(spawn_id))
     assert captured_env["MERIDIAN_PI_BINARY"] == "/usr/local/bin/pi"
+    assert captured_env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"].endswith("pi-lifecycle-events.jsonl")
     assert captured_env["PI_CODING_AGENT_SESSION_DIR"] == expected_scoped_session_dir
 
     metadata_path = resolve_spawn_log_dir(tmp_path, spawn_id) / "pi_runtime_meta.json"

@@ -15,7 +15,7 @@ PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES: Final[tuple[str, ...]] = (
     "meridian.notification.",
     "meridian.quiescence.",
 )
-PI_STDERR_LIFECYCLE_ALLOWLIST: Final[frozenset[str]] = frozenset(
+PI_LIFECYCLE_EVENT_ALLOWLIST: Final[frozenset[str]] = frozenset(
     {
         "meridian.subspawn.start",
         "meridian.subspawn.end",
@@ -26,13 +26,13 @@ PI_STDERR_LIFECYCLE_ALLOWLIST: Final[frozenset[str]] = frozenset(
         "meridian.quiescence.ready",
     }
 )
-_PI_STDERR_SUBSPAWN_TYPES: Final[frozenset[str]] = frozenset(
+_PI_SUBSPAWN_EVENT_TYPES: Final[frozenset[str]] = frozenset(
     {
         "meridian.subspawn.start",
         "meridian.subspawn.end",
     }
 )
-_PI_STDERR_NOTIFICATION_TYPES: Final[frozenset[str]] = frozenset(
+_PI_NOTIFICATION_EVENT_TYPES: Final[frozenset[str]] = frozenset(
     {
         "meridian.notification.queued",
         "meridian.notification.delivered",
@@ -165,7 +165,7 @@ def has_unsupported_pi_lifecycle_schema_version(
     return schema_version != PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION
 
 
-def _validate_stderr_lifecycle_payload(
+def _validate_lifecycle_event_payload(
     *,
     event_type: str,
     payload: dict[str, object],
@@ -189,12 +189,12 @@ def _validate_stderr_lifecycle_payload(
     if emitted_at_ms is None:
         return "invalid_emitted_at_ms"
 
-    if event_type in _PI_STDERR_SUBSPAWN_TYPES:
+    if event_type in _PI_SUBSPAWN_EVENT_TYPES:
         subspawn_id = payload.get("subspawn_id")
         if not isinstance(subspawn_id, str) or not subspawn_id.strip():
             return "missing_subspawn_id"
 
-    if event_type in _PI_STDERR_NOTIFICATION_TYPES:
+    if event_type in _PI_NOTIFICATION_EVENT_TYPES:
         notification_id = payload.get("notification_id")
         if not isinstance(notification_id, str) or not notification_id.strip():
             return "missing_notification_id"
@@ -202,37 +202,55 @@ def _validate_stderr_lifecycle_payload(
     return None
 
 
-def parse_pi_stderr_lifecycle_line(
+def parse_pi_lifecycle_event_line(
     line: str,
     *,
     expected_parent_spawn_id: SpawnId | str,
     harness_id: str,
-    enabled: bool,
 ) -> HarnessEvent | None:
-    """Parse one stderr line into a lifecycle event or diagnostic parse-error event."""
+    """Parse one lifecycle side-channel line into a lifecycle or parse-error event."""
 
-    if not enabled:
-        return None
     payload_text = line.strip()
     if not payload_text:
         return None
     try:
         payload_obj = json.loads(payload_text)
     except json.JSONDecodeError:
-        return None
+        return _lifecycle_parse_error_event(
+            reason="malformed_json",
+            error="malformed_json",
+            raw_line=payload_text,
+            harness_id=harness_id,
+        )
     if not isinstance(payload_obj, dict):
-        return None
+        return _lifecycle_parse_error_event(
+            reason="non_object",
+            error="non_object",
+            raw_line=payload_text,
+            harness_id=harness_id,
+        )
 
     payload = cast("dict[str, object]", payload_obj)
     event_type = payload.get("type")
     if not isinstance(event_type, str) or not event_type.strip():
-        return None
+        return _lifecycle_parse_error_event(
+            reason="missing_type",
+            error="missing_type",
+            raw_line=payload_text,
+            harness_id=harness_id,
+        )
 
     normalized_type = event_type.strip()
-    if normalized_type not in PI_STDERR_LIFECYCLE_ALLOWLIST:
-        return None
+    if normalized_type not in PI_LIFECYCLE_EVENT_ALLOWLIST:
+        return _lifecycle_parse_error_event(
+            reason="unsupported_type",
+            error="unsupported_type",
+            raw_type=normalized_type,
+            raw_line=payload_text,
+            harness_id=harness_id,
+        )
 
-    invalid_reason = _validate_stderr_lifecycle_payload(
+    invalid_reason = _validate_lifecycle_event_payload(
         event_type=normalized_type,
         payload=payload,
         expected_parent_spawn_id=str(expected_parent_spawn_id),
@@ -256,9 +274,9 @@ def parse_pi_stderr_lifecycle_line(
 
 __all__ = [
     "PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES",
-    "PI_STDERR_LIFECYCLE_ALLOWLIST",
+    "PI_LIFECYCLE_EVENT_ALLOWLIST",
     "PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION",
     "has_unsupported_pi_lifecycle_schema_version",
-    "parse_pi_stderr_lifecycle_line",
+    "parse_pi_lifecycle_event_line",
     "redact_pi_command_for_history",
 ]

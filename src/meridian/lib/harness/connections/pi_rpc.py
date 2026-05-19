@@ -28,11 +28,15 @@ from meridian.lib.harness.connections.base import (
     StopResult,
     validate_prompt_size,
 )
+from meridian.lib.harness.connections.pi_lifecycle_file import (
+    PiLifecycleEventTailer,
+    prepare_pi_lifecycle_event_file,
+)
 from meridian.lib.harness.errors import HarnessBinaryNotFound
 from meridian.lib.harness.pi_lifecycle_events import (
+    PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES,
     PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
     has_unsupported_pi_lifecycle_schema_version,
-    parse_pi_stderr_lifecycle_line,
     redact_pi_command_for_history,
 )
 from meridian.lib.harness.pi_runtime_resolver import (
@@ -124,7 +128,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._launch_command: tuple[str, ...] = ()
         self._launch_cwd: str | None = None
         self._launch_session_role: str | None = None
-        self._stderr_lifecycle_enabled = False
+        self._lifecycle_tailer: PiLifecycleEventTailer | None = None
         self._events_stream_active = False
 
     @property
@@ -175,7 +179,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._harness_ready_emitted = False
         self._pending_lifecycle_phase_events = []
         self._launch_session_role = config.pi_session_role
-        self._stderr_lifecycle_enabled = False
+        self._lifecycle_tailer = None
         self._events_stream_active = False
         self._validate_initial_prompt_requirement()
         self._set_state("starting")
@@ -305,11 +309,22 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 )
             )
         first_stdout_deadline_monotonic: float | None = None
+        lifecycle_tailer = self._lifecycle_tailer
+        if lifecycle_tailer is not None:
+            lifecycle_tailer.open()
+        lifecycle_poll_deadline_monotonic = time.monotonic() + (
+            lifecycle_tailer.poll_interval_secs if lifecycle_tailer is not None else 0.0
+        )
+        lifecycle_ready_events: list[HarnessEvent] = []
 
         try:
             while self._pending_lifecycle_phase_events:
                 yield self._pending_lifecycle_phase_events.pop(0)
             while True:
+                if lifecycle_ready_events:
+                    yield lifecycle_ready_events.pop(0)
+                    continue
+                now_monotonic = time.monotonic()
                 try:
                     timeout_secs: float | None = None
                     if (
@@ -321,19 +336,51 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                                 time.monotonic()
                                 + _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS
                             )
-                        timeout_secs = first_stdout_deadline_monotonic - time.monotonic()
+                        timeout_secs = first_stdout_deadline_monotonic - now_monotonic
                         if timeout_secs <= 0:
                             raise TimeoutError
                     else:
                         first_stdout_deadline_monotonic = None
+                    if lifecycle_tailer is not None:
+                        poll_wait = max(
+                            0.0, lifecycle_poll_deadline_monotonic - now_monotonic
+                        )
+                        timeout_secs = (
+                            poll_wait if timeout_secs is None else min(timeout_secs, poll_wait)
+                        )
                     if timeout_secs is None:
                         stream_kind, source, payload = await stream_queue.get()
+                    elif timeout_secs <= 0:
+                        raise TimeoutError
                     else:
                         stream_kind, source, payload = await asyncio.wait_for(
                             stream_queue.get(),
                             timeout=timeout_secs,
                         )
                 except TimeoutError:
+                    now_monotonic = time.monotonic()
+                    if (
+                        lifecycle_tailer is not None
+                        and now_monotonic >= lifecycle_poll_deadline_monotonic
+                    ):
+                        lifecycle_ready_events.extend(
+                            self._read_lifecycle_sidecar_events(lifecycle_tailer)
+                        )
+                        lifecycle_poll_deadline_monotonic = (
+                            now_monotonic + lifecycle_tailer.poll_interval_secs
+                        )
+                        if lifecycle_ready_events:
+                            continue
+                    if (
+                        not self._waiting_for_first_pi_event_after_prompt
+                        or self._first_pi_event_received
+                    ):
+                        continue
+                    if (
+                        first_stdout_deadline_monotonic is None
+                        or now_monotonic < first_stdout_deadline_monotonic
+                    ):
+                        continue
                     detail = _PI_FIRST_EVENT_TIMEOUT_REASON
                     self._mark_failed(detail)
                     self._waiting_for_first_pi_event_after_prompt = False
@@ -392,11 +439,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
                 if source == _STDIO_SOURCE_STDERR:
                     self._write_stderr_line(line_bytes)
-                    if not raw_text.strip():
-                        continue
-                    stderr_event = self._parse_stderr_lifecycle_line(raw_text)
-                    if stderr_event is not None:
-                        yield stderr_event
                     continue
                 if not raw_text.strip():
                     continue
@@ -426,6 +468,13 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                             "session_event_seen",
                             session_id=self._session_id,
                         )
+                if event.event_type == "agent_end" and lifecycle_tailer is not None:
+                    catch_up_events = self._read_lifecycle_sidecar_events(
+                        lifecycle_tailer,
+                        catch_up_to_eof=True,
+                    )
+                    for catch_up_event in catch_up_events:
+                        yield catch_up_event
                 yield event
             if not self._session_event_seen:
                 yield self._lifecycle_phase_event("session_event_absent")
@@ -433,6 +482,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             for task in stream_tasks:
                 task.cancel()
             await asyncio.gather(*stream_tasks, return_exceptions=True)
+            if lifecycle_tailer is not None:
+                lifecycle_tailer.close()
             self._events_stream_active = False
             await self._cleanup_resources(terminate_process=False)
 
@@ -452,6 +503,15 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             os.environ,
             config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,
+        )
+        lifecycle_file_path = prepare_pi_lifecycle_event_file(
+            spawn_dir=spawn_dir,
+            env=env,
+        )
+        self._lifecycle_tailer = PiLifecycleEventTailer(
+            file_path=lifecycle_file_path,
+            spawn_id=config.spawn_id,
+            harness_id=_HARNESS_NAME,
         )
         session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
         if session_dir:
@@ -473,17 +533,13 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._launch_cwd = str(config.task_cwd or config.control_root)
 
         try:
-            self._stderr_lifecycle_enabled = launch_role == "spawned"
-            stderr_target: int | BufferedWriter = self._stderr_handle
-            if self._stderr_lifecycle_enabled:
-                stderr_target = PIPE
             self._process = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=self._launch_cwd,
                 env=env,
                 stdin=PIPE,
                 stdout=PIPE,
-                stderr=stderr_target,
+                stderr=self._stderr_handle,
                 limit=_STDOUT_READLINE_LIMIT,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
@@ -517,6 +573,16 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise
         except Exception as exc:
             await queue.put((_STREAM_ERROR_KIND, source, exc))
+
+    def _write_stderr_line(self, line_bytes: bytes) -> None:
+        stderr_handle = self._stderr_handle
+        if stderr_handle is None:
+            return
+        try:
+            stderr_handle.write(line_bytes)
+            stderr_handle.flush()
+        except Exception:
+            logger.debug("Failed to append stderr line to Pi stderr log", exc_info=True)
 
     def _apply_session_dir_arg(self, command: Sequence[str], session_dir: str) -> list[str]:
         rewritten: list[str] = []
@@ -585,6 +651,12 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raw_line=payload_text,
             )
         normalized_type = event_type.strip()
+        if normalized_type.startswith(PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES):
+            logger.warning(
+                "Ignoring Pi lifecycle event on stdout; lifecycle sidecar is authoritative: %s",
+                normalized_type,
+            )
+            return None
         if self._has_unsupported_lifecycle_schema_version(
             event_type=normalized_type,
             payload=payload,
@@ -609,14 +681,16 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             raw_text=line,
         )
 
-    def _parse_stderr_lifecycle_line(self, line: str) -> HarnessEvent | None:
-        event = parse_pi_stderr_lifecycle_line(
-            line,
-            expected_parent_spawn_id=self._spawn_id,
-            harness_id=_HARNESS_NAME,
-            enabled=self._stderr_lifecycle_enabled,
-        )
-        if event is not None and event.event_type == "meridian.lifecycle.parse_error":
+    def _read_lifecycle_sidecar_events(
+        self,
+        tailer: PiLifecycleEventTailer,
+        *,
+        catch_up_to_eof: bool = False,
+    ) -> list[HarnessEvent]:
+        events = tailer.catch_up_to_eof() if catch_up_to_eof else tailer.read_ready_events()
+        for event in events:
+            if event.event_type != "meridian.lifecycle.parse_error":
+                continue
             raw_line = event.payload.get("raw_line")
             raw_text = raw_line if isinstance(raw_line, str) else ""
             trace_parse_error(
@@ -625,7 +699,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 raw_text,
                 error=str(event.payload.get("reason", "unknown_parse_error")),
             )
-        return event
+        return events
 
     def _has_unsupported_lifecycle_schema_version(
         self,
@@ -794,16 +868,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._stderr_handle is not None:
             self._stderr_handle.close()
             self._stderr_handle = None
-
-    def _write_stderr_line(self, line_bytes: bytes) -> None:
-        handle = self._stderr_handle
-        if handle is None:
-            return
-        try:
-            handle.write(line_bytes)
-            handle.flush()
-        except Exception:
-            logger.debug("Failed to write Pi stderr line to stderr.log", exc_info=True)
+        if self._lifecycle_tailer is not None:
+            self._lifecycle_tailer.close()
+        self._lifecycle_tailer = None
 
     def _emit_startup_phase(self, phase: StartupPhase) -> None:
         emitter = self._startup_emitter

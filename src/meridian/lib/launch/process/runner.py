@@ -38,20 +38,22 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
+from meridian.lib.harness.connections.pi_lifecycle_file import (
+    prepare_pi_lifecycle_event_file,
+    read_pi_lifecycle_events_file,
+)
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.extractors.pi import detect_pi_session_discovery_from_session_files
 from meridian.lib.harness.passthrough import get_passthrough
 from meridian.lib.harness.passthrough.base import PassthroughError
 from meridian.lib.harness.permission_broker import PermissionBroker
-from meridian.lib.harness.pi_lifecycle_events import (
-    parse_pi_stderr_lifecycle_line,
-    redact_pi_command_for_history,
-)
+from meridian.lib.harness.pi_lifecycle_events import redact_pi_command_for_history
 from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
+    PI_LIFECYCLE_EVENTS_FILENAME,
     PI_RUNTIME_META_FILENAME,
     PRIMARY_META_FILENAME,
 )
@@ -346,7 +348,12 @@ def run_primary_process_with_capture(
 def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
     """Delete managed sidecars when attach startup falls back to black-box launch."""
 
-    for filename in (PRIMARY_META_FILENAME, OUTPUT_FILENAME, "stderr.log"):
+    for filename in (
+        PRIMARY_META_FILENAME,
+        OUTPUT_FILENAME,
+        "stderr.log",
+        PI_LIFECYCLE_EVENTS_FILENAME,
+    ):
         with suppress(OSError):
             (spawn_dir / filename).unlink()
 
@@ -442,40 +449,39 @@ def _persist_blackbox_output_artifact(
         )
 
 
-def _persist_pi_primary_stderr_diagnostics(
+def _persist_pi_primary_lifecycle_sidecar_diagnostics(
     *,
     spawn_id: SpawnId | None,
     log_dir: Path,
 ) -> None:
-    """Parse allowlisted Pi lifecycle stderr lines into primary history diagnostics."""
+    """Parse Pi lifecycle sidecar lines into primary history diagnostics."""
 
     if spawn_id is None:
         return
-    stderr_path = log_dir / "stderr.log"
-    if not stderr_path.is_file():
+    lifecycle_path = log_dir / PI_LIFECYCLE_EVENTS_FILENAME
+    if not lifecycle_path.is_file():
         return
 
     history_writer = HarnessHistoryWriter(log_dir / HISTORY_FILENAME)
     try:
-        with stderr_path.open(encoding="utf-8", errors="replace") as stderr_handle:
-            for line in stderr_handle:
-                event = parse_pi_stderr_lifecycle_line(
-                    line,
-                    expected_parent_spawn_id=spawn_id,
-                    harness_id=HarnessId.PI.value,
-                    enabled=True,
-                )
-                if event is None:
-                    continue
-                write_result = history_writer.write(event)
-                if not write_result.success:
-                    logger.debug(
-                        "Failed to append Pi primary stderr lifecycle diagnostic event",
-                        extra={"spawn_id": str(spawn_id), "error": write_result.error},
-                    )
-                    return
+        events = read_pi_lifecycle_events_file(
+            file_path=lifecycle_path,
+            expected_parent_spawn_id=spawn_id,
+            harness_id=HarnessId.PI.value,
+        )
     except OSError:
-        logger.debug("Failed to parse Pi primary stderr lifecycle diagnostics", exc_info=True)
+        logger.debug("Failed to parse Pi primary lifecycle sidecar diagnostics", exc_info=True)
+        return
+
+    for event in events:
+        write_result = history_writer.write(event)
+        if write_result.success:
+            continue
+        logger.debug(
+            "Failed to append Pi primary lifecycle sidecar diagnostic event",
+            extra={"spawn_id": str(spawn_id), "error": write_result.error},
+        )
+        return
 
 
 def _execute_primary_process(
@@ -535,6 +541,11 @@ def _execute_primary_process(
             else None
         )
         blackbox_env = dict(child_env)
+        if harness_id is HarnessId.PI:
+            prepare_pi_lifecycle_event_file(
+                spawn_dir=log_dir,
+                env=blackbox_env,
+            )
         if (
             harness_id is HarnessId.PI
             and harness_contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
@@ -1101,6 +1112,11 @@ def run_harness_process(
                     command=command,
                     prelaunch_state=prelaunch_state,
                 )
+                if harness_id is HarnessId.PI:
+                    prepare_pi_lifecycle_event_file(
+                        spawn_dir=log_dir,
+                        env=child_env,
+                    )
 
                 is_pi_native_primary_launch = (
                     harness_id is HarnessId.PI
@@ -1182,7 +1198,7 @@ def run_harness_process(
                     log_dir=log_dir,
                 )
                 if harness_id is HarnessId.PI and write_native_primary_metadata:
-                    _persist_pi_primary_stderr_diagnostics(
+                    _persist_pi_primary_lifecycle_sidecar_diagnostics(
                         spawn_id=primary_spawn_id,
                         log_dir=log_dir,
                     )

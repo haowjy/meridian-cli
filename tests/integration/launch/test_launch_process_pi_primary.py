@@ -178,6 +178,7 @@ def test_run_harness_process_pi_primary_persists_native_metadata_at_runner_bound
     assert isinstance(env, dict)
     assert env["MERIDIAN_PI_BINARY"] == "/usr/local/bin/pi"
     assert env["MERIDIAN_PI_SESSION_ROLE"] == "primary"
+    assert env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"].endswith("pi-lifecycle-events.jsonl")
     assert env["PI_CODING_AGENT_SESSION_DIR"].endswith("meridian-pi/sessions")
     assert "PI_CODING_AGENT_DIR" not in env
     assert "MERIDIAN_PI_WRAPPER_METADATA_PATH" not in env
@@ -731,12 +732,12 @@ def test_run_harness_process_pi_primary_continue_session_nonzero_exit_keeps_disc
 
 
 @pytest.mark.slow
-def test_run_harness_process_pi_primary_stderr_lifecycle_is_projected_to_history(
+def test_run_harness_process_pi_primary_sidecar_lifecycle_is_projected_to_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "pi-primary-stderr-history"
+    project_root = tmp_path / "pi-primary-sidecar-history"
     project_root.mkdir()
     user_home = tmp_path / "user-home"
     monkeypatch.setattr("meridian.lib.harness.pi.get_user_home", lambda: user_home)
@@ -760,9 +761,9 @@ def test_run_harness_process_pi_primary_stderr_lifecycle_is_projected_to_history
     ) -> tuple[int, int]:
         assert callable(on_child_started)
         on_child_started(891)
-        stderr_path = Path(env["MERIDIAN_PRIMARY_STDERR_LOG_PATH"])
-        spawn_id = stderr_path.parent.name
-        stderr_path.write_text(
+        sidecar_path = Path(env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"])
+        spawn_id = sidecar_path.parent.name
+        sidecar_path.write_text(
             "\n".join(
                 (
                     '{"type":"meridian.subspawn.start","schema_version":1,'
@@ -774,6 +775,10 @@ def test_run_harness_process_pi_primary_stderr_lifecycle_is_projected_to_history
                 )
             )
             + "\n",
+            encoding="utf-8",
+        )
+        Path(env["MERIDIAN_PRIMARY_STDERR_LOG_PATH"]).write_text(
+            "plain stderr diagnostics\n",
             encoding="utf-8",
         )
         return (0, 891)
@@ -789,6 +794,7 @@ def test_run_harness_process_pi_primary_stderr_lifecycle_is_projected_to_history
     assert outcome.primary_spawn_id is not None
     spawn_dir = launch_context.runtime_root / "spawns" / str(outcome.primary_spawn_id)
     assert (spawn_dir / "stderr.log").is_file()
+    assert (spawn_dir / "pi-lifecycle-events.jsonl").is_file()
     runner_history = list(iter_history_events(spawn_dir / "history.jsonl"))
     assert [event["event_type"] for event in runner_history] == [
         "meridian.subspawn.start",

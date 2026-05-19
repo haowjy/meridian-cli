@@ -34,10 +34,13 @@ def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
 
     script = tmp_path / "lifecycle-harness.mjs"
     script.write_text(source, encoding="utf-8")
+    lifecycle_file = tmp_path / "pi-lifecycle-events.jsonl"
+    lifecycle_file.touch()
     env = {
         **os.environ,
         "MERIDIAN_LIFECYCLE_EXTENSION": str(LIFECYCLE_DIST),
         "MERIDIAN_TEST_TMP": str(tmp_path),
+        "MERIDIAN_PI_LIFECYCLE_EVENT_FILE": str(lifecycle_file),
     }
     result = subprocess.run(
         [node, str(script)],
@@ -55,7 +58,15 @@ def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
         if line.startswith("@@RESULT@@")
     ]
     assert marker_lines, result.stdout
-    return json.loads(marker_lines[-1])
+    payload = json.loads(marker_lines[-1])
+    lifecycle_events = [
+        json.loads(line)
+        for line in lifecycle_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if isinstance(payload, dict) and "lifecycleEvents" in payload:
+        payload["lifecycleEvents"] = lifecycle_events
+    return payload
 
 
 def test_lifecycle_child_drain_sends_single_wave_aggregate_notification(
@@ -1010,7 +1021,7 @@ originalWrite("@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents }) +
     assert output["sentMessages"] == []
 
 
-def test_lifecycle_primary_role_does_not_write_raw_diagnostics_to_visible_streams(
+def test_lifecycle_primary_wave_completion_does_not_emit_raw_lifecycle_json_to_stdout(
     tmp_path: Path,
 ) -> None:
     output = _run_node_harness(
@@ -1018,6 +1029,12 @@ def test_lifecycle_primary_role_does_not_write_raw_diagnostics_to_visible_stream
         r'''
 process.env.MERIDIAN_PI_SESSION_ROLE = "primary";
 process.env.MERIDIAN_SPAWN_ID = "p-primary-visible";
+const fs = await import("node:fs/promises");
+const path = await import("node:path");
+process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE = path.join(
+  process.env.MERIDIAN_TEST_TMP,
+  "pi-lifecycle-events.jsonl",
+);
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 const stdoutWrites = [];
 process.stdout.write = (chunk, encoding, callback) => {
@@ -1068,6 +1085,12 @@ await emit(
   { subspawn_id: "p1567", wait_policy: "tracked", kind: "meridian_spawn", success: true },
 );
 await new Promise((resolve) => setTimeout(resolve, 0));
+const lifecycleFileText = await fs.readFile(process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE, "utf-8");
+const sidecarLifecycleEvents = lifecycleFileText
+  .split(/\n/)
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .map((line) => JSON.parse(line));
 const stdoutLifecycleLines = stdoutWrites
   .flatMap((chunk) => chunk.split(/\n/))
   .filter((line) => line.includes("meridian.notification.") || line.includes("parent_spawn_id"));
@@ -1077,7 +1100,12 @@ const stderrLifecycleEvents = stderrWrites
   .map((line) => JSON.parse(line));
 originalStdoutWrite(
   "@@RESULT@@"
-    + JSON.stringify({ sentMessages, stdoutLifecycleLines, stderrLifecycleEvents })
+    + JSON.stringify({
+      sentMessages,
+      sidecarLifecycleEvents,
+      stdoutLifecycleLines,
+      stderrLifecycleEvents,
+    })
     + "\n"
 );
 process.stderr.write = originalStderrWrite;
@@ -1091,6 +1119,10 @@ process.stderr.write = originalStderrWrite;
     }
     details = output["sentMessages"][0]["message"]["details"]
     assert details["child_outcomes"][0]["subspawn_id"] == "p1567"
+    sidecar_event_types = [event["type"] for event in output["sidecarLifecycleEvents"]]
+    assert sidecar_event_types
+    assert "meridian.notification.queued" in sidecar_event_types
+    assert "meridian.notification.delivered" in sidecar_event_types
     assert output["stdoutLifecycleLines"] == []
     assert output["stderrLifecycleEvents"] == []
 

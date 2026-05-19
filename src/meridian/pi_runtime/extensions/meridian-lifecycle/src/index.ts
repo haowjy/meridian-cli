@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 
 import type { ExtensionAPI } from "../../types";
+import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 
 type WaitPolicy = "tracked" | "detached";
 type SubspawnKind = "bash" | "meridian_spawn";
@@ -127,6 +128,7 @@ const MAX_WAVE_KILL_GRACE_MS = 30_000;
 const MAX_WAVE_NOTIFICATION_OUTCOME_COUNT = 12;
 const MAX_WAVE_NOTIFICATION_REASON_CHARS = 72;
 const MAX_WAVE_NOTIFICATION_SUMMARY_CHARS = 384;
+const lifecycleWriter = createLifecycleSidecarWriter(ROLE);
 
 function nowMs(): number {
   return Date.now();
@@ -208,14 +210,7 @@ function parentSpawnIdFromEnv(): string | null {
 }
 
 function emitRaw(event: Record<string, unknown>): void {
-  if (ROLE === "primary") {
-    return;
-  }
-  try {
-    process.stdout.write(`${JSON.stringify(event)}\n`);
-  } catch {
-    // best effort only
-  }
+  lifecycleWriter.append(event);
 }
 
 function waitPolicyFrom(event: ToolResultEvent): WaitPolicy {
@@ -1420,6 +1415,7 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     clearActiveWave();
     unsubscribeInternalSubspawnStart();
     unsubscribeInternalSubspawnEnd();
+    lifecycleWriter.close();
   });
 
   pi.on("agent_start", async () => {

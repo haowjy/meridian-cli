@@ -28,10 +28,14 @@ def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
 
     script = tmp_path / "managed-bash-harness.mjs"
     script.write_text(source, encoding="utf-8")
+    lifecycle_file = tmp_path / "pi-lifecycle-events.jsonl"
+    lifecycle_file.touch()
     env = os.environ.copy()
     env["MERIDIAN_MANAGED_BASH_EXTENSION"] = str(MANAGED_BASH_DIST)
     env["MERIDIAN_PI_STATE_DIR"] = str(tmp_path / "pi-state")
     env["MERIDIAN_TEST_CWD"] = str(tmp_path)
+    env["MERIDIAN_PI_SESSION_ROLE"] = "spawned"
+    env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"] = str(lifecycle_file)
     result = subprocess.run(
         [node, str(script)],
         cwd=ROOT,
@@ -48,7 +52,15 @@ def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
         if line.startswith("@@RESULT@@")
     ]
     assert marker_lines, result.stdout
-    return json.loads(marker_lines[-1])
+    payload = json.loads(marker_lines[-1])
+    lifecycle_events = [
+        json.loads(line)
+        for line in lifecycle_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if isinstance(payload, dict) and "lifecycleEvents" in payload:
+        payload["lifecycleEvents"] = lifecycle_events
+    return payload
 
 
 def test_managed_bash_blocks_short_commands_and_tracks_background_jobs(tmp_path: Path) -> None:

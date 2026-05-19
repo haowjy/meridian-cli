@@ -31,11 +31,13 @@ from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.connections.pi_lifecycle_file import prepare_pi_lifecycle_event_file
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import TerminalEventOutcome, terminal_outcome
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
+    PI_LIFECYCLE_EVENTS_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
@@ -214,6 +216,7 @@ def _install_signal_handlers(
 def _truncate_attempt_logs(log_dir: Path) -> None:
     for name in (
         HISTORY_FILENAME,
+        PI_LIFECYCLE_EVENTS_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
         REPORT_FILENAME,
@@ -240,12 +243,17 @@ def _persist_attempt_artifacts(
     log_dir: Path,
     secrets: tuple[SecretSpec, ...],
 ) -> None:
-    for name in (HISTORY_FILENAME, STDERR_FILENAME, TOKENS_FILENAME):
+    for name in (
+        HISTORY_FILENAME,
+        PI_LIFECYCLE_EVENTS_FILENAME,
+        STDERR_FILENAME,
+        TOKENS_FILENAME,
+    ):
         source = log_dir / name
         if not source.exists():
             continue
         payload = source.read_bytes()
-        if name in {HISTORY_FILENAME, STDERR_FILENAME}:
+        if name in {HISTORY_FILENAME, PI_LIFECYCLE_EVENTS_FILENAME, STDERR_FILENAME}:
             payload = redact_secret_bytes(payload, secrets)
         artifacts.put(make_artifact_key(spawn_id, name), payload)
 
@@ -771,6 +779,10 @@ async def execute_with_streaming(
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
         if resolved_harness_id is HarnessId.PI:
+            prepare_pi_lifecycle_event_file(
+                spawn_dir=log_dir,
+                env=child_env,
+            )
             _scope_pi_session_dir_for_spawn(
                 child_env=child_env,
                 spawn_id=run.spawn_id,

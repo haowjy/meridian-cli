@@ -27,6 +27,8 @@ _PI_HELP_SURFACE = (
     "--no-context-files --no-prompt-templates -e --extension "
     "PI_CODING_AGENT_SESSION_DIR"
 )
+_PI_LIFECYCLE_EVENT_FILE_ENV = "MERIDIAN_PI_LIFECYCLE_EVENT_FILE"
+_PI_LIFECYCLE_EVENT_FILENAME = "pi-lifecycle-events.jsonl"
 
 
 def _is_pi_phase_event(event: HarnessEvent) -> bool:
@@ -53,6 +55,10 @@ def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(root / "agent" / "extensions"))
 
 
+def _lifecycle_sidecar_path(control_root: Path, spawn_id: SpawnId) -> Path:
+    return resolve_spawn_log_dir(control_root, spawn_id) / _PI_LIFECYCLE_EVENT_FILENAME
+
+
 @pytest.mark.parametrize(
     ("line", "expected_reason"),
     [
@@ -73,17 +79,18 @@ def test_pi_rpc_connection_surfaces_parse_diagnostics(
     assert event.harness_id == HarnessId.PI.value
 
 
-def test_pi_rpc_connection_rejects_unsupported_canonical_lifecycle_schema_version() -> None:
-    event = PiRpcConnection()._parse_stdout_line(
-        '{"type":"meridian.subspawn.start","schema_version":2,"subspawn_id":"j-1"}'
-    )
-    assert event is not None
-    assert event.event_type == "meridian.lifecycle.parse_error"
-    assert event.payload["type"] == "meridian.lifecycle.parse_error"
-    assert event.payload["schema_version"] == 1
-    assert event.payload["error"] == "unsupported_schema_version"
-    assert event.payload["raw_type"] == "meridian.subspawn.start"
-    assert event.payload["reason"] == "unsupported_schema_version"
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"type":"meridian.subspawn.start","schema_version":1,"subspawn_id":"j-1"}',
+        '{"type":"meridian.subspawn.start","schema_version":2,"subspawn_id":"j-1"}',
+        '{"type":"meridian.notification.queued","schema_version":99,"notification_id":"n-1"}',
+        '{"type":"meridian.quiescence.ready","schema_version":0}',
+    ],
+)
+def test_pi_rpc_connection_ignores_lifecycle_events_on_stdout(line: str) -> None:
+    event = PiRpcConnection()._parse_stdout_line(line)
+    assert event is None
 
 
 def test_pi_rpc_connection_allows_non_lifecycle_schema_version_passthrough() -> None:
@@ -308,6 +315,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         "        'MERIDIAN_PI_BINARY',\n"
         "        'MERIDIAN_PI_SESSION_ROLE',\n"
         "        'MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS',\n"
+        "        'MERIDIAN_PI_LIFECYCLE_EVENT_FILE',\n"
         "        'PI_CODING_AGENT_SESSION_DIR',\n"
         "        'PI_CODING_AGENT_DIR',\n"
         "    )\n"
@@ -393,6 +401,9 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
     assert observed_env["MERIDIAN_PI_BINARY"] == str(fake_pi)
     assert observed_env["MERIDIAN_PI_SESSION_ROLE"] == "spawned"
     assert observed_env["MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"] == "12500"
+    assert observed_env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"] == str(
+        _lifecycle_sidecar_path(tmp_path, SpawnId("p-pi-direct-runtime"))
+    )
     assert observed_env["PI_CODING_AGENT_SESSION_DIR"] == str(scoped_session_dir)
     assert "PI_CODING_AGENT_DIR" not in observed_env
 
@@ -533,18 +544,19 @@ async def test_pi_rpc_connection_redacts_secret_like_cli_args_in_process_spawned
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_ingests_allowlisted_stderr_lifecycle_events_and_tees_stderr_log(
+async def test_pi_rpc_connection_ingests_lifecycle_sidecar_events_and_tees_stderr_log(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
 
-    spawn_id = SpawnId("p-pi-stderr-lifecycle")
+    spawn_id = SpawnId("p-pi-sidecar-lifecycle")
     lifecycle_line = (
         '{"type":"meridian.subspawn.start","schema_version":1,'
-        '"parent_spawn_id":"p-pi-stderr-lifecycle","correlation_id":"j-1",'
+        '"parent_spawn_id":"p-pi-sidecar-lifecycle","correlation_id":"j-1",'
         '"subspawn_id":"j-1","emitted_at_ms":1760000000000}'
     )
+    plain_stderr = "warning from stderr"
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -553,8 +565,9 @@ async def test_pi_rpc_connection_ingests_allowlisted_stderr_lifecycle_events_and
         "#!/bin/sh\n"
         "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-stderr-events\"}'\n"
-        f"printf '%s\\n' '{lifecycle_line}' >&2\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-sidecar-events\"}'\n"
+        f"printf '%s\\n' '{plain_stderr}' >&2\n"
+        f"printf '%s\\n' '{lifecycle_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
@@ -569,6 +582,10 @@ async def test_pi_rpc_connection_ingests_allowlisted_stderr_lifecycle_events_and
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
 
     connection = PiRpcConnection()
     await connection.start(
@@ -605,8 +622,14 @@ async def test_pi_rpc_connection_ingests_allowlisted_stderr_lifecycle_events_and
     assert len(lifecycle_events) == 1
     assert lifecycle_events[0].payload["subspawn_id"] == "j-1"
     assert lifecycle_events[0].payload["parent_spawn_id"] == str(spawn_id)
+    assert not any(
+        event.event_type == "meridian.lifecycle.parse_error" for event in non_phase_events
+    )
     stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
-    assert lifecycle_line in stderr_log.read_text(encoding="utf-8")
+    stderr_text = stderr_log.read_text(encoding="utf-8")
+    assert plain_stderr in stderr_text
+    assert lifecycle_line not in stderr_text
+    assert lifecycle_line in sidecar_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -620,6 +643,11 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     spawn_id = SpawnId("p-pi-stderr-ignore")
     plain_stderr = "warning from stderr"
     non_allowlisted_json = '{"type":"pi.runtime.warn","message":"ignore-me"}'
+    lifecycle_stderr = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-stderr-ignore","correlation_id":"j-stderr",'
+        '"subspawn_id":"j-stderr","emitted_at_ms":1760000000000}'
+    )
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -631,6 +659,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-stderr-ignore\"}'\n"
         f"printf '%s\\n' '{plain_stderr}' >&2\n"
         f"printf '%s\\n' '{non_allowlisted_json}' >&2\n"
+        f"printf '%s\\n' '{lifecycle_stderr}' >&2\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
@@ -676,6 +705,7 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     )
 
     assert not any(event.event_type == "pi.runtime.warn" for event in non_phase_events)
+    assert not any(event.event_type == "meridian.subspawn.start" for event in non_phase_events)
     assert not any(
         event.event_type == "meridian.lifecycle.parse_error"
         for event in non_phase_events
@@ -684,190 +714,12 @@ async def test_pi_rpc_connection_ignores_non_lifecycle_stderr_lines_but_logs_the
     stderr_text = stderr_log.read_text(encoding="utf-8")
     assert plain_stderr in stderr_text
     assert non_allowlisted_json in stderr_text
-
-
-def _parse_stderr_lifecycle_candidate(line: str) -> HarnessEvent | None:
-    connection = PiRpcConnection()
-    connection._spawn_id = SpawnId("p-pi-stderr-validation")
-    connection._stderr_lifecycle_enabled = True
-    return connection._parse_stderr_lifecycle_line(line)
-
-
-@pytest.mark.parametrize(
-    ("line", "expected_reason"),
-    [
-        (
-            '{"type":"meridian.subspawn.start","schema_version":2,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
-            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
-            "unsupported_schema_version",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":"not-an-int",'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
-            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
-            "unsupported_schema_version",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"correlation_id":"j-1","subspawn_id":"j-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_parent_spawn_id",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"   ","correlation_id":"j-1",'
-            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
-            "missing_parent_spawn_id",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","subspawn_id":"j-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_correlation_id",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"  ",'
-            '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
-            "missing_correlation_id",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
-            '"subspawn_id":"j-1"}',
-            "invalid_emitted_at_ms",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
-            '"subspawn_id":"j-1","emitted_at_ms":"not-an-int"}',
-            "invalid_emitted_at_ms",
-        ),
-        (
-            '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_subspawn_id",
-        ),
-        (
-            '{"type":"meridian.notification.queued","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_notification_id",
-        ),
-        (
-            '{"type":"meridian.notification.delivered","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_notification_id",
-        ),
-        (
-            '{"type":"meridian.notification.completed","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_notification_id",
-        ),
-        (
-            '{"type":"meridian.notification.failed","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"n-1",'
-            '"emitted_at_ms":1760000000000}',
-            "missing_notification_id",
-        ),
-    ],
-)
-def test_pi_rpc_connection_rejects_invalid_allowlisted_stderr_lifecycle_candidates(
-    line: str,
-    expected_reason: str,
-) -> None:
-    event = _parse_stderr_lifecycle_candidate(line)
-
-    assert event is not None
-    assert event.event_type == "meridian.lifecycle.parse_error"
-    assert event.payload["reason"] == expected_reason
-    assert event.payload["raw_type"] == json.loads(line)["type"]
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {
-            "type": "meridian.subspawn.start",
-            "subspawn_id": "j-1",
-        },
-        {
-            "type": "meridian.subspawn.end",
-            "subspawn_id": "j-1",
-        },
-        {
-            "type": "meridian.notification.queued",
-            "notification_id": "n-1",
-        },
-        {
-            "type": "meridian.notification.delivered",
-            "notification_id": "n-1",
-        },
-        {
-            "type": "meridian.notification.completed",
-            "notification_id": "n-1",
-        },
-        {
-            "type": "meridian.notification.failed",
-            "notification_id": "n-1",
-        },
-        {
-            "type": "meridian.quiescence.ready",
-            "tracked_count": 0,
-            "pending_notification_count": 0,
-        },
-    ],
-)
-def test_pi_rpc_connection_accepts_all_valid_allowlisted_stderr_lifecycle_types(
-    payload: dict[str, object],
-) -> None:
-    candidate = {
-        "schema_version": 1,
-        "parent_spawn_id": "p-pi-stderr-validation",
-        "correlation_id": "c-1",
-        "emitted_at_ms": 1760000000000,
-        **payload,
-    }
-    event = _parse_stderr_lifecycle_candidate(
-        json.dumps(candidate, separators=(",", ":"))
-    )
-
-    assert event is not None
-    assert event.event_type == candidate["type"]
-    assert event.payload["parent_spawn_id"] == "p-pi-stderr-validation"
-    assert event.payload["correlation_id"] == "c-1"
-
-
-def test_pi_rpc_connection_ignores_legacy_underscore_lifecycle_names_on_stderr() -> None:
-    event = _parse_stderr_lifecycle_candidate(
-        '{"type":"meridian_subspawn_start","schema_version":1,'
-        '"parent_spawn_id":"p-pi-stderr-validation","correlation_id":"j-1",'
-        '"subspawn_id":"j-1","emitted_at_ms":1760000000000}'
-    )
-
-    assert event is None
-
-
-def test_pi_rpc_connection_ignores_stderr_lifecycle_when_ingestion_disabled() -> None:
-    connection = PiRpcConnection()
-    connection._spawn_id = SpawnId("p-pi-stderr-disabled")
-
-    event = connection._parse_stderr_lifecycle_line(
-        '{"type":"meridian.subspawn.start","schema_version":1,'
-        '"parent_spawn_id":"p-pi-stderr-disabled","correlation_id":"j-1",'
-        '"subspawn_id":"j-1","emitted_at_ms":1760000000000}'
-    )
-
-    assert event is None
+    assert lifecycle_stderr in stderr_text
 
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_stderr_lifecycle_parent_mismatch_emits_parse_error(
+async def test_pi_rpc_connection_lifecycle_sidecar_parent_mismatch_emits_parse_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -888,7 +740,7 @@ async def test_pi_rpc_connection_stderr_lifecycle_parent_mismatch_emits_parse_er
         "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-parent-mismatch\"}'\n"
-        f"printf '%s\\n' '{mismatched_line}' >&2\n"
+        f"printf '%s\\n' '{mismatched_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
@@ -903,6 +755,10 @@ async def test_pi_rpc_connection_stderr_lifecycle_parent_mismatch_emits_parse_er
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
 
     connection = PiRpcConnection()
     await connection.start(
@@ -942,8 +798,85 @@ async def test_pi_rpc_connection_stderr_lifecycle_parent_mismatch_emits_parse_er
     assert len(parse_errors) == 1
     assert parse_errors[0].payload["reason"] == "parent_spawn_id_mismatch"
     assert parse_errors[0].payload["raw_type"] == "meridian.subspawn.start"
-    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
-    assert mismatched_line in stderr_log.read_text(encoding="utf-8")
+    assert parse_errors[0].payload["raw_line"] == mismatched_line
+    assert mismatched_line in sidecar_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_lifecycle_sidecar_parse_error_is_diagnostic_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-sidecar-parse-error")
+    malformed_line = '{"type":"meridian.subspawn.start","schema_version":2}'
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-sidecar-parse-error\"}'\n"
+        f"printf '%s\\n' '{malformed_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    event_iter = connection.events()
+    collected: list[HarnessEvent] = []
+    while True:
+        event = await _next_non_phase_event(event_iter)
+        collected.append(event)
+        if event.event_type == "agent_end":
+            break
+    await connection.send_cancel()
+    collected.extend([event async for event in event_iter if not _is_pi_phase_event(event)])
+
+    parse_errors = [
+        event
+        for event in collected
+        if event.event_type == "meridian.lifecycle.parse_error"
+    ]
+    assert len(parse_errors) == 1
+    assert parse_errors[0].payload["reason"] == "unsupported_schema_version"
+    assert parse_errors[0].payload["raw_type"] == "meridian.subspawn.start"
+    assert parse_errors[0].payload["raw_line"] == malformed_line
 
 
 @pytest.mark.asyncio
@@ -963,13 +896,18 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-malformed\"}'\n"
         "printf '%s\\n' '{\"type\":\"message_update\",\"delta\":\"before malformed\"}'\n"
-        "printf '%s\\n' '{\"type\":\"meridian.subspawn.start\",\"schema_version\":2}'\n"
+        "printf '%s\\n' '{\"type\":\"meridian.subspawn.start\",\"schema_version\":2}' >> "
+        f"\"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
         "printf '%s\\n' "
         "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n",
         encoding="utf-8",
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, SpawnId("p-pi-live-malformed"))
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
 
     class NoopControlServer:
         endpoint = None
@@ -1043,21 +981,21 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_spawn_manager_deduplicates_stdout_and_stderr_lifecycle_by_correlation_key(
+async def test_pi_spawn_manager_ignores_stdout_lifecycle_and_uses_sidecar(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
 
-    spawn_id = SpawnId("p-pi-dual-surface-dedup")
+    spawn_id = SpawnId("p-pi-stdout-sidecar-dedup")
     start_line = (
         '{"type":"meridian.subspawn.start","schema_version":1,'
-        '"parent_spawn_id":"p-pi-dual-surface-dedup","correlation_id":"corr-start",'
+        '"parent_spawn_id":"p-pi-stdout-sidecar-dedup","correlation_id":"corr-start",'
         '"subspawn_id":"j-dupe","emitted_at_ms":1760000000000}'
     )
     end_line = (
         '{"type":"meridian.subspawn.end","schema_version":1,'
-        '"parent_spawn_id":"p-pi-dual-surface-dedup","correlation_id":"corr-end",'
+        '"parent_spawn_id":"p-pi-stdout-sidecar-dedup","correlation_id":"corr-end",'
         '"subspawn_id":"j-dupe","emitted_at_ms":1760000000001}'
     )
 
@@ -1070,9 +1008,9 @@ async def test_pi_spawn_manager_deduplicates_stdout_and_stderr_lifecycle_by_corr
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-dual-surface\"}'\n"
         f"printf '%s\\n' '{start_line}'\n"
-        f"printf '%s\\n' '{start_line}' >&2\n"
+        f"printf '%s\\n' '{start_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
         f"printf '%s\\n' '{end_line}'\n"
-        f"printf '%s\\n' '{end_line}' >&2\n"
+        f"printf '%s\\n' '{end_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
@@ -1087,6 +1025,10 @@ async def test_pi_spawn_manager_deduplicates_stdout_and_stderr_lifecycle_by_corr
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
 
     class NoopControlServer:
         endpoint = None
@@ -1154,47 +1096,45 @@ async def test_pi_spawn_manager_deduplicates_stdout_and_stderr_lifecycle_by_corr
         assert len(starts) == 1
         assert len(ends) == 1
 
-        stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
-        stderr_text = stderr_log.read_text(encoding="utf-8")
-        assert start_line in stderr_text
-        assert end_line in stderr_text
+        assert start_line in sidecar_path.read_text(encoding="utf-8")
+        assert end_line in sidecar_path.read_text(encoding="utf-8")
     finally:
         await manager.shutdown()
 
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_completion(
+async def test_pi_spawn_manager_lifecycle_sidecar_blocks_until_notification_completion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_extension_projection(monkeypatch, tmp_path)
 
-    spawn_id = SpawnId("p-pi-stderr-only-manager")
+    spawn_id = SpawnId("p-pi-sidecar-only-manager")
     lifecycle_lines = {
         "start": (
             '{"type":"meridian.subspawn.start","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"j-1-start",'
+            '"parent_spawn_id":"p-pi-sidecar-only-manager","correlation_id":"j-1-start",'
             '"subspawn_id":"j-1","wait_policy":"tracked","emitted_at_ms":1760000000000}'
         ),
         "end": (
             '{"type":"meridian.subspawn.end","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"j-1-end",'
+            '"parent_spawn_id":"p-pi-sidecar-only-manager","correlation_id":"j-1-end",'
             '"subspawn_id":"j-1","wait_policy":"tracked","emitted_at_ms":1760000000001}'
         ),
         "queued": (
             '{"type":"meridian.notification.queued","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"n-1-queued",'
+            '"parent_spawn_id":"p-pi-sidecar-only-manager","correlation_id":"n-1-queued",'
             '"notification_id":"n-1","emitted_at_ms":1760000000002}'
         ),
         "delivered": (
             '{"type":"meridian.notification.delivered","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"n-1-delivered",'
+            '"parent_spawn_id":"p-pi-sidecar-only-manager","correlation_id":"n-1-delivered",'
             '"notification_id":"n-1","emitted_at_ms":1760000000003}'
         ),
         "completed": (
             '{"type":"meridian.notification.completed","schema_version":1,'
-            '"parent_spawn_id":"p-pi-stderr-only-manager","correlation_id":"n-1-completed",'
+            '"parent_spawn_id":"p-pi-sidecar-only-manager","correlation_id":"n-1-completed",'
             '"notification_id":"n-1","emitted_at_ms":1760000000004}'
         ),
     }
@@ -1205,6 +1145,7 @@ async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_
     shim.write_text(
         "#!/usr/bin/env python3\n"
         "import json\n"
+        "import os\n"
         "import sys\n"
         "import time\n"
         "if len(sys.argv) > 1 and sys.argv[1] == '--version':\n"
@@ -1215,30 +1156,33 @@ async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_
         "    raise SystemExit(0)\n"
         "def emit_stdout(payload):\n"
         "    print(json.dumps(payload), flush=True)\n"
-        "def emit_stderr(line):\n"
-        "    sys.stderr.write(line + '\\n')\n"
-        "    sys.stderr.flush()\n"
-        "emit_stdout({'type': 'session', 'id': 'ses-stderr-only-manager'})\n"
+        "emit_stdout({'type': 'session', 'id': 'ses-sidecar-only-manager'})\n"
         "terminal_event = {\n"
         "    'type': 'agent_end',\n"
         "    'messages': [{'role': 'assistant', 'stopReason': 'stop'}],\n"
         "}\n"
+        "sidecar_path = os.environ.get('MERIDIAN_PI_LIFECYCLE_EVENT_FILE', '').strip()\n"
+        "if not sidecar_path:\n"
+        "    raise RuntimeError('missing MERIDIAN_PI_LIFECYCLE_EVENT_FILE')\n"
+        "def emit_sidecar(line):\n"
+        "    with open(sidecar_path, 'a', encoding='utf-8') as handle:\n"
+        "        handle.write(line + '\\n')\n"
         "for line in sys.stdin:\n"
         "    payload = json.loads(line)\n"
         "    payload_type = payload.get('type')\n"
         "    if payload_type == 'prompt':\n"
-        f"        emit_stderr({json.dumps(lifecycle_lines['start'])})\n"
+        f"        emit_sidecar({json.dumps(lifecycle_lines['start'])})\n"
         "        time.sleep(0.03)\n"
         "        emit_stdout({'type': 'agent_start'})\n"
         "        emit_stdout(terminal_event)\n"
         "        time.sleep(0.03)\n"
-        f"        emit_stderr({json.dumps(lifecycle_lines['end'])})\n"
-        f"        emit_stderr({json.dumps(lifecycle_lines['queued'])})\n"
-        f"        emit_stderr({json.dumps(lifecycle_lines['delivered'])})\n"
+        f"        emit_sidecar({json.dumps(lifecycle_lines['end'])})\n"
+        f"        emit_sidecar({json.dumps(lifecycle_lines['queued'])})\n"
+        f"        emit_sidecar({json.dumps(lifecycle_lines['delivered'])})\n"
         "        time.sleep(0.03)\n"
         "        emit_stdout({'type': 'agent_start'})\n"
         "        emit_stdout(terminal_event)\n"
-        f"        emit_stderr({json.dumps(lifecycle_lines['completed'])})\n"
+        f"        emit_sidecar({json.dumps(lifecycle_lines['completed'])})\n"
         "        continue\n"
         "    if payload_type == 'abort':\n"
         "        raise SystemExit(0)\n",
@@ -1246,6 +1190,10 @@ async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
 
     class NoopControlServer:
         endpoint = None
@@ -1320,9 +1268,15 @@ async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_
             if event["event_type"] == "meridian.pi.lifecycle.phase"
             and event["payload"]["phase"] == "waiting_for_tracked_children"
         )
-        assert len(agent_end_indices) == 2
-        assert waiting_child_index < agent_end_indices[1]
-        assert finalized_index > agent_end_indices[1]
+        completed_index = next(
+            index
+            for index, event in enumerate(history)
+            if event["event_type"] == "meridian.notification.completed"
+            and event["payload"]["notification_id"] == "n-1"
+        )
+        assert agent_end_indices
+        assert waiting_child_index < finalized_index
+        assert finalized_index > completed_index
 
         for event_type, event_id_field, event_id in [
             ("meridian.subspawn.start", "subspawn_id", "j-1"),
@@ -1339,10 +1293,8 @@ async def test_pi_spawn_manager_stderr_only_lifecycle_blocks_until_notification_
             ]
             assert len(matches) == 1
 
-        stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
-        stderr_text = stderr_log.read_text(encoding="utf-8")
         for line in lifecycle_lines.values():
-            assert line in stderr_text
+            assert line in sidecar_path.read_text(encoding="utf-8")
     finally:
         await manager.shutdown()
 
@@ -1880,7 +1832,7 @@ async def test_pi_connection_launches_in_task_cwd_when_provided(
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_rpc_connection_stderr_lifecycle_does_not_satisfy_first_stdout_deadline(
+async def test_pi_rpc_connection_lifecycle_sidecar_does_not_satisfy_first_stdout_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1889,10 +1841,10 @@ async def test_pi_rpc_connection_stderr_lifecycle_does_not_satisfy_first_stdout_
     monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
     monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
 
-    spawn_id = SpawnId("p-pi-stderr-no-stdout-timeout")
+    spawn_id = SpawnId("p-pi-sidecar-no-stdout-timeout")
     lifecycle_line = (
         '{"type":"meridian.subspawn.start","schema_version":1,'
-        '"parent_spawn_id":"p-pi-stderr-no-stdout-timeout","correlation_id":"j-timeout",'
+        '"parent_spawn_id":"p-pi-sidecar-no-stdout-timeout","correlation_id":"j-timeout",'
         '"subspawn_id":"j-timeout","emitted_at_ms":1760000000000}'
     )
 
@@ -1906,7 +1858,7 @@ async def test_pi_rpc_connection_stderr_lifecycle_does_not_satisfy_first_stdout_
         "while IFS= read -r line; do\n"
         "  case \"$line\" in\n"
         "    *'\"type\":\"prompt\"'*)\n"
-        f"      printf '%s\\n' '{lifecycle_line}' >&2\n"
+        f"      printf '%s\\n' '{lifecycle_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
         "      sleep 30\n"
         "      ;;\n"
         "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
@@ -1916,6 +1868,10 @@ async def test_pi_rpc_connection_stderr_lifecycle_does_not_satisfy_first_stdout_
     )
     shim.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
 
     connection = PiRpcConnection()
     await connection.start(

@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../types";
+import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 
 type WaitPolicy = "tracked" | "detached";
 type JobStatus = "running" | "exited" | "killed";
@@ -183,20 +184,13 @@ async function killProcessTreeHard(pid: number): Promise<void> {
   }
 }
 
-function emitLifecycleEvent(event: Record<string, unknown>): void {
-  try {
-    process.stdout.write(`${JSON.stringify(event)}\n`);
-  } catch {
-    // do not throw from lifecycle emit paths
-  }
-}
-
 class ManagedBashRegistry {
   private readonly stateRoot: string;
   private readonly jobsDir: string;
   private readonly sessionId: string;
   private readonly parentSpawnId: string | null;
   private readonly emitInternalEvent: InternalEventEmitter;
+  private readonly emitLifecycleEvent: (event: Record<string, unknown>) => void;
   private readonly jobs: Map<string, RuntimeJob> = new Map();
   private pollTimer: NodeJS.Timeout | null = null;
 
@@ -204,12 +198,14 @@ class ManagedBashRegistry {
     stateRoot: string,
     sessionId: string,
     parentSpawnId: string | null,
+    emitLifecycleEvent: (event: Record<string, unknown>) => void,
     emitInternalEvent?: InternalEventEmitter,
   ) {
     this.stateRoot = stateRoot;
     this.jobsDir = path.join(this.stateRoot, "managed-bash", sessionId, "jobs");
     this.sessionId = sessionId;
     this.parentSpawnId = parentSpawnId;
+    this.emitLifecycleEvent = emitLifecycleEvent;
     this.emitInternalEvent = emitInternalEvent ?? (() => undefined);
   }
 
@@ -334,7 +330,7 @@ class ManagedBashRegistry {
       started_at_ms: record.started_at_ms,
       log_path: record.log_path,
     };
-    emitLifecycleEvent(payload);
+    this.emitLifecycleEvent(payload);
     this.emitInternalEvent(INTERNAL_SUBSPAWN_START_EVENT, payload);
   }
 
@@ -354,7 +350,7 @@ class ManagedBashRegistry {
       duration_ms: record.duration_ms,
       log_path: record.log_path,
     };
-    emitLifecycleEvent(payload);
+    this.emitLifecycleEvent(payload);
     this.emitInternalEvent(INTERNAL_SUBSPAWN_END_EVENT, payload);
   }
 
@@ -778,13 +774,19 @@ function formatRunningResult(record: JobRecord): Record<string, unknown> {
   };
 }
 
-async function buildRegistry(pi: ExtensionAPI): Promise<{ registry: ManagedBashRegistry; sessionId: string }> {
+async function buildRegistry(pi: ExtensionAPI): Promise<{
+  registry: ManagedBashRegistry;
+  sessionId: string;
+  createRegistry: (sessionId: string) => ManagedBashRegistry;
+}> {
+  const lifecycleWriter = createLifecycleSidecarWriter();
   const sessionId = makeId("session");
   const createRegistry = (sid: string): ManagedBashRegistry =>
     new ManagedBashRegistry(
       resolveStateRoot(),
       sid,
       parentSpawnIdFromEnv(),
+      (event) => lifecycleWriter.append(event),
       (channel, payload) => {
         pi.events.emit(channel, payload);
       },
@@ -802,24 +804,28 @@ async function buildRegistry(pi: ExtensionAPI): Promise<{ registry: ManagedBashR
 
   pi.on("session_shutdown", async () => {
     await state.registry?.shutdownCleanup();
+    lifecycleWriter.close();
   });
 
   await registry.initialize();
-  return { registry, sessionId };
+  return { registry, sessionId, createRegistry };
 }
 
 const state: {
   registry: ManagedBashRegistry | null;
   sessionId: string;
+  createRegistry: ((sessionId: string) => ManagedBashRegistry) | null;
 } = {
   registry: null,
   sessionId: makeId("session"),
+  createRegistry: null,
 };
 
 export default async function managedBashExtension(pi: ExtensionAPI): Promise<void> {
   const setup = await buildRegistry(pi);
   state.registry = setup.registry;
   state.sessionId = setup.sessionId;
+  state.createRegistry = setup.createRegistry;
 
   pi.registerTool({
     name: "bash",
@@ -863,15 +869,15 @@ export default async function managedBashExtension(pi: ExtensionAPI): Promise<vo
       const sessionId = sessionIdFromContext(ctx as ToolContext, state.sessionId);
       if (sessionId !== state.sessionId) {
         // session changed after initial setup; rebuild lazily.
-        state.registry = new ManagedBashRegistry(
-          resolveStateRoot(),
-          sessionId,
-          parentSpawnIdFromEnv(),
-          (channel, payload) => {
-            pi.events.emit(channel, payload);
-          },
-        );
-        await state.registry.initialize();
+        const createRegistry = state.createRegistry;
+        if (createRegistry == null) {
+          throw new Error("managed bash registry factory unavailable");
+        }
+        const startRegistry = createRegistry(sessionId);
+        await startRegistry.initialize();
+        await state.registry?.shutdownCleanup();
+        state.registry = startRegistry;
+        state.sessionId = sessionId;
       }
 
       const activeRegistry = state.registry;
