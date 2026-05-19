@@ -23,6 +23,7 @@ _LAUNCH_MODE_VALUES: frozenset[LaunchMode] = frozenset(
 )
 
 SpawnOrigin = Literal["runner", "launcher", "launch_failure", "cancel", "reconciler"]
+TerminalSpawnStatus = Literal["succeeded", "failed", "cancelled"]
 _AUTHORITATIVE_ORIGIN_VALUES: tuple[SpawnOrigin, ...] = (
     "runner",
     "launcher",
@@ -58,11 +59,16 @@ class SpawnRecord(BaseModel):
     launch_mode: LaunchMode | None
     worker_pid: int | None
     runner_pid: int | None
+    runner_created_at_epoch: float | None
     status: SpawnStatus | Literal["unknown"]
     prompt: str | None
     started_at: str | None
-    exited_at: str | None
-    process_exit_code: int | None
+    last_attempt_exited_at: str | None
+    last_attempt_exit_code: int | None
+    runner_exit_code: int | None
+    runner_exit_status: TerminalSpawnStatus | None
+    runner_exit_error: str | None
+    runner_exit_at: str | None
     finished_at: str | None
     exit_code: int | None
     duration_secs: float | None
@@ -88,4 +94,5 @@ __all__ = [
     "LaunchMode",
     "SpawnOrigin",
     "SpawnRecord",
+    "TerminalSpawnStatus",
 ]

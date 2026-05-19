@@ -6,8 +6,11 @@ from typing import Any, cast
 
 import pytest
 
+from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.lifecycle import SpawnLifecycleService
+from meridian.lib.core.spawn_lifecycle import ExecutionTerminalFacts
 from meridian.lib.core.spawn_service import PrepareSpawnRequest, SpawnApplicationService
+from meridian.lib.core.types import SpawnId
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
 
@@ -31,6 +34,27 @@ def _runtime_request(tmp_path: Path, runtime_root: Path) -> LaunchRuntime:
 
 def _service(runtime_root: Path) -> SpawnApplicationService:
     return SpawnApplicationService(runtime_root, SpawnLifecycleService(runtime_root))
+
+
+def _start_spawn(
+    runtime_root: Path,
+    *,
+    status: SpawnStatus = "running",
+    kind: str = "child",
+) -> str:
+    return str(
+        spawn_store.start_spawn(
+            runtime_root,
+            spawn_id="p1",
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            kind=kind,
+            prompt="hello",
+            status=status,
+        )
+    )
 
 
 def _fake_launch_context_builder(child_cwd: Path) -> Any:
@@ -121,3 +145,109 @@ async def test_prepare_spawn_rejects_blank_goal_without_persisting_row(
         )
 
     assert spawn_store.list_spawns(runtime_root) == []
+
+
+@pytest.mark.asyncio
+async def test_complete_spawn_persists_terminal_intent_before_mark_finalizing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    service = _service(runtime_root)
+    original_mark_finalizing = service.lifecycle.mark_finalizing
+
+    def _assert_intent_then_mark(target_spawn_id: str) -> bool:
+        row = spawn_store.get_spawn(runtime_root, target_spawn_id)
+        assert row is not None
+        assert row.runner_exit_status == "failed"
+        assert row.runner_exit_code == 9
+        assert row.runner_exit_error == "launch_failed"
+        assert row.runner_exit_at is not None
+        return original_mark_finalizing(target_spawn_id)
+
+    monkeypatch.setattr(service.lifecycle, "mark_finalizing", _assert_intent_then_mark)
+
+    outcome = await service.complete_spawn(
+        SpawnId(spawn_id),
+        "failed",
+        9,
+        origin="launch_failure",
+        error="launch_failed",
+    )
+
+    assert outcome.wrote is True
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "failed"
+    assert row.runner_exit_status == "failed"
+    assert row.runner_exit_code == 9
+    assert row.runner_exit_error == "launch_failed"
+
+
+@pytest.mark.asyncio
+async def test_complete_execution_does_not_backfill_runner_exit_on_terminal_row(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="running")
+    spawn_store.finalize_spawn(
+        runtime_root,
+        spawn_id,
+        "failed",
+        1,
+        origin="launch_failure",
+        error="bootstrap_failed",
+        finished_at="2026-04-12T14:05:00Z",
+    )
+    service = _service(runtime_root)
+
+    outcome = await service.complete_execution(
+        SpawnId(spawn_id),
+        ExecutionTerminalFacts(exit_code=0),
+        origin="runner",
+    )
+
+    assert outcome.completion.snapshot is not None
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_exit_status is None
+    assert row.runner_exit_code is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary_finalizing_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
+
+    runtime_root = _runtime_root(tmp_path)
+    spawn_id = _start_spawn(runtime_root, status="finalizing", kind="primary")
+    spawn_dir = runtime_root / "spawns" / spawn_id
+    write_primary_metadata(
+        spawn_dir,
+        PrimaryMetadata(
+            managed_backend=True,
+            launcher_pid=7771,
+            activity="finalizing",
+        ),
+    )
+    service = _service(runtime_root)
+
+    async def _never_terminal(*_args: object, **_kwargs: object) -> Any:
+        return None
+
+    monkeypatch.setattr(service, "_wait_for_terminal", _never_terminal)
+
+    outcome = await service.cancel(SpawnId(spawn_id))
+
+    assert outcome.status == "finalizing"
+    assert outcome.finalizing is True
+    row = spawn_store.get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "finalizing"
+    assert row.runner_exit_status == "cancelled"
+    assert row.runner_exit_code == 130
+    assert row.runner_exit_error == "cancel_timeout"
+    assert row.runner_exit_at is not None

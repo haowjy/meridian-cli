@@ -35,7 +35,7 @@ logger = structlog.get_logger(__name__)
 
 _STARTUP_GRACE_SECS = 15
 _HEARTBEAT_WINDOW_SECS = 120
-_POST_EXIT_FINALIZATION_GRACE_SECS = 5
+_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = 5
 _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     HISTORY_FILENAME,
@@ -72,12 +72,14 @@ class FinalizeSucceededFromReport:
 
 
 @dataclass(frozen=True)
-class FinalizeSucceededFromExit:
+class FinalizeFromRunnerExit:
+    status: SpawnStatus
     exit_code: int
+    error: str | None
 
 
 type ReconciliationDecision = (
-    Skip | FinalizeFailed | FinalizeSucceededFromReport | FinalizeSucceededFromExit
+    Skip | FinalizeFailed | FinalizeSucceededFromReport | FinalizeFromRunnerExit
 )
 
 
@@ -97,10 +99,10 @@ def _started_at_epoch(started_at: str | None) -> float | None:
     return parsed.timestamp()
 
 
-def _exited_at_epoch(exited_at: str | None) -> float | None:
-    """Parse exited_at ISO string to epoch seconds."""
+def _runner_exit_at_epoch(runner_exit_at: str | None) -> float | None:
+    """Parse runner_exit_at ISO string to epoch seconds."""
 
-    return _started_at_epoch(exited_at)
+    return _started_at_epoch(runner_exit_at)
 
 
 def _read_completion_report(runtime_root: Path, spawn_id: str) -> str | None:
@@ -152,10 +154,15 @@ def _collect_artifact_snapshot(
     )
     report_text = _read_completion_report(runtime_root, record.id)
     runner_pid_alive = False
+    runner_created_at_epoch = (
+        record.runner_created_at_epoch
+        if record.runner_created_at_epoch is not None
+        else started_epoch
+    )
     if record.status != "finalizing" and record.runner_pid is not None and record.runner_pid > 0:
         runner_pid_alive = is_process_alive(
             record.runner_pid,
-            created_after_epoch=started_epoch,
+            created_after_epoch=runner_created_at_epoch,
         )
     launch_boundary = read_launch_boundary_summary(runtime_root, record.id)
     return ArtifactSnapshot(
@@ -210,11 +217,30 @@ def _is_pre_worker_launch_boundary_ghost(
     return runner_pid == parent_observed_launcher_pid
 
 
-def _in_post_exit_finalization_grace(record: SpawnRecord, now: float) -> bool:
-    exited_epoch = _exited_at_epoch(record.exited_at)
+def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> bool:
+    exited_epoch = _runner_exit_at_epoch(record.runner_exit_at)
     return (
         exited_epoch is not None
-        and now - exited_epoch < _POST_EXIT_FINALIZATION_GRACE_SECS
+        and now - exited_epoch < _POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
+    )
+
+
+def _finalize_from_runner_exit_decision(record: SpawnRecord) -> FinalizeFromRunnerExit:
+    status = record.runner_exit_status
+    if status not in {"succeeded", "failed", "cancelled"}:
+        return FinalizeFromRunnerExit(status="failed", exit_code=1, error="orphan_run")
+    if record.runner_exit_code is not None:
+        exit_code = record.runner_exit_code
+    elif status == "succeeded":
+        exit_code = 0
+    elif status == "cancelled":
+        exit_code = 130
+    else:
+        exit_code = 1
+    return FinalizeFromRunnerExit(
+        status=status,
+        exit_code=exit_code,
+        error=record.runner_exit_error,
     )
 
 
@@ -226,28 +252,14 @@ def decide_generic_reconciliation(
     if record.status == "finalizing":
         if _has_recent_activity(snapshot):
             return Skip(reason="recent_activity")
-        if snapshot.durable_report_completion:
-            return FinalizeSucceededFromReport()
+        if record.runner_exit_status is not None:
+            return _finalize_from_runner_exit_decision(record)
         return FinalizeFailed(error="orphan_finalization")
 
-    if record.process_exit_code is not None or record.exited_at is not None:
-        # A recorded process exit is attempt-level bookkeeping: the runner writes
-        # process_exit_code/exited_at after every attempt drains, including
-        # between retries. While the runner process is still alive it owns
-        # finalization — it may be mid retry backoff about to start another
-        # attempt — so the reaper must not preempt it as an orphan.
-        if snapshot.runner_pid_alive:
-            return Skip(reason="runner_alive")
-        if _in_post_exit_finalization_grace(record, now):
-            return Skip(reason="post_exit_finalization_grace")
-        if snapshot.durable_report_completion:
-            return FinalizeSucceededFromReport()
-        if record.process_exit_code == 0:
-            return FinalizeSucceededFromExit(exit_code=0)
-        return FinalizeFailed(
-            error="orphan_run",
-            exit_code=record.process_exit_code if record.process_exit_code is not None else 1,
-        )
+    if record.runner_exit_status is not None:
+        if _in_post_runner_exit_finalization_grace(record, now):
+            return Skip(reason="post_runner_exit_finalization_grace")
+        return _finalize_from_runner_exit_decision(record)
 
     if _is_pre_worker_launch_boundary_ghost(record, snapshot, now):
         if snapshot.durable_report_completion:
@@ -274,9 +286,10 @@ def decide_generic_reconciliation(
 
     if _in_startup_grace(snapshot.started_epoch, now):
         return Skip(reason="startup_grace")
-    if snapshot.durable_report_completion:
-        return FinalizeSucceededFromReport()
-    return FinalizeFailed(error="orphan_run")
+    return FinalizeFailed(
+        error="orphan_run",
+        exit_code=record.last_attempt_exit_code or 1,
+    )
 
 
 def decide_reconciliation(
@@ -286,6 +299,10 @@ def decide_reconciliation(
     now: float,
 ) -> ReconciliationDecision:
     """Unified reconciliation dispatcher."""
+
+    generic_decision = decide_generic_reconciliation(record, generic_snapshot, now)
+    if record.status == "finalizing" or record.runner_exit_status is not None:
+        return generic_decision
 
     strategy = ManagedPrimaryReconciliationStrategy()
     if strategy.supports(managed_snapshot):
@@ -302,7 +319,6 @@ def decide_reconciliation(
             durable_report_completion=generic_snapshot.durable_report_completion,
         )
 
-    generic_decision = decide_generic_reconciliation(record, generic_snapshot, now)
     if (
         _is_potential_managed_primary(record)
         and isinstance(generic_decision, FinalizeFailed)
@@ -460,11 +476,11 @@ def _finalize_completed_report(
     )
 
 
-def _finalize_completed_exit(
+def _finalize_from_runner_exit(
     project_root: Path,
     runtime_root: Path,
     record: SpawnRecord,
-    decision: FinalizeSucceededFromExit,
+    decision: FinalizeFromRunnerExit,
     snapshot: ArtifactSnapshot,
     now: float,
 ) -> SpawnRecord:
@@ -472,10 +488,10 @@ def _finalize_completed_exit(
         project_root,
         runtime_root,
         record,
-        status="succeeded",
+        status=decision.status,
         exit_code=decision.exit_code,
-        error=None,
-        reason="process_exited",
+        error=decision.error,
+        reason="runner_exit",
         snapshot=snapshot,
         now=now,
     )
@@ -514,8 +530,8 @@ def reconcile_active_spawn(
             generic_snapshot,
             now,
         )
-    if isinstance(decision, FinalizeSucceededFromExit):
-        return _finalize_completed_exit(
+    if isinstance(decision, FinalizeFromRunnerExit):
+        return _finalize_from_runner_exit(
             project_root,
             runtime_root,
             record,

@@ -158,7 +158,7 @@ def test_spawn_cancel_all_counts_finalizing_cancellations_as_accepted(
     )
 
 
-def test_spawn_list_does_not_infer_running_star_from_exited_at(tmp_path: Path) -> None:
+def test_spawn_list_does_not_infer_running_star_from_last_attempt_exit(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)

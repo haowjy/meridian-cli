@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_target import spawn_output_path_for_target
 from meridian.lib.state import session_store, spawn_store
@@ -357,3 +358,44 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
         )
     finally:
         session_store.stop_session(runtime_root, chat_id)
+
+
+def test_session_export_spawn_duration_uses_last_attempt_exited_at(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id="c42",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="do thing",
+        started_at="2026-04-12T14:00:00Z",
+    )
+    spawn_store.record_spawn_exited(
+        runtime_root,
+        "p42",
+        exit_code=0,
+        exited_at="2026-04-12T14:01:05Z",
+    )
+    _write_spawn_output(
+        runtime_root,
+        "p42",
+        {
+            "event_type": "item/completed",
+            "harness_id": "codex",
+            "payload": {"item": {"type": "agentMessage", "text": "done"}},
+        },
+    )
+
+    output = session_export_sync(
+        SessionExportInput(ref="p42", project_root=project_root.as_posix())
+    )
+
+    assert "- Duration: 1m 5s" in output.markdown

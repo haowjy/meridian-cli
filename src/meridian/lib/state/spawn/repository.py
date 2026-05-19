@@ -20,7 +20,7 @@ from meridian.lib.state.spawn.model import SpawnRecord
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import SpawnStatus
-    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin
+    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, TerminalSpawnStatus
 
 
 class StoredSpawnState(BaseModel):
@@ -56,10 +56,15 @@ class StoredSpawnState(BaseModel):
     launch_mode: str | None = None
     worker_pid: int | None = None
     runner_pid: int | None = None
+    runner_created_at_epoch: float | None = None
     status: str = "unknown"
     started_at: str | None = None
-    exited_at: str | None = None
-    process_exit_code: int | None = None
+    last_attempt_exited_at: str | None = None
+    last_attempt_exit_code: int | None = None
+    runner_exit_code: int | None = None
+    runner_exit_status: str | None = None
+    runner_exit_error: str | None = None
+    runner_exit_at: str | None = None
     finished_at: str | None = None
     exit_code: int | None = None
     duration_secs: float | None = None
@@ -121,10 +126,15 @@ def record_to_stored_state(
         launch_mode=record.launch_mode,
         worker_pid=record.worker_pid,
         runner_pid=record.runner_pid,
+        runner_created_at_epoch=record.runner_created_at_epoch,
         status=record.status,
         started_at=record.started_at,
-        exited_at=record.exited_at,
-        process_exit_code=record.process_exit_code,
+        last_attempt_exited_at=record.last_attempt_exited_at,
+        last_attempt_exit_code=record.last_attempt_exit_code,
+        runner_exit_code=record.runner_exit_code,
+        runner_exit_status=record.runner_exit_status,
+        runner_exit_error=record.runner_exit_error,
+        runner_exit_at=record.runner_exit_at,
         finished_at=record.finished_at,
         exit_code=record.exit_code,
         duration_secs=record.duration_secs,
@@ -169,11 +179,16 @@ def stored_state_to_record(
         launch_mode=cast("LaunchMode | None", stored.launch_mode),
         worker_pid=stored.worker_pid,
         runner_pid=stored.runner_pid,
+        runner_created_at_epoch=stored.runner_created_at_epoch,
         status=cast('SpawnStatus | Literal["unknown"]', stored.status),
         prompt=prompt,
         started_at=stored.started_at,
-        exited_at=stored.exited_at,
-        process_exit_code=stored.process_exit_code,
+        last_attempt_exited_at=stored.last_attempt_exited_at,
+        last_attempt_exit_code=stored.last_attempt_exit_code,
+        runner_exit_code=stored.runner_exit_code,
+        runner_exit_status=cast('TerminalSpawnStatus | None', stored.runner_exit_status),
+        runner_exit_error=stored.runner_exit_error,
+        runner_exit_at=stored.runner_exit_at,
         finished_at=stored.finished_at,
         exit_code=stored.exit_code,
         duration_secs=stored.duration_secs,

@@ -40,6 +40,7 @@ from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin
 from meridian.lib.streaming.signal_canceller import CancelOutcome as SignalCancelOutcome
 
 if TYPE_CHECKING:
+    from meridian.lib.core.lifecycle import TerminalStatus
     from meridian.lib.harness.registry import HarnessRegistry
     from meridian.lib.observability.debug_tracer import DebugTracer
     from meridian.lib.state.primary_meta import PrimaryMetadata
@@ -454,6 +455,16 @@ class SpawnApplicationService:
             lock = await self._locks.acquire(str(spawn_id))
             async with lock:
                 latest = terminal or self.get_spawn(spawn_id) or record
+                if (
+                    terminal is None
+                    and latest.status == "finalizing"
+                    and latest.runner_exit_status is None
+                    and (
+                        (primary_metadata is not None and primary_metadata.managed_backend)
+                        or _is_managed_primary_candidate(latest)
+                    )
+                ):
+                    latest = await self._ensure_cancel_timeout_intent(spawn_id, latest)
                 return _cancel_outcome_from_record(
                     str(spawn_id),
                     latest,
@@ -573,6 +584,17 @@ class SpawnApplicationService:
         if latest is None:
             latest = self.get_spawn(spawn_id) or record
             if latest.status == "finalizing":
+                latest = await self._ensure_cancel_timeout_intent(spawn_id, latest)
+                return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
+            if self.is_terminal(latest.status):
+                return _cancel_outcome_from_record(
+                    str(spawn_id),
+                    latest,
+                    already_terminal=True,
+                )
+
+            latest = await self._ensure_cancel_timeout_intent(spawn_id, latest)
+            if latest.status == "finalizing":
                 return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
             if self.is_terminal(latest.status):
                 return _cancel_outcome_from_record(
@@ -583,9 +605,11 @@ class SpawnApplicationService:
 
             if self._lifecycle.mark_finalizing(str(spawn_id)):
                 latest = self.get_spawn(spawn_id) or latest
+                latest = await self._ensure_cancel_timeout_intent(spawn_id, latest)
             else:
                 latest = self.get_spawn(spawn_id) or latest
                 if latest.status == "finalizing":
+                    latest = await self._ensure_cancel_timeout_intent(spawn_id, latest)
                     return _cancel_outcome_from_record(str(spawn_id), latest, finalizing=True)
                 if self.is_terminal(latest.status):
                     return _cancel_outcome_from_record(
@@ -619,6 +643,22 @@ class SpawnApplicationService:
             latest,
             finalizing=latest.status == "finalizing",
         )
+
+    async def _ensure_cancel_timeout_intent(
+        self,
+        spawn_id: SpawnId,
+        record: SpawnRecord,
+    ) -> SpawnRecord:
+        if self.is_terminal(record.status) or record.runner_exit_status is not None:
+            return record
+        await asyncio.to_thread(
+            self._lifecycle.record_runner_exit,
+            str(spawn_id),
+            status=cast("TerminalStatus", "cancelled"),
+            exit_code=130,
+            error="cancel_timeout",
+        )
+        return self.get_spawn(spawn_id) or record
 
     async def complete_spawn(
         self,
@@ -660,15 +700,17 @@ class SpawnApplicationService:
         """Resolve execution facts, then finalize through the lifecycle authority."""
 
         resolved = resolve_execution_terminal_outcome(facts)
-        completion = await self.complete_spawn(
-            spawn_id,
-            resolved.status,
-            resolved.exit_code,
-            origin=origin,
-            duration_secs=duration_secs,
-            usage=usage,
-            error=resolved.error,
-        )
+        lock = await self._locks.acquire(str(spawn_id))
+        async with lock:
+            completion = await self._complete_spawn_unlocked(
+                spawn_id,
+                resolved.status,
+                resolved.exit_code,
+                origin=origin,
+                duration_secs=duration_secs,
+                usage=usage,
+                error=resolved.error,
+            )
         return CompleteExecutionOutcome(
             resolved=resolved,
             completion=completion,
@@ -696,6 +738,17 @@ class SpawnApplicationService:
                 spawn_id=spawn_id,
             )
         was_terminal = self.is_terminal(record.status)
+        if not was_terminal and status in {"succeeded", "failed", "cancelled"}:
+            terminal_status = cast("TerminalStatus", status)
+            await asyncio.to_thread(
+                self._lifecycle.record_runner_exit,
+                str(spawn_id),
+                status=terminal_status,
+                exit_code=exit_code,
+                error=error,
+            )
+            record = self.get_spawn(spawn_id) or record
+            was_terminal = self.is_terminal(record.status)
 
         entered_finalizing = False
         if record.status == "running":

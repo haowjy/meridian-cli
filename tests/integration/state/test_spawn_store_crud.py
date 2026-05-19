@@ -3,12 +3,13 @@
 """CRUD operation tests for the spawn store.
 
 Covers: start, get, list, update, next_id, reserve, mark_running, and
-process_exit (exited) events.  Finalization and concurrency live in
+attempt-exit and runner-exit metadata writes. Finalization and concurrency live in
 test_spawn_store_finalize.py.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from meridian.lib.state.spawn_store import (
     list_spawns,
     mark_spawn_running,
     next_spawn_id,
+    record_runner_exit,
     record_spawn_exited,
     reserve_spawn_id,
     start_spawn,
@@ -72,6 +74,47 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row.launch_mode == "foreground"
     assert row.runner_pid == 2222
 
+
+def test_runner_pid_writes_capture_runner_created_at_epoch_for_live_pid(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+            runner_pid=os.getpid(),
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_created_at_epoch is not None
+
+
+def test_update_spawn_clears_runner_created_epoch_when_pid_changes_and_capture_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    update_spawn(runtime_root, spawn_id, runner_pid=os.getpid(), runner_created_at_epoch=123.0)
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_created_at_epoch == 123.0
+
+    monkeypatch.setattr(
+        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
+        lambda _pid: None,
+    )
+    update_spawn(runtime_root, spawn_id, runner_pid=999999)
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_pid == 999999
+    assert row.runner_created_at_epoch is None
 
 def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
@@ -294,7 +337,43 @@ def test_mark_spawn_running_missing_id_does_not_create_phantom_row(
     assert list_spawns(runtime_root) == []
 
 
-def test_exited_event_is_non_terminal_and_projects_process_exit(tmp_path: Path) -> None:
+def test_mark_spawn_running_captures_runner_created_at_epoch_for_live_pid(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    changed = mark_spawn_running(runtime_root, spawn_id, runner_pid=os.getpid())
+
+    assert changed is False
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_pid == os.getpid()
+    assert row.runner_created_at_epoch is not None
+
+
+def test_mark_spawn_running_clears_runner_created_epoch_when_pid_changes_and_capture_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    update_spawn(runtime_root, spawn_id, runner_pid=os.getpid(), runner_created_at_epoch=456.0)
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_created_at_epoch == 456.0
+
+    monkeypatch.setattr(
+        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
+        lambda _pid: None,
+    )
+    mark_spawn_running(runtime_root, spawn_id, runner_pid=999998)
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.runner_pid == 999998
+    assert row.runner_created_at_epoch is None
+
+
+def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
 
@@ -308,6 +387,57 @@ def test_exited_event_is_non_terminal_and_projects_process_exit(tmp_path: Path) 
     row = get_spawn(runtime_root, spawn_id)
     assert row is not None
     assert row.status == "running"
-    assert row.exited_at == "2026-04-12T14:00:00Z"
-    assert row.process_exit_code == 143
+    assert row.last_attempt_exited_at == "2026-04-12T14:00:00Z"
+    assert row.last_attempt_exit_code == 143
     assert row.exit_code is None
+
+
+def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+
+    record_runner_exit(
+        runtime_root,
+        spawn_id,
+        status="failed",
+        exit_code=42,
+        error="guardrail_failed",
+        exited_at="2026-04-12T14:03:00Z",
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "running"
+    assert row.runner_exit_status == "failed"
+    assert row.runner_exit_code == 42
+    assert row.runner_exit_error == "guardrail_failed"
+    assert row.runner_exit_at == "2026-04-12T14:03:00Z"
+
+
+def test_record_runner_exit_skips_terminal_rows(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = _start_test_spawn(runtime_root)
+    finalize_spawn(
+        runtime_root,
+        spawn_id,
+        "failed",
+        1,
+        origin="launch_failure",
+        error="bootstrap_failed",
+        finished_at="2026-04-12T14:05:00Z",
+    )
+
+    committed = record_runner_exit(
+        runtime_root,
+        spawn_id,
+        status="succeeded",
+        exit_code=0,
+        error=None,
+        exited_at="2026-04-12T14:06:00Z",
+    )
+
+    assert committed is None
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.status == "failed"
+    assert row.runner_exit_status is None

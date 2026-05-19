@@ -22,6 +22,7 @@ def apply_mark_running(
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
     validate_status_transition: bool = True,
 ) -> SpawnRecord:
     """Return ``record`` with running status and optional launch metadata."""
@@ -36,6 +37,9 @@ def apply_mark_running(
         updates["worker_pid"] = worker_pid
     if runner_pid is not None:
         updates["runner_pid"] = runner_pid
+        updates["runner_created_at_epoch"] = runner_created_at_epoch
+    elif runner_created_at_epoch is not None:
+        updates["runner_created_at_epoch"] = runner_created_at_epoch
     return record.model_copy(update=updates)
 
 
@@ -49,8 +53,30 @@ def apply_record_exited(
     """Return ``record`` with process-exit metadata applied."""
 
     updates: dict[str, object] = {
-        "process_exit_code": exit_code,
-        "exited_at": exited_at,
+        "last_attempt_exit_code": exit_code,
+        "last_attempt_exited_at": exited_at,
+    }
+    if spawn_id is not None:
+        updates["id"] = spawn_id
+    return record.model_copy(update=updates)
+
+
+def apply_runner_exit(
+    record: SpawnRecord,
+    *,
+    status: SpawnStatus,
+    exit_code: int,
+    error: str | None,
+    exited_at: str,
+    spawn_id: str | None = None,
+) -> SpawnRecord:
+    """Return ``record`` with runner-resolved terminal intent applied."""
+
+    updates: dict[str, object] = {
+        "runner_exit_status": status,
+        "runner_exit_code": exit_code,
+        "runner_exit_error": error,
+        "runner_exit_at": exited_at,
     }
     if spawn_id is not None:
         updates["id"] = spawn_id
