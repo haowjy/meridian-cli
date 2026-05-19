@@ -1,0 +1,4 @@
+packages: []
+strictDepBuilds: false
+allowBuilds:
+  esbuild: true
