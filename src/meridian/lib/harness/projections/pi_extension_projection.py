@@ -49,11 +49,6 @@ def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
     )
 
 
-def resolve_pi_extension_entrypoints() -> tuple[str, ...]:
-    """Backward-compatible alias for all Meridian-owned Pi extension entrypoints."""
-
-    return resolve_pi_all_extension_entrypoints()
-
 
 def _materialize_entrypoint(
     source_root: Path,
@@ -113,6 +108,5 @@ def _resolve_extension_target_root() -> Path:
 __all__ = [
     "PiExtensionProjectionError",
     "resolve_pi_all_extension_entrypoints",
-    "resolve_pi_extension_entrypoints",
     "resolve_pi_lifecycle_extension_entrypoint",
 ]

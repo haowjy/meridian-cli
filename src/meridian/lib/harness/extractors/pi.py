@@ -35,20 +35,6 @@ class PiSessionDiscoveryResult:
     detail: str | None = None
 
 
-def _safe_resolve(path: Path) -> Path:
-    try:
-        return path.expanduser().resolve()
-    except OSError:
-        return path.expanduser().absolute()
-
-
-def _encode_cwd_for_session_dir(cwd: Path) -> str:
-    normalized = str(_safe_resolve(cwd)).replace("\\", "/")
-    encoded = normalized.replace("/", "--")
-    if not encoded.endswith("--"):
-        encoded = f"{encoded}--"
-    return encoded
-
 
 def _pi_session_root(launch_env: Mapping[str, str]) -> Path:
     session_dir_override = launch_env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
@@ -82,7 +68,11 @@ def _normalize_cwd_for_matching(value: Path | str) -> str | None:
         raw_path = value if isinstance(value, Path) else Path(value)
     except (TypeError, ValueError):
         return None
-    normalized = str(_safe_resolve(raw_path)).replace("\\", "/").rstrip("/")
+    try:
+        resolved_path = raw_path.expanduser().resolve()
+    except OSError:
+        resolved_path = raw_path.expanduser().absolute()
+    normalized = str(resolved_path).replace("\\", "/").rstrip("/")
     return normalized or "/"
 
 
@@ -381,7 +371,6 @@ PI_EXTRACTOR = PiHarnessExtractor()
 __all__ = [
     "PI_EXTRACTOR",
     "PiHarnessExtractor",
-    "_encode_cwd_for_session_dir",
     "detect_pi_session_discovery_from_session_files",
     "detect_pi_session_id_from_session_files",
 ]

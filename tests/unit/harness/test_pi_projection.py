@@ -50,7 +50,7 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
         continue_fork=True,
         appended_system_prompt="You are meridian worker",
         extra_args=("--provider", "anthropic"),
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -95,7 +95,7 @@ def test_pi_rpc_projection_uses_session_without_fork_when_continue_fork_false(
         prompt="hello",
         continue_session_id="abc1234",
         continue_fork=False,
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -262,7 +262,7 @@ def test_pi_rpc_projection_rejects_user_mode_passthrough(
         harness=HarnessId.PI,
         prompt="hello",
         extra_args=("--mode", "json"),
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -347,7 +347,7 @@ def test_pi_rpc_projection_rejects_user_session_dir_passthrough(
         harness=HarnessId.PI,
         prompt="hello",
         extra_args=("--session-dir", "/tmp/user-session-dir"),
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -381,7 +381,7 @@ def test_pi_rpc_projection_rejects_passthrough_extension_flags(
         harness=HarnessId.PI,
         prompt="hello",
         extra_args=extra_args,
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -404,7 +404,7 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
 
     with pytest.raises(pi_extension_projection.PiExtensionProjectionError) as exc_info:
-        pi_extension_projection.resolve_pi_extension_entrypoints()
+        pi_extension_projection.resolve_pi_all_extension_entrypoints()
 
     message = str(exc_info.value)
     assert "meridian-lifecycle" in message and "index.js" in message

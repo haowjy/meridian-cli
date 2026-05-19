@@ -327,12 +327,6 @@ def test_pi_session_discovery_matches_windows_cwd_case_insensitively(
         encoding="utf-8",
     )
     monkeypatch.setattr(pi_extractor_module, "IS_WINDOWS", True)
-    monkeypatch.setattr(
-        pi_extractor_module,
-        "_safe_resolve",
-        lambda path: path.expanduser(),
-    )
-
     discovery = detect_pi_session_discovery_from_session_files(
         launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
         child_cwd=child_cwd,

@@ -77,7 +77,11 @@ def resolve_pi_runtime(*, env: Mapping[str, str], role: PiLaunchRole) -> PiRunti
         binary_path = detected
         runtime_kind = "path"
 
-    compatibility_error = _probe_runtime_compatibility(binary_path=binary_path, env=env, role=role)
+    compatibility_error, runtime_version = _probe_runtime_compatibility(
+        binary_path=binary_path,
+        env=env,
+        role=role,
+    )
     if compatibility_error is not None:
         if compatibility_error.kind == "execution":
             raise PiRuntimeResolutionError(
@@ -96,7 +100,7 @@ def resolve_pi_runtime(*, env: Mapping[str, str], role: PiLaunchRole) -> PiRunti
     return PiRuntimeResolution(
         binary_path=binary_path,
         runtime_kind=runtime_kind,
-        runtime_version=_runtime_version(binary_path=binary_path, env=env) or "unknown",
+        runtime_version=runtime_version or "unknown",
     )
 
 
@@ -105,23 +109,30 @@ def _probe_runtime_compatibility(
     binary_path: str,
     env: Mapping[str, str],
     role: PiLaunchRole,
-) -> _ProbeFailure | None:
+) -> tuple[_ProbeFailure | None, str | None]:
     version_probe = _run_probe_command((binary_path, "--version"), env)
     if isinstance(version_probe, _ProbeFailure):
-        return version_probe
+        return version_probe, None
     if version_probe.returncode != 0:
-        return _ProbeFailure(
-            kind="execution",
-            detail=_probe_failure_detail("--version", version_probe),
+        return (
+            _ProbeFailure(
+                kind="execution",
+                detail=_probe_failure_detail("--version", version_probe),
+            ),
+            None,
         )
+    runtime_version = _runtime_version_from_probe(version_probe)
 
     help_probe = _run_probe_command((binary_path, "--help"), env)
     if isinstance(help_probe, _ProbeFailure):
-        return help_probe
+        return help_probe, runtime_version
     if help_probe.returncode != 0:
-        return _ProbeFailure(
-            kind="execution",
-            detail=_probe_failure_detail("--help", help_probe),
+        return (
+            _ProbeFailure(
+                kind="execution",
+                detail=_probe_failure_detail("--help", help_probe),
+            ),
+            runtime_version,
         )
 
     required_groups = (
@@ -130,7 +141,7 @@ def _probe_runtime_compatibility(
         else _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_PRIMARY
     )
     if not required_groups:
-        return None
+        return None, runtime_version
 
     help_surface = "\n".join(
         candidate for candidate in (help_probe.stdout, help_probe.stderr) if candidate
@@ -142,18 +153,18 @@ def _probe_runtime_compatibility(
     ]
     if missing_groups:
         missing = ", ".join(missing_groups)
-        return _ProbeFailure(
-            kind="compatibility",
-            detail=f"`--help` surface missing required flags: {missing}",
+        return (
+            _ProbeFailure(
+                kind="compatibility",
+                detail=f"`--help` surface missing required flags: {missing}",
+            ),
+            runtime_version,
         )
 
-    return None
+    return None, runtime_version
 
 
-def _runtime_version(*, binary_path: str, env: Mapping[str, str]) -> str | None:
-    completed = _run_probe_command((binary_path, "--version"), env)
-    if isinstance(completed, _ProbeFailure):
-        return None
+def _runtime_version_from_probe(completed: subprocess.CompletedProcess[str]) -> str | None:
     for candidate in (completed.stdout, completed.stderr):
         text = (candidate or "").strip()
         if text:
