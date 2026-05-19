@@ -46,9 +46,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Primary native Pi now records best-effort lifecycle diagnostics from `stderr.log` into `history.jsonl` when stderr is separately capturable; PTY/merged-stderr launches degrade cleanly without diagnostic ingestion.
 - Primary native Pi discovery metadata now labels `--no-session` runs as `never_created`/`ephemeral_session` when no new session id appears, and treats retained continue/resume session ids as authoritative (`ok`) when no new file is discovered.
 
+### Fixed
+- Windows: Pi session JSONL fixture paths now use `json.dumps` for proper backslash escaping; cwd case-fold matching is case-insensitive.
+- Windows: Node ESM extension loading uses `file://` URLs via `Path.as_uri()` instead of raw Windows paths (`D:` was parsed as URL protocol).
+- Windows: tracked Pi child cleanup now has cross-platform fallback (was POSIX-only `os.killpg`).
+- Windows: Pi runtime resolver probe errors now correctly classify execution failures vs compatibility failures.
+- CI: Pi extension build now works across pnpm 10 (local) and pnpm 11 (CI/corepack) with `pnpm-workspace.yaml` `allowBuilds` + `package.json` `pnpm.onlyBuiltDependencies`.
+- CI: committed `pnpm-lock.yaml` for reproducible `--frozen-lockfile` installs; added missing `typebox` dependency.
+- CI: Node.js bumped to 24 for `node:sqlite` support required by pnpm 11 via corepack.
+- Flaky `test_pi_connection_launches_in_task_cwd_when_provided` — shim now waits for prompt input before exiting instead of racing the connection lifecycle.
+
 ### Removed
 - `meridian-pi` console entrypoint and wrapper implementation (`src/meridian/cli/pi_entrypoint.py`) plus wrapper-only unit tests.
 - Bundled Pi runtime wrapper launch path artifacts (`compile_runner.mjs`, `runner.mjs`, and `scripts/build-meridian-pi-runtime.sh`).
+- Slow/implementation-pinning tests: `test_launch_process_pi_primary.py`, `test_managed_bash_extension.py`.
 
 ## [0.1.13] - 2026-05-19
 ### Changed
