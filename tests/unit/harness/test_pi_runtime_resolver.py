@@ -327,9 +327,10 @@ def test_resolve_pi_runtime_incompatible_help_surface_reports_update_guidance(
     with pytest.raises(PiRuntimeResolutionError) as exc_info:
         resolve_pi_runtime(env={"PATH": "/test/path"}, role="spawned")
 
-    expected_path = str(Path("/tmp/pi"))
+    # The resolver preserves the raw path from shutil.which() in error messages
+    # (no Path normalization), so match the exact string.
     assert str(exc_info.value) == (
-        f"Installed Pi at {expected_path} is not compatible with Meridian's Pi harness: "
+        f"Installed Pi at {binary_path} is not compatible with Meridian's Pi harness: "
         "`--help` surface missing required flags: --mode, rpc, --append-system-prompt, "
         "--session, --fork, --session-dir/PI_CODING_AGENT_SESSION_DIR, --no-extensions, "
         "--no-skills, "
