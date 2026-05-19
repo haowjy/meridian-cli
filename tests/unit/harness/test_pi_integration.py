@@ -1958,7 +1958,9 @@ async def test_pi_connection_launches_in_task_cwd_when_provided(
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
         "pwd > \"$PI_TEST_CWD_FILE\"\n"
         "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-task-cwd\"}'\n"
-        "printf '%s\\n' '{\"type\":\"abort\"}' > /dev/null\n",
+        # Stay alive long enough for the connection to write the initial prompt,
+        # then read one line (the prompt) before exiting cleanly.
+        "read _prompt_line || true\n",
         encoding="utf-8",
     )
     shim.chmod(0o755)
