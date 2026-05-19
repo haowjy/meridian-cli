@@ -244,3 +244,72 @@ Expect:
   `waiting_for_first_pi_event_after_prompt`,
   `waiting_for_continuation_completion`, `pi_notification_timeout`,
   `semantic_completion_recorded`, `cleanup_stop_sent`, or `cleanup_failed`
+
+## S18-S19: Runtime and phase diagnostics
+
+Run one successful primary launch and one successful spawned RPC launch with
+`MERIDIAN_PI_BINARY` unset, then with it set to a known `pi` binary.
+
+Expect:
+- Diagnostics identify whether runtime came from `PATH` or `MERIDIAN_PI_BINARY`
+- Auth/config remains Pi-owned; Meridian does not set a fake auth root
+- Spawned `spawn show` exposes a useful Pi phase during startup and cleanup
+
+## S20-S22: Stderr lifecycle ingestion and dedup
+
+Use a fake/test Pi runtime or extension variant that can emit lifecycle events
+on stdout, stderr, or both.
+
+Expect:
+- Spawned RPC treats allowlisted stderr lifecycle JSON as machine input
+- Non-lifecycle stderr remains log-only and does not mutate quiescence state
+- Duplicate stdout/stderr lifecycle events are recorded once in history/tracker state
+
+## S23-S28: Child-wave batching and timeout behavior
+
+Run prompts or a test extension variant that starts multiple tracked/detached
+children, including mixed success/failure and a hanging tracked child.
+
+Expect:
+- One aggregate notification per child wave
+- Mixed outcomes preserve each child's terminal status
+- Tracked child timeout attempts spawned-session cleanup/cancel
+- Detached children do not block quiescence and are not killed by timeout
+- Missing wrapper child-id handoff fails closed instead of silently quiescing
+
+## S29-S32: Primary lifecycle extension remains non-invasive
+
+```bash
+uv run meridian --harness pi -m <pi-model>
+```
+
+From the native TUI, start `meridian spawn` child work and wait for completion.
+
+Expect:
+- Primary argv loads the lifecycle extension but not managed-bash, `--mode rpc`, or `--no-extensions`
+- Child completion can trigger a native Pi follow-up/notification
+- Primary does not auto-finalize or exit at quiescence; user remains in the TUI
+- Raw lifecycle JSON (`parent_spawn_id`, `correlation_id`, `emitted_at_ms`,
+  `meridian.notification.*`, etc.) does **not** appear in the visible TUI
+- Primary lifecycle diagnostics, if captured, are diagnostic-only and do not drive spawned quiescence
+
+## S33-S36: Primary Pi session identity and continue/fork
+
+1. Run primary Pi and send at least one prompt that causes Pi to persist a session.
+2. Exit the TUI.
+3. Inspect `meridian spawn show <primary-spawn-id>` and primary metadata.
+4. Run:
+
+```bash
+uv run meridian --continue <chat-id-from-primary>
+uv run meridian --fork <chat-id-from-primary>
+```
+
+Expect:
+- Meridian records the actual Pi session UUID from flat
+  `PI_CODING_AGENT_SESSION_DIR/*.jsonl` files, matched by cwd and launch time
+- `--continue` projects to native `pi --session <uuid>`
+- `--fork` projects to native `pi --fork <uuid>`
+- No cwd-bucketed Pi session layout is assumed
+- If Pi created no session, continue fails with a "no Pi session was created" diagnostic
+- If session files exist but cannot be matched/parsed, continue fails with a distinct discovery diagnostic

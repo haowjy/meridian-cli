@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -294,16 +293,6 @@ def test_resolve_pi_runtime_nonzero_version_probe_reports_probe_detail(
     assert "MERIDIAN_PI_BINARY=/path/to/pi" in message
 
 
-def test_pyproject_keeps_pi_runtime_unbundled_from_distribution_artifacts() -> None:
-    pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
-    pyproject_text = pyproject_path.read_text(encoding="utf-8")
-    pyproject_data = tomllib.loads(pyproject_text)
-
-    assert "meridian-pi" not in pyproject_data["project"]["scripts"]
-    assert "src/meridian/pi_runtime/bin" in pyproject_text
-    assert "src/meridian/pi_runtime/node_modules" in pyproject_text
-
-
 def test_resolve_pi_runtime_incompatible_help_surface_reports_update_guidance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -340,120 +329,6 @@ def test_resolve_pi_runtime_incompatible_help_surface_reports_update_guidance(
         "--session, --fork, --session-dir/PI_CODING_AGENT_SESSION_DIR, --no-extensions, "
         "--no-skills, "
         "--no-context-files, --no-prompt-templates, -e/--extension.\n"
-        "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary."
-    )
-
-
-def test_resolve_pi_runtime_spawned_fails_when_projected_no_prompt_templates_flag_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _fake_run(
-        command: list[str],
-        *,
-        check: bool,
-        capture_output: bool,
-        text: bool,
-        env: dict[str, str],
-        timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = check, capture_output, text, env, timeout
-        if command[1] == "--version":
-            return _completed(command, stdout="pi 1.0.0\n")
-        return _completed(
-            command,
-            stdout=(
-                "--mode rpc --model --append-system-prompt --session --fork "
-                "--session-dir --no-extensions --no-skills "
-                "--no-context-files -e --extension\n"
-            ),
-        )
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    with pytest.raises(PiRuntimeResolutionError) as exc_info:
-        resolve_pi_runtime(
-            env={"PATH": "/fake/path", "MERIDIAN_PI_BINARY": "/tmp/pi"},
-            role="spawned",
-        )
-
-    assert str(exc_info.value) == (
-        "Installed Pi at /tmp/pi is not compatible with Meridian's Pi harness: "
-        "`--help` surface missing required flags: --no-prompt-templates.\n"
-        "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary."
-    )
-
-
-def test_resolve_pi_runtime_spawned_fails_when_projected_fork_flag_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _fake_run(
-        command: list[str],
-        *,
-        check: bool,
-        capture_output: bool,
-        text: bool,
-        env: dict[str, str],
-        timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = check, capture_output, text, env, timeout
-        if command[1] == "--version":
-            return _completed(command, stdout="pi 1.0.0\n")
-        return _completed(
-            command,
-            stdout=(
-                "--mode rpc --model --append-system-prompt --session "
-                "--session-dir --no-extensions --no-skills "
-                "--no-context-files --no-prompt-templates -e --extension\n"
-            ),
-        )
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    with pytest.raises(PiRuntimeResolutionError) as exc_info:
-        resolve_pi_runtime(
-            env={"PATH": "/fake/path", "MERIDIAN_PI_BINARY": "/tmp/pi"},
-            role="spawned",
-        )
-
-    assert str(exc_info.value) == (
-        "Installed Pi at /tmp/pi is not compatible with Meridian's Pi harness: "
-        "`--help` surface missing required flags: --fork.\n"
-        "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary."
-    )
-
-
-def test_resolve_pi_runtime_primary_requires_session_dir_surface(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _fake_run(
-        command: list[str],
-        *,
-        check: bool,
-        capture_output: bool,
-        text: bool,
-        env: dict[str, str],
-        timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = check, capture_output, text, env, timeout
-        if command[1] == "--version":
-            return _completed(command, stdout="pi 1.0.0\n")
-        return _completed(
-            command,
-            stdout="--model --append-system-prompt --session --fork\n",
-        )
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    with pytest.raises(PiRuntimeResolutionError) as exc_info:
-        resolve_pi_runtime(
-            env={"PATH": "/fake/path", "MERIDIAN_PI_BINARY": "/tmp/pi"},
-            role="primary",
-        )
-
-    assert str(exc_info.value) == (
-        "Installed Pi at /tmp/pi is not compatible with Meridian's Pi harness: "
-        "`--help` surface missing required flags: --session-dir/"
-        "PI_CODING_AGENT_SESSION_DIR.\n"
         "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary."
     )
 

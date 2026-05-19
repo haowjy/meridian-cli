@@ -208,6 +208,9 @@ function parentSpawnIdFromEnv(): string | null {
 }
 
 function emitRaw(event: Record<string, unknown>): void {
+  if (ROLE === "primary") {
+    return;
+  }
   try {
     process.stdout.write(`${JSON.stringify(event)}\n`);
   } catch {

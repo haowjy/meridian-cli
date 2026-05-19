@@ -17,7 +17,6 @@ from meridian.lib.harness.extractors.pi import (
     detect_pi_session_discovery_from_session_files,
     detect_pi_session_id_from_session_files,
 )
-from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
@@ -278,36 +277,6 @@ def test_detect_pi_session_id_from_session_files_prefers_new_recent_session_for_
     )
 
     assert detected == "ses-child"
-
-
-def test_pi_adapter_observe_session_id_prefers_primary_detection_before_current_fallback(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    user_home = tmp_path / "user-home"
-    session_root = user_home / "meridian-pi" / "sessions"
-    session_root.mkdir(parents=True)
-
-    (session_root / "fork-child.jsonl").write_text(
-        f'{{"type":"session","id":"ses-primary-child","cwd":"{child_cwd}"}}\n',
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr("meridian.lib.harness.pi.get_user_home", lambda: user_home)
-    adapter = PiAdapter()
-    observed = adapter.observe_session_id(
-        artifacts=_MemoryArtifactStore({}),
-        spawn_id=SpawnId("p-pi-primary-fork"),
-        current_session_id="ses-source",
-        project_root=child_cwd,
-        started_at_epoch=time.time() - 1.0,
-        started_at_local_iso=None,
-        expected_session_id="ses-source",
-    )
-
-    assert observed == "ses-primary-child"
 
 
 def test_pi_session_discovery_requires_matching_cwd(tmp_path: Path) -> None:

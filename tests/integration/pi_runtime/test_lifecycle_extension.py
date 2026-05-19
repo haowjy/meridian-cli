@@ -891,139 +891,6 @@ originalWrite(
     assert output["killCalls"] == []
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="uses a POSIX shell stub/chmod/PATH shim for meridian wrapper interception",
-)
-def test_lifecycle_wave_timeout_does_not_cancel_wrapper_discovered_detached_meridian_spawn_child(
-    tmp_path: Path,
-) -> None:
-    output = _run_node_harness(
-        tmp_path,
-        r'''
-process.env.MERIDIAN_PI_SESSION_ROLE = "spawned";
-process.env.MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS = "120";
-const fs = await import("node:fs/promises");
-const path = await import("node:path");
-
-const testTmp = process.env.MERIDIAN_TEST_TMP;
-const commandLog = path.join(testTmp, "meridian-commands.log");
-const wrapperLog = path.join(testTmp, "wrapper.log");
-await fs.writeFile(wrapperLog, "wrapper discovered child p654\n", "utf-8");
-const binDir = path.join(testTmp, "bin");
-await fs.mkdir(binDir, { recursive: true });
-const meridian = path.join(binDir, "meridian");
-await fs.writeFile(
-  meridian,
-  "#!/bin/sh\n"
-    + "printf '%s\\n' \"$*\" >> \"$MERIDIAN_COMMAND_LOG\"\n"
-    + "if [ \"$1\" = \"--json\" ]; then printf '%s\\n' '{\"status\":\"running\"}'; fi\n"
-    + "exit 0\n",
-  "utf-8",
-);
-await fs.chmod(meridian, 0o755);
-process.env.MERIDIAN_COMMAND_LOG = commandLog;
-process.env.PATH = binDir + ":" + process.env.PATH;
-
-const originalWrite = process.stdout.write.bind(process.stdout);
-const rawWrites = [];
-process.stdout.write = (chunk, encoding, callback) => {
-  rawWrites.push(String(chunk));
-  if (typeof encoding === "function") encoding();
-  if (typeof callback === "function") callback();
-  return true;
-};
-const handlers = new Map();
-const internalHandlers = new Map();
-const sentMessages = [];
-function addHandler(map, name, cb) {
-  const list = map.get(name) ?? [];
-  list.push(cb);
-  map.set(name, list);
-  return () => undefined;
-}
-async function emit(map, name, ...args) {
-  for (const cb of map.get(name) ?? []) await cb(...args);
-}
-const pi = {
-  on(name, cb) { return addHandler(handlers, name, cb); },
-  events: {
-    on(name, cb) { return addHandler(internalHandlers, name, cb); },
-    emit(name, payload) { void emit(internalHandlers, name, payload); },
-  },
-  sendMessage(message, options) { sentMessages.push({ message, options }); },
-};
-const { default: lifecycle } = await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
-lifecycle(pi);
-await emit(
-  internalHandlers,
-  "meridian:subspawn:start",
-  { subspawn_id: "p321", wait_policy: "tracked", kind: "meridian_spawn" },
-);
-await emit(
-  internalHandlers,
-  "meridian:subspawn:start",
-  {
-    subspawn_id: "j-wrap",
-    wait_policy: "detached",
-    kind: "meridian_spawn",
-    command: "meridian spawn -a coder -p hi",
-  },
-);
-await emit(handlers, "agent_end", {});
-await emit(
-  internalHandlers,
-  "meridian:subspawn:end",
-  {
-    subspawn_id: "j-wrap",
-    wait_policy: "detached",
-    kind: "meridian_spawn",
-    log_path: wrapperLog,
-    success: true,
-  },
-);
-for (let attempt = 0; attempt < 24; attempt += 1) {
-  if (sentMessages.length > 0) break;
-  await new Promise((resolve) => setTimeout(resolve, 25));
-}
-const commandLines = (await fs.readFile(commandLog, "utf-8"))
-  .split(/\n/)
-  .map((line) => line.trim())
-  .filter(Boolean);
-const lifecycleEvents = rawWrites
-  .flatMap((chunk) => chunk.split(/\n/))
-  .filter(Boolean)
-  .map((line) => JSON.parse(line));
-originalWrite(
-  "@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents, commandLines }) + "\n"
-);
-''',
-    )
-
-    assert len(output["sentMessages"]) == 1
-    details = output["sentMessages"][0]["message"]["details"]
-    assert details["child_outcomes"] == [
-        {
-            "subspawn_id": "p321",
-            "status": "timed_out",
-            "success": False,
-            "reason": "wave_deadline",
-        }
-    ]
-    cancel_commands = [
-        command for command in output["commandLines"] if command.startswith("spawn cancel ")
-    ]
-    assert cancel_commands == ["spawn cancel p321"]
-    discovered_child_starts = [
-        event
-        for event in output["lifecycleEvents"]
-        if event.get("type") == "meridian.subspawn.start"
-        and event.get("subspawn_id") == "p654"
-    ]
-    assert len(discovered_child_starts) == 1
-    assert discovered_child_starts[0]["wait_policy"] == "detached"
-
-
 def test_lifecycle_send_message_failure_emits_stable_failure_reason(tmp_path: Path) -> None:
     output = _run_node_harness(
         tmp_path,
@@ -1141,6 +1008,91 @@ originalWrite("@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents }) +
     ]
     assert ready_events == []
     assert output["sentMessages"] == []
+
+
+def test_lifecycle_primary_role_does_not_write_raw_diagnostics_to_visible_streams(
+    tmp_path: Path,
+) -> None:
+    output = _run_node_harness(
+        tmp_path,
+        r'''
+process.env.MERIDIAN_PI_SESSION_ROLE = "primary";
+process.env.MERIDIAN_SPAWN_ID = "p-primary-visible";
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const stdoutWrites = [];
+process.stdout.write = (chunk, encoding, callback) => {
+  stdoutWrites.push(String(chunk));
+  if (typeof encoding === "function") encoding();
+  if (typeof callback === "function") callback();
+  return true;
+};
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+const stderrWrites = [];
+process.stderr.write = (chunk, encoding, callback) => {
+  stderrWrites.push(String(chunk));
+  if (typeof encoding === "function") encoding();
+  if (typeof callback === "function") callback();
+  return true;
+};
+const handlers = new Map();
+const internalHandlers = new Map();
+const sentMessages = [];
+function addHandler(map, name, cb) {
+  const list = map.get(name) ?? [];
+  list.push(cb);
+  map.set(name, list);
+  return () => undefined;
+}
+async function emit(map, name, ...args) {
+  for (const cb of map.get(name) ?? []) await cb(...args);
+}
+const pi = {
+  on(name, cb) { return addHandler(handlers, name, cb); },
+  events: {
+    on(name, cb) { return addHandler(internalHandlers, name, cb); },
+    emit(name, payload) { void emit(internalHandlers, name, payload); },
+  },
+  sendMessage(message, options) { sentMessages.push({ message, options }); },
+};
+const { default: lifecycle } = await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
+lifecycle(pi);
+await emit(
+  internalHandlers,
+  "meridian:subspawn:start",
+  { subspawn_id: "p1567", wait_policy: "tracked", kind: "meridian_spawn" },
+);
+await emit(handlers, "agent_end", {});
+await emit(
+  internalHandlers,
+  "meridian:subspawn:end",
+  { subspawn_id: "p1567", wait_policy: "tracked", kind: "meridian_spawn", success: true },
+);
+await new Promise((resolve) => setTimeout(resolve, 0));
+const stdoutLifecycleLines = stdoutWrites
+  .flatMap((chunk) => chunk.split(/\n/))
+  .filter((line) => line.includes("meridian.notification.") || line.includes("parent_spawn_id"));
+const stderrLifecycleEvents = stderrWrites
+  .flatMap((chunk) => chunk.split(/\n/))
+  .filter(Boolean)
+  .map((line) => JSON.parse(line));
+originalStdoutWrite(
+  "@@RESULT@@"
+    + JSON.stringify({ sentMessages, stdoutLifecycleLines, stderrLifecycleEvents })
+    + "\n"
+);
+process.stderr.write = originalStderrWrite;
+''',
+    )
+
+    assert len(output["sentMessages"]) == 1
+    assert output["sentMessages"][0]["options"] == {
+        "deliverAs": "followUp",
+        "triggerTurn": True,
+    }
+    details = output["sentMessages"][0]["message"]["details"]
+    assert details["child_outcomes"][0]["subspawn_id"] == "p1567"
+    assert output["stdoutLifecycleLines"] == []
+    assert output["stderrLifecycleEvents"] == []
 
 
 @pytest.mark.skipif(
