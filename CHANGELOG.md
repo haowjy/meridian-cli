@@ -11,7 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi runtime TypeScript extensions: `managed-bash` (`bash` override + `bash_bg_list/read/wait/kill`) and `meridian-lifecycle` (tracked child + notification/quiescence events) plus prebuild script `npm run build:extensions` for stable extension artifacts under `src/meridian/pi_runtime/dist/extensions/`.
 
 ### Changed
-- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; stderr remains debug only; primary TUI no longer shows raw lifecycle JSON; no lifecycle JSON leaks to TUI or stderr.
 - Primary Pi session identity now comes from flat `PI_CODING_AGENT_SESSION_DIR/*.jsonl` scanning with first-line JSON parse, cwd/time-window disambiguation, and expected-id suppression; `primary_meta.json` now records `harness_session_discovery` plus `harness_session_discovery_detail` so continue/fork errors can distinguish never-created vs discovery-failed vs legacy empty-id cases.
 - Pi harness now launches installed `pi` directly for both primary native TUI and spawned RPC (`MERIDIAN_PI_BINARY` override first, otherwise `pi` on `PATH`); no `meridian-pi` wrapper process in launch projection.
 - Pi runtime compatibility checks now run in Python prelaunch/connection startup with fail-fast install/update guidance before process launch.
@@ -36,7 +36,6 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawned Pi semantic completion now records success at event-ordered quiescence with micro-drain only (no fixed idle grace) and unblocks `spawn wait` before cleanup.
 - Pi cleanup now runs asynchronously after semantic completion; cleanup status/phases (`cleanup_running|cleanup_completed|cleanup_escalated|cleanup_failed`) are emitted separately from terminal spawn status.
 - Pending continuation tracking now keeps queued/delivered notifications pending until correlated follow-up terminal completion, with timeout failure `pi_notification_timeout:id=...:phase=...:elapsed=...:timeout=...`.
-- Spawned Pi now ingests allowlisted lifecycle events from stderr only; unrelated stderr noise no longer drives lifecycle behavior.
 - Tracked child waves now trigger one aggregate auto-resume with per-child status summary, not one resume per child.
 - Pi child-wave timeout now separate from notification timeout; timed-out tracked children are canceled before resume.
 - Pi launch/policy/integration tests now assert primary-native Pi command projection and runner routing, while keeping spawned RPC/quiescence assertions intact.
