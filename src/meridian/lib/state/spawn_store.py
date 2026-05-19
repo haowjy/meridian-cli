@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import psutil
 import structlog
 from pydantic import BaseModel, ConfigDict
 
@@ -36,12 +37,16 @@ from meridian.lib.state.spawn.model import (
 from meridian.lib.state.spawn.model import (
     SpawnRecord as SpawnRecord,
 )
+from meridian.lib.state.spawn.model import (
+    TerminalSpawnStatus as TerminalSpawnStatus,
+)
 from meridian.lib.state.spawn.terminal_policy import decide_terminal_write
 from meridian.lib.state.spawn.transitions import (
     apply_finalize,
     apply_mark_finalizing,
     apply_mark_running,
     apply_record_exited,
+    apply_runner_exit,
 )
 
 logger = structlog.get_logger(__name__)
@@ -113,6 +118,15 @@ def next_spawn_id(
 
 ACTIVE_SPAWN_STATUSES = _ACTIVE_SPAWN_STATUSES
 is_active_spawn_status = _is_active_spawn_status
+
+
+def _runner_created_at_epoch_for_pid(runner_pid: int | None) -> float | None:
+    if runner_pid is None or runner_pid <= 0:
+        return None
+    try:
+        return psutil.Process(runner_pid).create_time()
+    except (psutil.Error, OSError, ValueError):
+        return None
 
 
 def _resolve_start_metadata(
@@ -224,6 +238,7 @@ def start_spawn(
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
     status: SpawnStatus = "running",
     started_at: str | None = None,
     clock: Clock | None = None,
@@ -244,6 +259,10 @@ def start_spawn(
         normalized_goal = start_metadata.goal.strip()
         if not normalized_goal:
             raise ValueError("--goal cannot be empty")
+
+    resolved_runner_created_at_epoch = runner_created_at_epoch
+    if resolved_runner_created_at_epoch is None:
+        resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -281,11 +300,16 @@ def start_spawn(
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
+            runner_created_at_epoch=resolved_runner_created_at_epoch,
             status=status,
             prompt=prompt,
             started_at=started,
-            exited_at=None,
-            process_exit_code=None,
+            last_attempt_exited_at=None,
+            last_attempt_exit_code=None,
+            runner_exit_code=None,
+            runner_exit_status=None,
+            runner_exit_error=None,
+            runner_exit_at=None,
             finished_at=None,
             exit_code=None,
             duration_secs=None,
@@ -329,6 +353,7 @@ def update_spawn(
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
     harness_session_id: str | None = None,
     control_root: str | None = None,
     task_cwd: str | None = None,
@@ -342,23 +367,37 @@ def update_spawn(
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
+    resolved_runner_created_at_epoch = runner_created_at_epoch
+    if runner_pid is not None and resolved_runner_created_at_epoch is None:
+        resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
+
     def merge(current: SpawnRecord) -> SpawnRecord:
         updates: dict[str, object] = {}
-        for key, value in {
-            "launch_mode": launch_mode,
-            "worker_pid": worker_pid,
-            "runner_pid": runner_pid,
-            "harness_session_id": harness_session_id,
-            "control_root": control_root,
-            "task_cwd": task_cwd,
-            "execution_cwd": execution_cwd,
-            "claude_config_dir": claude_config_dir,
-            "error": error,
-            "desc": desc,
-            "work_id": work_id.strip() or None if work_id is not None else None,
-        }.items():
-            if value is not None:
-                updates[key] = value
+        if launch_mode is not None:
+            updates["launch_mode"] = launch_mode
+        if worker_pid is not None:
+            updates["worker_pid"] = worker_pid
+        if runner_pid is not None:
+            updates["runner_pid"] = runner_pid
+            updates["runner_created_at_epoch"] = resolved_runner_created_at_epoch
+        elif runner_created_at_epoch is not None:
+            updates["runner_created_at_epoch"] = runner_created_at_epoch
+        if harness_session_id is not None:
+            updates["harness_session_id"] = harness_session_id
+        if control_root is not None:
+            updates["control_root"] = control_root
+        if task_cwd is not None:
+            updates["task_cwd"] = task_cwd
+        if execution_cwd is not None:
+            updates["execution_cwd"] = execution_cwd
+        if claude_config_dir is not None:
+            updates["claude_config_dir"] = claude_config_dir
+        if error is not None:
+            updates["error"] = error
+        if desc is not None:
+            updates["desc"] = desc
+        if work_id is not None:
+            updates["work_id"] = work_id.strip() or None
         return current.model_copy(update=updates)
 
     try:
@@ -389,6 +428,7 @@ def update_spawn(
                 "launch_mode": launch_mode,
                 "worker_pid": worker_pid,
                 "runner_pid": runner_pid,
+                "runner_created_at_epoch": resolved_runner_created_at_epoch,
                 "harness_session_id": harness_session_id,
                 "control_root": control_root,
                 "task_cwd": task_cwd,
@@ -410,7 +450,7 @@ def record_spawn_exited(
     exited_at: str | None = None,
     clock: Clock | None = None,
 ) -> None:
-    """Record that the harness process has exited."""
+    """Record latest drained harness-attempt exit metadata."""
 
     resolved_clock = clock or RealClock()
     paths = RuntimePaths.from_root_dir(runtime_root)
@@ -431,6 +471,54 @@ def record_spawn_exited(
         )
     except FileNotFoundError:
         return
+
+
+def record_runner_exit(
+    runtime_root: Path,
+    spawn_id: SpawnId | str,
+    *,
+    status: TerminalSpawnStatus,
+    exit_code: int,
+    error: str | None = None,
+    exited_at: str | None = None,
+    clock: Clock | None = None,
+) -> SpawnRecord | None:
+    """Record runner-resolved terminal intent before finalization."""
+
+    if status not in {"succeeded", "failed", "cancelled"}:
+        raise ValueError(f"runner exit status must be terminal, got {status!r}")
+
+    resolved_clock = clock or RealClock()
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    resolved_exited_at = exited_at or resolved_clock.utc_now_iso()
+
+    class _RunnerExitSkipped(Exception):
+        def __init__(self, snapshot: SpawnRecord | None) -> None:
+            self.snapshot = snapshot
+
+    def merge_exit(current: SpawnRecord) -> SpawnRecord:
+        if not is_active_spawn_status(current.status):
+            raise _RunnerExitSkipped(current)
+        return apply_runner_exit(
+            current,
+            status=status,
+            exit_code=exit_code,
+            error=error,
+            exited_at=resolved_exited_at,
+        )
+
+    if _read_state(paths.spawns_dir, str(spawn_id)) is None:
+        return None
+    try:
+        return _write_state_locked(
+            paths.spawns_dir,
+            str(spawn_id),
+            merge_exit,
+        )
+    except FileNotFoundError:
+        return None
+    except _RunnerExitSkipped:
+        return None
 
 
 def finalize_spawn(
@@ -565,6 +653,7 @@ def mark_spawn_running(
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
 ) -> bool:
     changed, _snapshot = mark_spawn_running_with_snapshot(
         runtime_root,
@@ -572,6 +661,7 @@ def mark_spawn_running(
         launch_mode=launch_mode,
         worker_pid=worker_pid,
         runner_pid=runner_pid,
+        runner_created_at_epoch=runner_created_at_epoch,
     )
     return changed
 
@@ -583,12 +673,16 @@ def mark_spawn_running_with_snapshot(
     launch_mode: LaunchMode | None = None,
     worker_pid: int | None = None,
     runner_pid: int | None = None,
+    runner_created_at_epoch: float | None = None,
 ) -> tuple[bool, SpawnRecord | None]:
     """Mark a spawn running and return the post-write projection without rereading."""
 
     paths = RuntimePaths.from_root_dir(runtime_root)
 
     changed = False
+    resolved_runner_created_at_epoch = runner_created_at_epoch
+    if runner_pid is not None and resolved_runner_created_at_epoch is None:
+        resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
 
     def merge(current: SpawnRecord) -> SpawnRecord:
         nonlocal changed
@@ -598,6 +692,7 @@ def mark_spawn_running_with_snapshot(
             launch_mode=launch_mode,
             worker_pid=worker_pid,
             runner_pid=runner_pid,
+            runner_created_at_epoch=resolved_runner_created_at_epoch,
         )
 
     try:

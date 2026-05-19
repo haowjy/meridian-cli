@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -201,3 +202,30 @@ def test_start_accepts_typed_metadata_and_persists_goal(tmp_path: Path) -> None:
     assert record.desc == "goal metadata"
     assert record.work_id == "w-lifecycle"
     assert record.goal == "finish migration"
+
+
+def test_owner_mark_running_clears_stale_runner_created_epoch_when_pid_replaced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _make_service(tmp_path)
+    spawn_id = _start_spawn(service)
+    service.mark_running(
+        spawn_id,
+        runner_pid=os.getpid(),
+        runner_created_at_epoch=222.0,
+    )
+    initial = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert initial is not None
+    assert initial.runner_created_at_epoch == 222.0
+
+    monkeypatch.setattr("meridian.lib.core.lifecycle._pid_created_at_epoch", lambda _pid: None)
+    service.mark_running(
+        spawn_id,
+        runner_pid=999997,
+    )
+
+    updated = spawn_store.get_spawn(tmp_path, spawn_id)
+    assert updated is not None
+    assert updated.runner_pid == 999997
+    assert updated.runner_created_at_epoch is None

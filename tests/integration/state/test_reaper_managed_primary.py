@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.state import spawn_store
 from meridian.lib.state.managed_primary import terminate_managed_primary_processes
 from meridian.lib.state.primary_meta import PrimaryMetadata
 from tests.integration.state.conftest import (
@@ -94,7 +95,7 @@ def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
     assert latest.error is None
 
 
-def test_reconcile_active_spawn_managed_primary_launcher_alive_skips_when_finalizing(
+def test_reconcile_active_spawn_managed_primary_finalizing_without_runner_exit_marks_orphan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,10 +118,11 @@ def test_reconcile_active_spawn_managed_primary_launcher_alive_skips_when_finali
 
     reconciled = _reconcile(tmp_path, runtime_root, record)
 
-    assert reconciled == record
+    assert reconciled.status == "failed"
+    assert reconciled.error == "orphan_finalization"
     latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "finalizing"
-    assert latest.error is None
+    assert latest.status == "failed"
+    assert latest.error == "orphan_finalization"
 
 
 def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_primary(
@@ -319,6 +321,52 @@ def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_
     assert reconciled.exit_code == 0
     assert reconciled.error is None
     assert terminated_pids == []
+
+
+def test_reconcile_active_spawn_managed_primary_uses_runner_exit_tuple_before_orphan_logic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root, spawn_id = _create_spawn(
+        tmp_path,
+        started_at=_OLD_STARTED_AT,
+    )
+    _write_primary_meta(
+        runtime_root,
+        spawn_id,
+        launcher_pid=7775,
+        backend_pid=8885,
+        tui_pid=9995,
+        activity="idle",
+    )
+    spawn_store.record_runner_exit(
+        runtime_root,
+        spawn_id,
+        status="failed",
+        exit_code=73,
+        error="guardrail_failed",
+        exited_at="1970-01-01T00:16:30Z",
+    )
+    record = _get_spawn(runtime_root, spawn_id)
+    monkeypatch.setattr("meridian.lib.state.reaper.time.time", lambda: 1_000.0)
+    monkeypatch.setattr(
+        "meridian.lib.state.reaper.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.state.managed_primary.is_process_alive",
+        lambda *_args, **_kwargs: False,
+    )
+
+    reconciled = _reconcile(tmp_path, runtime_root, record)
+
+    assert reconciled.status == "failed"
+    assert reconciled.exit_code == 73
+    assert reconciled.error == "guardrail_failed"
+    latest = _get_spawn(runtime_root, spawn_id)
+    assert latest.status == "failed"
+    assert latest.exit_code == 73
+    assert latest.error == "guardrail_failed"
 
 
 def test_reconcile_active_spawn_child_orphan_terminates_worker_process_group(

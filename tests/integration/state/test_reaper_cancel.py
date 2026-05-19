@@ -318,6 +318,10 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     assert set(terminated_pids[1:]) == {7002, 7003}
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "finalizing"
+    assert latest.runner_exit_status == "cancelled"
+    assert latest.runner_exit_code == 130
+    assert latest.runner_exit_error == "cancel_timeout"
+    assert latest.runner_exit_at is not None
 
 
 def test_spawn_cancel_managed_primary_without_launcher_directly_terminates_backend_and_tui(
@@ -371,6 +375,10 @@ def test_spawn_cancel_managed_primary_without_launcher_directly_terminates_backe
     assert terminated_pids == [7102, 7103]
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "finalizing"
+    assert latest.runner_exit_status == "cancelled"
+    assert latest.runner_exit_code == 130
+    assert latest.runner_exit_error == "cancel_timeout"
+    assert latest.runner_exit_at is not None
 
 
 def test_spawn_cancel_managed_primary_queued_converges_to_terminal(

@@ -60,8 +60,8 @@ def test_spawn_show_sync_renders_finalizing_status_and_orphan_finalization_hint(
 
     assert output.spawn_id == "p1"
     assert output.status == "finalizing"
-    assert output.exited_at == "2026-04-12T14:00:00Z"
-    assert output.process_exit_code == 143
+    assert output.last_attempt_exited_at == "2026-04-12T14:00:00Z"
+    assert output.last_attempt_exit_code == 143
     rendered = output.format_text()
     assert "Status: finalizing (cleanup in progress)" in rendered
     assert "orphan_finalization" in rendered

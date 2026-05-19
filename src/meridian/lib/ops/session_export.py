@@ -186,7 +186,11 @@ def _session_metadata(runtime_root: Path, ref: str) -> list[str]:
 
     lines: list[str] = []
     started_at = record.started_at if record is not None else (spawn.started_at if spawn else None)
-    stopped_at = record.stopped_at if record is not None else (spawn.exited_at if spawn else None)
+    stopped_at = (
+        record.stopped_at
+        if record is not None
+        else (spawn.last_attempt_exited_at if spawn else None)
+    )
     model = record.model if record is not None else (spawn.model if spawn else None)
     harness = record.harness if record is not None else (spawn.harness if spawn else None)
     if started_at:

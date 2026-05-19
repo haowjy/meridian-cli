@@ -1,8 +1,8 @@
 """Authoritative lifecycle-transition seam for spawn state.
 
 This module is the single service boundary for lifecycle transitions
-(``start``, ``mark_running``, ``record_exited``, ``mark_finalizing``,
-``finalize``, ``cancel``) and post-write lifecycle hook dispatch.
+(``start``, ``mark_running``, ``record_exited``, ``record_runner_exit``,
+``mark_finalizing``, ``finalize``, ``cancel``) and post-write lifecycle hook dispatch.
 Persistence remains delegated to :mod:`meridian.lib.state.spawn_store`.
 
 Design decisions in effect:
@@ -31,6 +31,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
+import psutil
 import structlog
 
 from meridian.lib.core.spawn_start import SpawnStartMetadata
@@ -60,6 +61,15 @@ if TYPE_CHECKING:
     from meridian.lib.state.spawn_store import FinalizeOutcome
 
 logger = structlog.get_logger(__name__)
+
+
+def _pid_created_at_epoch(pid: int | None) -> float | None:
+    if pid is None or pid <= 0:
+        return None
+    try:
+        return psutil.Process(pid).create_time()
+    except (psutil.Error, OSError, ValueError):
+        return None
 
 
 def _spawn_store() -> Any:
@@ -287,6 +297,7 @@ class SpawnLifecycleService:
         launch_mode: LaunchMode | None = None,
         worker_pid: int | None = None,
         runner_pid: int | None = None,
+        runner_created_at_epoch: float | None = None,
         scope_snapshot: ProcessScopeSnapshot | None = None,
     ) -> None:
         """Mark a spawn as running and dispatch spawn.running.
@@ -297,6 +308,9 @@ class SpawnLifecycleService:
         with bind_lifecycle_correlation(
             self._correlation(operation="mark_running", spawn_id=spawn_id)
         ):
+            resolved_runner_created_at_epoch = runner_created_at_epoch
+            if runner_pid is not None and resolved_runner_created_at_epoch is None:
+                resolved_runner_created_at_epoch = _pid_created_at_epoch(runner_pid)
             if self._owns_record(spawn_id):
                 assert self._record is not None
                 changed = self._record.status != "running"
@@ -305,6 +319,7 @@ class SpawnLifecycleService:
                     launch_mode=launch_mode,
                     worker_pid=worker_pid,
                     runner_pid=runner_pid,
+                    runner_created_at_epoch=resolved_runner_created_at_epoch,
                     validate_status_transition=False,
                 )
                 if not self._write_owner_record(updated, transition="mark_running"):
@@ -322,6 +337,7 @@ class SpawnLifecycleService:
                 launch_mode=launch_mode,
                 worker_pid=worker_pid,
                 runner_pid=runner_pid,
+                runner_created_at_epoch=resolved_runner_created_at_epoch,
             )
             if changed:
                 event = self._build_event("spawn.running", record, spawn_id=spawn_id)
@@ -378,6 +394,71 @@ class SpawnLifecycleService:
                 record,
                 payload={"exit_code": exit_code},
             )
+
+    def record_runner_exit(
+        self,
+        spawn_id: str,
+        *,
+        status: TerminalStatus,
+        exit_code: int,
+        error: str | None = None,
+        exited_at: str | None = None,
+        clock: Clock | None = None,
+    ) -> bool:
+        """Persist runner-resolved terminal intent before finalization."""
+
+        with bind_lifecycle_correlation(
+            self._correlation(operation="record_runner_exit", spawn_id=spawn_id)
+        ):
+            resolved_exited_at = exited_at or _utc_now_iso(clock)
+            if self._owns_record(spawn_id):
+                assert self._record is not None
+                if self._record.status not in {"queued", "running", "finalizing"}:
+                    return False
+                updated = _spawn_transitions().apply_runner_exit(
+                    self._record,
+                    spawn_id=spawn_id,
+                    status=status,
+                    exit_code=exit_code,
+                    error=error,
+                    exited_at=resolved_exited_at,
+                )
+                if not self._write_owner_record(updated, transition="record_runner_exit"):
+                    return False
+                self._emit_telemetry_event(
+                    "spawn.updated",
+                    self._record,
+                    payload={
+                        "runner_exit_status": status,
+                        "runner_exit_code": exit_code,
+                        "runner_exit_error": error,
+                        "runner_exit_at": resolved_exited_at,
+                    },
+                )
+                return True
+
+            record = _spawn_store().record_runner_exit(
+                self._runtime_root,
+                spawn_id,
+                status=status,
+                exit_code=exit_code,
+                error=error,
+                exited_at=resolved_exited_at,
+                clock=clock,
+            )
+            if record is None:
+                return False
+            self._emit_telemetry_event(
+                "spawn.updated",
+                record,
+                payload={
+                    "runner_exit_status": status,
+                    "runner_exit_code": exit_code,
+                    "runner_exit_error": error,
+                    "runner_exit_at": resolved_exited_at,
+                },
+            )
+            return True
 
     def finalize(
         self,
@@ -763,10 +844,10 @@ def _record_after_exited_update(
         return None
     updates: dict[str, object] = {
         "id": spawn_id,
-        "process_exit_code": exit_code,
+        "last_attempt_exit_code": exit_code,
     }
     if exited_at is not None:
-        updates["exited_at"] = exited_at
+        updates["last_attempt_exited_at"] = exited_at
     return record.model_copy(update=updates)
 
 

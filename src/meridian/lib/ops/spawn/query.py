@@ -328,8 +328,8 @@ def detail_from_row(
         harness_session_id=row.harness_session_id,
         last_message=last_message,
         log_path=log_path,
-        exited_at=row.exited_at,
-        process_exit_code=row.process_exit_code,
+        last_attempt_exited_at=row.last_attempt_exited_at,
+        last_attempt_exit_code=row.last_attempt_exit_code,
         session_config_dir=row.claude_config_dir,
     )
 

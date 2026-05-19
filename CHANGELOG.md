@@ -6,6 +6,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - Release flow matches Mars shape: main workflow creates RC-by-default release commits/tags; tag-triggered `release.yml` is sole PyPI publish identity.
 
+### Fixed
+- Reaper no longer finalizes a spawn as `orphan_run` while its runner process is alive. Per-attempt `process_exit_code`/`exited_at` bookkeeping is attempt-level, not spawn-level — a live runner mid retry-backoff (or running post-attempt guardrails) owns finalization. Reaper now skips the post-exit branch when `runner_pid_alive`.
+- Spawn exit schema split: attempt exit fields renamed to `last_attempt_exit_code`/`last_attempt_exited_at`, runner terminal intent persisted as `runner_exit_*`, and reaper now reconciles from runner intent. Dead runner without persisted runner intent now orphan-fails instead of inferring success from stale attempt/report artifacts.
+
 ## [0.1.13-rc.2] - 2026-05-17
 
 ### Changed

@@ -692,8 +692,8 @@ class SpawnDetailOutput(BaseModel):
     harness_session_id: str | None = None
     last_message: str | None = None
     log_path: str | None = None
-    exited_at: str | None = None
-    process_exit_code: int | None = None
+    last_attempt_exited_at: str | None = None
+    last_attempt_exit_code: int | None = None
     session_config_dir: str | None = None
 
     def _normalized_report_body(self) -> str | None:
@@ -885,12 +885,12 @@ class SpawnDetailOutput(BaseModel):
             ("TUI pid", None if self.tui_pid is None else str(self.tui_pid)),
             ("Backend port", None if self.backend_port is None else str(self.backend_port)),
             ("Harness session", harness_session_value),
-            ("Exited at", None if active_status else self.exited_at),
+            ("Last attempt exited at", None if active_status else self.last_attempt_exited_at),
             (
-                "Process exit code",
+                "Last attempt exit code",
                 None
-                if (active_status or self.process_exit_code is None)
-                else str(self.process_exit_code),
+                if (active_status or self.last_attempt_exit_code is None)
+                else str(self.last_attempt_exit_code),
             ),
             ("Model", f"{self.model} ({self.harness})"),
             ("Duration", duration_value),
