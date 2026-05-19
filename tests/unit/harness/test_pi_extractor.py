@@ -21,6 +21,18 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
 
 
+def _session_jsonl(session_id: str, cwd: Path, *, extra_lines: str = "") -> str:
+    """Build a JSONL session file content with properly escaped paths.
+
+    Using json.dumps ensures Windows backslash paths are correctly escaped.
+    """
+    line = json.dumps({"type": "session", "id": session_id, "cwd": str(cwd)})
+    result = line + "\n"
+    if extra_lines:
+        result += extra_lines
+    return result
+
+
 class _MemoryArtifactStore:
     def __init__(self, payloads: dict[str, bytes]) -> None:
         self._payloads = payloads
@@ -104,7 +116,7 @@ def test_pi_extractor_detects_session_id_from_pi_session_storage(tmp_path: Path)
     session_dir.mkdir(parents=True)
     session_file = session_dir / "20260516_abc.jsonl"
     session_file.write_text(
-        f'{{"type":"session","id":"ses-from-file","cwd":"{child_cwd}"}}\n{{"type":"message"}}\n',
+        _session_jsonl("ses-from-file", child_cwd, extra_lines='{"type":"message"}\n'),
         encoding="utf-8",
     )
 
@@ -132,7 +144,7 @@ def test_pi_extractor_does_not_return_source_session_for_native_fork(tmp_path: P
     session_dir.mkdir(parents=True)
     session_file = session_dir / "20260516_fork.jsonl"
     session_file.write_text(
-        f'{{"type":"session","id":"ses-fork-child","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-fork-child", child_cwd),
         encoding="utf-8",
     )
 
@@ -160,7 +172,7 @@ def test_pi_extractor_prefers_pi_session_dir_env_override(tmp_path: Path) -> Non
     session_root = tmp_path / "custom-sessions"
     session_root.mkdir(parents=True)
     (session_root / "20260516_custom.jsonl").write_text(
-        f'{{"type":"session","id":"ses-from-session-dir-env","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-from-session-dir-env", child_cwd),
         encoding="utf-8",
     )
 
@@ -187,7 +199,7 @@ def test_pi_extractor_session_dir_override_ignores_stale_sibling_launches(tmp_pa
     parent_session_root.mkdir(parents=True)
     stale_path = parent_session_root / "20260516_stale.jsonl"
     stale_path.write_text(
-        f'{{"type":"session","id":"ses-stale-sibling","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-stale-sibling", child_cwd),
         encoding="utf-8",
     )
     stale_time = time.time() - 3600.0
@@ -195,7 +207,7 @@ def test_pi_extractor_session_dir_override_ignores_stale_sibling_launches(tmp_pa
 
     scoped_launch_root = parent_session_root
     (scoped_launch_root / "20260516_current.jsonl").write_text(
-        f'{{"type":"session","id":"ses-current-launch","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-current-launch", child_cwd),
         encoding="utf-8",
     )
 
@@ -225,7 +237,7 @@ def test_pi_extractor_uses_meridian_pi_sessions_default_root(
     session_root = user_home / "meridian-pi" / "sessions"
     session_root.mkdir(parents=True)
     (session_root / "20260516_default.jsonl").write_text(
-        f'{{"type":"session","id":"ses-from-default-root","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-from-default-root", child_cwd),
         encoding="utf-8",
     )
     monkeypatch.setattr(pi_extractor_module, "get_user_home", lambda: user_home)
@@ -256,7 +268,7 @@ def test_detect_pi_session_id_from_session_files_prefers_new_recent_session_for_
 
     stale_path = session_root / "stale.jsonl"
     stale_path.write_text(
-        f'{{"type":"session","id":"ses-source","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-source", child_cwd),
         encoding="utf-8",
     )
     stale_time = time.time() - 120.0
@@ -265,7 +277,7 @@ def test_detect_pi_session_id_from_session_files_prefers_new_recent_session_for_
     started_at = time.time()
     fresh_path = session_root / "fresh.jsonl"
     fresh_path.write_text(
-        f'{{"type":"session","id":"ses-child","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-child", child_cwd),
         encoding="utf-8",
     )
 
@@ -393,7 +405,7 @@ def test_pi_session_discovery_reports_open_errors_for_recent_flat_files(
     session_root.mkdir(parents=True)
     blocked = session_root / "20260518T010203_blocked.jsonl"
     blocked.write_text(
-        f'{{"type":"session","id":"ses-unreadable","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-unreadable", child_cwd),
         encoding="utf-8",
     )
 
@@ -437,7 +449,7 @@ def test_pi_session_discovery_ignores_expected_id_without_new_match(tmp_path: Pa
     session_root = tmp_path / "sessions"
     session_root.mkdir(parents=True)
     (session_root / "expected.jsonl").write_text(
-        f'{{"type":"session","id":"ses-source","cwd":"{child_cwd}"}}\n',
+        _session_jsonl("ses-source", child_cwd),
         encoding="utf-8",
     )
 

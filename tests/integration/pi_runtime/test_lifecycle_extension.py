@@ -25,6 +25,15 @@ LIFECYCLE_DIST = (
 )
 
 
+def _path_to_esm_url(p: Path) -> str:
+    """Convert a path to a file:// URL suitable for Node ESM import().
+
+    On Windows, Node's ESM loader requires file:// URLs for absolute paths.
+    On POSIX, raw paths work but file:// URLs are also fine.
+    """
+    return p.as_uri()
+
+
 def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
     node = shutil.which("node")
     if node is None:
@@ -38,7 +47,7 @@ def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
     lifecycle_file.touch()
     env = {
         **os.environ,
-        "MERIDIAN_LIFECYCLE_EXTENSION": str(LIFECYCLE_DIST),
+        "MERIDIAN_LIFECYCLE_EXTENSION": _path_to_esm_url(LIFECYCLE_DIST),
         "MERIDIAN_TEST_TMP": str(tmp_path),
         "MERIDIAN_PI_LIFECYCLE_EVENT_FILE": str(lifecycle_file),
     }
