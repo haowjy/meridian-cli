@@ -69,6 +69,131 @@ def _run_node_harness(tmp_path: Path, source: str) -> dict[str, object]:
     return payload
 
 
+def test_lifecycle_sidecar_writer_spawned_role_requires_sidecar_env(tmp_path: Path) -> None:
+    output = _run_node_harness(
+        tmp_path,
+        r'''
+process.env.MERIDIAN_PI_SESSION_ROLE = "spawned";
+delete process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE;
+try {
+  await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
+  process.stdout.write("@@RESULT@@" + JSON.stringify({ ok: true }) + "\n");
+} catch (error) {
+  process.stdout.write(
+    "@@RESULT@@" + JSON.stringify({ ok: false, message: String(error?.message ?? error) }) + "\n"
+  );
+}
+''',
+    )
+
+    assert output["ok"] is False
+    assert "MERIDIAN_PI_LIFECYCLE_EVENT_FILE is required for spawned Pi lifecycle events" in output[
+        "message"
+    ]
+
+
+def test_lifecycle_sidecar_writer_spawned_role_fails_when_sidecar_is_unopenable(
+    tmp_path: Path,
+) -> None:
+    output = _run_node_harness(
+        tmp_path,
+        r'''
+process.env.MERIDIAN_PI_SESSION_ROLE = "spawned";
+process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE = process.env.MERIDIAN_TEST_TMP;
+try {
+  await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
+  process.stdout.write("@@RESULT@@" + JSON.stringify({ ok: true }) + "\n");
+} catch (error) {
+  process.stdout.write(
+    "@@RESULT@@" + JSON.stringify({ ok: false, message: String(error?.message ?? error) }) + "\n"
+  );
+}
+''',
+    )
+
+    assert output["ok"] is False
+    assert "failed to open lifecycle event file" in output["message"]
+
+
+def test_lifecycle_sidecar_writer_primary_role_noops_without_sidecar_env(
+    tmp_path: Path,
+) -> None:
+    output = _run_node_harness(
+        tmp_path,
+        r'''
+process.env.MERIDIAN_PI_SESSION_ROLE = "primary";
+delete process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE;
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const originalStderrWrite = process.stderr.write.bind(process.stderr);
+const stdoutWrites = [];
+const stderrWrites = [];
+process.stdout.write = (chunk, encoding, callback) => {
+  stdoutWrites.push(String(chunk));
+  if (typeof encoding === "function") encoding();
+  if (typeof callback === "function") callback();
+  return true;
+};
+process.stderr.write = (chunk, encoding, callback) => {
+  stderrWrites.push(String(chunk));
+  if (typeof encoding === "function") encoding();
+  if (typeof callback === "function") callback();
+  return true;
+};
+const handlers = new Map();
+const internalHandlers = new Map();
+const sentMessages = [];
+function addHandler(map, name, cb) {
+  const list = map.get(name) ?? [];
+  list.push(cb);
+  map.set(name, list);
+  return () => undefined;
+}
+async function emit(map, name, ...args) {
+  for (const cb of map.get(name) ?? []) await cb(...args);
+}
+const pi = {
+  on(name, cb) { return addHandler(handlers, name, cb); },
+  events: {
+    on(name, cb) { return addHandler(internalHandlers, name, cb); },
+    emit(name, payload) { void emit(internalHandlers, name, payload); },
+  },
+  sendMessage(message, options) { sentMessages.push({ message, options }); },
+};
+const { default: lifecycle } = await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
+lifecycle(pi);
+await emit(
+  internalHandlers,
+  "meridian:subspawn:start",
+  { subspawn_id: "j-primary", wait_policy: "tracked", kind: "bash" },
+);
+await emit(handlers, "agent_end", {});
+await emit(
+  internalHandlers,
+  "meridian:subspawn:end",
+  { subspawn_id: "j-primary", wait_policy: "tracked", kind: "bash", success: true },
+);
+await new Promise((resolve) => setTimeout(resolve, 0));
+process.stdout.write = originalStdoutWrite;
+process.stderr.write = originalStderrWrite;
+originalStdoutWrite(
+  "@@RESULT@@"
+    + JSON.stringify({
+      sentMessages,
+      stdoutLines: stdoutWrites.flatMap((chunk) => chunk.split(/\n/)).filter(Boolean),
+      stderrLines: stderrWrites.flatMap((chunk) => chunk.split(/\n/)).filter(Boolean),
+      lifecycleEvents: [],
+    })
+    + "\n"
+);
+''',
+    )
+
+    assert len(output["sentMessages"]) == 1
+    assert output["stdoutLines"] == []
+    assert output["stderrLines"] == []
+    assert output["lifecycleEvents"] == []
+
+
 def test_lifecycle_child_drain_sends_single_wave_aggregate_notification(
     tmp_path: Path,
 ) -> None:

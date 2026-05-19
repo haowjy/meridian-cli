@@ -73,8 +73,6 @@ _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
 )
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 _PI_CHILD_WAVE_TIMEOUT_MS_ENV: Final[str] = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
-_STDIO_SOURCE_STDOUT: Final[Literal["stdout"]] = "stdout"
-_STDIO_SOURCE_STDERR: Final[Literal["stderr"]] = "stderr"
 _STREAM_LINE_KIND: Final[Literal["line"]] = "line"
 _STREAM_EOF_KIND: Final[Literal["eof"]] = "eof"
 _STREAM_ERROR_KIND: Final[Literal["error"]] = "error"
@@ -285,7 +283,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         stream_queue: asyncio.Queue[
             tuple[
                 Literal["line", "eof", "error"],
-                Literal["stdout", "stderr"],
                 bytes | BaseException | None,
             ]
         ] = asyncio.Queue()
@@ -293,21 +290,10 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             asyncio.create_task(
                 self._read_stdio_stream(
                     process.stdout,
-                    source=_STDIO_SOURCE_STDOUT,
                     queue=stream_queue,
                 )
             )
         ]
-        if process.stderr is not None:
-            stream_tasks.append(
-                asyncio.create_task(
-                    self._read_stdio_stream(
-                        process.stderr,
-                        source=_STDIO_SOURCE_STDERR,
-                        queue=stream_queue,
-                    )
-                )
-            )
         first_stdout_deadline_monotonic: float | None = None
         lifecycle_tailer = self._lifecycle_tailer
         if lifecycle_tailer is not None:
@@ -349,11 +335,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                             poll_wait if timeout_secs is None else min(timeout_secs, poll_wait)
                         )
                     if timeout_secs is None:
-                        stream_kind, source, payload = await stream_queue.get()
+                        stream_kind, payload = await stream_queue.get()
                     elif timeout_secs <= 0:
                         raise TimeoutError
                     else:
-                        stream_kind, source, payload = await asyncio.wait_for(
+                        stream_kind, payload = await asyncio.wait_for(
                             stream_queue.get(),
                             timeout=timeout_secs,
                         )
@@ -401,17 +387,21 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                 if stream_kind == _STREAM_ERROR_KIND:
                     stream_error = payload
                     if self._state not in {"stopping", "stopped"}:
-                        detail = f"Failed to read Pi {source}: {stream_error}"
+                        detail = f"Failed to read Pi stdout: {stream_error}"
                         self._mark_failed(detail)
                         yield self._error_event(detail)
                     break
 
                 if stream_kind == _STREAM_EOF_KIND:
-                    if source == _STDIO_SOURCE_STDERR:
-                        continue
                     return_code = process.returncode
                     if return_code is None:
                         return_code = await process.wait()
+                    if lifecycle_tailer is not None:
+                        for catch_up_event in self._read_lifecycle_sidecar_events(
+                            lifecycle_tailer,
+                            catch_up_to_eof=True,
+                        ):
+                            yield catch_up_event
                     if (
                         self._waiting_for_first_pi_event_after_prompt
                         and not self._first_pi_event_received
@@ -437,9 +427,6 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                     continue
                 line_bytes = payload
                 raw_text = line_bytes.decode("utf-8", errors="replace").rstrip("\n")
-                if source == _STDIO_SOURCE_STDERR:
-                    self._write_stderr_line(line_bytes)
-                    continue
                 if not raw_text.strip():
                     continue
 
@@ -552,12 +539,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def _read_stdio_stream(
         self,
         stream: asyncio.StreamReader,
-        *,
-        source: Literal["stdout", "stderr"],
         queue: asyncio.Queue[
             tuple[
                 Literal["line", "eof", "error"],
-                Literal["stdout", "stderr"],
                 bytes | BaseException | None,
             ]
         ],
@@ -566,23 +550,13 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             while True:
                 line_bytes = await stream.readline()
                 if not line_bytes:
-                    await queue.put((_STREAM_EOF_KIND, source, None))
+                    await queue.put((_STREAM_EOF_KIND, None))
                     return
-                await queue.put((_STREAM_LINE_KIND, source, line_bytes))
+                await queue.put((_STREAM_LINE_KIND, line_bytes))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            await queue.put((_STREAM_ERROR_KIND, source, exc))
-
-    def _write_stderr_line(self, line_bytes: bytes) -> None:
-        stderr_handle = self._stderr_handle
-        if stderr_handle is None:
-            return
-        try:
-            stderr_handle.write(line_bytes)
-            stderr_handle.flush()
-        except Exception:
-            logger.debug("Failed to append stderr line to Pi stderr log", exc_info=True)
+            await queue.put((_STREAM_ERROR_KIND, exc))
 
     def _apply_session_dir_arg(self, command: Sequence[str], session_dir: str) -> list[str]:
         rewritten: list[str] = []

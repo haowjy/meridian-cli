@@ -62,8 +62,12 @@ class PiLifecycleEventTailer:
         return self._parse_chunk(chunk)
 
     def catch_up_to_eof(self) -> list[HarnessEvent]:
-        events = self.read_ready_events()
-        events.extend(self.read_ready_events())
+        events: list[HarnessEvent] = []
+        while True:
+            ready = self.read_ready_events()
+            if not ready:
+                break
+            events.extend(ready)
         return events
 
     def _parse_chunk(self, chunk: bytes) -> list[HarnessEvent]:

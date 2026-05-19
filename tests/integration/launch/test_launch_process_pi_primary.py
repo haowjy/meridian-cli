@@ -800,3 +800,64 @@ def test_run_harness_process_pi_primary_sidecar_lifecycle_is_projected_to_histor
         "meridian.subspawn.start",
         "meridian.lifecycle.parse_error",
     ]
+
+
+@pytest.mark.slow
+def test_run_harness_process_pi_primary_sidecar_ignores_truncated_final_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+    project_root = tmp_path / "pi-primary-sidecar-truncated-line"
+    project_root.mkdir()
+    user_home = tmp_path / "user-home"
+    monkeypatch.setattr("meridian.lib.harness.pi.get_user_home", lambda: user_home)
+    monkeypatch.setattr("meridian.lib.harness.extractors.pi.get_user_home", lambda: user_home)
+    launch_context, harness_registry = _build_pi_primary_launch_context(project_root)
+    monkeypatch.setattr(
+        "meridian.lib.harness.pi.resolve_pi_runtime",
+        lambda **_kwargs: PiRuntimeResolution(
+            binary_path="/usr/local/bin/pi",
+            runtime_kind="path",
+            runtime_version="pi 4.5.6",
+        ),
+    )
+
+    def fake_run_primary_process_with_capture(
+        _command: tuple[str, ...],
+        _cwd: Path,
+        env: dict[str, str],
+        _output_log_path: Path | None,
+        on_child_started: Any = None,
+    ) -> tuple[int, int]:
+        assert callable(on_child_started)
+        on_child_started(902)
+        sidecar_path = Path(env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"])
+        spawn_id = sidecar_path.parent.name
+        sidecar_path.write_text(
+            "\n".join(
+                (
+                    '{"type":"meridian.subspawn.start","schema_version":1,'
+                    f'"parent_spawn_id":"{spawn_id}","correlation_id":"c-1",'
+                    '"subspawn_id":"j-1","emitted_at_ms":1760000000000}',
+                )
+            )
+            + "\n"
+            + '{"type":"meridian.subspawn.end","schema_version":1,'
+            f'"parent_spawn_id":"{spawn_id}","correlation_id":"c-2"',
+            encoding="utf-8",
+        )
+        return (0, 902)
+
+    outcome = run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
+
+    assert outcome.primary_spawn_id is not None
+    spawn_dir = launch_context.runtime_root / "spawns" / str(outcome.primary_spawn_id)
+    runner_history = list(iter_history_events(spawn_dir / "history.jsonl"))
+    assert [event["event_type"] for event in runner_history] == ["meridian.subspawn.start"]

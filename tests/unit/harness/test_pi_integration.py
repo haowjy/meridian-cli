@@ -14,6 +14,7 @@ import pytest
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import ConnectionConfig, ConnectionNotReady, HarnessEvent
+from meridian.lib.harness.connections.pi_lifecycle_file import PiLifecycleEventTailer
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
@@ -57,6 +58,70 @@ def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path)
 
 def _lifecycle_sidecar_path(control_root: Path, spawn_id: SpawnId) -> Path:
     return resolve_spawn_log_dir(control_root, spawn_id) / _PI_LIFECYCLE_EVENT_FILENAME
+
+
+def test_pi_lifecycle_event_tailer_ignores_truncated_final_line(tmp_path: Path) -> None:
+    spawn_id = SpawnId("p-pi-lifecycle-truncated-tailer")
+    lifecycle_path = tmp_path / "pi-lifecycle-events.jsonl"
+    complete_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-lifecycle-truncated-tailer","correlation_id":"j-ok",'
+        '"subspawn_id":"j-ok","emitted_at_ms":1760000000000}'
+    )
+    truncated_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-lifecycle-truncated-tailer","correlation_id":"j-truncated"'
+    )
+    lifecycle_path.write_text(f"{complete_line}\n{truncated_line}", encoding="utf-8")
+
+    tailer = PiLifecycleEventTailer(
+        file_path=lifecycle_path,
+        spawn_id=spawn_id,
+        harness_id=HarnessId.PI.value,
+    )
+    tailer.open()
+    try:
+        events = tailer.catch_up_to_eof()
+    finally:
+        tailer.close()
+
+    assert [event.event_type for event in events] == ["meridian.subspawn.start"]
+    assert events[0].payload["subspawn_id"] == "j-ok"
+
+
+def test_pi_lifecycle_event_tailer_preserves_partial_line_until_newline(tmp_path: Path) -> None:
+    spawn_id = SpawnId("p-pi-lifecycle-split-tailer")
+    lifecycle_path = tmp_path / "pi-lifecycle-events.jsonl"
+    lifecycle_path.touch()
+    event_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-lifecycle-split-tailer","correlation_id":"j-split",'
+        '"subspawn_id":"j-split","emitted_at_ms":1760000000000}'
+    )
+    split_at = event_line.index('"correlation_id"')
+
+    tailer = PiLifecycleEventTailer(
+        file_path=lifecycle_path,
+        spawn_id=spawn_id,
+        harness_id=HarnessId.PI.value,
+    )
+    tailer.open()
+    try:
+        with lifecycle_path.open("ab") as handle:
+            handle.write(event_line[:split_at].encode("utf-8"))
+            handle.flush()
+        assert tailer.read_ready_events() == []
+
+        with lifecycle_path.open("ab") as handle:
+            handle.write(event_line[split_at:].encode("utf-8"))
+            handle.write(b"\n")
+            handle.flush()
+        events = tailer.read_ready_events()
+    finally:
+        tailer.close()
+
+    assert [event.event_type for event in events] == ["meridian.subspawn.start"]
+    assert events[0].payload["subspawn_id"] == "j-split"
 
 
 @pytest.mark.parametrize(
@@ -630,6 +695,176 @@ async def test_pi_rpc_connection_ingests_lifecycle_sidecar_events_and_tees_stder
     assert plain_stderr in stderr_text
     assert lifecycle_line not in stderr_text
     assert lifecycle_line in sidecar_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_flushes_sidecar_events_written_after_agent_end_before_eof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-sidecar-eof-catchup")
+    trailing_lifecycle_line = (
+        '{"type":"meridian.subspawn.end","schema_version":1,'
+        '"parent_spawn_id":"p-pi-sidecar-eof-catchup","correlation_id":"j-eof-end",'
+        '"subspawn_id":"j-eof","status":"succeeded","success":true,'
+        '"emitted_at_ms":1760000000001}'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-sidecar-eof-catchup\"}'\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      sleep 0.05\n"
+        f"      printf '%s\\n' '{trailing_lifecycle_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
+        "      exit 0\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    non_phase_events = [
+        event async for event in connection.events() if not _is_pi_phase_event(event)
+    ]
+    lifecycle_events = [
+        event
+        for event in non_phase_events
+        if event.event_type == "meridian.subspawn.end"
+    ]
+    assert len(lifecycle_events) == 1
+    assert lifecycle_events[0].payload["subspawn_id"] == "j-eof"
+    assert non_phase_events.index(lifecycle_events[0]) > max(
+        index
+        for index, event in enumerate(non_phase_events)
+        if event.event_type == "agent_end"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_ignores_truncated_sidecar_tail_without_parse_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+
+    spawn_id = SpawnId("p-pi-sidecar-truncated-tail")
+    complete_line = (
+        '{"type":"meridian.subspawn.start","schema_version":1,'
+        '"parent_spawn_id":"p-pi-sidecar-truncated-tail","correlation_id":"j-ok-start",'
+        '"subspawn_id":"j-ok","emitted_at_ms":1760000000000}'
+    )
+    truncated_line = (
+        '{"type":"meridian.subspawn.end","schema_version":1,'
+        '"parent_spawn_id":"p-pi-sidecar-truncated-tail","correlation_id":"j-truncated"'
+    )
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-sidecar-truncated-tail\"}'\n"
+        f"printf '%s\\n' '{complete_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
+        f"printf '%s' '{truncated_line}' >> \"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"agent_start\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    sidecar_path = _lifecycle_sidecar_path(tmp_path, spawn_id)
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.touch()
+    monkeypatch.setenv(_PI_LIFECYCLE_EVENT_FILE_ENV, str(sidecar_path))
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    event_iter = connection.events()
+    non_phase_events: list[HarnessEvent] = []
+    while True:
+        event = await _next_non_phase_event(event_iter)
+        non_phase_events.append(event)
+        if event.event_type == "agent_end":
+            break
+    await connection.send_cancel()
+    non_phase_events.extend(
+        [event async for event in event_iter if not _is_pi_phase_event(event)]
+    )
+
+    lifecycle_events = [
+        event
+        for event in non_phase_events
+        if event.event_type == "meridian.subspawn.start"
+    ]
+    assert len(lifecycle_events) == 1
+    assert lifecycle_events[0].payload["subspawn_id"] == "j-ok"
+    assert not any(
+        event.event_type == "meridian.lifecycle.parse_error"
+        for event in non_phase_events
+    )
 
 
 @pytest.mark.asyncio
