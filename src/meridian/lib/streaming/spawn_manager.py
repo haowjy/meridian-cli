@@ -19,6 +19,7 @@ import psutil
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.control_action import (
@@ -60,60 +61,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
 
-_PI_SUBSPAWN_START_EVENTS: frozenset[str] = frozenset(
-    {
-        "meridian_subspawn_start",
-        "meridian.subspawn.start",
-    }
-)
-_PI_CANONICAL_SUBSPAWN_START_EVENTS: frozenset[str] = frozenset({"meridian.subspawn.start"})
-_PI_LEGACY_SUBSPAWN_START_EVENTS: frozenset[str] = frozenset({"meridian_subspawn_start"})
-_PI_SUBSPAWN_END_EVENTS: frozenset[str] = frozenset(
-    {
-        "meridian_subspawn_end",
-        "meridian.subspawn.end",
-    }
-)
-_PI_CANONICAL_SUBSPAWN_END_EVENTS: frozenset[str] = frozenset({"meridian.subspawn.end"})
-_PI_LEGACY_SUBSPAWN_END_EVENTS: frozenset[str] = frozenset({"meridian_subspawn_end"})
-_PI_NOTIFICATION_QUEUED_EVENTS: frozenset[str] = frozenset(
-    {"meridian.notification.queued", "meridian_notification_queued"}
-)
-_PI_NOTIFICATION_DELIVERED_EVENTS: frozenset[str] = frozenset(
-    {"meridian.notification.delivered", "meridian_notification_delivered"}
-)
-_PI_NOTIFICATION_COMPLETED_EVENTS: frozenset[str] = frozenset(
-    {"meridian.notification.completed", "meridian_notification_completed"}
-)
-_PI_NOTIFICATION_FAILED_EVENTS: frozenset[str] = frozenset(
-    {"meridian.notification.failed", "meridian_notification_failed"}
-)
-_PI_CANONICAL_NOTIFICATION_EVENTS: frozenset[str] = frozenset(
-    {
-        "meridian.notification.queued",
-        "meridian.notification.delivered",
-        "meridian.notification.completed",
-        "meridian.notification.failed",
-    }
-)
-_PI_CANONICAL_DEDUP_LIFECYCLE_EVENTS: frozenset[str] = frozenset(
-    {
-        "meridian.subspawn.start",
-        "meridian.subspawn.end",
-        "meridian.notification.queued",
-        "meridian.notification.delivered",
-        "meridian.notification.completed",
-        "meridian.notification.failed",
-        "meridian.quiescence.ready",
-    }
-)
-_PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION = 1
-_PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES: tuple[str, ...] = (
-    "meridian.subspawn.",
-    "meridian.notification.",
-    "meridian.quiescence.",
-)
-_PI_PHASE_EVENT_TYPE = "meridian.pi.lifecycle.phase"
+_PI_CANONICAL_DEDUP_LIFECYCLE_EVENTS = pi_lifecycle.PI_CANONICAL_DEDUP_LIFECYCLE_EVENTS
+_PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES = pi_lifecycle.PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES
+_PI_CANONICAL_NOTIFICATION_EVENTS = pi_lifecycle.PI_CANONICAL_NOTIFICATION_EVENTS
+_PI_CANONICAL_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_CANONICAL_SUBSPAWN_END_EVENTS
+_PI_CANONICAL_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_CANONICAL_SUBSPAWN_START_EVENTS
+_PI_LEGACY_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_LEGACY_SUBSPAWN_END_EVENTS
+_PI_LEGACY_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_LEGACY_SUBSPAWN_START_EVENTS
+_PI_NOTIFICATION_COMPLETED_EVENTS = pi_lifecycle.PI_NOTIFICATION_COMPLETED_EVENTS
+_PI_NOTIFICATION_DELIVERED_EVENTS = pi_lifecycle.PI_NOTIFICATION_DELIVERED_EVENTS
+_PI_NOTIFICATION_FAILED_EVENTS = pi_lifecycle.PI_NOTIFICATION_FAILED_EVENTS
+_PI_NOTIFICATION_QUEUED_EVENTS = pi_lifecycle.PI_NOTIFICATION_QUEUED_EVENTS
+_PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
+_PI_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_SUBSPAWN_END_EVENTS
+_PI_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_SUBSPAWN_START_EVENTS
+_PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION = pi_lifecycle.PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION
+_canonical_lifecycle_label = pi_lifecycle.canonical_pi_lifecycle_label
+_event_label_candidates = pi_lifecycle.pi_lifecycle_event_label_candidates
+_is_legacy_notification_label = pi_lifecycle.is_legacy_pi_notification_label
+_pi_correlation_id = pi_lifecycle.pi_correlation_id
+_pi_notification_failure_error = pi_lifecycle.pi_notification_failure_error
+_pi_notification_id = pi_lifecycle.pi_notification_id
+_pi_subspawn_id = pi_lifecycle.pi_subspawn_id
+_pi_subspawn_pgid = pi_lifecycle.pi_subspawn_pgid
+_pi_subspawn_pid = pi_lifecycle.pi_subspawn_pid
+_pi_wait_policy_is_tracked = pi_lifecycle.pi_wait_policy_is_tracked
+_unsupported_pi_schema_version_error = pi_lifecycle.unsupported_pi_schema_version_error
+
 _PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 1e-6
 
 StartConnectionPort = Callable[
@@ -149,124 +123,6 @@ class SpawnSession:
     control_actions: ControlActionCoordinator | None = None
 
 
-def _normalize_label(raw: str) -> str:
-    return raw.strip().lower().replace("-", "_").replace("/", ".")
-
-
-def _event_label_candidates(event: HarnessEvent) -> tuple[str, ...]:
-    candidates: list[str] = []
-    event_type = _normalize_label(event.event_type)
-    if event_type:
-        candidates.append(event_type)
-    payload_type = event.payload.get("type")
-    if isinstance(payload_type, str):
-        payload_label = _normalize_label(payload_type)
-        if payload_label and payload_label not in candidates:
-            candidates.append(payload_label)
-    return tuple(candidates)
-
-
-def _is_legacy_notification_label(labels: set[str]) -> bool:
-    if labels & _PI_CANONICAL_NOTIFICATION_EVENTS:
-        return False
-    return any(
-        label.startswith("meridian_notification_")
-        and label not in _PI_CANONICAL_NOTIFICATION_EVENTS
-        for label in labels
-    )
-
-
-def _pi_subspawn_id(payload: dict[str, object]) -> str | None:
-    for key in ("subspawn_id", "spawn_id", "child_spawn_id", "id"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if normalized:
-                return normalized
-    return None
-
-
-def _pi_notification_id(payload: dict[str, object]) -> str | None:
-    for key in ("notification_id", "correlation_id", "id"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if normalized:
-                return normalized
-    return None
-
-
-def _pi_wait_policy_is_tracked(payload: dict[str, object]) -> bool:
-    raw_policy = payload.get("wait_policy")
-    if not isinstance(raw_policy, str):
-        return True
-    return raw_policy.strip().lower() != "detached"
-
-
-def _pi_correlation_id(payload: dict[str, object]) -> str | None:
-    value = payload.get("correlation_id")
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    if not normalized:
-        return None
-    return normalized
-
-
-def _coerce_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if value.is_integer():
-            return int(value)
-        return None
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        if raw.startswith(("+", "-")):
-            sign = raw[0]
-            digits = raw[1:]
-            if digits.isdigit():
-                return int(f"{sign}{digits}")
-            return None
-        if raw.isdigit():
-            return int(raw)
-    return None
-
-
-def _pi_subspawn_pid(payload: dict[str, object]) -> int | None:
-    for key in ("pid", "child_pid", "process_id"):
-        value = _coerce_int(payload.get(key))
-        if value is not None:
-            return value
-    return None
-
-
-def _pi_subspawn_pgid(payload: dict[str, object]) -> int | None:
-    for key in ("pgid", "process_group_id"):
-        value = _coerce_int(payload.get(key))
-        if value is not None:
-            return value
-    return None
-
-
-def _pi_notification_failure_error(payload: dict[str, object]) -> str:
-    reason = payload.get("reason")
-    error = payload.get("error")
-    reason_text = reason.strip() if isinstance(reason, str) else ""
-    error_text = error.strip() if isinstance(error, str) else ""
-    if reason_text and error_text:
-        return f"pi_notification_failed:{reason_text}:{error_text}"
-    if reason_text:
-        return f"pi_notification_failed:{reason_text}"
-    if error_text:
-        return f"pi_notification_failed:{error_text}"
-    return "pi_notification_failed"
-
-
 def _pi_notification_timeout_error(
     pending: _PiPendingNotification,
     *,
@@ -297,42 +153,6 @@ def _safe_connection_session_id(connection: object) -> str | None:
     except Exception:
         return None
     return session_id if isinstance(session_id, str) and session_id.strip() else None
-
-
-def _unsupported_pi_schema_version_error(
-    labels: set[str],
-    payload: dict[str, object],
-) -> str | None:
-    canonical_lifecycle_labels = {
-        label
-        for label in labels
-        if label.startswith(_PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES)
-    }
-    if not canonical_lifecycle_labels:
-        return None
-
-    raw_schema_version = payload.get("schema_version")
-    if raw_schema_version is None:
-        return None
-    schema_version = _coerce_int(raw_schema_version)
-    if schema_version is None:
-        return "pi_lifecycle_tracking_invalidated:unsupported_schema_version:unknown"
-    if schema_version != _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION:
-        return (
-            "pi_lifecycle_tracking_invalidated:unsupported_schema_version:"
-            f"{schema_version}"
-        )
-    return None
-
-
-def _canonical_lifecycle_label(
-    labels: set[str],
-    canonical_labels: frozenset[str],
-) -> str:
-    matched = sorted(label for label in labels if label in canonical_labels)
-    if matched:
-        return matched[0]
-    return "unknown"
 
 
 @dataclass

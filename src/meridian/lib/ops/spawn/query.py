@@ -9,11 +9,17 @@ from typing import NamedTuple, cast
 
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
+from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE as _PI_PHASE_EVENT_TYPE
 from meridian.lib.launch.constants import OUTPUT_FILENAME, PI_LIFECYCLE_EVENTS_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import spawn_store
 from meridian.lib.state.liveness import is_process_alive
+from meridian.lib.state.reaper import (
+    SPAWN_HEARTBEAT_WINDOW_SECS,
+    SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS,
+    SPAWN_STARTUP_GRACE_SECS,
+)
 from meridian.lib.state.spawn.model import SpawnRecord
 
 from .models import SpawnDetailOutput
@@ -24,11 +30,8 @@ _SPAWN_REFERENCE_STATUS_FILTERS: dict[str, tuple[str, ...] | None] = {
     "@last-completed": ("succeeded",),
 }
 _RUNNING_LOG_MESSAGE_LIMIT = 120
-_PI_PHASE_EVENT_TYPE = "meridian.pi.lifecycle.phase"
 _ASSISTANT_ROLE_MARKER_RE = re.compile(r"^(assistant|codex)$", re.IGNORECASE)
 _LOG_ROLE_MARKER_RE = re.compile(r"^(user|assistant|codex|exec)$", re.IGNORECASE)
-# Intentionally mirrors reaper's activity/grace windows for nested read-only shaping.
-# Keep these in sync with `meridian.lib.state.reaper` detection behavior.
 _NESTED_READ_ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     "history.jsonl",
@@ -37,9 +40,11 @@ _NESTED_READ_ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "stderr.log",
     "report.md",
 )
-_NESTED_READ_HEARTBEAT_WINDOW_SECS = 120
-_NESTED_READ_STARTUP_GRACE_SECS = 15
-_NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = 5
+_NESTED_READ_HEARTBEAT_WINDOW_SECS = SPAWN_HEARTBEAT_WINDOW_SECS
+_NESTED_READ_STARTUP_GRACE_SECS = SPAWN_STARTUP_GRACE_SECS
+_NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = (
+    SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
+)
 
 
 class _PiCleanupTelemetry(NamedTuple):
