@@ -1,12 +1,5 @@
 """Spawn create-input validation and payload preparation helpers."""
 
-import json
-from difflib import get_close_matches
-from pathlib import Path
-from typing import cast
-
-import structlog
-
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -33,111 +26,7 @@ from ..runtime import (
 )
 from .models import SpawnCreateInput
 
-logger = structlog.get_logger(__name__)
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
-
-
-def _read_local_merged_models(project_root: Path | None) -> dict[str, object]:
-    """Read local mars merged model data without invoking mars."""
-    if project_root is None:
-        return {}
-
-    merged_path = project_root / ".mars" / "models-merged.json"
-    if not merged_path.is_file():
-        return {}
-
-    try:
-        raw = json.loads(merged_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return cast("dict[str, object]", raw)
-
-
-def _model_validation_context(
-    requested_model: str,
-    *,
-    project_root: Path | None,
-) -> str:
-    """Build advisory model context from local merged mars data only."""
-    merged = _read_local_merged_models(project_root)
-    if not merged:
-        return ""
-
-    aliases: list[str] = []
-    candidates: list[str] = []
-    for alias_name, alias_data in merged.items():
-        if not alias_name.strip():
-            continue
-        candidates.append(alias_name.strip())
-        if not isinstance(alias_data, dict):
-            continue
-        typed_alias_data = cast("dict[str, object]", alias_data)
-        model_id = typed_alias_data.get("model")
-        if isinstance(model_id, str) and model_id.strip():
-            normalized_model_id = model_id.strip()
-            aliases.append(f"{alias_name.strip()} -> {normalized_model_id}")
-            candidates.append(normalized_model_id)
-    if not aliases:
-        return ""
-
-    context_lines: list[str] = []
-    context_lines.append(f"Available aliases: {', '.join(sorted(aliases))}")
-
-    suggestion: str | None = None
-    close = get_close_matches(requested_model, candidates, n=1, cutoff=0.5)
-    if close:
-        suggestion = close[0]
-    if suggestion:
-        context_lines.append(f"Did you mean: {suggestion}?")
-    return "\n".join(context_lines)
-
-
-def _validate_requested_model(
-    requested_model: str,
-    *,
-    project_root: str | None,
-    explicit_harness: str | None = None,
-) -> str | None:
-    """Advisory model validation without mars subprocesses.
-
-    Definitive model validation happens later in build_launch_context().
-    This preflight check only uses local .mars/models-merged.json data to
-    provide useful early feedback when available.
-    """
-    normalized = requested_model.strip()
-    if not normalized:
-        return None
-
-    if explicit_harness:
-        # Harness is explicitly specified; allow raw provider/model IDs that
-        # may not match local alias data.
-        return None
-
-    explicit_root = Path(project_root).expanduser().resolve() if project_root else None
-    if explicit_root is None:
-        return None
-
-    merged = _read_local_merged_models(explicit_root)
-    if not merged:
-        return None
-
-    if normalized in merged:
-        return None
-
-    for alias_data in merged.values():
-        if isinstance(alias_data, dict):
-            typed_alias_data = cast("dict[str, object]", alias_data)
-            model_id = typed_alias_data.get("model")
-            if isinstance(model_id, str) and model_id.strip() == normalized:
-                return None
-
-    validation_context = _model_validation_context(normalized, project_root=explicit_root)
-    if validation_context:
-        return f"Model '{normalized}' not found in local configuration.\n{validation_context}"
-
-    return None
 
 
 def validate_create_input(payload: SpawnCreateInput) -> tuple[SpawnCreateInput, str | None]:
@@ -146,13 +35,7 @@ def validate_create_input(payload: SpawnCreateInput) -> tuple[SpawnCreateInput, 
     with capture_library_diagnostics():
         if not payload.prompt.strip() and not payload.files:
             raise ValueError("prompt required: use --prompt/-p or attach at least one --file/-f.")
-
-        model_warning = _validate_requested_model(
-            payload.model,
-            project_root=payload.project_root,
-            explicit_harness=payload.harness,
-        )
-        return payload, model_warning
+        return payload, None
 
 
 def build_create_payload(
