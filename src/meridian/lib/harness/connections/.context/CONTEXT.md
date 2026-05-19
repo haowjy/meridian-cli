@@ -9,11 +9,23 @@ Three concrete transports share the `HarnessConnection[SpecT]` ABC from `base.py
 | `claude_ws.py` | `ClaudeConnection` | stdin/stdout NDJSON | stream-json |
 | `codex_ws.py` | `CodexConnection` | WebSocket | JSON-RPC 2.0 |
 | `opencode_http.py` | `OpenCodeConnection` | HTTP + SSE | REST + event stream |
+| `pi_rpc.py` | `PiRpcConnection` | stdin/stdout JSONL | JSON-RPC (pi rpc mode) |
 
 **`claude_ws.py` is not a WebSocket.** The filename is a historical artifact. The connection
 writes NDJSON to the subprocess stdin and reads NDJSON from stdout. The `--input-format
 stream-json --output-format stream-json` flags select this mode. Do not reach for a WS
 library when reading this file.
+
+**`pi_rpc.py` (`PiRpcConnection`) has two event sources.** Primary events arrive on stdout
+(JSON-RPC protocol). Lifecycle events arrive via a sidecar JSONL file (`pi_lifecycle_file.py`,
+`PiLifecycleEventTailer`). The `events()` async iterator merges both sources: it reads stdout
+lines and polls the sidecar file at 50ms intervals, yielding lifecycle events as they appear.
+Lifecycle events on stdout are silently dropped — the sidecar is authoritative.
+
+**Pi startup requires an initial prompt.** Unlike other harnesses that can start in a
+listening state, spawned Pi RPC sessions must receive an initial user message. The
+connection validates this (`_validate_initial_prompt_requirement()`) and enforces a
+30-second timeout for the first response (`_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS`).
 
 **`opencode_http.py` imports `OPENCODE_CONFIG_CONTENT_ENV` from
 `meridian.lib.launch.workspace_projection`** — a cross-layer dependency on `launch/`
@@ -65,6 +77,24 @@ definition, not per-instance. Fields:
 - `supports_primary_observer` — only Codex and OpenCode
 - `supports_runtime_hitl` — runtime HITL through the connection; only Codex
 - `supported_startup_phases` — frozenset of phase names the adapter can observe
+
+### Pi Lifecycle Sidecar (pi_lifecycle_file.py)
+
+`PiLifecycleEventTailer` provides incremental reading of the JSONL sidecar file
+written by Pi extensions. Key design points:
+
+- **Open/close lifecycle**: `open()` resets offset and partial buffer; `close()` releases
+  the file handle. The tailer is opened in `events()` and closed in `finally`.
+- **Incremental reading**: `read_ready_events()` seeks to the last-known offset and reads
+  new bytes. Partial lines (no trailing newline) are buffered for the next read.
+- **Catch-up at EOF**: `catch_up_to_eof()` reads all remaining events — called at
+  `agent_end` and at process exit to ensure no lifecycle events are missed.
+- **Parse validation**: each line goes through `parse_pi_lifecycle_event_line()` which
+  validates schema version, parent spawn ID, correlation ID, and event type allowlist.
+  Invalid lines become `meridian.lifecycle.parse_error` events on the stream.
+
+The file is prepared by `prepare_pi_lifecycle_event_file()` — creates the file in the
+spawn log dir and sets `PI_LIFECYCLE_EVENT_FILE_ENV` for the Pi subprocess.
 
 ### ServerRequestHandler — Policy Boundary
 
@@ -118,9 +148,38 @@ Codex exposes a WebSocket URL (`ws://`); OpenCode exposes an HTTP URL (`http://`
 The `ObserverEndpoint` dataclass captures which transport and URL so `passthrough/` can
 build the correct TUI attach command without knowing connection internals.
 
+### Pi: Dual Event Sources
+
+`PiRpcConnection.events()` merges two async event sources: stdout lines (primary
+JSON-RPC protocol stream) and the lifecycle sidecar file. The lifecycle sidecar is
+polled at 50ms intervals. The merge uses `asyncio.wait_for` with a unified timeout
+system — stdout reads are interleaved with sidecar polls, and timeouts trigger
+sidecar re-reads. This ensures lifecycle events are delivered promptly without
+starving the stdout stream.
+
+### Pi: First-Event Timeout
+
+A spawned Pi session must respond to the initial prompt within 30 seconds. If no
+stdout event arrives in that window, the connection transitions to `failed` with
+reason `pi_rpc_no_response_after_initial_prompt`. This timeout is independent of
+the drain loop's child-wave timeout — it only applies during the connection startup
+phase, before the Pi process is known to be responsive.
+
+### Pi: Prompt Redaction
+
+PiCLI args may contain secrets (e.g., `--api-key`). `redact_pi_command_for_history()`
+in `pi_lifecycle_events.py` scans argv tokens for secret-bearing flags and replaces
+their values with `<redacted>` before writing to the history log. This is the same
+pattern as Claude's credential redaction but operates on the raw argv list rather
+than the full command string.
+
 ## Related .context/
 
 - [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — drain loop, terminal event semantics,
   SpawnParams accounting
 - [../../passthrough/.context/CONTEXT.md](../../passthrough/.context/CONTEXT.md) — uses
   `ObserverEndpoint` and `ConnectionConfig` for TUI attach sequencing
+- [../../../../pi_runtime/.context/CONTEXT.md](../../../../pi_runtime/.context/CONTEXT.md) — Pi
+  extensions that write the lifecycle sidecar; build pipeline
+- [../../../../pi_runtime/extensions/meridian-lifecycle/.context/CONTEXT.md](../../../../pi_runtime/extensions/meridian-lifecycle/.context/CONTEXT.md) —
+  canonical lifecycle events consumed by the tailer

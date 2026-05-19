@@ -115,8 +115,106 @@ Two policies control terminal event behavior:
 | `SingleTurnDrainPolicy` | any | `terminate=True` |
 | `PersistentDrainPolicy` | `succeeded` | emit `meridian/turn_completed`, continue |
 | `PersistentDrainPolicy` | error/cancel | `terminate=True` |
+| `PiRpcQuiescenceDrainPolicy` | `succeeded` + quiescent | `terminate=True` |
+| `PiRpcQuiescenceDrainPolicy` | `succeeded` + not quiescent | emit `meridian/turn_completed`, continue (waiting for children/notifications) |
+| `PiRpcQuiescenceDrainPolicy` | error/cancel | `terminate=True` |
 
-`SingleTurnDrainPolicy` is the default. Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for chat sessions where the harness stays alive across turns.
+`SingleTurnDrainPolicy` is the default. Pass `PersistentDrainPolicy` to `start_spawn(drain_policy=...)` for chat sessions where the harness stays alive across turns. `PiRpcQuiescenceDrainPolicy` is used automatically for Pi spawned sessions (`is_pi_connection and normalized_pi_session_role == "spawned"`) — no explicit policy param needed.
+
+## Pi RPC Quiescence Drain
+
+The Pi spawned drain loop adds quiescence-gated completion on top of standard event
+processing. The `_drain_loop()` in `spawn_manager.py` contains Pi-specific logic
+behind `pi_quiescence_enabled` / `is_pi_connection` guards.
+
+### 1. Child Subspawn Tracking (`_PiSubspawnTracker`)
+
+`_PiSubspawnTracker` maintains the set of active tracked children by observing
+lifecycle events during the drain loop. It handles:
+
+- **Canonical dedup**: lifecycle events carry `(event_type, correlation_id, subspawn_id)`
+  dedup keys. Duplicate events (same key seen twice) are silently dropped.
+- **Legacy + canonical event support**: accepts both `meridian_subspawn_start` (legacy)
+  and `meridian.subspawn.start` (canonical) event types. Anonymous tracked counts
+  track legacy events without subspawn IDs.
+- **PGID capture**: records process group IDs for cleanup when the wave deadline expires
+  or the Pi process exits with active children.
+- **Lifecycle invalidation**: if a parse error for a canonical lifecycle event arrives
+  with `unsupported_schema_version`, tracking is invalidated and the drain loop fails.
+
+### 2. Notification Timeouts
+
+After children drain, the drain loop may wait for pending notifications to complete.
+Each notification has a deadline derived from `MERIDIAN_PI_NOTIFICATION_TIMEOUT_SECONDS`
+env var. If a notification's deadline expires before `meridian.notification.completed`
+is received, the drain loop fails with `pi_notification_timeout`.
+
+### 3. Child Wave Timeout
+
+When the parent agent becomes idle (`agent_end` → `pi_parent_idle = true`) and tracked
+children exist, a child wave deadline is set (`pi_child_wave_deadline_monotonic`). If
+children don't finish before this deadline:
+
+- The drain loop calls `_terminate_pi_tracked_subspawns()` — sends `SIGTERM` then
+  `SIGKILL` to captured process groups
+- The tracker is cleared (`clear_tracked_children_after_wave_timeout()`)
+- A followup timeout is set (`pi_child_wave_timeout_followup_deadline`) to wait for
+  late-arriving notification events from the Pi process
+- If no notification signals arrive before the followup deadline, the drain loop fails
+  with `pi_child_wave_timeout`
+
+### 4. Micro-Drain
+
+When a terminal event arrives and quiescence is not yet confirmed, the drain loop
+enters micro-drain mode (`pi_quiescence_candidate` is set). Each subsequent event
+extends the micro-drain window. The drain loop checks quiescence after every event.
+When quiescence IS confirmed, the loop terminates with the candidate outcome. This
+handles the race where children/notifications complete between the terminal event
+and the quiescence check.
+
+### Pi Phase Events
+
+The drain loop emits `meridian.pi.lifecycle.phase` events for Pi-specific milestones.
+These are written to `history.jsonl` alongside harness events and are visible in
+`meridian spawn show` output:
+
+| Phase | When |
+|---|---|
+| `drain_started` | Drain loop begins |
+| `session_event_seen` / `session_event_absent` | Pi session event observed (or not) |
+| `waiting_for_tracked_children` | Parent idle, children still running |
+| `waiting_for_notification_completion` | Children done, notifications pending |
+| `pi_child_wave_timeout` | Wave deadline expired |
+| `pi_notification_timeout` | Notification deadline expired |
+| `quiescence_micro_drain_started` | Terminal event seen, polling for quiescence |
+| `quiescence_micro_drain_extended` | Additional event during micro-drain |
+| `quiescence_deferred` | Terminal event but still waiting for children/notifications |
+| `continuation_completed` | Notification resolved on terminal event |
+| `cleanup_running` / `cleanup_completed` / `cleanup_escalated` / `cleanup_failed` | Connection cleanup phases |
+| `finalized` | Drain complete; final status/exit_code/error |
+
+### Pi Tracked Subspawn Cleanup
+
+When the Pi process exits with active tracked children (crashed, killed, or otherwise
+terminated before quiescence), the drain loop's finally block calls
+`_terminate_pi_tracked_subspawns()`:
+
+- **POSIX**: iterates captured process group IDs, sends `SIGTERM` via `os.killpg()`,
+  waits 250ms, confirms liveness with `os.killpg(pgid, 0)`, then sends `SIGKILL` if
+  still alive
+- **Windows/fallback**: uses `terminate_tree_sync()` from
+  `meridian.lib.platform.process_scope.fallback`
+
+If no PGID metadata is available (anonymously tracked children), a warning is logged
+but no cleanup is attempted — the processes are orphaned.
+
+### Pi Connection Cleanup
+
+Pi connections use `quiescent` stop reason from `_cleanup_completed_session()`. The
+Pi process receives an abort message (`{"type": "abort"}`) and has a 5-second grace
+period to exit. If it doesn't exit within that window, the stop is escalated to
+process termination (`SIGTERM` then `SIGKILL`). Cleanup phases are tracked via
+`meridian.pi.lifecycle.phase` events for observability.
 
 ## SignalCanceller
 
@@ -169,3 +267,10 @@ orphan recovery — the two paths don't share scope management logic.
 ## Related KB
 
 - [KB: Codebase Guide](../../../../../../../../.meridian/git/meridian-flow-docs/kb/codebase/guide.md) — streaming module orientation and codebase navigation
+
+## Related .context/
+
+- [../../harness/.context/CONTEXT.md](../../harness/.context/CONTEXT.md) — PiAdapter, quiescence completion model, lifecycle events
+- [../../harness/connections/.context/CONTEXT.md](../../harness/connections/.context/CONTEXT.md) — PiRpcConnection dual-event-source, PiLifecycleEventTailer
+- [../../../pi_runtime/extensions/meridian-lifecycle/.context/CONTEXT.md](../../../pi_runtime/extensions/meridian-lifecycle/.context/CONTEXT.md) — wave/notification system, canonical lifecycle events
+- [../../ops/spawn/.context/CONTEXT.md](../../ops/spawn/.context/CONTEXT.md) — Pi nested stale detection in query.py

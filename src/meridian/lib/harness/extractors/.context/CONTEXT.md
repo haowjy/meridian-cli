@@ -35,6 +35,7 @@ Per-harness session ID key names searched (via `session_from_mapping_with_keys`)
 | Claude | `sessionId`, `session_id` |
 | Codex | `threadId`, `thread_id`, `session_id`, `sessionId`, `sessionID` |
 | OpenCode | `session_id`, `session`, `sessionId`, `id` |
+| Pi | `id` (from `session` event type on stdout) |
 
 `session_from_mapping_with_keys` searches recursively into nested dicts — it will find
 a session ID inside deeply nested payloads. This catches edge cases but can also pick up
@@ -53,6 +54,18 @@ files and matches against `child_cwd`:
   `resolve_rollout_session_id(path, project_root)` to confirm match
 - **OpenCode**: parses log lines matching `service=session ... directory=<cwd> ... created`
   within a 15-minute window of `started_at_epoch`
+- **Pi**: scans `~/.meridian/meridian-pi/sessions/` for `*.jsonl` files whose first line
+  is a `session` event with matching `cwd`. The Pi session directory is configurable via
+  `PI_CODING_AGENT_SESSION_DIR` env var. Session files use `--` as path separator
+  (e.g., `home--jimyao--gitrepos--myproject--.jsonl`). On Windows, cwd matching is
+  case-insensitive.
+
+### Pi Session CWD Encoding
+
+Pi session files encode the cwd as a slugified path: `/` replaced with `--`, with a
+trailing `--`. The extractor normalizes both the launch cwd and the file-derived cwd
+through `_safe_resolve()` → `replace("\\", "/")` → `rstrip("/")` before comparison.
+This ensures path identity comparison works on both POSIX and Windows.
 
 This path is inherently racy — it relies on the harness having written files by the
 time this runs. The 15-minute window for OpenCode and the mtime-sorted scan for Claude/
