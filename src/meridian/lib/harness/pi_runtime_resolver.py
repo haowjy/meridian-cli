@@ -57,6 +57,12 @@ class PiRuntimeResolutionError(RuntimeError):
     """Raised when no compatible installed Pi runtime can be resolved."""
 
 
+@dataclass(frozen=True)
+class _ProbeFailure:
+    kind: Literal["execution", "compatibility"]
+    detail: str
+
+
 def resolve_pi_runtime(*, env: Mapping[str, str], role: PiLaunchRole) -> PiRuntimeResolution:
     """Resolve one compatible Pi runtime binary for a launch role."""
 
@@ -73,10 +79,16 @@ def resolve_pi_runtime(*, env: Mapping[str, str], role: PiLaunchRole) -> PiRunti
 
     compatibility_error = _probe_runtime_compatibility(binary_path=binary_path, env=env, role=role)
     if compatibility_error is not None:
+        if compatibility_error.kind == "execution":
+            raise PiRuntimeResolutionError(
+                f"Unable to execute Pi at {binary_path}: {compatibility_error.detail}.\n"
+                "Verify the binary path and permissions, run `pi --version`, or set "
+                "MERIDIAN_PI_BINARY=/path/to/pi to another Pi binary."
+            )
         raise PiRuntimeResolutionError(
             "Installed Pi at "
             f"{binary_path} is not compatible with Meridian's Pi harness: "
-            f"{compatibility_error}.\n"
+            f"{compatibility_error.detail}.\n"
             "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible "
             "Pi binary."
         )
@@ -93,18 +105,24 @@ def _probe_runtime_compatibility(
     binary_path: str,
     env: Mapping[str, str],
     role: PiLaunchRole,
-) -> str | None:
+) -> _ProbeFailure | None:
     version_probe = _run_probe_command((binary_path, "--version"), env)
-    if isinstance(version_probe, str):
+    if isinstance(version_probe, _ProbeFailure):
         return version_probe
     if version_probe.returncode != 0:
-        return _probe_failure_detail("--version", version_probe)
+        return _ProbeFailure(
+            kind="execution",
+            detail=_probe_failure_detail("--version", version_probe),
+        )
 
     help_probe = _run_probe_command((binary_path, "--help"), env)
-    if isinstance(help_probe, str):
+    if isinstance(help_probe, _ProbeFailure):
         return help_probe
     if help_probe.returncode != 0:
-        return _probe_failure_detail("--help", help_probe)
+        return _ProbeFailure(
+            kind="execution",
+            detail=_probe_failure_detail("--help", help_probe),
+        )
 
     required_groups = (
         _REQUIRED_HELP_SURFACE_TOKEN_GROUPS_SPAWNED
@@ -124,14 +142,17 @@ def _probe_runtime_compatibility(
     ]
     if missing_groups:
         missing = ", ".join(missing_groups)
-        return f"`--help` surface missing required flags: {missing}"
+        return _ProbeFailure(
+            kind="compatibility",
+            detail=f"`--help` surface missing required flags: {missing}",
+        )
 
     return None
 
 
 def _runtime_version(*, binary_path: str, env: Mapping[str, str]) -> str | None:
     completed = _run_probe_command((binary_path, "--version"), env)
-    if isinstance(completed, str):
+    if isinstance(completed, _ProbeFailure):
         return None
     for candidate in (completed.stdout, completed.stderr):
         text = (candidate or "").strip()
@@ -143,7 +164,7 @@ def _runtime_version(*, binary_path: str, env: Mapping[str, str]) -> str | None:
 def _run_probe_command(
     command: Sequence[str],
     env: Mapping[str, str],
-) -> subprocess.CompletedProcess[str] | str:
+) -> subprocess.CompletedProcess[str] | _ProbeFailure:
     try:
         return subprocess.run(
             list(command),
@@ -154,11 +175,11 @@ def _run_probe_command(
             timeout=2.0,
         )
     except FileNotFoundError:
-        return "binary not found"
+        return _ProbeFailure(kind="execution", detail="binary not found")
     except OSError as exc:
-        return str(exc)
+        return _ProbeFailure(kind="execution", detail=str(exc))
     except subprocess.SubprocessError as exc:
-        return str(exc)
+        return _ProbeFailure(kind="execution", detail=str(exc))
 
 
 def _probe_failure_detail(flag: str, probe: subprocess.CompletedProcess[str]) -> str:

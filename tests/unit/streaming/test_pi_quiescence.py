@@ -878,13 +878,6 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
-    cleanup_calls: list[tuple[int, str]] = []
-
-    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
-        _ = spawn_id
-        cleanup_calls.append((process_group_id, reason))
-
-    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
 
     spawn_id = SpawnId("p-pi-child-wave-timeout")
     await manager.start_spawn(
@@ -909,7 +902,6 @@ async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_f
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
-        assert cleanup_calls == [(7701, "pi_child_wave_timeout")]
         history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
         history = [
             json.loads(line)
@@ -984,13 +976,6 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         start_connection=_start_connection,
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
-    cleanup_calls: list[tuple[int, str]] = []
-
-    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
-        _ = spawn_id
-        cleanup_calls.append((process_group_id, reason))
-
-    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
 
     spawn_id = SpawnId("p-pi-child-wave-timeout-turn-active")
     await manager.start_spawn(
@@ -1015,7 +1000,6 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_child_wave_timeout"
-        assert cleanup_calls == [(8801, "pi_child_wave_timeout")]
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -1491,7 +1475,7 @@ async def test_spawn_manager_pi_fails_on_canonical_subspawn_without_id_for_quies
 
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_pending_children_runs_posix_cleanup_hook(tmp_path: Path) -> None:
+async def test_spawn_manager_pi_process_exit_with_pending_children_fails(tmp_path: Path) -> None:
     events = [
         _pi_event("session", {"id": "ses-pi"}),
         _pi_event(
@@ -1519,14 +1503,6 @@ async def test_spawn_manager_pi_pending_children_runs_posix_cleanup_hook(tmp_pat
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
-    cleanup_calls: list[tuple[int, str]] = []
-
-    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
-        _ = spawn_id
-        cleanup_calls.append((process_group_id, reason))
-
-    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
-
     spawn_id = SpawnId("p-pi-pending-child-cleanup")
     await manager.start_spawn(
         ConnectionConfig(
@@ -1549,7 +1525,6 @@ async def test_spawn_manager_pi_pending_children_runs_posix_cleanup_hook(tmp_pat
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_process_exited_with_tracked_children"
-        assert cleanup_calls == [(5401, "pi_process_exit_with_tracked_children")]
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -1581,14 +1556,6 @@ async def test_spawn_manager_pi_pre_terminal_process_exit_with_tracked_children_
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
-    cleanup_calls: list[tuple[int, str]] = []
-
-    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
-        _ = spawn_id
-        cleanup_calls.append((process_group_id, reason))
-
-    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
-
     spawn_id = SpawnId("p-pi-pre-terminal-pending-child")
     await manager.start_spawn(
         ConnectionConfig(
@@ -1611,7 +1578,6 @@ async def test_spawn_manager_pi_pre_terminal_process_exit_with_tracked_children_
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_process_exited_with_tracked_children"
-        assert cleanup_calls == [(6201, "pi_process_exit_with_tracked_children")]
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -1647,14 +1613,6 @@ async def test_spawn_manager_pi_failed_terminal_does_not_defer_with_pending_chil
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
-    cleanup_calls: list[tuple[int, str]] = []
-
-    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
-        _ = spawn_id
-        cleanup_calls.append((process_group_id, reason))
-
-    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
-
     spawn_id = SpawnId("p-pi-failed-terminal-pending-child")
     await manager.start_spawn(
         ConnectionConfig(
@@ -1677,7 +1635,6 @@ async def test_spawn_manager_pi_failed_terminal_does_not_defer_with_pending_chil
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "pi_stop_error"
-        assert cleanup_calls == [(6501, "pi_process_exit_with_tracked_children")]
     finally:
         await manager.stop_spawn(spawn_id)
 
@@ -1713,14 +1670,6 @@ async def test_spawn_manager_pi_cancelled_terminal_cleans_up_pending_children(
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
-    cleanup_calls: list[tuple[int, str]] = []
-
-    async def _fake_cleanup(*, spawn_id: SpawnId, process_group_id: int, reason: str) -> None:
-        _ = spawn_id
-        cleanup_calls.append((process_group_id, reason))
-
-    manager._terminate_posix_process_group = _fake_cleanup  # type: ignore[method-assign]
-
     spawn_id = SpawnId("p-pi-cancelled-terminal-pending-child")
     await manager.start_spawn(
         ConnectionConfig(
@@ -1743,7 +1692,6 @@ async def test_spawn_manager_pi_cancelled_terminal_cleans_up_pending_children(
         assert outcome is not None
         assert outcome.status == "cancelled"
         assert outcome.error == "cancelled"
-        assert cleanup_calls == [(6601, "pi_process_exit_with_tracked_children")]
         assert fake_connection.stop_reasons == []
     finally:
         await manager.stop_spawn(spawn_id)

@@ -24,13 +24,16 @@ from meridian.lib.launch.request import (
 from meridian.lib.state import session_store, spawn_store
 from meridian.lib.state.history import iter_history_events
 from meridian.lib.state.primary_meta import read_primary_metadata
+from tests.support.fixtures import write_minimal_mars_config
+from tests.support.pi_extensions import configure_pi_extension_projection
 
 
-def _write_minimal_mars_config(project_root: Path) -> None:
-    (project_root / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
-        encoding="utf-8",
-    )
+@pytest.fixture(autouse=True)
+def _pi_extension_projection_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
 
 def _build_pi_primary_launch_context(
@@ -41,7 +44,7 @@ def _build_pi_primary_launch_context(
     source_pi_session_dir: str | None = None,
     extra_args: tuple[str, ...] = (),
 ) -> tuple[Any, Any]:
-    _write_minimal_mars_config(project_root)
+    write_minimal_mars_config(project_root)
     harness_registry = get_default_harness_registry()
     config = load_config(project_root)
     launch_context = build_launch_context(

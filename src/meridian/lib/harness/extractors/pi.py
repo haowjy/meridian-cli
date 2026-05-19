@@ -18,6 +18,7 @@ from meridian.lib.harness.common import (
 )
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state.user_paths import get_user_home
 
 from .base import HarnessExtractor
@@ -83,6 +84,17 @@ def _normalize_cwd_for_matching(value: Path | str) -> str | None:
         return None
     normalized = str(_safe_resolve(raw_path)).replace("\\", "/").rstrip("/")
     return normalized or "/"
+
+
+def _cwd_match_key(value: str) -> str:
+    """Return the comparison key for a resolved session cwd.
+
+    Pi session files store the cwd as text. On Windows, the filesystem path
+    identity Meridian is trying to recover is case-insensitive, so compare the
+    normalized text with Windows case-folding rather than exact string equality.
+    """
+
+    return value.casefold() if IS_WINDOWS else value
 
 
 def _session_discovery_result_from_session_files(
@@ -155,7 +167,9 @@ def _session_discovery_result_from_session_files(
         if not isinstance(session_cwd, str):
             continue
         normalized_session_cwd = _normalize_cwd_for_matching(session_cwd)
-        if normalized_session_cwd != normalized_child_cwd:
+        if normalized_session_cwd is None or _cwd_match_key(
+            normalized_session_cwd
+        ) != _cwd_match_key(normalized_child_cwd):
             continue
 
         candidates.append((modified_at, session_id.strip()))

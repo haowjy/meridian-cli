@@ -39,8 +39,17 @@ from meridian.lib.state.paths import (
 )
 from meridian.lib.streaming import spawn_manager as spawn_manager_module
 from tests.support.fakes import FakeClock, FakeHeartbeat
+from tests.support.pi_extensions import configure_pi_extension_projection
 
 streaming_runner_module = importlib.import_module("meridian.lib.launch.streaming_runner")
+
+
+@pytest.fixture(autouse=True)
+def _pi_extension_projection_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configure_pi_extension_projection(monkeypatch, tmp_path)
 
 
 class _FakeControlSocketServer:

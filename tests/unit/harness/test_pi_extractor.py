@@ -303,6 +303,34 @@ def test_pi_session_discovery_requires_matching_cwd(tmp_path: Path) -> None:
     assert discovery.detail.startswith("no_matching_session: cwd=")
 
 
+def test_pi_session_discovery_matches_windows_cwd_case_insensitively(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir(parents=True)
+    child_cwd = Path("C:/Work/Repo")
+    (session_root / "windows.jsonl").write_text(
+        '{"type":"session","id":"ses-windows-case","cwd":"c:/work/repo"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pi_extractor_module, "IS_WINDOWS", True)
+    monkeypatch.setattr(
+        pi_extractor_module,
+        "_safe_resolve",
+        lambda path: path.expanduser(),
+    )
+
+    discovery = detect_pi_session_discovery_from_session_files(
+        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
+        child_cwd=child_cwd,
+        started_at_epoch=time.time(),
+    )
+
+    assert discovery.session_id == "ses-windows-case"
+    assert discovery.discovery == "ok"
+
+
 def test_pi_session_discovery_reports_parse_errors_for_recent_flat_files(
     tmp_path: Path,
 ) -> None:

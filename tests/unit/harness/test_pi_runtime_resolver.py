@@ -229,7 +229,7 @@ def test_resolve_pi_runtime_never_uses_legacy_node_bun_or_meridian_pi_fallbacks(
         ),
     ],
 )
-def test_resolve_pi_runtime_probe_exceptions_report_update_guidance(
+def test_resolve_pi_runtime_probe_exceptions_report_execution_guidance(
     monkeypatch: pytest.MonkeyPatch,
     probe_error: BaseException,
     expected_detail: str,
@@ -255,11 +255,11 @@ def test_resolve_pi_runtime_probe_exceptions_report_update_guidance(
         )
 
     message = str(exc_info.value)
-    assert message.startswith(
-        "Installed Pi at /bad/pi is not compatible with Meridian's Pi harness:"
-    )
+    assert message.startswith("Unable to execute Pi at /bad/pi:")
     assert expected_detail in message
-    assert "Run `pi update`" in message
+    assert "not compatible" not in message
+    assert "Run `pi update`" not in message
+    assert "run `pi --version`" in message
     assert "MERIDIAN_PI_BINARY=/path/to/pi" in message
 
 
@@ -288,8 +288,9 @@ def test_resolve_pi_runtime_nonzero_version_probe_reports_probe_detail(
         )
 
     message = str(exc_info.value)
+    assert message.startswith("Unable to execute Pi at /bad/pi:")
     assert "`--version` probe failed: cannot execute" in message
-    assert "Run `pi update`" in message
+    assert "Run `pi update`" not in message
     assert "MERIDIAN_PI_BINARY=/path/to/pi" in message
 
 

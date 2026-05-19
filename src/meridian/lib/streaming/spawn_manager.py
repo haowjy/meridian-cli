@@ -1578,9 +1578,6 @@ class SpawnManager:
         *,
         reason: str,
     ) -> None:
-        if os.name == "nt":
-            return
-
         pgids = tracker.active_tracked_pgid_candidates()
         if not pgids:
             logger.warning(
@@ -1590,10 +1587,47 @@ class SpawnManager:
             return
 
         for pgid in pgids:
-            await self._terminate_posix_process_group(
-                spawn_id=spawn_id,
-                process_group_id=pgid,
+            if os.name == "nt":
+                await self._terminate_process_tree_fallback(
+                    spawn_id=spawn_id,
+                    process_id=pgid,
+                    reason=reason,
+                )
+            else:
+                await self._terminate_posix_process_group(
+                    spawn_id=spawn_id,
+                    process_group_id=pgid,
+                    reason=reason,
+                )
+
+    async def _terminate_process_tree_fallback(
+        self,
+        *,
+        spawn_id: SpawnId,
+        process_id: int,
+        reason: str,
+    ) -> None:
+        if process_id <= 0:
+            return
+
+        try:
+            from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
+
+            await asyncio.to_thread(
+                terminate_tree_sync,
+                pid=process_id,
+                grace_secs=5.0,
                 reason=reason,
+                scope_id=f"pi-subspawn:{spawn_id}",
+                degraded_fallback=True,
+            )
+        except Exception:
+            logger.warning(
+                "Failed fallback cleanup for Pi child process %d (spawn %s, reason=%s)",
+                process_id,
+                spawn_id,
+                reason,
+                exc_info=True,
             )
 
     async def _terminate_posix_process_group(

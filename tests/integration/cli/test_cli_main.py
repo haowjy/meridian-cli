@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+from tests.support.pi_extensions import configure_pi_extension_projection
+
 cli_main = importlib.import_module("meridian.cli.main")
 primary_launch = importlib.import_module("meridian.cli.primary_launch")
 init_ops = importlib.import_module("meridian.lib.ops.init_ops")
@@ -366,6 +368,7 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
     monkeypatch.setattr(
         cli_main,
         "maybe_bootstrap_runtime_state",
