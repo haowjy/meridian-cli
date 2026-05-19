@@ -407,5 +407,5 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
         pi_extension_projection.resolve_pi_extension_entrypoints()
 
     message = str(exc_info.value)
-    assert "meridian-lifecycle/index.js" in message
+    assert "meridian-lifecycle" in message and "index.js" in message
     assert "Build Pi extensions first" in message

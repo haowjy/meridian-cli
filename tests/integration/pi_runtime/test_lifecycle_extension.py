@@ -104,19 +104,23 @@ try {
 def test_lifecycle_sidecar_writer_spawned_role_fails_when_sidecar_is_unopenable(
     tmp_path: Path,
 ) -> None:
+    # Point at a file inside a non-existent directory — guaranteed unopenable
+    # on both POSIX and Windows.  (Using a directory path itself would fail on
+    # POSIX with EISDIR but may silently succeed on some Windows/Node combos.)
+    unopenable = str(tmp_path / "does-not-exist" / "sidecar.jsonl")
     output = _run_node_harness(
         tmp_path,
-        r'''
+        f'''
 process.env.MERIDIAN_PI_SESSION_ROLE = "spawned";
-process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE = process.env.MERIDIAN_TEST_TMP;
-try {
+process.env.MERIDIAN_PI_LIFECYCLE_EVENT_FILE = {json.dumps(unopenable)};
+try {{
   await import(process.env.MERIDIAN_LIFECYCLE_EXTENSION);
-  process.stdout.write("@@RESULT@@" + JSON.stringify({ ok: true }) + "\n");
-} catch (error) {
+  process.stdout.write("@@RESULT@@" + JSON.stringify({{ ok: true }}) + "\\n");
+}} catch (error) {{
   process.stdout.write(
-    "@@RESULT@@" + JSON.stringify({ ok: false, message: String(error?.message ?? error) }) + "\n"
+    "@@RESULT@@" + JSON.stringify({{ ok: false, message: String(error?.message ?? error) }}) + "\\n"
   );
-}
+}}
 ''',
     )
 

@@ -299,7 +299,7 @@ def test_pi_session_discovery_requires_matching_cwd(tmp_path: Path) -> None:
     session_root = tmp_path / "sessions"
     session_root.mkdir(parents=True)
     (session_root / "other.jsonl").write_text(
-        f'{{"type":"session","id":"ses-other","cwd":"{other_cwd}"}}\n',
+        _session_jsonl("ses-other", other_cwd),
         encoding="utf-8",
     )
 
@@ -379,7 +379,7 @@ def test_pi_session_discovery_ignores_stale_parse_error_files(tmp_path: Path) ->
     stale_time = time.time() - 3600.0
     os.utime(stale_path, (stale_time, stale_time))
     (session_root / "other.jsonl").write_text(
-        f'{{"type":"session","id":"ses-other","cwd":"{other_cwd}"}}\n',
+        _session_jsonl("ses-other", other_cwd),
         encoding="utf-8",
     )
 

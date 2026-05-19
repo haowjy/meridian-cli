@@ -255,7 +255,8 @@ def test_resolve_pi_runtime_probe_exceptions_report_execution_guidance(
         )
 
     message = str(exc_info.value)
-    assert message.startswith("Unable to execute Pi at /bad/pi:")
+    expected_path = str(Path("/bad/pi"))
+    assert message.startswith(f"Unable to execute Pi at {expected_path}:")
     assert expected_detail in message
     assert "not compatible" not in message
     assert "Run `pi update`" not in message
@@ -276,7 +277,8 @@ def test_resolve_pi_runtime_nonzero_version_probe_reports_probe_detail(
         timeout: float,
     ) -> subprocess.CompletedProcess[str]:
         _ = check, capture_output, text, env, timeout
-        assert command == ["/bad/pi", "--version"]
+        expected_path = str(Path("/bad/pi"))
+        assert command == [expected_path, "--version"]
         return _completed(command, returncode=127, stderr="cannot execute")
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
@@ -288,7 +290,8 @@ def test_resolve_pi_runtime_nonzero_version_probe_reports_probe_detail(
         )
 
     message = str(exc_info.value)
-    assert message.startswith("Unable to execute Pi at /bad/pi:")
+    expected_path = str(Path("/bad/pi"))
+    assert message.startswith(f"Unable to execute Pi at {expected_path}:")
     assert "`--version` probe failed: cannot execute" in message
     assert "Run `pi update`" not in message
     assert "MERIDIAN_PI_BINARY=/path/to/pi" in message
@@ -324,8 +327,9 @@ def test_resolve_pi_runtime_incompatible_help_surface_reports_update_guidance(
     with pytest.raises(PiRuntimeResolutionError) as exc_info:
         resolve_pi_runtime(env={"PATH": "/test/path"}, role="spawned")
 
+    expected_path = str(Path("/tmp/pi"))
     assert str(exc_info.value) == (
-        "Installed Pi at /tmp/pi is not compatible with Meridian's Pi harness: "
+        f"Installed Pi at {expected_path} is not compatible with Meridian's Pi harness: "
         "`--help` surface missing required flags: --mode, rpc, --append-system-prompt, "
         "--session, --fork, --session-dir/PI_CODING_AGENT_SESSION_DIR, --no-extensions, "
         "--no-skills, "
@@ -373,4 +377,4 @@ def test_resolve_pi_runtime_accepts_comma_separated_help_aliases(
         role="spawned",
     )
 
-    assert resolved.binary_path == "/tmp/pi"
+    assert resolved.binary_path == str(Path("/tmp/pi"))
