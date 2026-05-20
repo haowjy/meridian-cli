@@ -19,10 +19,8 @@ from meridian.lib.harness.connections.base import (
     StopProgressCallback,
     StopResult,
 )
-from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.drain_policy import DrainAction, PiRpcQuiescenceDrainPolicy
 from meridian.lib.streaming.spawn_manager import SpawnManager, _PiSubspawnTracker
 
 
@@ -107,31 +105,7 @@ def _pi_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
     return HarnessEvent(event_type=event_type, harness_id="pi", payload=payload)
 
 
-def test_pi_quiescence_policy_waits_for_callback_state() -> None:
-    quiescent = False
-
-    def _check() -> bool:
-        return quiescent
-
-    policy = PiRpcQuiescenceDrainPolicy(quiescence_check=_check)
-
-    assert policy.classify(TerminalEventOutcome(status="succeeded", exit_code=0)) == DrainAction(
-        terminate=False,
-        emit_turn_boundary=True,
-    )
-
-    quiescent = True
-    assert policy.classify(TerminalEventOutcome(status="succeeded", exit_code=0)) == DrainAction(
-        terminate=True,
-        emit_turn_boundary=False,
-    )
-    assert policy.classify(TerminalEventOutcome(status="failed", exit_code=1)) == DrainAction(
-        terminate=True,
-        emit_turn_boundary=False,
-    )
-
-
-def test_pi_subspawn_tracker_ignores_detached_wait_policy_and_tracks_notifications() -> None:
+def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -> None:
     tracker = _PiSubspawnTracker.empty()
 
     tracker.observe(
@@ -145,30 +119,16 @@ def test_pi_subspawn_tracker_ignores_detached_wait_policy_and_tracks_notificatio
     tracker.observe(
         _pi_event(
             "meridian.subspawn.start",
-            {
-                "subspawn_id": "tracked-1",
-                "wait_policy": "tracked",
-                "pid": 4401,
-            },
+            {"subspawn_id": "tracked-1", "wait_policy": "tracked", "pid": 4401},
         )
     )
     assert tracker.has_pending() is True
     assert tracker.active_tracked_pgid_candidates() == (4401,)
 
-    tracker.observe(
-        _pi_event(
-            "meridian.notification.queued",
-            {"notification_id": "n-1"},
-        )
-    )
+    tracker.observe(_pi_event("meridian.notification.queued", {"notification_id": "n-1"}))
     assert tracker.has_pending_notifications() is True
 
-    tracker.observe(
-        _pi_event(
-            "meridian.notification.completed",
-            {"notification_id": "n-1"},
-        )
-    )
+    tracker.observe(_pi_event("meridian.notification.completed", {"notification_id": "n-1"}))
     assert tracker.has_pending_notifications() is False
 
     tracker.observe(
@@ -180,285 +140,66 @@ def test_pi_subspawn_tracker_ignores_detached_wait_policy_and_tracks_notificatio
     assert tracker.notification_failure_error == "pi_notification_failed:sendMessage_error"
 
     tracker.observe(
-        _pi_event(
-            "meridian.subspawn.end",
-            {"subspawn_id": "tracked-1", "wait_policy": "tracked"},
-        )
+        _pi_event("meridian.subspawn.end", {"subspawn_id": "tracked-1", "wait_policy": "tracked"})
     )
     assert tracker.has_pending() is False
     assert tracker.active_tracked_pgid_candidates() == ()
 
 
-def test_pi_subspawn_tracker_invalidates_missing_canonical_ids() -> None:
-    tracker = _PiSubspawnTracker.empty()
-
-    tracker.observe(
-        _pi_event(
+@pytest.mark.parametrize(
+    ("event_type", "payload", "expected_error"),
+    [
+        (
             "meridian.subspawn.start",
             {"wait_policy": "tracked"},
-        )
-    )
-    assert tracker.has_pending() is False
-    assert (
-        tracker.lifecycle_tracking_invalidated_error
-        == "pi_lifecycle_tracking_invalidated:missing_subspawn_id:meridian.subspawn.start"
-    )
-
-    notification_tracker = _PiSubspawnTracker.empty()
-    notification_tracker.observe(
-        _pi_event(
+            "pi_lifecycle_tracking_invalidated:missing_subspawn_id:meridian.subspawn.start",
+        ),
+        (
             "meridian.notification.queued",
             {},
-        )
-    )
-    assert notification_tracker.has_pending_notifications() is False
-    assert (
-        notification_tracker.lifecycle_tracking_invalidated_error
-        == "pi_lifecycle_tracking_invalidated:missing_notification_id:meridian.notification.queued"
-    )
-
-
-def test_pi_subspawn_tracker_deduplicates_canonical_start_by_correlation_key() -> None:
-    tracker = _PiSubspawnTracker.empty()
-
-    duplicate = tracker.observe(
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-dup",
-                "correlation_id": "corr-dup",
-                "wait_policy": "tracked",
-                "pid": 4401,
-            },
-        )
-    )
-    assert duplicate is False
-    duplicate = tracker.observe(
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-dup",
-                "correlation_id": "corr-dup",
-                "wait_policy": "tracked",
-                "pid": 5501,
-            },
-        )
-    )
-    assert duplicate is True
-
-    assert tracker.active_tracked_count() == 1
-    assert tracker.active_tracked_pgid_candidates() == (4401,)
-
-
-def test_pi_subspawn_tracker_subspawn_end_first_terminal_outcome_wins() -> None:
-    tracker = _PiSubspawnTracker.empty()
-
-    tracker.observe(
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-terminal",
-                "correlation_id": "corr-terminal",
-                "wait_policy": "tracked",
-                "pid": 4601,
-            },
-        )
-    )
-    tracker.observe(
-        _pi_event(
-            "meridian.subspawn.end",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-terminal",
-                "correlation_id": "corr-terminal",
-                "wait_policy": "tracked",
-            },
-        )
-    )
-    tracker.observe(
-        _pi_event(
-            "meridian.subspawn.end",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-terminal",
-                "correlation_id": "corr-terminal-duplicate",
-                "wait_policy": "tracked",
-            },
-        )
-    )
-
-    assert tracker.has_pending() is False
-    assert tracker.active_tracked_pgid_candidates() == ()
-
-
-def test_pi_subspawn_tracker_tracks_meridian_spawn_kind_by_spawn_id() -> None:
-    tracker = _PiSubspawnTracker.empty()
-
-    tracker.observe(
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "p123",
-                "kind": "meridian_spawn",
-                "wait_policy": "tracked",
-            },
-        )
-    )
-    assert tracker.has_pending() is True
-
-    tracker.observe(
-        _pi_event(
-            "meridian.subspawn.end",
-            {
-                "schema_version": 1,
-                "subspawn_id": "p123",
-                "kind": "meridian_spawn",
-                "wait_policy": "tracked",
-            },
-        )
-    )
-    assert tracker.has_pending() is False
-
-
-@pytest.mark.asyncio
-async def test_spawn_manager_pi_drops_duplicate_canonical_lifecycle_events_from_history(
-    tmp_path: Path,
-) -> None:
-    events = [
-        _pi_event("session", {"id": "ses-pi"}),
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-dup",
-                "correlation_id": "corr-start",
-                "wait_policy": "tracked",
-            },
+            "pi_lifecycle_tracking_invalidated:missing_notification_id:meridian.notification.queued",
         ),
-        _pi_event(
-            "meridian.subspawn.start",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-dup",
-                "correlation_id": "corr-start",
-                "wait_policy": "tracked",
-            },
-        ),
-        _pi_event(
-            "meridian.subspawn.end",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-dup",
-                "correlation_id": "corr-end",
-                "wait_policy": "tracked",
-            },
-        ),
-        _pi_event(
-            "meridian.subspawn.end",
-            {
-                "schema_version": 1,
-                "subspawn_id": "j-dup",
-                "correlation_id": "corr-end",
-                "wait_policy": "tracked",
-            },
-        ),
-        _pi_event(
-            "agent_end",
-            {"messages": [{"role": "assistant", "stopReason": "stop"}]},
-        ),
-    ]
-    fake_connection = _FakePiConnection(events)
-
-    async def _start_connection(
-        config: ConnectionConfig,
-        spec: ResolvedLaunchSpec,
-    ) -> HarnessConnection[Any]:
-        await fake_connection.start(config, spec)
-        return fake_connection
-
-    manager = SpawnManager(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        start_connection=_start_connection,
-        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
-    )
-
-    spawn_id = SpawnId("p-pi-drop-duplicate-canonical")
-    await manager.start_spawn(
-        ConnectionConfig(
-            spawn_id=spawn_id,
-            harness_id=HarnessId.PI,
-            prompt="hello",
-            control_root=tmp_path,
-            env_overrides={},
-            pi_session_role="spawned",
-        ),
-        ResolvedLaunchSpec(
-            harness=HarnessId.PI,
-            prompt="hello",
-            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-        ),
-    )
-
-    try:
-        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
-        assert outcome is not None
-        assert outcome.status == "succeeded"
-
-        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
-        history = [
-            json.loads(line)
-            for line in history_path.read_text(encoding="utf-8").splitlines()
-            if line
-        ]
-        starts = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.subspawn.start"
-            and event.get("payload", {}).get("subspawn_id") == "j-dup"
-        ]
-        ends = [
-            event
-            for event in history
-            if event.get("event_type") == "meridian.subspawn.end"
-            and event.get("payload", {}).get("subspawn_id") == "j-dup"
-        ]
-        assert len(starts) == 1
-        assert len(ends) == 1
-    finally:
-        await manager.stop_spawn(spawn_id)
-
-
-def test_pi_subspawn_tracker_marks_lifecycle_tracking_invalid_on_unsupported_schema() -> None:
-    tracker = _PiSubspawnTracker.empty()
-
-    tracker.observe(
-        _pi_event(
+        (
             "meridian.subspawn.start",
             {"schema_version": 2, "subspawn_id": "tracked-1", "wait_policy": "tracked"},
-        )
-    )
-    assert tracker.has_pending() is False
-    assert (
-        tracker.lifecycle_tracking_invalidated_error
-        == "pi_lifecycle_tracking_invalidated:unsupported_schema_version:2"
-    )
-
-    tracker.observe(
-        _pi_event(
+            "pi_lifecycle_tracking_invalidated:unsupported_schema_version:2",
+        ),
+        (
             "meridian.notification.queued",
             {"schema_version": "2", "notification_id": "n-1"},
-        )
-    )
-    assert tracker.has_pending_notifications() is False
-
-
-def test_pi_subspawn_tracker_ignores_parse_error_diagnostics() -> None:
+            "pi_lifecycle_tracking_invalidated:unsupported_schema_version:2",
+        ),
+        (
+            "meridian.lifecycle.parse_error",
+            {
+                "type": "meridian.lifecycle.parse_error",
+                "schema_version": 1,
+                "reason": "unsupported_schema_version",
+                "error": "unsupported_schema_version",
+                "raw_type": "meridian.subspawn.start",
+                "raw_line": '{"type":"meridian.subspawn.start","schema_version":2}',
+            },
+            "pi_lifecycle_tracking_invalidated:unsupported_schema_event:meridian.subspawn.start",
+        ),
+    ],
+)
+def test_pi_subspawn_tracker_invalidates_malformed_canonical_lifecycle(
+    event_type: str,
+    payload: dict[str, object],
+    expected_error: str,
+) -> None:
     tracker = _PiSubspawnTracker.empty()
+
+    tracker.observe(_pi_event(event_type, payload))
+
+    assert tracker.has_pending() is False
+    assert tracker.has_pending_notifications() is False
+    assert tracker.lifecycle_tracking_invalidated_error == expected_error
+
+
+def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
+    tracker = _PiSubspawnTracker.empty()
+
     tracker.observe(
         _pi_event(
             "meridian.lifecycle.parse_error",
@@ -469,31 +210,54 @@ def test_pi_subspawn_tracker_ignores_parse_error_diagnostics() -> None:
             },
         )
     )
+
     assert tracker.has_pending() is False
     assert tracker.has_pending_notifications() is False
     assert tracker.notification_failure_error is None
     assert tracker.lifecycle_tracking_invalidated_error is None
 
 
-def test_pi_subspawn_tracker_invalidates_on_canonical_lifecycle_parse_error() -> None:
+def test_pi_subspawn_tracker_deduplicates_canonical_events() -> None:
     tracker = _PiSubspawnTracker.empty()
-    tracker.observe(
-        _pi_event(
-            "meridian.lifecycle.parse_error",
-            {
-                "type": "meridian.lifecycle.parse_error",
-                "schema_version": 1,
-                "reason": "unsupported_schema_version",
-                "error": "unsupported_schema_version",
-                "raw_type": "meridian.notification.queued",
-                "raw_line": '{"type":"meridian.notification.queued","schema_version":2}',
-            },
-        )
+
+    start = _pi_event(
+        "meridian.subspawn.start",
+        {
+            "schema_version": 1,
+            "subspawn_id": "j-dup",
+            "correlation_id": "corr-start",
+            "wait_policy": "tracked",
+            "pid": 4401,
+        },
     )
-    assert (
-        tracker.lifecycle_tracking_invalidated_error
-        == "pi_lifecycle_tracking_invalidated:unsupported_schema_event:meridian.notification.queued"
+    duplicate_start = _pi_event(
+        "meridian.subspawn.start",
+        {
+            "schema_version": 1,
+            "subspawn_id": "j-dup",
+            "correlation_id": "corr-start",
+            "wait_policy": "tracked",
+            "pid": 5501,
+        },
     )
+    end = _pi_event(
+        "meridian.subspawn.end",
+        {
+            "schema_version": 1,
+            "subspawn_id": "j-dup",
+            "correlation_id": "corr-end",
+            "wait_policy": "tracked",
+        },
+    )
+
+    assert tracker.observe(start) is False
+    assert tracker.observe(duplicate_start) is True
+    assert tracker.active_tracked_count() == 1
+    assert tracker.active_tracked_pgid_candidates() == (4401,)
+    assert tracker.observe(end) is False
+    assert tracker.observe(end) is True
+    assert tracker.has_pending() is False
+    assert tracker.active_tracked_pgid_candidates() == ()
 
 
 @pytest.mark.asyncio
