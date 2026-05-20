@@ -6,6 +6,7 @@ from pathlib import Path
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.catalog.catalog_session import CatalogSession
+from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.spawn.models import SpawnCreateInput
@@ -16,7 +17,7 @@ from tests.support.fixtures import write_agent, write_minimal_mars_config
 class _FakeBundleResult:
     model: str
     model_token: str
-    harness: str
+    harness: HarnessId
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
@@ -46,7 +47,7 @@ def test_spawn_create_dry_run_threads_bundle_model_selection(
         lambda request, *, harness_registry: _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="opencode",
+            harness=HarnessId.OPENCODE,
             harness_model="openai/gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(),
             provenance={"model_source": "cli", "harness_source": "provider"},
@@ -96,7 +97,7 @@ def test_spawn_create_dry_run_bundle_path_has_no_compiler_fallback_chain(
         lambda request, *, harness_registry: _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="codex",
+            harness=HarnessId.CODEX,
             harness_model="gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(effort="high"),
             provenance={"model_source": "profile-default", "harness_source": "provider"},

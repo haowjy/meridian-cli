@@ -55,7 +55,7 @@ class _BundlePromptDocument:
 class _BundleResult:
     model: str
     model_token: str
-    harness: str
+    harness: HarnessId
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
@@ -131,6 +131,58 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
             )
         )
     return tuple(documents)
+
+
+def _bundle_schema_error(message: str) -> RuntimeError:
+    return RuntimeError(
+        f"Mars launch-bundle returned invalid schema: {message}. "
+        f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+    )
+
+
+def _required_object_field(payload: dict[str, object], field_name: str) -> dict[str, object]:
+    raw_value = payload.get(field_name)
+    if not isinstance(raw_value, dict):
+        raise _bundle_schema_error(f"'{field_name}' must be an object")
+    return cast("dict[str, object]", raw_value)
+
+
+def _optional_object_field(payload: dict[str, object], field_name: str) -> dict[str, object]:
+    if field_name not in payload or payload[field_name] is None:
+        return {}
+    raw_value = payload[field_name]
+    if not isinstance(raw_value, dict):
+        raise _bundle_schema_error(f"'{field_name}' must be an object when present")
+    return cast("dict[str, object]", raw_value)
+
+
+def _parse_harness_id(
+    raw_harness: object,
+    *,
+    harness_registry: HarnessRegistry,
+) -> HarnessId:
+    harness_token = _normalize_str(raw_harness)
+    if not harness_token:
+        raise _bundle_schema_error("routing.harness is empty")
+    try:
+        harness_id = HarnessId(harness_token)
+    except ValueError as exc:
+        supported = ", ".join(str(harness) for harness in harness_registry.ids())
+        raise ValueError(
+            "Mars launch-bundle returned unsupported routing.harness "
+            f"'{harness_token}'. Available harnesses: {supported}. "
+            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+        ) from exc
+    try:
+        harness_registry.get_subprocess_harness(harness_id)
+    except (KeyError, TypeError) as exc:
+        supported = ", ".join(str(harness) for harness in harness_registry.ids())
+        raise ValueError(
+            "Mars launch-bundle returned unavailable routing.harness "
+            f"'{harness_token}'. Available harnesses: {supported}. "
+            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+        ) from exc
+    return harness_id
 
 
 def _build_bundle_command(request: BundleRequest) -> list[str]:
@@ -213,27 +265,29 @@ def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = No
     )
 
 
-def _parse_bundle_payload(payload: dict[str, object]) -> _BundleResult:
+def _parse_bundle_payload(
+    payload: dict[str, object],
+    *,
+    harness_registry: HarnessRegistry,
+) -> _BundleResult:
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
-        raise RuntimeError("Mars launch-bundle returned invalid schema: missing numeric 'version'.")
+        raise _bundle_schema_error("missing numeric 'version'")
     if version != _SUPPORTED_BUNDLE_SCHEMA_VERSION:
         raise RuntimeError(
             "Mars launch-bundle schema version "
             f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}."
         )
 
-    routing = cast("dict[str, object]", payload.get("routing") or {})
+    routing = _required_object_field(payload, "routing")
     model = _normalize_str(routing.get("model"))
     if not model:
-        raise RuntimeError("Mars launch-bundle returned an empty routing.model.")
+        raise _bundle_schema_error("routing.model is empty")
     model_token = _normalize_str(routing.get("model_token")) or model
-    harness = _normalize_str(routing.get("harness"))
-    if not harness:
-        raise RuntimeError("Mars launch-bundle returned an empty routing.harness.")
+    harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
     harness_model = _normalize_str(routing.get("harness_model")) or None
 
-    execution_policy_payload = cast("dict[str, object]", payload.get("execution_policy") or {})
+    execution_policy_payload = _required_object_field(payload, "execution_policy")
     execution_policy = ResolvedExecutionPolicy.model_validate(
         {
             "effort": execution_policy_payload.get("effort"),
@@ -245,9 +299,9 @@ def _parse_bundle_payload(payload: dict[str, object]) -> _BundleResult:
         }
     )
 
-    prompt_surface = cast("dict[str, object]", payload.get("prompt_surface") or {})
-    tools = cast("dict[str, object]", payload.get("tools") or {})
-    skills_metadata = cast("dict[str, object]", payload.get("skills_metadata") or {})
+    prompt_surface = _optional_object_field(payload, "prompt_surface")
+    tools = _optional_object_field(payload, "tools")
+    skills_metadata = _optional_object_field(payload, "skills_metadata")
 
     return _BundleResult(
         model=model,
@@ -277,7 +331,6 @@ def request_and_resolve(
 ) -> _BundleResult:
     """Resolve launch routing and execution policy through Mars launch-bundle."""
 
-    _ = harness_registry
     command = _build_bundle_command(request)
     try:
         result = subprocess.run(
@@ -316,7 +369,7 @@ def request_and_resolve(
     if not isinstance(payload_obj, dict):
         raise RuntimeError("Mars launch-bundle returned a non-object JSON payload.")
     payload = cast("dict[str, object]", payload_obj)
-    return _parse_bundle_payload(payload)
+    return _parse_bundle_payload(payload, harness_registry=harness_registry)
 
 
 def _map_provenance_level(value: str | None) -> ProvenanceLevel:

@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.bundle_adapter import BundleRequest, request_and_resolve
 
@@ -119,6 +120,7 @@ def test_request_and_resolve_builds_expected_mars_command(monkeypatch: pytest.Mo
     ]
     assert bundle.model == "gpt-5.5"
     assert bundle.model_token == "gpt55"
+    assert bundle.harness is HarnessId.OPENCODE
     assert bundle.harness_model == "openai/gpt-5.5"
     assert bundle.prompt_surface_inventory_prompt == "# Meridian Agents"
     assert bundle.tools_allowed == ("read",)
@@ -229,7 +231,7 @@ def test_request_and_resolve_reports_missing_routing_model(monkeypatch: pytest.M
         lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
     )
 
-    with pytest.raises(RuntimeError, match=r"empty routing\.model"):
+    with pytest.raises(RuntimeError, match=r"routing\.model is empty"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -247,7 +249,60 @@ def test_request_and_resolve_reports_missing_routing_harness(
         lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
     )
 
-    with pytest.raises(RuntimeError, match=r"empty routing\.harness"):
+    with pytest.raises(RuntimeError, match=r"routing\.harness is empty"):
+        request_and_resolve(
+            BundleRequest(agent=None, project_root=Path("/tmp/project")),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value", "message"),
+    [
+        ("routing", [], r"'routing' must be an object"),
+        ("execution_policy", "not-an-object", r"'execution_policy' must be an object"),
+        ("prompt_surface", "bad", r"'prompt_surface' must be an object when present"),
+        ("tools", False, r"'tools' must be an object when present"),
+        ("skills_metadata", ["bad"], r"'skills_metadata' must be an object when present"),
+    ],
+)
+def test_request_and_resolve_reports_invalid_nested_bundle_sections(
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    field_value: object,
+    message: str,
+) -> None:
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+    payload = _valid_bundle_payload()
+    payload[field_name] = field_value
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        request_and_resolve(
+            BundleRequest(agent=None, project_root=Path("/tmp/project")),
+            harness_registry=get_default_harness_registry(),
+        )
+
+
+def test_request_and_resolve_reports_unknown_routing_harness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+    payload = _valid_bundle_payload()
+    payload["routing"] = {
+        "model": "gpt-5.5",
+        "model_token": "gpt55",
+        "harness": "definitely-not-a-harness",
+    }
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
+    )
+
+    with pytest.raises(ValueError, match="unsupported routing\\.harness"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),

@@ -28,7 +28,7 @@ from meridian.lib.launch.request import LaunchCompositionSurface
 class _FakeBundleResult:
     model: str
     model_token: str
-    harness: str
+    harness: HarnessId
     harness_model: str | None
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
@@ -194,7 +194,7 @@ def test_spawn_prepare_uses_bundle_adapter_not_catalog_resolve_model(
         return _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="opencode",
+            harness=HarnessId.OPENCODE,
             harness_model="openai/gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(effort="medium"),
             provenance={"model_source": "cli", "harness_source": "cli", "effort_source": "cli"},
@@ -248,7 +248,7 @@ def test_spawn_prepare_overlay_policy_applies_after_bundle(
         lambda request, *, harness_registry: _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="codex",
+            harness=HarnessId.CODEX,
             harness_model="gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(effort="low", sandbox="read-only"),
             provenance={"model_source": "profile-default", "harness_source": "provider"},
@@ -297,7 +297,7 @@ def test_spawn_prepare_cli_policy_beats_agent_overlay(
         lambda request, *, harness_registry: _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="codex",
+            harness=HarnessId.CODEX,
             harness_model="gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(effort="medium"),
             provenance={"effort_source": "cli", "harness_source": "provider"},
@@ -330,7 +330,7 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
         frontmatter="name: reviewer\nmodel: gpt55\n",
     )
 
-    captured: dict[str, object] = {}
+    captured_requests: list[bundle_adapter.BundleRequest] = []
 
     def fake_request(
         request: bundle_adapter.BundleRequest,
@@ -338,13 +338,24 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
         harness_registry: object,
     ) -> _FakeBundleResult:
         _ = harness_registry
-        captured["request"] = request
+        captured_requests.append(request)
+        if len(captured_requests) == 1:
+            assert request.model_override is None
+            assert request.harness_override is None
+            return _FakeBundleResult(
+                model="gpt-5.5",
+                model_token="gpt55",
+                harness=HarnessId.CODEX,
+                harness_model="openai/gpt-5.5",
+                execution_policy=ResolvedExecutionPolicy(),
+                provenance={"model_source": "profile-default", "harness_source": "provider"},
+            )
         assert request.model_override == "haiku"
         assert request.harness_override == "opencode"
         return _FakeBundleResult(
             model="claude-haiku-4-5",
             model_token="haiku",
-            harness="opencode",
+            harness=HarnessId.OPENCODE,
             harness_model="openrouter/anthropic/claude-haiku-4.5",
             execution_policy=ResolvedExecutionPolicy(),
             provenance={"model_source": "cli", "harness_source": "cli"},
@@ -367,8 +378,7 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
         )
     )
 
-    request = captured["request"]
-    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert len(captured_requests) == 2
     assert policy.model == "claude-haiku-4-5"
     assert policy.harness == HarnessId.OPENCODE
     assert policy.model_selection is not None
@@ -400,7 +410,7 @@ def test_spawn_prepare_cli_routing_beats_agent_overlay(
         return _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="opencode",
+            harness=HarnessId.OPENCODE,
             harness_model="openai/gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(),
             provenance={"model_source": "cli", "harness_source": "cli"},
@@ -487,7 +497,7 @@ def test_spawn_prepare_passes_profile_and_requested_skills_to_bundle(
         return _FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
-            harness="codex",
+            harness=HarnessId.CODEX,
             harness_model="gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(),
             provenance={"harness_source": "provider"},
