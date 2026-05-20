@@ -317,17 +317,6 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
     ) -> _FakeBundleResult:
         _ = harness_registry
         captured_requests.append(request)
-        if len(captured_requests) == 1:
-            assert request.model_override is None
-            assert request.harness_override is None
-            return _FakeBundleResult(
-                model="gpt-5.5",
-                model_token="gpt55",
-                harness=HarnessId.CODEX,
-                harness_model="openai/gpt-5.5",
-                execution_policy=ResolvedExecutionPolicy(),
-                provenance={"model_source": "profile-default", "harness_source": "provider"},
-            )
         assert request.model_override == "haiku"
         assert request.harness_override == "opencode"
         return _FakeBundleResult(
@@ -356,12 +345,66 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
         )
     )
 
-    assert len(captured_requests) == 2
+    assert len(captured_requests) == 1
     assert policy.model == "claude-haiku-4-5"
     assert policy.harness == HarnessId.OPENCODE
     assert policy.model_selection is not None
     assert policy.model_selection.harness_model_id == "openrouter/anthropic/claude-haiku-4.5"
     assert policy.model_selection.harness_provenance == "agent-overlay-default"
+    assert policy.field_provenance.model_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert policy.field_provenance.harness_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+
+
+def test_spawn_prepare_agent_overlay_routing_rescues_broken_profile_route(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: stale-route\nharness: claude\n",
+    )
+
+    captured_requests: list[bundle_adapter.BundleRequest] = []
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured_requests.append(request)
+        if request.model_override != "haiku" or request.harness_override != "opencode":
+            raise RuntimeError("stale profile route should not be requested")
+        return _FakeBundleResult(
+            model="claude-haiku-4-5",
+            model_token="haiku",
+            harness=HarnessId.OPENCODE,
+            harness_model="openrouter/anthropic/claude-haiku-4.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate(
+        {"agents": {"reviewer": {"model": "haiku", "harness": "opencode"}}}
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert len(captured_requests) == 1
+    assert policy.model == "claude-haiku-4-5"
+    assert policy.harness == HarnessId.OPENCODE
     assert policy.field_provenance.model_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
     assert policy.field_provenance.harness_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
 

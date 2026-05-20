@@ -497,7 +497,6 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
     overlay_harness_applies = (
         explicit_user_overrides.harness is None and overlay_routing.harness is not None
     )
-    overlay_routing_applies = overlay_model_applies or overlay_harness_applies
     profile_model = profile.model if profile is not None else None
     profile_harness = profile.harness if profile is not None else None
     config_model_applies = (
@@ -528,19 +527,29 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         alias_catalog = surface.catalog.alias_map()
 
     resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
+    bundle_model_override = (
+        explicit_user_overrides.model
+        if explicit_user_overrides.model is not None
+        else (
+            overlay_routing.model
+            if overlay_model_applies
+            else (surface.config_overrides.model if config_model_applies else None)
+        )
+    )
+    bundle_harness_override = (
+        explicit_user_overrides.harness
+        if explicit_user_overrides.harness is not None
+        else (
+            overlay_routing.harness
+            if overlay_harness_applies
+            else (surface.configured_default_harness if config_harness_applies else None)
+        )
+    )
     bundle_request = bundle_adapter.BundleRequest(
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
-        model_override=(
-            explicit_user_overrides.model
-            if explicit_user_overrides.model is not None
-            else (surface.config_overrides.model if config_model_applies else None)
-        ),
-        harness_override=(
-            explicit_user_overrides.harness
-            if explicit_user_overrides.harness is not None
-            else (surface.configured_default_harness if config_harness_applies else None)
-        ),
+        model_override=bundle_model_override,
+        harness_override=bundle_harness_override,
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,
@@ -550,29 +559,6 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         bundle_request,
         harness_registry=surface.harness_registry,
     )
-    if overlay_routing_applies:
-        # Agent overlays are Meridian-owned precedence. Replay bundle routing with
-        # the overlay-applied tuple to recover canonical model + harness_model_id.
-        overlay_replay_request = bundle_adapter.BundleRequest(
-            agent=bundle_request.agent,
-            project_root=bundle_request.project_root,
-            model_override=(
-                overlay_routing.model if overlay_model_applies else bundle_request.model_override
-            ),
-            harness_override=(
-                overlay_routing.harness
-                if overlay_harness_applies
-                else bundle_request.harness_override
-            ),
-            effort_override=bundle_request.effort_override,
-            approval_override=bundle_request.approval_override,
-            sandbox_override=bundle_request.sandbox_override,
-            extra_skills=bundle_request.extra_skills,
-        )
-        bundle_result = bundle_adapter.request_and_resolve(
-            overlay_replay_request,
-            harness_registry=surface.harness_registry,
-        )
 
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
