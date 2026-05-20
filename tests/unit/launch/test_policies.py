@@ -619,6 +619,109 @@ def test_spawn_prepare_cli_routing_beats_agent_overlay(
     assert policy.field_provenance.harness_source is ProvenanceLevel.CLI
 
 
+def test_spawn_prepare_cli_model_demotes_lower_overlay_harness(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: haiku\n",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        return _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate({"agents": {"reviewer": {"harness": "opencode"}}})
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer", model="gpt55"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert request.model_override == "gpt55"
+    assert request.harness_override is None
+    assert policy.field_provenance.model_source is ProvenanceLevel.CLI
+
+
+def test_spawn_prepare_env_model_demotes_lower_overlay_harness(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: haiku\n",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        return _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate({"agents": {"reviewer": {"harness": "opencode"}}})
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(agent="reviewer"),
+                RuntimeOverrides(model="gpt55"),
+            ),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert request.model_override == "gpt55"
+    assert request.harness_override is None
+    assert policy.field_provenance.model_source is ProvenanceLevel.ENV
+
+
 def test_spawn_prepare_passes_config_default_model_when_no_higher_precedence_model(
     monkeypatch,
     tmp_path: Path,
@@ -638,14 +741,14 @@ def test_spawn_prepare_passes_config_default_model_when_no_higher_precedence_mod
             harness=HarnessId.CODEX,
             harness_model="gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(),
-            provenance={"model_source": "config-default", "harness_source": "provider"},
+            provenance={"model_source": "cli", "harness_source": "provider"},
         )
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
 
     config = MeridianConfig.model_validate({"default_model": "gpt55"})
-    resolve_launch_policy(
+    policy = resolve_launch_policy(
         SurfacePolicyInput(
             surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
@@ -661,9 +764,10 @@ def test_spawn_prepare_passes_config_default_model_when_no_higher_precedence_mod
     assert isinstance(request, bundle_adapter.BundleRequest)
     assert request.model_override == "gpt55"
     assert request.harness_override is None
+    assert policy.field_provenance.model_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
-def test_spawn_prepare_passes_config_default_harness_when_no_higher_precedence_routing(
+def test_spawn_prepare_passes_config_default_model_and_harness_together(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -682,14 +786,16 @@ def test_spawn_prepare_passes_config_default_harness_when_no_higher_precedence_r
             harness=HarnessId.OPENCODE,
             harness_model="openai/gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(),
-            provenance={"model_source": "provider", "harness_source": "config-default"},
+            provenance={"model_source": "cli", "harness_source": "cli"},
         )
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
 
-    config = MeridianConfig.model_validate({"default_harness": "opencode"})
-    resolve_launch_policy(
+    config = MeridianConfig.model_validate(
+        {"default_model": "gpt55", "default_harness": "opencode"}
+    )
+    policy = resolve_launch_policy(
         SurfacePolicyInput(
             surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
@@ -703,8 +809,13 @@ def test_spawn_prepare_passes_config_default_harness_when_no_higher_precedence_r
 
     request = captured["request"]
     assert isinstance(request, bundle_adapter.BundleRequest)
-    assert request.model_override is None
+    assert request.model_override == "gpt55"
     assert request.harness_override == "opencode"
+    assert policy.harness == HarnessId.OPENCODE
+    assert policy.field_provenance.model_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.field_provenance.harness_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.model_selection is not None
+    assert policy.model_selection.harness_provenance == "config-default"
 
 
 def test_spawn_prepare_profile_model_beats_config_default_model(

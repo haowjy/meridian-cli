@@ -16,6 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn-prepare bundle routing now forwards Meridian config defaults (`default_model`, `default_harness`) when no higher-precedence CLI/env/overlay/profile routing value is set.
 - Spawn-prepare now applies agent-overlay model/harness on the first mars launch-bundle call, so overlay routing can rescue stale profile routes without replay.
 - Spawn-prepare execution-policy provenance now follows Meridian post-bundle precedence (CLI/env/overlay/profile/config), so overlay and Meridian-only config winners (`autocompact_pct`, `timeout`) report correct sources.
+- Spawn-prepare routing now demotes lower-precedence harness overrides when a higher-precedence model is set, preserves same-tier config model+harness forwarding, and rewrites model/harness provenance locally for env/overlay/config winners.
 
 ## [0.1.14-rc.1] - 2026-05-20
 

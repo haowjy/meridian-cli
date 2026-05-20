@@ -477,6 +477,98 @@ _EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
     "timeout": "timeout_source",
 }
 
+_SPAWN_PREPARE_ROUTING_PRECEDENCE: tuple[str, ...] = (
+    "cli",
+    "env",
+    "agent-overlay-default",
+    "profile-default",
+    "config-default",
+)
+_SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES: frozenset[str] = frozenset(
+    {"cli", "env", "agent-overlay-default", "config-default"}
+)
+
+
+def _first_spawn_prepare_routing_candidate(
+    candidates: tuple[tuple[str, str | None], ...],
+) -> tuple[str, str] | None:
+    for source, value in candidates:
+        if value is not None:
+            return source, value
+    return None
+
+
+def _spawn_prepare_routing_rank(source: str) -> int:
+    try:
+        return _SPAWN_PREPARE_ROUTING_PRECEDENCE.index(source)
+    except ValueError:
+        return len(_SPAWN_PREPARE_ROUTING_PRECEDENCE)
+
+
+def _resolve_spawn_prepare_bundle_routing(
+    *,
+    surface: SurfacePolicyInput,
+    overlay_routing: RuntimeOverrides,
+    profile: AgentProfile | None,
+) -> tuple[str | None, str | None, str | None, dict[str, str]]:
+    """Resolve spawn-prepare routing overrides + local routing provenance."""
+
+    model_candidate = _first_spawn_prepare_routing_candidate(
+        (
+            ("cli", surface.cli_overrides.model),
+            ("env", surface.env_overrides.model),
+            ("agent-overlay-default", overlay_routing.model),
+            ("profile-default", profile.model if profile is not None else None),
+            ("config-default", surface.config_overrides.model),
+        )
+    )
+    config_default_harness = surface.configured_default_harness
+    if (
+        model_candidate is not None
+        and model_candidate[0] == "config-default"
+        and "default_harness" not in surface.config.model_fields_set
+    ):
+        config_default_harness = None
+    harness_candidate = _first_spawn_prepare_routing_candidate(
+        (
+            ("cli", surface.cli_overrides.harness),
+            ("env", surface.env_overrides.harness),
+            ("agent-overlay-default", overlay_routing.harness),
+            ("profile-default", profile.harness if profile is not None else None),
+            ("config-default", config_default_harness),
+        )
+    )
+
+    if (
+        model_candidate is not None
+        and harness_candidate is not None
+        and _spawn_prepare_routing_rank(model_candidate[0])
+        < _spawn_prepare_routing_rank(harness_candidate[0])
+    ):
+        harness_candidate = None
+
+    provenance_overrides: dict[str, str] = {}
+    if model_candidate is not None and model_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES:
+        provenance_overrides["model_source"] = model_candidate[0]
+    if (
+        harness_candidate is not None
+        and harness_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES
+    ):
+        provenance_overrides["harness_source"] = harness_candidate[0]
+
+    return (
+        model_candidate[1]
+        if model_candidate is not None
+        and model_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES
+        else None,
+        harness_candidate[1]
+        if harness_candidate is not None
+        and harness_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES
+        else None,
+        model_candidate[1] if model_candidate is not None else None,
+        provenance_overrides,
+    )
+
 
 def _resolve_spawn_prepare_execution_policy(
     *,
@@ -546,60 +638,22 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
     )
     agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
     overlay_routing = RuntimeOverrides.from_agent_overlay_routing(agent_overlay).routing_scope()
-    overlay_model_applies = (
-        explicit_user_overrides.model is None and overlay_routing.model is not None
-    )
-    overlay_harness_applies = (
-        explicit_user_overrides.harness is None and overlay_routing.harness is not None
-    )
-    profile_model = profile.model if profile is not None else None
-    profile_harness = profile.harness if profile is not None else None
-    config_model_applies = (
-        explicit_user_overrides.model is None
-        and not overlay_model_applies
-        and profile_model is None
-        and surface.config_overrides.model is not None
-    )
-    config_harness_applies = (
-        explicit_user_overrides.harness is None
-        and not overlay_harness_applies
-        and profile_harness is None
-        and explicit_user_overrides.model is None
-        and not overlay_model_applies
-        and profile_model is None
-        and surface.config_overrides.model is None
+    (
+        bundle_model_override,
+        bundle_harness_override,
+        requested_model_token,
+        routing_provenance_overrides,
+    ) = _resolve_spawn_prepare_bundle_routing(
+        surface=surface,
+        overlay_routing=overlay_routing,
+        profile=profile,
     )
 
-    requested_model_token = (
-        explicit_user_overrides.model
-        or (agent_overlay.model if agent_overlay is not None else None)
-        or (profile.model if profile is not None else None)
-        or surface.config_overrides.model
-        or ""
-    )
     alias_catalog: dict[str, AliasEntry] = {}
     if requested_model_token:
         alias_catalog = surface.catalog.alias_map()
 
     resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
-    bundle_model_override = (
-        explicit_user_overrides.model
-        if explicit_user_overrides.model is not None
-        else (
-            overlay_routing.model
-            if overlay_model_applies
-            else (surface.config_overrides.model if config_model_applies else None)
-        )
-    )
-    bundle_harness_override = (
-        explicit_user_overrides.harness
-        if explicit_user_overrides.harness is not None
-        else (
-            overlay_routing.harness
-            if overlay_harness_applies
-            else (surface.configured_default_harness if config_harness_applies else None)
-        )
-    )
     bundle_request = bundle_adapter.BundleRequest(
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
@@ -618,15 +672,11 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
     resolved_model = bundle_result.model
     resolved_harness = bundle_result.harness
     selected_model_token = bundle_result.model_token or resolved_model
-    requested_token = (
-        explicit_user_overrides.model
-        or (overlay_routing.model if overlay_model_applies else None)
-        or selected_model_token
-        or resolved_model
+    requested_token = requested_model_token or selected_model_token or resolved_model
+    harness_provenance = routing_provenance_overrides.get(
+        "harness_source",
+        bundle_result.provenance.get("harness_source", ""),
     )
-    harness_provenance = bundle_result.provenance.get("harness_source", "")
-    if overlay_harness_applies:
-        harness_provenance = "agent-overlay-default"
 
     model_selection = ModelSelectionContext(
         requested_token=requested_token or resolved_model,
@@ -674,11 +724,7 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         profile_warning=profile_warning,
         model_warning=bundle_model_warning,
     )
-    provenance_overrides: dict[str, str] = {}
-    if overlay_model_applies:
-        provenance_overrides["model_source"] = "agent-overlay-default"
-    if overlay_harness_applies:
-        provenance_overrides["harness_source"] = "agent-overlay-default"
+    provenance_overrides = dict(routing_provenance_overrides)
     provenance_overrides.update(execution_policy_provenance_overrides)
 
     return bundle_adapter.bundle_to_resolved_policy(
