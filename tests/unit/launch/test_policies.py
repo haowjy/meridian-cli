@@ -371,7 +371,7 @@ def test_spawn_prepare_cli_policy_beats_agent_overlay(
     assert policy.field_provenance.effort_source is ProvenanceLevel.CLI
 
 
-def test_spawn_prepare_config_default_meridian_only_policy_provenance(
+def test_spawn_prepare_env_timeout_provenance(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -389,22 +389,20 @@ def test_spawn_prepare_config_default_meridian_only_policy_provenance(
     )
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
 
-    config = MeridianConfig.model_validate({"primary": {"autocompact_pct": 77, "timeout": 25.0}})
+    config = MeridianConfig.model_validate({"primary": {"timeout": 77.0}})
     policy = resolve_launch_policy(
         SurfacePolicyInput(
             surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
-            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            layers=(RuntimeOverrides(), RuntimeOverrides(timeout=25.0)),
             config_overrides=RuntimeOverrides.from_config(config),
             config=config,
             harness_registry=get_default_harness_registry(),
         )
     )
 
-    assert policy.execution_policy.autocompact_pct == 77
     assert policy.execution_policy.timeout == 25.0
-    assert policy.field_provenance.autocompact_pct_source is ProvenanceLevel.CONFIG_DEFAULT
-    assert policy.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.field_provenance.timeout_source is ProvenanceLevel.ENV
 
 
 def test_spawn_prepare_env_policy_beats_overlay_config_provenance(

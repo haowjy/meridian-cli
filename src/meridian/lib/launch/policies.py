@@ -577,7 +577,13 @@ def _resolve_spawn_prepare_execution_policy(
     bundle_execution_policy: RuntimeOverrides,
     profile_overrides: RuntimeOverrides,
 ) -> tuple[RuntimeOverrides, dict[str, str]]:
-    """Resolve spawn-prepare execution policy + local provenance winners."""
+    """Resolve spawn-prepare execution policy + local provenance winners.
+
+    Spawn-prepare execution policy excludes config-default execution-policy
+    fields. Production spawn-prepare passes ``from_spawn_config()`` defaults,
+    which only carry routing defaults (model/harness), not primary policy
+    fields.
+    """
 
     policy_layers: tuple[tuple[str, RuntimeOverrides], ...] = (
         (
@@ -596,10 +602,6 @@ def _resolve_spawn_prepare_execution_policy(
         (
             "profile-default",
             profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
-        (
-            "config-default",
-            surface.config_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
         ),
     )
     resolved = resolve_policy_fields(tuple(layer for _, layer in policy_layers))
