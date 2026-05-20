@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Bump `mars-agents` to `0.4.8rc3` for `build launch-bundle` and centralized cache-root routing (`MARS_CACHE_DIR`).
+- Bump `mars-agents` to `0.4.8rc4` for `build launch-bundle` (with new top-level `agent_body` field) and centralized cache-root routing (`MARS_CACHE_DIR`).
 - Spawn-prepare launch policy now routes model/harness/execution-policy through `mars build launch-bundle` adapter (`launch/bundle_adapter.py`) instead of local compiler resolution.
 - Spawn-prepare policy tests now fake the bundle adapter boundary; spawn routing tests no longer fake `CatalogSession.resolve_model`.
 - `launch/compiler.py` marked deprecated for spawn-prepare path; kept for primary/chat local resolver surfaces in phase 1.
