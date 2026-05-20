@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Meridian wheel/sdist now bundles built Pi extension artifacts, so installed Pi launches do not require source-tree `pnpm run build:extensions`.
+
 ## [0.1.14-rc.1] - 2026-05-20
 
 ### Added

@@ -74,7 +74,13 @@ prerelease = "allow"
 
 
 [tool.hatch.build]
-artifacts = ["src/meridian/web_dist/*"]
+artifacts = [
+  "src/meridian/web_dist/*",
+  "src/meridian/pi_runtime/dist/extensions/**",
+]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
 include = [

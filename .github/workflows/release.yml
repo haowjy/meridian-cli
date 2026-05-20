@@ -78,8 +78,42 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
       - name: Build distributions
         run: uv build --no-sources
+
+      - name: Validate Pi extension artifacts are packaged
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          required = [
+              "meridian/pi_runtime/dist/extensions/managed-bash/index.js",
+              "meridian/pi_runtime/dist/extensions/meridian-lifecycle/index.js",
+          ]
+          wheel = next(Path("dist").glob("*.whl"))
+          with zipfile.ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+          missing = [name for name in required if name not in names]
+          if missing:
+              raise SystemExit(f"wheel missing Pi extension artifacts: {missing}")
+
+          sdist = next(Path("dist").glob("*.tar.gz"))
+          with tarfile.open(sdist) as archive:
+              names = set(archive.getnames())
+          missing = [name for name in required if not any(path.endswith(name) for path in names)]
+          if missing:
+              raise SystemExit(f"sdist missing Pi extension artifacts: {missing}")
+          PY
 
       - name: Validate wheel artifact
         run: |
