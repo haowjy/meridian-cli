@@ -40,27 +40,6 @@ def _valid_bundle_payload() -> dict[str, object]:
             "approval": "auto",
             "sandbox": "workspace-write",
         },
-        "prompt_surface": {
-            "system_instruction": "# Report",
-            "supplemental_documents": [
-                {
-                    "kind": "skill",
-                    "name": "shared-workspace",
-                    "content": "# Skill: shared-workspace\\n\\nBody",
-                    "skill_type": "guardrail",
-                }
-            ],
-            "inventory_prompt": "# Meridian Agents",
-        },
-        "tools": {
-            "allowed": ["read"],
-            "disallowed": ["rm"],
-            "mcp": ["github"],
-        },
-        "skills_metadata": {
-            "loaded": ["shared-workspace"],
-            "missing": ["missing-skill"],
-        },
         "provenance": {
             "model_source": "cli",
             "harness_source": "cli",
@@ -122,10 +101,6 @@ def test_request_and_resolve_builds_expected_mars_command(monkeypatch: pytest.Mo
     assert bundle.model_token == "gpt55"
     assert bundle.harness is HarnessId.OPENCODE
     assert bundle.harness_model == "openai/gpt-5.5"
-    assert bundle.prompt_surface_inventory_prompt == "# Meridian Agents"
-    assert bundle.tools_allowed == ("read",)
-    assert bundle.skills_loaded == ("shared-workspace",)
-    assert bundle.skills_missing == ("missing-skill",)
 
 
 def test_request_and_resolve_uses_native_windows_root_path(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -14,7 +14,6 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.compiler import ProvenanceLevel
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
-    ModelSelectionContext,
     SurfacePolicyInput,
     match_model_policy,
     resolve_launch_policy,
@@ -33,14 +32,6 @@ class _FakeBundleResult:
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...] = ()
-    prompt_surface_system_instruction: str = ""
-    prompt_surface_supplemental_documents: tuple[object, ...] = ()
-    prompt_surface_inventory_prompt: str = ""
-    tools_allowed: tuple[str, ...] = ()
-    tools_disallowed: tuple[str, ...] = ()
-    tools_mcp: tuple[str, ...] = ()
-    skills_loaded: tuple[str, ...] = ()
-    skills_missing: tuple[str, ...] = ()
 
 
 def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:
@@ -80,19 +71,6 @@ def _patch_local_alias_resolution(
 
     monkeypatch.setattr(CatalogSession, "resolve_model", resolve_entry)
     monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
-
-
-def test_model_selection_context_harness_model_id_defaults_to_none() -> None:
-    context = ModelSelectionContext(
-        requested_token="fast",
-        selected_model_token="fast",
-        canonical_model_id="fake-model",
-        mars_provided_harness=HarnessId.CODEX,
-        resolved_entry=None,
-        harness_provenance="resolved",
-    )
-
-    assert context.harness_model_id is None
 
 
 def test_resolve_policy_fields_resolves_per_field_precedence() -> None:
@@ -473,6 +451,38 @@ def test_chat_surface_keeps_local_compiler_path(
 
     assert policy.model == "gpt-5.3-codex"
     assert policy.harness == HarnessId.CODEX
+
+
+def test_primary_surface_keeps_local_compiler_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    alias = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
+    _patch_local_alias_resolution(
+        monkeypatch,
+        resolved_entries={"claude": alias, "claude-haiku-4-5": alias},
+    )
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("primary should not call bundle adapter in phase 1")
+        ),
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(model="claude"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.model == "claude-haiku-4-5"
+    assert policy.harness == HarnessId.CLAUDE
 
 
 def test_spawn_prepare_passes_profile_and_requested_skills_to_bundle(
