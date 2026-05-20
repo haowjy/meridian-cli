@@ -259,6 +259,78 @@ def test_spawn_prepare_overlay_policy_applies_after_bundle(
     assert policy.execution_policy.sandbox == "workspace-write"
 
 
+def test_spawn_prepare_overlay_policy_provenance_overrides_bundle(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: gpt55\n",
+    )
+
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(
+                effort="low",
+                sandbox="read-only",
+                approval="confirm",
+                autocompact=1200,
+                autocompact_pct=40,
+            ),
+            provenance={
+                "effort_source": "profile-default",
+                "sandbox_source": "profile-default",
+                "approval_source": "profile-default",
+                "autocompact_source": "profile-default",
+                "autocompact_pct_source": "profile-default",
+            },
+        ),
+    )
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate(
+        {
+            "agents": {
+                "reviewer": {
+                    "effort": "high",
+                    "sandbox": "workspace-write",
+                    "approval": "auto",
+                    "autocompact": 8000,
+                    "autocompact_pct": 85,
+                }
+            }
+        }
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.execution_policy.effort == "high"
+    assert policy.execution_policy.sandbox == "workspace-write"
+    assert policy.execution_policy.approval == "auto"
+    assert policy.execution_policy.autocompact == 8000
+    assert policy.execution_policy.autocompact_pct == 85
+    assert policy.field_provenance.effort_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert policy.field_provenance.sandbox_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert policy.field_provenance.approval_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert policy.field_provenance.autocompact_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert policy.field_provenance.autocompact_pct_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+
+
 def test_spawn_prepare_cli_policy_beats_agent_overlay(
     monkeypatch,
     tmp_path: Path,
@@ -296,6 +368,88 @@ def test_spawn_prepare_cli_policy_beats_agent_overlay(
     )
 
     assert policy.execution_policy.effort == "high"
+    assert policy.field_provenance.effort_source is ProvenanceLevel.CLI
+
+
+def test_spawn_prepare_config_default_meridian_only_policy_provenance(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={},
+        ),
+    )
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate({"primary": {"autocompact_pct": 77, "timeout": 25.0}})
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.execution_policy.autocompact_pct == 77
+    assert policy.execution_policy.timeout == 25.0
+    assert policy.field_provenance.autocompact_pct_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
+
+
+def test_spawn_prepare_env_policy_beats_overlay_config_provenance(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: gpt55\n",
+    )
+
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(sandbox="read-only"),
+            provenance={"sandbox_source": "profile-default"},
+        ),
+    )
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate(
+        {
+            "agents": {"reviewer": {"sandbox": "workspace-write"}},
+            "primary": {"sandbox": "danger-full-access"},
+        }
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides(sandbox="read-only")),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.execution_policy.sandbox == "read-only"
+    assert policy.field_provenance.sandbox_source is ProvenanceLevel.ENV
 
 
 def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(

@@ -468,6 +468,61 @@ def _require_policy_tier(
     return tier
 
 
+_EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
+    "effort": "effort_source",
+    "sandbox": "sandbox_source",
+    "approval": "approval_source",
+    "autocompact": "autocompact_source",
+    "autocompact_pct": "autocompact_pct_source",
+    "timeout": "timeout_source",
+}
+
+
+def _resolve_spawn_prepare_execution_policy(
+    *,
+    surface: SurfacePolicyInput,
+    agent_overlay_policy: RuntimeOverrides,
+    bundle_execution_policy: RuntimeOverrides,
+    profile_overrides: RuntimeOverrides,
+) -> tuple[RuntimeOverrides, dict[str, str]]:
+    """Resolve spawn-prepare execution policy + local provenance winners."""
+
+    policy_layers: tuple[tuple[str, RuntimeOverrides], ...] = (
+        (
+            "cli",
+            surface.cli_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        (
+            "env",
+            surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        (
+            "agent-overlay-default",
+            agent_overlay_policy.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        ("bundle", bundle_execution_policy),
+        (
+            "profile-default",
+            profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        (
+            "config-default",
+            surface.config_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+    )
+    resolved = resolve_policy_fields(tuple(layer for _, layer in policy_layers))
+
+    provenance_overrides: dict[str, str] = {}
+    for field_name in surface.supported_execution_policy_fields:
+        for source, layer in policy_layers:
+            if getattr(layer, field_name) is None:
+                continue
+            if source != "bundle":
+                provenance_overrides[_EXECUTION_POLICY_PROVENANCE_KEYS[field_name]] = source
+            break
+    return resolved, provenance_overrides
+
+
 def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     project_root = surface.catalog.project_root
     pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
@@ -583,18 +638,18 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         harness_model_id=bundle_result.harness_model,
     )
 
+    overlay_policy = RuntimeOverrides.from_agent_overlay_policy(agent_overlay)
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(
         supported_fields=surface.supported_execution_policy_fields
     )
-    resolved_execution_policy_overrides = resolve_policy_fields(
-        surface.cli_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        RuntimeOverrides.from_agent_overlay_policy(agent_overlay).execution_policy_scope(
-            surface.supported_execution_policy_fields
-        ),
-        bundle_execution_policy,
-        profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        surface.config_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+    (
+        resolved_execution_policy_overrides,
+        execution_policy_provenance_overrides,
+    ) = _resolve_spawn_prepare_execution_policy(
+        surface=surface,
+        agent_overlay_policy=overlay_policy,
+        bundle_execution_policy=bundle_execution_policy,
+        profile_overrides=profile_overrides,
     )
     resolved_execution_policy = ResolvedExecutionPolicy(
         effort=resolved_execution_policy_overrides.effort,
@@ -624,6 +679,7 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         provenance_overrides["model_source"] = "agent-overlay-default"
     if overlay_harness_applies:
         provenance_overrides["harness_source"] = "agent-overlay-default"
+    provenance_overrides.update(execution_policy_provenance_overrides)
 
     return bundle_adapter.bundle_to_resolved_policy(
         bundle=bundle_result,
