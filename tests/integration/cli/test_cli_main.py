@@ -1,9 +1,12 @@
+# qa-validated: pi-rpc-quiescence
 import importlib
 import os
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests.support.pi_extensions import configure_pi_extension_projection
 
 cli_main = importlib.import_module("meridian.cli.main")
 primary_launch = importlib.import_module("meridian.cli.primary_launch")
@@ -357,6 +360,30 @@ def test_main_rejects_from_with_other_session_initiation_modes(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == f"error: {expected}\n"
+
+
+def test_main_pi_primary_launch_dry_run_is_supported(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    configure_pi_extension_projection(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        cli_main,
+        "maybe_bootstrap_runtime_state",
+        lambda *_args, **_kwargs: tmp_path,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--harness", "pi", "--dry-run"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "pi" in captured.out
+    assert "--mode" not in captured.out
+    assert "--mode rpc" not in captured.out
 
 
 def test_init_alias_link_uses_mars_flow_with_full_link_target_when_called_directly(

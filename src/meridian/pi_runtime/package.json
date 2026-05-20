@@ -1,0 +1,22 @@
+{
+  "name": "meridian-pi-extensions",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:extensions:clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('./dist/extensions', { recursive: true, force: true });\"",
+    "build:extensions:managed-bash": "tsup ./extensions/managed-bash/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/managed-bash --clean",
+    "build:extensions:meridian-lifecycle": "tsup ./extensions/meridian-lifecycle/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/meridian-lifecycle --clean",
+    "build:extensions": "npm run build:extensions:clean && npm run build:extensions:managed-bash && npm run build:extensions:meridian-lifecycle"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "typebox": "^1.1.38"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

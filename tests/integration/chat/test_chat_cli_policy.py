@@ -1,19 +1,28 @@
 # qa-validated: test-suite-redesign
+# qa-validated: pi-rpc-quiescence
 """Chat CLI policy snapshot resolution tests — model alias, harness, agent, skills, approval."""
 
 from __future__ import annotations
 
 from io import StringIO
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from meridian.cli import chat_cmd
 from meridian.cli.chat_cmd import run_chat_server
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.chat.policy import build_chat_backend_launch_plan, default_chat_policy_snapshot
+from meridian.lib.catalog.model_aliases import AliasEntry, RunnablePath
+from meridian.lib.chat.policy import (
+    ChatPolicySnapshot,
+    build_chat_backend_launch_plan,
+    default_chat_policy_snapshot,
+    read_chat_policy_snapshot,
+    write_chat_policy_snapshot,
+)
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -31,6 +40,13 @@ class EmptyPipelineLookup:
     def get_policy_snapshot(self, chat_id: str):
         _ = chat_id
         return self._snapshot
+
+
+class _UnsupportedPrimaryAdapter:
+    class _Capabilities:
+        supports_primary_launch = False
+
+    capabilities = _Capabilities()
 
 
 def _mock_alias(alias: str, model_id: str, harness: HarnessId) -> AliasEntry:
@@ -75,6 +91,21 @@ def test_chat_policy_resolution_fails_before_runtime_configure_or_discovery_writ
     assert configured == []
     assert write_bootstrap_calls == []
     assert not (runtime_root / "chat-server.json").exists()
+
+
+def test_chat_policy_resolution_allows_pi_harness(tmp_path: Path) -> None:
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(  # pyright: ignore[reportPrivateUsage]
+        project_root=tmp_path,
+        model=None,
+        harness="pi",
+        agent=None,
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+    assert snapshot.harness == HarnessId.PI.value
 
 
 def test_chat_policy_snapshot_resolves_alias_to_canonical_model(monkeypatch, tmp_path) -> None:
@@ -416,8 +447,138 @@ def test_chat_policy_snapshot_with_agent_and_cli_overrides_feeds_launch_plan(
     assert plan.configured_payload == {
         "harness": "codex",
         "model": "gpt-5.4-mini",
+        "canonical_model_id": "gpt-5.4-mini",
+        "effective_model_id": "gpt-5.4-mini",
         "requested_model_token": "gptmini",
         "selected_model_token": "gptmini",
         "harness_provenance": "mars-provided",
         "policy_snapshot_id": snapshot.snapshot_id,
     }
+
+
+def test_chat_policy_snapshot_persists_harness_specific_model_for_reacquire(
+    monkeypatch, tmp_path
+) -> None:
+    alias_entry = AliasEntry(
+        alias="cross",
+        model_id=ModelId("gpt-5.4"),
+        resolved_harness=HarnessId.CLAUDE,
+        runnable_paths=(
+            RunnablePath(
+                harness="codex",
+                harness_model_id="gpt-5.4-codex",
+            ),
+        ),
+    )
+
+    def fake_resolve_model(self: CatalogSession, token: str) -> AliasEntry:
+        _ = self
+        if token in {"cross", "gpt-5.4"}:
+            return alias_entry
+        raise ValueError(f"unknown model {token}")
+
+    monkeypatch.setattr(CatalogSession, "resolve_model", fake_resolve_model)
+    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [alias_entry])
+
+    snapshot = chat_cmd._resolve_chat_policy_snapshot(
+        project_root=tmp_path,
+        model="cross",
+        harness="codex",
+        agent=None,
+        skills=(),
+        approval=None,
+        sandbox=None,
+        effort=None,
+        autocompact=None,
+    )
+
+    assert snapshot.canonical_model_id == "gpt-5.4"
+    assert snapshot.effective_model_id == "gpt-5.4-codex"
+
+    snapshot_path = tmp_path / "chat-policy.json"
+    write_chat_policy_snapshot(snapshot_path, snapshot)
+    reloaded_snapshot = read_chat_policy_snapshot(snapshot_path)
+
+    assert reloaded_snapshot.snapshot_id == snapshot.snapshot_id
+    assert reloaded_snapshot.canonical_model_id == "gpt-5.4"
+    assert reloaded_snapshot.effective_model_id == "gpt-5.4-codex"
+
+    adapter = get_default_harness_registry().get_subprocess_harness(HarnessId.CODEX)
+    plan = build_chat_backend_launch_plan(
+        snapshot=reloaded_snapshot,
+        initial_prompt="Hello",
+        spawn_id=SpawnId("chat-harness-model"),
+        adapter=adapter,
+        project_root=tmp_path,
+        runtime_root=tmp_path / "runtime",
+    )
+
+    assert plan.spec.model == "gpt-5.4-codex"
+    assert plan.configured_payload["model"] == "gpt-5.4-codex"
+    assert plan.configured_payload["canonical_model_id"] == "gpt-5.4"
+    assert plan.configured_payload["effective_model_id"] == "gpt-5.4-codex"
+
+
+def test_chat_policy_snapshot_migrates_missing_effective_model_to_canonical() -> None:
+    migrated = ChatPolicySnapshot.model_validate(
+        {
+            "schema_version": 3,
+            "snapshot_id": "s1",
+            "requested_model_token": "alias",
+            "selected_model_token": "alias",
+            "canonical_model_id": "gpt-5.4-mini",
+            "harness": "codex",
+            "prompt_inputs": {},
+        }
+    )
+    assert migrated.effective_model_id == "gpt-5.4-mini"
+
+    migrated_legacy_harness_model = ChatPolicySnapshot.model_validate(
+        {
+            "schema_version": 3,
+            "snapshot_id": "s2",
+            "requested_model_token": "alias",
+            "selected_model_token": "alias",
+            "canonical_model_id": "gpt-5.4-mini",
+            "harness_model_id": "gpt-5.4-codex",
+            "harness": "codex",
+            "prompt_inputs": {},
+        }
+    )
+    assert migrated_legacy_harness_model.effective_model_id == "gpt-5.4-codex"
+
+
+def test_build_chat_launch_plan_rejects_pi_snapshot_without_primary_support(
+    tmp_path: Path,
+) -> None:
+    snapshot = default_chat_policy_snapshot(harness=HarnessId.PI, model="pi-model")
+    adapter = cast("SubprocessHarness", _UnsupportedPrimaryAdapter())
+
+    with pytest.raises(ValueError) as exc_info:
+        build_chat_backend_launch_plan(
+            snapshot=snapshot,
+            initial_prompt="hello",
+            spawn_id=SpawnId("chat-pi"),
+            adapter=adapter,
+            project_root=tmp_path,
+            runtime_root=tmp_path / "runtime",
+        )
+
+    assert str(exc_info.value) == "Harness 'pi' does not support primary launch."
+
+
+def test_build_chat_launch_plan_rejects_non_pi_without_primary_launch_support(
+    tmp_path: Path,
+) -> None:
+    snapshot = default_chat_policy_snapshot(harness=HarnessId.CODEX, model="gpt-5.3-codex")
+    adapter = cast("SubprocessHarness", _UnsupportedPrimaryAdapter())
+
+    with pytest.raises(ValueError, match="does not support primary launch"):
+        build_chat_backend_launch_plan(
+            snapshot=snapshot,
+            initial_prompt="hello",
+            spawn_id=SpawnId("chat-non-pi"),
+            adapter=adapter,
+            project_root=tmp_path,
+            runtime_root=tmp_path / "runtime",
+        )

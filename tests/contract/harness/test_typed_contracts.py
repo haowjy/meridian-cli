@@ -46,6 +46,8 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
+    StopProgressCallback,
+    StopResult,
 )
 from meridian.lib.harness.connections.claude_ws import ClaudeConnection
 from meridian.lib.harness.connections.codex_ws import CodexConnection
@@ -246,8 +248,14 @@ class _MinimalConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
         _ = config, spec
 
-    async def stop(self) -> None:
-        return None
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
+        return StopResult()
 
     def health(self) -> bool:
         return True

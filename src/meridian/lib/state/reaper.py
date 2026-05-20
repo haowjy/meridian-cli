@@ -19,7 +19,11 @@ from meridian.lib.core.spawn_lifecycle import (
     resolve_reconciled_terminal_state,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
+from meridian.lib.launch.constants import (
+    HISTORY_FILENAME,
+    OUTPUT_FILENAME,
+    PI_LIFECYCLE_EVENTS_FILENAME,
+)
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.managed_primary import (
@@ -33,13 +37,14 @@ from meridian.lib.state.spawn.model import SpawnRecord
 
 logger = structlog.get_logger(__name__)
 
-_STARTUP_GRACE_SECS = 15
-_HEARTBEAT_WINDOW_SECS = 120
-_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = 5
+SPAWN_STARTUP_GRACE_SECS = 15
+SPAWN_HEARTBEAT_WINDOW_SECS = 120
+SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS = 5
 _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
+    PI_LIFECYCLE_EVENTS_FILENAME,
     "stderr.log",
     "report.md",
 )
@@ -136,7 +141,7 @@ def _recent_runner_activity(
             continue
         if latest_activity_epoch is None or mtime_epoch > latest_activity_epoch:
             latest_activity_epoch = mtime_epoch
-        if now - mtime_epoch <= _HEARTBEAT_WINDOW_SECS:
+        if now - mtime_epoch <= SPAWN_HEARTBEAT_WINDOW_SECS:
             return mtime_epoch, artifact_name
     return latest_activity_epoch, None
 
@@ -221,7 +226,7 @@ def _in_post_runner_exit_finalization_grace(record: SpawnRecord, now: float) -> 
     exited_epoch = _runner_exit_at_epoch(record.runner_exit_at)
     return (
         exited_epoch is not None
-        and now - exited_epoch < _POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
+        and now - exited_epoch < SPAWN_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS
     )
 
 
@@ -422,7 +427,7 @@ def _finalize_and_log(
         spawn_id=record.id,
         status=status,
         reason=reason,
-        heartbeat_window_secs=_HEARTBEAT_WINDOW_SECS,
+        heartbeat_window_secs=SPAWN_HEARTBEAT_WINDOW_SECS,
         last_activity_epoch=snapshot.last_activity_epoch,
         recent_activity_artifact=snapshot.recent_activity_artifact,
         inactivity_secs=inactivity_secs,
@@ -498,7 +503,7 @@ def _finalize_from_runner_exit(
 
 
 def _in_startup_grace(started_epoch: float | None, now: float) -> bool:
-    return started_epoch is not None and now - started_epoch < _STARTUP_GRACE_SECS
+    return started_epoch is not None and now - started_epoch < SPAWN_STARTUP_GRACE_SECS
 
 
 def reconcile_active_spawn(

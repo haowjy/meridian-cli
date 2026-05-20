@@ -71,7 +71,11 @@ def _install_readonly_permission_field(field_name: str) -> None:
     setattr(PermissionConfig, field_name, property(_get, _set))
 
 
-for _field_name in ("sandbox", "approval", "opencode_permission_override"):
+for _field_name in (
+    "sandbox",
+    "approval",
+    "opencode_permission_override",
+):
     _install_readonly_permission_field(_field_name)
 
 

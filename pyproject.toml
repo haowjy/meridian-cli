@@ -79,9 +79,23 @@ include = [
   "/LICENSE",
   "/pyproject.toml",
 ]
+exclude = [
+  "/src/meridian/pi_runtime/node_modules",
+  "/src/meridian/pi_runtime/node_modules/**",
+  "/src/meridian/pi_runtime/package-lock.json",
+  "/src/meridian/pi_runtime/bin",
+  "/src/meridian/pi_runtime/bin/**",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/meridian"]
+exclude = [
+  "src/meridian/pi_runtime/node_modules",
+  "src/meridian/pi_runtime/node_modules/**",
+  "src/meridian/pi_runtime/package-lock.json",
+  "src/meridian/pi_runtime/bin",
+  "src/meridian/pi_runtime/bin/**",
+]
 
 [tool.pyright]
 pythonVersion = "3.12"
@@ -103,7 +117,7 @@ reportUnknownArgumentType = "warning"
 venvPath = "."
 venv = ".venv"
 include = ["src"]
-exclude = [".venv", "build", "dist"]
+exclude = [".venv", "build", "dist", "src/meridian/pi_runtime/node_modules"]
 
 [tool.ruff]
 target-version = "py312"

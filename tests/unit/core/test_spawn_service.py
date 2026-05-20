@@ -61,18 +61,20 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
     def _build_launch_context(**kwargs: object) -> SimpleNamespace:
         request = cast("SpawnRequest", kwargs["request"])
         spawn_id = str(kwargs["spawn_id"])
+        runtime = cast("LaunchRuntime", kwargs["runtime"])
         return SimpleNamespace(
             resolved_request=request,
             project_root=child_cwd.parent,
             control_root=child_cwd.parent,
             task_cwd=child_cwd,
+            runtime=runtime,
             work_id=None,
             binding=SimpleNamespace(
                 child_cwd=child_cwd,
                 environment=SimpleNamespace(
                     bind_env_overrides={"MERIDIAN_SPAWN_ID": spawn_id},
                 ),
-                run_params=SimpleNamespace(appended_system_prompt=""),
+                run_params=SimpleNamespace(appended_system_prompt="", interactive=False),
             ),
         )
 
@@ -113,6 +115,7 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
     assert row.goal == "keep scope tight"
     assert prepared.connection_config.control_root == tmp_path
     assert prepared.connection_config.task_cwd == child_cwd
+    assert prepared.connection_config.pi_child_wave_timeout_seconds == 300.0
 
 
 @pytest.mark.asyncio
@@ -251,3 +254,43 @@ async def test_cancel_public_surface_backfills_cancel_intent_for_managed_primary
     assert row.runner_exit_code == 130
     assert row.runner_exit_error == "cancel_timeout"
     assert row.runner_exit_at is not None
+
+
+@pytest.mark.asyncio
+async def test_prepare_sets_pi_notification_timeout_from_wait_timeout_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    child_cwd = tmp_path / "child-cwd"
+    child_cwd.mkdir()
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.build_launch_context",
+        _fake_launch_context_builder(child_cwd),
+    )
+
+    runtime = _runtime_request(tmp_path, runtime_root).model_copy(
+        update={
+            "config_snapshot": {
+                "wait_timeout_minutes": 30.0,
+                "pi_child_wave_timeout_seconds": 45.0,
+            }
+        }
+    )
+    service = _service(runtime_root)
+    prepared = await service.prepare(
+        PrepareSpawnRequest(
+            request=SpawnRequest(
+                prompt="run it",
+                model="pi-fast",
+                harness="pi",
+            ),
+            runtime=runtime,
+            harness_registry=cast("Any", SimpleNamespace()),
+            chat_id="c1",
+        )
+    )
+
+    assert prepared.connection_config.timeout_seconds is None
+    assert prepared.connection_config.pi_notification_timeout_seconds == 1800.0
+    assert prepared.connection_config.pi_child_wave_timeout_seconds == 45.0

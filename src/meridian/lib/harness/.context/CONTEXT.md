@@ -40,6 +40,50 @@ Per-harness mapping:
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
+- Pi subprocess: `pi rpc --mode rpc` (JSON-RPC stdio); Pi has no subprocess-only path — the RPC mode is the connection
+
+### Pi: Extension-Based Architecture
+
+Pi is the first harness with in-process TypeScript extensions rather than an opaque
+subprocess. Two Meridian-owned extensions run inside the Pi process:
+
+- **managed-bash** — replaces Pi's default bash tool with job tracking, background
+  execution, and lifecycle event emission. See `src/meridian/pi_runtime/extensions/managed-bash/`.
+- **meridian-lifecycle** — consumes internal events, tracks child spawns, manages wave
+  notifications, and emits canonical lifecycle events to a sidecar JSONL file. See
+  `src/meridian/pi_runtime/extensions/meridian-lifecycle/`.
+
+Extensions are TypeScript, built with `tsup`/esbuild, and materialized per-launch by
+`pi_extension_projection.py` into user-level state under `~/.meridian/meridian-pi/agent/extensions/<launch-id>/`.
+
+The runtime itself is resolved by `pi_runtime_resolver.py` — it probes the installed
+`pi` binary for compatibility (required `--help` surface tokens differ between primary
+and spawned roles) and returns a `PiRuntimeResolution`.
+
+### Pi: Completion Model (Quiescence, Not Process Exit)
+
+Pi spawned sessions do not exit on task completion — they stay alive to track child
+spawns and deliver wave notifications. Completion is gated on **quiescence**: the
+parent agent is idle, all tracked children have finished, and all pending notifications
+have been delivered and acknowledged. The Python drain loop reads lifecycle events from
+the sidecar file and terminates the Pi process only when `meridian.quiescence.ready` is
+received or the wave deadline expires. See `lib/streaming/spawn_manager.py:_drain_loop()`
+and `PiRpcQuiescenceDrainPolicy`.
+
+### Pi: Lifecycle Events
+
+Canonical lifecycle events are written to a sidecar JSONL file by the Pi extensions
+and consumed by the Python layer:
+
+- `pi_lifecycle_events.py` — validates and parses lifecycle event lines; enforces
+  `schema_version`, `parent_spawn_id`, and allowlist checks
+- `pi_lifecycle_file.py` (`PiLifecycleEventTailer`) — incremental JSONL tailer that
+  the connection polls during the drain loop
+- Events: `meridian.subspawn.start`, `meridian.subspawn.end`,
+  `meridian.notification.queued/delivered/completed/failed`, `meridian.quiescence.ready`
+
+Lifecycle events are authoritative from the sidecar — if a lifecycle event appears on
+stdout, it is ignored (`PiRpcConnection._parse_stdout_line()` drops them).
 
 ### Bootstrap Sequence
 
@@ -113,6 +157,9 @@ Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded
 - Codex: `turn/completed` → succeeded; `error/connectionClosed` → failed
 - OpenCode: `session.idle` → succeeded; `session.error` → failed
+- Pi: `agent_end` → succeeded with quiescence check; `cancelled`/`error` → failed.
+  The `agent_end` → success mapping is conditional: the drain loop only breaks when
+  quiescence is also confirmed (no pending children/notifications). See `PiRpcQuiescenceDrainPolicy`.
 
 ## Rationale
 
@@ -162,9 +209,47 @@ was still initializing. The module only depends on `core.types` — it never dep
 on harness internals. `opencode_http.py` now imports `OPENCODE_CONFIG_CONTENT_ENV`
 from `meridian.lib.launch.workspace_projection`.
 
+### Pi: Quiescence Instead of Process Exit
+
+Pi spawned sessions don't exit when a task completes — they stay alive to track
+child spawn completion and deliver wave notifications. This means process exit is
+not a valid completion signal. Instead, Meridian reads the lifecycle sidecar for
+`meridian.quiescence.ready` — emitted when all children are done and all
+notifications delivered. The drain loop uses `PiRpcQuiescenceDrainPolicy`, which
+classifies `agent_end` as terminal only when the quiescence check passes.
+
+This is the first harness where "done" is not synonymous with "process exited."
+All other harnesses (Claude, Codex, OpenCode) use process exit or an explicit
+terminal event as the completion boundary.
+
+### Pi: Runtime Compatibility Probing
+
+`pi_runtime_resolver.py` probes the installed `pi` binary before every launch. It
+runs `pi --version` and `pi --help`, then checks the help surface for required
+CLI flags. The required set differs between `primary` and `spawned` roles —
+spawned requires `--mode`, `rpc`, `--no-extensions`, `--no-skills`, `-e`/`--extension`,
+etc. If any required token group is missing, the launch fails with a descriptive
+`PiRuntimeResolutionError`.
+
+The compatibility probe prevents silent failures where an older Pi binary is on
+PATH but lacks the flags Meridian's projection layer emits.
+
+### Pi: Lifecycle Sidecar vs Stdout
+
+Pi's stdout is the JSON-RPC transport channel. Lifecycle events cannot appear there
+without polluting the protocol stream. Instead, extensions write lifecycle events to
+a sidecar JSONL file via `PI_LIFECYCLE_EVENT_FILE_ENV`. The Python connection layer
+tails this file incrementally during the drain loop. If a lifecycle event does appear
+on stdout (e.g., from a misconfigured extension), it is silently dropped.
+
 ## Patterns
 
 ### Adding a Harness
+
+The full end-to-end guide is at [`docs/harness-integration.md`](../../../../docs/harness-integration.md).
+It covers probing, adapter implementation, projection, extraction, connection/semantics,
+wrapper/runtime packaging, session parity, model/catalog/Mars integration, and a
+verification checklist — using Pi as the worked example.
 
 Touch every file in `HARNESS_EXTENSION_TOUCHPOINTS` (listed in `__init__.py`):
 1. `core/types.py` — register `HarnessId`/`TransportId`
@@ -206,9 +291,11 @@ accounting invariant treats any uncovered field as a bug, not a warning.
 - `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/claude.md` — Claude flags, PTY path, session detection
 - `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/codex.md` — Codex JSON-RPC, managed-primary, approval routing detail
 - `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/opencode.md` — OpenCode SSE, SQLite sessions, workspace env merging
+- `$MERIDIAN_CONTEXT_KB_DIR/codebase/harness/pi.md` — Pi RPC, extension architecture, quiescence drain
 - `$MERIDIAN_CONTEXT_KB_DIR/architecture/launch-system.md` — how adapters plug into `build_launch_context()`
 
 ## Related .context/
 
 - [../../state/.context/CONTEXT.md](../../state/.context/CONTEXT.md) — artifact store that `SpawnExtractor` reads from; atomic write primitives
 - [../../launch/.context/CONTEXT.md](../../launch/.context/CONTEXT.md) — composition seam, four driving adapters, prepare/bind split, invariants
+- [../../../pi_runtime/.context/CONTEXT.md](../../../pi_runtime/.context/CONTEXT.md) — Pi TypeScript extensions, build pipeline, lifecycle sidecar writer

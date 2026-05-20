@@ -16,6 +16,7 @@ from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
     HarnessEvent,
+    StopResult,
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
@@ -28,13 +29,20 @@ from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 
 
-def _build_config(spawn_id: SpawnId, project_root: Path) -> ConnectionConfig:
+def _build_config(
+    spawn_id: SpawnId,
+    project_root: Path,
+    *,
+    harness_id: HarnessId = HarnessId.CODEX,
+) -> ConnectionConfig:
+    pi_session_role = "spawned" if harness_id is HarnessId.PI else None
     return ConnectionConfig(
         spawn_id=spawn_id,
-        harness_id=HarnessId.CODEX,
+        harness_id=harness_id,
         prompt="hello",
         control_root=project_root,
         env_overrides={},
+        pi_session_role=pi_session_role,
     )
 
 
@@ -101,15 +109,26 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
         def spawn_id(self) -> SpawnId:
             return self._spawn_id
 
+        @property
+        def subprocess_pid(self) -> int | None:
+            return 7373
+
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = spec
             self._spawn_id = config.spawn_id
             self.state = "connected"
 
-        async def stop(self) -> None:
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
             cleanup_started.set()
             await release_cleanup.wait()
             self.state = "stopped"
+            return StopResult()
 
         def health(self) -> bool:
             return True
@@ -183,6 +202,153 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
 
 
 @pytest.mark.asyncio
+async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path
+    runtime_root = resolve_runtime_paths(project_root).root_dir
+    allow_child_drain = asyncio.Event()
+
+    class FakeControlSocketServer:
+        def __init__(self, spawn_id: SpawnId, socket_path: Path, manager: SpawnManager) -> None:
+            _ = spawn_id, manager
+            self.socket_path = socket_path
+
+        async def start(self) -> None:
+            self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        async def stop(self) -> None:
+            return None
+
+    class FakePiConnection:
+        def __init__(self) -> None:
+            self._spawn_id = SpawnId("")
+            self.state = "created"
+            self.capabilities = ConnectionCapabilities(
+                mid_turn_injection="queue",
+                supports_steer=False,
+                supports_cancel=True,
+                runtime_model_switch=False,
+                structured_reasoning=True,
+            )
+
+        @property
+        def harness_id(self) -> HarnessId:
+            return HarnessId.PI
+
+        @property
+        def spawn_id(self) -> SpawnId:
+            return self._spawn_id
+
+        @property
+        def subprocess_pid(self) -> int | None:
+            return 7373
+
+        async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
+            _ = spec
+            self._spawn_id = config.spawn_id
+            self.state = "connected"
+
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
+            self.state = "stopped"
+            return StopResult()
+
+        def health(self) -> bool:
+            return self.state == "connected"
+
+        async def send_user_message(self, text: str) -> None:
+            _ = text
+
+        async def send_cancel(self) -> None:
+            return None
+
+        async def events(self):  # type: ignore[no-untyped-def]
+            yield HarnessEvent(
+                event_type="session",
+                harness_id="pi",
+                payload={"type": "session", "id": "ses-1"},
+            )
+            yield HarnessEvent(
+                event_type="meridian.subspawn.start",
+                harness_id="pi",
+                payload={
+                    "type": "meridian.subspawn.start",
+                    "schema_version": 1,
+                    "subspawn_id": "child-1",
+                    "wait_policy": "tracked",
+                },
+            )
+            yield HarnessEvent(
+                event_type="agent_end",
+                harness_id="pi",
+                payload={
+                    "type": "agent_end",
+                    "messages": [{"role": "assistant", "stopReason": "stop"}],
+                },
+            )
+            await allow_child_drain.wait()
+            yield HarnessEvent(
+                event_type="meridian.subspawn.end",
+                harness_id="pi",
+                payload={
+                    "type": "meridian.subspawn.end",
+                    "schema_version": 1,
+                    "subspawn_id": "child-1",
+                    "wait_policy": "tracked",
+                },
+            )
+
+    monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
+    monkeypatch.setattr(
+        "meridian.lib.harness.connections.get_connection_class",
+        lambda _harness_id: FakePiConnection,
+    )
+
+    spawn_id = start_spawn(
+        runtime_root,
+        chat_id="c-pi-child-drain",
+        model="openai-codex/gpt-5.4-mini",
+        agent="coder",
+        harness="pi",
+        kind="streaming",
+        prompt="hello",
+        launch_mode="foreground",
+        status="running",
+    )
+    manager = SpawnManager(
+        runtime_root=runtime_root,
+        project_root=project_root,
+    )
+    await manager.start_spawn(
+        _build_config(spawn_id, project_root, harness_id=HarnessId.PI),
+        _build_spec(),
+    )
+
+    try:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                asyncio.shield(manager.wait_for_completion(spawn_id)),
+                timeout=0.1,
+            )
+
+        allow_child_drain.set()
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        assert outcome.exit_code == 0
+        assert outcome.error is None
+    finally:
+        await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
 async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None:
     sink = RecordingTelemetrySink()
     init_telemetry(sink=sink)
@@ -196,8 +362,14 @@ async def test_backpressure_drop_emits_runtime_telemetry(tmp_path: Path) -> None
         def harness_id(self) -> HarnessId:
             return HarnessId.CODEX
 
-        async def stop(self) -> None:
-            return None
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
+            return StopResult()
 
     class FakeControlServer:
         async def stop(self) -> None:
@@ -284,8 +456,15 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
             self._spawn_id = config.spawn_id
             self.state = "connected"
 
-        async def stop(self) -> None:
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: Any = None,
+        ) -> StopResult:
+            _ = reason, progress
             self.state = "stopped"
+            return StopResult()
 
         def health(self) -> bool:
             return self.state == "connected"

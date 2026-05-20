@@ -150,3 +150,60 @@ call. Callers that need machine-readable output should request `--format json`.
 
 → [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — ops/ layer overview, SpawnApplicationService, SEAM-1/2/3
 → [../../../launch/.context/CONTEXT.md](../../../launch/.context/CONTEXT.md) — launch mechanism ops/spawn drives
+
+## Pi Nested Stale Detection
+
+`_read_only_nested_staleness_view()` in `query.py` handles the case where a nested
+spawn reads the status of a Pi spawn. Pi spawned sessions stay alive after task
+completion (quiescence model), so a nested reader observing a non-terminal Pi spawn
+must detect staleness differently than for other harnesses.
+
+### Detection Method
+
+The staleness check uses file modification times rather than PID liveness:
+- Reads mtimes of five files: `heartbeat`, `history.jsonl`, `output.jsonl`,
+  `meridian_lifecycle_events.jsonl`, `stderr.log`, `report.md`
+- If ANY file has been modified within the last 120 seconds
+  (`_NESTED_READ_HEARTBEAT_WINDOW_SECS`), the spawn is considered alive — the
+  Pi process may be blocked on lifecycle processing
+- A 15-second startup grace period (`_NESTED_READ_STARTUP_GRACE_SECS`) from
+  `started_at` prevents false staleness detection during Pi initialization
+- A 5-second post-runner-exit grace period
+  (`_NESTED_READ_POST_RUNNER_EXIT_FINALIZATION_GRACE_SECS`) allows the runner
+  process to finalize before the spawn row is considered stale
+
+If no file has been updated recently, the spawn is marked as `failed` with
+`error="stale_nested_read"` or `error="stale_nested_read_no_pid"`. This is a
+**read-only view** — `_read_only_nested_staleness_view()` returns a copy of the
+record with modified status, not a mutation.
+
+### Why File-Based Instead of PID-Based
+
+`is_process_alive()` (PID check) doesn't work for Pi spawned sessions because:
+1. The Pi process may be alive but blocked (quiescence drain waiting for children)
+2. The Pi process may have exited but the spawn row hasn't yet been reconciled
+   (cleanup phases still running)
+
+File mtime checks catch both cases: a blocked process usually writes heartbeat
+timestamps, and a dead process stops updating all files.
+
+### Scope: Read-Only Nested Context Only
+
+This detection only applies when `is_root_side_effect_process()` is false — i.e.,
+a nested agent reading another spawn's status. The root Meridian process uses the
+reaper (`lib/state/reaper.py`) for staleness detection, which has its own
+activity/grace windows and does actual row mutations.
+
+### Pi Cleanup Telemetry in `spawn show`
+
+`_pi_cleanup_telemetry()` reads `history.jsonl` for `meridian.pi.lifecycle.phase`
+events with phases starting with `cleanup_`. It extracts cleanup status
+(`running → completed → escalated → failed`), reason, and error to display in
+`meridian spawn show` output. The highest-severity cleanup status across all phase
+events is reported.
+
+## Related .context/
+
+- [../../../streaming/.context/CONTEXT.md](../../../streaming/.context/CONTEXT.md) — Pi quiescence drain, child wave timeouts, micro-drain
+- [../../../harness/.context/CONTEXT.md](../../../harness/.context/CONTEXT.md) — PiAdapter, lifecycle events, runtime resolution
+- [../../../harness/connections/.context/CONTEXT.md](../../../harness/connections/.context/CONTEXT.md) — PiRpcConnection dual-event-source

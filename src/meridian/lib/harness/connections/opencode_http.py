@@ -35,6 +35,8 @@ from meridian.lib.harness.connections.base import (
     HarnessConnection,
     HarnessEvent,
     ObserverEndpoint,
+    StopProgressCallback,
+    StopResult,
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
@@ -281,9 +283,15 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._primary_observer_mode = True
         await self.start(config, spec)
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
         if self._state == "stopped":
-            return
+            return StopResult()
         self._primary_observer_mode = False
         if self._state != "stopping":
             self._transition("stopping")
@@ -292,6 +300,7 @@ class OpenCodeConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._cancel_requested = False
         self._signal_in_flight = False
         self._transition("stopped")
+        return StopResult()
 
     def health(self) -> bool:
         if self._state not in {"starting", "connected"}:

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 class TerminalSurfaceMode(StrEnum):
     """How Meridian surfaces an interactive harness terminal."""
 
+    PURE_STDIO = "pure_stdio"
     PTY_MEDIATED = "pty_mediated"
     NATIVE_INHERIT = "native_inherit"
 
@@ -118,6 +119,9 @@ class ResolvedLaunchSpec(BaseModel):
     skills: tuple[str, ...] = ()
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
+
+    # Pi only
+    pi_extension_entrypoints: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:

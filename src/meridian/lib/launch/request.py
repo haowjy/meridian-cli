@@ -52,6 +52,7 @@ class SessionRequest(BaseModel):
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
+    source_pi_session_dir: str | None = None
     forked_from_chat_id: str | None = None
     continue_harness: str | None = None
     continue_source_tracked: bool = False

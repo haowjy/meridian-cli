@@ -14,7 +14,7 @@ from meridian.lib.ops.reference_recovery import (
     recover_harness_session_id,
 )
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.state import session_store, spawn_store
+from meridian.lib.state import primary_meta, session_store, spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
 _SPAWN_REF_RE = re.compile(r"^p\d+$")
@@ -36,6 +36,7 @@ class ResolvedSessionReference:
     source_control_root: str | None = None
     source_execution_cwd: str | None = None
     source_claude_config_dir: str | None = None
+    source_pi_session_dir: str | None = None
     warning: str | None = None
     recovery: RecoveryResult | None = None
 
@@ -106,6 +107,21 @@ def _latest_harness_session_id(record: session_store.SessionRecord) -> str | Non
     return _normalize_optional(record.harness_session_id)
 
 
+def _latest_primary_spawn_id_for_chat(runtime_root: Path, chat_id: str) -> str | None:
+    rows = spawn_store.list_spawns(runtime_root, filters={"chat_id": chat_id})
+    primary_rows = [row for row in rows if row.kind == "primary"]
+    if not primary_rows:
+        return None
+    return primary_rows[-1].id
+
+
+def _read_primary_pi_session_dir(runtime_root: Path, spawn_id: str) -> str | None:
+    metadata = primary_meta.read_primary_metadata(runtime_root, spawn_id)
+    if metadata is None:
+        return None
+    return _normalize_optional(metadata.session_dir)
+
+
 def _resolve_untracked_reference(project_root: Path, ref: str) -> ResolvedSessionReference:
     registry = get_default_harness_registry()
     inferred_harness = infer_harness_from_untracked_session_ref(
@@ -140,6 +156,7 @@ def _build_tracked_reference(
     source_control_root: str | None = None,
     source_execution_cwd: str | None = None,
     source_claude_config_dir: str | None = None,
+    source_pi_session_dir: str | None = None,
     project_root: Path,
 ) -> ResolvedSessionReference:
     registry = get_default_harness_registry()
@@ -163,6 +180,7 @@ def _build_tracked_reference(
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=source_claude_config_dir,
+        source_pi_session_dir=source_pi_session_dir,
         tracked=True,
     )
 
@@ -185,6 +203,14 @@ def _resolve_spawn_reference(
         source_execution_cwd = resolve_spawn_log_dir(project_root, ref).as_posix()
     elif source_execution_cwd is None:
         source_execution_cwd = project_root.as_posix()
+    source_pi_session_dir: str | None = None
+    if row.harness == "pi":
+        if row.kind == "primary":
+            source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, row.id)
+        elif row.chat_id:
+            primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, row.chat_id)
+            if primary_spawn_id is not None:
+                source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -196,6 +222,7 @@ def _resolve_spawn_reference(
         source_control_root=source_control_root,
         source_execution_cwd=source_execution_cwd,
         source_claude_config_dir=_normalize_optional(row.claude_config_dir),
+        source_pi_session_dir=source_pi_session_dir,
         project_root=project_root,
     )
 
@@ -210,6 +237,11 @@ def _resolve_chat_reference(
     session = records[0]
     harness_session_id = _latest_harness_session_id(session)
     stored_harness = _normalize_optional(session.harness)
+    source_pi_session_dir: str | None = None
+    if stored_harness == "pi":
+        primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, session.chat_id)
+        if primary_spawn_id is not None:
+            source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -228,6 +260,7 @@ def _resolve_chat_reference(
             or project_root.as_posix()
         ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
+        source_pi_session_dir=source_pi_session_dir,
         project_root=project_root,
     )
 
@@ -242,6 +275,11 @@ def _resolve_harness_session_reference(
     stored_harness_session_id = _normalize_optional(session.harness_session_id)
     harness_session_id = stored_harness_session_id or ref
     stored_harness = _normalize_optional(session.harness)
+    source_pi_session_dir: str | None = None
+    if stored_harness == "pi":
+        primary_spawn_id = _latest_primary_spawn_id_for_chat(runtime_root, session.chat_id)
+        if primary_spawn_id is not None:
+            source_pi_session_dir = _read_primary_pi_session_dir(runtime_root, primary_spawn_id)
     return _build_tracked_reference(
         harness_session_id=harness_session_id,
         stored_harness=stored_harness,
@@ -260,6 +298,7 @@ def _resolve_harness_session_reference(
             or project_root.as_posix()
         ),
         source_claude_config_dir=_normalize_optional(session.claude_config_dir),
+        source_pi_session_dir=source_pi_session_dir,
         project_root=project_root,
     )
 

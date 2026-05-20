@@ -4,6 +4,63 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `docs/harness-integration.md` — end-to-end guide for adding a new harness to Meridian, using Pi as the worked example. Covers probing, adapter/projection/extraction/semantics, native vs RPC launch split, session parity, model/catalog/Mars integration, verification checklist, and Pi-specific gap tracking.
+- Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
+- Pi harness unit tests for projection, extraction, registry/contract wiring, semantics, and CLI shortcut parsing.
+- Pi runtime TypeScript extensions: `managed-bash` (`bash` override + `bash_bg_list/read/wait/kill`) and `meridian-lifecycle` (tracked child + notification/quiescence events) plus prebuild script `npm run build:extensions` for stable extension artifacts under `src/meridian/pi_runtime/dist/extensions/`.
+
+### Changed
+- Nested spawn reads now apply read-only stale detection after reconciliation when `MERIDIAN_DEPTH>0`: stale rows surface as synthetic terminal (`runner_exit_*`, `stale_nested_read`, `stale_nested_read_no_pid`) without writing reconciler orphan states to disk.
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; stderr remains debug only; primary TUI no longer shows raw lifecycle JSON; no lifecycle JSON leaks to TUI or stderr.
+- Primary Pi session identity now comes from flat `PI_CODING_AGENT_SESSION_DIR/*.jsonl` scanning with first-line JSON parse, cwd/time-window disambiguation, and expected-id suppression; `primary_meta.json` now records `harness_session_discovery` plus `harness_session_discovery_detail` so continue/fork errors can distinguish never-created vs discovery-failed vs legacy empty-id cases.
+- Pi harness now launches installed `pi` directly for both primary native TUI and spawned RPC (`MERIDIAN_PI_BINARY` override first, otherwise `pi` on `PATH`); no `meridian-pi` wrapper process in launch projection.
+- Pi runtime compatibility checks now run in Python prelaunch/connection startup with fail-fast install/update guidance before process launch.
+- Primary Pi metadata sidecar now records resolved runtime selection from Python adapter prelaunch instead of wrapper-emitted runtime metadata.
+- `src/meridian/pi_runtime/` now contains only Meridian extension build artifacts/workflows (`npm run build:extensions`), not Pi runtime wrapper packaging.
+- Reaper legacy-worker cleanup warning now says it cleaned up a stale spawn and identifies the affected spawn explicitly.
+- Pi runtime resolution now prefers `MERIDIAN_PI_BINARY`, then installed `pi` on `PATH`; no bundled/dev runtime fallback path remains.
+- Wrapper-era runtime fallback env flags (`MERIDIAN_PI_ALLOW_BUNDLED_FALLBACK`, `MERIDIAN_PI_BUNDLED_AUTH_CONFIRMED`, `MERIDIAN_PI_NODE_BIN`) no longer influence Pi launch policy.
+- Pi wrapper no longer forces `PI_CODING_AGENT_DIR` by default; managed session isolation now uses `PI_CODING_AGENT_SESSION_DIR` and `--session-dir` under `~/.meridian/meridian-pi/sessions` (or configured user home).
+- Pi streaming launches now scope `PI_CODING_AGENT_SESSION_DIR` to `<session-root>/<spawn-id>/` so extractor fallback ignores stale sibling launch sessions.
+- Pi extractor session-id fallback now prefers `PI_CODING_AGENT_SESSION_DIR` and defaults to `get_user_home()/meridian-pi/sessions`.
+- Pi harness switched to RPC-only spawned launch (`pi --mode rpc`) with managed extension projection (`--no-extensions` + Meridian-owned `-e` paths), spawned/primary session-role env wiring, and quiescence-aware drain behavior that keeps spawned sessions alive across tracked child work then auto-stops on quiescence.
+- Harness semantics now classify Pi terminal/activity/signal events (`agent_end`, `message_update`, tool execution start/update) with stopReason=`error` failure mapping.
+- Permission flag projection now explicitly emits no CLI permission flags for Pi (extension-hook permission model).
+- Pi runtime compatibility probes require both `--version` and `--help` support for Meridian-required launch surface (`--mode rpc`, `--session-dir`/`PI_CODING_AGENT_SESSION_DIR`, `--no-extensions`, `-e`/`--extension`) before launch.
+- Pi runtime resolution now fails fast when the selected override/PATH binary cannot execute or is incompatible, with install/update guidance.
+- Pi RPC spawn path now sends prompt immediately after session creation (no preprompt wait) and hard-fails first-event startup on bounded timeout or runtime error.
+- Pi runtime selection metadata now persists as `pi_runtime_meta.json` from Python prelaunch for both primary and spawned launches; runtime failures surface as prelaunch/connection resolver errors.
+- Chat snapshots now persist effective harness-specific model; chat and primary-launch surfaces now gate with primary-launch capability.
+- Pi stop seam now uses typed `StopResult` plus progress events so quiescent-stop escalation is visible in stream/reporting.
+- Pi primary launch now routes through native Pi TUI process wrapping (no Pi RPC input loop, no `--mode rpc` for primary), while spawned Pi sessions remain RPC-managed with quiescence cleanup semantics.
+- Spawned Pi semantic completion now records success at event-ordered quiescence with micro-drain only (no fixed idle grace) and unblocks `spawn wait` before cleanup.
+- Pi cleanup now runs asynchronously after semantic completion; cleanup status/phases (`cleanup_running|cleanup_completed|cleanup_escalated|cleanup_failed`) are emitted separately from terminal spawn status.
+- Pending continuation tracking now keeps queued/delivered notifications pending until correlated follow-up terminal completion, with timeout failure `pi_notification_timeout:id=...:phase=...:elapsed=...:timeout=...`.
+- Tracked child waves now trigger one aggregate auto-resume with per-child status summary, not one resume per child.
+- Pi child-wave timeout now separate from notification timeout; timed-out tracked children are canceled before resume.
+- Pi launch/policy/integration tests now assert primary-native Pi command projection and runner routing, while keeping spawned RPC/quiescence assertions intact.
+- Primary native Pi now projects lifecycle extension only (`-e meridian-lifecycle`) with explicit passthrough rejection for `--no-extensions`; spawned RPC keeps managed-bash+lifecycle projection and lifecycle role-gates quiescence-ready/cancel-on-deadline to spawned sessions only.
+- Primary native Pi now also rejects passthrough `-e/--extension`; lifecycle-only extension policy cannot be overridden from `extra_args`.
+- Primary native Pi black-box launches now use resolved runtime child cwd consistently for launch execution, metadata, and session-file discovery matching.
+- Primary native Pi now records best-effort lifecycle diagnostics from `stderr.log` into `history.jsonl` when stderr is separately capturable; PTY/merged-stderr launches degrade cleanly without diagnostic ingestion.
+- Primary native Pi discovery metadata now labels `--no-session` runs as `never_created`/`ephemeral_session` when no new session id appears, and treats retained continue/resume session ids as authoritative (`ok`) when no new file is discovered.
+
+### Fixed
+- Windows: Pi session JSONL fixture paths now use `json.dumps` for proper backslash escaping; cwd case-fold matching is case-insensitive.
+- Windows: Node ESM extension loading uses `file://` URLs via `Path.as_uri()` instead of raw Windows paths (`D:` was parsed as URL protocol).
+- Windows: tracked Pi child cleanup now has cross-platform fallback (was POSIX-only `os.killpg`).
+- Windows: Pi runtime resolver probe errors now correctly classify execution failures vs compatibility failures.
+- CI: Pi extension build now works across pnpm 10 (local) and pnpm 11 (CI/corepack) with `pnpm-workspace.yaml` `allowBuilds` + `package.json` `pnpm.onlyBuiltDependencies`.
+- CI: committed `pnpm-lock.yaml` for reproducible `--frozen-lockfile` installs; added missing `typebox` dependency.
+- CI: Node.js bumped to 24 for `node:sqlite` support required by pnpm 11 via corepack.
+- Flaky `test_pi_connection_launches_in_task_cwd_when_provided` — shim now waits for prompt input before exiting instead of racing the connection lifecycle.
+
+### Removed
+- `meridian-pi` console entrypoint and wrapper implementation (`src/meridian/cli/pi_entrypoint.py`) plus wrapper-only unit tests.
+- Bundled Pi runtime wrapper launch path artifacts (`compile_runner.mjs`, `runner.mjs`, and `scripts/build-meridian-pi-runtime.sh`).
+- Slow/implementation-pinning tests: `test_launch_process_pi_primary.py`, `test_managed_bash_extension.py`.
+
 ## [0.1.13] - 2026-05-19
 ### Changed
 - Release flow matches Mars shape: main workflow creates RC-by-default release commits/tags; tag-triggered `release.yml` is sole PyPI publish identity.
@@ -31,6 +88,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.1.10] - 2026-05-16
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - OpenCode session logs read transcript messages from `opencode.db` when `session_diff` is empty/non-transcript.
 
 ## [0.1.9] - 2026-05-16
@@ -44,6 +102,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bare `--from` on `meridian spawn` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian-managed sessions. Same argv normalization as `--fork` / `--fork-fresh`.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Foreground `meridian spawn` and single-spawn `spawn wait` default to report-first compact output: status, report body, transcript command. Agent-mode defaults match compact text; explicit JSON carries report/transcript fields.
 - `spawn wait` includes report body by default; use `--no-report` to suppress it.
 - `--fork` is now identity-preserving on both primary and spawn CLIs. It rejects identity-shaping overrides with: `--fork preserves launch identity. Use --fork-fresh to change agent, model, or skills.`
@@ -64,6 +123,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Empty `override: {}` accepted as intentional no-op in model-policy rules.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Explicit harness selection is a force — model/harness compatibility checks removed; only unavailable primary-launch adapters are rejected.
 - Launch policy no longer re-validates final model/harness pairs after harness materialization.
 - `ModelSelectionContext.harness_model_id` carries per-harness model string; applied only at harness command boundary, not in telemetry/display/persistence.
@@ -75,6 +135,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scripts/manually-release.sh` — emergency/backfill release helper. Runs shared preflight, blocks empty `[Unreleased]`, updates version/changelog, commits, tags, and can push.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Release workflow: PR merges release only with a `release:*` label. CI creates the patch release commit and `vX.Y.Z` tag, then directly runs PyPI publish. Missing labels, `release:skip`, or direct `main` pushes skip auto-release. Tag pushes remain a manual/backfill publish path.
 - Workflow docs: document label-gated auto-release and manual tag backfill behavior.
 - Agent profile catalog: silently ignore invalid generated profile metadata instead of blocking spawn. Mars owns package validation.
@@ -84,6 +145,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.1.6] - 2026-05-15
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Git autosync: merge instead of rebase for remote integration. On conflict: `merge --abort` preserves local state (local-wins), writes conflict metadata JSON, appends notice to AGENTS.md managed section.
 - Git autosync: default `conflict_policy` changed from `leave` to `abort`.
@@ -112,6 +174,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Duplicate `_effective_model_policies()` in policies.py — centralized in compiler.py.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Config overlay `model-policies` accepts empty `override: {}` for fallback-candidate rules (parity with profile parsing).
 
@@ -136,6 +199,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `scripts/prune-worktrees.ps1` — Windows PowerShell mirror of prune-worktrees.sh.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Runtime catalog reads no longer warn for package authoring metadata mistakes; Mars owns profile/skill validation diagnostics.
 - `.github/workflows/meridian-ci.yml` extended with non-blocking PR label and changelog validation.
@@ -179,6 +243,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stronger CLI surface contract assertions in smoke tests (`test_config.py`, `test_context.py`).
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `source = "git"` without `remote` in context config is now valid (local-only tracking) instead of logging a warning and falling back.
 - **Execution policy carrier refactor.** `ResolvedExecutionPolicy` promoted to Pydantic `BaseModel` carrier passed opaquely through `SpawnRequest`, `LaunchRequest`, `ChatPolicySnapshot`, `CompilerRequest`, and `CompilerResult`. Adding a new execution-policy field now touches 2 files (carrier type + compiler resolution) instead of ~7 pass-through layers. 27 flat policy fields collapsed to 5 carrier fields; ~150 lines net reduction.
@@ -238,6 +303,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Declarative help profiles selected at app-build time from catalog metadata.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian doctor` (no flags) is now cheap and per-project only — no automatic background global scans. Background per-project repairs (stale locks, orphan runs) still run silently on primary launches.
 - `meridian doctor --global` is the explicit, opt-in path for expensive cross-project maintenance. Requires root process (rejects in nested execution).
@@ -272,6 +338,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian work root` command — prints the work items container path. Escape hatch for the root that's no longer shown in agent prompts.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Bumped mars-agents 0.2.5→0.2.6. Skill schema: `invocation: explicit|implicit` replaced by `model-invocable` + `user-invocable` booleans. Old fields are hard errors.
 - CLAUDE.md: release docs clarified — `meridian mars version` for prompt packages, `scripts/release.sh` for mars-agents and meridian-cli.
@@ -302,6 +369,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Portless error classification. All immediate non-zero exits were treated as route-occupied collisions. Now captures stderr via tempfile and matches known collision indicators; generic failures surface actual stderr output.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Mars compiled store migrated from `.agents/` to `.mars/`. `meridian mars sync` passthrough uses managed env. Remaining `.agents` path references cleaned up in resolve.py and test fixtures.
 - Mars model identity now separates harness affinity from model ID.
@@ -356,6 +424,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Archived old frontend, FastAPI app server, HCP chat stack, `meridian app` command, app-backed tests, and built UI artifacts. Active codebase clear for fresh `meridian chat` / `meridian app` rebuild.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian spawn wait` yield default now harness-aware: unknown 240s, Claude 270s, Codex 900s; mixed waits use shortest. `--yield-after-secs` still overrides.
 - Harness event semantics now live in narrow pure helpers for terminal outcome, activity transitions, and signal clearing.
@@ -386,6 +455,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.45] - 2026-04-25
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `mars-agents` 0.1.18 -> 0.1.19. Mars model listing now uses harness-aware runnable visibility and OpenCode provider/model availability.
 - Background spawn note trimmed. `meridian spawn --bg` now returns a short "Backgrounded. Spawn id: ... Collect later with \`meridian spawn wait\`." hint instead of a long immediate-wait warning.
@@ -443,6 +513,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Per-spawn details endpoint, infinite scroll.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian kg check` now reports broken links, `[!FLAG]` blocks, and git conflict markers. Broken links and flags are warnings (exit 0); conflict markers are errors (exit 1). `--strict` makes warnings exit-affecting. JSON includes all categories/counts. No early exit.
 - `git-autosync` rebase conflicts stay in clone for review by default; `conflict_policy = "abort"` restores old abort behavior. Future runs detect existing rebase state, skip all operations.
@@ -493,6 +564,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Frontend NewSessionDialog**: Submits to `POST /api/spawns` with agent/model/prompt selection.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Agent-mode CLI output defaults to text for all commands. Prior JSON defaults on `config.get`, `spawn.cancel`, `spawn.create`, `spawn.continue`, `spawn.wait`, `context`, `work.current` flipped to text. Explicit `--json` still available.
 - `spawn.wait` omits report body by default; pass `--report` to include. Report path always shown.
@@ -529,6 +601,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Nested Claude managed spawns now deny native delegation tools (Agent, TaskCreate, TaskGet, TaskList, TaskOutput, TaskStop, TaskUpdate) by default. Profiles opt out per-tool via `tools:` frontmatter listing. Prevents untracked sub-agent spawns outside Meridian policy.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `resolve_child_execution_cwd()` always returns `project_root`. Prior CLAUDECODE→spawn_log_dir redirect removed; `.claude/settings.json` now discovered correctly in nested Claude contexts.
 
@@ -538,6 +611,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.42] - 2026-04-22
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Spawn prompt projection now has one shared inline path. Codex and OpenCode inherit base inline projection: system instructions, task context, then user task.
 - Harness adapter docs now name the canonical prompt category routing and inline block order.
@@ -558,6 +632,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.40] - 2026-04-22
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - App chat UI migrated from frontend-v2.
 - Thread activity internals now named around spawn activity and stream control.
@@ -572,6 +647,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.40-rc.2] - 2026-04-22
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Default app server port changed from `8420` to `7676`. Vite proxy config updated to match.
 - **Work items: directory is the work item.** Eliminated `work-items/` metadata index. Work item exists iff its directory exists in `work/` (active) or `archive/work/` (done). `__status.json` inside each dir holds mutable metadata. `meridian work list` scans the actual work directory — no separate index to drift. Auto-heals missing/malformed status files. Fixes #69, #70.
@@ -598,6 +674,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch artifacts now emit `references.json` when references exist, with per-item routing (`inline`, `native-injection`, `omitted`) and native flag detail.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Claude primary launch now separates system instructions from the starting user prompt instead of appending the full prompt to system.
 - Launch artifacts now write from one shared projection path. Primary uses adapter `ProjectedContent` as authority for `system-prompt.md`, `starting-prompt.md`, and `projection-manifest.json`.
@@ -624,6 +701,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Plugin API v1**: Stable contract at `meridian.plugin_api` for hooks/plugins. Exports: hook types, state helpers, git helpers, config helpers, file locking.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - CLI help text updated: root epilogue and `spawn` description now advertise primary launch/resume/fork forms, session ref syntax (`c123`/`p123`/raw), foreground capture fallback (Unix TTY, falls back to subprocess on Windows/non-TTY), and correct `--autocompact` range (1-100). Agent root help updated to match.
 - `spawn show/children/files/cancel/wait/log` accept chat_id refs (e.g. `c213`). Resolves to most recent spawn with that chat_id.
@@ -670,6 +748,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared `ConfigSurface` builder unifies `config show` and `doctor` workspace state.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Bundled `mars-agents` 0.1.2 → 0.1.3.
 - Workspace file location follows `MERIDIAN_PROJECT_ROOT` — lives at `state_root.parent / workspace.local.toml`.
@@ -681,6 +760,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `spawn show` renders `orphan_finalization` distinct from `orphan_run` — tells apart drain-window hangs from runner-dead-during-run.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - `meridian-dev-workflow` bumped 0.0.25 → 0.0.26 via `meridian mars sync`.
 - `@impl-orchestrator` now runs a mandatory Explore phase before planning — verifies design against code reality, produces `plan/pre-planning-notes.md` as a gate artifact, terminates to a Redesign Brief when design is falsified.
@@ -710,6 +790,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Primary `meridian` launch startup agent catalog. Fresh and forked sessions now show installed agents before user input. Claude gets it in appended system prompt; Codex and OpenCode inline.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Startup inventory now agent-only. Skills still load through normal harness launch path, but not duplicated in startup catalog.
 
@@ -721,6 +802,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.0.27] - 2026-04-12
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Dev workflow package updated for unified `impl-orchestrator`.
 
@@ -741,6 +823,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CHANGELOG.md` resumed after staleness. Now in caveman style.
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - **Reaper rewrite**: 500-line state machine → 119 lines (~30 core). No PID files, no heartbeat, no foreground/background dispatch. Just: is `runner_pid` alive? Branch on `exited_at` presence.
 - **PID/heartbeat file elimination**: `harness.pid`, `background.pid`, `heartbeat` removed. PIDs come from event stream only. Spawn directories are artifact-only.
@@ -767,6 +850,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `gpt52` builtin alias for `gpt-5.2`; Claude `tools` passthrough in launch plan
 
 ### Changed
+- Pi lifecycle machine events now transport via append-only JSONL sidecar file (`pi-lifecycle-events.jsonl`) instead of stdout/stderr; extensions write via `fs.writeSync` append-mode fd, Python reads via `PiLifecycleEventTailer` with forced catch-up before quiescence decisions; no lifecycle JSON leaks to TUI or stderr.
 - Git autosync: extract `autosync_store.py` — single owner of `.meridian/autosync/` file layout. Eliminates duplicated path construction and JSON parsing across `git_autosync.py`, `sync_conflicts.py`, `context.py`.
 - Auto-resolve builtin aliases from discovered models; manifest-first bootstrap
 

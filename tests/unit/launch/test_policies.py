@@ -244,6 +244,67 @@ def test_validate_harness_compatibility_allows_same_layer_contradiction() -> Non
     )
 
 
+def test_resolve_launch_policy_primary_allows_model_derived_pi_harness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pi_alias = _mock_alias(alias="pi-fast", model_id="pi-fast-model", harness=HarnessId.PI)
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={
+            "pi-fast": pi_alias,
+            "pi-fast-model": pi_alias,
+        },
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(model="pi-fast"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.PI, HarnessId.CODEX),
+        )
+    )
+
+    assert policy.harness == HarnessId.PI
+
+
+def test_resolve_launch_policy_primary_allows_config_default_pi_harness(
+    tmp_path: Path,
+) -> None:
+    config = MeridianConfig.model_validate({"primary": {"harness": "pi"}})
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=_registry_with_harnesses(HarnessId.PI, HarnessId.CODEX),
+        )
+    )
+
+    assert policy.harness == HarnessId.PI
+
+
+def test_resolve_launch_policy_spawn_prepare_allows_pi_harness(tmp_path: Path) -> None:
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(harness="pi"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=_registry_with_harnesses(HarnessId.PI, HarnessId.CODEX),
+        )
+    )
+
+    assert policy.harness == HarnessId.PI
+
+
 def test_resolve_launch_policy_fallback_uses_policy_list_order(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

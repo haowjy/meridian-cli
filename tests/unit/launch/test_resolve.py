@@ -6,6 +6,8 @@ from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_r
 from meridian.lib.launch.prompt import dedupe_skill_names as prompt_dedupe_skill_names
 from meridian.lib.launch.resolve import (
     dedupe_skill_names,
+    resolve_pi_child_wave_timeout_seconds,
+    resolve_pi_notification_timeout_seconds,
     select_harness_model_id,
     validate_harness_compatibility,
 )
@@ -180,3 +182,53 @@ def test_select_harness_model_id_returns_canonical_with_empty_paths() -> None:
     )
 
     assert selected == "fake-model"
+
+
+def test_resolve_pi_notification_timeout_prefers_explicit_timeout() -> None:
+    assert (
+        resolve_pi_notification_timeout_seconds(
+            explicit_timeout_seconds=42.0,
+            config_snapshot={"wait_timeout_minutes": 30.0},
+        )
+        == 42.0
+    )
+
+
+def test_resolve_pi_notification_timeout_uses_config_wait_timeout_default() -> None:
+    assert (
+        resolve_pi_notification_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot={"wait_timeout_minutes": 30.0},
+        )
+        == 1800.0
+    )
+
+
+def test_resolve_pi_child_wave_timeout_defaults_to_five_minutes() -> None:
+    assert (
+        resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot=None,
+        )
+        == 300.0
+    )
+
+
+def test_resolve_pi_child_wave_timeout_prefers_explicit_timeout() -> None:
+    assert (
+        resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=42.0,
+            config_snapshot={"pi_child_wave_timeout_seconds": 10.0},
+        )
+        == 42.0
+    )
+
+
+def test_resolve_pi_child_wave_timeout_uses_config_override() -> None:
+    assert (
+        resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot={"timeouts": {"pi_child_wave_timeout_seconds": 12.5}},
+        )
+        == 12.5
+    )

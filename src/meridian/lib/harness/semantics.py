@@ -44,10 +44,11 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
         return TerminalEventOutcome(status="succeeded", exit_code=0)
 
     if event.event_type == "error/connectionClosed":
+        error = _stringify_terminal_error(event.payload.get("message")) or "connection_closed"
         return TerminalEventOutcome(
             status="failed",
             exit_code=1,
-            error="connection_closed",
+            error=error,
         )
 
     if event.harness_id == HarnessId.CLAUDE.value and event.event_type == "result":
@@ -92,6 +93,37 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
                 error=error or "opencode_session_error",
             )
 
+    if event.harness_id == HarnessId.PI.value and event.event_type == "agent_end":
+        messages_obj = event.payload.get("messages")
+        if isinstance(messages_obj, list):
+            for message_obj in reversed(cast("list[object]", messages_obj)):
+                if not isinstance(message_obj, dict):
+                    continue
+                message = cast("dict[str, object]", message_obj)
+                if str(message.get("role", "")).strip().lower() != "assistant":
+                    continue
+                stop_reason = str(message.get("stopReason", "")).strip().lower()
+                if stop_reason == "error":
+                    return TerminalEventOutcome(
+                        status="failed",
+                        exit_code=1,
+                        error="pi_stop_error",
+                    )
+                if stop_reason in {"abort", "aborted", "cancel", "cancelled", "canceled"}:
+                    return TerminalEventOutcome(
+                        status="cancelled",
+                        exit_code=130,
+                        error="cancelled",
+                    )
+                return TerminalEventOutcome(status="succeeded", exit_code=0)
+        return TerminalEventOutcome(status="succeeded", exit_code=0)
+
+    if event.harness_id == HarnessId.PI.value and event.event_type == "response":
+        command = str(event.payload.get("command", "")).strip().lower()
+        if command == "prompt" and event.payload.get("success") is False:
+            error = _stringify_terminal_error(event.payload.get("error")) or "pi_prompt_rejected"
+            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+
     return None
 
 
@@ -108,6 +140,18 @@ def activity_transition(event: HarnessEvent) -> ActivityState | None:
         return "turn_active"
     if event.event_type in {"turn/completed", "session.idle"}:
         return "idle"
+    if event.harness_id == HarnessId.PI.value:
+        if event.event_type in {
+            "agent_start",
+            "turn_start",
+            "message_start",
+            "message_update",
+            "tool_execution_start",
+            "tool_execution_update",
+        }:
+            return "turn_active"
+        if event.event_type in {"turn_end", "agent_end"}:
+            return "idle"
     return None
 
 
@@ -120,6 +164,8 @@ def clears_signal(event: HarnessEvent) -> bool:
         return event.event_type == "turn/completed"
     if event.harness_id == HarnessId.OPENCODE.value:
         return event.event_type in {"session.idle", "session.error"}
+    if event.harness_id == HarnessId.PI.value:
+        return event.event_type == "agent_end"
     return False
 
 

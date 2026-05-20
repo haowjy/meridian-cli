@@ -14,8 +14,6 @@ from typing import Any, cast
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.harness.semantics import TerminalEventOutcome
 
-_TERMINAL_EVENT_GRACE_SECONDS = 0.5
-
 
 class TriggerKind(Enum):
     """Trigger that won terminal arbitration."""
@@ -49,7 +47,6 @@ async def arbitrate_terminal(
     timeout_task: asyncio.Future[None] | None = None,
     budget_task: asyncio.Future[Any] | None = None,
     watchdog_task: asyncio.Future[bool] | None = None,
-    grace_seconds: float = _TERMINAL_EVENT_GRACE_SECONDS,
 ) -> ArbitrationDecision:
     """Return the terminal decision for the first completed trigger set.
 
@@ -58,7 +55,7 @@ async def arbitrate_terminal(
     2. budget exceeded
     3. timeout
     4. watchdog report termination
-    5. completion, including a bounded late-terminal grace window
+    5. completion
     6. signal
 
     Optional triggers are absent from the race when their task is ``None``.
@@ -92,6 +89,10 @@ async def arbitrate_terminal(
         )
 
     if timeout_task is not None and timeout_task in done:
+        if terminal_event_future.done():
+            return _terminal_frame_decision(terminal_event_future.result())
+        if completion_task.done():
+            return _completion_decision(terminal_event_future)
         return ArbitrationDecision(
             trigger=TriggerKind.TIMEOUT,
             terminal_outcome=None,
@@ -114,13 +115,13 @@ async def arbitrate_terminal(
         )
 
     if completion_task in done:
-        return await _completion_decision(terminal_event_future, grace_seconds)
+        return _completion_decision(terminal_event_future)
 
     if signal_task in done:
         # Signal has the lowest precedence.  If completion resolved in the same
-        # scheduling turn, preserve the completion/grace behavior.
+        # scheduling turn, preserve completion-derived behavior.
         if completion_task.done():
-            return await _completion_decision(terminal_event_future, grace_seconds)
+            return _completion_decision(terminal_event_future)
         return ArbitrationDecision(
             trigger=TriggerKind.SIGNAL,
             terminal_outcome=None,
@@ -144,13 +145,11 @@ def _terminal_frame_decision(outcome: TerminalEventOutcome) -> ArbitrationDecisi
     )
 
 
-async def _completion_decision(
+def _completion_decision(
     terminal_event_future: asyncio.Future[TerminalEventOutcome],
-    grace_seconds: float,
 ) -> ArbitrationDecision:
-    terminal_outcome = await _completion_grace(terminal_event_future, grace_seconds)
-    if terminal_outcome is not None:
-        return _terminal_frame_decision(terminal_outcome)
+    if terminal_event_future.done():
+        return _terminal_frame_decision(terminal_event_future.result())
     return ArbitrationDecision(
         trigger=TriggerKind.COMPLETION,
         terminal_outcome=None,
@@ -159,23 +158,6 @@ async def _completion_decision(
         synthetic_exit_code=None,
         synthetic_error=None,
     )
-
-
-async def _completion_grace(
-    terminal_event_future: asyncio.Future[TerminalEventOutcome],
-    grace_seconds: float,
-) -> TerminalEventOutcome | None:
-    """Wait briefly for a terminal frame after completion."""
-
-    if terminal_event_future.done():
-        return terminal_event_future.result()
-    try:
-        return await asyncio.wait_for(
-            asyncio.shield(terminal_event_future),
-            timeout=grace_seconds,
-        )
-    except TimeoutError:
-        return None
 
 
 __all__ = [

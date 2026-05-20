@@ -7,9 +7,12 @@ from typing import Final
 OUTPUT_FILENAME: Final[str] = "output.jsonl"
 HISTORY_FILENAME: Final[str] = "history.jsonl"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
+PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
+PI_LIFECYCLE_EVENTS_FILENAME: Final[str] = "pi-lifecycle-events.jsonl"
 STDERR_FILENAME: Final[str] = "stderr.log"
 TOKENS_FILENAME: Final[str] = "tokens.json"
 REPORT_FILENAME: Final[str] = "report.md"
+PI_LIFECYCLE_EVENT_FILE_ENV: Final[str] = "MERIDIAN_PI_LIFECYCLE_EVENT_FILE"
 
 DEFAULT_INFRA_EXIT_CODE: Final[int] = 2
 POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS: Final[float] = 1.0
@@ -45,10 +48,13 @@ BASE_COMMAND_CODEX_SUBPROCESS: Final[tuple[str, ...]] = ("codex", "exec", "--jso
 BASE_COMMAND_CODEX_STREAMING: Final[tuple[str, ...]] = ("codex", "app-server")
 BASE_COMMAND_OPENCODE_SUBPROCESS: Final[tuple[str, ...]] = ("opencode", "run")
 BASE_COMMAND_OPENCODE_STREAMING: Final[tuple[str, ...]] = ("opencode", "serve")
+BASE_COMMAND_PI_SUBPROCESS: Final[tuple[str, ...]] = ("pi", "--mode", "rpc")
+BASE_COMMAND_PI_STREAMING: Final[tuple[str, ...]] = ("pi", "--mode", "rpc")
 
 PRIMARY_BASE_COMMAND_CLAUDE: Final[tuple[str, ...]] = ("claude",)
 PRIMARY_BASE_COMMAND_CODEX: Final[tuple[str, ...]] = ("codex",)
 PRIMARY_BASE_COMMAND_OPENCODE: Final[tuple[str, ...]] = ("opencode",)
+PRIMARY_BASE_COMMAND_PI: Final[tuple[str, ...]] = ("pi",)
 
 __all__ = [
     "BASE_COMMAND_CLAUDE_STREAMING",
@@ -57,14 +63,20 @@ __all__ = [
     "BASE_COMMAND_CODEX_SUBPROCESS",
     "BASE_COMMAND_OPENCODE_STREAMING",
     "BASE_COMMAND_OPENCODE_SUBPROCESS",
+    "BASE_COMMAND_PI_STREAMING",
+    "BASE_COMMAND_PI_SUBPROCESS",
     "BLOCKED_CHILD_ENV_VARS",
     "DEFAULT_INFRA_EXIT_CODE",
     "HISTORY_FILENAME",
     "OUTPUT_FILENAME",
+    "PI_LIFECYCLE_EVENTS_FILENAME",
+    "PI_LIFECYCLE_EVENT_FILE_ENV",
+    "PI_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",
     "PRIMARY_BASE_COMMAND_CLAUDE",
     "PRIMARY_BASE_COMMAND_CODEX",
     "PRIMARY_BASE_COMMAND_OPENCODE",
+    "PRIMARY_BASE_COMMAND_PI",
     "PRIMARY_META_FILENAME",
     "REPORT_FILENAME",
     "REPORT_WATCHDOG_GRACE_SECONDS",

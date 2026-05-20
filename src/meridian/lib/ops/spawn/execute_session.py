@@ -74,6 +74,7 @@ def _resolve_session_continuation(
         source_control_root=request.session.source_control_root,
         source_execution_cwd=request.session.source_execution_cwd,
         source_claude_config_dir=request.session.source_claude_config_dir,
+        source_pi_session_dir=request.session.source_pi_session_dir,
     )
 
 

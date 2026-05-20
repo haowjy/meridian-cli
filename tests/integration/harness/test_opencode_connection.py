@@ -19,6 +19,8 @@ from meridian.lib.harness.connections.base import (
     ConnectionState,
     HarnessConnection,
     HarnessEvent,
+    StopProgressCallback,
+    StopResult,
 )
 from meridian.lib.harness.connections.opencode_http import (
     OpenCodeConnection,
@@ -322,8 +324,14 @@ def test_missing_harness_connection_abstract_method_raises_type_error() -> None:
         async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
             _ = config, spec
 
-        async def stop(self) -> None:
-            return None
+        async def stop(
+            self,
+            *,
+            reason: str | None = None,
+            progress: StopProgressCallback | None = None,
+        ) -> StopResult:
+            _ = reason, progress
+            return StopResult()
 
         def health(self) -> bool:
             return True

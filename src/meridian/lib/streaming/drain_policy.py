@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -39,10 +40,25 @@ class PersistentDrainPolicy:
         return DrainAction(terminate=True, emit_turn_boundary=False)
 
 
+class PiRpcQuiescenceDrainPolicy:
+    """Pi spawned-session policy: wait for quiescence before terminating."""
+
+    def __init__(self, *, quiescence_check: Callable[[], bool]) -> None:
+        self._quiescence_check = quiescence_check
+
+    def classify(self, outcome: TerminalEventOutcome) -> DrainAction:
+        if outcome.status != "succeeded":
+            return DrainAction(terminate=True, emit_turn_boundary=False)
+        if self._quiescence_check():
+            return DrainAction(terminate=True, emit_turn_boundary=False)
+        return DrainAction(terminate=False, emit_turn_boundary=True)
+
+
 __all__ = [
     "TURN_BOUNDARY_EVENT_TYPE",
     "DrainAction",
     "DrainPolicy",
     "PersistentDrainPolicy",
+    "PiRpcQuiescenceDrainPolicy",
     "SingleTurnDrainPolicy",
 ]

@@ -48,6 +48,8 @@ from meridian.lib.harness.connections.base import (
     ObserverEndpoint,
     PrimaryRuntimeRequestPolicy,
     ServerRequestHandler,
+    StopProgressCallback,
+    StopResult,
     validate_prompt_size,
 )
 from meridian.lib.harness.connections.errors import PortBindError
@@ -470,15 +472,22 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
     async def inject_runtime_event(self, event: HarnessEvent) -> None:
         await self._event_queue.put(event)
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult:
+        _ = reason, progress
         if self._state in {"stopped"}:
-            return
+            return StopResult()
         self._primary_observer_mode = False
 
         if self._state != "failed":
             self._transition("stopping")
 
         await self._cleanup_resources(mark_stopped=self._state != "failed")
+        return StopResult()
 
     def health(self) -> bool:
         process_running = self._process is not None and self._process.returncode is None

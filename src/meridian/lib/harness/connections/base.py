@@ -64,10 +64,21 @@ class ObserverEndpoint:
 
 
 ConnectionState = Literal["created", "starting", "connected", "stopping", "stopped", "failed"]
+PiSessionRole = Literal["primary", "spawned"]
 
 
 class ConnectionNotReady(RuntimeError):
     """Raised when send operations are attempted before connection readiness."""
+
+
+@dataclass(frozen=True)
+class StopResult:
+    """Normalized stop outcome metadata across harness connections."""
+
+    escalated: bool = False
+
+
+StopProgressCallback = Callable[[str, dict[str, object]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -206,8 +217,11 @@ class ConnectionConfig:
     task_cwd: Path | None = None
     system: str | None = None
     timeout_seconds: float | None = None
+    pi_notification_timeout_seconds: float | None = None
+    pi_child_wave_timeout_seconds: float | None = None
     ws_bind_host: str = "127.0.0.1"
     ws_port: int = 0
+    pi_session_role: PiSessionRole | None = None
     debug_tracer: DebugTracer | None = None
 
 
@@ -317,7 +331,12 @@ class HarnessConnection(Generic[SpecT], ABC):
         raise NotImplementedError(f"{self.harness_id.value} does not support runtime user input")
 
     @abstractmethod
-    async def stop(self) -> None: ...
+    async def stop(
+        self,
+        *,
+        reason: str | None = None,
+        progress: StopProgressCallback | None = None,
+    ) -> StopResult: ...
 
     @abstractmethod
     def health(self) -> bool: ...
@@ -345,9 +364,12 @@ __all__ = [
     "HarnessRequest",
     "InteractiveHandler",
     "ObserverEndpoint",
+    "PiSessionRole",
     "PrimaryRuntimeEventSurface",
     "PrimaryRuntimeRequestPolicy",
     "PromptTooLargeError",
     "ServerRequestHandler",
+    "StopProgressCallback",
+    "StopResult",
     "validate_prompt_size",
 ]

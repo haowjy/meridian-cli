@@ -92,6 +92,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Build Pi extensions
+        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+
       - name: Run fast gate
         run: uv run pytest -n auto -m "not slow"
 
@@ -113,6 +124,17 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --extra dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Build Pi extensions
+        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run full gate
         run: scripts/preflight.sh full
@@ -136,6 +158,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Build Pi extensions
+        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+
       - name: Run compatibility gate
         run: uv run pytest -n auto -m "not windows_only"
 
@@ -157,6 +190,17 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --extra dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Build Pi extensions
+        run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run Windows gate
         run: uv run pytest -n auto -m "not slow"

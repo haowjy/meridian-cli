@@ -12,10 +12,18 @@ project_codex_subprocess.py → CodexLaunchSpec → args + env   (codex exec --j
 project_codex_streaming.py  → CodexLaunchSpec → args + env   (codex app-server)
 project_opencode_subprocess.py → OpenCodeLaunchSpec → args + env  (opencode run)
 project_opencode_streaming.py  → OpenCodeLaunchSpec → args + env  (opencode serve)
+project_pi_rpc.py          → ResolvedLaunchSpec → args + env (pi rpc --mode rpc)
+project_pi_native_tui.py   → ResolvedLaunchSpec → args + env (pi native TUI, primary only)
+pi_extension_projection.py → (extension dist artifacts → per-launch materialization, no spec dependency)
 ```
 
 `project_codex_common.py` is not a projector — it provides `map_codex_approval_policy`
 and `map_codex_sandbox_mode` utilities shared by both Codex projectors.
+
+`pi_extension_projection.py` is not a projector — it resolves and materializes
+Meridian-owned Pi extension entrypoints from `pi_runtime/dist/extensions/` into
+per-launch state directories. It does not consume a `LaunchSpec`. See the Pi
+Extension Projection section below.
 
 ## Contracts
 
@@ -57,6 +65,26 @@ Approval mode → flag mapping:
 
 OpenCode receives no permission flags from this function — OpenCode handles approval
 through workspace env injection (see parent `.context/`).
+
+### Pi Extension Projection (`pi_extension_projection.py`)
+
+Resolves and materializes Meridian-owned Pi extension entrypoints for each launch:
+
+- **Source**: `pi_runtime/dist/extensions/<name>/index.js` — TypeScript extensions built
+  with `pnpm run build:extensions`
+- **Target**: `~/.meridian/meridian-pi/agent/extensions/<uuid4>/<name>/index.js` —
+  per-launch directory to prevent stale cached extensions
+- **Atomic copy**: uses `tempfile.mkstemp` + `shutil.copy2` + `os.replace` to avoid
+  partial writes
+- **Override env vars**: `MERIDIAN_PI_EXTENSION_SOURCE_ROOT` and
+  `MERIDIAN_PI_EXTENSION_TARGET_ROOT` for testing
+
+Two functions provide entrypoints:
+- `resolve_pi_lifecycle_extension_entrypoint()` — lifecycle extension only (primary mode)
+- `resolve_pi_all_extension_entrypoints()` — both managed-bash and lifecycle (spawned mode)
+
+Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
+the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.
 
 ### `HarnessCapabilityMismatch`
 
@@ -110,3 +138,5 @@ flag mapping to `permission_flags.py`.
 
 - [../../.context/CONTEXT.md](../../.context/CONTEXT.md) — full translation pipeline;
   `SpawnParams` accounting invariant (the adapter-level counterpart to projection drift)
+- [../../../../pi_runtime/.context/CONTEXT.md](../../../../pi_runtime/.context/CONTEXT.md) —
+  source of built extension artifacts that `pi_extension_projection.py` materializes

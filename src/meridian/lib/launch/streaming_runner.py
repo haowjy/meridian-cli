@@ -26,16 +26,18 @@ from meridian.lib.core.spawn_lifecycle import (
     ExecutionTerminalFacts,
     has_durable_report_completion,
 )
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
+from meridian.lib.harness.connections.pi_lifecycle_file import prepare_pi_lifecycle_event_file
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import TerminalEventOutcome, terminal_outcome
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
+    PI_LIFECYCLE_EVENTS_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
@@ -43,6 +45,7 @@ from meridian.lib.launch.constants import (
     TOKENS_FILENAME,
 )
 from meridian.lib.launch.context import LaunchContext
+from meridian.lib.launch.env import resolve_pi_session_role, scope_pi_session_dir_for_spawn
 from meridian.lib.launch.errors import ErrorCategory, classify_error, should_retry
 from meridian.lib.launch.extract import (
     FinalizeExtraction,
@@ -51,6 +54,10 @@ from meridian.lib.launch.extract import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.resolve import (
+    resolve_pi_child_wave_timeout_seconds,
+    resolve_pi_notification_timeout_seconds,
+)
 from meridian.lib.launch.runner_helpers import (
     append_budget_exceeded_event as _append_budget_exceeded_event,
 )
@@ -218,6 +225,16 @@ def _truncate_attempt_logs(log_dir: Path) -> None:
             target.unlink()
 
 
+def _scope_pi_session_dir_for_spawn(
+    *,
+    child_env: dict[str, str],
+    spawn_id: SpawnId,
+) -> None:
+    """Scope Pi session storage to one launch to avoid stale fallback collisions."""
+
+    scope_pi_session_dir_for_spawn(child_env=child_env, spawn_id=spawn_id)
+
+
 def _persist_attempt_artifacts(
     *,
     artifacts: ArtifactStore,
@@ -225,14 +242,42 @@ def _persist_attempt_artifacts(
     log_dir: Path,
     secrets: tuple[SecretSpec, ...],
 ) -> None:
-    for name in (HISTORY_FILENAME, STDERR_FILENAME, TOKENS_FILENAME):
+    for name in (
+        HISTORY_FILENAME,
+        PI_LIFECYCLE_EVENTS_FILENAME,
+        STDERR_FILENAME,
+        TOKENS_FILENAME,
+    ):
         source = log_dir / name
         if not source.exists():
             continue
         payload = source.read_bytes()
-        if name in {HISTORY_FILENAME, STDERR_FILENAME}:
+        if name in {HISTORY_FILENAME, PI_LIFECYCLE_EVENTS_FILENAME, STDERR_FILENAME}:
             payload = redact_secret_bytes(payload, secrets)
         artifacts.put(make_artifact_key(spawn_id, name), payload)
+
+
+def _pi_sidecar_has_subspawn_start(log_dir: Path) -> bool:
+    sidecar_path = log_dir / PI_LIFECYCLE_EVENTS_FILENAME
+    if not sidecar_path.exists():
+        return False
+    try:
+        sidecar_text = sidecar_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return any(
+        marker in sidecar_text
+        for marker in (
+            "meridian.subspawn.start",
+            "meridian_subspawn_start",
+        )
+    )
+
+
+def _retry_blocked_after_pi_subspawn_start(*, harness_id: HarnessId, log_dir: Path) -> bool:
+    """Return whether retrying would orphan already-started Pi subspawn work."""
+
+    return harness_id is HarnessId.PI and _pi_sidecar_has_subspawn_start(log_dir)
 
 
 def _line_from_harness_event(event: HarnessEvent) -> str:
@@ -424,6 +469,9 @@ async def run_streaming_spawn(
             raise RuntimeError("failed to subscribe to spawn stream")
 
         terminal_event_future = loop.create_future()
+        terminal_event_capture = (
+            terminal_event_future if config.harness_id != HarnessId.PI else None
+        )
         completion_task = asyncio.create_task(manager.wait_for_completion(spawn_id))
         consume_task = asyncio.create_task(
             _consume_subscriber_events(
@@ -433,7 +481,7 @@ async def run_streaming_spawn(
                 budget_breach_holder=[None],
                 event_observer=None,
                 stream_stdout_to_terminal=stream_to_terminal,
-                terminal_event_future=terminal_event_future,
+                terminal_event_future=terminal_event_capture,
             )
         )
         signal_task = asyncio.create_task(shutdown_event.wait())
@@ -519,6 +567,9 @@ async def _run_streaming_attempt(
     terminal_event_future: asyncio.Future[TerminalEventOutcome] = (
         asyncio.get_running_loop().create_future()
     )
+    terminal_event_capture = (
+        terminal_event_future if config.harness_id != HarnessId.PI else None
+    )
     subscriber: asyncio.Queue[HarnessEvent | None] | None = None
     connection: HarnessConnection[Any] | None = None
     drain_exit_code = DEFAULT_INFRA_EXIT_CODE
@@ -553,7 +604,7 @@ async def _run_streaming_attempt(
                 budget_breach_holder=budget_breach_holder,
                 event_observer=event_observer,
                 stream_stdout_to_terminal=stream_stdout_to_terminal,
-                terminal_event_future=terminal_event_future,
+                terminal_event_future=terminal_event_capture,
             )
         )
         signal_task = asyncio.create_task(signal_event.wait())
@@ -594,6 +645,7 @@ async def _run_streaming_attempt(
                 status="failed",
                 exit_code=3,
                 error="timeout",
+                prefer_drain_outcome=True,
             )
             drain_exit_code = 3
         elif decision.trigger == TriggerKind.WATCHDOG:
@@ -617,6 +669,10 @@ async def _run_streaming_attempt(
         if drain_outcome is not None and terminal_outcome is None:
             drain_exit_code = drain_outcome.exit_code
             drain_error = drain_outcome.error
+            if timed_out and drain_outcome.status == "succeeded":
+                timed_out = False
+            if drain_outcome.error == "report_watchdog":
+                terminated_by_report_watchdog = True
 
         # The watchdog resolves the completion future mid-flight inside
         # stop_spawn(), so completion_task can finish before watchdog_task.
@@ -625,7 +681,7 @@ async def _run_streaming_attempt(
             if watchdog_task.done():
                 with suppress(Exception):
                     terminated_by_report_watchdog = bool(watchdog_task.result())
-            elif drain_outcome is not None and drain_outcome.error == "report_watchdog":
+            else:
                 try:
                     await asyncio.wait_for(asyncio.shield(watchdog_task), timeout=2.0)
                     terminated_by_report_watchdog = bool(watchdog_task.result())
@@ -726,6 +782,14 @@ async def execute_with_streaming(
         timeout_seconds = (
             float(request.budget.timeout_secs) if request.budget.timeout_secs is not None else None
         )
+        pi_notification_timeout_seconds = resolve_pi_notification_timeout_seconds(
+            explicit_timeout_seconds=timeout_seconds,
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
+        pi_child_wave_timeout_seconds = resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
         max_retries = max(request.retry.max_attempts - 1, 0)
         retry_backoff_seconds = request.retry.backoff_secs
 
@@ -736,6 +800,20 @@ async def execute_with_streaming(
         child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
+        if resolved_harness_id is HarnessId.PI:
+            prepare_pi_lifecycle_event_file(
+                spawn_dir=log_dir,
+                env=child_env,
+            )
+            _scope_pi_session_dir_for_spawn(
+                child_env=child_env,
+                spawn_id=run.spawn_id,
+            )
+        pi_session_role = (
+            resolve_pi_session_role(interactive=launch_context.binding.run_params.interactive)
+            if resolved_harness_id is HarnessId.PI
+            else None
+        )
 
         spawn_store.update_spawn(
             runtime_root,
@@ -768,6 +846,9 @@ async def execute_with_streaming(
             task_cwd=child_cwd if child_cwd.resolve() != control_root.resolve() else None,
             system=getattr(spec, "appended_system_prompt", None),
             timeout_seconds=timeout_seconds,
+            pi_notification_timeout_seconds=pi_notification_timeout_seconds,
+            pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
+            pi_session_role=pi_session_role,
             debug_tracer=tracer,
         )
 
@@ -1055,6 +1136,13 @@ async def execute_with_streaming(
                         secrets=secrets,
                     )
 
+                    if _retry_blocked_after_pi_subspawn_start(
+                        harness_id=resolved_harness_id,
+                        log_dir=log_dir,
+                    ):
+                        conclusion.exit_code = 1
+                        break
+
                     if conclusion.retries_attempted >= max_retries:
                         conclusion.exit_code = 1
                         break
@@ -1090,6 +1178,14 @@ async def execute_with_streaming(
                     conclusion.failure_reason = "timeout"
                 elif category == ErrorCategory.STRATEGY_CHANGE:
                     conclusion.failure_reason = "strategy_change"
+
+                # Retrying after Pi already launched lifecycle-managed subspawn work is unsafe:
+                # children cannot be re-adopted by a new parent retry attempt.
+                if _retry_blocked_after_pi_subspawn_start(
+                    harness_id=resolved_harness_id,
+                    log_dir=log_dir,
+                ):
+                    break
 
                 if not should_retry(
                     exit_code=conclusion.exit_code,

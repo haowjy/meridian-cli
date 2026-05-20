@@ -35,6 +35,8 @@ def _write_primary_meta(
     *,
     managed_backend: bool = True,
     harness_session_id: str | None = None,
+    harness_session_discovery: str | None = None,
+    session_dir: str | None = None,
 ) -> None:
     meta_path = runtime_root / "spawns" / spawn_id / PRIMARY_META_FILENAME
     meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +45,10 @@ def _write_primary_meta(
         data["launcher_pid"] = os.getpid()
     if harness_session_id is not None:
         data["harness_session_id"] = harness_session_id
+    if harness_session_discovery is not None:
+        data["harness_session_discovery"] = harness_session_discovery
+    if session_dir is not None:
+        data["session_dir"] = session_dir
     meta_path.write_text(json.dumps(data) + "\n", encoding="utf-8")
 
 
@@ -325,6 +331,45 @@ def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spaw
             "harness_id": "codex",
             "payload": {"item": {"type": "agentMessage", "text": "primary live progress"}},
         },
+    )
+
+    with pytest.raises(ValueError) as exc:
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5))
+    assert str(exc.value) == (
+        "Spawn 'p42' has no transcript available yet (no harness session id recorded)."
+    )
+
+
+def test_session_log_primary_spawn_pi_never_created_skips_default_root_detection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = resolve_project_runtime_root(project_root)
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p42",
+        chat_id="c42",
+        model="openai-codex/gpt-5.4-mini",
+        agent="dev-orchestrator",
+        harness="pi",
+        kind="primary",
+        prompt="do thing",
+        harness_session_id="",
+    )
+    _write_primary_meta(
+        runtime_root,
+        "p42",
+        managed_backend=False,
+        harness_session_discovery="never_created",
+        session_dir=(tmp_path / "custom-pi-sessions").as_posix(),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.ops.session_target._detect_primary_harness_session_id",
+        lambda **_kwargs: pytest.fail("detection should be skipped for authoritative Pi metadata"),
     )
 
     with pytest.raises(ValueError) as exc:
