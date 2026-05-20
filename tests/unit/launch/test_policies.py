@@ -11,6 +11,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.compiler import ProvenanceLevel
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
     ModelSelectionContext,
@@ -329,22 +330,31 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
         frontmatter="name: reviewer\nmodel: gpt55\n",
     )
 
-    monkeypatch.setattr(
-        bundle_adapter,
-        "request_and_resolve",
-        lambda request, *, harness_registry: _FakeBundleResult(
-            model="gpt-5.5",
-            model_token="gpt55",
+    captured: dict[str, object] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        assert request.model_override == "haiku"
+        assert request.harness_override == "opencode"
+        return _FakeBundleResult(
+            model="claude-haiku-4-5",
+            model_token="haiku",
             harness="opencode",
-            harness_model="openai/gpt-5.5",
+            harness_model="openrouter/anthropic/claude-haiku-4.5",
             execution_policy=ResolvedExecutionPolicy(),
-            provenance={"harness_source": "provider"},
-        ),
-    )
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
 
     config = MeridianConfig.model_validate(
-        {"agents": {"reviewer": {"model": "haiku", "harness": "codex"}}}
+        {"agents": {"reviewer": {"model": "haiku", "harness": "opencode"}}}
     )
     policy = resolve_launch_policy(
         SurfacePolicyInput(
@@ -357,10 +367,71 @@ def test_spawn_prepare_agent_overlay_routing_overrides_bundle_when_cli_absent(
         )
     )
 
-    assert policy.model == "haiku"
-    assert policy.harness == HarnessId.CODEX
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert policy.model == "claude-haiku-4-5"
+    assert policy.harness == HarnessId.OPENCODE
     assert policy.model_selection is not None
-    assert policy.model_selection.harness_model_id is None
+    assert policy.model_selection.harness_model_id == "openrouter/anthropic/claude-haiku-4.5"
+    assert policy.model_selection.harness_provenance == "agent-overlay-default"
+    assert policy.field_provenance.model_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+    assert policy.field_provenance.harness_source is ProvenanceLevel.AGENT_OVERLAY_DEFAULT
+
+
+def test_spawn_prepare_cli_routing_beats_agent_overlay(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_agent_profile(
+        tmp_path,
+        name="reviewer",
+        frontmatter="name: reviewer\nmodel: gpt55\n",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        return _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness="opencode",
+            harness_model="openai/gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig.model_validate(
+        {"agents": {"reviewer": {"model": "haiku", "harness": "claude"}}}
+    )
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(
+                RuntimeOverrides(agent="reviewer", model="gpt55", harness="opencode"),
+                RuntimeOverrides(),
+            ),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert request.model_override == "gpt55"
+    assert request.harness_override == "opencode"
+    assert policy.field_provenance.model_source is ProvenanceLevel.CLI
+    assert policy.field_provenance.harness_source is ProvenanceLevel.CLI
 
 
 def test_chat_surface_keeps_local_compiler_path(

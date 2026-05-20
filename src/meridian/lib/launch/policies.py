@@ -490,6 +490,19 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         profile.name if profile is not None else (requested_agent or configured_default_agent or "")
     )
     agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
+    overlay_routing = RuntimeOverrides.from_agent_overlay_routing(agent_overlay).routing_scope()
+    overlay_model_applies = (
+        explicit_user_overrides.model is None and overlay_routing.model is not None
+    )
+    overlay_harness_applies = (
+        explicit_user_overrides.harness is None and overlay_routing.harness is not None
+    )
+    bundle_model_override = explicit_user_overrides.model
+    if bundle_model_override is None and overlay_model_applies:
+        bundle_model_override = overlay_routing.model
+    bundle_harness_override = explicit_user_overrides.harness
+    if bundle_harness_override is None and overlay_harness_applies:
+        bundle_harness_override = overlay_routing.harness
 
     requested_model_token = (
         explicit_user_overrides.model
@@ -507,8 +520,8 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         bundle_adapter.BundleRequest(
             agent=profile.name if profile is not None else requested_agent,
             project_root=project_root,
-            model_override=explicit_user_overrides.model,
-            harness_override=explicit_user_overrides.harness,
+            model_override=bundle_model_override,
+            harness_override=bundle_harness_override,
             effort_override=explicit_user_overrides.effort,
             approval_override=explicit_user_overrides.approval,
             sandbox_override=explicit_user_overrides.sandbox,
@@ -517,44 +530,27 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         harness_registry=surface.harness_registry,
     )
 
-    overlay_routing = RuntimeOverrides.from_agent_overlay_routing(agent_overlay).routing_scope()
-    overlay_model_applies = (
-        explicit_user_overrides.model is None and overlay_routing.model is not None
-    )
-    overlay_harness_applies = (
-        explicit_user_overrides.harness is None and overlay_routing.harness is not None
-    )
-
-    resolved_model = (
-        overlay_routing.model if overlay_model_applies else bundle_result.model
-    ) or bundle_result.model
-    resolved_harness = HarnessId(
-        overlay_routing.harness if overlay_harness_applies else bundle_result.harness
-    )
-
-    selected_model_token = (
-        overlay_routing.model
-        if overlay_model_applies and overlay_routing.model is not None
-        else bundle_result.model_token
-    ) or resolved_model
+    resolved_model = bundle_result.model
+    resolved_harness = HarnessId(bundle_result.harness)
+    selected_model_token = bundle_result.model_token or resolved_model
     requested_token = (
-        explicit_user_overrides.model or selected_model_token or resolved_model
+        explicit_user_overrides.model
+        or (overlay_routing.model if overlay_model_applies else None)
+        or selected_model_token
+        or resolved_model
     )
     harness_provenance = bundle_result.provenance.get("harness_source", "")
     if overlay_harness_applies:
         harness_provenance = "agent-overlay-default"
-    harness_model_id = bundle_result.harness_model
-    if overlay_model_applies or overlay_harness_applies:
-        harness_model_id = None
 
     model_selection = ModelSelectionContext(
         requested_token=requested_token or resolved_model,
         selected_model_token=selected_model_token or resolved_model,
         canonical_model_id=resolved_model,
-        mars_provided_harness=None if overlay_harness_applies else resolved_harness,
+        mars_provided_harness=resolved_harness,
         resolved_entry=None,
         harness_provenance=harness_provenance,
-        harness_model_id=harness_model_id,
+        harness_model_id=bundle_result.harness_model,
     )
 
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(
@@ -593,6 +589,12 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         profile_warning=profile_warning,
         model_warning=bundle_model_warning,
     )
+    provenance_overrides: dict[str, str] = {}
+    if overlay_model_applies:
+        provenance_overrides["model_source"] = "agent-overlay-default"
+    if overlay_harness_applies:
+        provenance_overrides["harness_source"] = "agent-overlay-default"
+
     return bundle_adapter.bundle_to_resolved_policy(
         bundle=bundle_result,
         profile=profile,
@@ -607,6 +609,7 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         alias_catalog=alias_catalog,
         harness_registry=surface.harness_registry,
         terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=resolved_harness),
+        provenance_overrides=provenance_overrides or None,
     )
 
 

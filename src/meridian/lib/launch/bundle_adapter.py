@@ -147,7 +147,7 @@ def _build_bundle_command(request: BundleRequest) -> list[str]:
         "launch-bundle",
         "--json",
         "--root",
-        request.project_root.as_posix(),
+        str(request.project_root),
     ]
 
     if request.agent:
@@ -351,6 +351,7 @@ def bundle_to_resolved_policy(
     alias_catalog: dict[str, AliasEntry] | None,
     harness_registry: HarnessRegistry,
     terminal_surface_mode: TerminalSurfaceMode,
+    provenance_overrides: dict[str, str] | None = None,
 ) -> ResolvedLaunchPolicy:
     """Map bundle facts + local composition context to ResolvedLaunchPolicy."""
 
@@ -366,6 +367,13 @@ def bundle_to_resolved_policy(
     from meridian.lib.launch.launch_types import ResolvedLaunchRouting
     from meridian.lib.launch.policies import ResolvedLaunchPolicy
 
+    effective_provenance = dict(bundle.provenance)
+    if provenance_overrides:
+        for key, value in provenance_overrides.items():
+            normalized = _normalize_str(value)
+            if normalized:
+                effective_provenance[key] = normalized
+
     return ResolvedLaunchPolicy(
         profile=profile,
         model=resolved_model,
@@ -380,16 +388,18 @@ def bundle_to_resolved_policy(
         execution_policy=execution_policy,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
-            model_source=_map_provenance_level(bundle.provenance.get("model_source")),
-            harness_source=_map_provenance_level(bundle.provenance.get("harness_source")),
-            effort_source=_map_provenance_level(bundle.provenance.get("effort_source")),
-            approval_source=_map_provenance_level(bundle.provenance.get("approval_source")),
-            sandbox_source=_map_provenance_level(bundle.provenance.get("sandbox_source")),
-            autocompact_source=_map_provenance_level(bundle.provenance.get("autocompact_source")),
-            autocompact_pct_source=_map_provenance_level(
-                bundle.provenance.get("autocompact_pct_source")
+            model_source=_map_provenance_level(effective_provenance.get("model_source")),
+            harness_source=_map_provenance_level(effective_provenance.get("harness_source")),
+            effort_source=_map_provenance_level(effective_provenance.get("effort_source")),
+            approval_source=_map_provenance_level(effective_provenance.get("approval_source")),
+            sandbox_source=_map_provenance_level(effective_provenance.get("sandbox_source")),
+            autocompact_source=_map_provenance_level(
+                effective_provenance.get("autocompact_source")
             ),
-            timeout_source=_map_provenance_level(bundle.provenance.get("timeout_source")),
+            autocompact_pct_source=_map_provenance_level(
+                effective_provenance.get("autocompact_pct_source")
+            ),
+            timeout_source=_map_provenance_level(effective_provenance.get("timeout_source")),
         ),
         model_selection=model_selection,
         fallback_chain=(),

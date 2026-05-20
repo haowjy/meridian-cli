@@ -209,7 +209,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
     )
 
     assert overlay_routed.model == "claude-sonnet-4.5"
-    assert overlay_routed.harness == "codex"
+    assert overlay_routed.harness == "claude"
     assert overlay_routed.execution_policy.effort == "high"
 
     assert cli_model_overridden.model == "gpt-5.5"
