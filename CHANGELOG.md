@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump `mars-agents` to `0.4.8rc3` for `build launch-bundle` and centralized cache-root routing (`MARS_CACHE_DIR`).
+
 ## [0.1.14-rc.1] - 2026-05-20
 
 ### Added
