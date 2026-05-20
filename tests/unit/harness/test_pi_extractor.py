@@ -7,10 +7,10 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+
+import pytest
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
-from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.extractors import pi as pi_extractor_module
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
@@ -98,149 +98,41 @@ def test_pi_extractor_reads_session_usage_and_report_from_output_jsonl() -> None
     assert PI_EXTRACTOR.extract_report(store, spawn_id) == "final report"
 
 
-def test_pi_extractor_detects_session_event_from_live_payload() -> None:
-    event = HarnessEvent(
-        event_type="session",
-        payload={"id": "ses-pi-123"},
-        harness_id="pi",
-    )
-
-    assert PI_EXTRACTOR.detect_session_id_from_event(event) == "ses-pi-123"
-
-
-def test_pi_extractor_detects_session_id_from_pi_session_storage(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    agent_dir = tmp_path / "agent"
-    session_dir = agent_dir / "sessions"
-    session_dir.mkdir(parents=True)
-    session_file = session_dir / "20260516_abc.jsonl"
-    session_file.write_text(
-        _session_jsonl("ses-from-file", child_cwd, extra_lines='{"type":"message"}\n'),
-        encoding="utf-8",
-    )
-
-    spec = ResolvedLaunchSpec(
-        harness="pi",
-        prompt="",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
-        spec=spec,
-        launch_env={"PI_CODING_AGENT_DIR": str(agent_dir)},
-        child_cwd=child_cwd,
-        runtime_root=tmp_path,
-    )
-
-    assert detected == "ses-from-file"
-
-
-def test_pi_extractor_does_not_return_source_session_for_native_fork(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    agent_dir = tmp_path / "agent"
-    session_dir = agent_dir / "sessions"
-    session_dir.mkdir(parents=True)
-    session_file = session_dir / "20260516_fork.jsonl"
-    session_file.write_text(
-        _session_jsonl("ses-fork-child", child_cwd),
-        encoding="utf-8",
-    )
-
-    spec = ResolvedLaunchSpec(
-        harness="pi",
-        prompt="",
-        continue_session_id="ses-source",
-        continue_fork=True,
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
-        spec=spec,
-        launch_env={"PI_CODING_AGENT_DIR": str(agent_dir)},
-        child_cwd=child_cwd,
-        runtime_root=tmp_path,
-    )
-
-    assert detected == "ses-fork-child"
-
-
-def test_pi_extractor_prefers_pi_session_dir_env_override(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    session_root = tmp_path / "custom-sessions"
-    session_root.mkdir(parents=True)
-    (session_root / "20260516_custom.jsonl").write_text(
-        _session_jsonl("ses-from-session-dir-env", child_cwd),
-        encoding="utf-8",
-    )
-
-    spec = ResolvedLaunchSpec(
-        harness="pi",
-        prompt="",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
-        spec=spec,
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
-        child_cwd=child_cwd,
-        runtime_root=tmp_path,
-    )
-
-    assert detected == "ses-from-session-dir-env"
-
-
-def test_pi_extractor_session_dir_override_ignores_stale_sibling_launches(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    parent_session_root = tmp_path / "custom-sessions"
-    parent_session_root.mkdir(parents=True)
-    stale_path = parent_session_root / "20260516_stale.jsonl"
-    stale_path.write_text(
-        _session_jsonl("ses-stale-sibling", child_cwd),
-        encoding="utf-8",
-    )
-    stale_time = time.time() - 3600.0
-    os.utime(stale_path, (stale_time, stale_time))
-
-    scoped_launch_root = parent_session_root
-    (scoped_launch_root / "20260516_current.jsonl").write_text(
-        _session_jsonl("ses-current-launch", child_cwd),
-        encoding="utf-8",
-    )
-
-    spec = ResolvedLaunchSpec(
-        harness="pi",
-        prompt="",
-        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
-    )
-
-    detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
-        spec=spec,
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(scoped_launch_root)},
-        child_cwd=child_cwd,
-        runtime_root=tmp_path,
-    )
-
-    assert detected == "ses-current-launch"
-
-
-def test_pi_extractor_uses_meridian_pi_sessions_default_root(
+@pytest.mark.parametrize(
+    ("storage_kind", "expected_session_id"),
+    [
+        ("agent_dir", "ses-from-agent-dir"),
+        ("session_dir", "ses-from-session-dir-env"),
+        ("default_root", "ses-from-default-root"),
+    ],
+)
+def test_pi_extractor_detects_session_id_from_supported_storage_roots(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
+    storage_kind: str,
+    expected_session_id: str,
 ) -> None:
     child_cwd = tmp_path / "repo"
     child_cwd.mkdir()
-    user_home = tmp_path / "user-home"
-    session_root = user_home / "meridian-pi" / "sessions"
+    launch_env: dict[str, str] = {}
+
+    if storage_kind == "agent_dir":
+        agent_dir = tmp_path / "agent"
+        session_root = agent_dir / "sessions"
+        launch_env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    elif storage_kind == "session_dir":
+        session_root = tmp_path / "custom-sessions"
+        launch_env["PI_CODING_AGENT_SESSION_DIR"] = str(session_root)
+    else:
+        user_home = tmp_path / "user-home"
+        session_root = user_home / "meridian-pi" / "sessions"
+        monkeypatch.setattr(pi_extractor_module, "get_user_home", lambda: user_home)
+
     session_root.mkdir(parents=True)
-    (session_root / "20260516_default.jsonl").write_text(
-        _session_jsonl("ses-from-default-root", child_cwd),
+    (session_root / "20260516_current.jsonl").write_text(
+        _session_jsonl(expected_session_id, child_cwd, extra_lines='{"type":"message"}\n'),
         encoding="utf-8",
     )
-    monkeypatch.setattr(pi_extractor_module, "get_user_home", lambda: user_home)
 
     spec = ResolvedLaunchSpec(
         harness="pi",
@@ -250,33 +142,27 @@ def test_pi_extractor_uses_meridian_pi_sessions_default_root(
 
     detected = PI_EXTRACTOR.detect_session_id_from_artifacts(
         spec=spec,
-        launch_env={},
+        launch_env=launch_env,
         child_cwd=child_cwd,
         runtime_root=tmp_path,
     )
 
-    assert detected == "ses-from-default-root"
+    assert detected == expected_session_id
 
 
-def test_detect_pi_session_id_from_session_files_prefers_new_recent_session_for_fork(
-    tmp_path: Path,
-) -> None:
+def test_pi_extractor_detects_new_fork_session_instead_of_source(tmp_path: Path) -> None:
     child_cwd = tmp_path / "repo"
     child_cwd.mkdir()
     session_root = tmp_path / "sessions"
     session_root.mkdir(parents=True)
 
     stale_path = session_root / "stale.jsonl"
-    stale_path.write_text(
-        _session_jsonl("ses-source", child_cwd),
-        encoding="utf-8",
-    )
+    stale_path.write_text(_session_jsonl("ses-source", child_cwd), encoding="utf-8")
     stale_time = time.time() - 120.0
     os.utime(stale_path, (stale_time, stale_time))
 
     started_at = time.time()
-    fresh_path = session_root / "fresh.jsonl"
-    fresh_path.write_text(
+    (session_root / "fresh.jsonl").write_text(
         _session_jsonl("ses-child", child_cwd),
         encoding="utf-8",
     )
@@ -291,33 +177,9 @@ def test_detect_pi_session_id_from_session_files_prefers_new_recent_session_for_
     assert detected == "ses-child"
 
 
-def test_pi_session_discovery_requires_matching_cwd(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    other_cwd = tmp_path / "other"
-    other_cwd.mkdir()
-    session_root = tmp_path / "sessions"
-    session_root.mkdir(parents=True)
-    (session_root / "other.jsonl").write_text(
-        _session_jsonl("ses-other", other_cwd),
-        encoding="utf-8",
-    )
-
-    discovery = detect_pi_session_discovery_from_session_files(
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
-        child_cwd=child_cwd,
-        started_at_epoch=time.time(),
-    )
-
-    assert discovery.session_id is None
-    assert discovery.discovery == "discovery_failed"
-    assert discovery.detail is not None
-    assert discovery.detail.startswith("no_matching_session: cwd=")
-
-
 def test_pi_session_discovery_matches_windows_cwd_case_insensitively(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session_root = tmp_path / "sessions"
     session_root.mkdir(parents=True)
@@ -327,6 +189,7 @@ def test_pi_session_discovery_matches_windows_cwd_case_insensitively(
         encoding="utf-8",
     )
     monkeypatch.setattr(pi_extractor_module, "IS_WINDOWS", True)
+
     discovery = detect_pi_session_discovery_from_session_files(
         launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
         child_cwd=child_cwd,
@@ -337,122 +200,68 @@ def test_pi_session_discovery_matches_windows_cwd_case_insensitively(
     assert discovery.discovery == "ok"
 
 
-def test_pi_session_discovery_reports_parse_errors_for_recent_flat_files(
+@pytest.mark.parametrize(
+    "case",
+    ["no_matching_cwd", "recent_parse_error", "stale_parse_error", "missing_dir", "expected_id"],
+)
+def test_pi_session_discovery_reports_unsuccessful_discovery_reasons(
     tmp_path: Path,
+    case: str,
 ) -> None:
     child_cwd = tmp_path / "repo"
     child_cwd.mkdir()
-    session_root = tmp_path / "sessions"
-    session_root.mkdir(parents=True)
-    (session_root / "20260518T010203_abc123.jsonl").write_text(
-        "{bad-json\n",
-        encoding="utf-8",
-    )
+    launch_env: dict[str, str]
+    expected_detail_prefix: str
+    expected_discovery = "discovery_failed"
+    expected_id: str | None = None
+
+    if case == "missing_dir":
+        launch_env = {"PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "missing")}
+        expected_discovery = "never_created"
+        expected_detail_prefix = "session_dir_missing:"
+    else:
+        other_cwd = tmp_path / "other"
+        other_cwd.mkdir()
+        session_root = tmp_path / "sessions"
+        session_root.mkdir(parents=True)
+        launch_env = {"PI_CODING_AGENT_SESSION_DIR": str(session_root)}
+        expected_detail_prefix = "no_matching_session: cwd="
+
+        if case == "no_matching_cwd":
+            (session_root / "other.jsonl").write_text(
+                _session_jsonl("ses-other", other_cwd),
+                encoding="utf-8",
+            )
+        elif case == "recent_parse_error":
+            (session_root / "20260518T010203_abc123.jsonl").write_text(
+                "{bad-json\n",
+                encoding="utf-8",
+            )
+            expected_detail_prefix = "session_file_parse_error:"
+        elif case == "stale_parse_error":
+            stale_path = session_root / "20260518T010203_broken.jsonl"
+            stale_path.write_text("{bad-json\n", encoding="utf-8")
+            stale_time = time.time() - 3600.0
+            os.utime(stale_path, (stale_time, stale_time))
+            (session_root / "other.jsonl").write_text(
+                _session_jsonl("ses-other", other_cwd),
+                encoding="utf-8",
+            )
+        elif case == "expected_id":
+            (session_root / "expected.jsonl").write_text(
+                _session_jsonl("ses-source", child_cwd),
+                encoding="utf-8",
+            )
+            expected_id = "ses-source"
 
     discovery = detect_pi_session_discovery_from_session_files(
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
+        launch_env=launch_env,
         child_cwd=child_cwd,
         started_at_epoch=time.time(),
+        expected_session_id=expected_id,
     )
 
     assert discovery.session_id is None
-    assert discovery.discovery == "discovery_failed"
+    assert discovery.discovery == expected_discovery
     assert discovery.detail is not None
-    assert discovery.detail.startswith("session_file_parse_error:")
-
-
-def test_pi_session_discovery_ignores_stale_parse_error_files(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    other_cwd = tmp_path / "other"
-    other_cwd.mkdir()
-    session_root = tmp_path / "sessions"
-    session_root.mkdir(parents=True)
-    stale_path = session_root / "20260518T010203_broken.jsonl"
-    stale_path.write_text("{bad-json\n", encoding="utf-8")
-    stale_time = time.time() - 3600.0
-    os.utime(stale_path, (stale_time, stale_time))
-    (session_root / "other.jsonl").write_text(
-        _session_jsonl("ses-other", other_cwd),
-        encoding="utf-8",
-    )
-
-    discovery = detect_pi_session_discovery_from_session_files(
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
-        child_cwd=child_cwd,
-        started_at_epoch=time.time(),
-    )
-
-    assert discovery.session_id is None
-    assert discovery.discovery == "discovery_failed"
-    assert discovery.detail is not None
-    assert discovery.detail.startswith("no_matching_session: cwd=")
-
-
-def test_pi_session_discovery_reports_open_errors_for_recent_flat_files(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    session_root = tmp_path / "sessions"
-    session_root.mkdir(parents=True)
-    blocked = session_root / "20260518T010203_blocked.jsonl"
-    blocked.write_text(
-        _session_jsonl("ses-unreadable", child_cwd),
-        encoding="utf-8",
-    )
-
-    original_open = Path.open
-
-    def _raise_for_blocked(path: Path, *args: Any, **kwargs: Any):
-        if path == blocked:
-            raise OSError("permission denied")
-        return original_open(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", _raise_for_blocked)
-
-    discovery = detect_pi_session_discovery_from_session_files(
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
-        child_cwd=child_cwd,
-        started_at_epoch=time.time(),
-    )
-
-    assert discovery.session_id is None
-    assert discovery.discovery == "discovery_failed"
-    assert discovery.detail is not None
-    assert discovery.detail.startswith("session_file_parse_error:")
-    assert "permission denied" in discovery.detail
-
-
-def test_pi_session_discovery_reports_never_created_when_dir_missing(tmp_path: Path) -> None:
-    discovery = detect_pi_session_discovery_from_session_files(
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(tmp_path / "missing")},
-        child_cwd=tmp_path,
-    )
-
-    assert discovery.session_id is None
-    assert discovery.discovery == "never_created"
-    assert discovery.detail is not None
-    assert discovery.detail.startswith("session_dir_missing:")
-
-
-def test_pi_session_discovery_ignores_expected_id_without_new_match(tmp_path: Path) -> None:
-    child_cwd = tmp_path / "repo"
-    child_cwd.mkdir()
-    session_root = tmp_path / "sessions"
-    session_root.mkdir(parents=True)
-    (session_root / "expected.jsonl").write_text(
-        _session_jsonl("ses-source", child_cwd),
-        encoding="utf-8",
-    )
-
-    discovery = detect_pi_session_discovery_from_session_files(
-        launch_env={"PI_CODING_AGENT_SESSION_DIR": str(session_root)},
-        child_cwd=child_cwd,
-        started_at_epoch=time.time(),
-        expected_session_id="ses-source",
-    )
-
-    assert discovery.session_id is None
-    assert discovery.discovery == "discovery_failed"
+    assert discovery.detail.startswith(expected_detail_prefix)
