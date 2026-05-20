@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -7,10 +8,23 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+
+
+@dataclass(frozen=True)
+class _FakeBundleResult:
+    model: str
+    model_token: str
+    harness: HarnessId
+    harness_model: str | None
+    execution_policy: ResolvedExecutionPolicy
+    provenance: dict[str, str]
+    warnings: tuple[str, ...] = ()
 
 
 def _write_minimal_subagent(project_root: Path) -> None:
@@ -68,6 +82,35 @@ def _patch_catalog_models(
     monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [cli_entry, overlay_entry])
 
 
+def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    model_routes = {
+        "claude-sonnet-4.5": ("claude-sonnet-4.5", HarnessId.CLAUDE),
+        "gpt-5.5": ("gpt-5.5", HarnessId.CODEX),
+        "gpt-5.4-mini": ("gpt-5.4-mini", HarnessId.CODEX),
+    }
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        selected_model, selected_harness = model_routes.get(
+            request.model_override or "",
+            ("gpt-5.3-codex", HarnessId.CODEX),
+        )
+        return _FakeBundleResult(
+            model=selected_model,
+            model_token=request.model_override or selected_model,
+            harness=selected_harness,
+            harness_model=selected_model,
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+
+
 def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -77,6 +120,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     prepare.py's job is to preserve continue_fork=True so the executor can act on it.
     """
     codex_adapter, runtime = _prepare_codex_runtime(tmp_path)
+    _stub_bundle_adapter(monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr(
         codex_adapter,
@@ -183,6 +227,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
         encoding="utf-8",
     )
     _patch_catalog_models(monkeypatch)
+    _stub_bundle_adapter(monkeypatch)
     runtime = build_runtime_from_root_and_config(
         tmp_path,
         load_config(tmp_path, user_config=user_config),
@@ -234,6 +279,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
         encoding="utf-8",
     )
     _patch_catalog_models(monkeypatch)
+    _stub_bundle_adapter(monkeypatch)
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
 
     prepared = build_create_payload(
