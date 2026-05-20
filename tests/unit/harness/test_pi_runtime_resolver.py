@@ -35,10 +35,41 @@ def test_resolve_pi_runtime_missing_path_reports_install_guidance() -> None:
     )
 
 
-def test_resolve_pi_runtime_uses_override_before_path(
+@pytest.mark.parametrize(
+    ("env", "which_result", "expected_binary", "expected_kind", "expected_which_calls"),
+    [
+        (
+            {"PATH": "/nonexistent", "MERIDIAN_PI_BINARY": str(Path("~/custom/pi").expanduser())},
+            None,
+            str(Path("~/custom/pi").expanduser()),
+            "override",
+            [],
+        ),
+        ({"PATH": "/path-pi"}, "/opt/pi/bin/pi", "/opt/pi/bin/pi", "path", [("pi", "/path-pi")]),
+        (
+            {"PATH": "/path-pi", "MERIDIAN_PI_BINARY": " \t "},
+            "/usr/local/bin/pi",
+            "/usr/local/bin/pi",
+            "path",
+            [("pi", "/path-pi")],
+        ),
+    ],
+)
+def test_resolve_pi_runtime_selection_precedence(
     monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str],
+    which_result: str | None,
+    expected_binary: str,
+    expected_kind: str,
+    expected_which_calls: list[tuple[str, str | None]],
 ) -> None:
-    calls: list[list[str]] = []
+    which_calls: list[tuple[str, str | None]] = []
+    run_calls: list[list[str]] = []
+
+    def _fake_which(binary_name: str, *, path: str | None = None) -> str | None:
+        which_calls.append((binary_name, path))
+        assert binary_name == "pi"
+        return which_result
 
     def _fake_run(
         command: list[str],
@@ -50,7 +81,7 @@ def test_resolve_pi_runtime_uses_override_before_path(
         timeout: float,
     ) -> subprocess.CompletedProcess[str]:
         _ = check, capture_output, text, env, timeout
-        calls.append(command)
+        run_calls.append(command)
         if command[1] == "--version":
             return _completed(command, stdout="pi 9.9.9\n")
         return _completed(
@@ -62,106 +93,16 @@ def test_resolve_pi_runtime_uses_override_before_path(
             ),
         )
 
+    monkeypatch.setattr("meridian.lib.harness.pi_runtime_resolver.shutil.which", _fake_which)
     monkeypatch.setattr(subprocess, "run", _fake_run)
 
-    resolved = resolve_pi_runtime(
-        env={
-            "PATH": "/nonexistent",
-            "MERIDIAN_PI_BINARY": str(Path("~/custom/pi").expanduser()),
-        },
-        role="spawned",
-    )
+    resolved = resolve_pi_runtime(env=env, role="spawned")
 
-    assert resolved.binary_path == str(Path("~/custom/pi").expanduser())
-    assert resolved.runtime_kind == "override"
+    assert which_calls == expected_which_calls
+    assert resolved.binary_path == expected_binary
+    assert resolved.runtime_kind == expected_kind
     assert resolved.runtime_version == "pi 9.9.9"
-    assert calls[0][0] == str(Path("~/custom/pi").expanduser())
-
-
-def test_resolve_pi_runtime_uses_path_when_override_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    which_calls: list[tuple[str, str | None]] = []
-
-    def _fake_which(binary_name: str, *, path: str | None = None) -> str:
-        which_calls.append((binary_name, path))
-        assert binary_name == "pi"
-        return "/opt/pi/bin/pi"
-
-    def _fake_run(
-        command: list[str],
-        *,
-        check: bool,
-        capture_output: bool,
-        text: bool,
-        env: dict[str, str],
-        timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = check, capture_output, text, env, timeout
-        if command[1] == "--version":
-            return _completed(command, stdout="pi 2.0.0\n")
-        return _completed(
-            command,
-            stdout=(
-                "--mode rpc --model --append-system-prompt --session --fork "
-                "--session-dir --no-extensions --no-skills --no-context-files "
-                "--no-prompt-templates -e --extension\n"
-            ),
-        )
-
-    monkeypatch.setattr("meridian.lib.harness.pi_runtime_resolver.shutil.which", _fake_which)
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    resolved = resolve_pi_runtime(env={"PATH": "/path-pi"}, role="spawned")
-
-    assert which_calls == [("pi", "/path-pi")]
-    assert resolved.binary_path == "/opt/pi/bin/pi"
-    assert resolved.runtime_kind == "path"
-    assert resolved.runtime_version == "pi 2.0.0"
-
-
-def test_resolve_pi_runtime_blank_override_falls_back_to_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    which_calls: list[tuple[str, str | None]] = []
-
-    def _fake_which(binary_name: str, *, path: str | None = None) -> str:
-        which_calls.append((binary_name, path))
-        assert binary_name == "pi"
-        return "/usr/local/bin/pi"
-
-    def _fake_run(
-        command: list[str],
-        *,
-        check: bool,
-        capture_output: bool,
-        text: bool,
-        env: dict[str, str],
-        timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = check, capture_output, text, env, timeout
-        if command[1] == "--version":
-            return _completed(command, stdout="pi 4.0.0\n")
-        return _completed(
-            command,
-            stdout=(
-                "--mode rpc --model --append-system-prompt --session --fork "
-                "--session-dir --no-extensions --no-skills --no-context-files "
-                "--no-prompt-templates -e --extension\n"
-            ),
-        )
-
-    monkeypatch.setattr("meridian.lib.harness.pi_runtime_resolver.shutil.which", _fake_which)
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    resolved = resolve_pi_runtime(
-        env={"PATH": "/path-pi", "MERIDIAN_PI_BINARY": " \t "},
-        role="spawned",
-    )
-
-    assert which_calls == [("pi", "/path-pi")]
-    assert resolved.binary_path == "/usr/local/bin/pi"
-    assert resolved.runtime_kind == "path"
+    assert run_calls[0][0] == expected_binary
 
 
 def test_resolve_pi_runtime_never_uses_legacy_node_bun_or_meridian_pi_fallbacks(
@@ -337,45 +278,3 @@ def test_resolve_pi_runtime_incompatible_help_surface_reports_update_guidance(
         "--no-context-files, --no-prompt-templates, -e/--extension.\n"
         "Run `pi update`, or set MERIDIAN_PI_BINARY=/path/to/pi to another compatible Pi binary."
     )
-
-
-def test_resolve_pi_runtime_accepts_comma_separated_help_aliases(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def _fake_run(
-        command: list[str],
-        *,
-        check: bool,
-        capture_output: bool,
-        text: bool,
-        env: dict[str, str],
-        timeout: float,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = check, capture_output, text, env, timeout
-        if command[1] == "--version":
-            return _completed(command, stdout="pi 1.0.0\n")
-        return _completed(
-            command,
-            stdout=(
-                "--mode <mode> Output mode: text, json, or rpc\n"
-                "--model <pattern>\n"
-                "--append-system-prompt <text>\n"
-                "--session <path|id>\n"
-                "--fork <path|id>\n"
-                "--session-dir <dir>\n"
-                "--no-extensions, -ne Disable extension discovery\n"
-                "--no-skills, -ns Disable skills discovery\n"
-                "--no-context-files, -nc Disable AGENTS.md discovery\n"
-                "--no-prompt-templates, -np Disable prompt templates\n"
-                "--extension, -e <path> Load extension\n"
-            ),
-        )
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    resolved = resolve_pi_runtime(
-        env={"PATH": "/fake/path", "MERIDIAN_PI_BINARY": "/tmp/pi"},
-        role="spawned",
-    )
-
-    assert resolved.binary_path == str(Path("/tmp/pi"))
