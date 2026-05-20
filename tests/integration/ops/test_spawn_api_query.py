@@ -221,12 +221,12 @@ def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
     assert [entry.spawn_id for entry in output.spawns] == [str(reviewer_spawn_id)]
 
 
-def test_spawn_list_and_show_suppress_terminal_primary_activity(tmp_path: Path) -> None:
+def test_spawn_show_and_list_render_primary_and_pi_diagnostics(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
 
-    spawn_id = spawn_store.start_spawn(
+    primary_id = spawn_store.start_spawn(
         runtime_root,
         spawn_id="p42",
         chat_id="c42",
@@ -239,10 +239,48 @@ def test_spawn_list_and_show_suppress_terminal_primary_activity(tmp_path: Path) 
     )
     _write_primary_meta(
         runtime_root,
-        str(spawn_id),
+        str(primary_id),
         activity="finalizing",
         backend_pid=4242,
         tui_pid=4343,
+    )
+
+    pi_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-cleanup",
+        chat_id="c-cleanup",
+        model="gpt-5.4",
+        agent="coder",
+        harness="pi",
+        prompt="hello",
+    )
+    history_path = runtime_root / "spawns" / str(pi_id) / "history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "seq": 0,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {"phase": "initial_prompt_sent"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "seq": 1,
+                        "event_type": "meridian.pi.lifecycle.phase",
+                        "payload": {
+                            "phase": "cleanup_stop_escalated",
+                            "cleanup_status": "escalated",
+                            "reason": "abort_grace_expired",
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
     listed = spawn_api.spawn_list_sync(
@@ -255,13 +293,32 @@ def test_spawn_list_and_show_suppress_terminal_primary_activity(tmp_path: Path) 
     assert entry.status_display is None
     assert entry.activity is None
 
-    detail = spawn_api.spawn_show_sync(
+    primary_detail = spawn_api.spawn_show_sync(
         SpawnShowInput(project_root=project_root.as_posix(), spawn_id="p42")
     )
-    assert detail.status == "succeeded"
-    assert detail.activity is None
-    assert detail.backend_pid == 4242
-    assert detail.tui_pid == 4343
+    assert primary_detail.status == "succeeded"
+    assert primary_detail.activity is None
+    assert primary_detail.backend_pid == 4242
+    assert primary_detail.tui_pid == 4343
+
+    pi_detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(pi_id))
+    )
+    assert pi_detail.pi_lifecycle_phase == "cleanup_stop_escalated"
+    assert pi_detail.pi_cleanup_status == "escalated"
+    assert pi_detail.pi_cleanup_phase == "cleanup_stop_escalated"
+    assert pi_detail.pi_cleanup_reason == "abort_grace_expired"
+
+    rendered = pi_detail.format_text()
+    assert "Pi phase: cleanup_stop_escalated" in rendered
+    assert "Pi cleanup status: escalated" in rendered
+    assert "Pi cleanup reason: abort_grace_expired" in rendered
+
+    wire = pi_detail.to_cli_wire()
+    assert wire["pi_lifecycle_phase"] == "cleanup_stop_escalated"
+    assert wire["pi_cleanup_status"] == "escalated"
+    assert wire["pi_cleanup_phase"] == "cleanup_stop_escalated"
+    assert wire["pi_cleanup_reason"] == "abort_grace_expired"
 
 
 def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> None:
@@ -290,136 +347,22 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
     wire = detail.to_cli_wire()
     assert wire["goal"] == "ship the migration"
 
-
 @pytest.mark.parametrize(
-    "latest_phase",
+    ("parent_harness", "payload", "spawn_ids", "expected"),
     [
-        "waiting_for_first_pi_event_after_prompt",
-        "waiting_for_continuation_completion",
-        "pi_notification_timeout",
-        "micro_drain_after_agent_end",
-        "semantic_completion_recorded",
-        "cleanup_stop_sent",
-        "cleanup_stop_escalated",
-        "cleanup_failed",
+        ("claude", SpawnWaitInput(), ("p-claude-child", "p-codex-child"), 270.0),
+        ("codex", SpawnWaitInput(), ("p-claude-child", "p-unknown-child"), 900.0),
+        (None, SpawnWaitInput(), ("p-codex-child",), 240.0),
+        ("codex", SpawnWaitInput(yield_after_secs=12), ("p-codex-child",), 12.0),
     ],
 )
-def test_spawn_show_includes_latest_pi_lifecycle_phase(
-    tmp_path: Path,
-    latest_phase: str,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p915",
-        chat_id="c915",
-        model="gpt-5.4",
-        agent="coder",
-        harness="pi",
-        prompt="hello",
-    )
-    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    history_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "seq": 0,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {"phase": "initial_prompt_sent"},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "seq": 1,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {"phase": latest_phase},
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    detail = spawn_api.spawn_show_sync(
-        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
-    )
-
-    assert detail.pi_lifecycle_phase == latest_phase
-    assert f"Pi phase: {latest_phase}" in detail.format_text()
-    wire = detail.to_cli_wire()
-    assert wire["pi_lifecycle_phase"] == latest_phase
-
-
-def test_spawn_show_includes_pi_cleanup_telemetry_and_preserves_escalation(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p-cleanup",
-        chat_id="c-cleanup",
-        model="gpt-5.4",
-        agent="coder",
-        harness="pi",
-        prompt="hello",
-    )
-    history_path = runtime_root / "spawns" / str(spawn_id) / "history.jsonl"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    history_path.write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "seq": 0,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {"phase": "cleanup_stop_sent", "cleanup_status": "running"},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "seq": 1,
-                        "event_type": "meridian.pi.lifecycle.phase",
-                        "payload": {
-                            "phase": "cleanup_stop_escalated",
-                            "cleanup_status": "escalated",
-                            "reason": "abort_grace_expired",
-                        },
-                    }
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    detail = spawn_api.spawn_show_sync(
-        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
-    )
-    assert detail.pi_cleanup_status == "escalated"
-    assert detail.pi_cleanup_phase == "cleanup_stop_escalated"
-    assert detail.pi_cleanup_reason == "abort_grace_expired"
-
-    rendered = detail.format_text()
-    assert "Pi cleanup status: escalated" in rendered
-    assert "Pi cleanup phase: cleanup_stop_escalated" in rendered
-    assert "Pi cleanup reason: abort_grace_expired" in rendered
-
-    wire = detail.to_cli_wire()
-    assert wire["pi_cleanup_status"] == "escalated"
-    assert wire["pi_cleanup_phase"] == "cleanup_stop_escalated"
-    assert wire["pi_cleanup_reason"] == "abort_grace_expired"
-
-
-def test_wait_yield_default_uses_parent_harness_interval(
+def test_wait_yield_resolution_uses_override_then_parent_harness_then_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    parent_harness: str | None,
+    payload: SpawnWaitInput,
+    spawn_ids: tuple[str, ...],
+    expected: float,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -441,60 +384,17 @@ def test_wait_yield_default_uses_parent_harness_interval(
     )
     config = spawn_api.load_config(project_root)
 
-    monkeypatch.setenv("MERIDIAN_HARNESS", "claude")
-    assert (
-        spawn_api._resolve_wait_checkpoint_seconds(
-            payload=SpawnWaitInput(),
-            spawn_ids=("p-claude-child", "p-codex-child"),
-            project_root=project_root,
-            config=config,
-        )
-        == 270.0
-    )
-
-    monkeypatch.setenv("MERIDIAN_HARNESS", "codex")
-    assert (
-        spawn_api._resolve_wait_checkpoint_seconds(
-            payload=SpawnWaitInput(),
-            spawn_ids=("p-claude-child", "p-unknown-child"),
-            project_root=project_root,
-            config=config,
-        )
-        == 900.0
-    )
-
-    monkeypatch.delenv("MERIDIAN_HARNESS", raising=False)
-    assert (
-        spawn_api._resolve_wait_checkpoint_seconds(
-            payload=SpawnWaitInput(),
-            spawn_ids=("p-codex-child",),
-            project_root=project_root,
-            config=config,
-        )
-        == 240.0
-    )
-
-
-def test_wait_yield_override_wins_over_harness_defaults(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-    spawn_id = spawn_store.start_spawn(
-        runtime_root,
-        chat_id="c1",
-        model="gpt-5.4",
-        agent="coder",
-        harness="codex",
-        prompt="codex",
-    )
-    config = spawn_api.load_config(project_root)
+    if parent_harness is None:
+        monkeypatch.delenv("MERIDIAN_HARNESS", raising=False)
+    else:
+        monkeypatch.setenv("MERIDIAN_HARNESS", parent_harness)
 
     assert (
         spawn_api._resolve_wait_checkpoint_seconds(
-            payload=SpawnWaitInput(yield_after_secs=12),
-            spawn_ids=(str(spawn_id),),
+            payload=payload,
+            spawn_ids=spawn_ids,
             project_root=project_root,
             config=config,
         )
-        == 12
+        == expected
     )
