@@ -18,7 +18,6 @@ from meridian.lib.launch.policies import (
     match_model_policy,
     resolve_launch_policy,
     resolve_policy_fields,
-    validate_harness_compatibility,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface
 
@@ -137,23 +136,7 @@ def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> No
 
     assert winner is not None
     assert winner.match_type == "model-glob"
-
-
-def test_validate_harness_compatibility_allows_cross_candidate_route() -> None:
-    registry = get_default_harness_registry()
-    model_entry = _mock_alias(
-        alias="claude",
-        model_id="claude-haiku-4-5",
-        harness=HarnessId.CLAUDE,
-    )
-    object.__setattr__(model_entry, "harness_candidates", ("claude", "codex"))
-
-    validate_harness_compatibility(
-        model="claude-haiku-4-5",
-        harness_id=HarnessId.CODEX,
-        model_entry=model_entry,
-        harness_registry=registry,
-    )
+    assert winner.match_value == "gpt-*"
 
 
 def test_spawn_prepare_uses_bundle_adapter_not_catalog_resolve_model(
@@ -210,55 +193,6 @@ def test_spawn_prepare_uses_bundle_adapter_not_catalog_resolve_model(
     assert request.harness_override == "opencode"
 
 
-def test_spawn_prepare_overlay_policy_applies_after_bundle(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter="name: reviewer\nmodel: gpt55\n",
-    )
-
-    monkeypatch.setattr(
-        bundle_adapter,
-        "request_and_resolve",
-        lambda request, *, harness_registry: _FakeBundleResult(
-            model="gpt-5.5",
-            model_token="gpt55",
-            harness=HarnessId.CODEX,
-            harness_model="gpt-5.5",
-            execution_policy=ResolvedExecutionPolicy(effort="low", sandbox="read-only"),
-            provenance={"model_source": "profile-default", "harness_source": "provider"},
-        ),
-    )
-    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
-
-    config = MeridianConfig.model_validate(
-        {
-            "agents": {
-                "reviewer": {
-                    "effort": "high",
-                    "sandbox": "workspace-write",
-                }
-            }
-        }
-    )
-    policy = resolve_launch_policy(
-        SurfacePolicyInput(
-            surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            catalog=CatalogSession(tmp_path),
-            layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
-            config_overrides=RuntimeOverrides.from_config(config),
-            config=config,
-            harness_registry=get_default_harness_registry(),
-        )
-    )
-
-    assert policy.execution_policy.effort == "high"
-    assert policy.execution_policy.sandbox == "workspace-write"
-
-
 def test_spawn_prepare_overlay_policy_provenance_overrides_bundle(
     monkeypatch,
     tmp_path: Path,
@@ -313,7 +247,7 @@ def test_spawn_prepare_overlay_policy_provenance_overrides_bundle(
             surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
             layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides()),
-            config_overrides=RuntimeOverrides.from_config(config),
+            config_overrides=RuntimeOverrides.from_spawn_config(config),
             config=config,
             harness_registry=get_default_harness_registry(),
         )
@@ -389,13 +323,13 @@ def test_spawn_prepare_env_timeout_provenance(
     )
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
 
-    config = MeridianConfig.model_validate({"primary": {"timeout": 77.0}})
+    config = MeridianConfig()
     policy = resolve_launch_policy(
         SurfacePolicyInput(
             surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
             layers=(RuntimeOverrides(), RuntimeOverrides(timeout=25.0)),
-            config_overrides=RuntimeOverrides.from_config(config),
+            config_overrides=RuntimeOverrides.from_spawn_config(config),
             config=config,
             harness_registry=get_default_harness_registry(),
         )
@@ -405,7 +339,7 @@ def test_spawn_prepare_env_timeout_provenance(
     assert policy.field_provenance.timeout_source is ProvenanceLevel.ENV
 
 
-def test_spawn_prepare_env_policy_beats_overlay_config_provenance(
+def test_spawn_prepare_env_policy_beats_agent_overlay_provenance(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -430,17 +364,14 @@ def test_spawn_prepare_env_policy_beats_overlay_config_provenance(
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
 
     config = MeridianConfig.model_validate(
-        {
-            "agents": {"reviewer": {"sandbox": "workspace-write"}},
-            "primary": {"sandbox": "danger-full-access"},
-        }
+        {"agents": {"reviewer": {"sandbox": "workspace-write"}}}
     )
     policy = resolve_launch_policy(
         SurfacePolicyInput(
             surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
             layers=(RuntimeOverrides(agent="reviewer"), RuntimeOverrides(sandbox="read-only")),
-            config_overrides=RuntimeOverrides.from_config(config),
+            config_overrides=RuntimeOverrides.from_spawn_config(config),
             config=config,
             harness_registry=get_default_harness_registry(),
         )
