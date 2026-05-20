@@ -276,7 +276,15 @@ def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
     model: str,
     expected_harness: HarnessId,
 ) -> None:
-    _write_minimal_mars_config(tmp_path)
+    # Link all three harness targets so mars's per-provider routing returns
+    # the harness the test parametrize expects. The minimal `.claude`-only
+    # config (used by other tests in this module) collapses every model to
+    # claude under the mars 0.4.8rc3 resolver and would invalidate the
+    # cross-harness coverage this test is asserting.
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
     write_agent(tmp_path, name="dev-orchestrator", model=model)
 
     preview = build_launch_context(
