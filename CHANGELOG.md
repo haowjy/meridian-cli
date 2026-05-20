@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.14-rc.1] - 2026-05-20
+
 ### Added
 - `docs/harness-integration.md` — end-to-end guide for adding a new harness to Meridian, using Pi as the worked example. Covers probing, adapter/projection/extraction/semantics, native vs RPC launch split, session parity, model/catalog/Mars integration, verification checklist, and Pi-specific gap tracking.
 - Pi Phase 1/2 subprocess harness integration: new `HarnessId.PI`, `meridian pi` harness shortcut, `PiAdapter`, subprocess projection, extractor, and bundle registration.
