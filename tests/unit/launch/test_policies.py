@@ -5,7 +5,7 @@ import pytest
 
 from meridian.lib.catalog.agent import load_agent_profile
 from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry
+from meridian.lib.catalog.model_aliases import AliasEntry, RunnablePath
 from meridian.lib.config.settings import MeridianConfig
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
@@ -94,6 +94,41 @@ def test_model_selection_context_harness_model_id_defaults_to_none() -> None:
     )
 
     assert context.harness_model_id is None
+
+
+def test_resolve_launch_policy_sets_harness_model_id_for_default_selected_harness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alias = AliasEntry(
+        alias="gpt-5.5",
+        model_id=ModelId("gpt-5.5"),
+        resolved_harness=HarnessId.OPENCODE,
+        runnable_paths=(
+            RunnablePath(
+                harness="opencode",
+                harness_model_id="openai/gpt-5.5",
+            ),
+        ),
+    )
+    _patch_alias_resolution(
+        monkeypatch,
+        resolved_entries={"gpt-5.5": alias},
+    )
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(Path.cwd()),
+            layers=(RuntimeOverrides(model="gpt-5.5"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.model_selection is not None
+    assert policy.model_selection.canonical_model_id == "gpt-5.5"
+    assert policy.model_selection.harness_model_id == "openai/gpt-5.5"
 
 
 def test_resolve_policy_fields_resolves_per_field_precedence() -> None:

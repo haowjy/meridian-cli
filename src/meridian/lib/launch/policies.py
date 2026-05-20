@@ -669,12 +669,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             str(selected_entry.model_id) if selected_entry is not None else final_model
         )
         harness_model_for_spec: str | None = None
-        selected_entry_default_harness = _resolved_model_default_harness(selected_entry)
-        if (
-            selected_entry is not None
-            and selected_entry_default_harness is not None
-            and harness_id != selected_entry_default_harness
-        ):
+        if selected_entry is not None:
             computed = select_harness_model_id(
                 model_entry=selected_entry,
                 harness_id=harness_id,
@@ -682,6 +677,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             )
             if computed != canonical_model_id:
                 harness_model_for_spec = computed
+
+        selected_entry_default_harness = _resolved_model_default_harness(selected_entry)
+        if (
+            selected_entry is not None
+            and selected_entry_default_harness is not None
+            and harness_id != selected_entry_default_harness
+        ):
             harness_candidates = tuple(
                 str(candidate) for candidate in selected_entry.harness_candidates
             )
