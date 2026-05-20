@@ -30,6 +30,7 @@ def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
     project_root = tmp_path / "repo"
     nested = project_root / "src" / "feature"
     (project_root / ".mars" / "skills").mkdir(parents=True)
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
     nested.mkdir(parents=True)
     reference_file = project_root / "guide.md"
     reference_file.write_text("# Guide\n", encoding="utf-8")
@@ -38,7 +39,7 @@ def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
             prompt="run",
-            model="",
+            model="gpt-5.4-mini",
             files=("guide.md",),
             dry_run=True,
         )
@@ -187,6 +188,7 @@ def test_spawn_create_dry_run_with_work_is_non_mutating(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.chdir(project_root)
     project_state_dir = resolve_project_paths(project_root).root_dir
 
@@ -195,6 +197,7 @@ def test_spawn_create_dry_run_with_work_is_non_mutating(
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
             prompt="run",
+            model="gpt-5.4-mini",
             work="new-work-item",
             project_root=project_root.as_posix(),
             dry_run=True,

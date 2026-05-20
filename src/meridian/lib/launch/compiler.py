@@ -1,4 +1,9 @@
-"""Pure-data compiler contract for launch parameter resolution."""
+"""Pure-data compiler contract for launch parameter resolution.
+
+DEPRECATED: Spawn-prepare now resolves through Mars launch-bundle. This module
+remains in Phase 1 for PRIMARY/CHAT local resolution paths and is scheduled for
+later cleanup.
+"""
 
 from __future__ import annotations
 

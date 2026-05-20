@@ -6,6 +6,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Bump `mars-agents` to `0.4.8rc3` for `build launch-bundle` and centralized cache-root routing (`MARS_CACHE_DIR`).
+- Spawn-prepare launch policy now routes model/harness/execution-policy through `mars build launch-bundle` adapter (`launch/bundle_adapter.py`) instead of local compiler resolution.
+- Spawn-prepare policy tests now fake the bundle adapter boundary; spawn routing tests no longer fake `CatalogSession.resolve_model`.
+- `launch/compiler.py` marked deprecated for spawn-prepare path; kept for primary/chat local resolver surfaces in phase 1.
 
 ### Fixed
 - Spawn now passes mars runnable harness model ID (for example `openai/gpt-5.5`) to OpenCode even when `opencode` is the default-selected harness.

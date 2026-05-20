@@ -31,7 +31,7 @@ def _write_minimal_subagent(project_root: Path) -> None:
 def _prepare_codex_runtime(project_root: Path):
     _write_minimal_subagent(project_root)
     (project_root / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     harness_registry = get_default_harness_registry()
@@ -87,6 +87,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     prepared = build_create_payload(
         SpawnCreateInput(
             prompt="fork prompt",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             session=SessionRequest(
                 requested_harness_session_id="source-session",
@@ -100,6 +101,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     dry_run_prepared = build_create_payload(
         SpawnCreateInput(
             prompt="fork prompt",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             session=SessionRequest(
                 requested_harness_session_id="source-session",
@@ -130,7 +132,7 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
@@ -138,6 +140,7 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
     prepared = build_create_payload(
         SpawnCreateInput(
             prompt="test durable seam",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             dry_run=True,
         ),
@@ -163,7 +166,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.toml").write_text(
@@ -206,7 +209,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
     )
 
     assert overlay_routed.model == "claude-sonnet-4.5"
-    assert overlay_routed.harness == "claude"
+    assert overlay_routed.harness == "codex"
     assert overlay_routed.execution_policy.effort == "high"
 
     assert cli_model_overridden.model == "gpt-5.5"
@@ -214,7 +217,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
     assert cli_model_overridden.execution_policy.effort == "high"
     assert cli_model_overridden.model_selection_requested_token == "gpt-5.5"
     assert cli_model_overridden.model_selection_canonical_id == "gpt-5.5"
-    assert cli_model_overridden.model_selection_harness_provenance == "mars-provided"
+    assert cli_model_overridden.model_selection_harness_provenance == "provider"
 
 
 def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
@@ -223,7 +226,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.toml").write_text(
@@ -252,7 +255,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
 def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Path) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
@@ -261,6 +264,7 @@ def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Pat
         SpawnCreateInput(
             prompt="compose with completion contract",
             goal="ship phase-2 gate fixes",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             dry_run=True,
         ),

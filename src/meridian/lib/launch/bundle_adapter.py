@@ -1,0 +1,405 @@
+"""Mars launch-bundle adapter for spawn/chat launch policy routing."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+from meridian.lib.core.types import HarnessId
+from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
+from meridian.lib.launch.launch_types import (
+    CompositionWarning,
+    ResolvedExecutionPolicy,
+    TerminalSurfaceMode,
+)
+
+if TYPE_CHECKING:
+    from meridian.lib.catalog.agent import AgentProfile
+    from meridian.lib.catalog.model_aliases import AliasEntry
+    from meridian.lib.harness.registry import HarnessRegistry
+    from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
+    from meridian.lib.launch.resolve import ResolvedSkills
+
+_MARS_BUNDLE_MIN_VERSION = "0.4.8rc3"
+_SUPPORTED_BUNDLE_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True)
+class BundleRequest:
+    """Input to launch-bundle resolution."""
+
+    agent: str | None
+    project_root: Path
+    model_override: str | None = None
+    harness_override: str | None = None
+    effort_override: str | None = None
+    approval_override: str | None = None
+    sandbox_override: str | None = None
+    extra_skills: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _BundlePromptDocument:
+    kind: str
+    name: str
+    content: str
+    skill_type: str
+
+
+@dataclass(frozen=True)
+class _BundleResult:
+    model: str
+    model_token: str
+    harness: str
+    harness_model: str | None
+    execution_policy: ResolvedExecutionPolicy
+    provenance: dict[str, str]
+    warnings: tuple[str, ...]
+    prompt_surface_system_instruction: str
+    prompt_surface_supplemental_documents: tuple[_BundlePromptDocument, ...]
+    prompt_surface_inventory_prompt: str
+    tools_allowed: tuple[str, ...]
+    tools_disallowed: tuple[str, ...]
+    tools_mcp: tuple[str, ...]
+    skills_loaded: tuple[str, ...]
+    skills_missing: tuple[str, ...]
+
+
+def _resolve_mars_binary() -> str | None:
+    scripts_dir = Path(sys.executable).parent
+    for name in ("mars", "mars.exe"):
+        candidate = scripts_dir / name
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("mars")
+
+
+def _normalize_str(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _as_str_dict(raw: object) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    values: dict[str, str] = {}
+    for key, value in cast("dict[object, object]", raw).items():
+        key_str = str(key).strip()
+        value_str = _normalize_str(value)
+        if key_str and value_str:
+            values[key_str] = value_str
+    return values
+
+
+def _as_str_tuple(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        return ()
+    values: list[str] = []
+    for item in cast("list[object]", raw):
+        normalized = _normalize_str(item)
+        if normalized:
+            values.append(normalized)
+    return tuple(values)
+
+
+def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
+    if not isinstance(raw, list):
+        return ()
+    documents: list[_BundlePromptDocument] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, dict):
+            continue
+        typed_item = cast("dict[str, object]", item)
+        kind = _normalize_str(typed_item.get("kind"))
+        name = _normalize_str(typed_item.get("name"))
+        content = _normalize_str(typed_item.get("content"))
+        skill_type = _normalize_str(typed_item.get("skill_type"))
+        if not kind or not name or not content:
+            continue
+        documents.append(
+            _BundlePromptDocument(
+                kind=kind,
+                name=name,
+                content=content,
+                skill_type=skill_type,
+            )
+        )
+    return tuple(documents)
+
+
+def _build_bundle_command(request: BundleRequest) -> list[str]:
+    mars_binary = _resolve_mars_binary()
+    if mars_binary is None:
+        raise RuntimeError(
+            "Mars launch-bundle adapter requires mars >= "
+            f"{_MARS_BUNDLE_MIN_VERSION}, but no mars binary was found."
+        )
+
+    command = [
+        mars_binary,
+        "build",
+        "launch-bundle",
+        "--json",
+        "--root",
+        request.project_root.as_posix(),
+    ]
+
+    if request.agent:
+        command.extend(["--agent", request.agent])
+    if request.model_override:
+        command.extend(["--model", request.model_override])
+    if request.harness_override:
+        command.extend(["--harness", request.harness_override])
+    if request.effort_override:
+        command.extend(["--effort", request.effort_override])
+    if request.approval_override:
+        command.extend(["--approval", request.approval_override])
+    if request.sandbox_override:
+        command.extend(["--sandbox", request.sandbox_override])
+    for skill in request.extra_skills:
+        command.extend(["--skill", skill])
+    return command
+
+
+def _extract_error_message(*, stdout: str, stderr: str) -> str:
+    def _from_stream(raw: str) -> str | None:
+        normalized = raw.strip()
+        if not normalized:
+            return None
+        try:
+            payload = json.loads(normalized)
+        except (json.JSONDecodeError, ValueError):
+            return normalized
+        if isinstance(payload, dict):
+            typed_payload = cast("dict[str, object]", payload)
+            error = _normalize_str(typed_payload.get("error"))
+            if error:
+                return error
+            message = _normalize_str(typed_payload.get("message"))
+            if message:
+                return message
+        return normalized
+
+    message = _from_stream(stderr) or _from_stream(stdout)
+    return message or "unknown mars error"
+
+
+def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = None) -> None:
+    message = _extract_error_message(stdout=stdout, stderr=stderr)
+    normalized = message.lower()
+    if (
+        "launch-bundle" in normalized
+        and (
+            "unrecognized" in normalized
+            or "unknown" in normalized
+            or "invalid subcommand" in normalized
+        )
+    ):
+        raise RuntimeError(
+            "Mars launch-bundle command is unavailable. Meridian requires mars >= "
+            f"{_MARS_BUNDLE_MIN_VERSION}. Error: {message}"
+        )
+    prefix = "Mars launch-bundle failed"
+    if returncode is not None:
+        prefix = f"{prefix} (exit {returncode})"
+    raise RuntimeError(
+        f"{prefix}: {message}. Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+    )
+
+
+def _parse_bundle_payload(payload: dict[str, object]) -> _BundleResult:
+    version = payload.get("version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise RuntimeError("Mars launch-bundle returned invalid schema: missing numeric 'version'.")
+    if version != _SUPPORTED_BUNDLE_SCHEMA_VERSION:
+        raise RuntimeError(
+            "Mars launch-bundle schema version "
+            f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}."
+        )
+
+    routing = cast("dict[str, object]", payload.get("routing") or {})
+    model = _normalize_str(routing.get("model"))
+    if not model:
+        raise RuntimeError("Mars launch-bundle returned an empty routing.model.")
+    model_token = _normalize_str(routing.get("model_token")) or model
+    harness = _normalize_str(routing.get("harness"))
+    if not harness:
+        raise RuntimeError("Mars launch-bundle returned an empty routing.harness.")
+    harness_model = _normalize_str(routing.get("harness_model")) or None
+
+    execution_policy_payload = cast("dict[str, object]", payload.get("execution_policy") or {})
+    execution_policy = ResolvedExecutionPolicy.model_validate(
+        {
+            "effort": execution_policy_payload.get("effort"),
+            "approval": execution_policy_payload.get("approval"),
+            "sandbox": execution_policy_payload.get("sandbox"),
+            "autocompact": execution_policy_payload.get("autocompact"),
+            "autocompact_pct": execution_policy_payload.get("autocompact_pct"),
+            "timeout": execution_policy_payload.get("timeout"),
+        }
+    )
+
+    prompt_surface = cast("dict[str, object]", payload.get("prompt_surface") or {})
+    tools = cast("dict[str, object]", payload.get("tools") or {})
+    skills_metadata = cast("dict[str, object]", payload.get("skills_metadata") or {})
+
+    return _BundleResult(
+        model=model,
+        model_token=model_token,
+        harness=harness,
+        harness_model=harness_model,
+        execution_policy=execution_policy,
+        provenance=_as_str_dict(payload.get("provenance")),
+        warnings=_as_str_tuple(payload.get("warnings")),
+        prompt_surface_system_instruction=_normalize_str(prompt_surface.get("system_instruction")),
+        prompt_surface_supplemental_documents=_parse_prompt_documents(
+            prompt_surface.get("supplemental_documents")
+        ),
+        prompt_surface_inventory_prompt=_normalize_str(prompt_surface.get("inventory_prompt")),
+        tools_allowed=_as_str_tuple(tools.get("allowed")),
+        tools_disallowed=_as_str_tuple(tools.get("disallowed")),
+        tools_mcp=_as_str_tuple(tools.get("mcp")),
+        skills_loaded=_as_str_tuple(skills_metadata.get("loaded")),
+        skills_missing=_as_str_tuple(skills_metadata.get("missing")),
+    )
+
+
+def request_and_resolve(
+    request: BundleRequest,
+    *,
+    harness_registry: HarnessRegistry,
+) -> _BundleResult:
+    """Resolve launch routing and execution policy through Mars launch-bundle."""
+
+    _ = harness_registry
+    command = _build_bundle_command(request)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Mars launch-bundle adapter requires mars >= "
+            f"{_MARS_BUNDLE_MIN_VERSION}, but the mars binary was not found."
+        ) from exc
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise RuntimeError(
+            "Mars launch-bundle command failed to execute. Meridian requires mars >= "
+            f"{_MARS_BUNDLE_MIN_VERSION}."
+        ) from exc
+
+    if result.returncode != 0:
+        _raise_bundle_error(
+            stdout=result.stdout,
+            stderr=result.stderr,
+            returncode=result.returncode,
+        )
+
+    try:
+        payload_obj = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(
+            "Mars launch-bundle returned invalid JSON output. "
+            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
+        ) from exc
+    if not isinstance(payload_obj, dict):
+        raise RuntimeError("Mars launch-bundle returned a non-object JSON payload.")
+    payload = cast("dict[str, object]", payload_obj)
+    return _parse_bundle_payload(payload)
+
+
+def _map_provenance_level(value: str | None) -> ProvenanceLevel:
+    normalized = (value or "").strip().lower()
+    mapping = {
+        "cli": ProvenanceLevel.CLI,
+        "env": ProvenanceLevel.ENV,
+        "agent-overlay-model-policy": ProvenanceLevel.AGENT_OVERLAY_POLICY,
+        "agent-overlay-default": ProvenanceLevel.AGENT_OVERLAY_DEFAULT,
+        "profile-model-policy": ProvenanceLevel.PROFILE_MODEL_POLICY,
+        "profile-default": ProvenanceLevel.PROFILE_DEFAULT,
+        "config-default": ProvenanceLevel.CONFIG_DEFAULT,
+        "provider": ProvenanceLevel.ALIAS_DEFAULT,
+        "alias-default": ProvenanceLevel.ALIAS_DEFAULT,
+        "unset": ProvenanceLevel.UNSET,
+    }
+    return mapping.get(normalized, ProvenanceLevel.UNSET)
+
+
+def bundle_to_resolved_policy(
+    *,
+    bundle: _BundleResult,
+    profile: AgentProfile | None,
+    resolved_skills: ResolvedSkills,
+    model_selection: ModelSelectionContext | None,
+    resolved_model: str,
+    resolved_harness: HarnessId,
+    routing_model: str | None,
+    routing_agent: str | None,
+    execution_policy: ResolvedExecutionPolicy,
+    warnings: tuple[CompositionWarning, ...],
+    alias_catalog: dict[str, AliasEntry] | None,
+    harness_registry: HarnessRegistry,
+    terminal_surface_mode: TerminalSurfaceMode,
+) -> ResolvedLaunchPolicy:
+    """Map bundle facts + local composition context to ResolvedLaunchPolicy."""
+
+    harness_id = resolved_harness
+    try:
+        adapter = harness_registry.get_subprocess_harness(harness_id)
+    except (KeyError, TypeError) as exc:
+        supported = ", ".join(str(harness) for harness in harness_registry.ids())
+        raise ValueError(
+            f"Unknown or unsupported harness '{harness_id}'. Available harnesses: {supported}"
+        ) from exc
+
+    from meridian.lib.launch.launch_types import ResolvedLaunchRouting
+    from meridian.lib.launch.policies import ResolvedLaunchPolicy
+
+    return ResolvedLaunchPolicy(
+        profile=profile,
+        model=resolved_model,
+        harness=harness_id,
+        adapter=adapter,
+        resolved_skills=resolved_skills,
+        routing=ResolvedLaunchRouting(
+            model=routing_model,
+            harness=harness_id,
+            agent=routing_agent,
+        ),
+        execution_policy=execution_policy,
+        terminal_surface_mode=terminal_surface_mode,
+        field_provenance=FieldProvenance(
+            model_source=_map_provenance_level(bundle.provenance.get("model_source")),
+            harness_source=_map_provenance_level(bundle.provenance.get("harness_source")),
+            effort_source=_map_provenance_level(bundle.provenance.get("effort_source")),
+            approval_source=_map_provenance_level(bundle.provenance.get("approval_source")),
+            sandbox_source=_map_provenance_level(bundle.provenance.get("sandbox_source")),
+            autocompact_source=_map_provenance_level(bundle.provenance.get("autocompact_source")),
+            autocompact_pct_source=_map_provenance_level(
+                bundle.provenance.get("autocompact_pct_source")
+            ),
+            timeout_source=_map_provenance_level(bundle.provenance.get("timeout_source")),
+        ),
+        model_selection=model_selection,
+        fallback_chain=(),
+        warnings=warnings,
+        alias_catalog=alias_catalog,
+    )
+
+
+__all__ = [
+    "BundleRequest",
+    "bundle_to_resolved_policy",
+    "request_and_resolve",
+]

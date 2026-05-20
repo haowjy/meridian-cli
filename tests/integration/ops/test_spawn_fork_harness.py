@@ -25,7 +25,7 @@ def _state_root(project_root: Path) -> Path:
     mars_toml = project_root / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
-            '[settings]\ntargets = [".claude"]\n',
+            '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
             encoding="utf-8",
         )
     runtime_root = resolve_project_runtime_root(project_root)
@@ -76,6 +76,7 @@ def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
             SpawnForkInput(
                 source_ref="c-source",
                 prompt="fork prompt",
+                model="haiku",
                 project_root=project_root.as_posix(),
             )
         )
@@ -120,7 +121,7 @@ def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview
     monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
 
     result = spawn_api.spawn_fork_sync(
-        SpawnForkInput(source_ref="c-source", prompt="fork prompt"),
+        SpawnForkInput(source_ref="c-source", prompt="fork prompt", model="gpt-5.4-mini"),
         prepared=prepared,
     )
 
@@ -152,6 +153,7 @@ def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(
             SpawnForkInput(
                 source_ref="c-source",
                 prompt="fork prompt",
+                model="haiku",
                 project_root=project_root.as_posix(),
             )
         )

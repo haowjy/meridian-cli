@@ -20,6 +20,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 
+from . import bundle_adapter
 from .compiler import (
     CompilerRequest,
     CompilerResult,
@@ -467,8 +468,153 @@ def _require_policy_tier(
     return tier
 
 
+def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
+    project_root = surface.catalog.project_root
+    pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
+    explicit_user_overrides = resolve(*surface.layers)
+    requested_agent = explicit_user_overrides.agent
+    configured_default_agent = pre_profile_resolved.agent if not requested_agent else ""
+
+    profile, profile_warning = load_agent_profile_with_fallback(
+        project_root=project_root,
+        requested_agent=requested_agent,
+        configured_default=configured_default_agent,
+    )
+
+    profile_overrides = RuntimeOverrides.from_agent_profile(profile)
+    full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
+    base_resolved = resolve(*full_layers)
+    profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
+
+    selected_agent_name = (
+        profile.name if profile is not None else (requested_agent or configured_default_agent or "")
+    )
+    agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
+
+    requested_model_token = (
+        explicit_user_overrides.model
+        or (agent_overlay.model if agent_overlay is not None else None)
+        or (profile.model if profile is not None else None)
+        or surface.config_overrides.model
+        or ""
+    )
+    alias_catalog: dict[str, AliasEntry] = {}
+    if requested_model_token:
+        alias_catalog = surface.catalog.alias_map()
+
+    resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
+    bundle_result = bundle_adapter.request_and_resolve(
+        bundle_adapter.BundleRequest(
+            agent=profile.name if profile is not None else requested_agent,
+            project_root=project_root,
+            model_override=explicit_user_overrides.model,
+            harness_override=explicit_user_overrides.harness,
+            effort_override=explicit_user_overrides.effort,
+            approval_override=explicit_user_overrides.approval,
+            sandbox_override=explicit_user_overrides.sandbox,
+            extra_skills=resolved_skill_names,
+        ),
+        harness_registry=surface.harness_registry,
+    )
+
+    overlay_routing = RuntimeOverrides.from_agent_overlay_routing(agent_overlay).routing_scope()
+    overlay_model_applies = (
+        explicit_user_overrides.model is None and overlay_routing.model is not None
+    )
+    overlay_harness_applies = (
+        explicit_user_overrides.harness is None and overlay_routing.harness is not None
+    )
+
+    resolved_model = (
+        overlay_routing.model if overlay_model_applies else bundle_result.model
+    ) or bundle_result.model
+    resolved_harness = HarnessId(
+        overlay_routing.harness if overlay_harness_applies else bundle_result.harness
+    )
+
+    selected_model_token = (
+        overlay_routing.model
+        if overlay_model_applies and overlay_routing.model is not None
+        else bundle_result.model_token
+    ) or resolved_model
+    requested_token = (
+        explicit_user_overrides.model or selected_model_token or resolved_model
+    )
+    harness_provenance = bundle_result.provenance.get("harness_source", "")
+    if overlay_harness_applies:
+        harness_provenance = "agent-overlay-default"
+    harness_model_id = bundle_result.harness_model
+    if overlay_model_applies or overlay_harness_applies:
+        harness_model_id = None
+
+    model_selection = ModelSelectionContext(
+        requested_token=requested_token or resolved_model,
+        selected_model_token=selected_model_token or resolved_model,
+        canonical_model_id=resolved_model,
+        mars_provided_harness=None if overlay_harness_applies else resolved_harness,
+        resolved_entry=None,
+        harness_provenance=harness_provenance,
+        harness_model_id=harness_model_id,
+    )
+
+    bundle_execution_policy = bundle_result.execution_policy.as_overrides(
+        supported_fields=surface.supported_execution_policy_fields
+    )
+    resolved_execution_policy_overrides = resolve_policy_fields(
+        surface.cli_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        RuntimeOverrides.from_agent_overlay_policy(agent_overlay).execution_policy_scope(
+            surface.supported_execution_policy_fields
+        ),
+        bundle_execution_policy,
+        profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        surface.config_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+    )
+    resolved_execution_policy = ResolvedExecutionPolicy(
+        effort=resolved_execution_policy_overrides.effort,
+        sandbox=resolved_execution_policy_overrides.sandbox,
+        approval=resolved_execution_policy_overrides.approval,
+        autocompact=resolved_execution_policy_overrides.autocompact,
+        autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,
+        timeout=resolved_execution_policy_overrides.timeout,
+    )
+
+    resolved_skills = resolve_skills_from_profile(
+        profile_skills=resolved_skill_names,
+        project_root=project_root,
+        readonly=surface.skills_readonly,
+        harness_id=resolved_harness.value,
+        selected_model_token=model_selection.selected_model_token,
+        canonical_model_id=model_selection.canonical_model_id,
+    )
+
+    bundle_model_warning = "\n".join(bundle_result.warnings).strip() or None
+    warnings = _policy_warnings(
+        profile_warning=profile_warning,
+        model_warning=bundle_model_warning,
+    )
+    return bundle_adapter.bundle_to_resolved_policy(
+        bundle=bundle_result,
+        profile=profile,
+        resolved_skills=resolved_skills,
+        model_selection=model_selection,
+        resolved_model=resolved_model,
+        resolved_harness=resolved_harness,
+        routing_model=model_selection.selected_model_token,
+        routing_agent=base_resolved.agent,
+        execution_policy=resolved_execution_policy,
+        warnings=warnings,
+        alias_catalog=alias_catalog,
+        harness_registry=surface.harness_registry,
+        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=resolved_harness),
+    )
+
+
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     """Resolve the shared launch policy boundary for one launch-like surface."""
+
+    if surface.surface is LaunchCompositionSurface.SPAWN_PREPARE:
+        return _resolve_spawn_prepare_policy_from_bundle(surface)
 
     project_root = surface.catalog.project_root
     pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)

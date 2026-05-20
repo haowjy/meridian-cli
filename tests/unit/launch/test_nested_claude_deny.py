@@ -64,8 +64,15 @@ def _build_context(
     tools: str | dict[str, str] | None = None,
 ) -> SpawnRequest:
     _ = monkeypatch
+    mars_toml = tmp_path / "mars.toml"
+    if not mars_toml.exists():
+        mars_toml.write_text(
+            '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+            encoding="utf-8",
+        )
     request = SpawnRequest(
         prompt="test",
+        model="haiku" if harness == HarnessId.CLAUDE else "gpt-5.4-mini",
         harness=harness.value,
         agent=agent,
         tools=tools,
@@ -183,8 +190,13 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
 ) -> None:
     """S-9: Missing profile means no opt-outs."""
     _ = monkeypatch
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
     request = SpawnRequest(
         prompt="test",
+        model="haiku",
         harness=HarnessId.CLAUDE.value,
         tools={"*": "deny", "agent": "allow"},
     )
@@ -209,8 +221,13 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
     monkeypatch: MonkeyPatch,
 ) -> None:
     _ = monkeypatch
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
     request = SpawnRequest(
         prompt="test",
+        model="haiku",
         harness=HarnessId.CLAUDE.value,
         tools={"*": "deny", "agent": "allow", "bash": "allow", "task": "deny"},
     )
