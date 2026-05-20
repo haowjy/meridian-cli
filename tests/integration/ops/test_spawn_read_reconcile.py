@@ -8,6 +8,7 @@ from meridian.lib.launch.constants import PI_LIFECYCLE_EVENTS_FILENAME
 from meridian.lib.ops.spawn import query as spawn_query
 from meridian.lib.ops.spawn.models import (
     SpawnShowInput,
+    SpawnWaitInput,
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -202,3 +203,114 @@ def test_read_spawn_row_nested_post_runner_exit_grace_keeps_running_status(
     assert result.runner_exit_status == "failed"
     assert result.exit_code is None
     assert result.error is None
+
+
+
+def test_read_spawn_row_nested_startup_grace_keeps_running_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    recent_started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-startup-grace",
+        chat_id="c1",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        runner_pid=999_999_999,
+        started_at=recent_started_at,
+    )
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    result = spawn_query.read_spawn_row(
+        project_root,
+        "p-startup-grace",
+        runtime_root=runtime_root,
+    )
+
+    assert result is not None
+    assert result.status == "running"
+    assert result.exit_code is None
+    assert result.error is None
+
+
+def test_read_spawn_row_nested_runner_exit_after_grace_returns_synthetic_terminal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_running_spawn(runtime_root, "p-runner-exit")
+    spawn_store.record_runner_exit(
+        runtime_root,
+        "p-runner-exit",
+        status="failed",
+        exit_code=17,
+        error="runner_failed",
+        exited_at=_OLD_TIMESTAMP,
+    )
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    result = spawn_query.read_spawn_row(project_root, "p-runner-exit", runtime_root=runtime_root)
+
+    assert result is not None
+    assert result.status == "failed"
+    assert result.exit_code == 17
+    assert result.error == "runner_failed"
+
+    persisted = spawn_store.get_spawn(runtime_root, "p-runner-exit")
+    assert persisted is not None
+    assert persisted.status == "running"
+    assert persisted.runner_exit_status == "failed"
+    assert persisted.exit_code is None
+    assert persisted.error is None
+
+
+def test_spawn_wait_sync_nested_stale_active_returns_synthetic_terminal_without_persisting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-wait-stale",
+        chat_id="c1",
+        model="gpt-5.3-codex",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        runner_pid=999_999_999,
+        started_at=_OLD_TIMESTAMP,
+    )
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+
+    output = spawn_api.spawn_wait_sync(
+        SpawnWaitInput(
+            spawn_ids=("p-wait-stale",),
+            timeout=0.01,
+            timeout_explicit=True,
+            poll_interval_secs=0.01,
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert output.any_failed is True
+    assert len(output.spawns) == 1
+    assert output.spawns[0].spawn_id == "p-wait-stale"
+    assert output.spawns[0].status == "failed"
+    assert output.spawns[0].exit_code == 1
+    assert output.spawns[0].failure_reason == "stale_nested_read"
+
+    persisted = spawn_store.get_spawn(runtime_root, "p-wait-stale")
+    assert persisted is not None
+    assert persisted.status == "running"
+    assert persisted.exit_code is None
+    assert persisted.error is None

@@ -124,6 +124,26 @@ def test_pi_lifecycle_event_tailer_preserves_partial_line_until_newline(tmp_path
     assert events[0].payload["subspawn_id"] == "j-split"
 
 
+@pytest.mark.parametrize(
+    ("line", "expected_reason"),
+    [
+        ("{bad json", "malformed_json"),
+        ("[]", "non_object"),
+        ('{"id":"missing-type"}', "missing_type"),
+    ],
+)
+def test_pi_rpc_connection_surfaces_stdout_parse_diagnostics(
+    line: str,
+    expected_reason: str,
+) -> None:
+    event = PiRpcConnection()._parse_stdout_line(line)
+
+    assert event is not None
+    assert event.event_type == "meridian.lifecycle.parse_error"
+    assert event.payload["reason"] == expected_reason
+    assert event.harness_id == HarnessId.PI.value
+
+
 
 def test_pi_semantics_terminal_outcome_and_activity_mapping() -> None:
     success_event = HarnessEvent(
