@@ -498,6 +498,23 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
         explicit_user_overrides.harness is None and overlay_routing.harness is not None
     )
     overlay_routing_applies = overlay_model_applies or overlay_harness_applies
+    profile_model = profile.model if profile is not None else None
+    profile_harness = profile.harness if profile is not None else None
+    config_model_applies = (
+        explicit_user_overrides.model is None
+        and not overlay_model_applies
+        and profile_model is None
+        and surface.config_overrides.model is not None
+    )
+    config_harness_applies = (
+        explicit_user_overrides.harness is None
+        and not overlay_harness_applies
+        and profile_harness is None
+        and explicit_user_overrides.model is None
+        and not overlay_model_applies
+        and profile_model is None
+        and surface.config_overrides.model is None
+    )
 
     requested_model_token = (
         explicit_user_overrides.model
@@ -514,8 +531,16 @@ def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> Re
     bundle_request = bundle_adapter.BundleRequest(
         agent=profile.name if profile is not None else requested_agent,
         project_root=project_root,
-        model_override=explicit_user_overrides.model,
-        harness_override=explicit_user_overrides.harness,
+        model_override=(
+            explicit_user_overrides.model
+            if explicit_user_overrides.model is not None
+            else (surface.config_overrides.model if config_model_applies else None)
+        ),
+        harness_override=(
+            explicit_user_overrides.harness
+            if explicit_user_overrides.harness is not None
+            else (surface.configured_default_harness if config_harness_applies else None)
+        ),
         effort_override=explicit_user_overrides.effort,
         approval_override=explicit_user_overrides.approval,
         sandbox_override=explicit_user_overrides.sandbox,

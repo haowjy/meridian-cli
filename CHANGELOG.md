@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Spawn now passes mars runnable harness model ID (for example `openai/gpt-5.5`) to OpenCode even when `opencode` is the default-selected harness.
 - `test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated` now links all three harness targets (`.claude`, `.codex`, `.opencode`) so mars 0.4.8rc3 routes per-provider; previously the `.claude`-only fixture collapsed every model to claude under the new resolver.
+- Spawn-prepare bundle routing now forwards Meridian config defaults (`default_model`, `default_harness`) when no higher-precedence CLI/env/overlay/profile routing value is set.
 
 ## [0.1.14-rc.1] - 2026-05-20
 
