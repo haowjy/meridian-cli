@@ -61,9 +61,10 @@ def test_request_and_resolve_builds_expected_mars_command(monkeypatch: pytest.Mo
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     monkeypatch.setattr("subprocess.run", fake_run)
 
+    project_root = Path("project").resolve()
     request = BundleRequest(
         agent="coder",
-        project_root=Path("/tmp/project"),
+        project_root=project_root,
         model_override="gpt55",
         harness_override="opencode",
         effort_override="high",
@@ -79,7 +80,7 @@ def test_request_and_resolve_builds_expected_mars_command(monkeypatch: pytest.Mo
         "launch-bundle",
         "--json",
         "--root",
-        "/tmp/project",
+        str(project_root),
         "--agent",
         "coder",
         "--model",
