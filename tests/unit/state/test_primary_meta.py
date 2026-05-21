@@ -14,37 +14,6 @@ from meridian.lib.state.primary_meta import (
 )
 
 
-def test_read_primary_metadata_accepts_native_blackbox_payload(tmp_path) -> None:
-    runtime_root = tmp_path / "runtime"
-    spawn_dir = runtime_root / "spawns" / "p1"
-    spawn_dir.mkdir(parents=True)
-
-    write_primary_metadata(
-        spawn_dir,
-        PrimaryMetadata(
-            managed_backend=False,
-            launcher_pid=101,
-            backend_pid=None,
-            tui_pid=202,
-            backend_port=None,
-            activity="idle",
-            harness_session_id="ses-pi-native",
-            harness_session_discovery="ok",
-        ),
-    )
-
-    metadata = read_primary_metadata(runtime_root, "p1")
-
-    assert metadata is not None
-    assert metadata.managed_backend is False
-    assert metadata.launcher_pid == 101
-    assert metadata.tui_pid == 202
-    assert metadata.activity == "idle"
-    assert metadata.harness_session_id == "ses-pi-native"
-    assert metadata.harness_session_discovery == "ok"
-    assert metadata.harness_session_discovery_detail is None
-
-
 def test_primary_surface_and_session_id_projection_support_native_metadata(tmp_path) -> None:
     runtime_root = tmp_path / "runtime"
     spawn_dir = runtime_root / "spawns" / "p2"

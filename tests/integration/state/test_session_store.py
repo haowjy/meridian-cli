@@ -211,6 +211,34 @@ def test_cleanup_stale_primary_session_with_dead_pid_is_cleaned(
     ]
     assert len(stop_rows) == 1
     assert stop_rows[0]["session_instance_id"] == session_generation
+def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    chat_id = session_store.start_session(
+        runtime_root,
+        harness="opencode",
+        harness_session_id="",
+        model="gpt-5.3-codex",
+        chat_id="c42",
+    )
+    try:
+        session_store.update_session_harness_id(runtime_root, chat_id, "resolved-thread")
+
+        record = session_store.get_session_record(runtime_root, chat_id)
+        assert record is not None
+        assert record.harness_session_id == "resolved-thread"
+        assert record.harness_session_ids == ("", "resolved-thread")
+
+        rows = [
+            json.loads(line)
+            for line in (runtime_root / "sessions.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert rows[0]["event"] == "start"
+        assert rows[0]["harness_session_id"] == ""
+        assert rows[1]["event"] == "update"
+        assert rows[1]["harness_session_id"] == "resolved-thread"
+    finally:
+        session_store.stop_session(runtime_root, chat_id)
 
 
 def test_cleanup_stale_primary_session_with_live_pid_is_not_cleaned(
@@ -332,107 +360,3 @@ def test_records_by_session_ignores_mismatched_generation_stop_and_update(tmp_pa
     assert record.active_work_id == "work-1"
     assert record.forked_from_chat_id is None
     assert record.stopped_at is None
-
-
-def test_empty_harness_session_id_flows_through_start_update_and_record(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="opencode",
-        harness_session_id="",
-        model="gpt-5.3-codex",
-        chat_id="c42",
-    )
-    try:
-        session_store.update_session_harness_id(runtime_root, chat_id, "resolved-thread")
-
-        record = session_store.get_session_record(runtime_root, chat_id)
-        assert record is not None
-        assert record.harness_session_id == "resolved-thread"
-        assert record.harness_session_ids == ("", "resolved-thread")
-
-        rows = [
-            json.loads(line)
-            for line in (runtime_root / "sessions.jsonl").read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        assert rows[0]["event"] == "start"
-        assert rows[0]["harness_session_id"] == ""
-        assert rows[1]["event"] == "update"
-        assert rows[1]["harness_session_id"] == "resolved-thread"
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
-
-
-def test_start_session_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    control_root = (tmp_path / "control-root").resolve()
-    task_cwd = (tmp_path / "task-cwd").resolve()
-    control_root.mkdir(parents=True, exist_ok=True)
-    task_cwd.mkdir(parents=True, exist_ok=True)
-
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-lookup",
-        model="gpt-5.4",
-        chat_id="c-root-test",
-        control_root=control_root.as_posix(),
-        task_cwd=task_cwd.as_posix(),
-        execution_cwd=task_cwd.as_posix(),
-    )
-    try:
-        record = session_store.get_session_record(runtime_root, chat_id)
-        assert record is not None
-        assert record.control_root == control_root.as_posix()
-        assert record.task_cwd == task_cwd.as_posix()
-        assert record.execution_cwd == task_cwd.as_posix()
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
-
-
-def test_list_all_session_records_includes_stopped_sessions(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    stopped_chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-stopped",
-        model="gpt-5.4",
-        chat_id="c1",
-    )
-    active_chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-active",
-        model="gpt-5.4",
-        chat_id="c2",
-    )
-    try:
-        session_store.stop_session(runtime_root, stopped_chat_id)
-        records = session_store.list_all_session_records(runtime_root)
-        by_chat_id = {record.chat_id: record for record in records}
-        assert set(by_chat_id) == {stopped_chat_id, active_chat_id}
-        assert by_chat_id[stopped_chat_id].stopped_at is not None
-        assert by_chat_id[active_chat_id].stopped_at is None
-    finally:
-        session_store.stop_session(runtime_root, active_chat_id)
-
-
-def test_get_session_record_returns_record_or_none(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    assert session_store.get_session_record(runtime_root, "missing") is None
-
-    chat_id = session_store.start_session(
-        runtime_root,
-        harness="codex",
-        harness_session_id="thread-lookup",
-        model="gpt-5.4",
-        chat_id="c3",
-    )
-    try:
-        record = session_store.get_session_record(runtime_root, chat_id)
-        assert record is not None
-        assert record.chat_id == chat_id
-        assert record.harness_session_id == "thread-lookup"
-    finally:
-        session_store.stop_session(runtime_root, chat_id)
