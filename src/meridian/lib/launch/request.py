@@ -135,7 +135,6 @@ class LaunchCompositionSurface(StrEnum):
     DIRECT = "direct"
     PRIMARY = "primary"
     SPAWN_PREPARE = "spawn_prepare"
-    CHAT = "chat"
 
 
 class LaunchRuntime(BaseModel):

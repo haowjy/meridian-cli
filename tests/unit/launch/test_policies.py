@@ -43,33 +43,13 @@ def _mock_alias(
     *,
     alias: str,
     model_id: str,
-    harness: HarnessId = HarnessId.CODEX,
+    harness: HarnessId,
 ) -> AliasEntry:
     return AliasEntry(
         alias=alias,
         model_id=ModelId(model_id),
         resolved_harness=harness,
     )
-
-
-def _patch_local_alias_resolution(
-    monkeypatch,
-    *,
-    resolved_entries: dict[str, AliasEntry],
-) -> None:
-    def resolve_entry(self: CatalogSession, name: str) -> AliasEntry:
-        _ = self
-        try:
-            return resolved_entries[name]
-        except KeyError as exc:
-            raise ValueError(f"Unknown model alias '{name}'") from exc
-
-    def list_entries(self: CatalogSession) -> list[AliasEntry]:
-        _ = self
-        return list(resolved_entries.values())
-
-    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_entry)
-    monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
 
 
 def test_resolve_policy_fields_resolves_per_field_precedence() -> None:
@@ -184,6 +164,113 @@ def test_spawn_prepare_ignores_removed_defaults_routing_keys(
     assert isinstance(request, bundle_adapter.BundleRequest)
     assert request.model_override is None
     assert request.harness_override is None
+
+
+def test_primary_config_defaults_feed_bundle_at_config_precedence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = MeridianConfig.model_validate(
+        {
+            "primary": {
+                "model": "haiku",
+                "harness": "opencode",
+                "effort": "medium",
+                "timeout": 30.0,
+            }
+        }
+    )
+    captured: dict[str, object] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        return _FakeBundleResult(
+            model="claude-haiku-4-5",
+            model_token="haiku",
+            harness=HarnessId.OPENCODE,
+            harness_model="openrouter/anthropic/claude-haiku-4.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert request.model_override == "haiku"
+    assert request.harness_override == "opencode"
+    assert policy.model == "claude-haiku-4-5"
+    assert policy.harness == HarnessId.OPENCODE
+    assert policy.model_selection is not None
+    assert policy.model_selection.harness_model_id == "openrouter/anthropic/claude-haiku-4.5"
+    assert policy.execution_policy.effort == "medium"
+    assert policy.execution_policy.timeout == 30.0
+    assert policy.field_provenance.model_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.field_provenance.harness_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.field_provenance.effort_source is ProvenanceLevel.CONFIG_DEFAULT
+    assert policy.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
+
+
+def test_primary_cli_model_demotes_lower_config_harness(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = MeridianConfig.model_validate({"primary": {"harness": "opencode"}})
+    captured: dict[str, object] = {}
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured["request"] = request
+        return _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.PRIMARY,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(model="gpt55"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    request = captured["request"]
+    assert isinstance(request, bundle_adapter.BundleRequest)
+    assert request.model_override == "gpt55"
+    assert request.harness_override is None
+    assert policy.harness == HarnessId.CODEX
+    assert policy.field_provenance.model_source is ProvenanceLevel.CLI
 
 
 def test_spawn_prepare_overlay_policy_provenance_overrides_bundle(
@@ -755,67 +842,49 @@ def test_spawn_prepare_env_model_demotes_lower_overlay_harness(
     assert policy.field_provenance.model_source is ProvenanceLevel.ENV
 
 
-def test_chat_surface_keeps_local_compiler_path(
-    monkeypatch,
-) -> None:
-    alias = _mock_alias(alias="codex", model_id="gpt-5.3-codex", harness=HarnessId.CODEX)
-    _patch_local_alias_resolution(
-        monkeypatch,
-        resolved_entries={"codex": alias, "gpt-5.3-codex": alias},
-    )
-    monkeypatch.setattr(
-        bundle_adapter,
-        "request_and_resolve",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("chat should not call bundle adapter in phase 1")
-        ),
-    )
-
-    policy = resolve_launch_policy(
-        SurfacePolicyInput(
-            surface=LaunchCompositionSurface.CHAT,
-            catalog=CatalogSession(Path.cwd()),
-            layers=(RuntimeOverrides(model="codex"), RuntimeOverrides()),
-            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
-            config=MeridianConfig(),
-            harness_registry=get_default_harness_registry(),
-        )
-    )
-
-    assert policy.model == "gpt-5.3-codex"
-    assert policy.harness == HarnessId.CODEX
-
-
-def test_primary_surface_keeps_local_compiler_path(
+def test_spawn_prepare_warns_missing_runnable_path_for_bundle_reroute(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    alias = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
-    _patch_local_alias_resolution(
-        monkeypatch,
-        resolved_entries={"claude": alias, "claude-haiku-4-5": alias},
+    alias = _mock_alias(alias="fast-gpt55", model_id="gpt-5.5", harness=HarnessId.CODEX)
+
+    monkeypatch.setattr(
+        CatalogSession,
+        "resolve_model",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("spawn-prepare reroute warning should use alias_map, not resolve_model")
+        ),
     )
     monkeypatch.setattr(
         bundle_adapter,
         "request_and_resolve",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("primary should not call bundle adapter in phase 1")
+        lambda request, *, harness_registry: _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.OPENCODE,
+            harness_model=None,
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"harness_source": "project"},
         ),
+    )
+    monkeypatch.setattr(
+        CatalogSession,
+        "alias_map",
+        lambda self: {"fast-gpt55": alias},
     )
 
     policy = resolve_launch_policy(
         SurfacePolicyInput(
-            surface=LaunchCompositionSurface.PRIMARY,
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
             catalog=CatalogSession(tmp_path),
-            layers=(RuntimeOverrides(model="claude"), RuntimeOverrides()),
-            config_overrides=RuntimeOverrides.from_config(MeridianConfig()),
+            layers=(RuntimeOverrides(model="gpt55"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_spawn_config(MeridianConfig()),
             config=MeridianConfig(),
             harness_registry=get_default_harness_registry(),
         )
     )
 
-    assert policy.model == "claude-haiku-4-5"
-    assert policy.harness == HarnessId.CLAUDE
+    assert any(warning.code == "missing_runnable_path" for warning in policy.warnings)
 
 
 def test_spawn_prepare_passes_profile_and_requested_skills_to_bundle(

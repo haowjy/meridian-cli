@@ -586,7 +586,7 @@ def _resolve_chat_policy_snapshot(
     )
     policy = resolve_launch_policy(
         SurfacePolicyInput(
-            surface=LaunchCompositionSurface.CHAT,
+            surface=LaunchCompositionSurface.PRIMARY,
             catalog=catalog,
             layers=(cli_overrides, RuntimeOverrides.from_env()),
             config_overrides=RuntimeOverrides.from_config(config),

@@ -528,7 +528,7 @@ def test_build_launch_context_opencode_includes_context_paths_in_external_direct
     (tmp_path / "ctx" / "strategy").mkdir(parents=True)
 
     request = _build_spawn_request()
-    request = request.model_copy(update={"harness": HarnessId.OPENCODE.value, "model": ""})
+    request = request.model_copy(update={"harness": HarnessId.OPENCODE.value})
     runtime = _build_launch_runtime(
         tmp_path=tmp_path,
         composition_surface=LaunchCompositionSurface.PRIMARY,

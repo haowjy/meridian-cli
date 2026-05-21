@@ -1,11 +1,13 @@
 # qa-validated: pi-rpc-quiescence
 import importlib
 import os
+import shlex
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests.support.fixtures import write_minimal_mars_config
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -368,6 +370,7 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    write_minimal_mars_config(tmp_path)
     configure_pi_extension_projection(monkeypatch, tmp_path)
     monkeypatch.setattr(
         cli_main,
@@ -376,13 +379,16 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     )
 
     with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--harness", "pi", "--dry-run"])
+        cli_main.main(["--harness", "pi", "--model", "gpt-5.4-mini", "--dry-run"])
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert captured.err == ""
     assert "pi" in captured.out
-    assert "--mode" not in captured.out
+    command_start = captured.out.find("pi ")
+    assert command_start >= 0
+    dry_run_argv = shlex.split(captured.out[command_start:])
+    assert "--mode" not in dry_run_argv
     assert "--mode rpc" not in captured.out
 
 

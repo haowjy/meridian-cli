@@ -3,15 +3,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
@@ -29,27 +30,60 @@ def _write_minimal_mars_config(project_root: Path) -> None:
     )
 
 
+@dataclass(frozen=True)
+class _BundleResolution:
+    model: str
+    model_token: str
+    harness: HarnessId
+
+
+@dataclass(frozen=True)
+class _FakeBundleResult:
+    model: str
+    model_token: str
+    harness: HarnessId
+    harness_model: str | None
+    execution_policy: ResolvedExecutionPolicy
+    provenance: dict[str, str]
+    warnings: tuple[str, ...] = ()
+
+
+def _stub_bundle_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    resolution: _BundleResolution,
+) -> None:
+    def _fake_request_and_resolve(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = (request, harness_registry)
+        return _FakeBundleResult(
+            model=resolution.model,
+            model_token=resolution.model_token,
+            harness=resolution.harness,
+            harness_model=None,
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
+
+
 def test_launch_skill_variants_use_alias_then_canonical_then_harness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _resolve_model_for_alias_variant(
-        self: CatalogSession,
-        token: str,
-    ) -> AliasEntry:
-        _ = (self, token)
-        return AliasEntry(
-            alias="alias-token",
-            model_id=ModelId("canonical-id"),
-            resolved_harness=HarnessId.CODEX,
-        )
-
-    monkeypatch.setattr(
-        CatalogSession,
-        "resolve_model",
-        _resolve_model_for_alias_variant,
-    )
     _write_minimal_mars_config(tmp_path)
+    _stub_bundle_resolution(
+        monkeypatch,
+        resolution=_BundleResolution(
+            model="canonical-id",
+            model_token="alias-token",
+            harness=HarnessId.CODEX,
+        ),
+    )
     write_agent(
         tmp_path,
         name="dev-orchestrator",
@@ -93,23 +127,15 @@ def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_onl
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _resolve_model_for_fallback_variant(
-        self: CatalogSession,
-        token: str,
-    ) -> AliasEntry:
-        _ = (self, token)
-        return AliasEntry(
-            alias="alias-token",
-            model_id=ModelId("canonical-id"),
-            resolved_harness=HarnessId.CODEX,
-        )
-
-    monkeypatch.setattr(
-        CatalogSession,
-        "resolve_model",
-        _resolve_model_for_fallback_variant,
-    )
     _write_minimal_mars_config(tmp_path)
+    _stub_bundle_resolution(
+        monkeypatch,
+        resolution=_BundleResolution(
+            model="canonical-id",
+            model_token="alias-token",
+            harness=HarnessId.CODEX,
+        ),
+    )
     write_agent(
         tmp_path,
         name="dev-orchestrator",

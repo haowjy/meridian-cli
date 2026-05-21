@@ -3,19 +3,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
 )
+from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.launch_types import TerminalSurfaceMode
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
 from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
@@ -40,39 +40,15 @@ def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> 
     path.write_text(f"---\n{frontmatter}\n---\n\n# {name}\n", encoding="utf-8")
 
 
-def _mock_alias(
-    *,
-    alias: str,
-    model_id: str,
-    harness: HarnessId,
-    default_effort: str | None = None,
-) -> AliasEntry:
-    return AliasEntry(
-        alias=alias,
-        model_id=ModelId(model_id),
-        resolved_harness=harness,
-        default_effort=default_effort,
-    )
-
-
-def _patch_alias_resolution(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    resolved_entries: dict[str, AliasEntry],
-) -> None:
-    def resolve_entry(self: CatalogSession, name: str) -> AliasEntry:
-        _ = self
-        try:
-            return resolved_entries[name]
-        except KeyError as exc:
-            raise ValueError(f"Unknown model alias '{name}'") from exc
-
-    def list_entries(self: CatalogSession) -> list[AliasEntry]:
-        _ = self
-        return list(resolved_entries.values())
-
-    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_entry)
-    monkeypatch.setattr(CatalogSession, "load_aliases", list_entries)
+@dataclass(frozen=True)
+class _FakeBundleResult:
+    model: str
+    model_token: str
+    harness: HarnessId
+    harness_model: str | None
+    execution_policy: ResolvedExecutionPolicy
+    provenance: dict[str, str]
+    warnings: tuple[str, ...] = ()
 
 
 def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
@@ -301,7 +277,7 @@ def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
     assert preview.resolved_request.terminal_surface_mode is TerminalSurfaceMode.PTY_MEDIATED
 
 
-def test_launch_resolution_fallback_policy_resolves_opencode_medium(
+def test_launch_resolution_fallback_policy_resolves_opencode_medium_via_bundle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -318,22 +294,25 @@ def test_launch_resolution_fallback_policy_resolves_opencode_medium(
         ),
     )
 
-    claude = _mock_alias(alias="claude", model_id="claude-haiku-4-5", harness=HarnessId.CLAUDE)
-    gpt55 = _mock_alias(
-        alias="gpt55",
-        model_id="gpt-5.5",
-        harness=HarnessId.CODEX,
-        default_effort="low",
-    )
-    _patch_alias_resolution(
-        monkeypatch,
-        resolved_entries={
-            "claude": claude,
-            "claude-haiku-4-5": claude,
-            "gpt55": gpt55,
-            "gpt-5.5": gpt55,
-        },
-    )
+    captured_requests: list[bundle_adapter.BundleRequest] = []
+
+    def _fake_request_and_resolve(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = (request, harness_registry)
+        captured_requests.append(request)
+        return _FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.OPENCODE,
+            harness_model="openai/gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(effort="medium"),
+            provenance={"harness_source": "project", "effort_source": "project"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     preview = build_launch_context(
         spawn_id="dry-run-fallback-opencode-medium",
@@ -343,6 +322,12 @@ def test_launch_resolution_fallback_policy_resolves_opencode_medium(
         dry_run=True,
     )
 
+    assert len(captured_requests) == 1
+    assert captured_requests[0].agent == "dev-orchestrator"
+    assert captured_requests[0].model_override is None
+    assert captured_requests[0].harness_override is None
     assert preview.harness.id is HarnessId.OPENCODE
     assert preview.resolved_request.model == "gpt-5.5"
     assert preview.resolved_request.execution_policy.effort == "medium"
+    assert str(preview.binding.run_params.model) == "openai/gpt-5.5"
+    assert preview.binding.spec.model == "openai/gpt-5.5"
