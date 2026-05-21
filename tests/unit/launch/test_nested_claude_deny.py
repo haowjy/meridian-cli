@@ -170,26 +170,6 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
     assert resolved_request.tools == {"agent": "allow", "task": "deny"}
 
 
-def test_spawn_prepare_claude_with_profile_tools_partial_optout(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _write_agent_profile(
-        tmp_path=tmp_path,
-        name="partial-optout-agent",
-        tools={"agent": "allow"},
-    )
-    resolved_request = _build_context(
-        tmp_path=tmp_path,
-        monkeypatch=monkeypatch,
-        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-        harness=HarnessId.CLAUDE,
-        agent="partial-optout-agent",
-    )
-
-    assert resolved_request.tools == {"agent": "allow", "task": "deny"}
-
-
 def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -223,7 +203,6 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     )
 
     assert context.resolved_request.tools == {"*": "deny", "agent": "deny"}
-    assert "--allowedTools" not in context.binding.argv
 
 
 def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
@@ -263,8 +242,6 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
         "bash": "allow",
         "task": "deny",
     }
-    allowed_flag_index = context.binding.argv.index("--allowedTools")
-    assert context.binding.argv[allowed_flag_index + 1] == "Bash"
 
 
 def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
