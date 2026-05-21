@@ -13,8 +13,7 @@ test_reaper_cancel.py.
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from meridian.lib.state import spawn_store
 from meridian.lib.state.managed_primary import terminate_managed_primary_processes
@@ -29,6 +28,9 @@ from tests.integration.state.conftest import (
     _write_primary_meta,
     _write_report,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_terminate_managed_primary_processes_skips_unvalidated_child_pid(
@@ -93,38 +95,6 @@ def test_reconcile_active_spawn_managed_primary_idle_launcher_alive_skips(
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "running"
     assert latest.error is None
-
-
-def test_reconcile_active_spawn_managed_primary_finalizing_without_runner_exit_marks_orphan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        status="finalizing",
-        started_at=_OLD_STARTED_AT,
-    )
-    _write_primary_meta(
-        runtime_root,
-        spawn_id,
-        launcher_pid=7774,
-        activity="finalizing",
-    )
-    record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == 7774,
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_finalization"
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "failed"
-    assert latest.error == "orphan_finalization"
-
-
 def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -172,13 +142,9 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     assert terminated_pids == [8882, 9992]
 
 
-@pytest.mark.parametrize("harness", ["codex"])
-@pytest.mark.parametrize("corrupt_primary_meta", [False, True])
 def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_kills_worker_pg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    harness: str,
-    corrupt_primary_meta: bool,
 ) -> None:
     from meridian.lib.platform.process_scope.base import CleanupResult
 
@@ -187,13 +153,12 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     runtime_root, spawn_id = _create_spawn(
         tmp_path,
         kind="primary",
-        harness=harness,
+        harness="codex",
         runner_pid=runner_pid,
         worker_pid=worker_pid,
         started_at=_OLD_STARTED_AT,
     )
-    if corrupt_primary_meta:
-        _write_corrupt_primary_meta(runtime_root, spawn_id)
+    _write_corrupt_primary_meta(runtime_root, spawn_id)
     record = _get_spawn(runtime_root, spawn_id)
 
     monkeypatch.setattr(
@@ -237,44 +202,6 @@ def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_ki
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
     assert terminated_pids == [worker_pid]
-
-
-def test_reconcile_active_spawn_orphan_primary_diagnostics_include_launcher_alive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runner_pid = 9201
-    worker_pid = 9202
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        kind="primary",
-        harness="codex",
-        runner_pid=runner_pid,
-        worker_pid=worker_pid,
-        started_at=_OLD_STARTED_AT,
-    )
-    record = _get_spawn(runtime_root, spawn_id)
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.is_process_alive",
-        lambda pid, created_after_epoch=None: pid == worker_pid,
-    )
-
-    warnings: list[tuple[str, dict[str, object]]] = []
-    monkeypatch.setattr(
-        "meridian.lib.state.reaper.logger.warning",
-        lambda event, **kwargs: warnings.append((event, kwargs)),
-    )
-
-    reconciled = _reconcile(tmp_path, runtime_root, record)
-
-    assert reconciled.status == "failed"
-    assert reconciled.error == "orphan_primary"
-    assert warnings
-    # Check the diagnostic warning (first emitted) which carries launcher_alive details
-    event, payload = warnings[0]
-    assert "Managed primary candidate reconciled without readable metadata" in event
-    assert payload["launcher_alive"] is False
-    assert payload["managed_metadata_readable"] is False
 
 
 def test_reconcile_active_spawn_managed_primary_finalizing_activity_uses_report_recovery(

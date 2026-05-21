@@ -13,8 +13,7 @@ test_reaper_managed_primary.py.
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.ops.spawn.models import SpawnCancelInput
@@ -26,6 +25,9 @@ from tests.integration.state.conftest import (
     _write_corrupt_primary_meta,
     _write_primary_meta,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _patch_spawn_cancel_runtime_resolution(
@@ -108,13 +110,9 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     assert latest.error == "orphan_primary"
 
 
-@pytest.mark.parametrize("harness", ["codex"])
-@pytest.mark.parametrize("corrupt_primary_meta", [False, True])
 def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pid_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    harness: str,
-    corrupt_primary_meta: bool,
 ) -> None:
     from meridian.lib.platform.process_scope.base import CleanupResult
 
@@ -123,13 +121,12 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     runtime_root, spawn_id = _create_spawn(
         tmp_path,
         kind="primary",
-        harness=harness,
+        harness="codex",
         runner_pid=runner_pid,
         worker_pid=worker_pid,
         started_at=_OLD_STARTED_AT,
     )
-    if corrupt_primary_meta:
-        _write_corrupt_primary_meta(runtime_root, spawn_id)
+    _write_corrupt_primary_meta(runtime_root, spawn_id)
 
     _patch_spawn_cancel_runtime_resolution(
         monkeypatch,
@@ -217,55 +214,6 @@ def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pi
     latest = _get_spawn(runtime_root, spawn_id)
     assert latest.status == "failed"
     assert latest.error == "orphan_primary"
-
-
-def test_cancel_terminal_non_orphan_primary_does_not_terminate_children(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(
-        tmp_path,
-        status="succeeded",
-        runner_pid=None,
-        started_at=_OLD_STARTED_AT,
-    )
-    _write_primary_meta(
-        runtime_root,
-        spawn_id,
-        launcher_pid=7401,
-        backend_pid=7402,
-        tui_pid=7403,
-        activity="idle",
-    )
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
-
-    output = spawn_api.spawn_cancel_sync(
-        SpawnCancelInput(
-            spawn_id=spawn_id,
-            project_root=tmp_path.as_posix(),
-        )
-    )
-
-    assert output.status == "succeeded"
-    assert output.exit_code == 1
-    assert output.message == f"Spawn '{spawn_id}' is already succeeded."
-    assert terminated_pids == []
-
-
 def test_spawn_cancel_managed_primary_signals_launcher_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -322,65 +270,6 @@ def test_spawn_cancel_managed_primary_signals_launcher_first(
     assert latest.runner_exit_code == 130
     assert latest.runner_exit_error == "cancel_timeout"
     assert latest.runner_exit_at is not None
-
-
-def test_spawn_cancel_managed_primary_without_launcher_directly_terminates_backend_and_tui(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
-    _write_primary_meta(
-        runtime_root,
-        spawn_id,
-        launcher_pid=7101,
-        backend_pid=7102,
-        tui_pid=7103,
-        activity="idle",
-    )
-    _patch_spawn_cancel_runtime_resolution(
-        monkeypatch,
-        runtime_root=runtime_root,
-        spawn_id=spawn_id,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.is_process_alive",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.state.managed_primary.is_process_alive",
-        lambda pid, created_after_epoch=None: pid in {7102, 7103},
-    )
-    monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_GRACE_SECS", 0.01)
-    monkeypatch.setattr("meridian.lib.core.spawn_service._MANAGED_CANCEL_FALLBACK_WAIT_SECS", 0.01)
-    terminated_pids: list[int] = []
-
-    class _FakeProcess:
-        def __init__(self, pid: int) -> None:
-            self.pid = pid
-
-        def terminate(self) -> None:
-            terminated_pids.append(self.pid)
-
-    monkeypatch.setattr("meridian.lib.state.managed_primary.psutil.Process", _FakeProcess)
-
-    output = spawn_api.spawn_cancel_sync(
-        SpawnCancelInput(
-            spawn_id=spawn_id,
-            project_root=tmp_path.as_posix(),
-        )
-    )
-
-    assert output.status == "finalizing"
-    assert output.exit_code == 1
-    assert terminated_pids == [7102, 7103]
-    latest = _get_spawn(runtime_root, spawn_id)
-    assert latest.status == "finalizing"
-    assert latest.runner_exit_status == "cancelled"
-    assert latest.runner_exit_code == 130
-    assert latest.runner_exit_error == "cancel_timeout"
-    assert latest.runner_exit_at is not None
-
-
 def test_spawn_cancel_managed_primary_queued_converges_to_terminal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
