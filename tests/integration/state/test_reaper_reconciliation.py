@@ -704,6 +704,13 @@ def test_reconcile_active_spawn_falls_back_to_started_epoch_when_runner_created_
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Force psutil-backed create-time lookup to return None so the test exercises
+    # the started_epoch fallback regardless of whether the fake runner PID happens
+    # to exist on the host (it doesn't on POSIX CI runners, but may on Windows).
+    monkeypatch.setattr(
+        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
+        lambda _pid: None,
+    )
     runtime_root, spawn_id = _create_spawn(
         tmp_path,
         started_at=_OLD_STARTED_AT,
