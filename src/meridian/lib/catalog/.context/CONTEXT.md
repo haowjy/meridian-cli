@@ -19,7 +19,7 @@ is unavailable or broken. Returns `None` only when the alias is unknown (mars ex
 code 1). Mars is always bundled with meridian, so unavailability is a hard error,
 not a soft fallback.
 
-**`_run_mars_models_list(project_root)`** — returns `None` silently when mars is
+**`run_mars_models_list(project_root)`** — returns `None` silently when mars is
 unavailable (used for listing, not resolution). Falls back to reading
 `.mars/models-merged.json` directly. This asymmetry is intentional: resolution must
 succeed or fail loudly; listing can degrade gracefully.
@@ -47,7 +47,7 @@ separate CLI invocations and prevent alias updates from being picked up.
 2. If mars returns a result → return `AliasEntry` from it
 3. If mars returns `None` (unknown alias) → search `mars models list --all` for exact model ID match
 4. If found in all-models list → return `AliasEntry` with empty alias (direct model ID passthrough)
-5. If not found → return `AliasEntry` with the input as model ID and `pattern_fallback_harness()` for harness
+5. If not found → return `AliasEntry` with the input as model ID and unresolved harness
 
 ### Agent Profile Model-Policy Parsing Rules (`agent.py`)
 
@@ -68,21 +68,12 @@ what the profile declares.
 **First-match wins.** Duplicate rules with the same selector are silently unreachable —
 no parse error. The first matching rule in list order wins.
 
-### Harness Inference (`model_policy.py`)
-
-`pattern_fallback_harness(model_id)` infers harness from model ID string patterns
-when mars does not provide an explicit harness. This is a last resort — the harness
-field in `AliasEntry.resolved_harness` takes precedence.
-
-Pattern-based inference means: if mars provides `harness: claude`, use that. If not,
-the pattern fallback kicks in. New model families may require updating the pattern
-table in `model_policy.py`.
-
 ### AliasEntry
 
 `AliasEntry.harness` property: returns `resolved_harness` if mars provided it;
-falls back to `pattern_fallback_harness(model_id)` otherwise. Callers should
-always use `.harness` (the property), not `.resolved_harness` (the raw field).
+raises `ValueError` otherwise. Missing harness is a mars-resolution bug, not a case
+for pattern guessing. Callers should always use `.harness` (the property), not
+`.resolved_harness` (the raw field).
 
 `AliasEntry.mars_provided_harness` exposes the raw mars-provided value for
 diagnostic display — do not use it for routing decisions.

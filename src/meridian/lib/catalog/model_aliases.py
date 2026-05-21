@@ -20,7 +20,6 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.catalog.model_policy import pattern_fallback_harness
 from meridian.lib.core.types import HarnessId, ModelId
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,10 @@ class AliasEntry(BaseModel):
     def harness(self) -> HarnessId:
         if self.resolved_harness is not None:
             return self.resolved_harness
-        return pattern_fallback_harness(str(self.model_id))
+        raise ValueError(
+            "Model harness is missing from Mars resolution for "
+            f"'{self.model_id}'. This is a bug."
+        )
 
     @property
     def mars_provided_harness(self) -> HarnessId | None:
@@ -279,7 +281,7 @@ def _resolve_mars_binary() -> str | None:
     return shutil.which("mars")
 
 
-def _run_mars_models_list(project_root: Path | None = None) -> list[dict[str, object]] | None:
+def run_mars_models_list(project_root: Path | None = None) -> list[dict[str, object]] | None:
     """Call ``mars models list --json`` and return the alias entries.
 
     Returns *None* when the mars binary is unavailable or the command fails,
@@ -420,7 +422,7 @@ def run_mars_models_resolve(
         # mars may do a cold models.dev fetch in ensure_fresh(Auto); mars caps each HTTP
         # phase at 15s (connect + recv-response + recv-body), so worst-case cold fetch is
         # ~45s. 60s leaves a small headroom for first-boot DNS, slow disks, and startup.
-        # Use the same timeout as _run_mars_models_list since both paths can refresh.
+        # Use the same timeout as run_mars_models_list since both paths can refresh.
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise RuntimeError(
@@ -489,7 +491,7 @@ def cached_mars_models_list(
         cached = cache.get_list(project_root)
         if cached is not _SENTINEL:
             return cast("list[dict[str, object]] | None", cached)
-    result = _run_mars_models_list(project_root)
+    result = run_mars_models_list(project_root)
     if cache is not None:
         cache.put_list(project_root, result)
     return result
@@ -642,7 +644,7 @@ def load_mars_descriptions(project_root: Path | None = None) -> dict[str, str]:
     descriptions: dict[str, str] = {}
 
     # Try mars CLI first
-    mars_list = _run_mars_models_list(project_root)
+    mars_list = run_mars_models_list(project_root)
     if mars_list is not None:
         for item in mars_list:
             resolved_model = item.get("model_id") or item.get("resolved_model")
@@ -686,6 +688,7 @@ __all__ = [
     "load_mars_descriptions",
     "parse_harness_candidates",
     "parse_runnable_paths",
+    "run_mars_models_list",
     "run_mars_models_list_all",
     "run_mars_models_resolve",
 ]

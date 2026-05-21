@@ -4,14 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Removed
-- Obsolete chat CLI policy snapshot integration tests removed (`tests/integration/chat/test_chat_cli_policy.py`) now that launch policy no longer routes through chat/local compiler paths.
-
 ### Changed
 - PRIMARY launch policy now resolves model/harness/execution policy through `mars build launch-bundle` adapter (same routing authority as spawn-prepare), not local compiler resolution.
 - PRIMARY launches now preserve bundle-selected harness runnable model IDs (for example `openai/gpt-5.5`) through final harness launch params.
 - Missing runnable-path warnings now cover bundle-driven reroutes on PRIMARY routing surfaces.
 - Launch-policy unit tests no longer assert CHAT/PRIMARY local compiler routing; stale phase-1 guards were deleted from `tests/unit/launch/test_policies.py`.
+- Model listing in `src/meridian/lib/ops/catalog.py` no longer applies Meridian-side visibility heuristics; it now consumes Mars model visibility output directly.
+- Primary launch synthetic prompt gating in `src/meridian/lib/launch/plan.py` now uses explicit harness only; no model-pattern harness inference path.
+- `AliasEntry.harness` now raises when Mars did not provide harness instead of guessing from model ID patterns.
+
+### Removed
+- Obsolete chat CLI policy snapshot integration tests removed (`tests/integration/chat/test_chat_cli_policy.py`) now that launch policy no longer routes through chat/local compiler paths.
+- `src/meridian/lib/catalog/model_policy.py` and all imports of its visibility/pattern fallback helpers.
 
 ## [0.1.14-rc.3] - 2026-05-21
 

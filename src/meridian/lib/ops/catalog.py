@@ -6,12 +6,6 @@ from typing import cast
 from pydantic import BaseModel, ConfigDict, model_serializer
 
 from meridian.lib.catalog.model_aliases import run_mars_models_list_all
-from meridian.lib.catalog.model_policy import (
-    DEFAULT_MODEL_VISIBILITY,
-    ModelVisibilityConfig,
-    compute_superseded_ids,
-    is_default_visible_model,
-)
 from meridian.lib.catalog.models import AliasEntry
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.core.types import HarnessId, ModelId
@@ -324,24 +318,6 @@ def _mars_all_entry_to_catalog_model(entry: dict[str, object]) -> CatalogModel |
     )
 
 
-def _is_default_visible(
-    model: CatalogModel,
-    all_model_ids: set[str],
-    *,
-    visibility: ModelVisibilityConfig,
-    superseded_model_ids: frozenset[str] = frozenset(),
-) -> bool:
-    return is_default_visible_model(
-        model_id=str(model.model_id),
-        pinned=model.pinned or bool(model.aliases),
-        release_date=model.release_date,
-        cost_input=model.cost_input,
-        all_model_ids=all_model_ids,
-        visibility=visibility,
-        superseded_model_ids=superseded_model_ids,
-    )
-
-
 def _cost_tier(cost_input: float | None) -> str | None:
     """Map input cost ($/M tokens) to a human-readable tier."""
     if cost_input is None:
@@ -365,35 +341,7 @@ def models_list_sync(payload: ModelsListInput) -> ModelsListOutput:
         for entry in mars_models
         if (model := _mars_all_entry_to_catalog_model(entry)) is not None
     ]
-
-    if payload.all:
-        return ModelsListOutput(models=tuple(catalog_models))
-
-    all_model_ids = {str(model.model_id) for model in catalog_models}
-    effective_visibility = DEFAULT_MODEL_VISIBILITY
-    if payload.show_superseded:
-        effective_visibility = effective_visibility.model_copy(update={"hide_superseded": False})
-
-    superseded: frozenset[str] = frozenset()
-    if effective_visibility.hide_superseded:
-        superseded = compute_superseded_ids(
-            [
-                (str(model.model_id), model.provider or "", model.release_date)
-                for model in catalog_models
-            ]
-        )
-
-    visible_models = [
-        model
-        for model in catalog_models
-        if _is_default_visible(
-            model,
-            all_model_ids,
-            visibility=effective_visibility,
-            superseded_model_ids=superseded,
-        )
-    ]
-    return ModelsListOutput(models=tuple(visible_models))
+    return ModelsListOutput(models=tuple(catalog_models))
 
 
 models_list = async_from_sync(models_list_sync)
