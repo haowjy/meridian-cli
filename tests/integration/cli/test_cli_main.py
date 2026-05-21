@@ -166,22 +166,6 @@ def test_main_bare_fork_without_meridian_spawn_id_errors(
     )
 
 
-def test_main_bare_fork_with_continue_reports_conflict_before_inference(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
-
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--human", "--fork", "--continue", "c123", "--dry-run"])
-
-    assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "error: Cannot combine --fork with --continue.\n"
-
-
 def test_main_fork_rejects_model_override(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

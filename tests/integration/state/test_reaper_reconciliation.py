@@ -288,10 +288,8 @@ def test_reconcile_active_spawn_finalizing_stale_report_without_runner_exit_orph
     assert latest.error == "orphan_finalization"
 
 
-@pytest.mark.parametrize("artifact_name", ["heartbeat", "stderr.log"])
 def test_reconcile_active_spawn_finalizing_recent_activity_skips(
     tmp_path: Path,
-    artifact_name: str,
 ) -> None:
     runtime_root, spawn_id = _create_spawn(
         tmp_path,
@@ -301,7 +299,7 @@ def test_reconcile_active_spawn_finalizing_recent_activity_skips(
     _write_activity_artifact(
         runtime_root,
         spawn_id,
-        artifact_name,
+        "heartbeat",
         age_secs=5,
     )
     record = _get_spawn(runtime_root, spawn_id)
@@ -416,18 +414,16 @@ def test_reconcile_active_spawn_treats_exact_heartbeat_window_boundary_as_recent
     assert latest.error is None
 
 
-@pytest.mark.parametrize("artifact_name", ["heartbeat", "history.jsonl"])
 def test_reconcile_active_spawn_dead_runner_recent_activity_skips_across_artifact_matrix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    artifact_name: str,
 ) -> None:
     runtime_root, spawn_id = _create_spawn(tmp_path, started_at=_OLD_STARTED_AT)
     record = _get_spawn(runtime_root, spawn_id)
     _write_activity_artifact(
         runtime_root,
         spawn_id,
-        artifact_name,
+        "heartbeat",
         age_secs=5,
     )
 

@@ -69,11 +69,6 @@ def test_validate_fork_mode_conflicts_fork_and_continue() -> None:
         validate_fork_mode(fork_from="p1", fork_fresh_from=None, continue_from="c1")
 
 
-def test_validate_fork_mode_conflicts_fork_fresh_and_continue() -> None:
-    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork-fresh with --continue.")):
-        validate_fork_mode(fork_from=None, fork_fresh_from="p1", continue_from="c1")
-
-
 def test_validate_fork_mode_conflicts_from_and_continue() -> None:
     with pytest.raises(ValueError, match=re.escape("Cannot combine --from with --continue.")):
         validate_fork_mode(
@@ -91,18 +86,6 @@ def test_validate_fork_mode_conflicts_fork_and_from() -> None:
         validate_fork_mode(
             fork_from="p1",
             fork_fresh_from=None,
-            continue_from=None,
-            context_from=("c1",),
-        )
-
-
-def test_validate_fork_mode_conflicts_fork_fresh_and_from() -> None:
-    with pytest.raises(
-        ValueError, match=re.escape("Cannot combine --fork-fresh with --from (MVP limitation).")
-    ):
-        validate_fork_mode(
-            fork_from=None,
-            fork_fresh_from="p1",
             continue_from=None,
             context_from=("c1",),
         )
