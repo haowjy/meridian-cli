@@ -24,6 +24,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch integration clusters now stub `launch-bundle` at the seam (`tests/support/launch.py`) across launch-process and launch-resolution tests, keeping runner/session/fork/managed-path assertions on real Meridian logic while removing live mars harness dependency.
 
 ### Removed
+- 66 tests under tests/integration/chat/ and tests/integration/cli/ that pinned argv shape (type-checked by pyright+cyclopts) or were per-mode cross-product duplicates. Smoke guides cover the per-mode behavior.
 - AgentProfile.model, .harness, .tools, .mcp_tools, .sandbox, .effort, .approval, .autocompact, .autocompact_pct, .model_policies.
 - `catalog/agent.py` `_parse_tools()`, `_parse_model_policies()`, `ModelPolicyRule` class.
 - `meridian.toml` `[primary].model`, `[primary].harness` fields. Mars owns model and harness routing; shadow surface gone.

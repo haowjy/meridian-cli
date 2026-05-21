@@ -132,27 +132,3 @@ def test_main_mars_defaults_to_text_in_agent_mode(monkeypatch: pytest.MonkeyPatc
     assert captured["output_format"] == "text"
 
 
-def test_main_mars_honors_explicit_text_in_agent_mode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-    captured: dict[str, object] = {}
-
-    def _fake_run_mars_passthrough(
-        args: tuple[str, ...] | list[str],
-        *,
-        output_format: str | None = None,
-        **_kwargs: object,
-    ) -> None:
-        captured["args"] = tuple(args)
-        captured["output_format"] = output_format
-        raise SystemExit(0)
-
-    monkeypatch.setattr(mars_passthrough, "run_mars_passthrough", _fake_run_mars_passthrough)
-
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(["--format", "text", "mars", "list"])
-
-    assert exc_info.value.code == 0
-    assert captured["args"] == ("list",)
-    assert captured["output_format"] == "text"
