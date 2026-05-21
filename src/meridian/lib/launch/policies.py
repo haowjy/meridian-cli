@@ -118,6 +118,7 @@ class ResolvedLaunchPolicy:
     resolved_mcp_tools: tuple[str, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
+    matched_policy_rule: str | None = None
     model_selection: ModelSelectionContext | None = None
     fallback_chain: tuple[dict[str, object], ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()

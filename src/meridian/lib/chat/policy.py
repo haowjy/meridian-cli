@@ -79,6 +79,7 @@ class ChatPolicySnapshot(BaseModel):
     effective_model_id: str = ""
     harness: str
     harness_provenance: str = ""
+    matched_policy_rule: str | None = None
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
 
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
@@ -220,6 +221,7 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         harness_provenance=(
             model_selection.harness_provenance if model_selection is not None else ""
         ),
+        matched_policy_rule=policy.matched_policy_rule,
         terminal_surface_mode=policy.terminal_surface_mode,
         execution_policy=policy.execution_policy,
         agent_name=profile.name if profile is not None else None,
@@ -362,6 +364,8 @@ def build_chat_backend_launch_plan(
         "harness_provenance": snapshot.harness_provenance,
         "policy_snapshot_id": snapshot.snapshot_id,
     }
+    if snapshot.matched_policy_rule is not None:
+        configured_payload["matched_policy_rule"] = snapshot.matched_policy_rule
     if ep.autocompact is not None and autocompact_supported:
         configured_payload["autocompact"] = ep.autocompact
     if ep.autocompact_pct is not None:

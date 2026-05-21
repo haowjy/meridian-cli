@@ -1284,6 +1284,7 @@ def prepare_launch_surface(
             "skill_paths": resolve_skill_paths(resolved_skills.loaded_skills),
             "fallback_chain": policies.fallback_chain,
             "terminal_surface_mode": policies.terminal_surface_mode,
+            "matched_policy_rule": policies.matched_policy_rule,
             **model_selection_update,
         }
     )

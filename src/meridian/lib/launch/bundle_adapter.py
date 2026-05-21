@@ -394,6 +394,10 @@ def _map_provenance_level(value: str | None) -> ProvenanceLevel:
     return mapping.get(normalized, ProvenanceLevel.UNSET)
 
 
+def _provenance_value(provenance: dict[str, str], field_name: str) -> str | None:
+    return provenance.get(f"{field_name}_source") or provenance.get(field_name)
+
+
 def _resolved_tools_field(bundle: _BundleResult) -> ToolsField | None:
     if not bundle.tools_allowed and not bundle.tools_disallowed:
         return None
@@ -459,19 +463,32 @@ def bundle_to_resolved_policy(
         resolved_mcp_tools=bundle.tools_mcp,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
-            model_source=_map_provenance_level(effective_provenance.get("model_source")),
-            harness_source=_map_provenance_level(effective_provenance.get("harness_source")),
-            effort_source=_map_provenance_level(effective_provenance.get("effort_source")),
-            approval_source=_map_provenance_level(effective_provenance.get("approval_source")),
-            sandbox_source=_map_provenance_level(effective_provenance.get("sandbox_source")),
+            model_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "model")
+            ),
+            harness_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "harness")
+            ),
+            effort_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "effort")
+            ),
+            approval_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "approval")
+            ),
+            sandbox_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "sandbox")
+            ),
             autocompact_source=_map_provenance_level(
-                effective_provenance.get("autocompact_source")
+                _provenance_value(effective_provenance, "autocompact")
             ),
             autocompact_pct_source=_map_provenance_level(
-                effective_provenance.get("autocompact_pct_source")
+                _provenance_value(effective_provenance, "autocompact_pct")
             ),
-            timeout_source=_map_provenance_level(effective_provenance.get("timeout_source")),
+            timeout_source=_map_provenance_level(
+                _provenance_value(effective_provenance, "timeout")
+            ),
         ),
+        matched_policy_rule=effective_provenance.get("matched_policy_rule"),
         model_selection=model_selection,
         fallback_chain=(),
         warnings=warnings,

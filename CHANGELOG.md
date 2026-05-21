@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `ResolvedLaunchPolicy.matched_policy_rule` preserves exact mars provenance string for audit and dry-run surfaces.
+
 ### Changed
 - Meridian's AgentProfile shrunk to identity + content; mars parses profile routing/tools/execution-policy and projects through the launch bundle.
 - PRIMARY launch policy now resolves model/harness/execution policy through `mars build launch-bundle` adapter (same routing authority as spawn-prepare), not local compiler resolution.

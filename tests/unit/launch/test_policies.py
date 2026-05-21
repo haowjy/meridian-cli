@@ -19,6 +19,7 @@ from meridian.lib.launch.policies import (
     resolve_policy_fields,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface
+from tests.support.launch import FakeBundleResult
 
 
 @dataclass(frozen=True)
@@ -432,6 +433,43 @@ def test_spawn_prepare_bundle_config_provenance_maps_to_config_default(
     assert request.harness_override is None
     assert policy.field_provenance.model_source is ProvenanceLevel.CONFIG_DEFAULT
     assert policy.field_provenance.harness_source is ProvenanceLevel.CONFIG_DEFAULT
+
+
+def test_spawn_prepare_preserves_raw_matched_policy_rule(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: FakeBundleResult(
+            model="gpt-5.5",
+            model_token="gpt55",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={
+                "model": "settings-model-policy",
+                "matched_policy_rule": "settings:2",
+            },
+        ),
+    )
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    config = MeridianConfig()
+    policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_spawn_config(config),
+            config=config,
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    assert policy.field_provenance.model_source is ProvenanceLevel.SETTINGS_MODEL_POLICY
+    assert policy.matched_policy_rule == "settings:2"
 
 
 def test_spawn_prepare_bundle_project_policy_provenance_maps_to_config_default(

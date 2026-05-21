@@ -45,7 +45,11 @@ def test_spawn_create_dry_run_threads_bundle_model_selection(
             harness=HarnessId.OPENCODE,
             harness_model="openai/gpt-5.5",
             execution_policy=ResolvedExecutionPolicy(),
-            provenance={"model_source": "cli", "harness_source": "provider"},
+            provenance={
+                "model_source": "cli",
+                "harness_source": "provider",
+                "matched_policy_rule": "settings:2",
+            },
         ),
     )
     monkeypatch.setattr(
@@ -70,10 +74,12 @@ def test_spawn_create_dry_run_threads_bundle_model_selection(
     assert result.status == "dry-run"
     assert result.model == "gpt-5.5"
     assert result.harness_id == "opencode"
+    assert result.matched_policy_rule == "settings:2"
     wire = result.to_wire()
     assert wire["model_selection"] == {
         "requested_token": "gpt55",
         "canonical_model_id": "gpt-5.5",
         "harness_provenance": "provider",
     }
+    assert wire["matched_policy_rule"] == "settings:2"
     assert "fallback_chain" not in wire

@@ -159,6 +159,7 @@ class SpawnActionOutput(BaseModel):
     model_selection_requested_token: str | None = None
     model_selection_canonical_id: str | None = None
     model_selection_harness_provenance: str | None = None
+    matched_policy_rule: str | None = None
     fallback_chain: tuple[dict[str, object], ...] = ()
     terminal_surface_mode: str | None = None
     project_root: str | None = None
@@ -249,6 +250,8 @@ class SpawnActionOutput(BaseModel):
                     "canonical_model_id": self.model_selection_canonical_id,
                     "harness_provenance": self.model_selection_harness_provenance,
                 }
+            if self.matched_policy_rule is not None:
+                wire["matched_policy_rule"] = self.matched_policy_rule
             if self.fallback_chain:
                 wire["fallback_chain"] = list(self.fallback_chain)
             if self.terminal_surface_mode is not None:
@@ -345,6 +348,8 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Model: {self.model}")
         if self.status == "dry-run" and self.model_selection_harness_provenance:
             lines.append(f"Routing: {self.model_selection_harness_provenance}")
+        if self.status == "dry-run" and self.matched_policy_rule:
+            lines.append(f"Matched policy rule: {self.matched_policy_rule}")
         if self.status == "dry-run" and self.project_root:
             lines.append(f"Project root: {self.project_root}")
             if self.project_root_source:
