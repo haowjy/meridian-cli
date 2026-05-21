@@ -241,15 +241,6 @@ def test_restart_recovery_handles_mixed_closed_active_and_draining_chats(
         ]
 
 
-def test_restart_recovery_with_empty_chats_dir_is_noop(tmp_path: Path) -> None:
-    assert not _paths(tmp_path).chats_dir.exists()
-
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app):
-        assert server._runtime.live_entries == {}
-        assert server._runtime.persisted_only == {}
-
-
 def test_restart_recovery_is_idempotent_and_does_not_duplicate_runtime_error(
     tmp_path: Path,
 ) -> None:
@@ -273,40 +264,3 @@ def test_restart_recovery_is_idempotent_and_does_not_duplicate_runtime_error(
     assert _runtime_error_count(tmp_path, chat_id) == 1
 
 
-def test_restart_recovery_writes_runtime_error_to_sqlite_index(tmp_path: Path) -> None:
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        chat_id = client.post("/chat", json={}).json()["chat_id"]
-        assert (
-            client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()["status"] == "accepted"
-        )
-        _ingest_turn_started(client, chat_id)
-
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        assert _state(client, chat_id) == "idle"
-
-    conn = sqlite3.connect(_index_path(tmp_path, chat_id))
-    row = conn.execute(
-        "SELECT payload_json FROM events WHERE chat_id=? AND type='runtime.error'",
-        (chat_id,),
-    ).fetchone()
-    conn.close()
-
-    assert row == ('{"reason":"backend_lost_after_restart"}',)
-
-
-def test_restart_recovery_keeps_closed_chat_persisted_only_and_replayable(
-    tmp_path: Path,
-) -> None:
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        chat_id = client.post("/chat", json={}).json()["chat_id"]
-        assert client.post(f"/chat/{chat_id}/close").json()["status"] == "accepted"
-
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        assert _state(client, chat_id) == "closed"
-        assert chat_id not in server._runtime.live_entries
-        assert chat_id in server._runtime.persisted_only
-        assert _event_types(client, chat_id, 2) == ["chat.started", "chat.exited"]

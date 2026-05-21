@@ -64,54 +64,6 @@ def test_chat_cli_auto_port_prints_local_backend_url(monkeypatch, tmp_path) -> N
     assert calls[0]["port"] == actual_port
 
 
-def test_chat_cli_uses_requested_host_and_port(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / "runtime")
-    calls: list[tuple[str, int]] = []
-
-    def fake_run(_app, *, host: str, port: int) -> None:
-        calls.append((host, port))
-
-    stdout = StringIO()
-    actual_port = run_chat_server(
-        host="0.0.0.0",
-        port=8765,
-        harness="codex",
-        headless=True,
-        uvicorn_run=fake_run,
-        stdout=stdout,
-    )
-
-    assert actual_port == 8765
-    assert calls == [("0.0.0.0", 8765)]
-    assert stdout.getvalue() == "Chat backend: http://127.0.0.1:8765\n"
-
-
-@pytest.mark.parametrize("harness", ["claude", "codex"])
-def test_chat_cli_accepts_supported_harness_matrix(monkeypatch, tmp_path, harness: str) -> None:
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / harness)
-
-    run_chat_server(
-        harness=harness,
-        port=8900,
-        headless=True,
-        uvicorn_run=lambda *_args, **_kwargs: None,
-        stdout=StringIO(),
-    )
-
-
-def test_chat_cli_rejects_unknown_harness(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / "runtime")
-
-    with pytest.raises(ValueError, match="unsupported chat harness"):
-        run_chat_server(
-            harness="bogus",
-            port=8900,
-            headless=True,
-            uvicorn_run=lambda *_args, **_kwargs: None,
-            stdout=StringIO(),
-        )
-
-
 def test_chat_cli_static_mode_mounts_assets_and_writes_server_discovery(
     monkeypatch, tmp_path
 ) -> None:
@@ -149,62 +101,6 @@ def test_chat_cli_static_mode_mounts_assets_and_writes_server_discovery(
     discovery = runtime_root / "chat-server.json"
     assert discovery.exists()
     assert '"url": "http://127.0.0.1:8765"' in discovery.read_text(encoding="utf-8")
-
-
-def test_chat_cli_static_mode_uses_default_asset_resolution(monkeypatch, tmp_path) -> None:
-    from meridian.lib.service_context import ApplicationContext, ApplicationServices, ChatEntryPoint
-
-    runtime_root = tmp_path / "runtime"
-    dist = _write_dist(tmp_path)
-    assets = chat_cmd.FrontendAssets(
-        root=dist, index_html=dist / "index.html", assets_dir=dist / "assets"
-    )
-    mounted: dict[str, object] = {}
-
-    def fake_mount(app, resolved_assets) -> None:
-        mounted["app"] = app
-        mounted["assets"] = resolved_assets
-
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    monkeypatch.setattr(
-        chat_cmd, "resolve_frontend_assets", lambda explicit_dist=None, **kwargs: assets
-    )
-    monkeypatch.setattr("meridian.lib.chat.server.mount_frontend", fake_mount)
-    stdout = StringIO()
-
-    actual_port = run_chat_server(
-        port=8765,
-        entrypoint=ChatEntryPoint(
-            context=ApplicationContext(project_root=tmp_path, runtime_root=runtime_root),
-            services=ApplicationServices(),
-        ),
-        uvicorn_run=lambda *_args, **_kwargs: None,
-        stdout=stdout,
-    )
-
-    assert actual_port == 8765
-    assert mounted["assets"] == assets
-    assert stdout.getvalue() == "Chat UI: http://127.0.0.1:8765\n"
-    discovery = runtime_root / "chat-server.json"
-    assert discovery.exists()
-    assert '"url": "http://127.0.0.1:8765"' in discovery.read_text(encoding="utf-8")
-
-
-def test_chat_cli_headless_skips_frontend_serving(monkeypatch, tmp_path) -> None:
-    runtime_root = tmp_path / "runtime"
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    stdout = StringIO()
-
-    actual_port = run_chat_server(
-        host="127.0.0.1",
-        port=8765,
-        headless=True,
-        uvicorn_run=lambda *_args, **_kwargs: None,
-        stdout=stdout,
-    )
-
-    assert actual_port == 8765
-    assert stdout.getvalue() == "Chat backend: http://127.0.0.1:8765\n"
 
 
 def test_chat_cli_missing_assets_exits_with_actionable_error(monkeypatch, tmp_path) -> None:

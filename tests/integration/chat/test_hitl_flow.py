@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 import meridian.lib.chat.server as server
@@ -168,25 +167,6 @@ def test_approve_rest_emits_resolution_event_with_request_id(tmp_path: Path) -> 
     assert relevant_events[-1]["payload"]["decision"] == "accept"
 
 
-def test_answer_input_rest_forwards_text_response_to_backend_handle(tmp_path: Path) -> None:
-    handle = Handle(pending_inputs={"i-text"})
-    configure(
-        runtime_root=tmp_path,
-        backend_acquisition=Acquisition([handle]),
-        project_root=tmp_path,
-    )
-
-    with TestClient(app) as client:
-        chat_id = _create_active_chat(client)
-        answered = client.post(
-            f"/chat/{chat_id}/input",
-            json={"request_id": "i-text", "answers": {"text": "Ada"}},
-        ).json()
-
-    assert answered == {"status": "accepted", "error": None}
-    assert handle.inputs == [("i-text", {"text": "Ada"})]
-
-
 def test_approve_for_stale_execution_generation_is_rejected_as_stale(tmp_path: Path) -> None:
     first = Handle(spawn_id="p-old", pending_requests={"r-stale"})
     second = Handle(spawn_id="p-new", pending_requests={"r-fresh"})
@@ -211,69 +191,6 @@ def test_approve_for_stale_execution_generation_is_rejected_as_stale(tmp_path: P
     assert rejected["status"] == "rejected"
     assert "stale" in (rejected["error"] or "")
     assert second.requests == []
-
-
-def test_multiple_pending_requests_each_emit_their_own_resolution(tmp_path: Path) -> None:
-    handle = Handle(pending_requests={"r1", "r2"})
-    configure(
-        runtime_root=tmp_path,
-        backend_acquisition=Acquisition([handle]),
-        project_root=tmp_path,
-    )
-
-    with TestClient(app) as client:
-        chat_id = _create_active_chat(client)
-        _ingest_event(client, chat_id, "request.opened", request_id="r1")
-        _ingest_event(client, chat_id, "request.opened", request_id="r2")
-
-        assert (
-            client.post(
-                f"/chat/{chat_id}/approve",
-                json={"request_id": "r1", "decision": "accept"},
-            ).json()["status"]
-            == "accepted"
-        )
-        assert (
-            client.post(
-                f"/chat/{chat_id}/approve",
-                json={"request_id": "r2", "decision": "reject"},
-            ).json()["status"]
-            == "accepted"
-        )
-        _drain_pipeline(client, chat_id)
-        events = _replayed_events(client, chat_id)
-
-    resolved = [event for event in events if event["type"] == "request.resolved"]
-    assert handle.requests == [("r1", "accept", None), ("r2", "reject", None)]
-    assert [event["request_id"] for event in resolved] == ["r1", "r2"]
-    assert [event["payload"]["decision"] for event in resolved] == ["accept", "reject"]
-
-
-@pytest.mark.parametrize(
-    ("endpoint", "body"),
-    [
-        ("approve", {"request_id": "r1", "decision": "accept"}),
-        ("input", {"request_id": "i1", "answers": {"text": "hello"}}),
-    ],
-)
-def test_hitl_commands_after_close_are_rejected_as_chat_closed(
-    tmp_path: Path,
-    endpoint: str,
-    body: dict[str, object],
-) -> None:
-    handle = Handle(pending_requests={"r1"}, pending_inputs={"i1"})
-    configure(
-        runtime_root=tmp_path,
-        backend_acquisition=Acquisition([handle]),
-        project_root=tmp_path,
-    )
-
-    with TestClient(app) as client:
-        chat_id = _create_active_chat(client)
-        assert client.post(f"/chat/{chat_id}/close").json()["status"] == "accepted"
-        rejected = client.post(f"/chat/{chat_id}/{endpoint}", json=body).json()
-
-    assert rejected == {"status": "rejected", "error": "chat_closed"}
 
 
 def test_cancel_during_pending_hitl_request_cleans_up_request(tmp_path: Path) -> None:

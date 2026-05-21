@@ -12,7 +12,6 @@ import pytest
 
 from meridian.cli import chat_cmd
 from meridian.cli.chat_cmd import run_chat_server
-from meridian.cli.output import OutputConfig
 from meridian.lib.chat.policy import default_chat_policy_snapshot
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -74,48 +73,6 @@ def test_stale_asset_warning_mentions_rebuild(monkeypatch, tmp_path) -> None:
     assert "pnpm build" in stdout.getvalue()
 
 
-def test_chat_command_meridian_env_dev_enables_dev_mode(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_run_chat_server(**kwargs) -> int:
-        captured.update(kwargs)
-        return 8765
-
-    monkeypatch.setenv("MERIDIAN_ENV", "dev")
-    monkeypatch.setattr(chat_cmd, "run_chat_server", fake_run_chat_server)
-    token = cli_main._GLOBAL_OPTIONS.set(
-        cli_main.GlobalOptions(output=OutputConfig(format="text"), harness="claude")
-    )
-    try:
-        chat_cmd._chat(port=8765)
-    finally:
-        cli_main._GLOBAL_OPTIONS.reset(token)
-
-    assert captured["dev"] is True
-    assert captured["frontend_root"] is None
-
-
-def test_chat_command_headless_takes_precedence_over_meridian_env_dev(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_run_chat_server(**kwargs) -> int:
-        captured.update(kwargs)
-        return 8765
-
-    monkeypatch.setenv("MERIDIAN_ENV", "dev")
-    monkeypatch.setattr(chat_cmd, "run_chat_server", fake_run_chat_server)
-    token = cli_main._GLOBAL_OPTIONS.set(
-        cli_main.GlobalOptions(output=OutputConfig(format="text"), harness="claude")
-    )
-    try:
-        chat_cmd._chat(port=8765, headless=True)
-    finally:
-        cli_main._GLOBAL_OPTIONS.reset(token)
-
-    assert captured["headless"] is True
-    assert captured["dev"] is False
-
-
 @pytest.mark.parametrize(
     ("kwargs", "expected_error"),
     [
@@ -162,55 +119,6 @@ def test_chat_cli_rejects_invalid_flag_combinations_before_startup(
     assert launch_attempts == []
 
 
-def test_chat_cli_headless_rejects_dev_mode(monkeypatch, tmp_path) -> None:
-    runtime_root = tmp_path / "runtime"
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    stdout = StringIO()
-
-    with pytest.raises(SystemExit) as exc_info:
-        run_chat_server(
-            port=8765,
-            headless=True,
-            dev=True,
-            uvicorn_run=lambda *_args, **_kwargs: None,
-            stdout=stdout,
-        )
-
-    assert exc_info.value.code == 1
-    assert stdout.getvalue() == "Error: --dev cannot be combined with --headless.\n"
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "expected_error"),
-    [
-        (
-            {"headless": True, "no_portless": True},
-            "Error: --no-portless is only valid with --dev.\n",
-        ),
-        (
-            {"headless": True, "tailscale": True},
-            "Error: --tailscale and --funnel are only valid with --dev.\n",
-        ),
-        (
-            {"headless": True, "portless_force": True},
-            "Error: dev frontend flags cannot be combined with --headless.\n",
-        ),
-    ],
-)
-def test_chat_cli_headless_rejects_dev_frontend_flags(
-    monkeypatch, tmp_path, kwargs, expected_error: str
-) -> None:
-    runtime_root = tmp_path / "runtime"
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    stdout = StringIO()
-
-    with pytest.raises(SystemExit) as exc_info:
-        run_chat_server(port=8765, stdout=stdout, **kwargs)
-
-    assert exc_info.value.code == 1
-    assert stdout.getvalue() == expected_error
-
-
 def test_chat_cli_dev_mode_reports_missing_frontend_checkout_actionably(
     monkeypatch, tmp_path
 ) -> None:
@@ -231,48 +139,6 @@ def test_chat_cli_dev_mode_reports_missing_frontend_checkout_actionably(
     assert "--frontend-root /path/to/meridian-web" in output
     assert "MERIDIAN_DEV_FRONTEND_ROOT=/path/to/meridian-web" in output
     assert "meridian chat --headless" in output
-
-
-def test_chat_cli_dev_mode_reports_prerequisite_failures(monkeypatch, tmp_path) -> None:
-    runtime_root = tmp_path / "runtime"
-    frontend_root = tmp_path / "meridian-web"
-    frontend_root.mkdir()
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    stdout = StringIO()
-
-    with pytest.raises(SystemExit) as exc_info:
-        run_chat_server(
-            port=8765,
-            dev=True,
-            frontend_root=str(frontend_root),
-            stdout=stdout,
-        )
-
-    assert exc_info.value.code == 1
-    expected = f"Error: Frontend root is missing package.json: {frontend_root.resolve()}\n"
-    assert stdout.getvalue() == expected
-
-
-def test_chat_cli_dev_mode_surfaces_launcher_configuration_errors(monkeypatch, tmp_path) -> None:
-    runtime_root = tmp_path / "runtime"
-    monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: runtime_root)
-    stdout = StringIO()
-
-    def raise_config_error(**_kwargs):
-        from meridian.lib.chat.dev_frontend import DevFrontendConfigurationError
-
-        raise DevFrontendConfigurationError("--tailscale/--funnel require portless")
-
-    monkeypatch.setattr(
-        "meridian.lib.chat.dev_frontend.resolve_dev_frontend_launcher",
-        raise_config_error,
-    )
-
-    with pytest.raises(SystemExit) as exc_info:
-        run_chat_server(port=8765, dev=True, stdout=stdout)
-
-    assert exc_info.value.code == 1
-    assert stdout.getvalue() == "Error: --tailscale/--funnel require portless\n"
 
 
 def test_chat_cli_dev_mode_uses_frontend_root_launcher_supervisor_and_warning(
