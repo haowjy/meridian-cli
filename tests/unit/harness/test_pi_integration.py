@@ -820,16 +820,28 @@ async def test_pi_rpc_connection_malformed_canonical_event_fails_closed_through_
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     shim = bin_dir / "pi"
+    # Spawned Pi RPC sessions must stay alive long enough to receive Meridian's
+    # initial prompt. Emitting the malformed sidecar event before reading stdin
+    # races connection startup instead of exercising manager fail-closed logic.
     shim.write_text(
         "#!/bin/sh\n"
         "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
-        "printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-malformed\"}'\n"
-        "printf '%s\\n' '{\"type\":\"message_update\",\"delta\":\"before malformed\"}'\n"
-        "printf '%s\\n' '{\"type\":\"meridian.subspawn.start\",\"schema_version\":2}' >> "
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        "    *'\"type\":\"prompt\"'*)\n"
+        "      printf '%s\\n' '{\"type\":\"session\",\"id\":\"ses-malformed\"}'\n"
+        "      printf '%s\\n' '{\"type\":\"message_update\",\"delta\":\"before malformed\"}'\n"
+        "      printf '%s\\n' "
+        "'{\"type\":\"meridian.subspawn.start\",\"schema_version\":2}' >> "
         f"\"${_PI_LIFECYCLE_EVENT_FILE_ENV}\"\n"
-        "printf '%s\\n' "
-        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n",
+        "      printf '%s\\n' "
+        "'{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"stopReason\":\"stop\"}]}'\n"
+        "      exit 0\n"
+        "      ;;\n"
+        "    *'\"type\":\"abort\"'*) exit 0 ;;\n"
+        "  esac\n"
+        "done\n",
         encoding="utf-8",
     )
     shim.chmod(0o755)
