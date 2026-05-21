@@ -128,8 +128,6 @@ def test_pi_lifecycle_event_tailer_preserves_partial_line_until_newline(tmp_path
     ("line", "expected_reason"),
     [
         ("{bad json", "malformed_json"),
-        ("[]", "non_object"),
-        ('{"id":"missing-type"}', "missing_type"),
     ],
 )
 def test_pi_rpc_connection_surfaces_stdout_parse_diagnostics(

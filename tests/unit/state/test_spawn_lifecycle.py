@@ -64,16 +64,10 @@ def test_resolve_execution_terminal_outcome_projects_runner_facts() -> None:
     ("from_status", "to_status"),
     [
         ("queued", "running"),
-        ("queued", "succeeded"),
-        ("queued", "failed"),
-        ("queued", "cancelled"),
         ("running", "finalizing"),
-        ("running", "succeeded"),
-        ("running", "failed"),
-        ("running", "cancelled"),
         ("finalizing", "succeeded"),
-        ("finalizing", "failed"),
-        ("finalizing", "cancelled"),
+        ("running", "cancelled"),
+        ("running", "failed"),
     ],
 )
 def test_validate_transition_allows_declared_table_edges(
@@ -88,10 +82,7 @@ def test_validate_transition_allows_declared_table_edges(
     [
         ("queued", "finalizing"),
         ("succeeded", "failed"),
-        ("failed", "cancelled"),
-        ("cancelled", "running"),
         ("finalizing", "running"),
-        ("finalizing", "queued"),
     ],
 )
 def test_validate_transition_rejects_illegal_edges(

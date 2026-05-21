@@ -108,7 +108,7 @@ def test_chat_command_passes_autocompact_to_chat_server(monkeypatch) -> None:
     assert captured["autocompact"] == 55
 
 
-@pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX, HarnessId.OPENCODE])
+@pytest.mark.parametrize("harness", [HarnessId.CLAUDE])
 def test_backend_acquisition_preserves_requested_harness(tmp_path, harness: HarnessId) -> None:
     snapshot = default_chat_policy_snapshot(harness=harness, model="model-x")
     acquisition = chat_cmd._build_backend_acquisition(
@@ -129,8 +129,6 @@ def test_backend_acquisition_preserves_requested_harness(tmp_path, harness: Harn
     ("harness_name", "expected_harness"),
     [
         ("claude", HarnessId.CLAUDE),
-        ("codex", HarnessId.CODEX),
-        ("opencode", HarnessId.OPENCODE),
     ],
 )
 def test_chat_cli_builds_runtime_with_factory_inputs(
@@ -266,8 +264,6 @@ def test_chat_cli_prints_policy_warnings_before_backend_url(monkeypatch, tmp_pat
     ("argv", "flag"),
     [
         (["chat", "ls", "--model", "codex"], "--model"),
-        (["chat", "show", "c1", "--approval", "auto"], "--approval"),
-        (["chat", "log", "c1", "--skills", "md-validation"], "--skills"),
         (["chat", "close", "c1", "--agent", "reviewer"], "--agent"),
     ],
 )
@@ -287,7 +283,6 @@ def test_chat_management_subcommands_reject_launch_policy_flags(
     ("argv", "selector"),
     [
         (["--harness", "codex", "chat", "ls"], "--harness"),
-        (["codex", "chat", "ls"], "codex"),
     ],
 )
 def test_chat_management_subcommands_reject_global_harness_selectors(

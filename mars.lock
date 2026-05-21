@@ -24,6 +24,7 @@ path = "/tmp/tmp.scFJOuDlIj/pkg"
 
 [dependencies.playwright-cli]
 url = "github.com/microsoft/playwright-cli"
+version = "main"
 commit = "3a1bafc8b4e973c72d0364eb5b427d1ce0aa8317"
 
 [items."agent/alignment-reviewer"]

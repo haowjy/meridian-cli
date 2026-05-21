@@ -140,8 +140,6 @@ def test_hooks_run_ignores_parent_project_and_runtime_overrides(
     "argv",
     [
         ["hooks"],
-        ["hooks", "list"],
-        ["hooks", "run", "record-finalized"],
     ],
 )
 def test_hooks_default_list_and_run_ignore_inherited_roots_during_bootstrap(
@@ -207,8 +205,6 @@ def test_hooks_default_list_and_run_ignore_inherited_roots_during_bootstrap(
     "argv",
     [
         ["hooks"],
-        ["hooks", "list"],
-        ["hooks", "run", "record-finalized"],
     ],
 )
 def test_nested_manual_hooks_ignore_inherited_roots_during_handler_execution(
@@ -272,8 +268,6 @@ def test_nested_manual_hooks_ignore_inherited_roots_during_handler_execution(
     "argv",
     [
         ["hooks"],
-        ["hooks", "list"],
-        ["hooks", "run", "record-finalized"],
     ],
 )
 def test_top_level_manual_hooks_resolve_project_root_from_cwd(

@@ -9,6 +9,7 @@ path = "/tmp/tmp.scFJOuDlIj/pkg"
 
 [settings]
 targets = [
+    ".pi",
     ".claude",
     ".opencode",
     ".codex",

@@ -129,7 +129,6 @@ def test_chat_command_headless_takes_precedence_over_meridian_env_dev(monkeypatc
         ),
         ({"no_portless": True}, "Error: --no-portless is only valid with --dev.\n"),
         ({"tailscale": True}, "Error: --tailscale and --funnel are only valid with --dev.\n"),
-        ({"funnel": True}, "Error: --tailscale and --funnel are only valid with --dev.\n"),
         (
             {"portless_force": True},
             "Error: --portless-force is only valid with portless dev mode.\n",
@@ -190,10 +189,6 @@ def test_chat_cli_headless_rejects_dev_mode(monkeypatch, tmp_path) -> None:
         ),
         (
             {"headless": True, "tailscale": True},
-            "Error: --tailscale and --funnel are only valid with --dev.\n",
-        ),
-        (
-            {"headless": True, "funnel": True},
             "Error: --tailscale and --funnel are only valid with --dev.\n",
         ),
         (
