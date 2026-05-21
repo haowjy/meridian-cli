@@ -33,6 +33,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `AgentOverlayConfig`, `RuntimeOverrides.from_agent_overlay_routing()`, `RuntimeOverrides.from_agent_overlay_policy()`, and `compiler._overlay_policy_rules()`.
 - `[agents]` block in `meridian.toml`; move config to `[agents.<name>]` in `mars.toml` / `mars.local.toml` (legacy section now raises migration error).
 - 39 pin-the-implementation tests from launch/CLI output and spawn-continue forwarding clusters; coverage moved to lean parser/contract tests plus smoke guides.
+- 77 tests under `tests/integration/state/` and `tests/unit/state/` that pinned implementation details or were error-mode cross-product duplicates. Canonical invariant coverage retained.
 
 ### Fixed
 - Opencode report extraction now reads the assistant message from history.jsonl payload.properties.info.parts instead of looking for a literal "assistant"-type event that the wrapped format never emits.

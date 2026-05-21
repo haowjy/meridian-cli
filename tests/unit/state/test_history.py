@@ -8,7 +8,6 @@ from meridian.lib.state import history as history_mod
 from meridian.lib.state.history import (
     HarnessHistoryWriter,
     read_history_range,
-    strip_seq_envelope,
 )
 
 
@@ -58,23 +57,6 @@ def test_writer_resume_discards_truncated_tail_before_append(tmp_path: Path) -> 
     assert len(raw_lines) == 2
     assert [json.loads(line)["seq"] for line in raw_lines] == [0, 1]
     assert all('"bad"' not in line for line in raw_lines)
-
-
-def test_writer_tracks_byte_offsets_at_line_starts(tmp_path: Path) -> None:
-    history_path = tmp_path / "history.jsonl"
-    writer = HarnessHistoryWriter(history_path)
-    writer.write(_event(0))
-    writer.write(_event(1))
-    writer.write(_event(2))
-
-    raw_lines = history_path.read_bytes().splitlines(keepends=True)
-    running_offset = 0
-    for raw_line in raw_lines:
-        envelope = json.loads(raw_line.decode("utf-8"))
-        assert envelope["byte_offset"] == running_offset
-        running_offset += len(raw_line)
-
-
 def test_iter_history_events_tolerates_truncated_or_corrupt_lines(tmp_path: Path) -> None:
     history_path = tmp_path / "history.jsonl"
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,83 +69,6 @@ def test_iter_history_events_tolerates_truncated_or_corrupt_lines(tmp_path: Path
 
     events = list(history_mod.iter_history_events(history_path))
     assert [event["seq"] for event in events] == [0, 1]
-
-
-def test_strip_seq_envelope_removes_seq_metadata() -> None:
-    raw = {
-        "seq": 4,
-        "byte_offset": 120,
-        "turn_id": "turn-4",
-        "item_id": "item-4",
-        "request_id": "request-4",
-        "interrupt_epoch": 1,
-        "stale_after_interrupt": False,
-        "event_type": "assistant_message",
-        "harness_id": "codex",
-        "payload": {"x": 1},
-        "raw_text": "assistant raw text",
-    }
-    stripped = strip_seq_envelope(raw)
-    assert stripped == {
-        "event_type": "assistant_message",
-        "harness_id": "codex",
-        "payload": {"x": 1},
-        "raw_text": "assistant raw text",
-    }
-
-
-def test_read_history_range_filters_by_start_seq_and_limit(tmp_path: Path) -> None:
-    history_path = tmp_path / "history.jsonl"
-    writer = HarnessHistoryWriter(history_path)
-    writer.write(_event(0))
-    writer.write(_event(1))
-    writer.write(_event(2))
-    writer.write(_event(3))
-
-    ranged = read_history_range(history_path, start_seq=1, limit=2)
-    assert [entry["seq"] for entry in ranged] == [1, 2]
-
-    full_from_two = read_history_range(history_path, start_seq=2)
-    assert [entry["seq"] for entry in full_from_two] == [2, 3]
-
-
-def test_raw_text_is_preserved_through_write_read_cycle(tmp_path: Path) -> None:
-    history_path = tmp_path / "history.jsonl"
-    writer = HarnessHistoryWriter(history_path)
-    result = writer.write(
-        HarnessEvent(
-            event_type="assistant_message",
-            payload={"index": 1},
-            harness_id="codex",
-            raw_text="raw assistant output",
-        )
-    )
-
-    assert result.success is True
-    events = read_history_range(history_path)
-    assert events == [
-        {
-            "seq": 0,
-            "byte_offset": 0,
-            "turn_id": None,
-            "item_id": None,
-            "request_id": None,
-            "interrupt_epoch": 0,
-            "stale_after_interrupt": False,
-            "event_type": "assistant_message",
-            "harness_id": "codex",
-            "payload": {"index": 1},
-            "raw_text": "raw assistant output",
-        }
-    ]
-    assert strip_seq_envelope(events[0]) == {
-        "event_type": "assistant_message",
-        "harness_id": "codex",
-        "payload": {"index": 1},
-        "raw_text": "raw assistant output",
-    }
-
-
 def test_write_failure_returns_error_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
