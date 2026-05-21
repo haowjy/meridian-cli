@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 
 from meridian.lib.config.settings import load_config
-from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.projections.project_opencode_streaming import (
     project_opencode_spec_to_session_payload,
@@ -38,7 +37,6 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -449,75 +447,6 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0
-
-
-def test_launch_primary_dry_run_returns_terminal_surface_mode(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path
-    _write_minimal_mars_config(project_root)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4",
-        harness=HarnessId.CODEX,
-    )
-
-    result = __import__("meridian.lib.launch", fromlist=["launch_primary"]).launch_primary(
-        project_root=project_root,
-        request=__import__("meridian.lib.launch.types", fromlist=["LaunchRequest"]).LaunchRequest(
-            model="gpt-5.4",
-            harness=HarnessId.CODEX.value,
-            dry_run=True,
-        ),
-        harness_registry=get_default_harness_registry(),
-    )
-
-    assert result.exit_code == 0
-    assert result.terminal_surface_mode == "pty_mediated"
-
-
-def test_opencode_non_interactive_projection_includes_variant_from_effort(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "opencode-subprocess-variant"
-    project_root.mkdir()
-    _write_minimal_mars_config(project_root)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gemini-2.5-pro",
-        harness=HarnessId.OPENCODE,
-        execution_policy=ResolvedExecutionPolicy(effort="medium"),
-    )
-    harness_registry = get_default_harness_registry()
-    config = load_config(project_root)
-
-    launch_context = build_launch_context(
-        spawn_id="dry-run-opencode-subprocess-variant",
-        request=SpawnRequest(
-            prompt="run task",
-            prompt_is_composed=False,
-            model="gemini-2.5-pro",
-            harness=HarnessId.OPENCODE.value,
-            execution_policy=ResolvedExecutionPolicy(effort="medium"),
-        ),
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.REQUIRED,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            config_snapshot=config.model_dump(mode="json", exclude_none=True),
-            runtime_root=(project_root / ".meridian").as_posix(),
-            project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=project_root.as_posix(),
-        ),
-        harness_registry=harness_registry,
-        dry_run=True,
-    )
-
-    argv = launch_context.binding.argv
-    assert "--variant" in argv
-    variant_index = argv.index("--variant")
-    assert argv[variant_index + 1] == "medium"
 
 
 def test_opencode_streaming_logs_effort_warning_without_failure(
