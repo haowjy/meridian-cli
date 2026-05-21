@@ -401,12 +401,42 @@ def extract_claude_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | 
 def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
     last_message: str | None = None
     for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-        event_type = str(payload.get("type", payload.get("event", ""))).strip().lower()
-        if event_type != "assistant":
+        event_payload = payload.get("payload")
+        if isinstance(event_payload, dict):
+            message_payload = cast("dict[str, object]", event_payload)
+        else:
+            message_payload = payload
+
+        properties_obj = message_payload.get("properties")
+        if not isinstance(properties_obj, dict):
             continue
-        message = _extract_text(payload.get("message"))
+        properties = cast("dict[str, object]", properties_obj)
+
+        info_obj = properties.get("info")
+        if not isinstance(info_obj, dict):
+            continue
+        info = cast("dict[str, object]", info_obj)
+
+        if str(info.get("role", "")).strip().lower() != "assistant":
+            continue
+
+        parts_obj = info.get("parts")
+        if not isinstance(parts_obj, list):
+            continue
+        parts = cast("list[object]", parts_obj)
+
+        text_chunks: list[str] = []
+        for part_obj in parts:
+            if not isinstance(part_obj, dict):
+                continue
+            part = cast("dict[str, object]", part_obj)
+            if str(part.get("type", "")).strip().lower() != "text":
+                continue
+            text_chunks.append(str(part.get("text", "")))
+        message = "".join(chunk for chunk in text_chunks if chunk).strip()
         if message:
             last_message = message
+
     return last_message
 
 

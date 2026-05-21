@@ -25,6 +25,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `[agents]` block in `meridian.toml`; move config to `[agents.<name>]` in `mars.toml` / `mars.local.toml` (legacy section now raises migration error).
 - 39 pin-the-implementation tests from launch/CLI output and spawn-continue forwarding clusters; coverage moved to lean parser/contract tests plus smoke guides.
 
+### Fixed
+- Opencode report extraction now reads the assistant message from history.jsonl payload.properties.info.parts instead of looking for a literal "assistant"-type event that the wrapped format never emits.
+
 ## [0.1.14-rc.3] - 2026-05-21
 
 ## [0.1.14-rc.2] - 2026-05-21
