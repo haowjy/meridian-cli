@@ -138,7 +138,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -n auto"
 asyncio_mode = "auto"
 pythonpath = ["src"]
 

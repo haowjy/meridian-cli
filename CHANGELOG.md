@@ -8,6 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `ResolvedLaunchPolicy.matched_policy_rule` preserves exact mars provenance string for audit and dry-run surfaces.
 
 ### Changed
+- `uv run pytest-llm` defaults to xdist `-n auto` parallel mode. Suite runs in ~75s instead of ~210s. Force serial with `pytest-llm -p no:xdist` when order matters.
 - Meridian's AgentProfile shrunk to identity + content; mars parses profile routing/tools/execution-policy and projects through the launch bundle.
 - PRIMARY launch policy now resolves model/harness/execution policy through `mars build launch-bundle` adapter (same routing authority as spawn-prepare), not local compiler resolution.
 - PRIMARY launches now preserve bundle-selected harness runnable model IDs (for example `openai/gpt-5.5`) through final harness launch params.
