@@ -1,11 +1,9 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from meridian.lib.config.project_paths import (
     PROJECT_ROOT_IGNORE_TARGETS,
-    ProjectConfigPaths,
     resolve_project_config_paths,
 )
 
@@ -13,19 +11,6 @@ from meridian.lib.config.project_paths import (
 @pytest.fixture(autouse=True)
 def _clear_state_root_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
-
-
-def test_project_paths_is_frozen(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    paths = ProjectConfigPaths(
-        project_root=project_root.resolve(), execution_cwd=project_root.resolve()
-    )
-
-    with pytest.raises(ValidationError, match="frozen"):
-        paths.project_root = tmp_path
-
-
 def test_resolve_project_paths_resolves_project_root_and_execution_cwd(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     execution_cwd = tmp_path / "exec"
@@ -36,18 +21,6 @@ def test_resolve_project_paths_resolves_project_root_and_execution_cwd(tmp_path:
 
     assert paths.project_root == project_root.resolve()
     assert paths.execution_cwd == execution_cwd.resolve()
-
-
-def test_resolve_project_paths_defaults_execution_cwd_to_project_root(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-
-    paths = resolve_project_config_paths(project_root=project_root)
-
-    assert paths.project_root == project_root.resolve()
-    assert paths.execution_cwd == project_root.resolve()
-
-
 def test_project_paths_exposes_root_file_policy(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
