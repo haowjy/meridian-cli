@@ -7,11 +7,12 @@ later cleanup.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from fnmatch import fnmatchcase
+from typing import Literal
 
-from meridian.lib.catalog.agent import ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import (
@@ -21,6 +22,16 @@ from meridian.lib.core.overrides import (
     normalize_execution_policy_fields,
 )
 from meridian.lib.tools import ToolsField
+
+
+@dataclass(frozen=True)
+class ModelPolicyRule:
+    """One model-policy override rule from launch policy inputs."""
+
+    match_type: Literal["model", "alias", "model-glob"]
+    match_value: str
+    no_fallback: bool = False
+    overrides: Mapping[str, object] = field(default_factory=dict)
 
 
 class ProvenanceLevel(Enum):
@@ -500,6 +511,7 @@ __all__ = [
     "CompilerRequest",
     "CompilerResult",
     "FieldProvenance",
+    "ModelPolicyRule",
     "ProvenanceLevel",
     "ResolvedExecutionPolicy",
     "compile_launch_params",

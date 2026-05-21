@@ -284,18 +284,8 @@ class RuntimeOverrides(BaseModel):
 
     @classmethod
     def from_agent_profile(cls, profile: AgentProfile | None) -> RuntimeOverrides:
-        if profile is None:
-            return cls()
-        return cls(
-            model=_normalize_optional_string(profile.model),
-            harness=_normalize_optional_string(profile.harness),
-            # Profile selection is the agent; it does not override itself.
-            effort=_normalize_optional_string(profile.effort),
-            sandbox=_normalize_optional_string(profile.sandbox),
-            approval=_normalize_optional_string(profile.approval),
-            autocompact=profile.autocompact,
-            autocompact_pct=getattr(profile, "autocompact_pct", None),
-        )
+        _ = profile
+        return cls()
 
     @classmethod
     def from_alias_entry(cls, alias_entry: AliasEntry | None) -> RuntimeOverrides:

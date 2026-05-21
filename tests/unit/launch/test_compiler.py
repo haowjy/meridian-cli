@@ -1,7 +1,6 @@
 # qa-validated: orchestrator-opencode-fallback-runtime
 from __future__ import annotations
 
-from meridian.lib.catalog.agent import ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -9,6 +8,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.launch.compiler import (
     CompilerRequest,
     CompilerResult,
+    ModelPolicyRule,
     compile_launch_params,
     compiler_result_to_dry_run_dict,
 )

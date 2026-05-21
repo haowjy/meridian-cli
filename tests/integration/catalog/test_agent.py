@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.catalog.agent import (
-    ModelPolicyRule,
+    AgentProfile,
     load_agent_profile,
     parse_agent_profile,
     scan_agent_profiles,
@@ -20,6 +20,19 @@ def _write_profile(tmp_path: Path, filename: str, frontmatter_lines: list[str]) 
     return profile_path
 
 
+def test_agent_profile_fields_are_identity_and_content_only() -> None:
+    assert tuple(AgentProfile.model_fields) == (
+        "name",
+        "description",
+        "mode",
+        "skills",
+        "model_invocable",
+        "body",
+        "path",
+        "raw_content",
+    )
+
+
 def test_scan_agent_profiles_reads_real_mars_agents_directory(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     agents_dir = project_root / ".mars" / "agents"
@@ -31,9 +44,7 @@ def test_scan_agent_profiles_reads_real_mars_agents_directory(tmp_path: Path) ->
         [
             "name: Reviewer",
             "mode: primary",
-            "model-policies:",
-            "  - match: {alias: gpt55}",
-            "    override: {effort: medium}",
+            "skills: [review, review, diff]",
         ],
     )
 
@@ -41,7 +52,7 @@ def test_scan_agent_profiles_reads_real_mars_agents_directory(tmp_path: Path) ->
 
     assert [profile.name for profile in profiles] == ["Coder", "Reviewer"]
     assert profiles[1].mode == "primary"
-    assert profiles[1].model_policies[0].no_fallback is False
+    assert profiles[1].skills == ("review", "review", "diff")
 
 
 def test_load_agent_profile_missing_error_points_to_mars_agents_path(tmp_path: Path) -> None:
@@ -77,280 +88,55 @@ def test_parse_agent_profile_ignores_legacy_models(tmp_path: Path) -> None:
     assert profile.name == "Bad"
 
 
-def test_parse_agent_profile_ignores_legacy_fallback_order(tmp_path: Path) -> None:
+def test_parse_agent_profile_ignores_removed_frontmatter_fields(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
         [
             "name: Bad",
+            "model: gpt55",
+            "harness: codex",
+            "sandbox: workspace-write",
+            "effort: high",
+            "approval: auto",
+            "autocompact: 1000",
+            "autocompact_pct: 50",
+            "tools: allow",
+            "mcp-tools: [foo]",
             "model-policies:",
             "  - match: {alias: gpt55}",
-            "    fallback-order: 1",
-            "    override: {effort: high}",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="alias",
-            match_value="gpt55",
-            overrides={"effort": "high"},
-        ),
-    )
-
-
-def test_parse_agent_profile_model_policies_parse(tmp_path: Path) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "mode: primary",
-            "model-policies:",
-            "  - match:",
-            "      model: gpt-5.5",
-            "    override:",
-            "      effort: high",
-            "      autocompact: 80",
-            "  - match:",
-            "      alias: opus",
-            "    override:",
-            "      harness: claude",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.mode == "primary"
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="model",
-            match_value="gpt-5.5",
-            overrides={"effort": "high", "autocompact": 80},
-        ),
-        ModelPolicyRule(
-            match_type="alias",
-            match_value="opus",
-            overrides={"harness": "claude"},
-        ),
-    )
-
-
-def test_parse_agent_profile_model_policies_implicit_fallback_order(tmp_path: Path) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "model-policies:",
-            "  - match: {alias: gpt55}",
-            "    override: {effort: medium}",
-            "  - match: {model: gpt-5.4}",
-            "    override: {effort: high}",
-            "  - match: {model-glob: 'gpt-*'}",
-            "    override: {approval: auto}",
-            "  - match: {alias: codex}",
-            "    no-fallback: true",
             "    override: {effort: low}",
         ],
     )
 
     profile = parse_agent_profile(profile_path)
 
-    fallback_candidates = [
-        rule.match_value
-        for rule in profile.model_policies
-        if rule.match_type in {"alias", "model"} and not rule.no_fallback
-    ]
-    assert fallback_candidates == ["gpt55", "gpt-5.4"]
+    assert profile.name == "Bad"
+    assert profile.mode == "subagent"
 
 
-def test_parse_agent_profile_model_glob_rules_are_always_no_fallback(tmp_path: Path) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "model-policies:",
-            "  - match: {model-glob: 'gpt-*'}",
-            "    override: {effort: medium}",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies[0].no_fallback is True
-
-
-def test_parse_agent_profile_model_policies_accepts_empty_override_with_fallback_candidate(
-    tmp_path: Path,
-) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "model-policies:",
-            "  - match: {alias: claude-opus-4-6}",
-            "    override: {}",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="alias",
-            match_value="claude-opus-4-6",
-            no_fallback=False,
-            overrides={},
-        ),
-    )
-
-
-def test_parse_agent_profile_model_policies_accepts_missing_override(
-    tmp_path: Path,
-) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "reviewer.md",
-        [
-            "name: Reviewer",
-            "model-policies:",
-            "  - match: {alias: claude-opus-4-6}",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="alias",
-            match_value="claude-opus-4-6",
-            no_fallback=False,
-            overrides={},
-        ),
-    )
-
-
-def test_parse_agent_profile_keeps_noop_non_fallback_policy_rule(tmp_path: Path) -> None:
+def test_parse_agent_profile_mode_defaults_to_subagent_for_invalid_value(tmp_path: Path) -> None:
     profile_path = _write_profile(
         tmp_path,
         "bad.md",
-        [
-            "name: Bad",
-            "model-policies:",
-            "  - match:",
-            "      model: gpt-5.5",
-            "    no-fallback: true",
-            "    override: {}",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="model",
-            match_value="gpt-5.5",
-            no_fallback=True,
-            overrides={},
-        ),
-    )
-
-
-@pytest.mark.parametrize(
-    "lines",
-    [
-        [
-            "model-policies:",
-            "  - match:",
-            "      model: gpt-5.5",
-            "      alias: gpt",
-            "    override:",
-            "      effort: high",
-        ],
-    ],
-)
-def test_parse_agent_profile_ignores_invalid_model_policy_rules(
-    tmp_path: Path,
-    lines: list[str],
-) -> None:
-    profile_path = _write_profile(tmp_path, "bad.md", ["name: Bad", *lines])
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == ()
-
-
-def test_parse_agent_profile_filters_unknown_model_policy_override_key(tmp_path: Path) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "mixed.md",
-        [
-            "name: Mixed",
-            "model-policies:",
-            "  - match: {model: gpt-5.5}",
-            "    override:",
-            "      effort: high",
-            "      temperature: 0.2",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == (
-        ModelPolicyRule(
-            match_type="model",
-            match_value="gpt-5.5",
-            no_fallback=False,
-            overrides={"effort": "high"},
-        ),
-    )
-
-
-def test_parse_agent_profile_skips_rule_when_all_override_keys_invalid(tmp_path: Path) -> None:
-    """A rule with only invalid override keys is silently dropped, not kept as no-op."""
-    profile_path = _write_profile(
-        tmp_path,
-        "typo.md",
-        [
-            "name: Typo",
-            "model-policies:",
-            "  - match: {model: gpt-5.5}",
-            "    override:",
-            "      harenss: opencode",
-        ],
-    )
-
-    profile = parse_agent_profile(profile_path)
-
-    assert profile.model_policies == ()
-
-
-def test_parse_agent_profile_ignores_invalid_optional_fields(tmp_path: Path) -> None:
-    profile_path = _write_profile(
-        tmp_path,
-        "bad.md",
-        [
-            "name: Bad",
-            "mode: daemon",
-            "approval: nope",
-            "autocompact: 101",
-            "autocompact_pct: 0",
-            "tools: maybe",
-        ],
+        ["name: Bad", "mode: daemon"],
     )
 
     profile = parse_agent_profile(profile_path)
 
     assert profile.mode == "subagent"
-    assert profile.approval is None
-    assert profile.autocompact is None
-    assert profile.autocompact_pct is None
-    assert profile.tools is None
+
+
+def test_parse_agent_profile_defaults_model_invocable_to_true(tmp_path: Path) -> None:
+    profile_path = _write_profile(
+        tmp_path,
+        "agent.md",
+        ["name: Agent", "model-invocable: nope"],
+    )
+
+    profile = parse_agent_profile(profile_path)
+
+    assert profile.model_invocable is True
 
 
 def test_scan_agent_profiles_skips_unreadable_profile_without_blocking_catalog(

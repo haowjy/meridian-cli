@@ -5,11 +5,8 @@ from typing import Literal
 
 import pytest
 
-from meridian.lib.catalog.agent import AgentProfile, ModelPolicyRule
-from meridian.lib.catalog.model_aliases import entry
+from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.launch.prompt import (
-    _dedupe_fan_out_aliases,
-    _get_fan_out_aliases,
     build_agent_inventory_prompt,
     build_goal_instruction,
 )
@@ -20,26 +17,14 @@ def _profile(
     tmp_path: Path,
     name: str,
     description: str,
-    model: str | None = None,
-    model_policies: tuple[ModelPolicyRule, ...] = (),
     mode: Literal["primary", "subagent"] = "subagent",
     model_invocable: bool = True,
 ) -> AgentProfile:
     return AgentProfile(
         name=name,
         description=description,
-        model=model,
-        harness=None,
-        skills=(),
-        tools=None,
-        mcp_tools=(),
-        sandbox=None,
-        effort=None,
-        approval=None,
-        autocompact=None,
-        autocompact_pct=None,
         mode=mode,
-        model_policies=model_policies,
+        skills=(),
         model_invocable=model_invocable,
         body="",
         path=tmp_path / f"{name}.md",
@@ -59,7 +44,7 @@ def test_build_agent_inventory_prompt_returns_none_without_agents(
     assert build_agent_inventory_prompt(project_root=tmp_path) is None
 
 
-def test_build_agent_inventory_prompt_renders_model_and_fan_out_metadata(
+def test_build_agent_inventory_prompt_renders_name_and_description_only(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -71,76 +56,24 @@ def test_build_agent_inventory_prompt_renders_model_and_fan_out_metadata(
         ),
         _profile(
             tmp_path=tmp_path,
-            name="beta",
-            description="Fan-out only",
-            model_policies=(
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="opus46",
-                    overrides={"effort": "medium"},
-                ),
-            ),
-        ),
-        _profile(
-            tmp_path=tmp_path,
             name="alpha",
             description="Primary reviewer",
-            model="gpt54",
-            model_policies=(
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="gpt54",
-                    overrides={"effort": "medium"},
-                ),
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="gpt55",
-                    overrides={"effort": "medium"},
-                ),
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="dup55",
-                    overrides={"effort": "medium"},
-                ),
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="unknown_alias",
-                    overrides={"effort": "medium"},
-                ),
-            ),
         ),
     ]
-    alias_load_count = 0
 
     def fake_scan(*, project_root: Path) -> list[AgentProfile]:
         assert project_root == tmp_path
         return profiles
 
-    def fake_load(*, project_root: Path):
-        nonlocal alias_load_count
-        assert project_root == tmp_path
-        alias_load_count += 1
-        return [
-            entry(alias="gpt54", model_id="gpt-5.4"),
-            entry(alias="gpt55", model_id="gpt-5.5"),
-            entry(alias="dup55", model_id="gpt-5.5"),
-            entry(alias="opus46", model_id="claude-opus-4-6"),
-        ]
-
     monkeypatch.setattr("meridian.lib.launch.prompt.scan_agent_profiles", fake_scan)
-    monkeypatch.setattr("meridian.lib.launch.prompt.load_merged_aliases", fake_load)
 
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
 
     assert prompt is not None
-    assert alias_load_count == 1
     lines = prompt.splitlines()
     assert lines[0] == "# Meridian Agents"
     assert lines[4] == "## Subagent"
-    assert (
-        "- alpha: Primary reviewer | Model: gpt54 | Fan-out: gpt54, gpt55, unknown_alias" in lines
-    )
-    assert "- beta: Fan-out only | Fan-out: opus46" in lines
+    assert "- alpha: Primary reviewer" in lines
     assert "- zeta: No model metadata" in lines
 
 
@@ -166,10 +99,6 @@ def test_build_agent_inventory_prompt_groups_by_mode(
         "meridian.lib.launch.prompt.scan_agent_profiles",
         lambda *, project_root: profiles,
     )
-    monkeypatch.setattr(
-        "meridian.lib.launch.prompt.load_merged_aliases",
-        lambda *, project_root: [],
-    )
 
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
 
@@ -183,50 +112,6 @@ def test_build_agent_inventory_prompt_groups_by_mode(
         "- coder: Worker",
     ]
     assert "Mode:" not in prompt
-
-
-def test_build_agent_inventory_prompt_uses_policy_fallback_chain_for_display(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    profiles = [
-        _profile(
-            tmp_path=tmp_path,
-            name="reviewer",
-            description="Policy fallback chain",
-            model_policies=(
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="gpt55",
-                    overrides={"effort": "medium"},
-                ),
-                ModelPolicyRule(
-                    match_type="alias",
-                    match_value="gpt54",
-                    overrides={"effort": "high"},
-                ),
-            ),
-        ),
-    ]
-
-    monkeypatch.setattr(
-        "meridian.lib.launch.prompt.scan_agent_profiles",
-        lambda *, project_root: profiles,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.launch.prompt.load_merged_aliases",
-        lambda *, project_root: [
-            entry(alias="gpt54", model_id="gpt-5.4"),
-            entry(alias="gpt55", model_id="gpt-5.5"),
-            entry(alias="policy-only", model_id="gpt-policy"),
-        ],
-    )
-
-    prompt = build_agent_inventory_prompt(project_root=tmp_path)
-
-    assert prompt is not None
-    assert "- reviewer: Policy fallback chain | Fan-out: gpt55, gpt54" in prompt.splitlines()
-    assert "policy-only" not in prompt
 
 
 def test_build_agent_inventory_prompt_excludes_non_model_invocable_agents(
@@ -251,10 +136,6 @@ def test_build_agent_inventory_prompt_excludes_non_model_invocable_agents(
     monkeypatch.setattr(
         "meridian.lib.launch.prompt.scan_agent_profiles",
         lambda *, project_root: profiles,
-    )
-    monkeypatch.setattr(
-        "meridian.lib.launch.prompt.load_merged_aliases",
-        lambda *, project_root: [],
     )
 
     prompt = build_agent_inventory_prompt(project_root=tmp_path)
@@ -289,83 +170,6 @@ def test_build_agent_inventory_prompt_returns_none_when_all_hidden(
     )
 
     assert build_agent_inventory_prompt(project_root=tmp_path) is None
-
-
-def test_get_fan_out_aliases_empty_without_policy_entries(tmp_path: Path) -> None:
-    profile = _profile(
-        tmp_path=tmp_path,
-        name="reviewer",
-        description="Fallback",
-    )
-
-    assert _get_fan_out_aliases(profile) == ()
-
-
-def test_get_fan_out_aliases_uses_policy_list_order(tmp_path: Path) -> None:
-    profile = _profile(
-        tmp_path=tmp_path,
-        name="reviewer",
-        description="Fallback policy",
-        model_policies=(
-            ModelPolicyRule(
-                match_type="alias",
-                match_value="gpt55",
-                overrides={"effort": "medium"},
-            ),
-            ModelPolicyRule(
-                match_type="alias",
-                match_value="gpt54",
-                overrides={"effort": "high"},
-            ),
-            ModelPolicyRule(
-                match_type="model-glob",
-                match_value="gpt-*",
-                overrides={"effort": "low"},
-            ),
-            ModelPolicyRule(
-                match_type="alias",
-                match_value="disabled",
-                no_fallback=True,
-                overrides={"effort": "low"},
-            ),
-        ),
-    )
-
-    assert _get_fan_out_aliases(profile) == ("gpt55", "gpt54")
-
-
-# --- _dedupe_fan_out_aliases ---
-
-
-def test_dedupe_fan_out_aliases_keeps_first_alias_for_each_resolved_model() -> None:
-    catalog = {
-        "gpt54": entry(alias="gpt54", model_id="gpt-5.4"),
-        "gpt": entry(alias="gpt", model_id="gpt-5.4"),
-        "opus": entry(alias="opus", model_id="claude-opus-4-6"),
-        "opus46": entry(alias="opus46", model_id="claude-opus-4-6"),
-    }
-    result = _dedupe_fan_out_aliases(["gpt54", "gpt", "opus", "opus46"], catalog)
-    assert result == ["gpt54", "opus"]
-
-
-def test_dedupe_fan_out_aliases_preserves_unknown_aliases_verbatim() -> None:
-    catalog = {
-        "gpt": entry(alias="gpt", model_id="gpt-5.5"),
-        "gpt55": entry(alias="gpt55", model_id="gpt-5.5"),
-    }
-    result = _dedupe_fan_out_aliases(
-        ["gpt", "custom-gpt", "gpt55", "another-custom"],
-        catalog,
-    )
-    assert result == ["gpt", "custom-gpt", "another-custom"]
-
-
-def test_dedupe_fan_out_aliases_dedupes_literal_model_ids_against_aliases() -> None:
-    catalog = {
-        "gpt55": entry(alias="gpt55", model_id="gpt-5.5"),
-    }
-    result = _dedupe_fan_out_aliases(["gpt55", "gpt-5.5"], catalog)
-    assert result == ["gpt55"]
 
 
 def test_build_goal_instruction_renders_spawn_completion_contract() -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from meridian.lib.catalog.agent import load_agent_profile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig, load_config
@@ -11,7 +10,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
-from meridian.lib.launch.compiler import ProvenanceLevel
+from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
     SurfacePolicyInput,
@@ -31,6 +30,9 @@ class _FakeBundleResult:
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...] = ()
+    tools_allowed: tuple[str, ...] = ()
+    tools_disallowed: tuple[str, ...] = ()
+    tools_mcp: tuple[str, ...] = ()
 
 
 def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:
@@ -92,24 +94,24 @@ def test_resolve_policy_fields_model_policy_scope_strips_routing_fields() -> Non
 
 
 def test_match_model_policy_first_match_wins_by_list_order(tmp_path: Path) -> None:
-    _write_agent_profile(
-        tmp_path,
-        name="reviewer",
-        frontmatter=(
-            "name: reviewer\n"
-            "model-policies:\n"
-            "  - match: {model-glob: 'gpt-*'}\n"
-            "    override: {effort: low}\n"
-            "  - match: {alias: fast}\n"
-            "    override: {effort: medium}\n"
-            "  - match: {model: gpt-5.5}\n"
-            "    override: {effort: high}\n"
-        ),
-    )
-    profile = load_agent_profile("reviewer", tmp_path)
-
     winner = match_model_policy(
-        model_policies=profile.model_policies,
+        model_policies=(
+            ModelPolicyRule(
+                match_type="model-glob",
+                match_value="gpt-*",
+                overrides={"effort": "low"},
+            ),
+            ModelPolicyRule(
+                match_type="alias",
+                match_value="fast",
+                overrides={"effort": "medium"},
+            ),
+            ModelPolicyRule(
+                match_type="model",
+                match_value="gpt-5.5",
+                overrides={"effort": "high"},
+            ),
+        ),
         canonical_model_id="gpt-5.5",
         selected_model_token="fast",
     )
