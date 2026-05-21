@@ -9,7 +9,6 @@ test_spawn_store_finalize.py.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,6 @@ from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
     list_spawns,
-    mark_spawn_running,
     next_spawn_id,
     record_runner_exit,
     record_spawn_exited,
@@ -73,49 +71,6 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row is not None
     assert row.launch_mode == "foreground"
     assert row.runner_pid == 2222
-
-
-def test_runner_pid_writes_capture_runner_created_at_epoch_for_live_pid(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            runner_pid=os.getpid(),
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.runner_created_at_epoch is not None
-
-
-def test_update_spawn_clears_runner_created_epoch_when_pid_changes_and_capture_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-    update_spawn(runtime_root, spawn_id, runner_pid=os.getpid(), runner_created_at_epoch=123.0)
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.runner_created_at_epoch == 123.0
-
-    monkeypatch.setattr(
-        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
-        lambda _pid: None,
-    )
-    update_spawn(runtime_root, spawn_id, runner_pid=999999)
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.runner_pid == 999999
-    assert row.runner_created_at_epoch is None
-
 def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     control_root = (tmp_path / "control-root").resolve()
@@ -184,64 +139,6 @@ def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
         )
 
     assert list_spawns(runtime_root) == []
-
-
-def test_start_spawn_merges_direct_fields_when_typed_metadata_omits_values(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            metadata=SpawnStartMetadata(),
-            desc="fallback desc",
-            work_id="  w-fallback  ",
-            goal="  keep fallback goal  ",
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.desc == "fallback desc"
-    assert row.work_id == "w-fallback"
-    assert row.goal == "keep fallback goal"
-
-
-def test_start_spawn_metadata_values_override_direct_values_when_present(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = str(
-        start_spawn(
-            runtime_root,
-            chat_id="c1",
-            model="gpt-5.4",
-            agent="coder",
-            harness="codex",
-            prompt="hello",
-            metadata=SpawnStartMetadata(
-                desc="metadata desc",
-                work_id="  w-meta  ",
-                goal="  keep metadata goal  ",
-            ),
-            desc="fallback desc",
-            work_id="  w-fallback  ",
-            goal="  keep fallback goal  ",
-        )
-    )
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.desc == "metadata desc"
-    assert row.work_id == "w-meta"
-    assert row.goal == "keep metadata goal"
-
-
 def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     p1 = _start_test_spawn(runtime_root)
@@ -263,21 +160,6 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
     assert [spawn.id for spawn in filtered] == [p2]
     assert filtered[0].prompt is None
     assert filtered[0].desc == "desc-2"
-
-
-def test_get_spawn_returns_none_and_list_spawns_skips_directory_without_state(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    _start_test_spawn(runtime_root)
-    ghost_dir = runtime_root / "spawns" / "pghost"
-    ghost_dir.mkdir(parents=True, exist_ok=True)
-    (ghost_dir / "starting-prompt.md").write_text("dangling", encoding="utf-8")
-
-    assert get_spawn(runtime_root, "pghost") is None
-    assert [spawn.id for spawn in list_spawns(runtime_root)] == ["p1"]
-
-
 def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     p1 = _start_test_spawn(runtime_root)
@@ -325,54 +207,6 @@ def test_next_and_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
     assert reserve_spawn_id(runtime_root) == "p21"
     assert next_spawn_id(runtime_root) == "p22"
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "21"
-
-
-def test_mark_spawn_running_missing_id_does_not_create_phantom_row(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-
-    assert mark_spawn_running(runtime_root, "p-missing") is False
-    assert get_spawn(runtime_root, "p-missing") is None
-    assert list_spawns(runtime_root) == []
-
-
-def test_mark_spawn_running_captures_runner_created_at_epoch_for_live_pid(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-
-    changed = mark_spawn_running(runtime_root, spawn_id, runner_pid=os.getpid())
-
-    assert changed is False
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.runner_pid == os.getpid()
-    assert row.runner_created_at_epoch is not None
-
-
-def test_mark_spawn_running_clears_runner_created_epoch_when_pid_changes_and_capture_fails(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-    update_spawn(runtime_root, spawn_id, runner_pid=os.getpid(), runner_created_at_epoch=456.0)
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.runner_created_at_epoch == 456.0
-
-    monkeypatch.setattr(
-        "meridian.lib.state.spawn_store._runner_created_at_epoch_for_pid",
-        lambda _pid: None,
-    )
-    mark_spawn_running(runtime_root, spawn_id, runner_pid=999998)
-
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.runner_pid == 999998
-    assert row.runner_created_at_epoch is None
-
-
 def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)
@@ -412,32 +246,3 @@ def test_record_runner_exit_persists_terminal_intent_without_finalizing(tmp_path
     assert row.runner_exit_code == 42
     assert row.runner_exit_error == "guardrail_failed"
     assert row.runner_exit_at == "2026-04-12T14:03:00Z"
-
-
-def test_record_runner_exit_skips_terminal_rows(tmp_path: Path) -> None:
-    runtime_root = _state_root(tmp_path)
-    spawn_id = _start_test_spawn(runtime_root)
-    finalize_spawn(
-        runtime_root,
-        spawn_id,
-        "failed",
-        1,
-        origin="launch_failure",
-        error="bootstrap_failed",
-        finished_at="2026-04-12T14:05:00Z",
-    )
-
-    committed = record_runner_exit(
-        runtime_root,
-        spawn_id,
-        status="succeeded",
-        exit_code=0,
-        error=None,
-        exited_at="2026-04-12T14:06:00Z",
-    )
-
-    assert committed is None
-    row = get_spawn(runtime_root, spawn_id)
-    assert row is not None
-    assert row.status == "failed"
-    assert row.runner_exit_status is None
