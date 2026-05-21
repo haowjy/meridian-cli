@@ -13,12 +13,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Primary launch synthetic prompt gating in `src/meridian/lib/launch/plan.py` now uses explicit harness only; no model-pattern harness inference path.
 - `AliasEntry.harness` now raises when Mars did not provide harness instead of guessing from model ID patterns.
 - Mars now resolves agent overlays; Meridian deleted `AgentOverlayConfig` and now consumes launch-bundle routing/execution-policy directly.
+- Launch-context and Exhibit-A integration tests now fake the launch-bundle seam when asserting Meridian-owned behavior (env projection, deny-set composition, telemetry, task-cwd persistence), while bundle subprocess/error contracts remain in `tests/unit/launch/test_bundle_adapter.py` + smoke.
+- Smoke docs updated for post-phase-2 routing and launch checks: `tests/smoke/spawn-dry-run.md`, `tests/smoke/workspace.md`, and new `tests/smoke/spawn-continue-fork.md`.
 
 ### Removed
 - Obsolete chat CLI policy snapshot integration tests removed (`tests/integration/chat/test_chat_cli_policy.py`) now that launch policy no longer routes through chat/local compiler paths.
 - `src/meridian/lib/catalog/model_policy.py` and all imports of its visibility/pattern fallback helpers.
 - `AgentOverlayConfig`, `RuntimeOverrides.from_agent_overlay_routing()`, `RuntimeOverrides.from_agent_overlay_policy()`, and `compiler._overlay_policy_rules()`.
 - `[agents]` block in `meridian.toml`; move config to `[agents.<name>]` in `mars.toml` / `mars.local.toml` (legacy section now raises migration error).
+- 39 pin-the-implementation tests from launch/CLI output and spawn-continue forwarding clusters; coverage moved to lean parser/contract tests plus smoke guides.
 
 ## [0.1.14-rc.3] - 2026-05-21
 
