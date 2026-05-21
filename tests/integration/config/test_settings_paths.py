@@ -161,7 +161,7 @@ def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: 
         load_config(project_root, resolve_models=False)
 
     message = str(exc_info.value)
-    assert config_path.as_posix() in message
+    assert str(config_path) in message
     assert "define [agents.<name>] under mars.toml or mars.local.toml" in message
 
 

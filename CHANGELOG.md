@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Mars now resolves agent overlays; Meridian deleted `AgentOverlayConfig` and now consumes launch-bundle routing/execution-policy directly.
 - Launch-context and Exhibit-A integration tests now fake the launch-bundle seam when asserting Meridian-owned behavior (env projection, deny-set composition, telemetry, task-cwd persistence), while bundle subprocess/error contracts remain in `tests/unit/launch/test_bundle_adapter.py` + smoke.
 - Smoke docs updated for post-phase-2 routing and launch checks: `tests/smoke/spawn-dry-run.md`, `tests/smoke/workspace.md`, and new `tests/smoke/spawn-continue-fork.md`.
+- Legacy `[agents]` migration error-path assertion now checks platform-native config path rendering, so Windows validates copy/paste-safe diagnostics.
 
 ### Removed
 - Obsolete chat CLI policy snapshot integration tests removed (`tests/integration/chat/test_chat_cli_policy.py`) now that launch policy no longer routes through chat/local compiler paths.
