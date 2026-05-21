@@ -31,12 +31,22 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state.spawn_store import list_spawns
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
     )
 
 
