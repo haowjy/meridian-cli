@@ -235,7 +235,7 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
         "[workspace.docs]\n"
         'path = "./docs"\n'
         "\n"
-        "[agents.reviewer]\n"
+        "[custom_agents.reviewer]\n"
         'model = "gpt55"\n'
         "\n"
         "[custom]\n"
@@ -264,7 +264,7 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
     assert "[context.work]" in updated
     assert 'remote = "https://example.com/work.git"' in updated
     assert "[workspace.docs]" in updated
-    assert "[agents.reviewer]" in updated
+    assert "[custom_agents.reviewer]" in updated
     assert 'model = "gpt55"' in updated
     assert "[custom]" in updated
     assert 'value = "keep-me"' in updated

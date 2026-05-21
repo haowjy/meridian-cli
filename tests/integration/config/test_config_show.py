@@ -148,9 +148,6 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
         "[context.work]\n"
         'source = "git"\n'
         "\n"
-        "[agents.reviewer]\n"
-        'model = "gpt55"\n'
-        "\n"
         "[[hooks]]\n"
         'event = "spawn"\n'
         'command = "echo project"\n',
@@ -171,17 +168,11 @@ def test_config_show_attributes_dynamic_sections_from_file_and_user_config(
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
     # write env after initial project-only check
-    assert (
-        next(item for item in shown.values if item.key == "agents.reviewer.model").source == "file"
-    )
     assert next(item for item in shown.values if item.key == "context.work.source").source == "file"
 
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
 
-    assert (
-        next(item for item in shown.values if item.key == "agents.reviewer.model").source == "file"
-    )
     assert next(item for item in shown.values if item.key == "context.work.source").source == "file"
     assert (
         next(item for item in shown.values if item.key == "context.work.remote").source
@@ -226,29 +217,6 @@ def test_config_show_reports_user_hook_suppression_with_user_provenance(
     assert hook_value.value == "[] (suppressed)"
     assert hook_value.source == "user-config"
     assert "hooks: [] (suppressed) [source: user-config]" in shown.format_text(FormatContext())
-
-
-def test_config_show_reports_empty_overlay_model_policy_list(
-    tmp_path: Path,
-) -> None:
-    project_root = _repo(tmp_path)
-    (project_root / "meridian.toml").write_text(
-        "[agents.reviewer]\nmodel-policies = []\n",
-        encoding="utf-8",
-    )
-
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    policy_value = next(
-        item for item in shown.values if item.key == "agents.reviewer.model-policies"
-    )
-
-    assert policy_value.value == "[] (no overlay rules)"
-    assert policy_value.source == "file"
-    assert (
-        "agents.reviewer.model-policies: [] (no overlay rules) [source: file]"
-        in shown.format_text(FormatContext())
-    )
-
 
 def test_config_show_reports_project_hook_suppression_over_lower_precedence_user_hooks(
     tmp_path: Path,

@@ -148,99 +148,21 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
-def test_load_config_parses_overlay_model_policy_no_fallback(tmp_path: Path) -> None:
+def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[agents.reviewer]",
-                "",
-                "[[agents.reviewer.model-policies]]",
-                "match = { alias = 'gpt55' }",
-                "override = { effort = 'high' }",
-                "no-fallback = true",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root, resolve_models=False)
-
-    overlay = config.agents["reviewer"]
-    assert overlay.model_policies is not None
-    assert len(overlay.model_policies) == 1
-    assert overlay.model_policies[0].match_type == "alias"
-    assert overlay.model_policies[0].no_fallback is True
-
-
-def test_load_config_accepts_empty_overlay_model_policy_override_for_fallback_candidates(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[agents.reviewer]",
-                "",
-                "[[agents.reviewer.model-policies]]",
-                "match = { alias = 'gpt55' }",
-                "override = {}",
-                "",
-                "[[agents.reviewer.model-policies]]",
-                "match = { model = 'gpt-5.5' }",
-                "override = {}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root, resolve_models=False)
-
-    overlay = config.agents["reviewer"]
-    assert overlay.model_policies is not None
-    assert len(overlay.model_policies) == 2
-    assert overlay.model_policies[0].match_type == "alias"
-    assert overlay.model_policies[0].match_value == "gpt55"
-    assert overlay.model_policies[0].overrides == {}
-    assert overlay.model_policies[0].no_fallback is False
-    assert overlay.model_policies[1].match_type == "model"
-    assert overlay.model_policies[1].match_value == "gpt-5.5"
-    assert overlay.model_policies[1].overrides == {}
-    assert overlay.model_policies[1].no_fallback is False
-
-
-@pytest.mark.parametrize(
-    ("match_line", "no_fallback_line"),
-    [
-        ("match = { alias = 'gpt55' }", "no-fallback = true"),
-        ("match = { model-glob = 'gpt*' }", ""),
-    ],
-)
-def test_load_config_rejects_empty_overlay_model_policy_override_for_non_fallback_candidates(
-    tmp_path: Path,
-    match_line: str,
-    no_fallback_line: str,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    lines = [
-        "[agents.reviewer]",
-        "",
-        "[[agents.reviewer.model-policies]]",
-        match_line,
-        "override = {}",
-    ]
-    if no_fallback_line:
-        lines.append(no_fallback_line)
-    (project_root / "meridian.toml").write_text("\n".join(lines), encoding="utf-8")
+    config_path = project_root / "meridian.toml"
+    config_path.write_text('[agents.reviewer]\nmodel = "gpt55"\n', encoding="utf-8")
 
     with pytest.raises(
         ValueError,
-        match=r"expected at least one override field",
-    ):
+        match=r"Legacy section '\[agents\]' is not supported",
+    ) as exc_info:
         load_config(project_root, resolve_models=False)
+
+    message = str(exc_info.value)
+    assert config_path.as_posix() in message
+    assert "define [agents.<name>] under mars.toml or mars.local.toml" in message
 
 
 def test_load_config_ignores_legacy_state_path_when_root_config_missing(

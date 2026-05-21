@@ -23,8 +23,6 @@ from meridian.lib.config.schema import (
     parse_toml_scalar,
 )
 from meridian.lib.core.overrides import (
-    KNOWN_APPROVAL_VALUES,
-    KNOWN_EFFORT_VALUES,
     ApprovalValue,
     AutocompactPctValue,
     AutocompactValue,
@@ -38,6 +36,7 @@ _PRIMARY_AUTOCOMPACT_PCT_MIN = 1
 _PRIMARY_AUTOCOMPACT_PCT_MAX = 100
 _PRIMARY_AUTOCOMPACT_TOKEN_MIN = 1000
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
+_LEGACY_AGENTS_SECTION = "agents"
 
 
 class _SettingsLoadContext(BaseModel):
@@ -385,219 +384,14 @@ def _normalize_spawn_table(raw_value: object, *, source: str) -> dict[str, objec
     return values
 
 
-def _normalize_agent_autocompact(raw_value: object, *, source: str) -> int:
-    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
-        raise ValueError(
-            f"Invalid value for '{source}': expected int, got "
-            f"{type(raw_value).__name__} ({raw_value!r})."
-        )
-    if raw_value < _PRIMARY_AUTOCOMPACT_TOKEN_MIN:
-        raise ValueError(
-            f"Invalid value for '{source}': expected int >= "
-            f"{_PRIMARY_AUTOCOMPACT_TOKEN_MIN} (token count), got {raw_value!r}."
-        )
-    return raw_value
-
-
-def _normalize_agent_autocompact_pct(raw_value: object, *, source: str) -> int:
-    if isinstance(raw_value, bool) or not isinstance(raw_value, int):
-        raise ValueError(
-            f"Invalid value for '{source}': expected int, got "
-            f"{type(raw_value).__name__} ({raw_value!r})."
-        )
-    if not (_PRIMARY_AUTOCOMPACT_PCT_MIN <= raw_value <= _PRIMARY_AUTOCOMPACT_PCT_MAX):
-        raise ValueError(
-            f"Invalid value for '{source}': expected int between "
-            f"{_PRIMARY_AUTOCOMPACT_PCT_MIN} and {_PRIMARY_AUTOCOMPACT_PCT_MAX}, "
-            f"got {raw_value!r}."
-        )
-    return raw_value
-
-
-def _normalize_agent_policy_overrides(
-    raw_value: object,
-    *,
-    source: str,
-) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    rejected_list_keys = frozenset({"skills", "tools", "mcp-tools"})
-    allowed_scalar_keys = frozenset(
-        {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
+def _legacy_agents_section_error(*, path: Path) -> ValueError:
+    message = (
+        f"Legacy section '[{_LEGACY_AGENTS_SECTION}]' is not supported in '{path}'. "
+        "[agents] in meridian.toml is no longer supported. Agent overlays moved to mars.toml: "
+        "define [agents.<name>] under mars.toml or mars.local.toml. See docs/configuration.md "
+        "for the new schema."
     )
-    overrides: dict[str, object] = {}
-    for key, value in cast("dict[str, object]", raw_value).items():
-        field_source = f"{source}.{key}"
-        if key in rejected_list_keys:
-            logger.warning(
-                "Ignoring unsupported Meridian config key '%s'; list overrides are not "
-                "supported in agent model-policies.",
-                field_source,
-            )
-            continue
-        if key not in allowed_scalar_keys:
-            logger.warning("Ignoring unknown Meridian config key '%s'.", field_source)
-            continue
-        if key == "autocompact":
-            overrides[key] = _normalize_agent_autocompact(value, source=field_source)
-            continue
-        if key == "autocompact_pct":
-            overrides[key] = _normalize_agent_autocompact_pct(value, source=field_source)
-            continue
-        if not isinstance(value, str):
-            raise ValueError(
-                f"Invalid value for '{field_source}': expected str, got "
-                f"{type(value).__name__} ({value!r})."
-            )
-        normalized = _normalize_required_string(value, source=field_source)
-        if key == "effort" and normalized not in KNOWN_EFFORT_VALUES:
-            raise ValueError(
-                f"Invalid value for '{field_source}': expected one of "
-                f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-            )
-        if key == "approval" and normalized not in KNOWN_APPROVAL_VALUES:
-            raise ValueError(
-                f"Invalid value for '{field_source}': expected one of "
-                f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-            )
-        overrides[key] = normalized
-    return overrides
-
-
-def _normalize_agent_model_policies(
-    raw_value: object,
-    *,
-    source: str,
-) -> list[dict[str, object]]:
-    if not isinstance(raw_value, list):
-        raise ValueError(
-            f"Invalid value for '{source}': expected array[table], "
-            f"got {type(raw_value).__name__} ({raw_value!r})."
-        )
-
-    allowed_match_keys = frozenset({"model", "alias", "model-glob"})
-    policies: list[dict[str, object]] = []
-    for index, item in enumerate(cast("list[object]", raw_value), start=1):
-        policy_source = f"{source}[{index}]"
-        if not isinstance(item, dict):
-            raise ValueError(
-                f"Invalid value for '{policy_source}': expected table, "
-                f"got {type(item).__name__} ({item!r})."
-            )
-        policy = cast("dict[str, object]", item)
-        raw_match = policy.get("match")
-        if not isinstance(raw_match, dict):
-            raise ValueError(f"Invalid value for '{policy_source}.match': expected table.")
-        match = cast("dict[str, object]", raw_match)
-        normalized_match = {str(key).strip(): value for key, value in match.items()}
-        if len(normalized_match) != 1:
-            raise ValueError(
-                f"Invalid value for '{policy_source}.match': expected exactly one of "
-                "model, alias, or model-glob."
-            )
-        match_type = next(iter(normalized_match))
-        if match_type not in allowed_match_keys:
-            raise ValueError(
-                f"Invalid value for '{policy_source}.match': expected one of "
-                f"{sorted(allowed_match_keys)}, got {match_type!r}."
-            )
-        raw_match_value = normalized_match[match_type]
-        if not isinstance(raw_match_value, str):
-            raise ValueError(
-                f"Invalid value for '{policy_source}.match.{match_type}': expected str, got "
-                f"{type(raw_match_value).__name__} ({raw_match_value!r})."
-            )
-        match_value = _normalize_required_string(
-            raw_match_value,
-            source=f"{policy_source}.match.{match_type}",
-        )
-        if "override" not in policy:
-            raise ValueError(f"Invalid value for '{policy_source}.override': expected table.")
-        overrides = _normalize_agent_policy_overrides(
-            policy["override"],
-            source=f"{policy_source}.override",
-        )
-        no_fallback = policy.get("no-fallback", False)
-        if not isinstance(no_fallback, bool):
-            raise ValueError(
-                f"Invalid value for '{policy_source}.no-fallback': expected bool."
-            )
-        is_fallback_candidate = match_type in {"alias", "model"} and not no_fallback
-        if not overrides and not is_fallback_candidate:
-            raise ValueError(
-                f"Invalid value for '{policy_source}.override': expected at least one "
-                "override field."
-            )
-        policies.append(
-            {
-                "match_type": match_type,
-                "match_value": match_value,
-                "overrides": overrides,
-                "no_fallback": no_fallback,
-            }
-        )
-    return policies
-
-
-def _normalize_agents_table(raw_value: object, *, source: str) -> dict[str, object]:
-    if not isinstance(raw_value, dict):
-        raise ValueError(f"Invalid value for '{source}': expected table.")
-
-    values: dict[str, object] = {}
-    scalar_keys = frozenset({"model", "harness", "effort", "approval", "sandbox"})
-    for agent_name, agent_value in cast("dict[str, object]", raw_value).items():
-        normalized_name = str(agent_name).strip()
-        agent_source = f"{source}.{normalized_name or agent_name}"
-        if not normalized_name:
-            raise ValueError(f"Invalid value for '{source}': expected non-empty agent name.")
-        if not isinstance(agent_value, dict):
-            raise ValueError(f"Invalid value for '{agent_source}': expected table.")
-        logger.debug("Loading Meridian overlay config for agent '%s'.", normalized_name)
-        overlay: dict[str, object] = {}
-        for key, value in cast("dict[str, object]", agent_value).items():
-            field_source = f"{agent_source}.{key}"
-            if key in scalar_keys:
-                if not isinstance(value, str):
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected str, got "
-                        f"{type(value).__name__} ({value!r})."
-                    )
-                normalized = _normalize_required_string(value, source=field_source)
-                if key == "effort" and normalized not in KNOWN_EFFORT_VALUES:
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected one of "
-                        f"{sorted(KNOWN_EFFORT_VALUES)}, got {value!r}."
-                    )
-                if key == "approval" and normalized not in KNOWN_APPROVAL_VALUES:
-                    raise ValueError(
-                        f"Invalid value for '{field_source}': expected one of "
-                        f"{sorted(KNOWN_APPROVAL_VALUES)}, got {value!r}."
-                    )
-                overlay[key] = normalized
-                continue
-            if key == "autocompact":
-                overlay[key] = _normalize_agent_autocompact(value, source=field_source)
-                continue
-            if key == "autocompact_pct":
-                overlay[key] = _normalize_agent_autocompact_pct(value, source=field_source)
-                continue
-            if key == "model-policies":
-                overlay["model_policies"] = _normalize_agent_model_policies(
-                    value,
-                    source=field_source,
-                )
-                continue
-            if key == "timeout":
-                logger.warning(
-                    "Ignoring unsupported Meridian config key '%s'; agent overlays do not "
-                    "support timeout.",
-                    field_source,
-                )
-                continue
-            logger.warning("Ignoring unknown Meridian config key '%s'.", field_source)
-        values[normalized_name] = overlay
-    return values
+    return ValueError(message)
 
 
 def _normalize_hooks_array(raw_value: object, *, source: str) -> tuple[dict[str, object], ...]:
@@ -853,28 +647,6 @@ def _normalize_workspace_section(
 
 
 DYNAMIC_SECTION_DESCRIPTORS: dict[str, DynamicSectionDescriptor] = {
-    "agents": DynamicSectionDescriptor(
-        section_key="agents",
-        merge_kind="nested_dict",
-        scaffold_lines=(
-            "# -- Agent runtime overrides ------------------------------------------------",
-            "# Override default model/policy for specific agent profiles without editing",
-            "# generated .mars/agents/ sources.",
-            "# See docs/configuration.md for full semantics.",
-            "",
-            "# [agents.tech-lead]",
-            '# model = "gpt55"',
-            '# effort = "medium"',
-            '# approval = "auto"',
-            "",
-            "# [[agents.tech-lead.model-policies]]",
-            '# match = { model-glob = "gpt*" }',
-            '# override = { effort = "medium", autocompact = 200000 }',
-            "# # Or use percentage-based threshold (1-100):",
-            '# # override = { effort = "medium", autocompact_pct = 80 }',
-            "",
-        ),
-    ),
     "hooks": DynamicSectionDescriptor(
         section_key="hooks",
         merge_kind="replace",
@@ -942,9 +714,7 @@ def normalize_dynamic_sections(
         if section_key not in payload:
             continue
         raw_value = payload[section_key]
-        if section_key == "agents":
-            value = _normalize_agents_table(raw_value, source=section_key)
-        elif section_key == "hooks":
+        if section_key == "hooks":
             value = _normalize_hooks_array(raw_value, source=section_key)
         elif section_key == "work":
             value = _normalize_work_table(raw_value, source=section_key)
@@ -1014,14 +784,7 @@ def _normalize_toml_payload(
             )
             continue
         if key == "agents":
-            normalized = merge_dynamic_sections(
-                normalized,
-                normalize_dynamic_sections(
-                    payload={key: raw_value},
-                    project_root=project_root,
-                ),
-            )
-            continue
+            raise _legacy_agents_section_error(path=path)
         if key == "harness":
             normalized["harness"] = _merge_nested_dicts(
                 cast("dict[str, object]", normalized.get("harness", {})),
@@ -1328,102 +1091,6 @@ class PrimaryConfig(BaseModel):
         return value
 
 
-class AgentOverlayModelPolicy(BaseModel):
-    """One conditional model-policy rule in an agent overlay."""
-
-    model_config = ConfigDict(frozen=True)
-
-    match_type: str
-    match_value: str
-    overrides: dict[str, object]
-    no_fallback: bool = False
-
-    @field_validator("match_type")
-    @classmethod
-    def _validate_match_type(cls, value: str) -> str:
-        normalized = _normalize_required_string(value, source="agents.model-policies.match")
-        if normalized not in {"model", "alias", "model-glob"}:
-            raise ValueError(
-                "Invalid value for 'agents.model-policies.match': expected one of "
-                "['alias', 'model', 'model-glob'], "
-                f"got {value!r}."
-            )
-        return normalized
-
-    @field_validator("match_value")
-    @classmethod
-    def _validate_match_value(cls, value: str) -> str:
-        return _normalize_required_string(value, source="agents.model-policies.match")
-
-    @field_validator("overrides")
-    @classmethod
-    def _validate_overrides(cls, value: dict[str, object]) -> dict[str, object]:
-        allowed = frozenset(
-            {"harness", "effort", "approval", "sandbox", "autocompact", "autocompact_pct"}
-        )
-        normalized: dict[str, object] = {}
-        for key, raw_value in value.items():
-            if key not in allowed:
-                raise ValueError(
-                    "Invalid value for 'agents.model-policies.override': expected one of "
-                    f"{sorted(allowed)}, got {key!r}."
-                )
-            source = f"agents.model-policies.override.{key}"
-            if key == "autocompact":
-                normalized[key] = _normalize_agent_autocompact(raw_value, source=source)
-                continue
-            if key == "autocompact_pct":
-                normalized[key] = _normalize_agent_autocompact_pct(raw_value, source=source)
-                continue
-            if not isinstance(raw_value, str):
-                raise ValueError(
-                    f"Invalid value for '{source}': expected str, got "
-                    f"{type(raw_value).__name__} ({raw_value!r})."
-                )
-            text = _normalize_required_string(raw_value, source=source)
-            if key == "effort" and text not in KNOWN_EFFORT_VALUES:
-                raise ValueError(
-                    f"Invalid value for '{source}': expected one of "
-                    f"{sorted(KNOWN_EFFORT_VALUES)}, got {raw_value!r}."
-                )
-            if key == "approval" and text not in KNOWN_APPROVAL_VALUES:
-                raise ValueError(
-                    f"Invalid value for '{source}': expected one of "
-                    f"{sorted(KNOWN_APPROVAL_VALUES)}, got {raw_value!r}."
-                )
-            normalized[key] = text
-        return normalized
-
-
-class AgentOverlayConfig(BaseModel):
-    """Per-agent runtime policy overlay from project config."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore")
-
-    model: str | None = None
-    harness: str | None = None
-    effort: EffortValue = None
-    approval: ApprovalValue = None
-    sandbox: str | None = None
-    autocompact: AutocompactValue = None
-    autocompact_pct: AutocompactPctValue = None
-    # Three-state: None = inherit, () = prepend no-op, non-empty = prepend before profile rules
-    model_policies: tuple[AgentOverlayModelPolicy, ...] | None = None
-
-    @field_validator("model")
-    @classmethod
-    def _validate_model(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="agents.model")
-        if normalized is None:
-            return None
-        return _normalize_model_identifier(normalized, project_root=_current_project_root())
-
-    @field_validator("harness", "sandbox")
-    @classmethod
-    def _validate_optional_string_fields(cls, value: str | None) -> str | None:
-        return _normalize_optional_string(value, source="agents")
-
-
 class HarnessProfileConfig(BaseModel):
     """Per-harness model and wait-yield settings."""
 
@@ -1616,7 +1283,6 @@ class MeridianConfig(BaseSettings):
     ] = 30.0
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
-    agents: dict[str, AgentOverlayConfig] = Field(default_factory=dict)
     output: OutputConfig = Field(default_factory=OutputConfig)
     state: StateConfig = Field(default_factory=StateConfig)
     work: WorkConfig = Field(default_factory=WorkConfig)
