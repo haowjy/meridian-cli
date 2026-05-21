@@ -4,6 +4,14 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Model listing in `src/meridian/lib/ops/catalog.py` no longer applies Meridian-side visibility heuristics; it now consumes Mars model visibility output directly.
+- Primary launch synthetic prompt gating in `src/meridian/lib/launch/plan.py` now uses explicit harness only; no model-pattern harness inference path.
+- `AliasEntry.harness` now raises when Mars did not provide harness instead of guessing from model ID patterns.
+
+### Removed
+- `src/meridian/lib/catalog/model_policy.py` and all imports of its visibility/pattern fallback helpers.
+
 ## [0.1.14-rc.3] - 2026-05-21
 
 ## [0.1.14-rc.2] - 2026-05-21

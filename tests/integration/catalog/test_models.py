@@ -1,4 +1,3 @@
-from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -42,14 +41,13 @@ def _init_repo(project_root: Path) -> None:
     )
 
 
-def test_models_list_uses_visibility_rules_and_keeps_aliased_models_visible(
+def test_models_list_default_delegates_to_mars_without_meridian_visibility_filters(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     _init_repo(project_root)
 
-    old_date = (date.today() - timedelta(days=365)).isoformat()
     monkeypatch.setattr(
         "meridian.lib.ops.catalog.run_mars_models_list_all",
         lambda project_root=None: [
@@ -70,73 +68,36 @@ def test_models_list_uses_visibility_rules_and_keeps_aliased_models_visible(
                 "claude-old",
                 provider="anthropic",
                 harness=HarnessId.CLAUDE,
-                release_date=old_date,
+                release_date="2020-01-01",
             ),
         ],
     )
 
     output = models_list_sync(ModelsListInput(project_root=project_root.as_posix()))
     model_ids = {str(model.model_id) for model in output.models}
-    assert model_ids == {"gpt-5.4", "gemini-3.1-pro"}
+    assert model_ids == {"gpt-5.4", "gemini-3.1-pro", "claude-expensive", "claude-old"}
 
 
-@pytest.mark.parametrize(
-    ("show_superseded", "expected_model_ids"),
-    [
-        (False, {"gpt-5.4"}),
-        (True, {"gpt-5.4", "gpt-5.2"}),
-    ],
-)
-def test_models_list_superseded_visibility_toggle(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    show_superseded: bool,
-    expected_model_ids: set[str],
-) -> None:
-    project_root = tmp_path / "repo"
-    _init_repo(project_root)
-
-    today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=30)).isoformat()
-    monkeypatch.setattr(
-        "meridian.lib.ops.catalog.run_mars_models_list_all",
-        lambda project_root=None: [
-            _model("gpt-5.4", release_date=today),
-            _model("gpt-5.2", release_date=yesterday),
-        ],
-    )
-
-    output = models_list_sync(
-        ModelsListInput(
-            project_root=project_root.as_posix(),
-            show_superseded=show_superseded,
-        )
-    )
-    model_ids = {str(model.model_id) for model in output.models}
-    assert model_ids == expected_model_ids
-
-
-def test_models_list_aliased_model_survives_superseded(
+def test_models_list_show_superseded_flag_no_longer_changes_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "repo"
     _init_repo(project_root)
 
-    today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=30)).isoformat()
     monkeypatch.setattr(
         "meridian.lib.ops.catalog.run_mars_models_list_all",
         lambda project_root=None: [
-            _model("gpt-5.4", release_date=today),
-            _model("gpt-5.2", release_date=yesterday, matched_aliases=["old-gpt"]),
+            _model("gpt-5.4", release_date="2026-05-01"),
+            _model("gpt-5.2", release_date="2026-04-01"),
         ],
     )
 
-    output = models_list_sync(ModelsListInput(project_root=project_root.as_posix()))
-    model_ids = {str(model.model_id) for model in output.models}
-    assert "gpt-5.4" in model_ids
-    assert "gpt-5.2" in model_ids
+    default_output = models_list_sync(ModelsListInput(project_root=project_root.as_posix()))
+    superseded_output = models_list_sync(
+        ModelsListInput(project_root=project_root.as_posix(), show_superseded=True)
+    )
+    assert default_output == superseded_output
 
 
 def test_models_list_all_delegates_to_mars_without_meridian_filters(
@@ -153,14 +114,14 @@ def test_models_list_all_delegates_to_mars_without_meridian_filters(
                 "id": "gpt-5.4",
                 "harness": "codex",
                 "provider": "openai",
-                "release_date": date.today().isoformat(),
+                "release_date": "2026-05-01",
                 "matched_aliases": ["gpt", "latest"],
             },
             {
                 "id": "gpt-5.2",
                 "harness": "codex",
                 "provider": "openai",
-                "release_date": (date.today() - timedelta(days=30)).isoformat(),
+                "release_date": "2026-04-01",
                 "matched_aliases": ["stable"],
             },
         ],

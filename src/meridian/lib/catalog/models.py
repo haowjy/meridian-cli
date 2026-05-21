@@ -151,10 +151,12 @@ def resolve_model(
 
             return mars_alias_entry(mars_result, resolved_model_id)
 
-    # Step 2: Raw model ID passthrough for harness fallback elsewhere. Do not
-    # call the expensive all-model exact-ID guard when mars cannot resolve the
-    # input; the guard only exists for mars prefix-match collisions where mars
-    # returned a different model ID than the literal input.
+    # Step 2: Raw model ID passthrough when mars cannot resolve the input.
+    # Harness stays unresolved here and downstream routing should treat missing
+    # harness as a resolution error rather than guessing from model patterns.
+    # Do not call the expensive all-model exact-ID guard in this path; the
+    # guard only exists for mars prefix-match collisions where mars returned a
+    # different model ID than the literal input.
     return AliasEntry(alias="", model_id=ModelId(normalized), resolved_harness=None)
 
 
