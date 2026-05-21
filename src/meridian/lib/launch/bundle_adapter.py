@@ -17,6 +17,7 @@ from meridian.lib.launch.launch_types import (
     ResolvedExecutionPolicy,
     TerminalSurfaceMode,
 )
+from meridian.lib.tools import ToolAction, ToolsField
 
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
@@ -393,6 +394,17 @@ def _map_provenance_level(value: str | None) -> ProvenanceLevel:
     return mapping.get(normalized, ProvenanceLevel.UNSET)
 
 
+def _resolved_tools_field(bundle: _BundleResult) -> ToolsField | None:
+    if not bundle.tools_allowed and not bundle.tools_disallowed:
+        return None
+    tools: dict[str, ToolAction] = {}
+    for capability in bundle.tools_allowed:
+        tools[capability] = "allow"
+    for capability in bundle.tools_disallowed:
+        tools[capability] = "deny"
+    return tools
+
+
 def bundle_to_resolved_policy(
     *,
     bundle: _BundleResult,
@@ -443,6 +455,8 @@ def bundle_to_resolved_policy(
             agent=routing_agent,
         ),
         execution_policy=execution_policy,
+        resolved_tools=_resolved_tools_field(bundle),
+        resolved_mcp_tools=bundle.tools_mcp,
         terminal_surface_mode=terminal_surface_mode,
         field_provenance=FieldProvenance(
             model_source=_map_provenance_level(effective_provenance.get("model_source")),

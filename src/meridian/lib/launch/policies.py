@@ -19,6 +19,7 @@ from meridian.lib.core.overrides import (
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
+from meridian.lib.tools import ToolsField
 
 from . import bundle_adapter
 from .compiler import (
@@ -113,6 +114,8 @@ class ResolvedLaunchPolicy:
     resolved_skills: ResolvedSkills
     routing: ResolvedLaunchRouting
     execution_policy: ResolvedExecutionPolicy
+    resolved_tools: ToolsField | None = None
+    resolved_mcp_tools: tuple[str, ...] = ()
     terminal_surface_mode: TerminalSurfaceMode = TerminalSurfaceMode.PTY_MEDIATED
     field_provenance: FieldProvenance = field(default_factory=FieldProvenance)
     model_selection: ModelSelectionContext | None = None

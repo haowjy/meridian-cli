@@ -63,12 +63,16 @@ def _build_context(
     harness: HarnessId,
     agent: str | None = None,
     tools: str | dict[str, str] | None = None,
+    bundle_tools_allowed: tuple[str, ...] = (),
+    bundle_tools_disallowed: tuple[str, ...] = (),
 ) -> SpawnRequest:
     model = "haiku" if harness == HarnessId.CLAUDE else "gpt-5.4-mini"
     stub_bundle_request_and_resolve(
         monkeypatch,
         model=model,
         harness=harness,
+        tools_allowed=bundle_tools_allowed,
+        tools_disallowed=bundle_tools_disallowed,
     )
     mars_toml = tmp_path / "mars.toml"
     if not mars_toml.exists():
@@ -165,6 +169,7 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
         composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
         harness=HarnessId.CLAUDE,
         agent="allowlist-agent",
+        bundle_tools_allowed=("agent",),
     )
 
     assert resolved_request.tools == {"agent": "allow", "task": "deny"}

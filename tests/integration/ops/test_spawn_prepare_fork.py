@@ -23,6 +23,9 @@ class _FakeBundleResult:
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...] = ()
+    tools_allowed: tuple[str, ...] = ()
+    tools_disallowed: tuple[str, ...] = ()
+    tools_mcp: tuple[str, ...] = ()
 
 
 def _write_minimal_subagent(project_root: Path) -> None:

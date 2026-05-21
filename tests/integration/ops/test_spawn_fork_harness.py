@@ -35,6 +35,9 @@ class _FakeBundleResult:
         execution_policy: ResolvedExecutionPolicy,
         provenance: dict[str, str],
         warnings: tuple[str, ...] = (),
+        tools_allowed: tuple[str, ...] = (),
+        tools_disallowed: tuple[str, ...] = (),
+        tools_mcp: tuple[str, ...] = (),
     ) -> None:
         self.model = model
         self.model_token = model_token
@@ -43,6 +46,9 @@ class _FakeBundleResult:
         self.execution_policy = execution_policy
         self.provenance = provenance
         self.warnings = warnings
+        self.tools_allowed = tools_allowed
+        self.tools_disallowed = tools_disallowed
+        self.tools_mcp = tools_mcp
 
 
 def _state_root(project_root: Path) -> Path:

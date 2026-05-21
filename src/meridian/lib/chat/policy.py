@@ -226,8 +226,8 @@ def snapshot_from_resolved_policy(policy: ResolvedLaunchPolicy) -> ChatPolicySna
         agent_profile_path=resolve_profile_path(profile),
         skills=policy.resolved_skills.skill_names,
         prompt_inputs=prompt_inputs,
-        tools=profile.tools if profile is not None else None,
-        mcp_tools=profile.mcp_tools if profile is not None else (),
+        tools=policy.resolved_tools,
+        mcp_tools=policy.resolved_mcp_tools,
         warnings=tuple(warnings),
         field_provenance={
             key: value

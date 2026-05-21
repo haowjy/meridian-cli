@@ -1255,7 +1255,7 @@ def prepare_launch_surface(
         agent_inventory_prompt=content.agent_inventory_prompt,
         context_prompt=content.context_prompt,
     )
-    profile_tools_for_nested_deny = profile.tools if profile is not None else None
+    profile_tools_for_nested_deny = policies.resolved_tools if profile is not None else None
 
     resolved_request = request.model_copy(
         update={
@@ -1266,9 +1266,11 @@ def prepare_launch_surface(
             "agent": resolved_agent_name,
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
-            "mcp_tools": profile.mcp_tools if profile is not None else request.mcp_tools,
+            "mcp_tools": (
+                policies.resolved_mcp_tools if profile is not None else request.mcp_tools
+            ),
             "execution_policy": execution_policy,
-            "tools": profile.tools if profile is not None else request.tools,
+            "tools": policies.resolved_tools if profile is not None else request.tools,
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
