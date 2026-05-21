@@ -230,11 +230,11 @@ def test_primary_config_defaults_do_not_flow_into_bundle_routing_overrides(
     assert policy.field_provenance.timeout_source is ProvenanceLevel.CONFIG_DEFAULT
 
 
-def test_primary_cli_model_demotes_lower_config_harness(
+def test_primary_cli_model_does_not_forward_harness_without_explicit_override(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    config = MeridianConfig.model_validate({"primary": {"harness": "opencode"}})
+    config = MeridianConfig()
     captured: dict[str, object] = {}
 
     def fake_request(

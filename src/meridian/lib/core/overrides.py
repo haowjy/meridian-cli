@@ -260,7 +260,7 @@ class RuntimeOverrides(BaseModel):
         timeout_raw = _read_env_string("MERIDIAN_TIMEOUT")
         return cls(
             model=_read_env_string("MERIDIAN_MODEL"),
-            harness=None,  # MERIDIAN_HARNESS is spawn-local, not a policy override
+            harness=None,
             agent=_read_env_string("MERIDIAN_AGENT"),
             effort=_read_env_string("MERIDIAN_EFFORT"),
             sandbox=_read_env_string("MERIDIAN_SANDBOX"),
@@ -306,8 +306,6 @@ class RuntimeOverrides(BaseModel):
             return cls()
         primary = config.primary
         return cls(
-            model=primary.model,
-            harness=primary.harness,
             agent=primary.agent,
             effort=primary.effort,
             sandbox=primary.sandbox,

@@ -93,27 +93,33 @@ def test_resolve_project_root_does_not_treat_user_home_state_dir_as_project_mark
     assert resolution.source != "project-state"
 
 
-def test_load_config_reads_meridian_toml_at_project_root(tmp_path: Path) -> None:
+def test_load_config_reads_primary_agent_at_project_root(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     config_path = project_root / "meridian.toml"
-    config_path.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
+    config_path.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
 
-    assert load_config(project_root).primary.harness == "claude"
+    assert load_config(project_root).primary.agent == "reviewer"
 
 
 def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        '[defaults]\nmodel = "legacy-model"\nharness = "claude"\n',
+        "[defaults]\n"
+        'model = "legacy-model"\n'
+        'harness = "claude"\n'
+        "\n"
+        "[primary]\n"
+        'model = "shadow-model"\n'
+        'harness = "opencode"\n',
         encoding="utf-8",
     )
 
     config = load_config(project_root, resolve_models=False)
 
-    assert config.primary.model is None
-    assert config.primary.harness is None
+    assert not hasattr(config.primary, "model")
+    assert not hasattr(config.primary, "harness")
 
 
 def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
@@ -172,9 +178,9 @@ def test_load_config_ignores_legacy_state_path_when_root_config_missing(
     project_root.mkdir()
     legacy_path = project_root / ".meridian" / "config.toml"
     legacy_path.parent.mkdir()
-    legacy_path.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
+    legacy_path.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
 
-    assert load_config(project_root).primary.harness is None
+    assert load_config(project_root).primary.agent is None
 
 
 def test_config_show_ignores_inaccessible_implicit_user_config(

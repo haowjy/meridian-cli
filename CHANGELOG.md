@@ -22,6 +22,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 - AgentProfile.model, .harness, .tools, .mcp_tools, .sandbox, .effort, .approval, .autocompact, .autocompact_pct, .model_policies.
 - `catalog/agent.py` `_parse_tools()`, `_parse_model_policies()`, `ModelPolicyRule` class.
+- `meridian.toml` `[primary].model`, `[primary].harness` fields. Mars owns model and harness routing; shadow surface gone.
+- `MERIDIAN_HARNESS` config env var. Use `-m` / `--harness` CLI flag or mars-side default.
 - Obsolete chat CLI policy snapshot integration tests removed (`tests/integration/chat/test_chat_cli_policy.py`) now that launch policy no longer routes through chat/local compiler paths.
 - `src/meridian/lib/catalog/model_policy.py` and all imports of its visibility/pattern fallback helpers.
 - `AgentOverlayConfig`, `RuntimeOverrides.from_agent_overlay_routing()`, `RuntimeOverrides.from_agent_overlay_policy()`, and `compiler._overlay_policy_rules()`.

@@ -59,7 +59,7 @@ def test_config_show_ignores_user_global_workspace_entries(
     user_config_path = tmp_path / "user-config.toml"
     user_config_path.write_text(
         "[primary]\n"
-        'harness = "opencode"\n'
+        'agent = "reviewer"\n'
         "\n"
         "[workspace.user_docs]\n"
         f'path = "{user_workspace_root.as_posix()}"\n',
@@ -68,7 +68,7 @@ def test_config_show_ignores_user_global_workspace_entries(
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config_path.as_posix())
 
     result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    harness_value = next(item for item in result.values if item.key == "primary.harness")
+    agent_value = next(item for item in result.values if item.key == "primary.agent")
 
     assert result.workspace.status == "none"
     assert result.workspace.sources == ()
@@ -76,8 +76,8 @@ def test_config_show_ignores_user_global_workspace_entries(
     assert result.workspace.roots.projected == 0
     assert result.workspace.roots.skipped == 0
     assert result.workspace_findings == ()
-    assert harness_value.value == "opencode"
-    assert harness_value.source == "user-config"
+    assert agent_value.value == "reviewer"
+    assert agent_value.source == "user-config"
 
 
 def test_config_show_verbose_and_json_include_named_workspace_root_details(tmp_path: Path) -> None:

@@ -1010,24 +1010,6 @@ class PrimaryConfig(BaseModel):
             file_aliases=(file_alias("primary", "autocompact_pct"),),
         ),
     ] = None
-    model: Annotated[
-        str | None,
-        config_field(
-            "primary.model",
-            value_kind="str",
-            file_aliases=(file_alias("primary", "model"),),
-            env_vars=("MERIDIAN_MODEL",),
-        ),
-    ] = None
-    harness: Annotated[
-        str | None,
-        config_field(
-            "primary.harness",
-            value_kind="str",
-            file_aliases=(file_alias("primary", "harness"),),
-            env_vars=("MERIDIAN_HARNESS",),
-        ),
-    ] = None
     agent: Annotated[
         str | None,
         config_field(
@@ -1066,15 +1048,7 @@ class PrimaryConfig(BaseModel):
     ] = None
     timeout: float | None = None
 
-    @field_validator("model")
-    @classmethod
-    def _validate_model(cls, value: str | None) -> str | None:
-        normalized = _normalize_optional_string(value, source="primary.model")
-        if normalized is None:
-            return None
-        return _normalize_model_identifier(normalized, project_root=_current_project_root())
-
-    @field_validator("harness", "agent")
+    @field_validator("agent")
     @classmethod
     def _validate_optional_string_fields(cls, value: str | None) -> str | None:
         return _normalize_optional_string(value, source="primary")
