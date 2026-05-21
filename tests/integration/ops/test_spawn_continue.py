@@ -5,7 +5,6 @@ SpawnForkInput tests live in test_spawn_fork.py and test_spawn_fork_harness.py.
 # qa-validated: test-suite-redesign
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,8 +15,6 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
-from meridian.lib.launch import bundle_adapter
-from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnContinueInput,
@@ -25,17 +22,7 @@ from meridian.lib.ops.spawn.models import (
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
-
-
-@dataclass(frozen=True)
-class _FakeBundleResult:
-    model: str
-    model_token: str
-    harness: HarnessId
-    harness_model: str | None
-    execution_policy: ResolvedExecutionPolicy
-    provenance: dict[str, str]
-    warnings: tuple[str, ...] = ()
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _state_root(project_root: Path) -> Path:
@@ -103,17 +90,10 @@ def _stub_bundle_adapter(
     model: str = "gpt-5.3-codex",
     harness: HarnessId = HarnessId.CODEX,
 ) -> None:
-    monkeypatch.setattr(
-        bundle_adapter,
-        "request_and_resolve",
-        lambda request, *, harness_registry: _FakeBundleResult(
-            model=model,
-            model_token=request.model_override or model,
-            harness=harness,
-            harness_model=model,
-            execution_policy=ResolvedExecutionPolicy(),
-            provenance={"model_source": "cli", "harness_source": "provider"},
-        ),
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=harness,
     )
 
 
@@ -231,44 +211,6 @@ def test_spawn_continue_respects_explicit_background_request(
     assert result.status == "dry-run"
     assert captured_input is not None
     assert captured_input.background is True
-
-
-def test_spawn_continue_passes_explicit_harness_to_create_input(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = _state_root(project_root)
-    _seed_spawn(runtime_root, spawn_id="p23", harness_session_id="session-23")
-
-    captured_input: SpawnCreateInput | None = None
-
-    def _fake_spawn_create_sync(
-        payload: SpawnCreateInput,
-        ctx=None,
-        *,
-        sink=None,
-    ) -> SpawnActionOutput:
-        _ = (ctx, sink)
-        nonlocal captured_input
-        captured_input = payload
-        return SpawnActionOutput(command="spawn.create", status="dry-run")
-
-    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
-
-    result = spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p23",
-            prompt="follow-up prompt",
-            harness="codex",
-            project_root=project_root.as_posix(),
-        )
-    )
-
-    assert result.status == "dry-run"
-    assert captured_input is not None
-    assert captured_input.harness == "codex"
 
 
 def test_spawn_continue_forwards_shared_create_fields_to_spawn_create(

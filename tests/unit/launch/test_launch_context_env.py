@@ -21,6 +21,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -126,6 +127,11 @@ def test_build_launch_context_uses_runtime_override_snapshot_not_live_env(
     tmp_path: Path,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     runtime = _build_launch_runtime(
         tmp_path=tmp_path,
         composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
@@ -158,6 +164,11 @@ def test_build_launch_context_explicit_empty_snapshot_blocks_live_policy_env_lea
     tmp_path: Path,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     runtime = _build_launch_runtime(
         tmp_path=tmp_path,
         composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
@@ -192,6 +203,11 @@ def test_build_launch_context_primary_preserves_runtime_depth(
     expected_depth: str,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
     monkeypatch.delenv("MERIDIAN_SPAWN_ID", raising=False)
     if parent_depth is not None:
@@ -220,6 +236,11 @@ def test_build_launch_context_primary_exports_configured_context_dirs(
     tmp_path: Path,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
     (tmp_path / "meridian.local.toml").write_text(
         "\n".join(
@@ -433,6 +454,11 @@ def test_build_launch_context_projects_context_paths_to_workspace_roots(
 ) -> None:
     """CONTEXT-PROJ-1: Context paths are included in workspace projection."""
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
     (tmp_path / "meridian.local.toml").write_text(
         "\n".join(
@@ -503,6 +529,11 @@ def test_build_launch_context_opencode_includes_context_paths_in_external_direct
 ) -> None:
     """CONTEXT-PROJ-2: OpenCode projection includes all context paths."""
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gemini-2.5-pro",
+        harness=HarnessId.OPENCODE,
+    )
     monkeypatch.delenv("MERIDIAN_ACTIVE_WORK_ID", raising=False)
     monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
     (tmp_path / "meridian.local.toml").write_text(

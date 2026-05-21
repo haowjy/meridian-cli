@@ -11,6 +11,7 @@ from meridian.lib.launch.permissions import (
     compute_nested_claude_deny_additions,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -63,7 +64,12 @@ def _build_context(
     agent: str | None = None,
     tools: str | dict[str, str] | None = None,
 ) -> SpawnRequest:
-    _ = monkeypatch
+    model = "haiku" if harness == HarnessId.CLAUDE else "gpt-5.4-mini"
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=harness,
+    )
     mars_toml = tmp_path / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
@@ -72,7 +78,7 @@ def _build_context(
         )
     request = SpawnRequest(
         prompt="test",
-        model="haiku" if harness == HarnessId.CLAUDE else "gpt-5.4-mini",
+        model=model,
         harness=harness.value,
         agent=agent,
         tools=tools,
@@ -189,7 +195,11 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """S-9: Missing profile means no opt-outs."""
-    _ = monkeypatch
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="haiku",
+        harness=HarnessId.CLAUDE,
+    )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
@@ -220,7 +230,11 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    _ = monkeypatch
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="haiku",
+        harness=HarnessId.CLAUDE,
+    )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",

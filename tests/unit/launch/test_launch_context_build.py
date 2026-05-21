@@ -18,6 +18,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -157,6 +158,11 @@ def test_build_launch_context_primary_projects_supplemental_documents(
     tmp_path: Path,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     request = _build_primary_spawn_request(
         supplemental_prompt_documents=(
             PromptDocument(
@@ -185,9 +191,15 @@ def test_build_launch_context_primary_projects_supplemental_documents(
 
 
 def test_build_launch_context_spawn_prepare_injects_goal_completion_contract(
+    monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     request = _build_spawn_request(goal="finish launch composition wiring").model_copy(
         update={"prompt_is_composed": False}
     )

@@ -7,7 +7,9 @@ from typing import Any
 
 import pytest
 
+from meridian.lib.core.types import HarnessId
 from tests.support.fixtures import write_minimal_mars_config
+from tests.support.launch import stub_bundle_request_and_resolve
 from tests.support.pi_extensions import configure_pi_extension_projection
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -372,6 +374,11 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     monkeypatch.chdir(tmp_path)
     write_minimal_mars_config(tmp_path)
     configure_pi_extension_projection(monkeypatch, tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.PI,
+    )
     monkeypatch.setattr(
         cli_main,
         "maybe_bootstrap_runtime_state",

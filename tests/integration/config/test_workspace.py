@@ -13,6 +13,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from meridian.lib.launch.workspace import ensure_workspace_valid_for_launch
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 @pytest.fixture(autouse=True)
@@ -243,9 +244,17 @@ def test_workspace_entries_do_not_create_context_env_vars(tmp_path: Path) -> Non
     assert "MERIDIAN_CONTEXT_DOCS_DIR" not in runtime_ctx.binding.environment.bind_env_overrides
 
 
-def test_workspace_entries_do_not_enter_system_prompt_context(tmp_path: Path) -> None:
+def test_workspace_entries_do_not_enter_system_prompt_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project_root = _repo(tmp_path)
     _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     workspace_root = project_root / "workspace-docs"
     workspace_root.mkdir()
     (project_root / "meridian.toml").write_text(

@@ -38,6 +38,7 @@ from meridian.lib.launch.request import (
 )
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
@@ -450,9 +451,17 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert outcome.exit_code == 0
 
 
-def test_launch_primary_dry_run_returns_terminal_surface_mode(tmp_path: Path) -> None:
+def test_launch_primary_dry_run_returns_terminal_surface_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     project_root = tmp_path
     _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
 
     result = __import__("meridian.lib.launch", fromlist=["launch_primary"]).launch_primary(
         project_root=project_root,
@@ -470,10 +479,17 @@ def test_launch_primary_dry_run_returns_terminal_surface_mode(tmp_path: Path) ->
 
 def test_opencode_non_interactive_projection_includes_variant_from_effort(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = tmp_path / "opencode-subprocess-variant"
     project_root.mkdir()
     _write_minimal_mars_config(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gemini-2.5-pro",
+        harness=HarnessId.OPENCODE,
+        execution_policy=ResolvedExecutionPolicy(effort="medium"),
+    )
     harness_registry = get_default_harness_registry()
     config = load_config(project_root)
 

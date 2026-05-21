@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -13,7 +12,6 @@ from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
 )
-from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
 from meridian.lib.launch.plan import (
@@ -23,6 +21,7 @@ from meridian.lib.launch.plan import (
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
 from tests.support.fixtures import write_agent, write_skill
+from tests.support.launch import stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
 
@@ -38,17 +37,6 @@ def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> 
     path = project_root / ".mars" / "agents" / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{frontmatter}\n---\n\n# {name}\n", encoding="utf-8")
-
-
-@dataclass(frozen=True)
-class _FakeBundleResult:
-    model: str
-    model_token: str
-    harness: HarnessId
-    harness_model: str | None
-    execution_policy: ResolvedExecutionPolicy
-    provenance: dict[str, str]
-    warnings: tuple[str, ...] = ()
 
 
 def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
@@ -288,25 +276,15 @@ def test_launch_resolution_fallback_policy_resolves_opencode_medium_via_bundle(
         ),
     )
 
-    captured_requests: list[bundle_adapter.BundleRequest] = []
-
-    def _fake_request_and_resolve(
-        request: bundle_adapter.BundleRequest,
-        *,
-        harness_registry: object,
-    ) -> _FakeBundleResult:
-        _ = (request, harness_registry)
-        captured_requests.append(request)
-        return _FakeBundleResult(
-            model="gpt-5.5",
-            model_token="gpt55",
-            harness=HarnessId.OPENCODE,
-            harness_model="openai/gpt-5.5",
-            execution_policy=ResolvedExecutionPolicy(effort="medium"),
-            provenance={"harness_source": "project", "effort_source": "project"},
-        )
-
-    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
+    captured_requests = stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.5",
+        model_token="gpt55",
+        harness=HarnessId.OPENCODE,
+        harness_model="openai/gpt-5.5",
+        execution_policy=ResolvedExecutionPolicy(effort="medium"),
+        provenance={"harness_source": "project", "effort_source": "project"},
+    )
 
     preview = build_launch_context(
         spawn_id="dry-run-fallback-opencode-medium",
