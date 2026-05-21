@@ -20,6 +20,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SubprocessHarness
 from meridian.lib.harness.registry import HarnessRegistry
 
+from . import bundle_adapter
 from .compiler import (
     CompilerRequest,
     CompilerResult,
@@ -75,7 +76,6 @@ class SurfacePolicyInput:
     config_overrides: RuntimeOverrides
     config: MeridianConfig
     harness_registry: HarnessRegistry
-    configured_default_harness: str = "claude"
     skills_readonly: bool = True
     requested_skills: tuple[str, ...] = ()
     supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
@@ -167,7 +167,7 @@ def _resolve_final_model(
         return layer_model, None
 
     harness_default = config.default_model_for_harness(str(harness_id))
-    fallback_model = harness_default or config.default_model or ""
+    fallback_model = harness_default or ""
     if not fallback_model:
         return "", None
     try:
@@ -467,8 +467,284 @@ def _require_policy_tier(
     return tier
 
 
+_EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
+    "effort": "effort_source",
+    "sandbox": "sandbox_source",
+    "approval": "approval_source",
+    "autocompact": "autocompact_source",
+    "autocompact_pct": "autocompact_pct_source",
+    "timeout": "timeout_source",
+}
+
+_SPAWN_PREPARE_ROUTING_PRECEDENCE: tuple[str, ...] = (
+    "cli",
+    "env",
+    "agent-overlay-default",
+    "profile-default",
+)
+_SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES: frozenset[str] = frozenset(
+    {"cli", "env", "agent-overlay-default"}
+)
+
+
+def _first_spawn_prepare_routing_candidate(
+    candidates: tuple[tuple[str, str | None], ...],
+) -> tuple[str, str] | None:
+    for source, value in candidates:
+        if value is not None:
+            return source, value
+    return None
+
+
+def _spawn_prepare_routing_rank(source: str) -> int:
+    try:
+        return _SPAWN_PREPARE_ROUTING_PRECEDENCE.index(source)
+    except ValueError:
+        return len(_SPAWN_PREPARE_ROUTING_PRECEDENCE)
+
+
+def _resolve_spawn_prepare_bundle_routing(
+    *,
+    surface: SurfacePolicyInput,
+    overlay_routing: RuntimeOverrides,
+    profile: AgentProfile | None,
+) -> tuple[str | None, str | None, str | None, dict[str, str]]:
+    """Resolve spawn-prepare routing overrides + local routing provenance.
+
+    Project-config defaults no longer participate in spawn-prepare routing
+    overrides now that Mars launch-bundle owns project-level routing defaults.
+    """
+
+    model_candidate = _first_spawn_prepare_routing_candidate(
+        (
+            ("cli", surface.cli_overrides.model),
+            ("env", surface.env_overrides.model),
+            ("agent-overlay-default", overlay_routing.model),
+            ("profile-default", profile.model if profile is not None else None),
+        )
+    )
+    harness_candidate = _first_spawn_prepare_routing_candidate(
+        (
+            ("cli", surface.cli_overrides.harness),
+            ("env", surface.env_overrides.harness),
+            ("agent-overlay-default", overlay_routing.harness),
+            ("profile-default", profile.harness if profile is not None else None),
+        )
+    )
+
+    if (
+        model_candidate is not None
+        and harness_candidate is not None
+        and _spawn_prepare_routing_rank(model_candidate[0])
+        < _spawn_prepare_routing_rank(harness_candidate[0])
+    ):
+        harness_candidate = None
+
+    provenance_overrides: dict[str, str] = {}
+    if model_candidate is not None and model_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES:
+        provenance_overrides["model_source"] = model_candidate[0]
+    if (
+        harness_candidate is not None
+        and harness_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES
+    ):
+        provenance_overrides["harness_source"] = harness_candidate[0]
+
+    return (
+        model_candidate[1]
+        if model_candidate is not None
+        and model_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES
+        else None,
+        harness_candidate[1]
+        if harness_candidate is not None
+        and harness_candidate[0] in _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES
+        else None,
+        model_candidate[1] if model_candidate is not None else None,
+        provenance_overrides,
+    )
+
+
+def _resolve_spawn_prepare_execution_policy(
+    *,
+    surface: SurfacePolicyInput,
+    agent_overlay_policy: RuntimeOverrides,
+    bundle_execution_policy: RuntimeOverrides,
+    profile_overrides: RuntimeOverrides,
+) -> tuple[RuntimeOverrides, dict[str, str]]:
+    """Resolve spawn-prepare execution policy + local provenance winners.
+
+    Spawn-prepare execution policy excludes config-default execution-policy
+    fields. Production spawn-prepare now passes empty config defaults from
+    ``from_spawn_config()`` because Mars launch-bundle owns project routing
+    defaults.
+    """
+
+    policy_layers: tuple[tuple[str, RuntimeOverrides], ...] = (
+        (
+            "cli",
+            surface.cli_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        (
+            "env",
+            surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        (
+            "agent-overlay-default",
+            agent_overlay_policy.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+        ("bundle", bundle_execution_policy),
+        (
+            "profile-default",
+            profile_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
+        ),
+    )
+    resolved = resolve_policy_fields(tuple(layer for _, layer in policy_layers))
+
+    provenance_overrides: dict[str, str] = {}
+    for field_name in surface.supported_execution_policy_fields:
+        for source, layer in policy_layers:
+            if getattr(layer, field_name) is None:
+                continue
+            if source != "bundle":
+                provenance_overrides[_EXECUTION_POLICY_PROVENANCE_KEYS[field_name]] = source
+            break
+    return resolved, provenance_overrides
+
+
+def _resolve_spawn_prepare_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
+    project_root = surface.catalog.project_root
+    pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
+    explicit_user_overrides = resolve(*surface.layers)
+    requested_agent = explicit_user_overrides.agent
+    configured_default_agent = pre_profile_resolved.agent if not requested_agent else ""
+
+    profile, profile_warning = load_agent_profile_with_fallback(
+        project_root=project_root,
+        requested_agent=requested_agent,
+        configured_default=configured_default_agent,
+    )
+
+    profile_overrides = RuntimeOverrides.from_agent_profile(profile)
+    full_layers = (*surface.layers, profile_overrides, surface.config_overrides)
+    base_resolved = resolve(*full_layers)
+    profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
+
+    selected_agent_name = (
+        profile.name if profile is not None else (requested_agent or configured_default_agent or "")
+    )
+    agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
+    overlay_routing = RuntimeOverrides.from_agent_overlay_routing(agent_overlay).routing_scope()
+    (
+        bundle_model_override,
+        bundle_harness_override,
+        requested_model_token,
+        routing_provenance_overrides,
+    ) = _resolve_spawn_prepare_bundle_routing(
+        surface=surface,
+        overlay_routing=overlay_routing,
+        profile=profile,
+    )
+
+    alias_catalog: dict[str, AliasEntry] = {}
+    if requested_model_token:
+        alias_catalog = surface.catalog.alias_map()
+
+    resolved_skill_names = dedupe_skill_names((*profile_skills, *surface.requested_skills))
+    bundle_request = bundle_adapter.BundleRequest(
+        agent=profile.name if profile is not None else requested_agent,
+        project_root=project_root,
+        model_override=bundle_model_override,
+        harness_override=bundle_harness_override,
+        effort_override=explicit_user_overrides.effort,
+        approval_override=explicit_user_overrides.approval,
+        sandbox_override=explicit_user_overrides.sandbox,
+        extra_skills=resolved_skill_names,
+    )
+    bundle_result = bundle_adapter.request_and_resolve(
+        bundle_request,
+        harness_registry=surface.harness_registry,
+    )
+
+    resolved_model = bundle_result.model
+    resolved_harness = bundle_result.harness
+    selected_model_token = bundle_result.model_token or resolved_model
+    requested_token = requested_model_token or selected_model_token or resolved_model
+    harness_provenance = routing_provenance_overrides.get(
+        "harness_source",
+        bundle_result.provenance.get("harness_source", ""),
+    )
+
+    model_selection = ModelSelectionContext(
+        requested_token=requested_token or resolved_model,
+        selected_model_token=selected_model_token or resolved_model,
+        canonical_model_id=resolved_model,
+        mars_provided_harness=resolved_harness,
+        resolved_entry=None,
+        harness_provenance=harness_provenance,
+        harness_model_id=bundle_result.harness_model,
+    )
+
+    overlay_policy = RuntimeOverrides.from_agent_overlay_policy(agent_overlay)
+    bundle_execution_policy = bundle_result.execution_policy.as_overrides(
+        supported_fields=surface.supported_execution_policy_fields
+    )
+    (
+        resolved_execution_policy_overrides,
+        execution_policy_provenance_overrides,
+    ) = _resolve_spawn_prepare_execution_policy(
+        surface=surface,
+        agent_overlay_policy=overlay_policy,
+        bundle_execution_policy=bundle_execution_policy,
+        profile_overrides=profile_overrides,
+    )
+    resolved_execution_policy = ResolvedExecutionPolicy(
+        effort=resolved_execution_policy_overrides.effort,
+        sandbox=resolved_execution_policy_overrides.sandbox,
+        approval=resolved_execution_policy_overrides.approval,
+        autocompact=resolved_execution_policy_overrides.autocompact,
+        autocompact_pct=resolved_execution_policy_overrides.autocompact_pct,
+        timeout=resolved_execution_policy_overrides.timeout,
+    )
+
+    resolved_skills = resolve_skills_from_profile(
+        profile_skills=resolved_skill_names,
+        project_root=project_root,
+        readonly=surface.skills_readonly,
+        harness_id=resolved_harness.value,
+        selected_model_token=model_selection.selected_model_token,
+        canonical_model_id=model_selection.canonical_model_id,
+    )
+
+    bundle_model_warning = "\n".join(bundle_result.warnings).strip() or None
+    warnings = _policy_warnings(
+        profile_warning=profile_warning,
+        model_warning=bundle_model_warning,
+    )
+    provenance_overrides = dict(routing_provenance_overrides)
+    provenance_overrides.update(execution_policy_provenance_overrides)
+
+    return bundle_adapter.bundle_to_resolved_policy(
+        bundle=bundle_result,
+        profile=profile,
+        resolved_skills=resolved_skills,
+        model_selection=model_selection,
+        resolved_model=resolved_model,
+        resolved_harness=resolved_harness,
+        routing_model=model_selection.selected_model_token,
+        routing_agent=base_resolved.agent,
+        execution_policy=resolved_execution_policy,
+        warnings=warnings,
+        alias_catalog=alias_catalog,
+        harness_registry=surface.harness_registry,
+        terminal_surface_mode=_resolve_terminal_surface_mode(harness_id=resolved_harness),
+        provenance_overrides=provenance_overrides or None,
+    )
+
+
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     """Resolve the shared launch policy boundary for one launch-like surface."""
+
+    if surface.surface is LaunchCompositionSurface.SPAWN_PREPARE:
+        return _resolve_spawn_prepare_policy_from_bundle(surface)
 
     project_root = surface.catalog.project_root
     pre_profile_resolved = resolve(*surface.layers, surface.config_overrides)
@@ -546,7 +822,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile_skills=profile_skills,
         resolved_alias_entry=resolved_entry,
         alias_catalog=alias_catalog,
-        configured_default_harness=surface.configured_default_harness,
         project_root=project_root.as_posix(),
         supported_execution_policy_fields=tuple(surface.supported_execution_policy_fields),
     )
@@ -669,12 +944,7 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             str(selected_entry.model_id) if selected_entry is not None else final_model
         )
         harness_model_for_spec: str | None = None
-        selected_entry_default_harness = _resolved_model_default_harness(selected_entry)
-        if (
-            selected_entry is not None
-            and selected_entry_default_harness is not None
-            and harness_id != selected_entry_default_harness
-        ):
+        if selected_entry is not None:
             computed = select_harness_model_id(
                 model_entry=selected_entry,
                 harness_id=harness_id,
@@ -682,6 +952,13 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
             )
             if computed != canonical_model_id:
                 harness_model_for_spec = computed
+
+        selected_entry_default_harness = _resolved_model_default_harness(selected_entry)
+        if (
+            selected_entry is not None
+            and selected_entry_default_harness is not None
+            and harness_id != selected_entry_default_harness
+        ):
             harness_candidates = tuple(
                 str(candidate) for candidate in selected_entry.harness_candidates
             )
@@ -788,7 +1065,6 @@ def resolve_policies(
     config_overrides: RuntimeOverrides,
     config: MeridianConfig,
     harness_registry: HarnessRegistry,
-    configured_default_harness: str = "claude",
     skills_readonly: bool = True,
 ) -> ResolvedLaunchPolicy:
     """Compatibility wrapper over the public shared launch policy boundary."""
@@ -801,7 +1077,6 @@ def resolve_policies(
             config_overrides=config_overrides,
             config=config,
             harness_registry=harness_registry,
-            configured_default_harness=configured_default_harness,
             skills_readonly=skills_readonly,
         )
     )

@@ -477,7 +477,7 @@ def test_doctor_skips_model_resolution_for_config_surface(
 ) -> None:
     project_root = _create_project_root(tmp_path)
     _create_agent_skill_dirs(project_root)
-    monkeypatch.setenv("MERIDIAN_DEFAULT_MODEL", "gpt-5.4")
+    monkeypatch.setenv("MERIDIAN_HARNESS_MODEL_CODEX", "gpt-5.4")
     monkeypatch.setattr(
         diag,
         "check_upgrade_availability",

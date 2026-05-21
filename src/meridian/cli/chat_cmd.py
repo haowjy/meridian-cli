@@ -592,7 +592,6 @@ def _resolve_chat_policy_snapshot(
             config_overrides=RuntimeOverrides.from_config(config),
             config=config,
             harness_registry=harness_registry,
-            configured_default_harness=config.primary.harness or "claude",
             skills_readonly=True,
             requested_skills=skills,
             supported_execution_policy_fields=frozenset(

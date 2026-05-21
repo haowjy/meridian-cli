@@ -74,12 +74,66 @@ grep -q '^Routing: mars-provided$' /tmp/meridian-routing-provenance.txt && \
 echo "PASS: ROUTE-2 text dry-run surfaced routing provenance"
 ```
 
+### ROUTE-3. Mars settings defaults own spawn routing when Meridian defaults are present [CRITICAL]
+
+Project routing defaults belong in `mars.toml [settings]`, not `meridian.toml`.
+This probe intentionally writes stale Meridian default keys and primary defaults,
+then verifies a spawn with no explicit model/harness follows the Mars bundle
+route instead of forwarding Meridian config values.
+
+```bash
+cat > "$SMOKE_REPO/mars.toml" <<'TOML'
+[settings]
+targets = [".claude", ".codex", ".opencode"]
+default_model = "local-default-model"
+default_harness = "opencode"
+TOML
+
+cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'EOF_AGENT'
+---
+name: reviewer
+description: project default routing smoke reviewer
+---
+# Reviewer
+
+Reply briefly.
+EOF_AGENT
+
+cat > "$SMOKE_REPO/meridian.toml" <<'TOML'
+[defaults]
+model = "legacy-default-should-not-win"
+harness = "claude"
+
+[primary]
+model = "primary-default-should-not-win"
+harness = "opencode"
+TOML
+
+uv run meridian --json spawn -a reviewer -p "probe mars project defaults" --dry-run \
+  > /tmp/meridian-routing-project-defaults.json && \
+uv run python - <<'PY'
+import json
+
+payload = json.load(open('/tmp/meridian-routing-project-defaults.json'))
+selection = payload.get('model_selection') or {}
+
+assert payload['status'] == 'dry-run'
+assert payload['model'] == 'local-default-model', payload
+assert payload['harness_id'] == 'opencode', payload
+assert selection['requested_token'] == 'local-default-model', selection
+assert selection['canonical_model_id'] == 'local-default-model', selection
+assert selection['harness_provenance'] == 'provider', selection
+print('PASS: ROUTE-3 mars settings defaults drove spawn routing; Meridian defaults were ignored')
+PY
+```
+
 ## Cleanup
 
 ```bash
 rm -rf "$SMOKE_REPO" \
   /tmp/meridian-routing-provenance.json \
-  /tmp/meridian-routing-provenance.txt
+  /tmp/meridian-routing-provenance.txt \
+  /tmp/meridian-routing-project-defaults.json
 unset MERIDIAN_PROJECT_DIR MERIDIAN_RUNTIME_DIR SMOKE_REPO REPO_ROOT
 echo "PASS: cleanup complete"
 ```

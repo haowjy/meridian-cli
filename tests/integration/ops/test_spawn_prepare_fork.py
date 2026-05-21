@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -7,10 +8,23 @@ from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+
+
+@dataclass(frozen=True)
+class _FakeBundleResult:
+    model: str
+    model_token: str
+    harness: HarnessId
+    harness_model: str | None
+    execution_policy: ResolvedExecutionPolicy
+    provenance: dict[str, str]
+    warnings: tuple[str, ...] = ()
 
 
 def _write_minimal_subagent(project_root: Path) -> None:
@@ -31,7 +45,7 @@ def _write_minimal_subagent(project_root: Path) -> None:
 def _prepare_codex_runtime(project_root: Path):
     _write_minimal_subagent(project_root)
     (project_root / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     harness_registry = get_default_harness_registry()
@@ -68,6 +82,94 @@ def _patch_catalog_models(
     monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [cli_entry, overlay_entry])
 
 
+def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    model_routes = {
+        "claude-sonnet-4.5": ("claude-sonnet-4.5", HarnessId.CLAUDE),
+        "gpt-5.5": ("gpt-5.5", HarnessId.CODEX),
+        "gpt-5.4-mini": ("gpt-5.4-mini", HarnessId.CODEX),
+    }
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        selected_model, selected_harness = model_routes.get(
+            request.model_override or "",
+            ("gpt-5.3-codex", HarnessId.CODEX),
+        )
+        return _FakeBundleResult(
+            model=selected_model,
+            model_token=request.model_override or selected_model,
+            harness=selected_harness,
+            harness_model=selected_model,
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+
+
+def test_build_create_payload_does_not_forward_meridian_primary_or_legacy_defaults_to_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "mars.toml").write_text(
+        "[settings]\n"
+        'targets = [".claude", ".codex", ".opencode"]\n'
+        'default_model = "mars-default-model"\n'
+        'default_harness = "opencode"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "meridian.toml").write_text(
+        "[defaults]\n"
+        'model = "legacy-default-model"\n'
+        'harness = "claude"\n'
+        "\n"
+        "[primary]\n"
+        'model = "primary-model"\n'
+        'harness = "codex"\n',
+        encoding="utf-8",
+    )
+    captured_requests: list[bundle_adapter.BundleRequest] = []
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured_requests.append(request)
+        return _FakeBundleResult(
+            model="mars-default-model",
+            model_token="mars-default-model",
+            harness=HarnessId.OPENCODE,
+            harness_model="openai/mars-default-model",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "project", "harness_source": "project"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="use mars project routing defaults",
+            project_root=tmp_path.as_posix(),
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert len(captured_requests) == 1
+    request = captured_requests[0]
+    assert request.model_override is None
+    assert request.harness_override is None
+    assert prepared.model == "mars-default-model"
+    assert prepared.harness == "opencode"
+
+
 def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -77,6 +179,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     prepare.py's job is to preserve continue_fork=True so the executor can act on it.
     """
     codex_adapter, runtime = _prepare_codex_runtime(tmp_path)
+    _stub_bundle_adapter(monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr(
         codex_adapter,
@@ -87,6 +190,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     prepared = build_create_payload(
         SpawnCreateInput(
             prompt="fork prompt",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             session=SessionRequest(
                 requested_harness_session_id="source-session",
@@ -100,6 +204,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     dry_run_prepared = build_create_payload(
         SpawnCreateInput(
             prompt="fork prompt",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             session=SessionRequest(
                 requested_harness_session_id="source-session",
@@ -130,7 +235,7 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
@@ -138,6 +243,7 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
     prepared = build_create_payload(
         SpawnCreateInput(
             prompt="test durable seam",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             dry_run=True,
         ),
@@ -163,7 +269,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.toml").write_text(
@@ -180,6 +286,7 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
         encoding="utf-8",
     )
     _patch_catalog_models(monkeypatch)
+    _stub_bundle_adapter(monkeypatch)
     runtime = build_runtime_from_root_and_config(
         tmp_path,
         load_config(tmp_path, user_config=user_config),
@@ -214,7 +321,72 @@ def test_build_create_payload_applies_agent_overlay_layering_and_per_field_cli_p
     assert cli_model_overridden.execution_policy.effort == "high"
     assert cli_model_overridden.model_selection_requested_token == "gpt-5.5"
     assert cli_model_overridden.model_selection_canonical_id == "gpt-5.5"
-    assert cli_model_overridden.model_selection_harness_provenance == "mars-provided"
+    assert cli_model_overridden.model_selection_harness_provenance == "provider"
+
+
+def test_build_create_payload_agent_overlay_route_rescues_stale_profile_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agents_dir = tmp_path / ".mars" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "meridian-subagent.md").write_text(
+        "---\n"
+        "name: meridian-subagent\n"
+        "model: stale-route\n"
+        "harness: claude\n"
+        "---\n"
+        "\n"
+        "Broken profile route should be rescued by overlay.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "meridian.toml").write_text(
+        '[agents.meridian-subagent]\nmodel = "haiku"\nharness = "opencode"\n',
+        encoding="utf-8",
+    )
+
+    captured_requests: list[bundle_adapter.BundleRequest] = []
+
+    def fake_request(
+        request: bundle_adapter.BundleRequest,
+        *,
+        harness_registry: object,
+    ) -> _FakeBundleResult:
+        _ = harness_registry
+        captured_requests.append(request)
+        if request.model_override != "haiku" or request.harness_override != "opencode":
+            raise RuntimeError("stale profile route should not be requested")
+        return _FakeBundleResult(
+            model="claude-haiku-4-5",
+            model_token="haiku",
+            harness=HarnessId.OPENCODE,
+            harness_model="openrouter/anthropic/claude-haiku-4.5",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="overlay rescues stale profile route",
+            project_root=tmp_path.as_posix(),
+            agent="meridian-subagent",
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert len(captured_requests) == 1
+    assert prepared.model == "claude-haiku-4-5"
+    assert prepared.harness == "opencode"
+    assert prepared.model_selection_requested_token == "haiku"
+    assert prepared.model_selection_harness_provenance == "agent-overlay-default"
 
 
 def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
@@ -223,7 +395,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
 ) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     (tmp_path / "meridian.toml").write_text(
@@ -231,6 +403,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
         encoding="utf-8",
     )
     _patch_catalog_models(monkeypatch)
+    _stub_bundle_adapter(monkeypatch)
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
 
     prepared = build_create_payload(
@@ -252,7 +425,7 @@ def test_build_create_payload_ignores_agent_overlays_when_no_agent_is_selected(
 def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Path) -> None:
     _write_minimal_subagent(tmp_path)
     (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude"]\n',
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
     )
     runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
@@ -261,6 +434,7 @@ def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Pat
         SpawnCreateInput(
             prompt="compose with completion contract",
             goal="ship phase-2 gate fixes",
+            model="gpt-5.4-mini",
             project_root=tmp_path.as_posix(),
             dry_run=True,
         ),

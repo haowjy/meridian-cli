@@ -12,6 +12,9 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.core.types import HarnessId
+from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.reference import ResolvedSessionReference
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
@@ -21,11 +24,32 @@ from meridian.lib.ops.spawn.models import (
 from meridian.lib.state.paths import resolve_project_runtime_root
 
 
+class _FakeBundleResult:
+    def __init__(
+        self,
+        *,
+        model: str,
+        model_token: str,
+        harness: HarnessId,
+        harness_model: str | None,
+        execution_policy: ResolvedExecutionPolicy,
+        provenance: dict[str, str],
+        warnings: tuple[str, ...] = (),
+    ) -> None:
+        self.model = model
+        self.model_token = model_token
+        self.harness = harness
+        self.harness_model = harness_model
+        self.execution_policy = execution_policy
+        self.provenance = provenance
+        self.warnings = warnings
+
+
 def _state_root(project_root: Path) -> Path:
     mars_toml = project_root / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
-            '[settings]\ntargets = [".claude"]\n',
+            '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
             encoding="utf-8",
         )
     runtime_root = resolve_project_runtime_root(project_root)
@@ -56,15 +80,31 @@ def _resolved_reference(**overrides: object) -> ResolvedSessionReference:
     return replace(reference, **overrides)
 
 
-def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
+def test_spawn_fork_rejects_cross_harness_when_model_infers_different_target(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEFAULT_HARNESS", "claude")
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_codex_session_reference)
+
+    captured_request = None
+
+    def _fake_request_and_resolve(request, *, harness_registry):
+        _ = harness_registry
+        nonlocal captured_request
+        captured_request = request
+        return _FakeBundleResult(
+            model=request.model_override or "gpt-5.4-mini",
+            model_token=request.model_override or "gpt-5.4-mini",
+            harness=HarnessId.CLAUDE if request.model_override == "haiku" else HarnessId.CODEX,
+            harness_model=request.model_override or "gpt-5.4-mini",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     def _fail_spawn_create_sync(*_args, **_kwargs):
         raise AssertionError("cross-harness fork should fail before spawn_create_sync")
@@ -76,9 +116,13 @@ def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
             SpawnForkInput(
                 source_ref="c-source",
                 prompt="fork prompt",
+                model="haiku",
                 project_root=project_root.as_posix(),
             )
         )
+    assert captured_request is not None
+    assert captured_request.model_override == "haiku"
+    assert captured_request.harness_override is None
 
 
 def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview(
@@ -87,21 +131,33 @@ def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview
 ) -> None:
     ambient_root = tmp_path / "ambient"
     ambient_root.mkdir()
-    (ambient_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "claude"\n',
-        encoding="utf-8",
-    )
     monkeypatch.chdir(ambient_root)
 
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
-    (project_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "codex"\n',
-        encoding="utf-8",
-    )
     prepared = prepare_for_runtime_write(project_root)
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_codex_session_reference)
+
+    captured_bundle_request = None
+
+    def _fake_request_and_resolve(request, *, harness_registry):
+        _ = harness_registry
+        nonlocal captured_bundle_request
+        captured_bundle_request = request
+        expected_root = project_root.resolve()
+        request_root = request.project_root.resolve()
+        harness = HarnessId.CODEX if request_root == expected_root else HarnessId.CLAUDE
+        return _FakeBundleResult(
+            model=request.model_override or "gpt-5.4-mini",
+            model_token=request.model_override or "gpt-5.4-mini",
+            harness=harness,
+            harness_model=request.model_override or "gpt-5.4-mini",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     captured_input: SpawnCreateInput | None = None
 
@@ -120,27 +176,43 @@ def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview
     monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
 
     result = spawn_api.spawn_fork_sync(
-        SpawnForkInput(source_ref="c-source", prompt="fork prompt"),
+        SpawnForkInput(source_ref="c-source", prompt="fork prompt", model="gpt-5.4-mini"),
         prepared=prepared,
     )
 
     assert result.status == "dry-run"
     assert captured_input is not None
     assert captured_input.harness == "codex"
+    assert captured_bundle_request is not None
+    assert captured_bundle_request.project_root.resolve() == project_root.resolve()
 
 
-def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(
+def test_spawn_fork_rejects_cross_harness_when_payload_harness_is_explicit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
-    (project_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "claude"\n',
-        encoding="utf-8",
-    )
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_codex_session_reference)
+
+    captured_request = None
+
+    def _fake_request_and_resolve(request, *, harness_registry):
+        _ = harness_registry
+        nonlocal captured_request
+        captured_request = request
+        harness = HarnessId.CLAUDE if request.harness_override == "claude" else HarnessId.CODEX
+        return _FakeBundleResult(
+            model=request.model_override or "gpt-5.4-mini",
+            model_token=request.model_override or "gpt-5.4-mini",
+            harness=harness,
+            harness_model=request.model_override or "gpt-5.4-mini",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     def _fail_spawn_create_sync(*_args, **_kwargs):
         raise AssertionError("cross-harness fork should fail before spawn_create_sync")
@@ -152,9 +224,14 @@ def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(
             SpawnForkInput(
                 source_ref="c-source",
                 prompt="fork prompt",
+                model="gpt-5.4-mini",
+                harness="claude",
                 project_root=project_root.as_posix(),
             )
         )
+    assert captured_request is not None
+    assert captured_request.model_override == "gpt-5.4-mini"
+    assert captured_request.harness_override == "claude"
 
 
 def test_spawn_fork_errors_when_reference_has_no_recorded_session(

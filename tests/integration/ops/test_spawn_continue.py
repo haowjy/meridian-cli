@@ -5,6 +5,7 @@ SpawnForkInput tests live in test_spawn_fork.py and test_spawn_fork_harness.py.
 # qa-validated: test-suite-redesign
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,8 @@ from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
+from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnContinueInput,
@@ -24,11 +27,22 @@ from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 
 
+@dataclass(frozen=True)
+class _FakeBundleResult:
+    model: str
+    model_token: str
+    harness: HarnessId
+    harness_model: str | None
+    execution_policy: ResolvedExecutionPolicy
+    provenance: dict[str, str]
+    warnings: tuple[str, ...] = ()
+
+
 def _state_root(project_root: Path) -> Path:
     mars_toml = project_root / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
-            '[settings]\ntargets = [".claude"]\n',
+            '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
             encoding="utf-8",
         )
     runtime_root = resolve_project_runtime_root(project_root)
@@ -83,6 +97,26 @@ def _patch_catalog_models(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [codex_entry, claude_entry])
 
 
+def _stub_bundle_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    model: str = "gpt-5.3-codex",
+    harness: HarnessId = HarnessId.CODEX,
+) -> None:
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: _FakeBundleResult(
+            model=model,
+            model_token=request.model_override or model,
+            harness=harness,
+            harness_model=model,
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        ),
+    )
+
+
 def test_spawn_continue_errors_when_source_spawn_lacks_harness_session_id(
     tmp_path: Path,
 ) -> None:
@@ -133,6 +167,7 @@ def test_spawn_continue_passes_resume_details_in_session_dto_fields(
         return SpawnActionOutput(command="spawn.create", status="dry-run")
 
     monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+    _stub_bundle_adapter(monkeypatch)
 
     result = spawn_api.spawn_continue_sync(
         SpawnContinueInput(
@@ -182,6 +217,7 @@ def test_spawn_continue_respects_explicit_background_request(
         return SpawnActionOutput(command="spawn.create", status="dry-run")
 
     monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
+    _stub_bundle_adapter(monkeypatch)
 
     result = spawn_api.spawn_continue_sync(
         SpawnContinueInput(

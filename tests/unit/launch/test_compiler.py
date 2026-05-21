@@ -56,7 +56,6 @@ def _request(
         profile_skills=(),
         resolved_alias_entry=resolved_alias,
         alias_catalog=resolved_catalog,
-        configured_default_harness="claude",
         project_root="/repo",
         supported_execution_policy_fields=(
             supported_execution_policy_fields

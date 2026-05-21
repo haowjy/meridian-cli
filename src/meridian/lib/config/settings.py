@@ -1061,11 +1061,6 @@ def _normalize_toml_payload(
                     raw_value=section_value,
                     source=f"{key}.{section_key}",
                 )
-                if option.field_path in {("default_model",)}:
-                    coerced = _normalize_model_identifier(
-                        cast("str", coerced),
-                        project_root=project_root,
-                    )
                 _assign_nested_value(normalized, option.field_path, coerced)
             continue
 
@@ -1079,8 +1074,6 @@ def _normalize_toml_payload(
             raw_value=raw_value,
             source=key,
         )
-        if option.field_path in {("default_model",)}:
-            coerced = _normalize_model_identifier(cast("str", coerced), project_root=project_root)
         _assign_nested_value(normalized, option.field_path, coerced)
 
     return normalized
@@ -1100,7 +1093,6 @@ def _env_alias_overrides(project_root: Path) -> dict[str, object]:
         )
 
         if option.field_path in {
-            ("default_model",),
             ("harness", "claude", "model"),
             ("harness", "codex", "model"),
             ("harness", "opencode", "model"),
@@ -1622,52 +1614,12 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_MIN_WAIT_YIELD_SECONDS",),
         ),
     ] = 30.0
-    default_model: Annotated[
-        str,
-        config_field(
-            "defaults.model",
-            value_kind="str",
-            file_aliases=(
-                file_alias("defaults", "model"),
-                file_alias("defaults", "default_model"),
-                file_alias(None, "model"),
-                file_alias(None, "default_model"),
-            ),
-            env_vars=("MERIDIAN_DEFAULT_MODEL",),
-        ),
-    ] = ""
-    default_harness: Annotated[
-        str,
-        config_field(
-            "defaults.harness",
-            value_kind="str",
-            file_aliases=(
-                file_alias("defaults", "harness"),
-                file_alias(None, "default_harness"),
-            ),
-            env_vars=("MERIDIAN_DEFAULT_HARNESS",),
-        ),
-    ] = "codex"
-
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     agents: dict[str, AgentOverlayConfig] = Field(default_factory=dict)
     output: OutputConfig = Field(default_factory=OutputConfig)
     state: StateConfig = Field(default_factory=StateConfig)
     work: WorkConfig = Field(default_factory=WorkConfig)
-
-    @field_validator("default_model")
-    @classmethod
-    def _validate_default_model(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            return normalized
-        return _normalize_model_identifier(normalized, project_root=_current_project_root())
-
-    @field_validator("default_harness")
-    @classmethod
-    def _validate_default_harness(cls, value: str) -> str:
-        return _normalize_required_string(value, source="defaults")
 
     @field_validator("default_wait_yield_seconds", "min_wait_yield_seconds")
     @classmethod

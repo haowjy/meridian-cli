@@ -58,7 +58,7 @@ def test_config_show_ignores_user_global_workspace_entries(
     user_workspace_root.mkdir()
     user_config_path = tmp_path / "user-config.toml"
     user_config_path.write_text(
-        "[defaults]\n"
+        "[primary]\n"
         'harness = "opencode"\n'
         "\n"
         "[workspace.user_docs]\n"
@@ -68,7 +68,7 @@ def test_config_show_ignores_user_global_workspace_entries(
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config_path.as_posix())
 
     result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    harness_value = next(item for item in result.values if item.key == "defaults.harness")
+    harness_value = next(item for item in result.values if item.key == "primary.harness")
 
     assert result.workspace.status == "none"
     assert result.workspace.sources == ()
