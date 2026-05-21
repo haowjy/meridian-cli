@@ -123,10 +123,18 @@ def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(mode
 
 
 @pytest.mark.parametrize(
-    ("model", "peer_name", "peer_model", "skill_name", "skill_description"),
+    (
+        "model",
+        "expected_harness",
+        "peer_name",
+        "peer_model",
+        "skill_name",
+        "skill_description",
+    ),
     [
         (
             "claude-sonnet-4",
+            HarnessId.CLAUDE,
             "coder",
             "gpt-5.4",
             "review",
@@ -134,6 +142,7 @@ def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(mode
         ),
         (
             "gpt-5.4",
+            HarnessId.CODEX,
             "reviewer",
             "claude-sonnet-4",
             "meridian-spawn",
@@ -141,6 +150,7 @@ def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(mode
         ),
         (
             "gemini-2.5-pro",
+            HarnessId.OPENCODE,
             "smoke-tester",
             "claude-sonnet-4",
             "verification",
@@ -151,13 +161,20 @@ def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(mode
 )
 def test_primary_launch_injects_inventory_by_harness_family(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     model: str,
+    expected_harness: HarnessId,
     peer_name: str,
     peer_model: str,
     skill_name: str,
     skill_description: str,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=expected_harness,
+    )
     write_agent(tmp_path, name="dev-orchestrator", model=model)
     write_agent(tmp_path, name=peer_name, model=peer_model)
     write_skill(tmp_path, skill_name, description=skill_description)
@@ -191,6 +208,11 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4",
+        harness=HarnessId.CLAUDE,
+    )
     write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4")
     monkeypatch.setattr(context_ref, "resolve_context_ref", lambda _root, _ref: object())
     monkeypatch.setattr(context_ref, "resolved_context_ref_value", lambda _ref: "p999")
@@ -231,6 +253,7 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
 )
 def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     model: str,
     expected_harness: HarnessId,
 ) -> None:
@@ -242,6 +265,11 @@ def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=expected_harness,
     )
     write_agent(tmp_path, name="dev-orchestrator", model=model)
 
