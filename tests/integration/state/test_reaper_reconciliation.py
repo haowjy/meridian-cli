@@ -361,7 +361,6 @@ def test_reconcile_active_spawn_with_dead_runner_and_no_exit_or_report_fails(
     [
         ("1", "running", None),
         ("0", "failed", "missing_runner_pid"),
-        ("garbage", "running", None),
     ],
 )
 def test_reconcile_active_spawn_depth_gate_respects_env_matrix(

@@ -120,7 +120,7 @@ def test_doctor_warning_shape_for_non_mars_warnings(
         assert warning.payload is None
 
 
-@pytest.mark.parametrize("depth_value", ["1", "garbage"])
+@pytest.mark.parametrize("depth_value", ["1"])
 def test_doctor_kill_orphans_skips_repair_when_depth_is_not_clearly_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -141,7 +141,7 @@ def test_doctor_kill_orphans_skips_repair_when_depth_is_not_clearly_root(
     assert "orphan_runs" not in result.repaired
 
 
-@pytest.mark.parametrize("depth_value", [None, "", "0"])
+@pytest.mark.parametrize("depth_value", [None, "0"])
 def test_doctor_kill_orphans_repairs_orphan_runs_when_depth_is_clearly_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

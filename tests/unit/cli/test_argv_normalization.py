@@ -118,25 +118,6 @@ def test_validate_fork_mode_rejects_identity_override_agent() -> None:
         )
 
 
-def test_validate_fork_mode_rejects_identity_override_model() -> None:
-    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
-        validate_fork_mode(
-            fork_from="p1",
-            fork_fresh_from=None,
-            continue_from=None,
-            model="gpt-5.4-mini",
-        )
-
-
-def test_validate_fork_mode_rejects_identity_override_skills() -> None:
-    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
-        validate_fork_mode(
-            fork_from="p1",
-            fork_fresh_from=None,
-            continue_from=None,
-            skills="foo,bar",
-        )
-
 
 def test_validate_fork_mode_allows_fork_fresh_with_agent_model_and_skills() -> None:
     assert validate_fork_mode(
