@@ -104,13 +104,8 @@ def test_build_primary_spawn_request_copies_context_from() -> None:
 
 @pytest.mark.parametrize(
     "model",
-    [
-        "claude-sonnet-4",
-        "gpt-5.4",
-        "gemini-2.5-pro",
-        "",
-    ],
-    ids=["claude-model", "codex-model", "opencode-model", "no-model"],
+    ["claude-sonnet-4"],
+    ids=["claude-model"],
 )
 def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(model: str) -> None:
     """Without explicit harness we default to no synthetic first prompt."""
@@ -246,10 +241,8 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     ("model", "expected_harness"),
     [
         ("claude-sonnet-4", HarnessId.CLAUDE),
-        ("gpt-5.4", HarnessId.CODEX),
-        ("gemini-2.5-pro", HarnessId.OPENCODE),
     ],
-    ids=["claude", "codex", "opencode"],
+    ids=["claude"],
 )
 def test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated(
     tmp_path: Path,

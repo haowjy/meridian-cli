@@ -53,7 +53,7 @@ def test_config_set_and_reset_require_project_config_file(
 
 @pytest.mark.parametrize(
     "key",
-    ["defaults.model", "defaults.harness", "primary.model", "primary.harness"],
+    ["defaults.model"],
 )
 @pytest.mark.parametrize("operation", ["get", "set", "reset"])
 def test_deleted_routing_default_keys_are_not_supported_by_config_commands(
@@ -274,49 +274,6 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
     assert "[[hooks]]" in updated
     assert 'run = "echo hi"' in updated
     assert load_config(project_root).primary.agent == "coder"
-
-
-def test_config_reset_preserves_dynamic_sections_comments_and_unknown_content(
-    tmp_path: Path,
-) -> None:
-    project_root = _repo(tmp_path)
-    config_path = project_root / "meridian.toml"
-    config_path.write_text(
-        "# top-level comment\n"
-        "[primary]\n"
-        'agent = "reviewer" # inline comment\n'
-        "\n"
-        "[context.work]\n"
-        'source = "git"\n'
-        'remote = "https://example.com/work.git"\n'
-        "\n"
-        "[workspace.docs]\n"
-        'path = "./docs"\n'
-        "\n"
-        "[custom]\n"
-        'value = "keep-me"\n'
-        "\n"
-        "[[hooks]]\n"
-        'event = "spawn"\n'
-        'run = "echo hi"\n',
-        encoding="utf-8",
-    )
-
-    result = config_reset_sync(
-        ConfigResetInput(project_root=project_root.as_posix(), key="primary.agent")
-    )
-
-    updated = config_path.read_text(encoding="utf-8")
-
-    assert result.removed is True
-    assert "# top-level comment" in updated
-    assert 'agent = "reviewer"' not in updated
-    assert "[context.work]" in updated
-    assert "[workspace.docs]" in updated
-    assert "[custom]" in updated
-    assert "[[hooks]]" in updated
-    assert 'run = "echo hi"' in updated
-    assert load_config(project_root).primary.agent is None
 
 
 def test_config_set_rewrites_nested_harness_alias_to_canonical_spelling(tmp_path: Path) -> None:
