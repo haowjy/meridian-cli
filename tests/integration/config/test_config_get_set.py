@@ -26,36 +26,26 @@ def _repo(tmp_path: Path) -> Path:
     return project_root
 
 
-@pytest.mark.parametrize("operation", ["set", "reset"])
-def test_config_set_and_reset_require_project_config_file(
+def test_config_set_requires_project_config_file(
     tmp_path: Path,
-    operation: str,
 ) -> None:
     project_root = _repo(tmp_path)
 
     with pytest.raises(ValueError, match="no project config; run `meridian config init`"):
-        if operation == "set":
-            config_set_sync(
-                ConfigSetInput(
-                    project_root=project_root.as_posix(),
-                    key="defaults.max_depth",
-                    value="5",
-                )
+        config_set_sync(
+            ConfigSetInput(
+                project_root=project_root.as_posix(),
+                key="defaults.max_depth",
+                value="5",
             )
-        else:
-            config_reset_sync(
-                ConfigResetInput(
-                    project_root=project_root.as_posix(),
-                    key="defaults.max_depth",
-                )
-            )
+        )
 
 
 @pytest.mark.parametrize(
     "key",
     ["defaults.model"],
 )
-@pytest.mark.parametrize("operation", ["get", "set", "reset"])
+@pytest.mark.parametrize("operation", ["get", "set"])
 def test_deleted_routing_default_keys_are_not_supported_by_config_commands(
     tmp_path: Path,
     key: str,

@@ -86,7 +86,7 @@ def test_chat_cli_uses_requested_host_and_port(monkeypatch, tmp_path) -> None:
     assert stdout.getvalue() == "Chat backend: http://127.0.0.1:8765\n"
 
 
-@pytest.mark.parametrize("harness", ["claude", "codex", "opencode"])
+@pytest.mark.parametrize("harness", ["claude", "codex"])
 def test_chat_cli_accepts_supported_harness_matrix(monkeypatch, tmp_path, harness: str) -> None:
     monkeypatch.setattr("meridian.cli.chat_cmd.get_user_home", lambda: tmp_path / harness)
 

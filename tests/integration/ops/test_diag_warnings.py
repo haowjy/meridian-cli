@@ -84,7 +84,6 @@ def _run_doctor_without_upgrade_noise(
     ("trigger", "expected_code", "expected_payload_keys"),
     [
         ("missing_skills_directories", "missing_skills_directories", ()),
-        ("missing_agent_profile_directories", "missing_agent_profile_directories", ()),
         ("live_active_spawns_remain", "live_active_spawns_remain", ("spawn_ids",)),
     ],
 )

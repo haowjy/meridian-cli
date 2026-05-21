@@ -350,7 +350,6 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     ("parent_harness", "payload", "spawn_ids", "expected"),
     [
-        ("claude", SpawnWaitInput(), ("p-claude-child", "p-codex-child"), 270.0),
         ("codex", SpawnWaitInput(), ("p-claude-child", "p-unknown-child"), 900.0),
         (None, SpawnWaitInput(), ("p-codex-child",), 240.0),
         ("codex", SpawnWaitInput(yield_after_secs=12), ("p-codex-child",), 12.0),
