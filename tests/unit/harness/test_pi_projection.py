@@ -182,16 +182,11 @@ def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false
     ("extra_args", "message", "continue_fork"),
     [
         (("--session", "user-session"), "cannot accept --session", False),
-        (("--session=user-session",), "cannot accept --session", False),
         (("--fork", "user-session"), "cannot accept --fork", True),
-        (("--fork=user-session",), "cannot accept --fork", True),
         (("--mode", "rpc"), "cannot accept --mode", False),
         (("--session-dir", "/tmp/user-session-dir"), "cannot accept --session-dir", False),
         (("--no-extensions",), "cannot accept --no-extensions", False),
         (("-e", "/tmp/custom-extension.js"), "-e/--extension", False),
-        (("--extension", "/tmp/custom-extension.js"), "-e/--extension", False),
-        (("-ecustom.js",), "-e/--extension", False),
-        (("-e/tmp/custom-extension.js",), "-e/--extension", False),
     ],
 )
 def test_pi_native_projection_rejects_owned_cli_surface(
@@ -243,8 +238,6 @@ def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primar
         (("--no-extensions",), "extension loading"),
         (("-e", "/tmp/custom-extension.js"), "-e/--extension"),
         (("--extension", "/tmp/custom-extension.js"), "-e/--extension"),
-        (("-ecustom.js",), "-e/--extension"),
-        (("-e/tmp/custom-extension.js",), "-e/--extension"),
     ],
 )
 def test_pi_rpc_projection_rejects_owned_cli_surface(

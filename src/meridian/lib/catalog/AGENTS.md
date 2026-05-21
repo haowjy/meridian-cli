@@ -18,7 +18,7 @@ and prevents stale results from leaking across invocations.
 The resolution pipeline for a model alias:
 1. `mars models resolve <name>` via subprocess
 2. If unknown alias → search `mars models list --all` for exact model ID match
-3. If not found → pass through as raw model ID with harness inferred from patterns
+3. If not found → pass through as raw model ID with unresolved harness
 
 ## Key Rules
 
@@ -31,9 +31,9 @@ and prevent alias updates from taking effect until restart.
 degrades gracefully for listing. Do not add a soft fallback to resolve.
 
 **Use `AliasEntry.harness` (property), not `.resolved_harness` (raw field).** The
-property returns `resolved_harness` when mars provided it, and falls back to
-`pattern_fallback_harness(model_id)` otherwise. Routing decisions based on the raw
-field silently skip pattern-based harness inference.
+property raises when `resolved_harness` is missing. Mars should always provide a
+harness for resolved entries; missing harness is a bug, not a value meridian should
+guess.
 
 **`CatalogSession` is single-operation use.** Create one per launch operation and
 discard at operation end. Do not share across operations — cache is intentionally
@@ -65,7 +65,6 @@ environments silently skip auto-resolve aliases.
 - `model_aliases.py` — `AliasEntry`, `MarsResultCache`, mars subprocess integration
 - `agent.py` — `AgentProfile`, agent frontmatter parsing for `.mars/agents/*.md`
 - `skill.py` — skill YAML/markdown parsing for `.mars/skills/*/SKILL.md`
-- `model_policy.py` — `pattern_fallback_harness()`: harness inference from model ID patterns
 
 ## Usage Pattern
 
@@ -79,8 +78,8 @@ agent = load_agent_profile(project_root, "coder")
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — mars subprocess integration, resolve vs
-list asymmetry, `MarsResultCache` scoping contract, harness inference from patterns,
-fallback to merged JSON, model-policy parsing rules
+list asymmetry, `MarsResultCache` scoping contract, fallback to merged JSON,
+model-policy parsing rules
 
 ## Related
 

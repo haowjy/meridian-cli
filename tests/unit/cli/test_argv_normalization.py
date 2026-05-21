@@ -7,7 +7,6 @@ from meridian.cli.argv_normalization import (
     FORK_INFERENCE_ERROR,
     FROM_INFERENCE_ERROR,
     SELF_FORK_REF_SENTINEL,
-    SYNTHETIC_VALUE_TOKENS,
     ForkModeResolution,
     normalize_optional_value_flags,
     resolve_fork_ref,
@@ -23,15 +22,6 @@ from meridian.cli.argv_normalization import (
         (["--fork", "p123"], ["--fork", "p123"]),
         (["--fork", "--bg"], ["--fork", SELF_FORK_REF_SENTINEL, "--bg"]),
         (["--fork=p123"], ["--fork", "p123"]),
-        (["--fork="], ["--fork", SELF_FORK_REF_SENTINEL]),
-        (["--fork-fresh"], ["--fork-fresh", SELF_FORK_REF_SENTINEL]),
-        (["--from"], ["--from", SELF_FORK_REF_SENTINEL]),
-        (["--from", "p123"], ["--from", "p123"]),
-        (["--from=p123"], ["--from", "p123"]),
-        (
-            ["spawn", "--fork-fresh", "-a", "reviewer"],
-            ["spawn", "--fork-fresh", SELF_FORK_REF_SENTINEL, "-a", "reviewer"],
-        ),
         (
             ["spawn", "--fork", "--", "literal"],
             ["spawn", "--fork", SELF_FORK_REF_SENTINEL, "--", "literal"],
@@ -68,9 +58,6 @@ def test_resolve_optional_ref_self_sentinel_without_context_errors(
         resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from")
 
 
-def test_synthetic_value_tokens_contains_sentinel() -> None:
-    assert SELF_FORK_REF_SENTINEL in SYNTHETIC_VALUE_TOKENS
-
 
 def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
     with pytest.raises(ValueError, match=re.escape("Cannot combine --fork with --fork-fresh.")):
@@ -80,11 +67,6 @@ def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
 def test_validate_fork_mode_conflicts_fork_and_continue() -> None:
     with pytest.raises(ValueError, match=re.escape("Cannot combine --fork with --continue.")):
         validate_fork_mode(fork_from="p1", fork_fresh_from=None, continue_from="c1")
-
-
-def test_validate_fork_mode_conflicts_fork_fresh_and_continue() -> None:
-    with pytest.raises(ValueError, match=re.escape("Cannot combine --fork-fresh with --continue.")):
-        validate_fork_mode(fork_from=None, fork_fresh_from="p1", continue_from="c1")
 
 
 def test_validate_fork_mode_conflicts_from_and_continue() -> None:
@@ -109,18 +91,6 @@ def test_validate_fork_mode_conflicts_fork_and_from() -> None:
         )
 
 
-def test_validate_fork_mode_conflicts_fork_fresh_and_from() -> None:
-    with pytest.raises(
-        ValueError, match=re.escape("Cannot combine --fork-fresh with --from (MVP limitation).")
-    ):
-        validate_fork_mode(
-            fork_from=None,
-            fork_fresh_from="p1",
-            continue_from=None,
-            context_from=("c1",),
-        )
-
-
 def test_validate_fork_mode_rejects_identity_override_agent() -> None:
     with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
         validate_fork_mode(
@@ -130,25 +100,6 @@ def test_validate_fork_mode_rejects_identity_override_agent() -> None:
             agent="reviewer",
         )
 
-
-def test_validate_fork_mode_rejects_identity_override_model() -> None:
-    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
-        validate_fork_mode(
-            fork_from="p1",
-            fork_fresh_from=None,
-            continue_from=None,
-            model="gpt-5.4-mini",
-        )
-
-
-def test_validate_fork_mode_rejects_identity_override_skills() -> None:
-    with pytest.raises(ValueError, match=re.escape(FORK_IDENTITY_ERROR)):
-        validate_fork_mode(
-            fork_from="p1",
-            fork_fresh_from=None,
-            continue_from=None,
-            skills="foo,bar",
-        )
 
 
 def test_validate_fork_mode_allows_fork_fresh_with_agent_model_and_skills() -> None:

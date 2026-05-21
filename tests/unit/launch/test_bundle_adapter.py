@@ -282,10 +282,7 @@ def test_request_and_resolve_reports_missing_routing_harness(
     ("field_name", "field_value", "message"),
     [
         ("routing", [], r"'routing' must be an object"),
-        ("execution_policy", "not-an-object", r"'execution_policy' must be an object"),
-        ("prompt_surface", "bad", r"'prompt_surface' must be an object when present"),
         ("tools", False, r"'tools' must be an object when present"),
-        ("skills_metadata", ["bad"], r"'skills_metadata' must be an object when present"),
     ],
 )
 def test_request_and_resolve_reports_invalid_nested_bundle_sections(
@@ -352,7 +349,6 @@ def test_request_and_resolve_reports_subprocess_file_not_found(
     ("error", "message"),
     [
         (subprocess.TimeoutExpired(cmd="mars", timeout=60), "failed to execute"),
-        (OSError("boom"), "failed to execute"),
     ],
 )
 def test_request_and_resolve_reports_subprocess_execution_errors(

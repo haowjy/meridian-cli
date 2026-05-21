@@ -32,54 +32,54 @@ uv run meridian config show --json
 - [ ] `project_root` equals `$SCRATCH` (forward slashes)
 - [ ] `project_root_source == "env"`
 - [ ] `runtime_root` is `null`
-- [ ] `values` array contains entry for `primary.harness` with `value == null` and `source == "builtin"`
+- [ ] `values` array contains entry for `primary.agent` with `value == null` and `source == "builtin"`
 
 ## config get — single key
 
 ```bash
-uv run meridian config get primary.harness
+uv run meridian config get primary.agent
 ```
 - [ ] Exit 0
-- [ ] stdout: `primary.harness: null [source: builtin]`
+- [ ] stdout: `primary.agent: null [source: builtin]`
 
 ## config set and get roundtrip
 
 ```bash
 uv run meridian config init
-uv run meridian config set primary.harness opencode
+uv run meridian config set primary.agent reviewer
 ```
 - [ ] Exit 0
-- [ ] stdout contains `set primary.harness = opencode`
+- [ ] stdout contains `set primary.agent = reviewer`
 
 ```bash
-uv run meridian config get primary.harness
+uv run meridian config get primary.agent
 ```
 - [ ] Exit 0
-- [ ] stdout: `primary.harness: opencode [source: file]`
-- [ ] `$SCRATCH/meridian.toml` contains `harness = "opencode"`
+- [ ] stdout: `primary.agent: reviewer [source: file]`
+- [ ] `$SCRATCH/meridian.toml` contains `agent = "reviewer"`
 
 ## config reset
 
 ```bash
 uv run meridian config init
-uv run meridian config set primary.harness to-be-reset
-uv run meridian config reset primary.harness
+uv run meridian config set primary.agent to-be-reset
+uv run meridian config reset primary.agent
 ```
 - [ ] Exit 0
-- [ ] stdout contains `reset primary.harness (removed)`
+- [ ] stdout contains `reset primary.agent (removed)`
 
 ```bash
-uv run meridian config get primary.harness
+uv run meridian config get primary.agent
 ```
 - [ ] Exit 0
-- [ ] stdout: `primary.harness: null [source: builtin]`
+- [ ] stdout: `primary.agent: null [source: builtin]`
 
 ## config set preserves unrelated sections
 
 ```bash
 cat > "$SCRATCH/meridian.toml" << 'EOF'
 [primary]
-harness = "claude"
+agent = "reviewer"
 
 [workspace.docs]
 path = "./docs"
@@ -89,9 +89,9 @@ event = "spawn"
 run = "echo hi"
 EOF
 
-uv run meridian config set primary.harness opencode
+uv run meridian config set primary.agent coder
 ```
 - [ ] Exit 0
-- [ ] `meridian.toml` contains `harness = "opencode"`
+- [ ] `meridian.toml` contains `agent = "coder"`
 - [ ] `meridian.toml` still contains `[workspace.docs]`
 - [ ] `meridian.toml` still contains `[[hooks]]`

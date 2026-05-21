@@ -11,7 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, field_validator
 if TYPE_CHECKING:
     from meridian.lib.catalog.agent import AgentProfile
     from meridian.lib.catalog.model_aliases import AliasEntry
-    from meridian.lib.config.settings import AgentOverlayConfig, MeridianConfig
+    from meridian.lib.config.settings import MeridianConfig
     from meridian.lib.ops.spawn.models import SpawnCreateInput
 
 _AUTOCOMPACT_TOKEN_MIN = 1000
@@ -260,7 +260,7 @@ class RuntimeOverrides(BaseModel):
         timeout_raw = _read_env_string("MERIDIAN_TIMEOUT")
         return cls(
             model=_read_env_string("MERIDIAN_MODEL"),
-            harness=None,  # MERIDIAN_HARNESS is spawn-local, not a policy override
+            harness=None,
             agent=_read_env_string("MERIDIAN_AGENT"),
             effort=_read_env_string("MERIDIAN_EFFORT"),
             sandbox=_read_env_string("MERIDIAN_SANDBOX"),
@@ -284,18 +284,8 @@ class RuntimeOverrides(BaseModel):
 
     @classmethod
     def from_agent_profile(cls, profile: AgentProfile | None) -> RuntimeOverrides:
-        if profile is None:
-            return cls()
-        return cls(
-            model=_normalize_optional_string(profile.model),
-            harness=_normalize_optional_string(profile.harness),
-            # Profile selection is the agent; it does not override itself.
-            effort=_normalize_optional_string(profile.effort),
-            sandbox=_normalize_optional_string(profile.sandbox),
-            approval=_normalize_optional_string(profile.approval),
-            autocompact=profile.autocompact,
-            autocompact_pct=getattr(profile, "autocompact_pct", None),
-        )
+        _ = profile
+        return cls()
 
     @classmethod
     def from_alias_entry(cls, alias_entry: AliasEntry | None) -> RuntimeOverrides:
@@ -316,8 +306,6 @@ class RuntimeOverrides(BaseModel):
             return cls()
         primary = config.primary
         return cls(
-            model=primary.model,
-            harness=primary.harness,
             agent=primary.agent,
             effort=primary.effort,
             sandbox=primary.sandbox,
@@ -334,31 +322,6 @@ class RuntimeOverrides(BaseModel):
         if config is None:
             return cls()
         return cls()
-
-    @classmethod
-    def from_agent_overlay_routing(cls, overlay: AgentOverlayConfig | None) -> RuntimeOverrides:
-        """Extract routing fields (model, harness) from an agent overlay."""
-
-        if overlay is None:
-            return cls()
-        return cls(
-            model=overlay.model,
-            harness=overlay.harness,
-        )
-
-    @classmethod
-    def from_agent_overlay_policy(cls, overlay: AgentOverlayConfig | None) -> RuntimeOverrides:
-        """Extract policy fields from an agent overlay."""
-
-        if overlay is None:
-            return cls()
-        return cls(
-            effort=overlay.effort,
-            approval=overlay.approval,
-            sandbox=overlay.sandbox,
-            autocompact=overlay.autocompact,
-            autocompact_pct=overlay.autocompact_pct,
-        )
 
     @classmethod
     def from_spawn_input(cls, payload: SpawnCreateInput) -> RuntimeOverrides:

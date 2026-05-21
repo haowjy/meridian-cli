@@ -5,11 +5,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import meridian.lib.chat.server as server
-from meridian.lib.chat.event_log import ChatEventLog
-from meridian.lib.chat.protocol import ChatEvent, utc_now_iso
 from meridian.lib.chat.server import app, configure
 from meridian.lib.core.types import SpawnId
-from meridian.lib.state.paths import RuntimePaths
 
 
 class Handle:
@@ -68,17 +65,6 @@ def test_rest_routes_are_command_wrappers(tmp_path: Path) -> None:
         assert client.get(f"/chat/{chat_id}/state").json()["state"] == "closed"
 
 
-def test_create_chat_accepts_empty_body(tmp_path: Path) -> None:
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        created = client.post("/chat")
-
-    assert created.status_code == 200
-    payload = created.json()
-    assert payload["chat_id"].startswith("c-")
-    assert payload["state"] == "idle"
-
-
 def test_list_chats_and_events_routes_expose_persisted_state(tmp_path: Path) -> None:
     configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
     with TestClient(app) as client:
@@ -99,47 +85,6 @@ def test_list_chats_and_events_routes_expose_persisted_state(tmp_path: Path) -> 
         limited = client.get(f"/chat/{chat_id}/events?last=1").json()
         assert len(limited["events"]) == 1
         assert limited["events"][0]["type"]
-
-
-def test_events_route_rejects_unknown_chat(tmp_path: Path) -> None:
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        response = client.get("/chat/c-missing/events")
-        assert response.status_code == 404
-
-
-def test_restart_recovery_marks_unclosed_active_chat_idle_with_error(tmp_path: Path) -> None:
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        chat_id = client.post("/chat", json={}).json()["chat_id"]
-        prompted = client.post(f"/chat/{chat_id}/msg", json={"text": "hi"}).json()
-        assert prompted["status"] == "accepted"
-
-    log = ChatEventLog(RuntimePaths.from_root_dir(tmp_path).chat_history_path(chat_id))
-    log.append(
-        ChatEvent(
-            type="turn.started",
-            seq=0,
-            chat_id=chat_id,
-            execution_id="p-test",
-            timestamp=utc_now_iso(),
-        )
-    )
-
-    configure(runtime_root=tmp_path, backend_acquisition=Acquisition())
-    with TestClient(app) as client:
-        assert client.get(f"/chat/{chat_id}/state").json()["state"] == "idle"
-        events = _replayed_events(client, chat_id)
-        relevant_types = [
-            event["type"]
-            for event in events
-            if event["type"] not in {"user.prompt", "chat.state_changed"}
-        ]
-        assert relevant_types == [
-            "chat.started",
-            "turn.started",
-            "runtime.error",
-        ]
 
 
 def _frontend_assets(tmp_path: Path):

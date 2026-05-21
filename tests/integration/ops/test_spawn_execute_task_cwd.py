@@ -7,12 +7,13 @@ from typing import Any
 
 import meridian.lib.ops.spawn.api as spawn_api
 import meridian.lib.ops.spawn.execute as spawn_execute
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.spawn.execute_bg import _load_bg_worker_request
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_spawn_log_dir
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _seed_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -32,6 +33,11 @@ def test_spawn_create_background_persists_distinct_task_cwd(
     runtime_root = tmp_path / "runtime-root"
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
     monkeypatch.chdir(task_cwd)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+    )
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
@@ -85,6 +91,11 @@ def test_spawn_create_blocking_passes_distinct_task_cwd_to_launch_runtime(
     runtime_root = tmp_path / "runtime-root"
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
     monkeypatch.chdir(task_cwd)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+    )
 
     captured: dict[str, Any] = {}
 

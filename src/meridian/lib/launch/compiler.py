@@ -7,14 +7,13 @@ later cleanup.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from fnmatch import fnmatchcase
-from typing import Literal, cast
+from typing import Literal
 
-from meridian.lib.catalog.agent import ModelPolicyRule
 from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.config.settings import AgentOverlayConfig
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import (
     EXECUTION_POLICY_FIELDS,
@@ -25,11 +24,23 @@ from meridian.lib.core.overrides import (
 from meridian.lib.tools import ToolsField
 
 
+@dataclass(frozen=True)
+class ModelPolicyRule:
+    """One model-policy override rule from launch policy inputs."""
+
+    match_type: Literal["model", "alias", "model-glob"]
+    match_value: str
+    no_fallback: bool = False
+    overrides: Mapping[str, object] = field(default_factory=dict)
+
+
 class ProvenanceLevel(Enum):
     CLI = "cli"
     ENV = "env"
-    AGENT_OVERLAY_POLICY = "agent-overlay-model-policy"
-    AGENT_OVERLAY_DEFAULT = "agent-overlay-default"
+    OVERLAY_MODEL_POLICY = "overlay-model-policy"
+    OVERLAY = "overlay"
+    SETTINGS_MODEL_POLICY = "settings-model-policy"
+    MATCHED_POLICY_RULE = "matched_policy_rule"
     PROFILE_MODEL_POLICY = "profile-model-policy"
     PROFILE_DEFAULT = "profile-default"
     CONFIG_DEFAULT = "config-default"
@@ -61,7 +72,6 @@ class CompilerRequest:
     # Layered override sources — separate for provenance accuracy
     cli_overrides: RuntimeOverrides
     env_overrides: RuntimeOverrides
-    agent_overlay: AgentOverlayConfig | None
     config_defaults: RuntimeOverrides
 
     # Agent profile data (loaded by caller, passed as data)
@@ -180,9 +190,8 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
     model_token, model_source = _resolve_model_token(request)
     canonical_model_id = _canonical_model_id(model_token=model_token, request=request)
 
-    effective_policies, overlay_policy_count = effective_model_policies(
-        profile_model_policies=request.profile_model_policies,
-        agent_overlay=request.agent_overlay,
+    effective_policies = effective_model_policies(
+        profile_model_policies=request.profile_model_policies
     )
     matched_policy = _match_policy_rule(
         model_policies=effective_policies,
@@ -192,7 +201,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
     policy_source = _matched_policy_provenance(
         matched_policy=matched_policy,
         model_policies=effective_policies,
-        overlay_policy_count=overlay_policy_count,
     )
     matched_policy_overrides = _policy_overrides(matched_policy)
 
@@ -208,15 +216,12 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
     )
 
     alias_defaults = RuntimeOverrides.from_alias_entry(request.resolved_alias_entry)
-    overlay_policy_defaults = RuntimeOverrides.from_agent_overlay_policy(request.agent_overlay)
-
     effort, effort_source = _resolve_execution_policy_field(
         request,
         "effort",
         (request.cli_overrides.effort, ProvenanceLevel.CLI),
         (request.env_overrides.effort, ProvenanceLevel.ENV),
         (policy_override_tier.effort, policy_override_source),
-        (overlay_policy_defaults.effort, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
         (request.profile_policy_defaults.effort, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.effort, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.effort, ProvenanceLevel.ALIAS_DEFAULT),
@@ -227,7 +232,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.cli_overrides.approval, ProvenanceLevel.CLI),
         (request.env_overrides.approval, ProvenanceLevel.ENV),
         (policy_override_tier.approval, policy_override_source),
-        (overlay_policy_defaults.approval, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
         (request.profile_policy_defaults.approval, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.approval, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.approval, ProvenanceLevel.ALIAS_DEFAULT),
@@ -238,7 +242,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.cli_overrides.sandbox, ProvenanceLevel.CLI),
         (request.env_overrides.sandbox, ProvenanceLevel.ENV),
         (policy_override_tier.sandbox, policy_override_source),
-        (overlay_policy_defaults.sandbox, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
         (request.profile_policy_defaults.sandbox, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.sandbox, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.sandbox, ProvenanceLevel.ALIAS_DEFAULT),
@@ -249,7 +252,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.cli_overrides.autocompact, ProvenanceLevel.CLI),
         (request.env_overrides.autocompact, ProvenanceLevel.ENV),
         (policy_override_tier.autocompact, policy_override_source),
-        (overlay_policy_defaults.autocompact, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
         (request.profile_policy_defaults.autocompact, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.autocompact, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.autocompact, ProvenanceLevel.ALIAS_DEFAULT),
@@ -260,7 +262,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
         (request.cli_overrides.autocompact_pct, ProvenanceLevel.CLI),
         (request.env_overrides.autocompact_pct, ProvenanceLevel.ENV),
         (policy_override_tier.autocompact_pct, policy_override_source),
-        (overlay_policy_defaults.autocompact_pct, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),
         (request.profile_policy_defaults.autocompact_pct, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.autocompact_pct, ProvenanceLevel.CONFIG_DEFAULT),
         (alias_defaults.autocompact_pct, ProvenanceLevel.ALIAS_DEFAULT),
@@ -274,7 +275,6 @@ def compile_launch_params(request: CompilerRequest) -> CompilerResult:
             matched_policy_overrides.timeout,
             policy_source if matched_policy is not None else ProvenanceLevel.UNSET,
         ),
-        (None, ProvenanceLevel.AGENT_OVERLAY_DEFAULT),  # Overlay timeout intentionally excluded.
         (
             None,
             ProvenanceLevel.PROFILE_DEFAULT,
@@ -363,10 +363,6 @@ def _resolve_model_token(request: CompilerRequest) -> tuple[str, ProvenanceLevel
     model, source = _resolve_field(
         (request.cli_overrides.model, ProvenanceLevel.CLI),
         (request.env_overrides.model, ProvenanceLevel.ENV),
-        (
-            request.agent_overlay.model if request.agent_overlay is not None else None,
-            ProvenanceLevel.AGENT_OVERLAY_DEFAULT,
-        ),
         (request.profile_routing_model, ProvenanceLevel.PROFILE_DEFAULT),
         (request.config_defaults.model, ProvenanceLevel.CONFIG_DEFAULT),
     )
@@ -381,46 +377,22 @@ def _canonical_model_id(*, model_token: str, request: CompilerRequest) -> str:
     return model_token
 
 
-def _overlay_policy_rules(overlay: AgentOverlayConfig) -> tuple[ModelPolicyRule, ...]:
-    if overlay.model_policies is None:
-        return ()
-    return tuple(
-        ModelPolicyRule(
-            match_type=cast("Literal['model', 'alias', 'model-glob']", rule.match_type),
-            match_value=rule.match_value,
-            overrides=dict(rule.overrides),
-            no_fallback=rule.no_fallback,
-        )
-        for rule in overlay.model_policies
-    )
-
-
 def effective_model_policies(
     *,
     profile_model_policies: tuple[ModelPolicyRule, ...] | None,
-    agent_overlay: AgentOverlayConfig | None,
-) -> tuple[tuple[ModelPolicyRule, ...], int]:
-    profile_policies = profile_model_policies or ()
-    if agent_overlay is None or agent_overlay.model_policies is None:
-        return profile_policies, 0
-
-    overlay_policies = _overlay_policy_rules(agent_overlay)
-    effective_policies = (*overlay_policies, *profile_policies)
-    return effective_policies, len(overlay_policies)
+) -> tuple[ModelPolicyRule, ...]:
+    return profile_model_policies or ()
 
 
 def _matched_policy_provenance(
     *,
     matched_policy: ModelPolicyRule | None,
     model_policies: tuple[ModelPolicyRule, ...],
-    overlay_policy_count: int,
 ) -> ProvenanceLevel:
     if matched_policy is None:
         return ProvenanceLevel.UNSET
-    for index, candidate in enumerate(model_policies):
+    for candidate in model_policies:
         if candidate is matched_policy:
-            if index < overlay_policy_count:
-                return ProvenanceLevel.AGENT_OVERLAY_POLICY
             return ProvenanceLevel.PROFILE_MODEL_POLICY
     return ProvenanceLevel.UNSET
 
@@ -469,13 +441,15 @@ def _provenance_rank(level: ProvenanceLevel) -> int:
     order = {
         ProvenanceLevel.CLI: 0,
         ProvenanceLevel.ENV: 1,
-        ProvenanceLevel.AGENT_OVERLAY_POLICY: 2,
-        ProvenanceLevel.AGENT_OVERLAY_DEFAULT: 3,
-        ProvenanceLevel.PROFILE_MODEL_POLICY: 4,
-        ProvenanceLevel.PROFILE_DEFAULT: 5,
-        ProvenanceLevel.CONFIG_DEFAULT: 6,
-        ProvenanceLevel.ALIAS_DEFAULT: 7,
-        ProvenanceLevel.UNSET: 8,
+        ProvenanceLevel.OVERLAY_MODEL_POLICY: 2,
+        ProvenanceLevel.OVERLAY: 3,
+        ProvenanceLevel.SETTINGS_MODEL_POLICY: 4,
+        ProvenanceLevel.MATCHED_POLICY_RULE: 5,
+        ProvenanceLevel.PROFILE_MODEL_POLICY: 6,
+        ProvenanceLevel.PROFILE_DEFAULT: 7,
+        ProvenanceLevel.CONFIG_DEFAULT: 8,
+        ProvenanceLevel.ALIAS_DEFAULT: 9,
+        ProvenanceLevel.UNSET: 10,
     }
     return order[level]
 
@@ -504,10 +478,6 @@ def _resolve_harness(
     harness, harness_source = _resolve_field(
         (request.cli_overrides.harness, ProvenanceLevel.CLI),
         (request.env_overrides.harness, ProvenanceLevel.ENV),
-        (
-            request.agent_overlay.harness if request.agent_overlay is not None else None,
-            ProvenanceLevel.AGENT_OVERLAY_DEFAULT,
-        ),
         (policy_harness, policy_source if policy_harness is not None else ProvenanceLevel.UNSET),
         (request.profile_routing_harness, ProvenanceLevel.PROFILE_DEFAULT),
     )
@@ -531,9 +501,7 @@ def _resolve_harness(
         if model_derived is not None and model_derived != harness:
             return model_derived, ProvenanceLevel.ALIAS_DEFAULT, "model-derived-override"
 
-    if harness_source is ProvenanceLevel.AGENT_OVERLAY_POLICY:
-        harness_provenance = "agent-overlay-model-policy"
-    elif harness_source is ProvenanceLevel.PROFILE_MODEL_POLICY:
+    if harness_source is ProvenanceLevel.PROFILE_MODEL_POLICY:
         harness_provenance = "profile-model-policy"
 
     return harness, harness_source, harness_provenance
@@ -543,6 +511,7 @@ __all__ = [
     "CompilerRequest",
     "CompilerResult",
     "FieldProvenance",
+    "ModelPolicyRule",
     "ProvenanceLevel",
     "ResolvedExecutionPolicy",
     "compile_launch_params",

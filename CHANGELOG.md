@@ -4,6 +4,42 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `ResolvedLaunchPolicy.matched_policy_rule` preserves exact mars provenance string for audit and dry-run surfaces.
+
+### Changed
+- `uv run pytest-llm` defaults to xdist `-n auto` parallel mode. Suite runs in ~75s instead of ~210s. Force serial with `pytest-llm -p no:xdist` when order matters.
+- Meridian's AgentProfile shrunk to identity + content; mars parses profile routing/tools/execution-policy and projects through the launch bundle.
+- PRIMARY launch policy now resolves model/harness/execution policy through `mars build launch-bundle` adapter (same routing authority as spawn-prepare), not local compiler resolution.
+- PRIMARY launches now preserve bundle-selected harness runnable model IDs (for example `openai/gpt-5.5`) through final harness launch params.
+- Missing runnable-path warnings now cover bundle-driven reroutes on PRIMARY routing surfaces.
+- Launch-policy unit tests no longer assert CHAT/PRIMARY local compiler routing; stale phase-1 guards were deleted from `tests/unit/launch/test_policies.py`.
+- Model listing in `src/meridian/lib/ops/catalog.py` no longer applies Meridian-side visibility heuristics; it now consumes Mars model visibility output directly.
+- Primary launch synthetic prompt gating in `src/meridian/lib/launch/plan.py` now uses explicit harness only; no model-pattern harness inference path.
+- `AliasEntry.harness` now raises when Mars did not provide harness instead of guessing from model ID patterns.
+- Mars now resolves agent overlays; Meridian deleted `AgentOverlayConfig` and now consumes launch-bundle routing/execution-policy directly.
+- Launch-context and Exhibit-A integration tests now fake the launch-bundle seam when asserting Meridian-owned behavior (env projection, deny-set composition, telemetry, task-cwd persistence), while bundle subprocess/error contracts remain in `tests/unit/launch/test_bundle_adapter.py` + smoke.
+- Smoke docs updated for post-phase-2 routing and launch checks: `tests/smoke/spawn-dry-run.md`, `tests/smoke/workspace.md`, and new `tests/smoke/spawn-continue-fork.md`.
+- Legacy `[agents]` migration error-path assertion now checks platform-native config path rendering, so Windows validates copy/paste-safe diagnostics.
+- Launch integration clusters now stub `launch-bundle` at the seam (`tests/support/launch.py`) across launch-process and launch-resolution tests, keeping runner/session/fork/managed-path assertions on real Meridian logic while removing live mars harness dependency.
+
+### Removed
+- 56 tests under `tests/integration/ops/` that pinned SpawnCreateInput field forwarding, prepared-payload serialization, or qi_ops micro-coverage. Canonical behavior + edge-classification cases retained.
+- 66 tests under tests/integration/chat/ and tests/integration/cli/ that pinned argv shape (type-checked by pyright+cyclopts) or were per-mode cross-product duplicates. Smoke guides cover the per-mode behavior.
+- AgentProfile.model, .harness, .tools, .mcp_tools, .sandbox, .effort, .approval, .autocompact, .autocompact_pct, .model_policies.
+- `catalog/agent.py` `_parse_tools()`, `_parse_model_policies()`, `ModelPolicyRule` class.
+- `meridian.toml` `[primary].model`, `[primary].harness` fields. Mars owns model and harness routing; shadow surface gone.
+- `MERIDIAN_HARNESS` config env var. Use `-m` / `--harness` CLI flag or mars-side default.
+- Obsolete chat CLI policy snapshot integration tests removed (`tests/integration/chat/test_chat_cli_policy.py`) now that launch policy no longer routes through chat/local compiler paths.
+- `src/meridian/lib/catalog/model_policy.py` and all imports of its visibility/pattern fallback helpers.
+- `AgentOverlayConfig`, `RuntimeOverrides.from_agent_overlay_routing()`, `RuntimeOverrides.from_agent_overlay_policy()`, and `compiler._overlay_policy_rules()`.
+- `[agents]` block in `meridian.toml`; move config to `[agents.<name>]` in `mars.toml` / `mars.local.toml` (legacy section now raises migration error).
+- 39 pin-the-implementation tests from launch/CLI output and spawn-continue forwarding clusters; coverage moved to lean parser/contract tests plus smoke guides.
+- 77 tests under `tests/integration/state/` and `tests/unit/state/` that pinned implementation details or were error-mode cross-product duplicates. Canonical invariant coverage retained.
+
+### Fixed
+- Opencode report extraction now reads the assistant message from history.jsonl payload.properties.info.parts instead of looking for a literal "assistant"-type event that the wrapped format never emits.
+
 ## [0.1.14-rc.3] - 2026-05-21
 
 ## [0.1.14-rc.2] - 2026-05-21

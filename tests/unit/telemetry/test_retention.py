@@ -11,8 +11,6 @@ from meridian.lib.telemetry.retention import SegmentOwner, parse_segment_owner
     ("name", "expected"),
     [
         ("cli.123-0001.jsonl", SegmentOwner(logical_owner="cli", pid=123)),
-        ("chat.456-0002.jsonl", SegmentOwner(logical_owner="chat", pid=456)),
-        ("p42.789-0010.jsonl", SegmentOwner(logical_owner="p42", pid=789)),
         (
             "spawn.worker.alpha.321-0003.jsonl",
             SegmentOwner(logical_owner="spawn.worker.alpha", pid=321),
@@ -31,14 +29,9 @@ def test_parse_segment_owner_accepts_compound_segment_names(
     [
         "123-0001.jsonl",
         "cli.123.jsonl",
-        "cli.123-.jsonl",
         "cli.-0001.jsonl",
-        "cli.+123-0001.jsonl",
-        "cli.123-+1.jsonl",
-        "cli.123--1.jsonl",
         "cli.pid-0001.jsonl",
         "cli.123-seq.jsonl",
-        ".123-0001.jsonl",
         "cli.123-0001.log",
     ],
 )

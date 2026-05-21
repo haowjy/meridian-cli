@@ -38,12 +38,22 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.types import SessionMode
 from meridian.lib.state import session_store
 from meridian.lib.state.spawn_store import get_spawn, list_spawns
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _write_minimal_mars_config(project_root: Path) -> None:
     (project_root / "mars.toml").write_text(
         '[settings]\ntargets = [".claude"]\n',
         encoding="utf-8",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
     )
 
 
@@ -445,59 +455,3 @@ def test_run_harness_process_codex_managed_failure_raises_error(
         )
 
 
-@pytest.mark.slow
-def test_run_harness_process_fresh_codex_primary_routes_to_managed_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Fresh Codex primary (no session to resume) uses managed attach, not black-box."""
-    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "codex-fresh-managed"
-    project_root.mkdir()
-    # No session request - this is a fresh primary
-    launch_context, harness_registry = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CODEX,
-        model="gpt-5.4",
-        prompt="fresh codex primary prompt",
-    )
-    codex_adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
-    managed_calls = 0
-
-    def fake_run_primary_attach(
-        harness_id: Any,
-        spawn_id: Any,
-        spawn_dir: Any,
-        control_root: Any,
-        task_cwd: Any,
-        env: Any,
-        spec: Any,
-        process_launcher: Any,
-        on_running: Any = None,
-    ) -> PrimaryAttachOutcome:
-        _ = spawn_id, spawn_dir, control_root, task_cwd, env, spec, process_launcher
-        nonlocal managed_calls
-        managed_calls += 1
-        # Verify this is for Codex
-        assert harness_id == HarnessId.CODEX
-        # Call on_running to mark spawn as running
-        if callable(on_running):
-            on_running(12345)
-        return PrimaryAttachOutcome(exit_code=0, session_id="fresh-thread-id", tui_pid=12345)
-
-    monkeypatch.setattr(codex_adapter, "observe_session_id", lambda **kwargs: None)
-
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        run_primary_attach_fn=fake_run_primary_attach,
-        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
-            AssertionError("fresh codex primary should use managed path, not black-box")
-        ),
-        stop_session_fn=lambda *args, **kwargs: None,
-        update_session_harness_id_fn=lambda *args, **kwargs: None,
-    )
-
-    assert managed_calls == 1
-    assert outcome.exit_code == 0
-    assert outcome.resolved_harness_session_id == "fresh-thread-id"

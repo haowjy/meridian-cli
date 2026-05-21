@@ -5,11 +5,9 @@ import importlib
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from meridian.lib.catalog.agent import AgentProfile, scan_agent_profiles
-from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.catalog.models import load_merged_aliases
 from meridian.lib.catalog.skill import SkillRegistry
 from meridian.lib.config.context_config import ContextConfig
 from meridian.lib.context.resolver import (
@@ -214,70 +212,9 @@ def compose_skill_injections(skills: Sequence[SkillContent]) -> str | None:
     return _join_sections(blocks)
 
 
-def _dedupe_fan_out_aliases(
-    alias_keys: Sequence[str],
-    alias_catalog: Mapping[str, AliasEntry],
-) -> list[str]:
-    """Deduplicate display entries by resolved model id preserving profile order.
-
-    Alias entries are resolved through the alias catalog. Entries that are not
-    known aliases may be literal model ids from policy fallback rules, so their
-    display value is treated as the canonical model id for deduplication.
-    """
-
-    deduped: list[str] = []
-    seen_model_ids: set[str] = set()
-    for alias_key in alias_keys:
-        catalog_entry = alias_catalog.get(alias_key)
-        if catalog_entry is None:
-            if alias_key in seen_model_ids:
-                continue
-            seen_model_ids.add(alias_key)
-            deduped.append(alias_key)
-            continue
-        model_id = str(catalog_entry.model_id)
-        if model_id in seen_model_ids:
-            continue
-        seen_model_ids.add(model_id)
-        deduped.append(alias_key)
-    return deduped
-
-
-def _get_fan_out_aliases(agent: AgentProfile) -> tuple[str, ...]:
-    """Get fan-out aliases for inventory display.
-
-    Uses model-policies fallback entries only.
-    """
-    fallback_rules = tuple(
-        rule
-        for rule in agent.model_policies
-        if not rule.no_fallback and rule.match_type in {"alias", "model"}
-    )
-    if fallback_rules:
-        return tuple(rule.match_value for rule in fallback_rules)
-    return ()
-
-
-def _render_agent_line(
-    agent: AgentProfile,
-    alias_catalog: Mapping[str, AliasEntry],
-) -> str:
+def _render_agent_line(agent: AgentProfile) -> str:
     description = agent.description.strip()
-    suffix_parts: list[str] = []
-    if agent.model:
-        suffix_parts.append(f"Model: {agent.model}")
-    display_aliases = _get_fan_out_aliases(agent)
-    if display_aliases:
-        fan_out_aliases = _dedupe_fan_out_aliases(
-            display_aliases,
-            alias_catalog,
-        )
-        if fan_out_aliases:
-            suffix_parts.append(f"Fan-out: {', '.join(fan_out_aliases)}")
-    line = f"- {agent.name}: {description}" if description else f"- {agent.name}"
-    if suffix_parts:
-        line = f"{line} | {' | '.join(suffix_parts)}"
-    return line
+    return f"- {agent.name}: {description}" if description else f"- {agent.name}"
 
 
 def build_context_prompt(
@@ -319,7 +256,7 @@ def build_context_prompt(
 def build_launch_context_documents(
     *,
     project_root: Path,
-    alias_catalog: Mapping[str, AliasEntry] | None = None,
+    alias_catalog: Mapping[str, Any] | None = None,
     active_work_dir: Path | None = None,
     include_inventory: bool = True,
     include_context: bool = True,
@@ -352,7 +289,7 @@ def build_launch_context_documents(
 def build_agent_inventory_prompt(
     *,
     project_root: Path,
-    alias_catalog: dict[str, AliasEntry] | None = None,
+    alias_catalog: dict[str, Any] | None = None,
     agents: list[AgentProfile] | None = None,
 ) -> str | None:
     """Render installed agent inventory grouped by mode."""
@@ -370,12 +307,7 @@ def build_agent_inventory_prompt(
     if not visible_agents:
         return None
 
-    if alias_catalog is None:
-        alias_catalog = {
-            alias.alias: alias
-            for alias in load_merged_aliases(project_root=project_root)
-            if alias.alias.strip()
-        }
+    _ = alias_catalog
 
     lines = [
         "# Meridian Agents",
@@ -389,12 +321,12 @@ def build_agent_inventory_prompt(
     if primary_agents:
         lines.extend(["", "## Primary"])
         for agent in primary_agents:
-            lines.append(_render_agent_line(agent, alias_catalog))
+            lines.append(_render_agent_line(agent))
 
     if subagent_agents:
         lines.extend(["", "## Subagent"])
         for agent in subagent_agents:
-            lines.append(_render_agent_line(agent, alias_catalog))
+            lines.append(_render_agent_line(agent))
 
     return "\n".join(lines).strip()
 

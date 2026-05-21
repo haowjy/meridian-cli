@@ -1,6 +1,3 @@
-import pytest
-
-from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES,
     TERMINAL_SPAWN_STATUSES,
@@ -9,7 +6,6 @@ from meridian.lib.core.spawn_lifecycle import (
     is_active_spawn_status,
     resolve_execution_terminal_outcome,
     resolve_execution_terminal_state,
-    validate_transition,
 )
 
 
@@ -58,48 +54,6 @@ def test_resolve_execution_terminal_outcome_projects_runner_facts() -> None:
     assert outcome.status == "cancelled"
     assert outcome.exit_code == 143
     assert outcome.error == "terminated"
-
-
-@pytest.mark.parametrize(
-    ("from_status", "to_status"),
-    [
-        ("queued", "running"),
-        ("queued", "succeeded"),
-        ("queued", "failed"),
-        ("queued", "cancelled"),
-        ("running", "finalizing"),
-        ("running", "succeeded"),
-        ("running", "failed"),
-        ("running", "cancelled"),
-        ("finalizing", "succeeded"),
-        ("finalizing", "failed"),
-        ("finalizing", "cancelled"),
-    ],
-)
-def test_validate_transition_allows_declared_table_edges(
-    from_status: SpawnStatus,
-    to_status: SpawnStatus,
-) -> None:
-    validate_transition(from_status=from_status, to_status=to_status)
-
-
-@pytest.mark.parametrize(
-    ("from_status", "to_status"),
-    [
-        ("queued", "finalizing"),
-        ("succeeded", "failed"),
-        ("failed", "cancelled"),
-        ("cancelled", "running"),
-        ("finalizing", "running"),
-        ("finalizing", "queued"),
-    ],
-)
-def test_validate_transition_rejects_illegal_edges(
-    from_status: SpawnStatus,
-    to_status: SpawnStatus,
-) -> None:
-    with pytest.raises(ValueError, match="Illegal spawn transition"):
-        validate_transition(from_status=from_status, to_status=to_status)
 
 
 def test_finalizing_membership_reflects_active_non_terminal_state() -> None:

@@ -79,3 +79,20 @@ uv run meridian spawn -a test -p "test" --dry-run --json
 - [ ] stderr JSON `error` field contains `entry name 'Bad'`
 - [ ] stderr JSON `error` field contains `meridian config show`
 - [ ] stderr JSON `error` field contains `meridian doctor`
+
+## Workspace entries project as dirs, not prompt/context env aliases
+
+```bash
+mkdir -p "$SCRATCH/workspace-docs"
+cat > "$SCRATCH/meridian.toml" << 'EOF'
+[workspace.docs]
+path = "./workspace-docs"
+EOF
+
+uv run meridian spawn -m gpt-5.4-mini -p "workspace projection check" --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `status == "dry-run"`
+- [ ] `cli_command` contains `$SCRATCH/workspace-docs` as projected add-dir
+- [ ] `composed_prompt` does NOT contain `workspace-docs`
+- [ ] JSON output does NOT contain `MERIDIAN_CONTEXT_DOCS_DIR`

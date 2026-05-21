@@ -159,39 +159,6 @@ async def test_cold_acquisition_registers_observer_before_start_and_uses_persist
 
 
 @pytest.mark.asyncio
-async def test_cold_acquisition_uses_launch_plan_connection_config(
-    tmp_path: Path,
-):
-    manager = SpawnManager()
-    control_root = tmp_path / "project"
-    control_root.mkdir(parents=True)
-    env_overrides = {
-        "MERIDIAN_HARNESS": "codex",
-        "MERIDIAN_SPAWN_ID": "s-chat",
-        "MERIDIAN_PROJECT_DIR": str(control_root.resolve()),
-        "MERIDIAN_RUNTIME_DIR": str((tmp_path / "runtime").resolve()),
-    }
-
-    acquisition = ColdSpawnAcquisition(
-        spawn_manager=manager,
-        normalizer_factory=lambda chat_id, execution_id: Normalizer(),
-        pipeline_lookup=PipelineLookup(),
-        launch_plan_factory=_launch_plan_factory(
-            spawn_id=SpawnId("s-chat"),
-            harness_id=HarnessId.CODEX,
-            control_root=control_root,
-            env_overrides=env_overrides,
-        ),
-    )
-
-    handle = await acquisition.acquire("c1", "hello")
-
-    assert manager.started_config is not None
-    assert manager.started_config.env_overrides == env_overrides
-    assert str(handle.spawn_id) == "s-chat"
-
-
-@pytest.mark.asyncio
 async def test_cold_acquisition_unregisters_observer_when_start_fails(tmp_path: Path):
     manager = SpawnManager()
     manager.fail_start = True

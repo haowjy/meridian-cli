@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from meridian.lib.catalog.model_policy import pattern_fallback_harness
 from meridian.lib.config.project_root import resolve_project_root_resolution
 from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.overrides import RuntimeOverrides
@@ -25,10 +24,8 @@ _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
 def _requires_primary_synthetic_prompt(request: LaunchRequest) -> bool:
     """Return whether the resolved harness requires a synthetic first prompt.
 
-    Resolution order when harness is not explicit:
-    1. Infer harness from model via pattern matching (no I/O).
-    2. Fall back to False — Claude is the default primary harness and does
-       not require an initial prompt.
+    If harness is not explicit, fall back to False — Claude is the default
+    primary harness and does not require an initial prompt.
     """
 
     explicit_harness = (request.harness or "").strip()
@@ -40,18 +37,6 @@ def _requires_primary_synthetic_prompt(request: LaunchRequest) -> bool:
             return False
         harness = get_default_harness_registry().get_subprocess_harness(harness_id)
         return harness.capabilities.requires_initial_prompt
-
-    # Harness not set — try to infer from model via pattern matching.
-    # Covers raw model IDs (e.g. "gpt-5.4" → codex) and aliases that match
-    # a pattern directly (e.g. "codex" matches "codex*").
-    model = (request.model or "").strip()
-    if model:
-        try:
-            inferred_harness_id = pattern_fallback_harness(model)
-            harness = get_default_harness_registry().get_subprocess_harness(inferred_harness_id)
-            return harness.capabilities.requires_initial_prompt
-        except (ValueError, KeyError):
-            pass
 
     # Cannot determine harness. Claude is the default primary harness and
     # does not need an initial prompt.

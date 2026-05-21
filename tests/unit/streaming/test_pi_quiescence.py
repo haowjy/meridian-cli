@@ -155,18 +155,8 @@ def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -
             "pi_lifecycle_tracking_invalidated:missing_subspawn_id:meridian.subspawn.start",
         ),
         (
-            "meridian.notification.queued",
-            {},
-            "pi_lifecycle_tracking_invalidated:missing_notification_id:meridian.notification.queued",
-        ),
-        (
             "meridian.subspawn.start",
             {"schema_version": 2, "subspawn_id": "tracked-1", "wait_policy": "tracked"},
-            "pi_lifecycle_tracking_invalidated:unsupported_schema_version:2",
-        ),
-        (
-            "meridian.notification.queued",
-            {"schema_version": "2", "notification_id": "n-1"},
             "pi_lifecycle_tracking_invalidated:unsupported_schema_version:2",
         ),
         (

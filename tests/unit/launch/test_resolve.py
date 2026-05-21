@@ -3,7 +3,6 @@ from __future__ import annotations
 from meridian.lib.catalog.model_aliases import AliasEntry, RunnablePath
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
-from meridian.lib.launch.prompt import dedupe_skill_names as prompt_dedupe_skill_names
 from meridian.lib.launch.resolve import (
     dedupe_skill_names,
     resolve_pi_child_wave_timeout_seconds,
@@ -19,14 +18,6 @@ def _registry_with_harnesses(*harness_ids: HarnessId) -> HarnessRegistry:
     for harness_id in harness_ids:
         registry.register(base_registry.get(harness_id))
     return registry
-
-
-def test_dedupe_skill_names_is_importable_from_resolve() -> None:
-    assert callable(dedupe_skill_names)
-
-
-def test_dedupe_skill_names_is_reexported_from_prompt() -> None:
-    assert prompt_dedupe_skill_names is dedupe_skill_names
 
 
 def test_dedupe_skill_names_preserves_first_seen_order() -> None:
@@ -79,22 +70,6 @@ def test_validate_harness_compatibility_allows_harness_with_empty_candidates() -
         model_id=ModelId("fake-model"),
         resolved_harness=HarnessId.CODEX,
         harness_candidates=(),
-    )
-
-    validate_harness_compatibility(
-        model="fake-model",
-        harness_id=HarnessId.OPENCODE,
-        model_entry=model_entry,
-        harness_registry=_registry_with_harnesses(HarnessId.CODEX, HarnessId.OPENCODE),
-    )
-
-
-def test_validate_harness_compatibility_allows_policy_reroute_outside_candidates() -> None:
-    model_entry = AliasEntry(
-        alias="fast",
-        model_id=ModelId("fake-model"),
-        resolved_harness=HarnessId.CODEX,
-        harness_candidates=("codex",),
     )
 
     validate_harness_compatibility(

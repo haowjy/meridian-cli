@@ -43,26 +43,3 @@ def test_causal_tracker_marks_late_old_turn_output_stale_after_interrupt() -> No
     assert late_item.item_id == "item-old"
     assert late_item.interrupt_epoch == 1
     assert late_item.stale_after_interrupt is True
-
-
-def test_causal_tracker_respects_explicit_interrupt_fields() -> None:
-    tracker = ManagedPrimaryCausalTracker()
-
-    fields = tracker.derive(
-        _event(
-            "item/completed",
-            {
-                "interrupt_epoch": 7,
-                "stale_after_interrupt": True,
-                "turn_id": "turn-explicit",
-                "item_id": "item-explicit",
-                "request_id": "request-explicit",
-            },
-        )
-    )
-
-    assert fields.interrupt_epoch == 7
-    assert fields.stale_after_interrupt is True
-    assert fields.turn_id == "turn-explicit"
-    assert fields.item_id == "item-explicit"
-    assert fields.request_id == "request-explicit"

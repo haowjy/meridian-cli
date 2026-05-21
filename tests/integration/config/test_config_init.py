@@ -48,7 +48,6 @@ def test_config_init_scaffold_includes_dynamic_section_examples(tmp_path: Path) 
     assert result.created is True
     assert "[defaults]" in content
     assert "[state]" in content
-    assert "# [agents.tech-lead]" in content
     assert "# [[hooks]]" in content
     assert "# [context.work]" in content
     assert "# [workspace.docs]" in content

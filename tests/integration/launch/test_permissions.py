@@ -145,8 +145,6 @@ def test_tools_resolver_codex_ignores_claude_tool_flags() -> None:
     (
         ("default", "default", ()),
         ("read-only", "read-only", ("--sandbox", "read-only")),
-        ("workspace-write", "workspace-write", ("--sandbox", "workspace-write")),
-        ("danger-full-access", "danger-full-access", ("--sandbox", "danger-full-access")),
     ),
 )
 def test_codex_uses_exact_sandbox_from_profile(

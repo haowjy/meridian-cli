@@ -12,11 +12,13 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _noop_setup_telemetry(**_kwargs: object) -> None:
@@ -70,6 +72,11 @@ def test_spawn_create_dry_run_emits_usage_events(
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.chdir(project_root)
     monkeypatch.setattr(spawn_api, "setup_telemetry", _noop_setup_telemetry)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+    )
     sink = RecordingTelemetrySink()
     init_telemetry(sink=sink)
 
@@ -115,6 +122,11 @@ def test_spawn_create_with_prepared_skips_self_bootstrap(
     monkeypatch.setattr(spawn_api, "load_config", _forbidden)
     monkeypatch.setattr(spawn_api, "resolve_runtime_root_and_config", _forbidden)
     monkeypatch.setattr(spawn_api, "resolve_runtime_root", _forbidden)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+    )
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(

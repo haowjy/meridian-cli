@@ -30,7 +30,7 @@ uv run meridian --version
 uv run meridian config show
 ```
 - [ ] Exit 0
-- [ ] Output contains `harness` (e.g. `primary.harness`)
+- [ ] Output contains `agent` (e.g. `primary.agent`)
 
 ## Models list redirect
 

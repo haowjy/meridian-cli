@@ -186,3 +186,19 @@ def test_spawn_action_wire_background_does_not_add_transcript_command() -> None:
     assert agent_wire["wait_required"] is True
     assert agent_wire["wait_command"] == "meridian spawn wait"
     assert "transcript_command" not in agent_wire
+
+
+def test_spawn_action_dry_run_exposes_matched_policy_rule() -> None:
+    output = SpawnActionOutput(
+        command="spawn.create",
+        status="dry-run",
+        model="gpt-5.5",
+        harness_id="codex",
+        matched_policy_rule="settings:2",
+    )
+
+    wire = output.to_wire()
+    text = output.format_text()
+
+    assert wire["matched_policy_rule"] == "settings:2"
+    assert "Matched policy rule: settings:2" in text

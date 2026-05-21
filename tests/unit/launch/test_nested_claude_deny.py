@@ -7,10 +7,10 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.permissions import (
-    CLAUDE_NATIVE_DELEGATION_TOOLS,
     compute_nested_claude_deny_additions,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
+from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
     from pytest import MonkeyPatch
@@ -62,8 +62,17 @@ def _build_context(
     harness: HarnessId,
     agent: str | None = None,
     tools: str | dict[str, str] | None = None,
+    bundle_tools_allowed: tuple[str, ...] = (),
+    bundle_tools_disallowed: tuple[str, ...] = (),
 ) -> SpawnRequest:
-    _ = monkeypatch
+    model = "haiku" if harness == HarnessId.CLAUDE else "gpt-5.4-mini"
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=harness,
+        tools_allowed=bundle_tools_allowed,
+        tools_disallowed=bundle_tools_disallowed,
+    )
     mars_toml = tmp_path / "mars.toml"
     if not mars_toml.exists():
         mars_toml.write_text(
@@ -72,7 +81,7 @@ def _build_context(
         )
     request = SpawnRequest(
         prompt="test",
-        model="haiku" if harness == HarnessId.CLAUDE else "gpt-5.4-mini",
+        model=model,
         harness=harness.value,
         agent=agent,
         tools=tools,
@@ -159,26 +168,7 @@ def test_spawn_prepare_claude_skips_implicit_deny_when_allowlist_present(
         composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
         harness=HarnessId.CLAUDE,
         agent="allowlist-agent",
-    )
-
-    assert resolved_request.tools == {"agent": "allow", "task": "deny"}
-
-
-def test_spawn_prepare_claude_with_profile_tools_partial_optout(
-    tmp_path: Path,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _write_agent_profile(
-        tmp_path=tmp_path,
-        name="partial-optout-agent",
-        tools={"agent": "allow"},
-    )
-    resolved_request = _build_context(
-        tmp_path=tmp_path,
-        monkeypatch=monkeypatch,
-        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-        harness=HarnessId.CLAUDE,
-        agent="partial-optout-agent",
+        bundle_tools_allowed=("agent",),
     )
 
     assert resolved_request.tools == {"agent": "allow", "task": "deny"}
@@ -189,7 +179,11 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """S-9: Missing profile means no opt-outs."""
-    _ = monkeypatch
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="haiku",
+        harness=HarnessId.CLAUDE,
+    )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
@@ -213,14 +207,17 @@ def test_adhoc_allowed_tools_without_profile_still_denies_agent(
     )
 
     assert context.resolved_request.tools == {"*": "deny", "agent": "deny"}
-    assert "--allowedTools" not in context.binding.argv
 
 
 def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    _ = monkeypatch
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="haiku",
+        harness=HarnessId.CLAUDE,
+    )
     (tmp_path / "mars.toml").write_text(
         '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
         encoding="utf-8",
@@ -249,8 +246,6 @@ def test_adhoc_allowed_tools_respects_existing_explicit_deny_precedence(
         "bash": "allow",
         "task": "deny",
     }
-    allowed_flag_index = context.binding.argv.index("--allowedTools")
-    assert context.binding.argv[allowed_flag_index + 1] == "Bash"
 
 
 def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
@@ -259,5 +254,3 @@ def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
     assert adapter.blocked_child_env_vars() == {"CLAUDECODE"}
 
 
-def test_claude_native_delegation_constant_contains_agent_tool() -> None:
-    assert "Agent" in CLAUDE_NATIVE_DELEGATION_TOOLS

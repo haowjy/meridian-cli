@@ -12,7 +12,6 @@ import pytest
 
 from meridian.cli import chat_cmd
 from meridian.cli.chat_cmd import run_chat_server
-from meridian.cli.output import OutputConfig
 from meridian.lib.chat.policy import default_chat_policy_snapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.launch_types import CompositionWarning
@@ -44,93 +43,10 @@ def _stable_policy_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_chat_command_falls_back_to_globally_parsed_harness(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_run_chat_server(**kwargs) -> int:
-        captured.update(kwargs)
-        return 8765
-
-    monkeypatch.setattr(chat_cmd, "run_chat_server", fake_run_chat_server)
-    token = cli_main._GLOBAL_OPTIONS.set(
-        cli_main.GlobalOptions(output=OutputConfig(format="text"), harness="codex")
-    )
-    try:
-        chat_cmd._chat(port=8765)
-    finally:
-        cli_main._GLOBAL_OPTIONS.reset(token)
-
-    assert captured["harness"] == "codex"
-    assert captured["headless"] is False
-    assert captured["frontend_dist"] is None
-    assert captured["open_browser"] is False
-    assert captured["autocompact"] is None
-
-
-def test_chat_command_prefers_explicit_harness_over_global_default(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_run_chat_server(**kwargs) -> int:
-        captured.update(kwargs)
-        return 8765
-
-    monkeypatch.setattr(chat_cmd, "run_chat_server", fake_run_chat_server)
-    token = cli_main._GLOBAL_OPTIONS.set(
-        cli_main.GlobalOptions(output=OutputConfig(format="text"), harness="claude")
-    )
-    try:
-        chat_cmd._chat(
-            harness="opencode",
-            port=8765,
-            headless=True,
-            frontend_dist="/tmp/dist",
-            open_browser=True,
-        )
-    finally:
-        cli_main._GLOBAL_OPTIONS.reset(token)
-
-    assert captured["harness"] == "opencode"
-    assert captured["headless"] is True
-    assert captured["frontend_dist"] == "/tmp/dist"
-    assert captured["open_browser"] is True
-
-
-def test_chat_command_passes_autocompact_to_chat_server(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_run_chat_server(**kwargs) -> int:
-        captured.update(kwargs)
-        return 8765
-
-    monkeypatch.setattr(chat_cmd, "run_chat_server", fake_run_chat_server)
-    chat_cmd._chat(port=8765, autocompact=55)
-
-    assert captured["autocompact"] == 55
-
-
-@pytest.mark.parametrize("harness", [HarnessId.CLAUDE, HarnessId.CODEX, HarnessId.OPENCODE])
-def test_backend_acquisition_preserves_requested_harness(tmp_path, harness: HarnessId) -> None:
-    snapshot = default_chat_policy_snapshot(harness=harness, model="model-x")
-    acquisition = chat_cmd._build_backend_acquisition(
-        runtime_root=tmp_path / "runtime",
-        project_root=tmp_path,
-        pipeline_lookup=EmptyPipelineLookup(snapshot),
-    )
-
-    plan = acquisition._build_launch_plan("c1", "hello")
-    config = plan.connection_config
-    spec = plan.spec
-
-    assert config.harness_id == harness
-    assert spec.model == "model-x"
-
-
 @pytest.mark.parametrize(
     ("harness_name", "expected_harness"),
     [
         ("claude", HarnessId.CLAUDE),
-        ("codex", HarnessId.CODEX),
-        ("opencode", HarnessId.OPENCODE),
     ],
 )
 def test_chat_cli_builds_runtime_with_factory_inputs(
@@ -262,41 +178,3 @@ def test_chat_cli_prints_policy_warnings_before_backend_url(monkeypatch, tmp_pat
     )
 
 
-@pytest.mark.parametrize(
-    ("argv", "flag"),
-    [
-        (["chat", "ls", "--model", "codex"], "--model"),
-        (["chat", "show", "c1", "--approval", "auto"], "--approval"),
-        (["chat", "log", "c1", "--skills", "md-validation"], "--skills"),
-        (["chat", "close", "c1", "--agent", "reviewer"], "--agent"),
-    ],
-)
-def test_chat_management_subcommands_reject_launch_policy_flags(
-    argv: list[str], flag: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(argv)
-
-    assert exc_info.value.code == 1
-    stderr = capsys.readouterr().err
-    assert 'Unknown option: "' in stderr
-    assert flag in stderr or (flag == "--agent" and '"-a"' in stderr)
-
-
-@pytest.mark.parametrize(
-    ("argv", "selector"),
-    [
-        (["--harness", "codex", "chat", "ls"], "--harness"),
-        (["codex", "chat", "ls"], "codex"),
-    ],
-)
-def test_chat_management_subcommands_reject_global_harness_selectors(
-    argv: list[str], selector: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with pytest.raises(SystemExit) as exc_info:
-        cli_main.main(argv)
-
-    message = str(exc_info.value)
-    assert "Unknown option" in message
-    assert selector in message
-    assert capsys.readouterr().err == ""

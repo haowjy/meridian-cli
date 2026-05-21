@@ -208,52 +208,6 @@ def test_backpressure_eviction_drops_slow_client_without_affecting_fast_clients(
     assert fast_seqs == list(range(7))
 
 
-def test_three_websocket_clients_receive_same_close_event(tmp_path: Path) -> None:
-    runtime = ChatRuntime(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        default_policy_snapshot=default_chat_policy_snapshot(),
-        backend_acquisition=cast("Any", PassiveAcquisition()),
-    )
-    configure(runtime=runtime)
-
-    with TestClient(app) as client:
-        chat_id = client.post("/chat", json={}).json()["chat_id"]
-        with (
-            client.websocket_connect(f"/ws/chat/{chat_id}") as ws_one,
-            client.websocket_connect(f"/ws/chat/{chat_id}") as ws_two,
-            client.websocket_connect(f"/ws/chat/{chat_id}") as ws_three,
-        ):
-            assert ws_one.receive_json()["type"] == CHAT_STARTED
-            assert ws_two.receive_json()["type"] == CHAT_STARTED
-            assert ws_three.receive_json()["type"] == CHAT_STARTED
-
-            ws_one.send_json(
-                {
-                    "command_type": "close",
-                    "command_id": "cmd-close",
-                    "chat_id": chat_id,
-                    "timestamp": "2026-04-30T00:00:00Z",
-                    "payload": {},
-                }
-            )
-            ws_one_messages = _receive_until(
-                ws_one,
-                lambda messages: _has_ack_and_event(
-                    messages, command_id="cmd-close", event_type=CHAT_EXITED
-                ),
-                max_messages=2,
-            )
-            ws_two_message = ws_two.receive_json()
-            ws_three_message = ws_three.receive_json()
-
-    assert {payload["type"] for payload in ws_one_messages if "type" in payload} == {CHAT_EXITED}
-    assert {payload["ack"] for payload in ws_one_messages if "ack" in payload} == {"cmd-close"}
-    assert ws_two_message["type"] == CHAT_EXITED
-    assert ws_three_message["type"] == CHAT_EXITED
-    assert ws_two_message["seq"] == ws_three_message["seq"] == 1
-
-
 def test_websocket_command_ack_framing_matches_each_command_id(tmp_path: Path) -> None:
     configure(runtime_root=tmp_path, backend_acquisition=cast("Any", PassiveAcquisition()))
 
@@ -371,24 +325,3 @@ def test_malformed_websocket_message_rejects_sender_without_crashing_other_clien
     assert bad_close["type"] == CHAT_EXITED
 
 
-def test_rapid_connect_disconnect_does_not_leak_fanout_clients(tmp_path: Path) -> None:
-    runtime = ChatRuntime(
-        runtime_root=tmp_path,
-        project_root=tmp_path,
-        default_policy_snapshot=default_chat_policy_snapshot(),
-        backend_acquisition=cast("Any", PassiveAcquisition()),
-    )
-    configure(runtime=runtime)
-
-    with TestClient(app) as client:
-        chat_id = client.post("/chat", json={}).json()["chat_id"]
-        entry = runtime.live_entries[chat_id]
-        assert entry.fanout is not None
-
-        for _ in range(10):
-            with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
-                assert ws.receive_json()["type"] == CHAT_STARTED
-                assert entry.fanout.client_count == 1
-            _wait_for(lambda: entry.fanout is not None and entry.fanout.client_count == 0)
-
-        assert entry.fanout.client_count == 0

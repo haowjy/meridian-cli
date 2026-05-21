@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
@@ -17,6 +18,7 @@ from meridian.lib.launch.request import (
     SpawnRequest,
 )
 from tests.support.fixtures import write_agent, write_skill
+from tests.support.launch import stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
 
@@ -30,8 +32,14 @@ def _write_minimal_mars_config(project_root: Path) -> None:
 
 def test_spawn_prepare_opencode_keeps_all_references_inline(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gemini-2.5-pro",
+        harness=HarnessId.OPENCODE,
+    )
     write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4-5")
     write_agent(tmp_path, name="reviewer", model="gpt-5.4")
     file_ref = tmp_path / "README.md"
@@ -92,15 +100,21 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     ("harness", "model"),
     [
         ("codex", "gpt-5.4"),
-        ("opencode", "gemini-2.5-pro"),
     ],
 )
 def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_prompt(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     harness: str,
     model: str,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    expected_harness = HarnessId(harness)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model=model,
+        harness=expected_harness,
+    )
     write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4-5")
     write_agent(tmp_path, name="reviewer", model="gpt-5.4")
 
@@ -135,8 +149,14 @@ def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_pr
 
 def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_prompt(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-5",
+        harness=HarnessId.CLAUDE,
+    )
     write_skill(
         tmp_path,
         "verification",
@@ -211,8 +231,14 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
 
 def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-5",
+        harness=HarnessId.CLAUDE,
+    )
     write_skill(
         tmp_path,
         "verification",

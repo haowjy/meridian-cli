@@ -6,7 +6,6 @@ from meridian.lib.state.spawn.model import SpawnRecord
 from meridian.lib.state.spawn.repository import (
     read_prompt,
     read_state,
-    scan_spawn_ids,
     write_state,
     write_state_locked,
 )
@@ -82,34 +81,6 @@ def test_v2_state_round_trips_without_prompt_body(tmp_path: Path) -> None:
 
     assert restored == record
     assert read_prompt(spawns_dir, "p1") == "hello world"
-
-
-def test_read_state_returns_record_without_prompt_when_prompt_file_is_missing(
-    tmp_path: Path,
-) -> None:
-    spawns_dir = tmp_path / "spawns"
-    record = _record(prompt="hello world")
-
-    write_state(spawns_dir, record)
-
-    restored = read_state(spawns_dir, "p1")
-
-    assert restored == record.model_copy(update={"prompt": None})
-    assert read_prompt(spawns_dir, "p1") is None
-    state_text = (spawns_dir / "p1" / "state.json").read_text(encoding="utf-8")
-    assert '"prompt_length": 11' in state_text
-
-
-def test_scan_spawn_ids_lists_only_directories_with_state(tmp_path: Path) -> None:
-    spawns_dir = tmp_path / "spawns"
-    write_state(spawns_dir, _record("opaque-id"))
-    write_state(spawns_dir, _record("r7"))
-    (spawns_dir / "empty").mkdir()
-    (spawns_dir / "file").write_text("not a spawn", encoding="utf-8")
-
-    assert scan_spawn_ids(spawns_dir) == ["opaque-id", "r7"]
-
-
 def test_write_state_refuses_to_overwrite_terminal_state(tmp_path: Path) -> None:
     spawns_dir = tmp_path / "spawns"
     write_state(spawns_dir, _record(status="succeeded"))

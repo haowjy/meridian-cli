@@ -93,27 +93,33 @@ def test_resolve_project_root_does_not_treat_user_home_state_dir_as_project_mark
     assert resolution.source != "project-state"
 
 
-def test_load_config_reads_meridian_toml_at_project_root(tmp_path: Path) -> None:
+def test_load_config_reads_primary_agent_at_project_root(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     config_path = project_root / "meridian.toml"
-    config_path.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
+    config_path.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
 
-    assert load_config(project_root).primary.harness == "claude"
+    assert load_config(project_root).primary.agent == "reviewer"
 
 
 def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     (project_root / "meridian.toml").write_text(
-        '[defaults]\nmodel = "legacy-model"\nharness = "claude"\n',
+        "[defaults]\n"
+        'model = "legacy-model"\n'
+        'harness = "claude"\n'
+        "\n"
+        "[primary]\n"
+        'model = "shadow-model"\n'
+        'harness = "opencode"\n',
         encoding="utf-8",
     )
 
     config = load_config(project_root, resolve_models=False)
 
-    assert config.primary.model is None
-    assert config.primary.harness is None
+    assert not hasattr(config.primary, "model")
+    assert not hasattr(config.primary, "harness")
 
 
 def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
@@ -148,111 +154,21 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
-def test_load_config_parses_overlay_model_policy_no_fallback(tmp_path: Path) -> None:
+def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[agents.reviewer]",
-                "",
-                "[[agents.reviewer.model-policies]]",
-                "match = { alias = 'gpt55' }",
-                "override = { effort = 'high' }",
-                "no-fallback = true",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root, resolve_models=False)
-
-    overlay = config.agents["reviewer"]
-    assert overlay.model_policies is not None
-    assert len(overlay.model_policies) == 1
-    assert overlay.model_policies[0].match_type == "alias"
-    assert overlay.model_policies[0].no_fallback is True
-
-
-def test_load_config_accepts_empty_overlay_model_policy_override_for_fallback_candidates(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[agents.reviewer]",
-                "",
-                "[[agents.reviewer.model-policies]]",
-                "match = { alias = 'gpt55' }",
-                "override = {}",
-                "",
-                "[[agents.reviewer.model-policies]]",
-                "match = { model = 'gpt-5.5' }",
-                "override = {}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(project_root, resolve_models=False)
-
-    overlay = config.agents["reviewer"]
-    assert overlay.model_policies is not None
-    assert len(overlay.model_policies) == 2
-    assert overlay.model_policies[0].match_type == "alias"
-    assert overlay.model_policies[0].match_value == "gpt55"
-    assert overlay.model_policies[0].overrides == {}
-    assert overlay.model_policies[0].no_fallback is False
-    assert overlay.model_policies[1].match_type == "model"
-    assert overlay.model_policies[1].match_value == "gpt-5.5"
-    assert overlay.model_policies[1].overrides == {}
-    assert overlay.model_policies[1].no_fallback is False
-
-
-@pytest.mark.parametrize(
-    ("match_line", "no_fallback_line"),
-    [
-        ("match = { alias = 'gpt55' }", "no-fallback = true"),
-        ("match = { model-glob = 'gpt*' }", ""),
-    ],
-)
-def test_load_config_rejects_empty_overlay_model_policy_override_for_non_fallback_candidates(
-    tmp_path: Path,
-    match_line: str,
-    no_fallback_line: str,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    lines = [
-        "[agents.reviewer]",
-        "",
-        "[[agents.reviewer.model-policies]]",
-        match_line,
-        "override = {}",
-    ]
-    if no_fallback_line:
-        lines.append(no_fallback_line)
-    (project_root / "meridian.toml").write_text("\n".join(lines), encoding="utf-8")
+    config_path = project_root / "meridian.toml"
+    config_path.write_text('[agents.reviewer]\nmodel = "gpt55"\n', encoding="utf-8")
 
     with pytest.raises(
         ValueError,
-        match=r"expected at least one override field",
-    ):
+        match=r"Legacy section '\[agents\]' is not supported",
+    ) as exc_info:
         load_config(project_root, resolve_models=False)
 
-
-def test_load_config_ignores_legacy_state_path_when_root_config_missing(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    legacy_path = project_root / ".meridian" / "config.toml"
-    legacy_path.parent.mkdir()
-    legacy_path.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
-
-    assert load_config(project_root).primary.harness is None
+    message = str(exc_info.value)
+    assert str(config_path) in message
+    assert "define [agents.<name>] under mars.toml or mars.local.toml" in message
 
 
 def test_config_show_ignores_inaccessible_implicit_user_config(
@@ -414,18 +330,3 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
 
 
-def test_config_show_preserves_discovered_project_root_provenance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "plain-project"
-    nested = project_root / "tools" / "scripts"
-    project_root.mkdir()
-    nested.mkdir(parents=True)
-    (project_root / "meridian.local.toml").write_text("", encoding="utf-8")
-    monkeypatch.chdir(nested)
-
-    result = config_show_sync(ConfigShowInput())
-
-    assert result.project_root == project_root.resolve().as_posix()
-    assert result.project_root_source == "meridian-local-toml"

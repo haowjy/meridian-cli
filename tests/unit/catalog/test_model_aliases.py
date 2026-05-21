@@ -4,7 +4,6 @@ import pytest
 from pydantic import ValidationError
 
 from meridian.lib.catalog.model_aliases import AliasEntry, RunnablePath
-from meridian.lib.catalog.model_policy import pattern_fallback_harness
 from meridian.lib.core.types import HarnessId, ModelId
 
 
@@ -71,16 +70,20 @@ def test_alias_entry_harness_model_id_for_returns_none_with_empty_paths() -> Non
     assert alias_entry.harness_model_id_for("opencode") is None
 
 
-def test_alias_entry_harness_property_still_uses_resolved_or_pattern_fallback() -> None:
+def test_alias_entry_harness_property_requires_mars_resolved_harness() -> None:
     resolved_entry = AliasEntry(
         alias="fast",
         model_id=ModelId("fake-model"),
         resolved_harness=HarnessId.OPENCODE,
     )
-    fallback_entry = AliasEntry(
+    unresolved_entry = AliasEntry(
         alias="fast",
         model_id=ModelId("gpt-fallback-model"),
     )
 
     assert resolved_entry.harness == HarnessId.OPENCODE
-    assert fallback_entry.harness == pattern_fallback_harness("gpt-fallback-model")
+    with pytest.raises(
+        ValueError,
+        match="Model harness is missing from Mars resolution",
+    ):
+        _ = unresolved_entry.harness
