@@ -239,21 +239,13 @@ _EXECUTION_POLICY_PROVENANCE_KEYS: dict[ExecutionPolicyField, str] = {
     "timeout": "timeout_source",
 }
 
-# Routing precedence for the bundle path.  config-default is included so that
-# PRIMARY's config.primary.model / config.primary.harness can flow through the
-# bundle when no higher-precedence layer has set them (mars can't read the
-# meridian config directly).  For SPAWN_PREPARE, config_overrides is always
-# empty (from from_spawn_config()), so adding "config-default" has no effect.
+# Routing precedence for the bundle path. Only explicit user overrides are
+# forwarded into the bundle request.
 _BUNDLE_ROUTING_PRECEDENCE: tuple[str, ...] = (
     "cli",
     "env",
-    "agent-overlay-default",
-    "profile-default",
-    "config-default",
 )
-_BUNDLE_ROUTING_SOURCES: frozenset[str] = frozenset(
-    {"cli", "env", "agent-overlay-default", "config-default"}
-)
+_BUNDLE_ROUTING_SOURCES: frozenset[str] = frozenset({"cli", "env"})
 
 
 def _first_routing_candidate(
@@ -275,35 +267,22 @@ def _routing_rank(source: str) -> int:
 def _resolve_bundle_routing(
     *,
     surface: SurfacePolicyInput,
-    overlay_routing: RuntimeOverrides,
-    profile: AgentProfile | None,
 ) -> tuple[str | None, str | None, str | None, dict[str, str]]:
     """Resolve routing overrides + local routing provenance for the bundle path.
 
-    Config-level defaults (config.primary.model / config.primary.harness for
-    PRIMARY; empty for SPAWN_PREPARE) enter at the lowest precedence tier.
-    They are passed to the bundle only when no higher-precedence layer has set
-    the field, because mars cannot read the meridian config file directly.
+    Only explicit user overrides are forwarded to the bundle request.
     """
-
-    config_routing = surface.config_overrides.routing_scope()
 
     model_candidate = _first_routing_candidate(
         (
             ("cli", surface.cli_overrides.model),
             ("env", surface.env_overrides.model),
-            ("agent-overlay-default", overlay_routing.model),
-            ("profile-default", profile.model if profile is not None else None),
-            ("config-default", config_routing.model),
         )
     )
     harness_candidate = _first_routing_candidate(
         (
             ("cli", surface.cli_overrides.harness),
             ("env", surface.env_overrides.harness),
-            ("agent-overlay-default", overlay_routing.harness),
-            ("profile-default", profile.harness if profile is not None else None),
-            ("config-default", config_routing.harness),
         )
     )
 
@@ -335,7 +314,6 @@ def _resolve_bundle_routing(
 def _resolve_bundle_execution_policy(
     *,
     surface: SurfacePolicyInput,
-    agent_overlay_policy: RuntimeOverrides,
     bundle_execution_policy: RuntimeOverrides,
     profile_overrides: RuntimeOverrides,
 ) -> tuple[RuntimeOverrides, dict[str, str]]:
@@ -357,10 +335,6 @@ def _resolve_bundle_execution_policy(
         (
             "env",
             surface.env_overrides.execution_policy_scope(surface.supported_execution_policy_fields),
-        ),
-        (
-            "agent-overlay-default",
-            agent_overlay_policy.execution_policy_scope(surface.supported_execution_policy_fields),
         ),
         ("bundle", bundle_execution_policy),
         (
@@ -386,8 +360,8 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     """Resolve launch policy for PRIMARY and SPAWN_PREPARE via mars launch-bundle.
 
     Both surfaces share this single code path. The only differences are:
-    - PRIMARY passes config.primary.* routing and execution defaults via the
-      config_overrides layer; SPAWN_PREPARE passes empty config defaults.
+    - PRIMARY carries config.primary.* execution defaults in config_overrides;
+      SPAWN_PREPARE passes empty config defaults.
     - Validation of primary-launch harness compatibility happens downstream in
       the composition layer (_prepare_primary_surface), not here.
     """
@@ -409,11 +383,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     base_resolved = resolve(*full_layers)
     profile_skills = dedupe_skill_names(profile.skills) if profile is not None else ()
 
-    selected_agent_name = (
-        profile.name if profile is not None else (requested_agent or configured_default_agent or "")
-    )
-    agent_overlay = surface.config.agents.get(selected_agent_name) if selected_agent_name else None
-    overlay_routing = RuntimeOverrides.from_agent_overlay_routing(agent_overlay).routing_scope()
     (
         bundle_model_override,
         bundle_harness_override,
@@ -421,8 +390,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         routing_provenance_overrides,
     ) = _resolve_bundle_routing(
         surface=surface,
-        overlay_routing=overlay_routing,
-        profile=profile,
     )
 
     alias_catalog: dict[str, AliasEntry] = {}
@@ -464,7 +431,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         harness_model_id=bundle_result.harness_model,
     )
 
-    overlay_policy = RuntimeOverrides.from_agent_overlay_policy(agent_overlay)
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(
         supported_fields=surface.supported_execution_policy_fields
     )
@@ -473,7 +439,6 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         execution_policy_provenance_overrides,
     ) = _resolve_bundle_execution_policy(
         surface=surface,
-        agent_overlay_policy=overlay_policy,
         bundle_execution_policy=bundle_execution_policy,
         profile_overrides=profile_overrides,
     )

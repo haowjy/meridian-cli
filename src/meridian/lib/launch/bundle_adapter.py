@@ -377,8 +377,10 @@ def _map_provenance_level(value: str | None) -> ProvenanceLevel:
     mapping = {
         "cli": ProvenanceLevel.CLI,
         "env": ProvenanceLevel.ENV,
-        "agent-overlay-model-policy": ProvenanceLevel.AGENT_OVERLAY_POLICY,
-        "agent-overlay-default": ProvenanceLevel.AGENT_OVERLAY_DEFAULT,
+        "overlay-model-policy": ProvenanceLevel.OVERLAY_MODEL_POLICY,
+        "overlay": ProvenanceLevel.OVERLAY,
+        "settings-model-policy": ProvenanceLevel.SETTINGS_MODEL_POLICY,
+        "matched_policy_rule": ProvenanceLevel.MATCHED_POLICY_RULE,
         "profile-model-policy": ProvenanceLevel.PROFILE_MODEL_POLICY,
         "profile-default": ProvenanceLevel.PROFILE_DEFAULT,
         "config": ProvenanceLevel.CONFIG_DEFAULT,
