@@ -10,11 +10,6 @@
 # max_retries = 3
 # Delay multiplier between retries in seconds (float).
 # retry_backoff_seconds = 0.25
-# Default model for spawns when --model and profile model are both unset
-# (str model id).
-# model = ""
-# Default harness for spawns when higher-precedence values and profile harness are unset.
-# harness = "codex"
 
 # -- Timeout behavior -------------------------------------------------------
 [timeouts]
@@ -38,9 +33,9 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 [primary]
 # Context compaction threshold for the primary agent (int 1-100).
 # autocompact = 65
-# Model override for the primary agent (str model id; unset = use defaults.model).
+# Model override for the primary agent (str model id).
 # model = ""
-# Harness override for the primary agent (str; unset = use defaults.harness).
+# Harness override for the primary agent (str).
 # harness = ""
 # Agent profile name for the primary session (str; unset = no profile).
 agent = "product-lead"

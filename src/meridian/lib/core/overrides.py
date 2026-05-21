@@ -329,20 +329,11 @@ class RuntimeOverrides(BaseModel):
 
     @classmethod
     def from_spawn_config(cls, config: MeridianConfig | None) -> RuntimeOverrides:
-        """Build overrides from spawn-level config defaults.
-
-        Unlike from_config() which reads config.primary.*, this reads
-        spawn defaults from config.default_model.
-
-        Harness is intentionally excluded here so model->harness derivation
-        can run when only a model is configured.
-        """
+        """Build overrides from spawn-level config defaults."""
 
         if config is None:
             return cls()
-        return cls(
-            model=_normalize_optional_string(config.default_model) or None,
-        )
+        return cls()
 
     @classmethod
     def from_agent_overlay_routing(cls, overlay: AgentOverlayConfig | None) -> RuntimeOverrides:

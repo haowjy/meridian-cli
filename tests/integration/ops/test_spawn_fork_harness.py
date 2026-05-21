@@ -80,30 +80,31 @@ def _resolved_reference(**overrides: object) -> ResolvedSessionReference:
     return replace(reference, **overrides)
 
 
-def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        bundle_adapter,
-        "request_and_resolve",
-        lambda request, *, harness_registry: _FakeBundleResult(
-            model=request.model_override or "gpt-5.4-mini",
-            model_token=request.model_override or "gpt-5.4-mini",
-            harness=HarnessId.CODEX,
-            harness_model=request.model_override or "gpt-5.4-mini",
-            execution_policy=ResolvedExecutionPolicy(),
-            provenance={"model_source": "cli", "harness_source": "provider"},
-        ),
-    )
-
-
-def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
+def test_spawn_fork_rejects_cross_harness_when_model_infers_different_target(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEFAULT_HARNESS", "claude")
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_codex_session_reference)
+
+    captured_request = None
+
+    def _fake_request_and_resolve(request, *, harness_registry):
+        _ = harness_registry
+        nonlocal captured_request
+        captured_request = request
+        return _FakeBundleResult(
+            model=request.model_override or "gpt-5.4-mini",
+            model_token=request.model_override or "gpt-5.4-mini",
+            harness=HarnessId.CLAUDE if request.model_override == "haiku" else HarnessId.CODEX,
+            harness_model=request.model_override or "gpt-5.4-mini",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     def _fail_spawn_create_sync(*_args, **_kwargs):
         raise AssertionError("cross-harness fork should fail before spawn_create_sync")
@@ -119,6 +120,9 @@ def test_spawn_fork_rejects_cross_harness_when_env_selects_different_target(
                 project_root=project_root.as_posix(),
             )
         )
+    assert captured_request is not None
+    assert captured_request.model_override == "haiku"
+    assert captured_request.harness_override is None
 
 
 def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview(
@@ -127,22 +131,33 @@ def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview
 ) -> None:
     ambient_root = tmp_path / "ambient"
     ambient_root.mkdir()
-    (ambient_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "claude"\n',
-        encoding="utf-8",
-    )
     monkeypatch.chdir(ambient_root)
 
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
-    (project_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "codex"\n',
-        encoding="utf-8",
-    )
     prepared = prepare_for_runtime_write(project_root)
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_codex_session_reference)
-    _stub_bundle_adapter(monkeypatch)
+
+    captured_bundle_request = None
+
+    def _fake_request_and_resolve(request, *, harness_registry):
+        _ = harness_registry
+        nonlocal captured_bundle_request
+        captured_bundle_request = request
+        expected_root = project_root.resolve()
+        request_root = request.project_root.resolve()
+        harness = HarnessId.CODEX if request_root == expected_root else HarnessId.CLAUDE
+        return _FakeBundleResult(
+            model=request.model_override or "gpt-5.4-mini",
+            model_token=request.model_override or "gpt-5.4-mini",
+            harness=harness,
+            harness_model=request.model_override or "gpt-5.4-mini",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "provider"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     captured_input: SpawnCreateInput | None = None
 
@@ -168,20 +183,36 @@ def test_spawn_fork_with_prepared_context_uses_prepared_root_for_harness_preview
     assert result.status == "dry-run"
     assert captured_input is not None
     assert captured_input.harness == "codex"
+    assert captured_bundle_request is not None
+    assert captured_bundle_request.project_root.resolve() == project_root.resolve()
 
 
-def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(
+def test_spawn_fork_rejects_cross_harness_when_payload_harness_is_explicit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
     _state_root(project_root)
-    (project_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "claude"\n',
-        encoding="utf-8",
-    )
     monkeypatch.setattr(spawn_api, "resolve_session_reference", _fake_codex_session_reference)
+
+    captured_request = None
+
+    def _fake_request_and_resolve(request, *, harness_registry):
+        _ = harness_registry
+        nonlocal captured_request
+        captured_request = request
+        harness = HarnessId.CLAUDE if request.harness_override == "claude" else HarnessId.CODEX
+        return _FakeBundleResult(
+            model=request.model_override or "gpt-5.4-mini",
+            model_token=request.model_override or "gpt-5.4-mini",
+            harness=harness,
+            harness_model=request.model_override or "gpt-5.4-mini",
+            execution_policy=ResolvedExecutionPolicy(),
+            provenance={"model_source": "cli", "harness_source": "cli"},
+        )
+
+    monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
     def _fail_spawn_create_sync(*_args, **_kwargs):
         raise AssertionError("cross-harness fork should fail before spawn_create_sync")
@@ -193,10 +224,14 @@ def test_spawn_fork_rejects_cross_harness_when_project_default_is_explicit(
             SpawnForkInput(
                 source_ref="c-source",
                 prompt="fork prompt",
-                model="haiku",
+                model="gpt-5.4-mini",
+                harness="claude",
                 project_root=project_root.as_posix(),
             )
         )
+    assert captured_request is not None
+    assert captured_request.model_override == "gpt-5.4-mini"
+    assert captured_request.harness_override == "claude"
 
 
 def test_spawn_fork_errors_when_reference_has_no_recorded_session(

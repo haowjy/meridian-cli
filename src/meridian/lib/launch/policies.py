@@ -76,7 +76,6 @@ class SurfacePolicyInput:
     config_overrides: RuntimeOverrides
     config: MeridianConfig
     harness_registry: HarnessRegistry
-    configured_default_harness: str = "claude"
     skills_readonly: bool = True
     requested_skills: tuple[str, ...] = ()
     supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
@@ -168,7 +167,7 @@ def _resolve_final_model(
         return layer_model, None
 
     harness_default = config.default_model_for_harness(str(harness_id))
-    fallback_model = harness_default or config.default_model or ""
+    fallback_model = harness_default or ""
     if not fallback_model:
         return "", None
     try:
@@ -482,10 +481,9 @@ _SPAWN_PREPARE_ROUTING_PRECEDENCE: tuple[str, ...] = (
     "env",
     "agent-overlay-default",
     "profile-default",
-    "config-default",
 )
 _SPAWN_PREPARE_BUNDLE_ROUTING_SOURCES: frozenset[str] = frozenset(
-    {"cli", "env", "agent-overlay-default", "config-default"}
+    {"cli", "env", "agent-overlay-default"}
 )
 
 
@@ -511,7 +509,11 @@ def _resolve_spawn_prepare_bundle_routing(
     overlay_routing: RuntimeOverrides,
     profile: AgentProfile | None,
 ) -> tuple[str | None, str | None, str | None, dict[str, str]]:
-    """Resolve spawn-prepare routing overrides + local routing provenance."""
+    """Resolve spawn-prepare routing overrides + local routing provenance.
+
+    Project-config defaults no longer participate in spawn-prepare routing
+    overrides now that Mars launch-bundle owns project-level routing defaults.
+    """
 
     model_candidate = _first_spawn_prepare_routing_candidate(
         (
@@ -519,23 +521,14 @@ def _resolve_spawn_prepare_bundle_routing(
             ("env", surface.env_overrides.model),
             ("agent-overlay-default", overlay_routing.model),
             ("profile-default", profile.model if profile is not None else None),
-            ("config-default", surface.config_overrides.model),
         )
     )
-    config_default_harness = surface.configured_default_harness
-    if (
-        model_candidate is not None
-        and model_candidate[0] == "config-default"
-        and "default_harness" not in surface.config.model_fields_set
-    ):
-        config_default_harness = None
     harness_candidate = _first_spawn_prepare_routing_candidate(
         (
             ("cli", surface.cli_overrides.harness),
             ("env", surface.env_overrides.harness),
             ("agent-overlay-default", overlay_routing.harness),
             ("profile-default", profile.harness if profile is not None else None),
-            ("config-default", config_default_harness),
         )
     )
 
@@ -580,9 +573,9 @@ def _resolve_spawn_prepare_execution_policy(
     """Resolve spawn-prepare execution policy + local provenance winners.
 
     Spawn-prepare execution policy excludes config-default execution-policy
-    fields. Production spawn-prepare passes ``from_spawn_config()`` defaults,
-    which only carry routing defaults (model/harness), not primary policy
-    fields.
+    fields. Production spawn-prepare now passes empty config defaults from
+    ``from_spawn_config()`` because Mars launch-bundle owns project routing
+    defaults.
     """
 
     policy_layers: tuple[tuple[str, RuntimeOverrides], ...] = (
@@ -829,7 +822,6 @@ def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
         profile_skills=profile_skills,
         resolved_alias_entry=resolved_entry,
         alias_catalog=alias_catalog,
-        configured_default_harness=surface.configured_default_harness,
         project_root=project_root.as_posix(),
         supported_execution_policy_fields=tuple(surface.supported_execution_policy_fields),
     )
@@ -1073,7 +1065,6 @@ def resolve_policies(
     config_overrides: RuntimeOverrides,
     config: MeridianConfig,
     harness_registry: HarnessRegistry,
-    configured_default_harness: str = "claude",
     skills_readonly: bool = True,
 ) -> ResolvedLaunchPolicy:
     """Compatibility wrapper over the public shared launch policy boundary."""
@@ -1086,7 +1077,6 @@ def resolve_policies(
             config_overrides=config_overrides,
             config=config,
             harness_registry=harness_registry,
-            configured_default_harness=configured_default_harness,
             skills_readonly=skills_readonly,
         )
     )

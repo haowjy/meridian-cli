@@ -104,6 +104,52 @@ def test_request_and_resolve_builds_expected_mars_command(monkeypatch: pytest.Mo
     assert bundle.harness_model == "openai/gpt-5.5"
 
 
+def test_request_and_resolve_accepts_project_default_bundle_without_local_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        recorded["command"] = command
+        recorded["kwargs"] = kwargs
+        payload = _valid_bundle_payload()
+        payload["routing"] = {
+            "model": "gpt-5.3-codex",
+            "model_token": "gpt-5.3-codex",
+            "harness": "codex",
+            "harness_model": "gpt-5.3-codex",
+        }
+        payload["provenance"] = {
+            "model_source": "project",
+            "harness_source": "project",
+        }
+        return _completed(stdout=json.dumps(payload))
+
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    project_root = Path("project").resolve()
+    bundle = request_and_resolve(
+        BundleRequest(agent=None, project_root=project_root),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    command = recorded["command"]
+    assert command == [
+        "mars",
+        "build",
+        "launch-bundle",
+        "--json",
+        "--root",
+        str(project_root),
+    ]
+    assert bundle.model == "gpt-5.3-codex"
+    assert bundle.model_token == "gpt-5.3-codex"
+    assert bundle.harness is HarnessId.CODEX
+    assert bundle.provenance["model_source"] == "project"
+    assert bundle.provenance["harness_source"] == "project"
+
+
 def test_request_and_resolve_uses_native_windows_root_path(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: dict[str, object] = {}
 

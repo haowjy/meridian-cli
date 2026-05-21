@@ -26,7 +26,7 @@ def test_config_init_creates_meridian_toml_and_is_idempotent(
     config_path = project_root / "meridian.toml"
 
     first = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
-    config_path.write_text('[defaults]\nharness = "claude"\n', encoding="utf-8")
+    config_path.write_text("[defaults]\nmax_depth = 7\n", encoding="utf-8")
     second = config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
 
     assert first.created is True
@@ -34,7 +34,7 @@ def test_config_init_creates_meridian_toml_and_is_idempotent(
     assert first.path == config_path.as_posix()
     assert second.path == config_path.as_posix()
     assert config_path.is_file()
-    assert config_path.read_text(encoding="utf-8") == '[defaults]\nharness = "claude"\n'
+    assert config_path.read_text(encoding="utf-8") == "[defaults]\nmax_depth = 7\n"
     assert not (project_root / "mars.toml").exists()
     assert not (project_root / ".mars").exists()
 

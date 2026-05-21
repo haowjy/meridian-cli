@@ -76,7 +76,6 @@ class CompilerRequest:
     alias_catalog: dict[str, AliasEntry]
 
     # Options
-    configured_default_harness: str = "claude"
     project_root: str = ""
     supported_execution_policy_fields: tuple[ExecutionPolicyField, ...] = EXECUTION_POLICY_FIELDS
 
@@ -520,7 +519,7 @@ def _resolve_harness(
             return model_derived, ProvenanceLevel.ALIAS_DEFAULT, model_derived_provenance
 
     if harness is None:
-        harness = request.config_defaults.harness or request.configured_default_harness or "claude"
+        harness = request.config_defaults.harness or "claude"
         return harness, ProvenanceLevel.CONFIG_DEFAULT, "configured-default"
 
     if _should_override_harness_with_model(

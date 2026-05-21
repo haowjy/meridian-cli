@@ -381,6 +381,8 @@ def _map_provenance_level(value: str | None) -> ProvenanceLevel:
         "agent-overlay-default": ProvenanceLevel.AGENT_OVERLAY_DEFAULT,
         "profile-model-policy": ProvenanceLevel.PROFILE_MODEL_POLICY,
         "profile-default": ProvenanceLevel.PROFILE_DEFAULT,
+        "config": ProvenanceLevel.CONFIG_DEFAULT,
+        "project": ProvenanceLevel.CONFIG_DEFAULT,
         "config-default": ProvenanceLevel.CONFIG_DEFAULT,
         "provider": ProvenanceLevel.ALIAS_DEFAULT,
         "alias-default": ProvenanceLevel.ALIAS_DEFAULT,

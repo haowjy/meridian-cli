@@ -30,7 +30,7 @@ uv run meridian --version
 uv run meridian config show
 ```
 - [ ] Exit 0
-- [ ] Output contains `model` (e.g. `defaults.model`)
+- [ ] Output contains `harness` (e.g. `primary.harness`)
 
 ## Models list redirect
 

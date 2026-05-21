@@ -80,7 +80,6 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `defaults.max_depth` | int | Max zero-based delegated spawn depth |
 | `defaults.max_retries` | int | Retry attempts per run |
 | `defaults.retry_backoff_seconds` | float | Retry backoff multiplier |
-| `defaults.model` | str | Default model for spawn when unset |
 | `timeouts.kill_grace_minutes` | float | Grace before force-kill (minutes) |
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
 | `timeouts.wait_minutes` | float | Default `spawn wait` timeout (minutes) |
@@ -95,6 +94,8 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
 
 Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile.
+
+Project-level routing defaults (`default_model`, `default_harness`) now live in `mars.toml` under `[settings]`.
 
 ## Config Precedence
 
@@ -174,7 +175,6 @@ Project-local overrides win over project, project wins over user config.
 ```toml
 [defaults]
 max_depth = 4
-model = "gpt-5.3-codex"
 
 [harness]
 claude = "claude-opus-4-6"
@@ -444,8 +444,6 @@ These override spawn-level runtime policy. They sit above project config but bel
 | `MERIDIAN_AUTOCOMPACT` | Context compaction threshold (int 1–100) |
 | `MERIDIAN_TIMEOUT` | Spawn timeout in minutes (float > 0) |
 
-Note: `MERIDIAN_MODEL` is a per-spawn runtime override. `MERIDIAN_DEFAULT_MODEL` (below) is the config-level default used when no stronger value is set.
-
 ### Config Overrides
 
 - `MERIDIAN_MAX_RETRIES`
@@ -453,7 +451,6 @@ Note: `MERIDIAN_MODEL` is a per-spawn runtime override. `MERIDIAN_DEFAULT_MODEL`
 - `MERIDIAN_KILL_GRACE_MINUTES`
 - `MERIDIAN_GUARDRAIL_TIMEOUT_MINUTES`
 - `MERIDIAN_WAIT_TIMEOUT_MINUTES`
-- `MERIDIAN_DEFAULT_MODEL`
 - `MERIDIAN_HARNESS_MODEL_CLAUDE`
 - `MERIDIAN_HARNESS_MODEL_CODEX`
 - `MERIDIAN_HARNESS_MODEL_OPENCODE`

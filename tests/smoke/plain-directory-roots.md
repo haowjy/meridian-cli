@@ -16,7 +16,7 @@ NESTED="$PROJECT/src/feature"
 mkdir -p "$NESTED"
 cat > "$PROJECT/meridian.toml" << 'EOF'
 [defaults]
-harness = "codex"
+max_depth = 4
 EOF
 HOME_DIR=$(mktemp -d)
 

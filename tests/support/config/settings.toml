@@ -2,7 +2,6 @@
 max_depth = 7
 max_retries = 4
 retry_backoff_seconds = 0.5
-model = "gpt-5.2-high"
 
 [timeouts]
 kill_grace_minutes = 0.025
@@ -15,4 +14,5 @@ codex = "gpt-5.3-codex"
 opencode = "gemini-3.1-pro"
 
 [primary]
+model = "gpt-5.2-high"
 autocompact = 61000

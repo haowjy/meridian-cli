@@ -32,53 +32,53 @@ uv run meridian config show --json
 - [ ] `project_root` equals `$SCRATCH` (forward slashes)
 - [ ] `project_root_source == "env"`
 - [ ] `runtime_root` is `null`
-- [ ] `values` array contains entry for `defaults.harness` with `value == "codex"` and `source == "builtin"`
+- [ ] `values` array contains entry for `primary.harness` with `value == null` and `source == "builtin"`
 
 ## config get — single key
 
 ```bash
-uv run meridian config get defaults.harness
+uv run meridian config get primary.harness
 ```
 - [ ] Exit 0
-- [ ] stdout: `defaults.harness: codex [source: builtin]`
+- [ ] stdout: `primary.harness: null [source: builtin]`
 
 ## config set and get roundtrip
 
 ```bash
 uv run meridian config init
-uv run meridian config set defaults.model smoke-test-model
+uv run meridian config set primary.harness opencode
 ```
 - [ ] Exit 0
-- [ ] stdout contains `set defaults.model = smoke-test-model`
+- [ ] stdout contains `set primary.harness = opencode`
 
 ```bash
-uv run meridian config get defaults.model
+uv run meridian config get primary.harness
 ```
 - [ ] Exit 0
-- [ ] stdout: `defaults.model: smoke-test-model [source: file]`
-- [ ] `$SCRATCH/meridian.toml` contains `model = "smoke-test-model"`
+- [ ] stdout: `primary.harness: opencode [source: file]`
+- [ ] `$SCRATCH/meridian.toml` contains `harness = "opencode"`
 
 ## config reset
 
 ```bash
 uv run meridian config init
-uv run meridian config set defaults.model to-be-reset
-uv run meridian config reset defaults.model
+uv run meridian config set primary.harness to-be-reset
+uv run meridian config reset primary.harness
 ```
 - [ ] Exit 0
-- [ ] stdout contains `reset defaults.model (removed)`
+- [ ] stdout contains `reset primary.harness (removed)`
 
 ```bash
-uv run meridian config get defaults.model
+uv run meridian config get primary.harness
 ```
 - [ ] Exit 0
-- [ ] stdout: `defaults.model:  [source: builtin]`
+- [ ] stdout: `primary.harness: null [source: builtin]`
 
 ## config set preserves unrelated sections
 
 ```bash
 cat > "$SCRATCH/meridian.toml" << 'EOF'
-[defaults]
+[primary]
 harness = "claude"
 
 [workspace.docs]
@@ -89,7 +89,7 @@ event = "spawn"
 run = "echo hi"
 EOF
 
-uv run meridian config set defaults.harness opencode
+uv run meridian config set primary.harness opencode
 ```
 - [ ] Exit 0
 - [ ] `meridian.toml` contains `harness = "opencode"`

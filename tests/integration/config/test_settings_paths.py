@@ -97,9 +97,23 @@ def test_load_config_reads_meridian_toml_at_project_root(tmp_path: Path) -> None
     project_root = tmp_path / "repo"
     project_root.mkdir()
     config_path = project_root / "meridian.toml"
-    config_path.write_text('[defaults]\nharness = "claude"\n', encoding="utf-8")
+    config_path.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
 
-    assert load_config(project_root).default_harness == "claude"
+    assert load_config(project_root).primary.harness == "claude"
+
+
+def test_load_config_ignores_deleted_defaults_model_and_harness_keys(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / "meridian.toml").write_text(
+        '[defaults]\nmodel = "legacy-model"\nharness = "claude"\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root, resolve_models=False)
+
+    assert config.primary.model is None
+    assert config.primary.harness is None
 
 
 def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
@@ -236,9 +250,9 @@ def test_load_config_ignores_legacy_state_path_when_root_config_missing(
     project_root.mkdir()
     legacy_path = project_root / ".meridian" / "config.toml"
     legacy_path.parent.mkdir()
-    legacy_path.write_text('[defaults]\nharness = "claude"\n', encoding="utf-8")
+    legacy_path.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
 
-    assert load_config(project_root).default_harness == "codex"
+    assert load_config(project_root).primary.harness is None
 
 
 def test_config_show_ignores_inaccessible_implicit_user_config(
@@ -265,8 +279,8 @@ def test_config_show_ignores_inaccessible_implicit_user_config(
     with caplog.at_level(logging.WARNING, logger="meridian.lib.config.project_root"):
         result = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
 
-    default_harness = next(item for item in result.values if item.key == "defaults.harness")
-    assert default_harness.value == "codex"
+    max_depth = next(item for item in result.values if item.key == "defaults.max_depth")
+    assert max_depth.value == 3
     assert any(str(config_path) in record.message for record in caplog.records)
 
 

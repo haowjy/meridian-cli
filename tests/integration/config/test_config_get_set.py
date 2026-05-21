@@ -38,17 +38,38 @@ def test_config_set_and_reset_require_project_config_file(
             config_set_sync(
                 ConfigSetInput(
                     project_root=project_root.as_posix(),
-                    key="defaults.model",
-                    value="gpt-5.4",
+                    key="defaults.max_depth",
+                    value="5",
                 )
             )
         else:
             config_reset_sync(
                 ConfigResetInput(
                     project_root=project_root.as_posix(),
-                    key="defaults.model",
+                    key="defaults.max_depth",
                 )
             )
+
+
+@pytest.mark.parametrize("key", ["defaults.model", "defaults.harness"])
+@pytest.mark.parametrize("operation", ["get", "set", "reset"])
+def test_deleted_routing_default_keys_are_not_supported_by_config_commands(
+    tmp_path: Path,
+    key: str,
+    operation: str,
+) -> None:
+    project_root = _repo(tmp_path)
+    config_init_sync(ConfigInitInput(project_root=project_root.as_posix()))
+
+    with pytest.raises(ValueError, match=rf"Unknown config key '{key}'"):
+        if operation == "get":
+            config_get_sync(ConfigGetInput(project_root=project_root.as_posix(), key=key))
+        elif operation == "set":
+            config_set_sync(
+                ConfigSetInput(project_root=project_root.as_posix(), key=key, value="codex")
+            )
+        else:
+            config_reset_sync(ConfigResetInput(project_root=project_root.as_posix(), key=key))
 
 
 def test_config_show_and_loader_share_project_config_precedence(
@@ -57,30 +78,28 @@ def test_config_show_and_loader_share_project_config_precedence(
 ) -> None:
     project_root = _repo(tmp_path)
     project_config = project_root / "meridian.toml"
-    project_config.write_text('[defaults]\nharness = "claude"\n', encoding="utf-8")
+    project_config.write_text('[primary]\nharness = "claude"\n', encoding="utf-8")
     user_config = tmp_path / "user-config.toml"
-    user_config.write_text('[defaults]\nharness = "opencode"\n', encoding="utf-8")
+    user_config.write_text('[primary]\nharness = "opencode"\n', encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_CONFIG", user_config.as_posix())
 
     project_only = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    project_only_value = next(
-        item for item in project_only.values if item.key == "defaults.harness"
-    )
+    project_only_value = next(item for item in project_only.values if item.key == "primary.harness")
     assert project_only.path == project_config.as_posix()
     assert project_only_value.value == "claude"
     assert project_only_value.source == "file"
-    assert load_config(project_root).default_harness == "claude"
+    assert load_config(project_root).primary.harness == "claude"
 
-    monkeypatch.setenv("MERIDIAN_DEFAULT_HARNESS", "codex")
+    monkeypatch.setenv("MERIDIAN_HARNESS", "codex")
 
     resolved = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    resolved_value = next(item for item in resolved.values if item.key == "defaults.harness")
+    resolved_value = next(item for item in resolved.values if item.key == "primary.harness")
 
     assert resolved.path == project_config.as_posix()
     assert resolved_value.value == "codex"
     assert resolved_value.source == "env var"
-    assert resolved_value.env_var == "MERIDIAN_DEFAULT_HARNESS"
-    assert load_config(project_root).default_harness == "codex"
+    assert resolved_value.env_var == "MERIDIAN_HARNESS"
+    assert load_config(project_root).primary.harness == "codex"
 
 
 def test_config_show_and_get_resolve_env_selected_user_config_like_loader(
@@ -89,45 +108,45 @@ def test_config_show_and_get_resolve_env_selected_user_config_like_loader(
 ) -> None:
     project_root = _repo(tmp_path)
     env_user_config = tmp_path / "env-user-config.toml"
-    env_user_config.write_text('[defaults]\nharness = "opencode"\n', encoding="utf-8")
+    env_user_config.write_text('[primary]\nharness = "opencode"\n', encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_CONFIG", env_user_config.as_posix())
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
     gotten = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="defaults.harness")
+        ConfigGetInput(project_root=project_root.as_posix(), key="primary.harness")
     )
-    shown_value = next(item for item in shown.values if item.key == "defaults.harness")
+    shown_value = next(item for item in shown.values if item.key == "primary.harness")
 
     assert shown_value.value == "opencode"
     assert shown_value.source == "user-config"
-    assert gotten.key == "defaults.harness"
+    assert gotten.key == "primary.harness"
     assert gotten.value == "opencode"
     assert gotten.source == "user-config"
-    assert load_config(project_root).default_harness == "opencode"
+    assert load_config(project_root).primary.harness == "opencode"
 
 
 def test_config_show_and_loader_share_local_over_project_precedence(tmp_path: Path) -> None:
     project_root = _repo(tmp_path)
     (project_root / "meridian.toml").write_text(
-        '[defaults]\nharness = "claude"\n',
+        '[primary]\nharness = "claude"\n',
         encoding="utf-8",
     )
     (project_root / "meridian.local.toml").write_text(
-        '[defaults]\nharness = "opencode"\n',
+        '[primary]\nharness = "opencode"\n',
         encoding="utf-8",
     )
 
     shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    shown_value = next(item for item in shown.values if item.key == "defaults.harness")
+    shown_value = next(item for item in shown.values if item.key == "primary.harness")
     gotten = config_get_sync(
-        ConfigGetInput(project_root=project_root.as_posix(), key="defaults.harness")
+        ConfigGetInput(project_root=project_root.as_posix(), key="primary.harness")
     )
 
     assert shown_value.value == "opencode"
     assert shown_value.source == "file"
     assert gotten.value == "opencode"
     assert gotten.source == "file"
-    assert load_config(project_root).default_harness == "opencode"
+    assert load_config(project_root).primary.harness == "opencode"
 
 
 def test_config_show_and_get_report_spawn_wait_yield_env_provenance(
@@ -206,7 +225,7 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
     config_path = project_root / "meridian.toml"
     original = (
         "# top-level comment\n"
-        "[defaults]\n"
+        "[primary]\n"
         'harness = "claude" # inline comment\n'
         "\n"
         "[context.work]\n"
@@ -231,14 +250,14 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
     result = config_set_sync(
         ConfigSetInput(
             project_root=project_root.as_posix(),
-            key="defaults.harness",
+            key="primary.harness",
             value="opencode",
         )
     )
 
     updated = config_path.read_text(encoding="utf-8")
 
-    assert result.key == "defaults.harness"
+    assert result.key == "primary.harness"
     assert result.value == "opencode"
     assert "# top-level comment" in updated
     assert 'harness = "opencode" # inline comment' in updated
@@ -251,7 +270,7 @@ def test_config_set_preserves_dynamic_sections_comments_and_unknown_content(tmp_
     assert 'value = "keep-me"' in updated
     assert "[[hooks]]" in updated
     assert 'run = "echo hi"' in updated
-    assert load_config(project_root).default_harness == "opencode"
+    assert load_config(project_root).primary.harness == "opencode"
 
 
 def test_config_reset_preserves_dynamic_sections_comments_and_unknown_content(
@@ -261,7 +280,7 @@ def test_config_reset_preserves_dynamic_sections_comments_and_unknown_content(
     config_path = project_root / "meridian.toml"
     config_path.write_text(
         "# top-level comment\n"
-        "[defaults]\n"
+        "[primary]\n"
         'harness = "claude" # inline comment\n'
         "\n"
         "[context.work]\n"
@@ -281,7 +300,7 @@ def test_config_reset_preserves_dynamic_sections_comments_and_unknown_content(
     )
 
     result = config_reset_sync(
-        ConfigResetInput(project_root=project_root.as_posix(), key="defaults.harness")
+        ConfigResetInput(project_root=project_root.as_posix(), key="primary.harness")
     )
 
     updated = config_path.read_text(encoding="utf-8")
@@ -294,7 +313,7 @@ def test_config_reset_preserves_dynamic_sections_comments_and_unknown_content(
     assert "[custom]" in updated
     assert "[[hooks]]" in updated
     assert 'run = "echo hi"' in updated
-    assert load_config(project_root).default_harness == "codex"
+    assert load_config(project_root).primary.harness is None
 
 
 def test_config_set_rewrites_nested_harness_alias_to_canonical_spelling(tmp_path: Path) -> None:

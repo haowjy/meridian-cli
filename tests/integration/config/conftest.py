@@ -18,6 +18,4 @@ def _isolate_config_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
     monkeypatch.delenv("MERIDIAN_PROJECT_DIR", raising=False)
     monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
-    monkeypatch.delenv("MERIDIAN_DEFAULT_HARNESS", raising=False)
-    monkeypatch.delenv("MERIDIAN_DEFAULT_MODEL", raising=False)
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "user-home").as_posix())

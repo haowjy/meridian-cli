@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Bump `mars-agents` to `0.4.8rc4` for `build launch-bundle` (with new top-level `agent_body` field) and centralized cache-root routing (`MARS_CACHE_DIR`).
+- Bump `mars-agents` to `0.4.8rc5` for `build launch-bundle` (with new top-level `agent_body` field) and centralized cache-root routing (`MARS_CACHE_DIR`).
 - Spawn-prepare launch policy now routes model/harness/execution-policy through `mars build launch-bundle` adapter (`launch/bundle_adapter.py`) instead of local compiler resolution.
 - Spawn-prepare policy tests now fake the bundle adapter boundary; spawn routing tests no longer fake `CatalogSession.resolve_model`.
 - `launch/compiler.py` marked deprecated for spawn-prepare path; kept for primary/chat local resolver surfaces in phase 1.
@@ -13,10 +13,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Spawn now passes mars runnable harness model ID (for example `openai/gpt-5.5`) to OpenCode even when `opencode` is the default-selected harness.
 - `test_launch_policy_terminal_surface_mode_defaults_to_pty_mediated` now links all three harness targets (`.claude`, `.codex`, `.opencode`) so mars 0.4.8rc3 routes per-provider; previously the `.claude`-only fixture collapsed every model to claude under the new resolver.
-- Spawn-prepare bundle routing now forwards Meridian config defaults (`default_model`, `default_harness`) when no higher-precedence CLI/env/overlay/profile routing value is set.
 - Spawn-prepare now applies agent-overlay model/harness on the first mars launch-bundle call, so overlay routing can rescue stale profile routes without replay.
 - Spawn-prepare execution-policy provenance now follows Meridian post-bundle precedence from real spawn surfaces (CLI/env/overlay/profile), so overlay and env winners report correct sources.
 - Spawn-prepare routing now demotes lower-precedence harness overrides when a higher-precedence model is set, preserves same-tier config model+harness forwarding, and rewrites model/harness provenance locally for env/overlay/config winners.
+- Mars launch-bundle `config` provenance now maps to Meridian config-default provenance.
+
+### Removed
+- Meridian project config `[defaults]` routing keys `model` and `harness`. Use `mars.toml [settings].default_model` / `default_harness`.
 
 ## [0.1.14-rc.1] - 2026-05-20
 

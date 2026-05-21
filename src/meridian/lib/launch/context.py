@@ -846,10 +846,8 @@ def compile_prepared_policy_surface(
     )
     if runtime.composition_surface == LaunchCompositionSurface.PRIMARY:
         config_overrides = RuntimeOverrides.from_config(config)
-        configured_default_harness = config.primary.harness or "claude"
     else:
         config_overrides = RuntimeOverrides.from_spawn_config(config)
-        configured_default_harness = config.default_harness
 
     resolved_policy = resolve_launch_policy(
         SurfacePolicyInput(
@@ -859,7 +857,6 @@ def compile_prepared_policy_surface(
             config_overrides=config_overrides,
             config=config,
             harness_registry=harness_registry,
-            configured_default_harness=configured_default_harness,
             skills_readonly=dry_run,
             requested_skills=request.skills,
         )
