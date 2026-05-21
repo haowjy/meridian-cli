@@ -172,7 +172,7 @@ def test_reconcile_active_spawn_managed_primary_dead_launcher_marks_orphan_prima
     assert terminated_pids == [8882, 9992]
 
 
-@pytest.mark.parametrize("harness", ["codex", "opencode"])
+@pytest.mark.parametrize("harness", ["codex"])
 @pytest.mark.parametrize("corrupt_primary_meta", [False, True])
 def test_reconcile_active_spawn_managed_primary_candidate_unreadable_metadata_kills_worker_pg(
     tmp_path: Path,

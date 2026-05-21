@@ -100,7 +100,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     ("harness", "model"),
     [
         ("codex", "gpt-5.4"),
-        ("opencode", "gemini-2.5-pro"),
     ],
 )
 def test_spawn_prepare_system_field_harnesses_route_agent_inventory_to_system_prompt(

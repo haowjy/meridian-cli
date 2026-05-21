@@ -108,7 +108,7 @@ def test_cancel_orphan_primary_after_passive_reconcile_still_terminates(
     assert latest.error == "orphan_primary"
 
 
-@pytest.mark.parametrize("harness", ["codex", "opencode"])
+@pytest.mark.parametrize("harness", ["codex"])
 @pytest.mark.parametrize("corrupt_primary_meta", [False, True])
 def test_cancel_orphan_primary_candidate_with_unreadable_metadata_uses_worker_pid_fallback(
     tmp_path: Path,

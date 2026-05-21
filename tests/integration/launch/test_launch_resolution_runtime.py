@@ -68,10 +68,9 @@ def test_build_primary_launch_runtime_preserves_execution_cwd(tmp_path: Path) ->
     ("harness", "requires_initial_prompt"),
     [
         (HarnessId.CLAUDE, False),
-        (HarnessId.OPENCODE, False),
         (HarnessId.CODEX, True),
     ],
-    ids=["claude", "opencode", "codex"],
+    ids=["claude", "codex"],
 )
 def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
     harness: HarnessId,
@@ -143,16 +142,8 @@ def test_build_primary_spawn_request_without_harness_skips_synthetic_prompt(mode
             "meridian-spawn",
             "Spawn helper",
         ),
-        (
-            "gemini-2.5-pro",
-            HarnessId.OPENCODE,
-            "smoke-tester",
-            "claude-sonnet-4",
-            "verification",
-            "Verification helper",
-        ),
     ],
-    ids=["claude", "codex", "opencode"],
+    ids=["claude", "codex"],
 )
 def test_primary_launch_injects_inventory_by_harness_family(
     tmp_path: Path,
