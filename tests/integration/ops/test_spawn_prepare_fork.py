@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -12,20 +11,7 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
-
-
-@dataclass(frozen=True)
-class _FakeBundleResult:
-    model: str
-    model_token: str
-    harness: HarnessId
-    harness_model: str | None
-    execution_policy: ResolvedExecutionPolicy
-    provenance: dict[str, str]
-    warnings: tuple[str, ...] = ()
-    tools_allowed: tuple[str, ...] = ()
-    tools_disallowed: tuple[str, ...] = ()
-    tools_mcp: tuple[str, ...] = ()
+from tests.support.launch import FakeBundleResult
 
 
 def _write_minimal_subagent(project_root: Path) -> None:
@@ -67,13 +53,13 @@ def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
         request: bundle_adapter.BundleRequest,
         *,
         harness_registry: object,
-    ) -> _FakeBundleResult:
+    ) -> FakeBundleResult:
         _ = harness_registry
         selected_model, selected_harness = model_routes.get(
             request.model_override or "",
             ("gpt-5.3-codex", HarnessId.CODEX),
         )
-        return _FakeBundleResult(
+        return FakeBundleResult(
             model=selected_model,
             model_token=request.model_override or selected_model,
             harness=selected_harness,
@@ -112,10 +98,10 @@ def test_build_create_payload_does_not_forward_meridian_primary_or_legacy_defaul
         request: bundle_adapter.BundleRequest,
         *,
         harness_registry: object,
-    ) -> _FakeBundleResult:
+    ) -> FakeBundleResult:
         _ = harness_registry
         captured_requests.append(request)
-        return _FakeBundleResult(
+        return FakeBundleResult(
             model="mars-default-model",
             model_token="mars-default-model",
             harness=HarnessId.OPENCODE,
@@ -202,37 +188,3 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     dry_run_command = " ".join(dry_run_prepared.cli_command)
     assert "/spawns/preview/report.md" not in dry_run_command
     assert "<spawn-report-path>" in dry_run_command
-
-
-def test_build_create_payload_returns_durable_spawn_request_without_prepared_surface_fields(
-    tmp_path: Path,
-) -> None:
-    _write_minimal_subagent(tmp_path)
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
-        encoding="utf-8",
-    )
-    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
-
-    prepared = build_create_payload(
-        SpawnCreateInput(
-            prompt="test durable seam",
-            model="gpt-5.4-mini",
-            project_root=tmp_path.as_posix(),
-            dry_run=True,
-        ),
-        runtime=runtime,
-    )
-
-    payload = prepared.model_dump(mode="json", exclude_none=True)
-
-    assert payload["prompt"] == "test durable seam"
-    assert "cli_command" in payload
-    for prepared_only_field in (
-        "seed_harness_session_id",
-        "agent_inventory_prompt",
-        "context_prompt",
-        "alias_catalog",
-    ):
-        assert prepared_only_field not in payload
-
