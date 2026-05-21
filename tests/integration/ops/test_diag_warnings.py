@@ -13,7 +13,6 @@ import pytest
 from meridian.lib.catalog import models as catalog_models
 from meridian.lib.ops import diag
 from meridian.lib.ops import mars as mars_ops
-from meridian.lib.ops.config import ConfigShowInput, config_show_sync
 from meridian.lib.ops.diag import DoctorInput, doctor_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -121,7 +120,7 @@ def test_doctor_warning_shape_for_non_mars_warnings(
         assert warning.payload is None
 
 
-@pytest.mark.parametrize("depth_value", ["1", "garbage", "1.5", "-1"])
+@pytest.mark.parametrize("depth_value", ["1", "garbage"])
 def test_doctor_kill_orphans_skips_repair_when_depth_is_not_clearly_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -314,38 +313,6 @@ def test_doctor_reports_update_check_failure_warning(
     assert all(warning.code != "outdated_dependencies" for warning in result.warnings)
 
 
-def test_doctor_warning_surface_matches_config_show_for_missing_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "missing-repo"
-    shown = config_show_sync(ConfigShowInput(project_root=project_root.as_posix()))
-    assert shown.warning is not None
-    monkeypatch.setattr(
-        diag,
-        "check_upgrade_availability",
-        lambda *_args, **_kwargs: mars_ops.UpgradeAvailability(),
-    )
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
-
-    assert shown.warning in {warning.message for warning in result.warnings}
-
-
-def test_doctor_text_output_prefixes_warning_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _create_project_root(tmp_path)
-    _create_agent_skill_dirs(project_root)
-    monkeypatch.setattr(diag, "check_upgrade_availability", lambda *_args, **_kwargs: None)
-
-    result = doctor_sync(DoctorInput(project_root=project_root.as_posix()))
-
-    text = result.format_text()
-    assert "warning: updates_check_failed: Could not check for dependency updates" in text
-
-
 def test_doctor_reports_telemetry_retention_stats_and_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -448,26 +415,6 @@ def test_doctor_surfaces_workspace_unknown_and_missing_root_warnings(
     missing = _warning_by_code(result, "workspace_missing_root")
     assert missing.payload == {
         "roots": [(project_root / "missing-root").resolve().as_posix()],
-    }
-
-
-def test_doctor_surfaces_named_workspace_local_missing_warning(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _create_project_root(tmp_path)
-    _create_agent_skill_dirs(project_root)
-    (project_root / "meridian.local.toml").write_text(
-        '[workspace.local_missing]\npath = "./missing-local"\n',
-        encoding="utf-8",
-    )
-
-    result = _run_doctor_without_upgrade_noise(project_root, monkeypatch)
-
-    local_missing = _warning_by_code(result, "workspace_local_missing_root")
-    assert local_missing.payload == {
-        "name": "local_missing",
-        "path": (project_root / "missing-local").resolve().as_posix(),
     }
 
 

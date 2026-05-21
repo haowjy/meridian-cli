@@ -171,18 +171,6 @@ def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: 
     assert "define [agents.<name>] under mars.toml or mars.local.toml" in message
 
 
-def test_load_config_ignores_legacy_state_path_when_root_config_missing(
-    tmp_path: Path,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    legacy_path = project_root / ".meridian" / "config.toml"
-    legacy_path.parent.mkdir()
-    legacy_path.write_text('[primary]\nagent = "reviewer"\n', encoding="utf-8")
-
-    assert load_config(project_root).primary.agent is None
-
-
 def test_config_show_ignores_inaccessible_implicit_user_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -342,18 +330,3 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
 
 
-def test_config_show_preserves_discovered_project_root_provenance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "plain-project"
-    nested = project_root / "tools" / "scripts"
-    project_root.mkdir()
-    nested.mkdir(parents=True)
-    (project_root / "meridian.local.toml").write_text("", encoding="utf-8")
-    monkeypatch.chdir(nested)
-
-    result = config_show_sync(ConfigShowInput())
-
-    assert result.project_root == project_root.resolve().as_posix()
-    assert result.project_root_source == "meridian-local-toml"

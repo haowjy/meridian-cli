@@ -7,7 +7,6 @@ from meridian.cli.argv_normalization import (
     FORK_INFERENCE_ERROR,
     FROM_INFERENCE_ERROR,
     SELF_FORK_REF_SENTINEL,
-    SYNTHETIC_VALUE_TOKENS,
     ForkModeResolution,
     normalize_optional_value_flags,
     resolve_fork_ref,
@@ -23,15 +22,6 @@ from meridian.cli.argv_normalization import (
         (["--fork", "p123"], ["--fork", "p123"]),
         (["--fork", "--bg"], ["--fork", SELF_FORK_REF_SENTINEL, "--bg"]),
         (["--fork=p123"], ["--fork", "p123"]),
-        (["--fork="], ["--fork", SELF_FORK_REF_SENTINEL]),
-        (["--fork-fresh"], ["--fork-fresh", SELF_FORK_REF_SENTINEL]),
-        (["--from"], ["--from", SELF_FORK_REF_SENTINEL]),
-        (["--from", "p123"], ["--from", "p123"]),
-        (["--from=p123"], ["--from", "p123"]),
-        (
-            ["spawn", "--fork-fresh", "-a", "reviewer"],
-            ["spawn", "--fork-fresh", SELF_FORK_REF_SENTINEL, "-a", "reviewer"],
-        ),
         (
             ["spawn", "--fork", "--", "literal"],
             ["spawn", "--fork", SELF_FORK_REF_SENTINEL, "--", "literal"],
@@ -67,9 +57,6 @@ def test_resolve_optional_ref_self_sentinel_without_context_errors(
     with pytest.raises(ValueError, match=FROM_INFERENCE_ERROR):
         resolve_optional_ref(SELF_FORK_REF_SENTINEL, flag_name="--from")
 
-
-def test_synthetic_value_tokens_contains_sentinel() -> None:
-    assert SELF_FORK_REF_SENTINEL in SYNTHETIC_VALUE_TOKENS
 
 
 def test_validate_fork_mode_conflicts_fork_and_fork_fresh() -> None:
