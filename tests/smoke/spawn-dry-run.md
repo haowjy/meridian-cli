@@ -44,32 +44,60 @@ uv run meridian spawn -a reviewer -p "test" -m gpt-5.5 --dry-run --json
 - [ ] `harness_id == "codex"`
 - [ ] `terminal_surface_mode == "pty_mediated"`
 
-## Agent overlay model precedence
+## Agent routing override precedence (mars.toml `[agents.<name>]`)
 
 ```bash
-# meridian.toml overlay: gpt-5.4; meridian.local.toml overlay: gpt-5.5
-cat > "$SCRATCH/meridian.toml" << 'EOF'
-[agents.reviewer]
-model = "gpt-5.4"
-EOF
-cat > "$SCRATCH/meridian.local.toml" << 'EOF'
+# mars routing config for this project
+cat > "$SCRATCH/mars.toml" << 'EOF'
+[settings]
+targets = [".claude", ".codex", ".opencode"]
+
 [agents.reviewer]
 model = "gpt-5.5"
 EOF
 
-# Without CLI override — local overlay wins
+# Without CLI override — project routing override wins
 uv run meridian spawn -a reviewer -p "test" --dry-run --json
 ```
 - [ ] Exit 0
-- [ ] `model == "gpt-5.5"` (local overlay wins over project overlay)
+- [ ] `model == "gpt-5.5"` (project `mars.toml` agent override applied)
 - [ ] `harness_id == "codex"`
 
 ```bash
-# With CLI override — CLI wins over all overlays
+# With CLI override — CLI wins over agent routing override
 uv run meridian spawn -a reviewer -p "test" -m gpt-5.4 --dry-run --json
 ```
 - [ ] Exit 0
-- [ ] `model == "gpt-5.4"` (CLI flag beats local overlay)
+- [ ] `model == "gpt-5.4"` (CLI flag beats `[agents.reviewer]` model)
+
+## Mars bundle round-trip + provenance fields
+
+```bash
+cat > "$SCRATCH/.mars/agents/reviewer.md" << 'EOF'
+---
+name: reviewer
+model: gpt-5.4-mini
+model-policies:
+  - match: { alias: gpt55 }
+    override: { harness: opencode, effort: medium }
+---
+# Reviewer
+EOF
+
+cat > "$SCRATCH/mars.toml" << 'EOF'
+[settings]
+targets = [".claude", ".codex", ".opencode"]
+EOF
+
+uv run meridian spawn -a reviewer -m gpt55 -p "bundle policy check" --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `status == "dry-run"`
+- [ ] `harness_id == "opencode"` (bundle resolved route)
+- [ ] `cli_command` includes `--variant` and `medium` (effort projection)
+- [ ] `model_selection.requested_token == "gpt55"`
+- [ ] `model_selection.canonical_model_id` present
+- [ ] `model_selection.harness_provenance` present
 
 ## Template variable substitution
 
