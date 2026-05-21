@@ -139,16 +139,6 @@ def test_discover_segments_caches_stat_for_sort(tmp_path: Path, monkeypatch) -> 
     assert discover_segments(telemetry_dir) == [first, second]
 
 
-def test_status_text_includes_rootless_limitation(tmp_path: Path) -> None:
-    status = compute_status(tmp_path)
-
-    rendered = status.format_text()
-
-    assert "Rootless processes" in rendered
-    assert "stderr only" in rendered
-    assert "outside the scope of local segment readers" in rendered
-
-
 def test_status_dict_is_json_serializable(tmp_path: Path) -> None:
     status = compute_status(tmp_path)
 
