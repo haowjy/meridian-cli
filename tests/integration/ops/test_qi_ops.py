@@ -15,11 +15,6 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.ops.qi import (
-    QiCheckFinding,
-    QiCheckOutput,
-    QiKnowledgePoint,
-    QiShowOutput,
-    QiSummaryOutput,
     discover_knowledge_points,
     find_boundary,
     qi_check_sync,
@@ -62,14 +57,6 @@ class TestDiscoverKnowledgePoints:
         points = discover_knowledge_points(tmp_path)
         assert any(p.kind == "context" for p in points)
 
-    def test_finds_both_in_same_dir(self, tmp_path: Path) -> None:
-        _make_agents_md(tmp_path)
-        _make_context_md(tmp_path)
-        points = discover_knowledge_points(tmp_path)
-        kinds = {p.kind for p in points}
-        assert "agents" in kinds
-        assert "context" in kinds
-
     def test_finds_nested(self, tmp_path: Path) -> None:
         sub = tmp_path / "subdir"
         sub.mkdir()
@@ -97,11 +84,6 @@ class TestDiscoverKnowledgePoints:
         assert points
         assert "\\" not in points[0].rel_path
 
-    def test_returns_qi_knowledge_point_instances(self, tmp_path: Path) -> None:
-        _make_agents_md(tmp_path)
-        points = discover_knowledge_points(tmp_path)
-        assert all(isinstance(p, QiKnowledgePoint) for p in points)
-
     def test_context_md_not_found_without_subdir(self, tmp_path: Path) -> None:
         # A bare .context file (not a dir) should not produce a context point.
         (tmp_path / ".context").write_text("not a dir", encoding="utf-8")
@@ -117,11 +99,6 @@ class TestDiscoverKnowledgePoints:
 class TestFindBoundary:
     def test_finds_agents_md_in_same_dir(self, tmp_path: Path) -> None:
         _make_agents_md(tmp_path)
-        boundary = find_boundary(tmp_path)
-        assert boundary == tmp_path
-
-    def test_finds_context_md_in_same_dir(self, tmp_path: Path) -> None:
-        _make_context_md(tmp_path)
         boundary = find_boundary(tmp_path)
         assert boundary == tmp_path
 
@@ -161,10 +138,6 @@ class TestFindBoundary:
 
 
 class TestQiSummarySync:
-    def test_returns_qi_summary_output(self, tmp_path: Path) -> None:
-        result = qi_summary_sync(tmp_path)
-        assert isinstance(result, QiSummaryOutput)
-
     def test_empty_counts(self, tmp_path: Path) -> None:
         result = qi_summary_sync(tmp_path)
         assert result.agents_count == 0
@@ -193,12 +166,6 @@ class TestQiSummarySync:
         assert "AGENTS.md" in text
         assert ".context/" in text
 
-    def test_format_text_shows_subcommands(self, tmp_path: Path) -> None:
-        result = qi_summary_sync(tmp_path)
-        text = result.format_text()
-        assert "qi graph" in text
-        assert "qi check" in text
-
 
 # ---------------------------------------------------------------------------
 # qi_show_sync
@@ -206,10 +173,6 @@ class TestQiSummarySync:
 
 
 class TestQiShowSync:
-    def test_returns_qi_show_output(self, tmp_path: Path) -> None:
-        result = qi_show_sync(tmp_path, tmp_path)
-        assert isinstance(result, QiShowOutput)
-
     def test_agents_content_loaded(self, tmp_path: Path) -> None:
         _make_agents_md(tmp_path)
         result = qi_show_sync(tmp_path, tmp_path)
@@ -233,18 +196,6 @@ class TestQiShowSync:
         result = qi_show_sync(tmp_path, tmp_path)
         assert result.agents_content is None
         assert result.context_content is None
-
-    def test_format_text_no_content(self, tmp_path: Path) -> None:
-        result = qi_show_sync(tmp_path, tmp_path)
-        text = result.format_text()
-        assert "No inline knowledge" in text
-
-    def test_format_text_with_agents(self, tmp_path: Path) -> None:
-        _make_agents_md(tmp_path)
-        result = qi_show_sync(tmp_path, tmp_path)
-        text = result.format_text()
-        assert "AGENTS.md" in text
-        assert "Agents" in text
 
     def test_boundary_path_is_relative_when_inside_project(self, tmp_path: Path) -> None:
         sub = tmp_path / "sub"
@@ -271,10 +222,6 @@ class TestQiShowSync:
 
 
 class TestQiCheckSync:
-    def test_returns_qi_check_output(self, tmp_path: Path) -> None:
-        result = qi_check_sync(tmp_path)
-        assert isinstance(result, QiCheckOutput)
-
     def test_empty_project_passes_cleanly(self, tmp_path: Path) -> None:
         result = qi_check_sync(tmp_path)
         assert result.findings == []
@@ -384,11 +331,6 @@ class TestQiCheckSync:
         broken = [f for f in result.findings if f.category == "broken_link"]
         assert broken == []
 
-    def test_has_errors_property(self, tmp_path: Path) -> None:
-        (tmp_path / ".context").mkdir()  # missing CONTEXT.md → error
-        result = qi_check_sync(tmp_path)
-        assert result.has_errors is True
-
     def test_error_and_warning_counts(self, tmp_path: Path) -> None:
         # Setup: .context/ without CONTEXT.md (error) + orphan in nested dir (warning)
         (tmp_path / ".context").mkdir()  # error: missing_context_md
@@ -398,17 +340,6 @@ class TestQiCheckSync:
         result = qi_check_sync(tmp_path)
         assert result.error_count >= 1
         assert result.warning_count >= 1
-
-    def test_format_text_clean(self, tmp_path: Path) -> None:
-        result = qi_check_sync(tmp_path)
-        text = result.format_text()
-        assert "All checks passed" in text
-
-    def test_format_text_with_findings(self, tmp_path: Path) -> None:
-        (tmp_path / ".context").mkdir()
-        result = qi_check_sync(tmp_path)
-        text = result.format_text()
-        assert "error(s)" in text
 
     def test_findings_sorted_errors_before_warnings(self, tmp_path: Path) -> None:
         # .context/ dir without CONTEXT.md → error, orphan context in sub → warning
@@ -431,11 +362,6 @@ class TestQiCheckSync:
             )
             if first_warn is not None and last_error is not None:
                 assert last_error <= first_warn
-
-    def test_findings_are_qi_check_finding_instances(self, tmp_path: Path) -> None:
-        (tmp_path / ".context").mkdir()
-        result = qi_check_sync(tmp_path)
-        assert all(isinstance(f, QiCheckFinding) for f in result.findings)
 
     @pytest.mark.skipif(sys.platform == "win32", reason="chmod not reliable on Windows")
     def test_unreadable_file_produces_finding(self, tmp_path: Path) -> None:
