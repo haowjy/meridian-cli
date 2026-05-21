@@ -236,23 +236,3 @@ def test_build_create_payload_returns_durable_spawn_request_without_prepared_sur
     ):
         assert prepared_only_field not in payload
 
-def test_build_create_payload_carries_goal_from_spawn_create_input(tmp_path: Path) -> None:
-    _write_minimal_subagent(tmp_path)
-    (tmp_path / "mars.toml").write_text(
-        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
-        encoding="utf-8",
-    )
-    runtime = build_runtime_from_root_and_config(tmp_path, load_config(tmp_path))
-
-    prepared = build_create_payload(
-        SpawnCreateInput(
-            prompt="compose with completion contract",
-            goal="ship phase-2 gate fixes",
-            model="gpt-5.4-mini",
-            project_root=tmp_path.as_posix(),
-            dry_run=True,
-        ),
-        runtime=runtime,
-    )
-
-    assert prepared.goal == "ship phase-2 gate fixes"

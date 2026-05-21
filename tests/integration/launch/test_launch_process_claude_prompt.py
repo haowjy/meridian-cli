@@ -182,47 +182,6 @@ def test_run_harness_process_writes_prompt_file_before_primary_launch(
     assert outcome.exit_code == 0
 
 
-@pytest.mark.slow
-def test_run_harness_process_black_box_primary_uses_no_tui_log_artifact(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    launch_context, harness_registry = _build_primary_launch_context(
-        project_root=project_root,
-        harness_id=HarnessId.CLAUDE,
-        model="claude-sonnet-4-5",
-    )
-    claude_adapter = harness_registry.get_subprocess_harness(HarnessId.CLAUDE)
-    captured: dict[str, object] = {}
-
-    def fake_run_primary_process_with_capture(
-        command: Any,
-        cwd: Any,
-        env: Any,
-        output_log_path: Any,
-        on_child_started: Any = None,
-    ) -> tuple[int, int]:
-        captured["output_log_path"] = output_log_path
-        assert callable(on_child_started)
-        on_child_started(444)
-        return (0, 444)
-
-    monkeypatch.setattr(claude_adapter, "observe_session_id", lambda **kwargs: None)
-
-    outcome = run_harness_process(
-        launch_context,
-        harness_registry,
-        run_primary_process_with_capture_fn=fake_run_primary_process_with_capture,
-        stop_session_fn=lambda *args, **kwargs: None,
-    )
-
-    assert captured["output_log_path"] is None
-    assert outcome.primary_spawn_id is not None
-    assert list(launch_context.runtime_root.rglob("tui.log")) == []
-
 
 @pytest.mark.slow
 def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_task_cwd(

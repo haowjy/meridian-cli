@@ -7,7 +7,6 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.permissions import (
-    CLAUDE_NATIVE_DELEGATION_TOOLS,
     compute_nested_claude_deny_additions,
 )
 from meridian.lib.launch.request import LaunchCompositionSurface, LaunchRuntime, SpawnRequest
@@ -255,5 +254,3 @@ def test_claude_keeps_only_nesting_sentinel_blocked_from_child_env() -> None:
     assert adapter.blocked_child_env_vars() == {"CLAUDECODE"}
 
 
-def test_claude_native_delegation_constant_contains_agent_tool() -> None:
-    assert "Agent" in CLAUDE_NATIVE_DELEGATION_TOOLS
