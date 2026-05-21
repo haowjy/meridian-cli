@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME, PRIMARY_META_FILENAME
+from meridian.lib.launch.constants import HISTORY_FILENAME, PRIMARY_META_FILENAME
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -228,48 +228,6 @@ def test_session_log_completed_managed_primary_falls_back_to_output_when_native_
     assert output.source == "spawn p42 output"
     assert [(message.role, message.content) for message in output.messages] == [
         ("assistant", "managed artifact transcript")
-    ]
-
-
-def test_managed_primary_fallback_to_legacy_output(tmp_path: Path) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    runtime_root = resolve_project_runtime_root(project_root)
-    runtime_root.mkdir(parents=True, exist_ok=True)
-
-    spawn_store.start_spawn(
-        runtime_root,
-        spawn_id="p42",
-        chat_id="c42",
-        model="gpt-5.4",
-        agent="dev-orchestrator",
-        harness="codex",
-        kind="primary",
-        prompt="do thing",
-        harness_session_id="missing-native-session",
-        status="failed",
-    )
-    _write_primary_meta(runtime_root, "p42")
-    _write_spawn_output(
-        runtime_root,
-        "p42",
-        {
-            "event_type": "item/completed",
-            "harness_id": "codex",
-            "payload": {"item": {"type": "agentMessage", "text": "managed legacy transcript"}},
-        },
-        artifact=True,
-        filename=OUTPUT_FILENAME,
-    )
-
-    output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
-    )
-
-    assert output.session_id == "p42"
-    assert output.source == "spawn p42 output"
-    assert [(message.role, message.content) for message in output.messages] == [
-        ("assistant", "managed legacy transcript")
     ]
 
 

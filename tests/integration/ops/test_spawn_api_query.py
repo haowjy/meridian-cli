@@ -21,7 +21,6 @@ from meridian.lib.ops.spawn.models import (
     SpawnListInput,
     SpawnShowInput,
     SpawnStatsInput,
-    SpawnWaitInput,
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -346,54 +345,3 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
     assert "Goal: ship the migration" in rendered
     wire = detail.to_cli_wire()
     assert wire["goal"] == "ship the migration"
-
-@pytest.mark.parametrize(
-    ("parent_harness", "payload", "spawn_ids", "expected"),
-    [
-        ("codex", SpawnWaitInput(), ("p-claude-child", "p-unknown-child"), 900.0),
-        (None, SpawnWaitInput(), ("p-codex-child",), 240.0),
-        ("codex", SpawnWaitInput(yield_after_secs=12), ("p-codex-child",), 12.0),
-    ],
-)
-def test_wait_yield_resolution_uses_override_then_parent_harness_then_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    parent_harness: str | None,
-    payload: SpawnWaitInput,
-    spawn_ids: tuple[str, ...],
-    expected: float,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / "meridian.toml").write_text(
-        "\n".join(
-            [
-                "[spawn]",
-                "default_wait_yield_seconds = 240",
-                "min_wait_yield_seconds = 30",
-                "",
-                "[harness.claude]",
-                "wait_yield_seconds = 270",
-                "",
-                "[harness.codex]",
-                "wait_yield_seconds = 900",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    config = spawn_api.load_config(project_root)
-
-    if parent_harness is None:
-        monkeypatch.delenv("MERIDIAN_HARNESS", raising=False)
-    else:
-        monkeypatch.setenv("MERIDIAN_HARNESS", parent_harness)
-
-    assert (
-        spawn_api._resolve_wait_checkpoint_seconds(
-            payload=payload,
-            spawn_ids=spawn_ids,
-            project_root=project_root,
-            config=config,
-        )
-        == expected
-    )

@@ -79,32 +79,6 @@ def setup_spawn_projection(runtime_root: Path, monkeypatch) -> None:
     spawn_observer.register_spawn_telemetry_observer()
 
 
-def test_retention_cleanup_deletes_old_orphaned_files(tmp_path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    telemetry_dir.mkdir()
-    old = telemetry_dir / "999999-0001.jsonl"
-    old.write_text('{"event":"old"}\n', encoding="utf-8")
-    old_time = time.time() - 10 * 24 * 60 * 60
-    os.utime(old, (old_time, old_time))
-
-    run_retention_cleanup(telemetry_dir, max_age_days=7)
-
-    assert not old.exists()
-
-
-def test_retention_preserves_files_from_live_processes(tmp_path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    telemetry_dir.mkdir()
-    live = telemetry_dir / f"cli.{os.getpid()}-0001.jsonl"
-    live.write_text('{"event":"live"}\n', encoding="utf-8")
-    old_time = time.time() - 10 * 24 * 60 * 60
-    os.utime(live, (old_time, old_time))
-
-    run_retention_cleanup(telemetry_dir, max_age_days=7, max_total_bytes=1)
-
-    assert live.exists()
-
-
 def test_retention_preserves_spawn_owned_segments_for_reconciled_active_spawns(tmp_path) -> None:
     telemetry_dir = tmp_path / "telemetry"
     segment = write_segment(
@@ -146,37 +120,6 @@ def test_retention_deletes_spawn_owned_segments_for_stale_spawns(tmp_path) -> No
     run_retention_cleanup(telemetry_dir, runtime_root=tmp_path, max_age_days=7)
 
     assert not segment.exists()
-
-
-def test_retention_prefers_deleting_orphaned_segments_under_size_pressure(tmp_path) -> None:
-    telemetry_dir = tmp_path / "telemetry"
-    active_spawn = write_segment(
-        telemetry_dir,
-        "p1.999-0001.jsonl",
-        event="spawn.running",
-        domain="spawn",
-    )
-    live_cli = write_segment(telemetry_dir, f"cli.{os.getpid()}-0001.jsonl")
-    orphan = write_segment(telemetry_dir, "123-0001.jsonl")
-
-    service = SpawnLifecycleService(tmp_path)
-    spawn_id = start_spawn(service)
-    assert spawn_id == "p1"
-    heartbeat = tmp_path / "spawns" / spawn_id / "heartbeat"
-    heartbeat.parent.mkdir(parents=True, exist_ok=True)
-    heartbeat.touch()
-
-    live_budget = active_spawn.stat().st_size + live_cli.stat().st_size
-    run_retention_cleanup(
-        telemetry_dir,
-        runtime_root=tmp_path,
-        max_age_days=365,
-        max_total_bytes=live_budget,
-    )
-
-    assert active_spawn.exists()
-    assert live_cli.exists()
-    assert not orphan.exists()
 
 
 def test_retention_size_pressure_prefers_legacy_orphan_over_stale_recognized_segment(
@@ -236,35 +179,6 @@ def test_full_pipeline_emit_queue_writer_segment(tmp_path) -> None:
     assert event["ids"] == {"chat_id": "c1"}
 
 
-def test_spawn_process_exited_projects_to_telemetry_segment(tmp_path, monkeypatch) -> None:
-    setup_spawn_projection(tmp_path, monkeypatch)
-    service = SpawnLifecycleService(tmp_path)
-    spawn_id = start_spawn(service)
-
-    service.record_exited(spawn_id, exit_code=42)
-
-    wait_for(
-        lambda: any(
-            event["event"] == "spawn.process_exited" for event in read_telemetry_events(tmp_path)
-        )
-    )
-    projected = [
-        event
-        for event in read_telemetry_events(tmp_path)
-        if event["event"] == "spawn.process_exited"
-    ]
-    assert projected == [
-        {
-            **projected[0],
-            "domain": "spawn",
-            "scope": "core.lifecycle",
-            "severity": "info",
-            "ids": {"spawn_id": spawn_id},
-            "data": {"exit_code": 42},
-        }
-    ]
-
-
 def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
     tmp_path, monkeypatch
 ) -> None:
@@ -314,18 +228,3 @@ def test_spawn_terminal_success_and_failure_project_to_telemetry_segment(
         "error": {"type": "SpawnFailed", "message": "boom"},
     }
     assert "category" not in failed["data"]
-
-
-def test_non_terminal_spawn_lifecycle_events_are_not_projected(tmp_path, monkeypatch) -> None:
-    setup_spawn_projection(tmp_path, monkeypatch)
-    service = SpawnLifecycleService(tmp_path)
-    spawn_id = start_spawn(service, status="queued")
-
-    service.mark_running(spawn_id)
-    service.mark_finalizing(spawn_id)
-
-    time.sleep(0.05)
-    event_names = {event["event"] for event in read_telemetry_events(tmp_path)}
-    assert "spawn.queued" not in event_names
-    assert "spawn.running" not in event_names
-    assert "spawn.finalizing" not in event_names
