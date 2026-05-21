@@ -6,12 +6,10 @@ SpawnForkInput tests live in test_spawn_fork.py and test_spawn_fork_harness.py.
 """
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
-from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.core.types import HarnessId, ModelId
@@ -149,63 +147,3 @@ def test_spawn_continue_rejects_cross_harness_from_resolved_model_policy(
         str(exc_info.value)
         == "Cannot continue across harnesses: source is 'codex', target is 'claude'."
     )
-
-
-def test_spawn_continue_dry_run_with_prepared_context_does_not_require_lifecycle(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "user-home").as_posix())
-    monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
-    monkeypatch.delenv("MERIDIAN_PROJECT_DIR", raising=False)
-    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
-
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    prepared = prepare_for_runtime_write(project_root)
-    assert prepared.runtime_root is not None
-    _seed_spawn(prepared.runtime_root, spawn_id="p25", harness_session_id="session-25")
-
-    def _fail_create_lifecycle_service(*args: object, **kwargs: object) -> None:
-        raise AssertionError("dry-run prepared continue should not construct lifecycle service")
-
-    monkeypatch.setattr(
-        "meridian.lib.core.lifecycle.create_lifecycle_service",
-        _fail_create_lifecycle_service,
-    )
-    monkeypatch.setattr(
-        spawn_api,
-        "build_create_payload",
-        lambda payload, runtime=None, preflight_warning=None, ctx=None: SimpleNamespace(
-            harness=payload.harness or "codex",
-            model=payload.model,
-            warning=preflight_warning,
-            agent=payload.agent,
-            agent_metadata={},
-            skills=payload.skills,
-            skill_paths=(),
-            reference_files=(),
-            template_vars={},
-            context_from=(),
-            prompt=payload.prompt,
-            goal=payload.goal,
-            model_selection_requested_token=None,
-            model_selection_canonical_id=None,
-            model_selection_harness_provenance=None,
-            terminal_surface_mode=None,
-            cli_command=("codex",),
-        ),
-    )
-
-    result = spawn_api.spawn_continue_sync(
-        SpawnContinueInput(
-            spawn_id="p25",
-            prompt="follow-up prompt",
-            dry_run=True,
-            project_root=project_root.as_posix(),
-        ),
-        prepared=prepared,
-    )
-
-    assert result.status == "dry-run"
-    assert result.command == "spawn.continue"

@@ -1,7 +1,6 @@
 # qa-validated: test-suite-redesign
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import meridian.lib.ops.spawn.api as spawn_api
@@ -11,20 +10,7 @@ from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from tests.support.fixtures import write_agent, write_minimal_mars_config
-
-
-@dataclass(frozen=True)
-class _FakeBundleResult:
-    model: str
-    model_token: str
-    harness: HarnessId
-    harness_model: str | None
-    execution_policy: ResolvedExecutionPolicy
-    provenance: dict[str, str]
-    warnings: tuple[str, ...] = ()
-    tools_allowed: tuple[str, ...] = ()
-    tools_disallowed: tuple[str, ...] = ()
-    tools_mcp: tuple[str, ...] = ()
+from tests.support.launch import FakeBundleResult
 
 
 def test_spawn_create_dry_run_threads_bundle_model_selection(
@@ -39,7 +25,7 @@ def test_spawn_create_dry_run_threads_bundle_model_selection(
     monkeypatch.setattr(
         bundle_adapter,
         "request_and_resolve",
-        lambda request, *, harness_registry: _FakeBundleResult(
+        lambda request, *, harness_registry: FakeBundleResult(
             model="gpt-5.5",
             model_token="gpt55",
             harness=HarnessId.OPENCODE,
