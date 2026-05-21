@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.14-rc.2] - 2026-05-21
+
 ### Changed
 - Bump `mars-agents` to `0.4.8rc5` for `build launch-bundle` (with new top-level `agent_body` field) and centralized cache-root routing (`MARS_CACHE_DIR`).
 - Spawn-prepare launch policy now routes model/harness/execution-policy through `mars build launch-bundle` adapter (`launch/bundle_adapter.py`) instead of local compiler resolution.
