@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -26,8 +27,15 @@ if TYPE_CHECKING:
     from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
     from meridian.lib.launch.resolve import ResolvedSkills
 
-_MARS_BUNDLE_MIN_VERSION = "0.4.8rc3"
-_SUPPORTED_BUNDLE_SCHEMA_VERSION = 1
+def _resolve_mars_min_version() -> str:
+    try:
+        return version("mars-agents")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+_MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
+_SUPPORTED_BUNDLE_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -277,13 +285,12 @@ def _parse_bundle_payload(
     if version != _SUPPORTED_BUNDLE_SCHEMA_VERSION:
         raise RuntimeError(
             "Mars launch-bundle schema version "
-            f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}."
+            f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}. "
+            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
         )
 
     routing = _required_object_field(payload, "routing")
     model = _normalize_str(routing.get("model"))
-    if not model:
-        raise _bundle_schema_error("routing.model is empty")
     model_token = _normalize_str(routing.get("model_token")) or model
     harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
     harness_model = _normalize_str(routing.get("harness_model")) or None

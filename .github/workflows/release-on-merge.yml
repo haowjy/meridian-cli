@@ -397,6 +397,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Set up Node.js
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build Pi extensions
+        if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
+        run: |
+          corepack enable
+          cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+
       - name: Run shared preflight
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
         run: scripts/preflight.sh full

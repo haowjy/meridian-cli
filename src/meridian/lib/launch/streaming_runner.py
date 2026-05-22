@@ -954,7 +954,7 @@ async def execute_with_streaming(
                 )
                 conclusion.absorb_attempt(attempt)
                 if attempt.start_error is not None:
-                    logger.warning(
+                    logger.info(
                         "Failed to execute streaming spawn attempt.",
                         spawn_id=str(run.spawn_id),
                         harness_id=str(harness.id),
@@ -1152,7 +1152,7 @@ async def execute_with_streaming(
 
                     conclusion.retries_attempted += 1
                     conclusion.exit_code = 1
-                    logger.warning(
+                    logger.info(
                         "Retrying after guardrail failure.",
                         spawn_id=str(run.spawn_id),
                         harness_id=str(harness.id),
@@ -1200,7 +1200,7 @@ async def execute_with_streaming(
                     break
 
                 conclusion.retries_attempted += 1
-                logger.warning(
+                logger.info(
                     "Retrying failed run attempt.",
                     spawn_id=str(run.spawn_id),
                     harness_id=str(harness.id),

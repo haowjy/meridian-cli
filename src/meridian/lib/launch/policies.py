@@ -482,7 +482,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         selected_model_token=selected_model_token,
         canonical_model_id=resolved_model,
     )
-    if bundle_result.harness_model is None:
+    if bundle_result.harness_model is None and resolved_model:
         if default_harness is not None and resolved_harness != default_harness:
             policy_warnings.append(
                 CompositionWarning(

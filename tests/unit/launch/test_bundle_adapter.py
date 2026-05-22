@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path, PureWindowsPath
 from typing import cast
@@ -9,7 +10,13 @@ import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.bundle_adapter import BundleRequest, request_and_resolve
+from meridian.lib.launch.bundle_adapter import (
+    _MARS_BUNDLE_MIN_VERSION,
+    BundleRequest,
+    request_and_resolve,
+)
+
+_ESCAPED_MIN_VERSION = re.escape(_MARS_BUNDLE_MIN_VERSION)
 
 
 def _completed(
@@ -28,7 +35,7 @@ def _completed(
 
 def _valid_bundle_payload() -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "routing": {
             "model": "gpt-5.5",
             "model_token": "gpt55",
@@ -47,6 +54,28 @@ def _valid_bundle_payload() -> dict[str, object]:
         },
         "warnings": ["bundle warning"],
     }
+
+
+def _resolve_with_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object] | None = None,
+    *,
+    agent: str | None = None,
+    project_root: str | Path | None = None,
+):
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+    resolved_payload = payload if payload is not None else _valid_bundle_payload()
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: _completed(stdout=json.dumps(resolved_payload)),
+    )
+    return request_and_resolve(
+        BundleRequest(
+            agent=agent,
+            project_root=Path(project_root) if project_root is not None else Path("/tmp/project"),
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
 
 
 def test_request_and_resolve_builds_expected_mars_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,7 +205,7 @@ def test_request_and_resolve_uses_native_windows_root_path(monkeypatch: pytest.M
 def test_request_and_resolve_reports_missing_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: None)
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.4\.8rc3"):
+    with pytest.raises(RuntimeError, match=rf"mars >= {_ESCAPED_MIN_VERSION}"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -195,7 +224,7 @@ def test_request_and_resolve_reports_unsupported_launch_bundle_command(
         ),
     )
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.4\.8rc3"):
+    with pytest.raises(RuntimeError, match=rf"mars >= {_ESCAPED_MIN_VERSION}"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -229,53 +258,33 @@ def test_request_and_resolve_reports_non_object_json_payload(
 def test_request_and_resolve_reports_unsupported_schema_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
-    payload["version"] = 2
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
-    )
+    payload["version"] = 99
 
-    with pytest.raises(RuntimeError, match="schema version 2 is unsupported"):
-        request_and_resolve(
-            BundleRequest(agent=None, project_root=Path("/tmp/project")),
-            harness_registry=get_default_harness_registry(),
-        )
+    with pytest.raises(RuntimeError, match=r"schema version 99 is unsupported.*mars >= 0\.6\.1"):
+        _resolve_with_payload(monkeypatch, payload)
 
 
-def test_request_and_resolve_reports_missing_routing_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+def test_request_and_resolve_accepts_empty_model_for_harness_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     payload = _valid_bundle_payload()
-    payload["routing"] = {"harness": "opencode"}
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
-    )
+    payload["routing"] = {"model": "", "harness": "opencode"}
 
-    with pytest.raises(RuntimeError, match=r"routing\.model is empty"):
-        request_and_resolve(
-            BundleRequest(agent=None, project_root=Path("/tmp/project")),
-            harness_registry=get_default_harness_registry(),
-        )
+    bundle = _resolve_with_payload(monkeypatch, payload)
+    assert bundle.model == ""
+    assert bundle.model_token == ""
+    assert bundle.harness is HarnessId.OPENCODE
 
 
 def test_request_and_resolve_reports_missing_routing_harness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
     payload["routing"] = {"model": "gpt-5.5"}
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
-    )
 
     with pytest.raises(RuntimeError, match=r"routing\.harness is empty"):
-        request_and_resolve(
-            BundleRequest(agent=None, project_root=Path("/tmp/project")),
-            harness_registry=get_default_harness_registry(),
-        )
+        _resolve_with_payload(monkeypatch, payload)
 
 
 @pytest.mark.parametrize(
@@ -291,41 +300,25 @@ def test_request_and_resolve_reports_invalid_nested_bundle_sections(
     field_value: object,
     message: str,
 ) -> None:
-    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
     payload[field_name] = field_value
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
-    )
 
     with pytest.raises(RuntimeError, match=message):
-        request_and_resolve(
-            BundleRequest(agent=None, project_root=Path("/tmp/project")),
-            harness_registry=get_default_harness_registry(),
-        )
+        _resolve_with_payload(monkeypatch, payload)
 
 
 def test_request_and_resolve_reports_unknown_routing_harness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
     payload["routing"] = {
         "model": "gpt-5.5",
         "model_token": "gpt55",
         "harness": "definitely-not-a-harness",
     }
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
-    )
 
     with pytest.raises(ValueError, match="unsupported routing\\.harness"):
-        request_and_resolve(
-            BundleRequest(agent=None, project_root=Path("/tmp/project")),
-            harness_registry=get_default_harness_registry(),
-        )
+        _resolve_with_payload(monkeypatch, payload)
 
 
 def test_request_and_resolve_reports_subprocess_file_not_found(
