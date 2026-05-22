@@ -6,7 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -28,10 +28,6 @@ if TYPE_CHECKING:
 
 _MARS_BUNDLE_MIN_VERSION = "0.5.0"
 _SUPPORTED_BUNDLE_SCHEMA_VERSION = 2
-
-
-def _empty_object_dict() -> dict[str, object]:
-    return {}
 
 
 @dataclass(frozen=True)
@@ -73,11 +69,6 @@ class _BundleResult:
     tools_mcp: tuple[str, ...]
     skills_loaded: tuple[str, ...]
     skills_missing: tuple[str, ...]
-    selection_kind: str = ""
-    match_evidence: str = ""
-    harness_model_source: str = ""
-    harness_model_confidence: str = ""
-    route_trace: dict[str, object] = field(default_factory=_empty_object_dict)
 
 
 def _resolve_mars_binary() -> str | None:
@@ -286,7 +277,8 @@ def _parse_bundle_payload(
     if version != _SUPPORTED_BUNDLE_SCHEMA_VERSION:
         raise RuntimeError(
             "Mars launch-bundle schema version "
-            f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}."
+            f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}. "
+            f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
         )
 
     routing = _required_object_field(payload, "routing")
@@ -296,16 +288,6 @@ def _parse_bundle_payload(
     model_token = _normalize_str(routing.get("model_token")) or model
     harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
     harness_model = _normalize_str(routing.get("harness_model")) or None
-    selection_kind = _normalize_str(routing.get("selection_kind"))
-    match_evidence = _normalize_str(routing.get("match_evidence"))
-    harness_model_source = _normalize_str(routing.get("harness_model_source"))
-    harness_model_confidence = _normalize_str(routing.get("harness_model_confidence"))
-    route_trace_raw = routing.get("route_trace")
-    route_trace = (
-        cast("dict[str, object]", route_trace_raw)
-        if isinstance(route_trace_raw, dict)
-        else {}
-    )
 
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     execution_policy = ResolvedExecutionPolicy.model_validate(
@@ -341,11 +323,6 @@ def _parse_bundle_payload(
         tools_mcp=_as_str_tuple(tools.get("mcp")),
         skills_loaded=_as_str_tuple(skills_metadata.get("loaded")),
         skills_missing=_as_str_tuple(skills_metadata.get("missing")),
-        selection_kind=selection_kind,
-        match_evidence=match_evidence,
-        harness_model_source=harness_model_source,
-        harness_model_confidence=harness_model_confidence,
-        route_trace=route_trace,
     )
 
 
