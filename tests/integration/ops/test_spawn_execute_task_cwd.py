@@ -26,72 +26,16 @@ def _seed_project(tmp_path: Path) -> tuple[Path, Path]:
     return project_root, task_cwd
 
 
-def test_spawn_create_background_persists_distinct_task_cwd(
+def test_spawn_create_background_handoff_preserves_external_task_cwd(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    project_root, task_cwd = _seed_project(tmp_path)
-    runtime_root = tmp_path / "runtime-root"
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
-    monkeypatch.chdir(task_cwd)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.3-codex",
-        harness=HarnessId.CODEX,
-    )
-
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(
-        spawn_execute,
-        "_build_background_worker_command",
-        lambda **_kwargs: (sys.executable, "-c", "pass"),
-    )
-    monkeypatch.setattr(
-        spawn_execute,
-        "_record_launch_boundary_observation",
-        lambda runtime_root, spawn_id, **kwargs: captured.setdefault("launch_cwds", []).append(
-            kwargs.get("cwd")
-        ),
-    )
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="reply with OK",
-            model="gpt-5.3-codex",
-            harness="codex",
-            background=True,
-            project_root=project_root.as_posix(),
-        )
-    )
-
-    assert result.status == "running"
-    assert project_root.as_posix() in captured["launch_cwds"]
-    assert result.spawn_id is not None
-
-    authority = resolve_runtime_authority_for_read(project_root)
-    assert authority.runtime_root is not None
-    spawn_id = SpawnId(result.spawn_id)
-    row = spawn_store.get_spawn(authority.runtime_root, spawn_id)
-
-    assert row is not None
-    assert row.control_root == project_root.as_posix()
-    assert row.task_cwd is None
-
-    bg_request = _load_bg_worker_request(resolve_spawn_log_dir(project_root, spawn_id))
-    assert bg_request.runtime.control_root == project_root.as_posix()
-    assert bg_request.runtime.requested_task_cwd == project_root.as_posix()
-
-
-def test_spawn_create_background_launches_worker_from_authority_root_with_external_task_cwd(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    project_root, task_cwd = _seed_project(tmp_path)
+    project_root, invocation_cwd = _seed_project(tmp_path)
     runtime_root = tmp_path / "runtime-root"
     external_task_cwd = tmp_path / "outside-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
-    monkeypatch.chdir(task_cwd)
+    monkeypatch.chdir(invocation_cwd)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.3-codex",
@@ -153,79 +97,16 @@ def test_spawn_create_background_launches_worker_from_authority_root_with_extern
     assert bg_request.runtime.requested_task_cwd == external_task_cwd.as_posix()
 
 
-def test_spawn_create_blocking_passes_distinct_task_cwd_to_launch_runtime(
+def test_spawn_create_persists_and_executes_prepared_task_cwd_contract(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
-    project_root, task_cwd = _seed_project(tmp_path)
-    runtime_root = tmp_path / "runtime-root"
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
-    monkeypatch.chdir(task_cwd)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.3-codex",
-        harness=HarnessId.CODEX,
-    )
-
-    captured: dict[str, Any] = {}
-
-    async def _fake_launch_prepared_spawn(
-        *,
-        runtime_request: Any,
-        execution_cwd: str,
-        **_kwargs: object,
-    ) -> int:
-        captured["runtime_requested_task_cwd"] = runtime_request.requested_task_cwd
-        captured["runtime_control_root"] = runtime_request.control_root
-        captured["execution_cwd"] = execution_cwd
-        return 0
-
-    monkeypatch.setattr(spawn_execute, "launch_prepared_spawn", _fake_launch_prepared_spawn)
-    monkeypatch.setattr(
-        spawn_execute,
-        "read_spawn_row",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            status="succeeded",
-            duration_secs=0.0,
-            input_tokens=None,
-            output_tokens=None,
-        ),
-    )
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="reply with OK",
-            model="gpt-5.3-codex",
-            harness="codex",
-            project_root=project_root.as_posix(),
-        )
-    )
-
-    assert result.status == "succeeded"
-    assert captured["runtime_control_root"] == project_root.as_posix()
-    assert captured["runtime_requested_task_cwd"] == project_root.as_posix()
-    assert captured["execution_cwd"] == project_root.as_posix()
-
-    assert result.spawn_id is not None
-    authority = resolve_runtime_authority_for_read(project_root)
-    assert authority.runtime_root is not None
-    row = spawn_store.get_spawn(authority.runtime_root, SpawnId(result.spawn_id))
-
-    assert row is not None
-    assert row.control_root == project_root.as_posix()
-    assert row.task_cwd is None
-
-
-def test_spawn_execute_uses_prepared_request_task_cwd_contract(
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    project_root, task_cwd = _seed_project(tmp_path)
+    project_root, invocation_cwd = _seed_project(tmp_path)
     runtime_root = tmp_path / "runtime-root"
     external_task_cwd = tmp_path / "outside-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", runtime_root.as_posix())
-    monkeypatch.chdir(task_cwd)
+    monkeypatch.chdir(invocation_cwd)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model="gpt-5.3-codex",
@@ -282,10 +163,12 @@ def test_spawn_execute_uses_prepared_request_task_cwd_contract(
     )
 
     assert result.status == "succeeded"
-    assert captured["runtime_control_root"] == project_root.as_posix()
-    assert captured["runtime_requested_task_cwd"] == external_task_cwd.as_posix()
-    assert captured["execution_cwd"] == external_task_cwd.as_posix()
-    assert captured["work_id"] == "ambient-work"
+    assert captured == {
+        "runtime_control_root": project_root.as_posix(),
+        "runtime_requested_task_cwd": external_task_cwd.as_posix(),
+        "execution_cwd": external_task_cwd.as_posix(),
+        "work_id": "ambient-work",
+    }
 
     assert result.spawn_id is not None
     authority = resolve_runtime_authority_for_read(project_root)

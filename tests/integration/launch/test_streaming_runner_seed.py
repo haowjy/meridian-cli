@@ -414,3 +414,4 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     assert row is not None
     assert row.control_root == tmp_path.as_posix()
     assert row.task_cwd == external_task_cwd.as_posix()
+

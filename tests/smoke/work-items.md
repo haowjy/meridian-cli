@@ -93,3 +93,19 @@ uv run meridian work show with-worktree-path --json
 ```
 - [ ] Exit 0
 - [ ] JSON shows worktree path is null/empty
+
+## manually assigned/shared worktree path is not removed by lifecycle
+
+```bash
+uv run meridian work start manual-a
+uv run meridian work start manual-b
+mkdir -p "$SCRATCH/shared-manual-worktree"
+uv run meridian work set-worktree manual-a "$SCRATCH/shared-manual-worktree"
+uv run meridian work set-worktree manual-b "$SCRATCH/shared-manual-worktree"
+uv run meridian work done manual-a
+test -d "$SCRATCH/shared-manual-worktree"
+uv run meridian work delete manual-b
+test -d "$SCRATCH/shared-manual-worktree"
+```
+- [ ] Both `test -d` checks pass
+- [ ] Lifecycle output says the path is manually assigned / not removed

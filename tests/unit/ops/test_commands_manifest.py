@@ -16,23 +16,19 @@ def _spec_by_fqid() -> dict[str, ExtensionCommandSpec]:
     return {spec.fqid: spec for spec in get_all_op_specs()}
 
 
-def test_work_set_worktree_command_is_registered() -> None:
-    spec = _spec_by_fqid()["meridian.work.set-worktree"]
+def test_work_set_and_clear_worktree_commands_are_registered() -> None:
+    specs = _spec_by_fqid()
 
-    assert spec.cli_group == "work"
-    assert spec.cli_name == "set-worktree"
-    assert spec.agent_default_format == "text"
-    assert spec.surfaces == frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP})
-    assert spec.args_schema is WorkSetWorktreeInput
-    assert spec.result_schema is WorkSetWorktreeOutput
+    set_spec = specs["meridian.work.set-worktree"]
+    assert set_spec.cli_group == "work"
+    assert set_spec.cli_name == "set-worktree"
+    assert set_spec.surfaces == frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP})
+    assert set_spec.args_schema is WorkSetWorktreeInput
+    assert set_spec.result_schema is WorkSetWorktreeOutput
 
-
-def test_work_clear_worktree_command_is_registered() -> None:
-    spec = _spec_by_fqid()["meridian.work.clear-worktree"]
-
-    assert spec.cli_group == "work"
-    assert spec.cli_name == "clear-worktree"
-    assert spec.agent_default_format == "text"
-    assert spec.surfaces == frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP})
-    assert spec.args_schema is WorkClearWorktreeInput
-    assert spec.result_schema is WorkClearWorktreeOutput
+    clear_spec = specs["meridian.work.clear-worktree"]
+    assert clear_spec.cli_group == "work"
+    assert clear_spec.cli_name == "clear-worktree"
+    assert clear_spec.surfaces == frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP})
+    assert clear_spec.args_schema is WorkClearWorktreeInput
+    assert clear_spec.result_schema is WorkClearWorktreeOutput

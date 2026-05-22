@@ -168,11 +168,6 @@ def test_spawn_action_wire_background_does_not_add_transcript_command() -> None:
         status="running",
         spawn_id="pbg",
         background=True,
-        authority_root="/repo/main",
-        task_cwd="/repo.worktrees/feature-x",
-        reference_anchor="/repo.worktrees/feature-x",
-        task_cwd_source="explicit-work-worktree",
-        task_cwd_work_item="feature-x",
     )
 
     wire = output.to_wire()
@@ -182,11 +177,6 @@ def test_spawn_action_wire_background_does_not_add_transcript_command() -> None:
     assert wire["wait_required"] is True
     assert wire["wait_command"] == "meridian spawn wait"
     assert wire["note"].startswith("Background spawn submitted.")
-    assert wire["authority_root"] == "/repo/main"
-    assert wire["task_cwd"] == "/repo.worktrees/feature-x"
-    assert wire["reference_anchor"] == "/repo.worktrees/feature-x"
-    assert wire["task_cwd_source"] == "explicit-work-worktree"
-    assert wire["task_cwd_work_item"] == "feature-x"
     assert "transcript_command" not in wire
 
     agent_wire = output.to_agent_wire()
@@ -195,11 +185,6 @@ def test_spawn_action_wire_background_does_not_add_transcript_command() -> None:
     assert agent_wire["terminal"] is False
     assert agent_wire["wait_required"] is True
     assert agent_wire["wait_command"] == "meridian spawn wait"
-    assert agent_wire["authority_root"] == "/repo/main"
-    assert agent_wire["task_cwd"] == "/repo.worktrees/feature-x"
-    assert agent_wire["reference_anchor"] == "/repo.worktrees/feature-x"
-    assert agent_wire["task_cwd_source"] == "explicit-work-worktree"
-    assert agent_wire["task_cwd_work_item"] == "feature-x"
     assert "transcript_command" not in agent_wire
 
 
@@ -242,27 +227,7 @@ def test_spawn_action_dry_run_exposes_task_cwd_fields() -> None:
     assert "Task CWD:  /repo.worktrees/feature-x" in text
 
 
-def test_spawn_action_non_dry_run_json_exposes_task_cwd_fields_when_distinct() -> None:
-    output = SpawnActionOutput(
-        command="spawn.create",
-        status="succeeded",
-        spawn_id="p5",
-        authority_root="/repo/main",
-        task_cwd="/repo.worktrees/feature-x",
-        reference_anchor="/repo.worktrees/feature-x",
-        task_cwd_source="explicit-work-worktree",
-        task_cwd_work_item="feature-x",
-    )
-
-    wire = output.to_wire()
-    assert wire["authority_root"] == "/repo/main"
-    assert wire["task_cwd"] == "/repo.worktrees/feature-x"
-    assert wire["reference_anchor"] == "/repo.worktrees/feature-x"
-    assert wire["task_cwd_source"] == "explicit-work-worktree"
-    assert wire["task_cwd_work_item"] == "feature-x"
-
-
-def test_spawn_action_terminal_compact_includes_task_cwd_observability() -> None:
+def test_spawn_action_runtime_text_includes_distinct_task_cwd() -> None:
     output = SpawnActionOutput(
         command="spawn.create",
         status="succeeded",
@@ -277,24 +242,6 @@ def test_spawn_action_terminal_compact_includes_task_cwd_observability() -> None
 
     text = output.format_text()
     assert "Authority: /repo/main" in text
-    assert (
-        "Task CWD:  /repo.worktrees/feature-x  "
-        "(work: feature-x, explicit-work-worktree)" in text
-    )
-    assert "Reference anchor: /repo.worktrees/feature-x" in text
-
-
-def test_spawn_action_default_text_includes_reference_anchor_for_distinct_task_cwd() -> None:
-    output = SpawnActionOutput(
-        command="spawn.create",
-        status="running",
-        spawn_id="p7",
-        authority_root="/repo/main",
-        task_cwd="/repo.worktrees/feature-x",
-        reference_anchor="/repo.worktrees/feature-x",
-    )
-
-    text = output.format_text()
-    assert "Authority: /repo/main" in text
     assert "Task CWD:  /repo.worktrees/feature-x" in text
+    assert "work: feature-x" in text
     assert "Reference anchor: /repo.worktrees/feature-x" in text

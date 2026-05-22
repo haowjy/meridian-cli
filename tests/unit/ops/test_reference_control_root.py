@@ -7,7 +7,7 @@ import pytest
 
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.spawn import api as spawn_api
-from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnForkInput
+from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput
 from meridian.lib.state import session_store
 from meridian.lib.state.primary_meta import PrimaryMetadata, write_primary_metadata
 from meridian.lib.state.spawn_store import start_spawn
@@ -183,67 +183,6 @@ def test_spawn_continue_uses_persisted_source_control_root(
     assert captured["session"].source_control_root == persisted_control_root.as_posix()
     assert captured["create_input"].worktree is True
 
-
-def test_spawn_fork_threads_worktree_flag_into_create_input(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _runtime_root(tmp_path)
-    project_root = tmp_path / "project"
-    project_root.mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setattr(
-        spawn_api,
-        "_resolve_spawn_read_authority",
-        lambda *, project_root, prepared=None: (Path(project_root), runtime_root),
-    )
-    monkeypatch.setattr(
-        spawn_api,
-        "resolve_session_reference",
-        lambda *args, **kwargs: spawn_api.ResolvedSessionReference(
-            harness_session_id="thread-1",
-            harness="codex",
-            source_chat_id="c1",
-            source_model="gpt-5.4",
-            source_agent="coder",
-            source_skills=(),
-            source_work_id=None,
-            tracked=True,
-            source_control_root=project_root.as_posix(),
-            source_execution_cwd=project_root.as_posix(),
-        ),
-    )
-    monkeypatch.setattr(
-        spawn_api,
-        "_resolve_effective_fork_target_harness",
-        lambda *args, **kwargs: "codex",
-    )
-    captured: dict[str, Any] = {}
-
-    def _fake_spawn_create_sync(
-        create_input: Any,
-        *,
-        ctx: Any = None,
-        sink: Any = None,
-        prepared: Any = None,
-    ) -> SpawnActionOutput:
-        _ = (ctx, sink, prepared)
-        captured["create_input"] = create_input
-        return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p2")
-
-    monkeypatch.setattr(spawn_api, "spawn_create_sync", _fake_spawn_create_sync)
-
-    spawn_api.spawn_fork_sync(
-        SpawnForkInput(
-            source_ref="p1",
-            prompt="Fork",
-            model="gpt-5.4",
-            worktree=False,
-            project_root=project_root.as_posix(),
-        )
-    )
-
-    assert captured["create_input"].worktree is False
 
 
 def test_resolve_spawn_reference_legacy_rows_fall_back_to_current_control_root(

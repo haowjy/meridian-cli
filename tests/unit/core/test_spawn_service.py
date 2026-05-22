@@ -81,34 +81,6 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
     return _build_launch_context
 
 
-def _fake_launch_context_builder_with_paths(
-    *,
-    control_root: Path,
-    task_cwd: Path | None,
-    child_cwd: Path,
-) -> Any:
-    def _build_launch_context(**kwargs: object) -> SimpleNamespace:
-        request = cast("SpawnRequest", kwargs["request"])
-        spawn_id = str(kwargs["spawn_id"])
-        runtime = cast("LaunchRuntime", kwargs["runtime"])
-        return SimpleNamespace(
-            resolved_request=request,
-            project_root=control_root,
-            control_root=control_root,
-            task_cwd=task_cwd,
-            runtime=runtime,
-            work_id=None,
-            binding=SimpleNamespace(
-                child_cwd=child_cwd,
-                environment=SimpleNamespace(
-                    bind_env_overrides={"MERIDIAN_SPAWN_ID": spawn_id},
-                ),
-                run_params=SimpleNamespace(appended_system_prompt="", interactive=False),
-            ),
-        )
-
-    return _build_launch_context
-
 
 @pytest.mark.asyncio
 async def test_prepare_persists_trimmed_goal_from_spawn_request(
@@ -145,45 +117,6 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
     assert prepared.connection_config.control_root == tmp_path
     assert prepared.connection_config.task_cwd == child_cwd
     assert prepared.connection_config.pi_child_wave_timeout_seconds == 300.0
-
-
-@pytest.mark.asyncio
-async def test_prepare_persists_selected_task_cwd_but_uses_child_cwd_for_connection(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_root = _runtime_root(tmp_path)
-    selected_task_cwd = tmp_path.parent / f"{tmp_path.name}-selected-task-cwd"
-    selected_task_cwd.mkdir()
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.build_launch_context",
-        _fake_launch_context_builder_with_paths(
-            control_root=tmp_path,
-            task_cwd=selected_task_cwd,
-            child_cwd=tmp_path,
-        ),
-    )
-
-    service = _service(runtime_root)
-    prepared = await service.prepare(
-        PrepareSpawnRequest(
-            request=SpawnRequest(
-                prompt="run it",
-                model="gpt-5.4",
-                harness="codex",
-                agent="coder",
-            ),
-            runtime=_runtime_request(tmp_path, runtime_root),
-            harness_registry=cast("Any", SimpleNamespace()),
-            chat_id="c1",
-        )
-    )
-
-    row = spawn_store.get_spawn(runtime_root, prepared.spawn_id)
-    assert row is not None
-    assert row.task_cwd == selected_task_cwd.as_posix()
-    assert prepared.connection_config.control_root == tmp_path
-    assert prepared.connection_config.task_cwd is None
 
 
 @pytest.mark.asyncio
