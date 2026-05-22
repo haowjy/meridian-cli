@@ -236,7 +236,7 @@ def test_build_create_payload_kb_reference_uses_authority_kb_dir_with_external_t
 
     assert prepared.task_cwd == external_task_cwd.as_posix()
     assert prepared.reference_anchor == external_task_cwd.as_posix()
-    assert prepared.reference_files == (authority_kb_file.resolve().as_posix(),)
+    assert tuple(Path(path) for path in prepared.reference_files) == (authority_kb_file.resolve(),)
 
 
 def test_build_create_payload_relative_reference_resolves_from_selected_worktree(
@@ -280,4 +280,4 @@ def test_build_create_payload_relative_reference_resolves_from_selected_worktree
     assert prepared.reference_anchor == external_task_cwd.as_posix()
     assert prepared.task_cwd_source == "explicit-work-worktree"
     assert prepared.task_cwd_work_item == work.name
-    assert prepared.reference_files == (reference_file.resolve().as_posix(),)
+    assert tuple(Path(path) for path in prepared.reference_files) == (reference_file.resolve(),)

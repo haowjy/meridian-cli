@@ -32,6 +32,7 @@ def _isolate_cli_main_invocations(
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "meridian.toml").write_text("[defaults]\n", encoding="utf-8")
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
     monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
 
