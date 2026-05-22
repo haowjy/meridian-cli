@@ -123,32 +123,51 @@ jobs:
             exit 0
           fi
 
-          unknown_release_labels="$(grep '^release:' <<<"${labels}" | grep -vxE 'release:(skip|patch|stable|rc)' || true)"
-          has_stable_label=false
+          unknown_release_labels="$(grep '^release:' <<<"${labels}" | grep -vxE 'release:(skip|patch|stable|minor|major|rc)' || true)"
+          has_patch_label=false
+          has_minor_label=false
+          has_major_label=false
           has_rc_label=false
 
           if grep -qxE 'release:(patch|stable)' <<<"${release_labels}"; then
-            has_stable_label=true
+            has_patch_label=true
+          fi
+          if grep -qx 'release:minor' <<<"${release_labels}"; then
+            has_minor_label=true
+          fi
+          if grep -qx 'release:major' <<<"${release_labels}"; then
+            has_major_label=true
           fi
           if grep -qx 'release:rc' <<<"${release_labels}"; then
             has_rc_label=true
           fi
 
           release_kind="rc"
+          bump_kind="patch"
+          if [[ "${has_major_label}" == "true" ]]; then
+            bump_kind="major"
+          elif [[ "${has_minor_label}" == "true" ]]; then
+            bump_kind="minor"
+          elif [[ "${has_patch_label}" == "true" ]]; then
+            bump_kind="patch"
+          fi
+
           if [[ -n "${unknown_release_labels}" ]]; then
+            bump_kind="patch"
             echo "::notice::Unknown release label(s) detected (${unknown_release_labels//$'\n'/, }); defaulting to prerelease (rc)."
           elif [[ "${has_rc_label}" == "true" ]]; then
-            echo "::notice::release:rc label present; creating prerelease (rc)."
-          elif [[ "${has_stable_label}" == "true" ]]; then
+            echo "::notice::release:rc label present; creating prerelease (rc) with ${bump_kind} bump."
+          elif [[ "${has_patch_label}" == "true" || "${has_minor_label}" == "true" || "${has_major_label}" == "true" ]]; then
             release_kind="stable"
-            echo "::notice::release:patch/release:stable label present; creating stable patch release."
+            echo "::notice::Stable release label present; creating stable ${bump_kind} release."
           else
             echo "::notice::release:* label present without explicit stable label; defaulting to prerelease (rc)."
           fi
 
           echo "should_release=true" >> "$GITHUB_OUTPUT"
           echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Resolved release kind: ${release_kind}."
+          echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Resolved release kind: ${release_kind}; bump kind: ${bump_kind}."
 
       - name: Skip when trigger already released
         if: steps.release_intent.outputs.should_release == 'true'
@@ -387,16 +406,37 @@ jobs:
         id: next_version
         env:
           RELEASE_KIND: ${{ steps.release_intent.outputs.release_kind }}
+          BUMP_KIND: ${{ steps.release_intent.outputs.bump_kind }}
         run: |
           bump_version() {
             local version="$1"
+            local bump_kind="${2:-patch}"
             local major minor patch
             IFS='.' read -r major minor patch <<<"${version}"
-            patch=$((patch + 1))
-            echo "${major}.${minor}.${patch}"
+            case "${bump_kind}" in
+              patch)
+                patch=$((patch + 1))
+                echo "${major}.${minor}.${patch}"
+                ;;
+              minor)
+                minor=$((minor + 1))
+                echo "${major}.${minor}.0"
+                ;;
+              major)
+                major=$((major + 1))
+                echo "${major}.0.0"
+                ;;
+              *)
+                echo "::error::Unsupported bump kind: ${bump_kind}"
+                exit 1
+                ;;
+            esac
           }
 
           git fetch --tags --force
+
+          release_kind="${RELEASE_KIND:-rc}"
+          bump_kind="${BUMP_KIND:-patch}"
 
           base_tag=""
           while IFS= read -r candidate_tag; do
@@ -414,41 +454,42 @@ jobs:
             echo "::notice::Using latest stable release tag ${base_tag}."
           fi
 
-          next_patch="$(bump_version "${base_version}")"
-          if [[ "${RELEASE_KIND}" == "stable" ]]; then
-            next_version="${next_patch}"
+          next_bumped_version="$(bump_version "${base_version}" "${bump_kind}")"
+          if [[ "${release_kind}" == "stable" ]]; then
+            next_version="${next_bumped_version}"
             while git rev-parse -q --verify "refs/tags/v${next_version}" >/dev/null; do
               colliding_tag="v${next_version}"
               colliding_commit="$(git rev-parse "${colliding_tag}^{commit}")"
               colliding_subject="$(git show -s --format=%s "${colliding_commit}")"
               echo "::notice::Stable tag collision at ${colliding_tag} (commit=${colliding_commit}, subject='${colliding_subject}'); selecting next candidate version."
               base_version="${next_version}"
-              next_patch="$(bump_version "${base_version}")"
-              next_version="${next_patch}"
+              next_bumped_version="$(bump_version "${base_version}" "${bump_kind}")"
+              next_version="${next_bumped_version}"
             done
             python_version="${next_version}"
           else
-            escaped_next_patch="$(sed 's/\./\\./g' <<<"${next_patch}")"
+            escaped_next_bumped_version="$(sed 's/\./\\./g' <<<"${next_bumped_version}")"
             max_rc=0
             while IFS= read -r rc_tag; do
-              if [[ "${rc_tag}" =~ ^v${escaped_next_patch}-rc\.([0-9]+)$ ]]; then
+              if [[ "${rc_tag}" =~ ^v${escaped_next_bumped_version}-rc\.([0-9]+)$ ]]; then
                 rc_number="${BASH_REMATCH[1]}"
                 if (( rc_number > max_rc )); then
                   max_rc="${rc_number}"
                 fi
               fi
-            done < <(git tag --list "v${next_patch}-rc.*")
+            done < <(git tag --list "v${next_bumped_version}-rc.*")
 
             next_rc=$((max_rc + 1))
-            next_version="${next_patch}-rc.${next_rc}"
-            python_version="${next_patch}rc${next_rc}"
+            next_version="${next_bumped_version}-rc.${next_rc}"
+            python_version="${next_bumped_version}rc${next_rc}"
           fi
 
           echo "next_version=${next_version}" >> "$GITHUB_OUTPUT"
           echo "python_version=${python_version}" >> "$GITHUB_OUTPUT"
-          echo "release_kind=${RELEASE_KIND}" >> "$GITHUB_OUTPUT"
+          echo "release_kind=${release_kind}" >> "$GITHUB_OUTPUT"
+          echo "bump_kind=${bump_kind}" >> "$GITHUB_OUTPUT"
           echo "base_version=${base_version}" >> "$GITHUB_OUTPUT"
-          echo "Computed next ${RELEASE_KIND} version ${next_version} (python=${python_version}) from base ${base_version}."
+          echo "Computed next ${release_kind} version ${next_version} (python=${python_version}) from base ${base_version} with ${bump_kind} bump."
 
       - name: Update release files
         if: steps.release_intent.outputs.should_release == 'true' && steps.release_guard.outputs.already_released != 'true'
