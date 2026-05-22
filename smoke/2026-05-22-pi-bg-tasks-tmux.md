@@ -1,8 +1,9 @@
 # Pi extensions — tmux live smoke (2026-05-22)
 
 Worktree: `pi-generic-background-tasks`  
-State dir: `$HOME/meridian-pi/smoke-pi-bg-tasks-20260522`  
-Tmux session: `pi-smoke` (attach: `tmux attach -t pi-smoke`)
+**Use isolated dirs** (repo convention): `. tests/smoke/scripts/setup.sh` → `SCRATCH` and `MERIDIAN_HOME` are `mktemp -d` paths under `/tmp`.  
+For Pi extension state during manual smoke: `export MERIDIAN_PI_STATE_DIR="$MERIDIAN_HOME/pi-state"` (not `$HOME/meridian-pi/...`).  
+Automated checks: pytest `tmp_path` / `tests/integration/pi_runtime/test_lifecycle_extension.py` — not committed one-off harness scripts.
 
 ## Rebase on `origin/main` (2026-05-22)
 
@@ -20,7 +21,14 @@ Tmux session: `pi-smoke` (attach: `tmux attach -t pi-smoke`)
 | `-m gpt-5.4-mini` on Pi resolves to `azure-openai-responses` with no API key | Use **`-m openai-codex/gpt-5.4-mini`** for live Pi spawns (still “gpt-5.4-mini” family) |
 | Bare `gpt-5.4-mini` dry-run defaults to **codex** harness, not pi | Always pass `--harness pi` for Pi RPC smoke |
 
-Helper: `source smoke/pi-smoke-env.sh` from repo root.
+Setup (from repo root, before tmux/manual Pi):
+
+```bash
+. tests/smoke/scripts/setup.sh
+cd "$SCRATCH"   # or your worktree for extension build
+export MERIDIAN_PI_STATE_DIR="${MERIDIAN_PI_STATE_DIR:-$MERIDIAN_HOME/pi-state}"
+mkdir -p "$MERIDIAN_PI_STATE_DIR"
+```
 
 ## Pass/fail matrix
 
@@ -29,7 +37,7 @@ Helper: `source smoke/pi-smoke-env.sh` from repo root.
 | **Prep** | `npm run build:extensions` | PASS | |
 | **Prep** | `pi --version` (Node 24 PATH) | PASS | 0.75.4 |
 | **Prep** | `meridian spawn --harness pi --dry-run` | PASS | Projects both extensions on RPC |
-| **B** | `background_task` start + wait | PASS | Harness: `smoke/pi-extension-command-harness.mjs` |
+| **B** | `background_task` start + wait | PASS | Ad-hoc Node harness (session-only; not in repo — use pytest/vitest instead) |
 | **B** | `/ps` notify rows | PASS | `[task] … exited …` lines |
 | **B** | `/ps:logs` | PASS | `smoke-done` in combined.log tail |
 | **B** | `/ps:clear` | PASS | `cleared N finished task(s)` |
@@ -117,10 +125,4 @@ RPC spawn projection (from p2207 history) loads both:
 
 ## Artifacts
 
-| Path | Purpose |
-|------|---------|
-| `smoke/pi-smoke-env.sh` | Env for tmux panes |
-| `smoke/pi-extension-command-harness.mjs` | Non-interactive `/ps` + tool smoke |
-| `/tmp/pi-harness-both.log` | Harness JSON output |
-| `/tmp/smoke-s1-codex.log` | S1 success log |
-| `/tmp/smoke-s6.log` | S6 success log |
+Session-local only (under `/tmp` or agent temp): spawn logs under `$MERIDIAN_HOME`, Pi state under `$MERIDIAN_PI_STATE_DIR`. Do not commit machine-specific env scripts — see `tests/smoke/scripts/setup.sh`.
