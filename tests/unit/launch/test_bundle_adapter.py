@@ -258,12 +258,16 @@ def test_request_and_resolve_reports_unsupported_schema_version(
         _resolve_with_payload(monkeypatch, payload)
 
 
-def test_request_and_resolve_reports_missing_routing_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_request_and_resolve_accepts_empty_model_for_harness_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     payload = _valid_bundle_payload()
-    payload["routing"] = {"harness": "opencode"}
+    payload["routing"] = {"model": "", "harness": "opencode"}
 
-    with pytest.raises(RuntimeError, match=r"routing\.model is empty"):
-        _resolve_with_payload(monkeypatch, payload)
+    bundle = _resolve_with_payload(monkeypatch, payload)
+    assert bundle.model == ""
+    assert bundle.model_token == ""
+    assert bundle.harness is HarnessId.OPENCODE
 
 
 def test_request_and_resolve_reports_missing_routing_harness(

@@ -283,8 +283,6 @@ def _parse_bundle_payload(
 
     routing = _required_object_field(payload, "routing")
     model = _normalize_str(routing.get("model"))
-    if not model:
-        raise _bundle_schema_error("routing.model is empty")
     model_token = _normalize_str(routing.get("model_token")) or model
     harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
     harness_model = _normalize_str(routing.get("harness_model")) or None
