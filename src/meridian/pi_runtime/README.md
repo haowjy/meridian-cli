@@ -13,7 +13,7 @@ npm run build:extensions
 
 This writes stable entrypoints under `dist/extensions/`:
 
-- `dist/extensions/managed-bash/index.js`
-- `dist/extensions/meridian-lifecycle/index.js`
+- `dist/extensions/background-tasks/index.js`
+- `dist/extensions/meridian-spawn-watch/index.js`
 
 Launch projection copies those extension entrypoints into Meridian-owned state for each spawned run.

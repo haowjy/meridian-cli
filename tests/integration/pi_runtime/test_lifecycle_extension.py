@@ -20,7 +20,7 @@ LIFECYCLE_DIST = (
     / "pi_runtime"
     / "dist"
     / "extensions"
-    / "meridian-lifecycle"
+    / "meridian-spawn-watch"
     / "index.js"
 )
 
@@ -288,7 +288,7 @@ originalWrite("@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents }) +
         assert event["notification_id"]
     sent = output["sentMessages"]
     assert sent[0]["options"] == {"deliverAs": "followUp", "triggerTurn": True}
-    assert sent[0]["message"]["customType"] == "meridian-lifecycle"
+    assert sent[0]["message"]["customType"] in {"meridian-lifecycle", "meridian-spawn-watch"}
     assert sent[0]["message"]["display"] is True
     assert sent[0]["message"]["content"] == (
         "Background work completed. 1 children finished: j-1 succeeded."

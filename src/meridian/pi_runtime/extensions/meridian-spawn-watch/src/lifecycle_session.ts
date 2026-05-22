@@ -228,8 +228,11 @@ function waitPolicyFrom(event: ToolResultEvent): WaitPolicy {
 
 function jobIdFrom(event: ToolResultEvent): string | null {
   return (
+    (event.details as { task_id?: string })?.task_id ||
     event.details?.job_id ||
+    (event.details?.job as { task_id?: string })?.task_id ||
     event.details?.job?.job_id ||
+    (event.input as { task_id?: string })?.task_id ||
     event.input?.job_id ||
     null
   );
@@ -640,7 +643,7 @@ async function runCommand(command: string, args: string[], timeoutMs: number): P
   });
 }
 
-export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
+export function setupLifecycleSession(pi: ExtensionAPI): void {
   const childWaveTimeoutMs = resolveChildWaveTimeoutMs();
   const childWaveKillGraceMs = resolveWaveKillGraceMs();
 
@@ -1432,6 +1435,18 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
     const commandLooksLikeMeridianSpawn = isMeridianSpawnCommand(command);
     const resultJobId = jobIdFrom(event);
 
+    if (toolName === "background_task" && (event.details as { action?: string })?.action === "start") {
+      const taskId = resultJobId;
+      if (taskId && commandLooksLikeMeridianSpawn) {
+        session.meridianSpawnWrapperJobs.add(taskId);
+        addTrackedChild(taskId, waitPolicyFrom(event), "meridian_spawn");
+        setChildPid(taskId, intFromUnknown(event.details?.pid));
+        handleObservedMeridianSpawnOutput(event, true, taskId);
+        ensureChildStatusPoller();
+      }
+      return;
+    }
+
     if (toolName === "bash") {
       if (event.details?.state === "running") {
         const jobId = resultJobId;
@@ -1464,6 +1479,24 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       return;
     }
 
+    if (
+      toolName === "background_task" &&
+      ["wait", "cancel"].includes(String((event.details as { action?: string })?.action ?? ""))
+    ) {
+      const taskId = resultJobId;
+      const meridianAssociated = !!taskId && session.meridianSpawnWrapperJobs.has(taskId);
+      handleObservedMeridianSpawnOutput(event, meridianAssociated, taskId);
+      if (taskId && event.details?.found !== false) {
+        const task = (event.details as { task?: { status?: string } })?.task;
+        const status = task?.status ?? event.details?.job?.status;
+        if (status && status !== "running" && !session.meridianSpawnWrapperJobs.has(taskId)) {
+          maybeRemoveChild(taskId);
+        }
+      }
+      ensureChildStatusPoller();
+      return;
+    }
+
     if (toolName === "bash_bg_wait" || toolName === "bash_bg_kill") {
       const jobId = resultJobId;
       const meridianAssociated = !!jobId && session.meridianSpawnWrapperJobs.has(jobId);
@@ -1480,6 +1513,14 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       return;
     }
 
+    if (toolName === "background_task" && (event.details as { action?: string })?.action === "output") {
+      const taskId = resultJobId;
+      const meridianAssociated = !!taskId && session.meridianSpawnWrapperJobs.has(taskId);
+      handleObservedMeridianSpawnOutput(event, meridianAssociated, taskId);
+      ensureChildStatusPoller();
+      return;
+    }
+
     if (toolName === "bash_bg_read") {
       const jobId = resultJobId;
       const meridianAssociated = !!jobId && session.meridianSpawnWrapperJobs.has(jobId);
@@ -1488,14 +1529,19 @@ export default function meridianLifecycleExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    if (toolName === "bash_bg_list") {
-      const jobs = event.details?.jobs;
+    if (
+      toolName === "background_task" &&
+      (event.details as { action?: string })?.action === "list"
+    ) {
+      const jobs =
+        (event.details as { tasks?: Array<Record<string, unknown>> })?.tasks ??
+        event.details?.jobs;
       if (!Array.isArray(jobs)) {
         return;
       }
       let hasMeridianWrapper = false;
       for (const job of jobs) {
-        const jobId = job.job_id;
+        const jobId = (job.task_id as string) ?? (job.job_id as string);
         if (!jobId) {
           continue;
         }

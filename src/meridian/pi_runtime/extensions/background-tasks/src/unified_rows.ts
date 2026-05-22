@@ -1,0 +1,68 @@
+import { offMeridianEvent, onMeridianEvent } from "../../shared/meridian_bus";
+import type { BackgroundTaskRecord, PsRow } from "./types";
+
+const SPAWN_CHANNELS = [
+  "meridian:spawn:discovered",
+  "meridian:spawn:updated",
+  "meridian:spawn:removed",
+] as const;
+
+export type SpawnRowProjection = {
+  spawn_id: string;
+  task_id?: string;
+  status: string;
+  summary?: string;
+};
+
+export function createUnifiedRowFeed(): {
+  getSpawnRows: () => SpawnRowProjection[];
+  mergeRows: (tasks: BackgroundTaskRecord[]) => PsRow[];
+  dispose: () => void;
+} {
+  const spawnRows = new Map<string, SpawnRowProjection>();
+
+  const handlers = SPAWN_CHANNELS.map((channel) => {
+    const handler = (payload: Record<string, unknown>) => {
+      const spawnId = typeof payload.spawn_id === "string" ? payload.spawn_id : null;
+      if (!spawnId) {
+        return;
+      }
+      if (channel === "meridian:spawn:removed") {
+        spawnRows.delete(spawnId);
+        return;
+      }
+      spawnRows.set(spawnId, {
+        spawn_id: spawnId,
+        task_id: typeof payload.task_id === "string" ? payload.task_id : undefined,
+        status: typeof payload.status === "string" ? payload.status : "unknown",
+        summary: typeof payload.summary === "string" ? payload.summary : undefined,
+      });
+    };
+    onMeridianEvent(channel, handler);
+    return { channel, handler };
+  });
+
+  return {
+    getSpawnRows: () => [...spawnRows.values()],
+    mergeRows(tasks) {
+      const MERIDIAN_SPAWN = /\bmeridian\s+spawn\b/;
+      const processRows: PsRow[] = tasks.map((task) => ({
+        kind: MERIDIAN_SPAWN.test(task.command) ? "meridian_spawn_wrapper" : "process",
+        ...task,
+      }));
+      const spawnPsRows: PsRow[] = [...spawnRows.values()].map((row) => ({
+        kind: "meridian_spawn",
+        spawn_id: row.spawn_id,
+        task_id: row.task_id,
+        status: row.status,
+        summary: row.summary,
+      }));
+      return [...processRows, ...spawnPsRows];
+    },
+    dispose() {
+      for (const { channel, handler } of handlers) {
+        offMeridianEvent(channel, handler);
+      }
+    },
+  };
+}

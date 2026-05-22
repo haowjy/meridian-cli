@@ -86,7 +86,7 @@ Start `sleep 3 && echo child-done` as tracked background work. When it completes
 Expect:
 - Parent turn idles while child runs
 - Lifecycle emits `meridian.notification.queued` + `delivered`
-- Internal extension bus receives `meridian:subspawn:start` / `meridian:subspawn:end` from managed-bash
+- Internal extension bus receives `meridian:task:start` / `meridian:task:end` from background-tasks (and `meridian:subspawn:*` for spawn wrappers)
 - Follow-up turn starts automatically
 - After follow-up `agent_end`, quiescence is reached and spawn completes
 
@@ -311,7 +311,7 @@ uv run meridian --harness pi -m <pi-model>
 From the native TUI, start `meridian spawn` child work and wait for completion.
 
 Expect:
-- Primary argv loads the lifecycle extension but not managed-bash, `--mode rpc`, or `--no-extensions`
+- Primary argv loads meridian-spawn-watch only (not background-tasks), `--mode rpc`, or `--no-extensions`
 - Child completion can trigger a native Pi follow-up/notification
 - Primary does not auto-finalize or exit at quiescence; user remains in the TUI
 - Lifecycle events are written to `pi-lifecycle-events.jsonl` sidecar, not stdio

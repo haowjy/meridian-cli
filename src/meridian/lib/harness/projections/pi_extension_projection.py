@@ -16,12 +16,12 @@ _EXTENSION_SOURCE_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_SOURCE_ROOT
 _EXTENSION_TARGET_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_TARGET_ROOT"
 
 _LIFECYCLE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
-    "meridian-lifecycle",
-    "meridian-lifecycle/index.js",
+    "meridian-spawn-watch",
+    "meridian-spawn-watch/index.js",
 )
 
 _ALL_REQUIRED_EXTENSION_RELATIVE_PATHS: Final[tuple[tuple[str, str], ...]] = (
-    ("managed-bash", "managed-bash/index.js"),
+    ("background-tasks", "background-tasks/index.js"),
     _LIFECYCLE_EXTENSION_RELATIVE_PATH,
 )
 

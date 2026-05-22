@@ -45,10 +45,10 @@ async def _next_non_phase_event(event_iter):  # type: ignore[no-untyped-def]
 
 def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     source_root = root / "dist" / "extensions"
-    (source_root / "managed-bash").mkdir(parents=True, exist_ok=True)
-    (source_root / "managed-bash" / "index.js").write_text("export default {}\\n", encoding="utf-8")
-    (source_root / "meridian-lifecycle").mkdir(parents=True, exist_ok=True)
-    (source_root / "meridian-lifecycle" / "index.js").write_text(
+    (source_root / "background-tasks").mkdir(parents=True, exist_ok=True)
+    (source_root / "background-tasks" / "index.js").write_text("export default {}\\n", encoding="utf-8")
+    (source_root / "meridian-spawn-watch").mkdir(parents=True, exist_ok=True)
+    (source_root / "meridian-spawn-watch" / "index.js").write_text(
         "export default {}\\n",
         encoding="utf-8",
     )
@@ -348,8 +348,8 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
 
     scoped_session_dir = tmp_path / "pi-sessions" / "p-pi-direct-runtime"
     managed_entrypoints = (
-        str(tmp_path / "agent" / "extensions" / "managed-bash" / "index.js"),
-        str(tmp_path / "agent" / "extensions" / "meridian-lifecycle" / "index.js"),
+        str(tmp_path / "agent" / "extensions" / "background-tasks" / "index.js"),
+        str(tmp_path / "agent" / "extensions" / "meridian-spawn-watch" / "index.js"),
     )
 
     connection = PiRpcConnection()

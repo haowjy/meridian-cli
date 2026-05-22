@@ -22,10 +22,10 @@ from meridian.lib.state.user_paths import get_user_home
 
 
 def _write_extension_fixture(root: Path) -> None:
-    (root / "managed-bash").mkdir(parents=True, exist_ok=True)
-    (root / "managed-bash" / "index.js").write_text("export default {}\n", encoding="utf-8")
-    (root / "meridian-lifecycle").mkdir(parents=True, exist_ok=True)
-    (root / "meridian-lifecycle" / "index.js").write_text(
+    (root / "background-tasks").mkdir(parents=True, exist_ok=True)
+    (root / "background-tasks" / "index.js").write_text("export default {}\n", encoding="utf-8")
+    (root / "meridian-spawn-watch").mkdir(parents=True, exist_ok=True)
+    (root / "meridian-spawn-watch" / "index.js").write_text(
         "export default {}\n",
         encoding="utf-8",
     )
@@ -73,8 +73,8 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
-        str(extension_target_root / "managed-bash" / "index.js"),
-        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+        str(extension_target_root / "background-tasks" / "index.js"),
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
     ]
     assert command[-2:] == ["--provider", "anthropic"]
     assert "solve this" not in command
@@ -152,9 +152,9 @@ def test_pi_native_projection_loads_lifecycle_extension_only(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
-        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
     ]
-    assert str(extension_target_root / "managed-bash" / "index.js") not in extension_values
+    assert str(extension_target_root / "background-tasks" / "index.js") not in extension_values
     assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
     assert command[command.index("--append-system-prompt") + 1] == "native primary"
     assert command[command.index("--fork") + 1] == "019e3113-edc8-7751-bb29-9648304465d5"
@@ -226,7 +226,7 @@ def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primar
     )
 
     assert spec.pi_extension_entrypoints == (
-        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
     )
 
 
@@ -270,8 +270,8 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
     extension_target_root = tmp_path / "agent" / "extensions"
-    (extension_source_root / "managed-bash").mkdir(parents=True, exist_ok=True)
-    (extension_source_root / "managed-bash" / "index.js").write_text(
+    (extension_source_root / "background-tasks").mkdir(parents=True, exist_ok=True)
+    (extension_source_root / "background-tasks" / "index.js").write_text(
         "export default {}\n",
         encoding="utf-8",
     )
@@ -282,5 +282,5 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
         pi_extension_projection.resolve_pi_all_extension_entrypoints()
 
     message = str(exc_info.value)
-    assert "meridian-lifecycle" in message and "index.js" in message
+    assert "meridian-spawn-watch" in message and "index.js" in message
     assert "Build Pi extensions first" in message
