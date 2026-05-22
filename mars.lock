@@ -2,7 +2,7 @@ version = 2
 
 [dependencies.anthropic-skills]
 url = "github.com/anthropics/skills"
-commit = "6a5bb06904ab164a345e41c381fc9097954b83da"
+commit = "690f15cac7f7b4c055c5ab109c79ed9259934081"
 
 [dependencies.meridian-base]
 url = "github.com/meridian-flow/meridian-base"
@@ -24,7 +24,6 @@ path = "/tmp/tmp.scFJOuDlIj/pkg"
 
 [dependencies.playwright-cli]
 url = "github.com/microsoft/playwright-cli"
-version = "main"
 commit = "3a1bafc8b4e973c72d0364eb5b427d1ce0aa8317"
 
 [items."agent/alignment-reviewer"]

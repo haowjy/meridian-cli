@@ -69,7 +69,7 @@ from meridian.lib.platform.process_scope import (
 )
 from meridian.lib.state.paths import resolve_spawn_log_dir
 
-_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 _STOP_WAIT_TIMEOUT_SECONDS = 5.0
 _STARTUP_STDERR_MAX_BYTES = 16 * 1024
