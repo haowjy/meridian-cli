@@ -195,6 +195,62 @@ def test_shared_managed_worktree_done_skips_removal(tmp_path: Path) -> None:
     assert "still referenced by work item(s): managed-b" in (done_output.warning or "")
 
 
+def test_shared_managed_worktree_archived_peer_does_not_block_last_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item_a = work_store.create_work_item(project_state_dir, "managed-peer-a", "", None)
+    item_b = work_store.create_work_item(project_state_dir, "managed-peer-b", "", None)
+    shared_path = tmp_path / "shared-managed-final-cleanup"
+    shared_path.mkdir(parents=True, exist_ok=True)
+
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item_a.name,
+        path=shared_path.as_posix(),
+        branch="feature/managed-peer-a",
+        managed=True,
+    )
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item_b.name,
+        path=shared_path.as_posix(),
+        branch="feature/managed-peer-b",
+        managed=True,
+    )
+
+    from meridian.lib.ops import worktree_lifecycle
+
+    remove_calls: list[tuple[Path, Path, bool]] = []
+
+    monkeypatch.setattr(
+        worktree_lifecycle,
+        "resolve_main_repo_root",
+        lambda _path: project_root,
+    )
+
+    def _fake_remove(repo_root: Path, worktree_path: Path, *, force: bool = False) -> None:
+        remove_calls.append((repo_root, worktree_path, force))
+
+    monkeypatch.setattr(worktree_lifecycle, "remove_worktree", _fake_remove)
+    monkeypatch.setattr(worktree_lifecycle, "ensure_no_unpushed_commits", lambda _path: None)
+
+    first_done = work_done_sync(
+        WorkDoneInput(work_id=item_a.name, project_root=project_root.as_posix())
+    )
+    assert "still referenced by work item(s): managed-peer-b" in (first_done.warning or "")
+    assert remove_calls == []
+
+    second_done = work_done_sync(
+        WorkDoneInput(work_id=item_b.name, project_root=project_root.as_posix())
+    )
+    assert "still referenced by work item(s): managed-peer-a" not in (second_done.warning or "")
+    assert "Removed worktree at" in (second_done.warning or "")
+    assert len(remove_calls) == 1
+    assert remove_calls[0][1] == shared_path.resolve()
+
+
 def test_shared_managed_worktree_rename_skips_move(tmp_path: Path) -> None:
     project_root, project_state_dir = _setup_project(tmp_path)
     item_a = work_store.create_work_item(project_state_dir, "rename-a", "", None)

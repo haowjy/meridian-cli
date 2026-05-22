@@ -161,11 +161,13 @@ def _coerce_worktree_metadata(
         branch_value = nested_dict.get("branch")
         pending_value = nested_dict.get("pending")
         managed_value = nested_dict.get("managed")
+        has_managed_key = "managed" in nested_dict
     else:
         path_value = raw.get("worktree_path")
         branch_value = raw.get("worktree_branch")
         pending_value = raw.get("worktree_pending")
         managed_value = raw.get("worktree_managed")
+        has_managed_key = "worktree_managed" in raw
         legacy_keys = ("worktree_path", "worktree_branch", "worktree_pending", "worktree_managed")
         if nested is not None or any(key in raw for key in legacy_keys):
             changed = True
@@ -187,6 +189,19 @@ def _coerce_worktree_metadata(
 
     if isinstance(managed_value, bool):
         managed = managed_value
+    elif (
+        not has_managed_key
+        and (
+            (isinstance(path_value, str) and bool(path_value))
+            or (isinstance(branch_value, str) and bool(branch_value))
+            or pending_value is not None
+        )
+    ):
+        # Compatibility inference for pre-managed records:
+        # when worktree metadata exists but no `managed` flag was persisted,
+        # treat it as a managed/provisioned worktree.
+        managed = True
+        changed = True
     else:
         managed = fallback.managed
         if managed_value is not None:
@@ -605,12 +620,15 @@ def list_work_item_references_for_path(
     worktree_path: str,
     *,
     exclude_work_id: str | None = None,
+    include_archived: bool = True,
 ) -> list[WorkItem]:
-    """Return active+archived work items that reference ``worktree_path``."""
+    """Return work items that reference ``worktree_path``."""
 
     target = _normalize_worktree_path(worktree_path)
     active_items, _ = list_work_items(runtime_root)
-    archived_items, _ = list_archived_work_items(runtime_root, all_archived=True)
+    archived_items: list[WorkItem] = []
+    if include_archived:
+        archived_items, _ = list_archived_work_items(runtime_root, all_archived=True)
     matches: list[WorkItem] = []
     for item in (*active_items, *archived_items):
         if exclude_work_id is not None and item.name == exclude_work_id:

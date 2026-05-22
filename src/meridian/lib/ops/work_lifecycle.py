@@ -92,6 +92,7 @@ def _shared_worktree_references(
         project_state_dir,
         item.worktree_path,
         exclude_work_id=item.name,
+        include_archived=False,
     )
     return tuple(sorted({reference.name for reference in references}))
 
