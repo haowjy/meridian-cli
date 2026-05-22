@@ -171,6 +171,80 @@ This is a model-facing concern only. `scan_agent_profiles()` and
 and explicit `-a <name>` resolution use those neutral surfaces and are not
 filtered by `model_invocable`.
 
+### Spawn CWD and Directory Contracts
+
+`cwd.py` owns the three-directory model that governs where spawned agents work,
+where references resolve, and where the child process actually runs:
+
+```
+authority_root          ← profiles, skills, config, KB authority
+logical_task_cwd        ← where the spawned agent works; relative -f resolves here
+actual_process_cwd      ← where the child process starts (may differ)
+```
+
+**`authority_root`** is the project/config root — profiles, skills, config, and
+KB references all resolve relative to this. It never changes based on work item
+selection.
+
+**`logical_task_cwd`** (also called `reference_anchor`) is where the spawned agent
+is expected to work. When a work item has a configured worktree path, this is the
+worktree directory. Relative `-f` paths resolve from here. Set by
+`resolve_task_cwd()` based on work/worktree intent flags.
+
+**`actual_process_cwd`** is where the child process actually starts. It defaults
+to `logical_task_cwd` but may differ — Claude harness forces it to `authority_root`
+when `has_distinct_task_cwd` is true, because Claude's `--add-dir` grants access
+without needing the process to start in the task directory.
+
+**Task CWD instruction injection.** When `actual_process_cwd != logical_task_cwd`,
+the launch composition adds a prompt instruction telling the agent to `cd` into
+the task cwd before any filesystem operations. This is the fallback mechanism —
+the agent is informed of the intended working directory when the process didn't
+start there. Controlled by `LaunchDirectoryContext.requires_task_cwd_instruction`.
+
+Resolution priority in `resolve_task_cwd()`:
+1. `--no-worktree` → authority root
+2. `--worktree` → worktree path (requires selected work item)
+3. explicit `--work <id>` → worktree path or authority root fallback
+4. ambient work attachment → worktree path or authority root fallback
+5. no work context → authority root default
+
+### Reference Loading and Anchor Semantics
+
+`reference.py` owns `-f` reference file loading and template substitution.
+
+**Reference anchor** is `logical_task_cwd` — relative `-f` paths resolve from the
+task working directory, not from `authority_root`. This means reference paths are
+relative to where the agent works, not where config lives.
+
+**`kb:` prefix** resolves from the authority KB directory (`authority_root/.meridian/.../kb/`
+or configured KB root). The path after `kb:` must be relative and must not escape
+the KB root. Example: `kb:architecture/launch-system.md`.
+
+**`@` prefix is unsupported** — attempting to use it raises a `ValueError` directing
+the user to use `kb:` instead. This was a legacy convention that has been removed.
+
+Directory references (`-f <dir>`) render as a tree structure with blocked directories
+(`.git`, `node_modules`, `.meridian`, etc.) and blocked suffixes (`.pyc`, `.egg-info`)
+excluded. File references include content inline if under 100KB; larger or binary
+files produce a warning instead.
+
+### Worktree Path Assignment vs Managed Ownership
+
+Work items track worktree paths through `WorktreeMetadata` in `work_store.py`,
+which separates **path assignment** from **managed git-worktree ownership**:
+
+- **`managed=True`**: provisioned by `work start` via `provision_for_start()`.
+  Lifecycle operations (cleanup on done/delete, rename, restore on reopen) apply.
+- **`managed=False`**: set manually via `work set-worktree`. The path is recorded
+  but lifecycle operations skip it — `cleanup_for_done()`, `cleanup_for_delete()`,
+  and `rename_worktree()` all return `skipped_manual` for unmanaged worktrees.
+
+This separation allows users to point a work item at an existing directory without
+meridian treating it as a disposable git worktree. Shared worktree references
+(multiple work items pointing at the same path) also block destructive lifecycle
+operations via the `shared_with` guard.
+
 ### Workspace Projection
 
 `workspace_projection.py` in this module owns `project_workspace_roots()` and
@@ -191,6 +265,12 @@ Two steps inside `bind_launch_context()`:
 Roots include workspace roots, git context clone roots, context projection roots
 (work, kb, extras), runtime root, and system temp dir — deduplicated in order.
 Extra args remain user-owned passthrough; they are not a workspace projection channel.
+
+**Task CWD projection gap.** When `task_cwd` is outside both `control_root` and
+all projected workspace roots, and workspace projection is not active, a
+`task_cwd_not_projected` warning is emitted. The launch continues but the agent
+doesn't automatically get access to the task directory — harness-specific
+configuration would be needed.
 
 ### Logging Convention
 
