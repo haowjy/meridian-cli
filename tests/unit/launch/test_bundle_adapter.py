@@ -231,18 +231,20 @@ def test_request_and_resolve_reports_non_object_json_payload(
         )
 
 
+@pytest.mark.parametrize("schema_version", [1, 3])
 def test_request_and_resolve_reports_unsupported_schema_version(
     monkeypatch: pytest.MonkeyPatch,
+    schema_version: int,
 ) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
-    payload["version"] = 3
+    payload["version"] = schema_version
     monkeypatch.setattr(
         "subprocess.run",
         lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
     )
 
-    with pytest.raises(RuntimeError, match="schema version 3 is unsupported"):
+    with pytest.raises(RuntimeError, match=f"schema version {schema_version} is unsupported"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
