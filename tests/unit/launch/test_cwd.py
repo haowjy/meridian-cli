@@ -50,8 +50,28 @@ def test_resolve_task_cwd_explicit_work_is_hard_boundary(tmp_path: Path) -> None
     )
 
     assert resolved.task_cwd == authority_root.resolve()
-    assert resolved.source == "authority-root"
-    assert resolved.work_item is None
+    assert resolved.source == "explicit-work-authority-root"
+    assert resolved.work_item == explicit.name
+
+
+def test_resolve_task_cwd_ambient_work_without_worktree_falls_back_with_source(
+    tmp_path: Path,
+) -> None:
+    authority_root = tmp_path / "authority"
+    state_dir = tmp_path / "state"
+    authority_root.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    ambient = work_store.create_work_item(state_dir, "ambient-work", "", None)
+
+    resolved = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        ambient_work_id=ambient.name,
+    )
+
+    assert resolved.task_cwd == authority_root.resolve()
+    assert resolved.source == "ambient-work-authority-root"
+    assert resolved.work_item == ambient.name
 
 
 def test_resolve_task_cwd_force_worktree_uses_ambient_work_item(
@@ -134,6 +154,36 @@ def test_resolve_task_cwd_stale_worktree_path_is_hard_error_unless_no_worktree(
     )
     assert bypassed.task_cwd == authority_root.resolve()
     assert bypassed.source == "forced-no-worktree"
+
+
+def test_resolve_task_cwd_ignores_archived_work_item_worktree(tmp_path: Path) -> None:
+    authority_root = tmp_path / "authority"
+    state_dir = tmp_path / "state"
+    authority_root.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    work = work_store.create_work_item(state_dir, "archived-work", "", None)
+    archived_path = tmp_path / "archived-worktree"
+    archived_path.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(state_dir, work.name, path=archived_path.as_posix())
+    work_store.archive_work_item(state_dir, work.name)
+
+    explicit = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        explicit_work_id=work.name,
+    )
+    ambient = resolve_task_cwd(
+        authority_root,
+        project_state_dir=state_dir,
+        ambient_work_id=work.name,
+    )
+
+    assert explicit.task_cwd == authority_root.resolve()
+    assert explicit.source == "explicit-work-authority-root"
+    assert explicit.work_item == work.name
+    assert ambient.task_cwd == authority_root.resolve()
+    assert ambient.source == "ambient-work-authority-root"
+    assert ambient.work_item == work.name
 
 
 def test_launch_directory_context_requires_instruction_when_process_cwd_differs(

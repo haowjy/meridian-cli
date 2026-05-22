@@ -61,12 +61,12 @@ class LaunchDirectoryContext:
         return self.actual_process_cwd != self.logical_task_cwd
 
 
-def _worktree_path_for_item(
+def _active_worktree_path_for_item(
     *,
     project_state_dir: Path,
     work_id: str,
 ) -> Path | None:
-    item = work_store.get_work_item(project_state_dir, work_id)
+    item = work_store.get_active_work_item(project_state_dir, work_id)
     if item is None or item.worktree_path is None:
         return None
     return Path(item.worktree_path).expanduser().resolve()
@@ -123,7 +123,7 @@ def resolve_task_cwd(
                 "--worktree requires a selected work item. "
                 "Pass --work <item> or attach an active work item first."
             )
-        configured_path = _worktree_path_for_item(
+        configured_path = _active_worktree_path_for_item(
             project_state_dir=project_state_dir,
             work_id=force_worktree_work_id,
         )
@@ -142,15 +142,15 @@ def resolve_task_cwd(
         )
 
     if selected_work_id is not None:
-        explicit_path = _worktree_path_for_item(
+        explicit_path = _active_worktree_path_for_item(
             project_state_dir=project_state_dir,
             work_id=selected_work_id,
         )
         if explicit_path is None:
             return TaskCwdResolution(
                 task_cwd=resolved_authority_root,
-                source="authority-root",
-                work_item=None,
+                source="explicit-work-authority-root",
+                work_item=selected_work_id,
             )
         return TaskCwdResolution(
             task_cwd=_validated_worktree_path(
@@ -162,19 +162,24 @@ def resolve_task_cwd(
         )
 
     if ambient_selected_work_id is not None:
-        ambient_path = _worktree_path_for_item(
+        ambient_path = _active_worktree_path_for_item(
             project_state_dir=project_state_dir,
             work_id=ambient_selected_work_id,
         )
-        if ambient_path is not None:
+        if ambient_path is None:
             return TaskCwdResolution(
-                task_cwd=_validated_worktree_path(
-                    worktree_path=ambient_path,
-                    work_id=ambient_selected_work_id,
-                ),
-                source="ambient-work-worktree",
+                task_cwd=resolved_authority_root,
+                source="ambient-work-authority-root",
                 work_item=ambient_selected_work_id,
             )
+        return TaskCwdResolution(
+            task_cwd=_validated_worktree_path(
+                worktree_path=ambient_path,
+                work_id=ambient_selected_work_id,
+            ),
+            source="ambient-work-worktree",
+            work_item=ambient_selected_work_id,
+        )
 
     return TaskCwdResolution(
         task_cwd=resolved_authority_root,

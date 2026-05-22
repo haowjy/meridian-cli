@@ -4,20 +4,25 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from meridian.lib.launch.cwd import resolve_task_cwd
+from meridian.lib.ops import work_lifecycle
 from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.work_lifecycle import (
     WorkClearWorktreeInput,
     WorkDeleteInput,
     WorkDoneInput,
     WorkRenameInput,
+    WorkReopenInput,
     WorkSetWorktreeInput,
     work_clear_worktree_sync,
     work_delete_sync,
     work_done_sync,
     work_rename_sync,
+    work_reopen_sync,
     work_set_worktree_sync,
 )
+from meridian.lib.ops.worktree_lifecycle import WorktreeRestoreResult
 from meridian.lib.state import work_store
+from meridian.lib.state.work_store import WorkItem, WorktreeMetadata
 
 if TYPE_CHECKING:
     import pytest
@@ -50,6 +55,12 @@ def test_work_set_and_clear_worktree(tmp_path: Path) -> None:
     assert item.worktree_path == worktree_path.resolve().as_posix()
     assert item.worktree_managed is False
 
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        work.name,
+        branch="feature/stale-branch",
+    )
+
     clear_output = work_clear_worktree_sync(
         WorkClearWorktreeInput(work_id=work.name, project_root=project_root.as_posix())
     )
@@ -57,6 +68,7 @@ def test_work_set_and_clear_worktree(tmp_path: Path) -> None:
     item = work_store.get_work_item(project_state_dir, work.name)
     assert item is not None
     assert item.worktree_path is None
+    assert item.worktree_branch is None
     assert item.worktree_managed is False
 
 
@@ -83,7 +95,7 @@ def test_work_clear_worktree_makes_spawn_resolution_fall_back_to_authority_root(
     )
 
     assert resolved.task_cwd == project_root.resolve()
-    assert resolved.source == "authority-root"
+    assert resolved.source == "explicit-work-authority-root"
 
 
 def test_manual_worktree_assignment_done_and_delete_do_not_remove_path(tmp_path: Path) -> None:
@@ -268,3 +280,42 @@ def test_managed_unshared_done_keeps_cleanup_lifecycle_enabled(
     assert "Removed worktree at" in (done_output.warning or "")
     assert len(remove_calls) == 1
     assert remove_calls[0][1] == managed_path.resolve()
+
+
+def test_work_reopen_missing_worktree_notice_requires_fix_not_silent_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "reopen-work", "", None)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=(tmp_path / "missing-reopen-worktree").as_posix(),
+        managed=True,
+    )
+    work_store.archive_work_item(project_state_dir, item.name)
+
+    def _fallback_result(
+        _project_root: Path, archived_item: WorkItem
+    ) -> WorktreeRestoreResult:
+        return WorktreeRestoreResult(
+            status="fallback_project_root",
+            metadata=WorktreeMetadata(
+                path=archived_item.worktree_path,
+                branch=archived_item.worktree_branch,
+                pending=False,
+                managed=True,
+            ),
+        )
+
+    monkeypatch.setattr(work_lifecycle, "restore_for_reopen", _fallback_result)
+
+    reopened = work_reopen_sync(
+        WorkReopenInput(work_id=item.name, project_root=project_root.as_posix())
+    )
+
+    assert reopened.status == "open"
+    assert reopened.warning is not None
+    assert "--no-worktree" in reopened.warning
+    assert "use the project root for CWD" not in reopened.warning

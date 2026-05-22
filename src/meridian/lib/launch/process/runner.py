@@ -1179,9 +1179,7 @@ def run_harness_process(
                     primary_spawn_id=primary_spawn_id,
                     log_dir=log_dir,
                     control_root=control_root,
-                    launch_cwd=(
-                        launch_child_cwd if is_pi_native_primary_launch else control_root
-                    ),
+                    launch_cwd=launch_child_cwd,
                     task_cwd=task_cwd,
                     child_env=child_env,
                     launch_spec=launch_spec,

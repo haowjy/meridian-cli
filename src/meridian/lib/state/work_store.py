@@ -507,6 +507,16 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     return None
 
 
+def get_active_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
+    """Load one active work item."""
+
+    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    active_dir = _active_dir(paths, work_id)
+    if not active_dir.is_dir():
+        return None
+    return _work_item_from_dir(active_dir, archived=False)
+
+
 def work_scratch_dir(runtime_root: Path, work_id: str) -> Path:
     """Return current active/archive work directory if present, otherwise active path."""
 

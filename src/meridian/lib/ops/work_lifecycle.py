@@ -977,6 +977,7 @@ def work_clear_worktree_sync(
         project_state_dir,
         payload.work_id,
         path=None,
+        branch=None,
         pending=False,
         managed=False,
     )

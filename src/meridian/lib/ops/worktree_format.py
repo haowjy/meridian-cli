@@ -25,23 +25,26 @@ def format_restore_notice(result: WorktreeRestoreResult) -> str | None:
     if result.status == "manual_missing":
         return (
             f"Assigned worktree path is missing: {result.metadata.path}\n"
-            "Spawns will use the project root for CWD until the path exists."
+            "Restore the path, clear the assignment, or launch with --no-worktree."
         )
     if result.status == "available":
         return f"Worktree available at {result.metadata.path}"
     if result.status == "restored":
         return f"Recreated worktree at {result.metadata.path}"
     if result.status == "branch_missing":
-        return "Worktree branch metadata is missing; spawns will use the project root for CWD."
+        return (
+            "Worktree branch metadata is missing.\n"
+            "Restore branch metadata, clear the assignment, or launch with --no-worktree."
+        )
     if result.status == "fallback_project_root":
         return (
             f"Worktree was removed: {result.metadata.path}\n"
-            "Spawns will use the project root for CWD."
+            "Restore the worktree, clear the assignment, or launch with --no-worktree."
         )
     if result.status == "failed":
         return (
             f"Could not recreate worktree at '{result.metadata.path}': {result.error}\n"
-            "Spawns will use the project root for CWD."
+            "Restore or clear the assignment, or launch with --no-worktree."
         )
     return None
 
