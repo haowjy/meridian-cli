@@ -1,5 +1,6 @@
 import importlib
 import io
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,9 +26,13 @@ class _FakeStdin(io.StringIO):
 
 
 def test_spawn_prompt_file_dash_reads_stdin_through_main(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
+    monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
     captured: dict[str, object] = {}
 
     def _fake_spawn_create_sync(
@@ -166,5 +171,3 @@ def test_spawn_children_agent_mode_uses_children_text_view(
     rendered = capsys.readouterr().out
     assert "reviewer" in rendered
     assert "review child" in rendered
-
-
