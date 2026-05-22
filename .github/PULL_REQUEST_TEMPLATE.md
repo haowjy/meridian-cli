@@ -10,13 +10,14 @@
 
 <!-- What changed? Paste the agent-generated summary, then adjust for clarity. -->
 
+## Resulting Behavior
+
+<!-- User-facing end state. What can someone do after this merges that they could not do before? Prefer examples/CLI outcomes over implementation details. -->
+
 ## Work Item
 
 <!-- Meridian work item slug, for example: worktree-pr-release-workflow -->
 
-## Changes
-
-<!-- Notable implementation details, behavior changes, risks, and follow-ups. -->
 
 ## Verification
 
