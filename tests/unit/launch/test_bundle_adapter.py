@@ -28,12 +28,17 @@ def _completed(
 
 def _valid_bundle_payload() -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "routing": {
             "model": "gpt-5.5",
             "model_token": "gpt55",
             "harness": "opencode",
             "harness_model": "openai/gpt-5.5",
+            "selection_kind": "policy",
+            "match_evidence": "alias-and-policy",
+            "harness_model_source": "registry",
+            "harness_model_confidence": "high",
+            "route_trace": {"path": ["alias", "policy"]},
         },
         "execution_policy": {
             "effort": "high",
@@ -176,7 +181,7 @@ def test_request_and_resolve_uses_native_windows_root_path(monkeypatch: pytest.M
 def test_request_and_resolve_reports_missing_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: None)
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.4\.8rc3"):
+    with pytest.raises(RuntimeError, match=r"mars >= 0\.5\.0"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -195,7 +200,7 @@ def test_request_and_resolve_reports_unsupported_launch_bundle_command(
         ),
     )
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.4\.8rc3"):
+    with pytest.raises(RuntimeError, match=r"mars >= 0\.5\.0"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -231,17 +236,58 @@ def test_request_and_resolve_reports_unsupported_schema_version(
 ) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
-    payload["version"] = 2
+    payload["version"] = 3
     monkeypatch.setattr(
         "subprocess.run",
         lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
     )
 
-    with pytest.raises(RuntimeError, match="schema version 2 is unsupported"):
+    with pytest.raises(RuntimeError, match="schema version 3 is unsupported"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
         )
+
+
+def test_request_and_resolve_extracts_schema_v2_routing_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+    payload = _valid_bundle_payload()
+    payload["routing"] = {
+        "model": "gpt-5.5",
+        "model_token": "gpt55",
+        "harness": "opencode",
+        "harness_model": "openai/gpt-5.5",
+        "selection_kind": "policy",
+        "match_evidence": "rule-42",
+        "harness_model_source": "policy",
+        "harness_model_confidence": "medium",
+        "route_trace": {
+            "rule_id": "rule-42",
+            "steps": ["alias-lookup", "policy-match"],
+            "extra": {"reason": "exact-match"},
+        },
+    }
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
+    )
+
+    bundle = request_and_resolve(
+        BundleRequest(agent=None, project_root=Path("/tmp/project")),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert bundle.selection_kind == "policy"
+    assert bundle.match_evidence == "rule-42"
+    assert bundle.harness_model_source == "policy"
+    assert bundle.harness_model_confidence == "medium"
+    assert bundle.route_trace == {
+        "rule_id": "rule-42",
+        "steps": ["alias-lookup", "policy-match"],
+        "extra": {"reason": "exact-match"},
+    }
 
 
 def test_request_and_resolve_reports_missing_routing_model(monkeypatch: pytest.MonkeyPatch) -> None:
