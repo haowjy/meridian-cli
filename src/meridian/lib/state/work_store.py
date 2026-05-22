@@ -366,10 +366,19 @@ def _warn_both_locations(
         )
 
 
+def _is_valid_work_slug(name: str) -> bool:
+    """Return True if ``name`` is a valid work-item slug (survives slugify unchanged)."""
+    return bool(name) and slugify(name) == name
+
+
 def _list_work_item_dirs(root_dir: Path) -> list[Path]:
     if not root_dir.is_dir():
         return []
-    return [child for child in root_dir.iterdir() if child.is_dir()]
+    return [
+        child
+        for child in root_dir.iterdir()
+        if child.is_dir() and _is_valid_work_slug(child.name)
+    ]
 
 
 def _status_payload(

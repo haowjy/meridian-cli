@@ -28,7 +28,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     printf 'v* tags are CI-owned. Push normal changes to main; CI creates release tags.\n' >&2
     printf 'Note: enforce server-side protection for refs/tags/v* in GitHub; local hooks are bypassable.\n' >&2
     exit 1
-  elif [[ "$remote_ref" == refs/heads/* ]]; then
+  elif [[ "$remote_ref" == refs/heads/* && "$local_sha" != "$ZERO_SHA" ]]; then
+    # Skip deletion pushes — preflight only matters when pushing code.
     has_branch_refs=true
   fi
 done

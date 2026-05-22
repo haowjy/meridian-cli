@@ -416,6 +416,9 @@ def work_start_sync(
     normalized_work_id = work_store.slugify(payload.label)
     if not normalized_work_id:
         raise ValueError("Work item label must contain at least one letter or number.")
+    slug_warning: str | None = None
+    if normalized_work_id != payload.label.strip():
+        slug_warning = f"Normalized '{payload.label.strip()}' to '{normalized_work_id}'."
 
     existing = work_store.get_work_item(project_state_dir, normalized_work_id)
     created = False
@@ -559,7 +562,7 @@ def work_start_sync(
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         created=created,
-        warning=_merge_warnings(warning, reattach_warning, worktree_warning),
+        warning=_merge_warnings(warning, slug_warning, reattach_warning, worktree_warning),
         worktree_path=item.worktree_path,
     )
 
