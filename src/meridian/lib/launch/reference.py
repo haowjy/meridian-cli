@@ -9,8 +9,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.state.paths import resolve_kb_dir
-
 _TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 
@@ -413,17 +411,73 @@ def _load_directory_reference(path: Path) -> ReferenceItem:
         )
 
 
+def _resolve_reference_path(
+    *,
+    raw_path: str | Path,
+    reference_anchor: Path,
+    kb_dir: Path,
+) -> Path:
+    raw_text = str(raw_path)
+    if raw_text.startswith("kb:"):
+        relative = raw_text[3:]
+        if not relative:
+            raise ValueError("Path after 'kb:' must not be empty.")
+        relative_path = Path(relative)
+        if relative_path.is_absolute():
+            raise ValueError(f"Path after 'kb:' must be relative, got: {relative}")
+        resolved = (kb_dir / relative_path).resolve()
+        kb_root = kb_dir.resolve()
+        try:
+            resolved.relative_to(kb_root)
+        except ValueError as exc:
+            raise ValueError(
+                "kb: path escapes KB directory.\n"
+                f"  Resolved: {resolved}\n"
+                f"  KB root:  {kb_root}"
+            ) from exc
+        return resolved
+    if raw_text.startswith("@"):
+        replacement = raw_text[1:]
+        raise ValueError(
+            "The '@' prefix for reference files is no longer supported.\n"
+            f"Use 'kb:{replacement}' instead."
+        )
+
+    path_obj = raw_path if isinstance(raw_path, Path) else Path(raw_text)
+    expanded = path_obj.expanduser()
+    if expanded.is_absolute():
+        return expanded.resolve()
+    return (reference_anchor / expanded).resolve()
+
+
+def _ensure_reference_exists(
+    *,
+    resolved_path: Path,
+    raw_path: str | Path,
+    reference_anchor: Path,
+) -> None:
+    if resolved_path.exists():
+        return
+    raise FileNotFoundError(
+        "Reference path not found.\n"
+        f"  Given: {raw_path}\n"
+        f"  Reference anchor: {reference_anchor}\n"
+        f"  Resolved path: {resolved_path}"
+    )
+
+
 def load_reference_items(
     paths: Sequence[str | Path],
     *,
-    base_dir: Path | None = None,
+    reference_anchor: Path,
+    kb_dir: Path,
 ) -> tuple[ReferenceItem, ...]:
     """Load reference items (files or directories) in input order.
 
     Args:
-        paths: Sequence of file or directory paths. Paths starting with '@'
-               are resolved relative to the KB directory.
-        base_dir: Base directory for relative path resolution.
+        paths: Sequence of file or directory paths.
+        reference_anchor: Base directory for relative path resolution.
+        kb_dir: KB root directory for ``kb:`` prefixed references.
 
     Returns:
         Tuple of ReferenceItem objects with content or tree representations.
@@ -431,24 +485,21 @@ def load_reference_items(
     Raises:
         FileNotFoundError: If a path doesn't exist.
     """
-    root = (base_dir or Path.cwd()).resolve()
+    anchor = reference_anchor.expanduser().resolve()
+    resolved_kb_dir = kb_dir.expanduser().resolve()
     loaded: list[ReferenceItem] = []
 
     for raw_path in paths:
-        # Resolve path
-        if isinstance(raw_path, str) and raw_path.startswith("@"):
-            relative = raw_path[1:]
-            if not relative:
-                raise ValueError("Reference path after '@' must not be empty.")
-            resolved = (resolve_kb_dir(root) / relative).resolve()
-        else:
-            path_obj = raw_path if isinstance(raw_path, Path) else Path(raw_path)
-            expanded = path_obj.expanduser()
-            resolved = (expanded if expanded.is_absolute() else root / expanded).resolve()
-
-        # Check existence
-        if not resolved.exists():
-            raise FileNotFoundError(f"Reference path not found: {resolved}")
+        resolved = _resolve_reference_path(
+            raw_path=raw_path,
+            reference_anchor=anchor,
+            kb_dir=resolved_kb_dir,
+        )
+        _ensure_reference_exists(
+            resolved_path=resolved,
+            raw_path=raw_path,
+            reference_anchor=anchor,
+        )
 
         # Load based on type
         if resolved.is_dir():
@@ -462,13 +513,15 @@ def load_reference_items(
 def validate_reference_paths(
     paths: Sequence[str | Path],
     *,
-    base_dir: Path | None = None,
+    reference_anchor: Path,
+    kb_dir: Path,
 ) -> tuple[Path, ...]:
     """Validate reference paths exist without reading content.
 
     Args:
         paths: Sequence of file or directory paths.
-        base_dir: Base directory for relative path resolution.
+        reference_anchor: Base directory for relative path resolution.
+        kb_dir: KB root directory for ``kb:`` prefixed references.
 
     Returns:
         Tuple of resolved absolute paths.
@@ -476,22 +529,21 @@ def validate_reference_paths(
     Raises:
         FileNotFoundError: If a path doesn't exist.
     """
-    root = (base_dir or Path.cwd()).resolve()
+    anchor = reference_anchor.expanduser().resolve()
+    resolved_kb_dir = kb_dir.expanduser().resolve()
     validated: list[Path] = []
 
     for raw_path in paths:
-        if isinstance(raw_path, str) and raw_path.startswith("@"):
-            relative = raw_path[1:]
-            if not relative:
-                raise ValueError("Reference path after '@' must not be empty.")
-            resolved = (resolve_kb_dir(root) / relative).resolve()
-        else:
-            path_obj = raw_path if isinstance(raw_path, Path) else Path(raw_path)
-            expanded = path_obj.expanduser()
-            resolved = (expanded if expanded.is_absolute() else root / expanded).resolve()
-
-        if not resolved.exists():
-            raise FileNotFoundError(f"Reference path not found: {resolved}")
+        resolved = _resolve_reference_path(
+            raw_path=raw_path,
+            reference_anchor=anchor,
+            kb_dir=resolved_kb_dir,
+        )
+        _ensure_reference_exists(
+            resolved_path=resolved,
+            raw_path=raw_path,
+            reference_anchor=anchor,
+        )
         validated.append(resolved)
 
     return tuple(validated)

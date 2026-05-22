@@ -188,6 +188,27 @@ complexity without benefit.
 Rename is crash-safe: `work-items.rename.intent.json` is written before any rename
 begins. Leftover intent is replayed on startup/reconciliation.
 
+### WorktreeMetadata: Path Assignment vs Managed Ownership
+
+`WorktreeMetadata` in `work_store.py` separates **path assignment** from **managed
+git-worktree ownership** via the `managed` flag:
+
+- **`managed=True`**: worktree was provisioned by `work start` through
+  `provision_for_start()`. The lifecycle layer (`ops/worktree_lifecycle.py`) owns
+  cleanup on done/delete, rename, and restore on reopen.
+- **`managed=False`**: path was set manually via `work set-worktree`. Lifecycle
+  operations skip it — `cleanup_for_done()`, `cleanup_for_delete()`, and
+  `rename_worktree()` all return `skipped_manual` for unmanaged worktrees.
+
+This separation prevents destructive lifecycle operations from removing or moving
+directories that the user explicitly pointed a work item at. Shared worktree
+references (multiple items referencing the same path) also block cleanup via the
+`shared_with` guard in `cleanup_for_done()` and `cleanup_for_delete()`.
+
+The `pending` flag supports crash recovery: set before `git worktree add`, cleared
+after. `recover_pending()` in `worktree_lifecycle.py` heals or clears interrupted
+provisions.
+
 ### User-Level Storage for New Features
 
 New features that need user-level storage (git clones, cache, custom data) go under

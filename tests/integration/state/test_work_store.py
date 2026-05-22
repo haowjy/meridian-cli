@@ -220,4 +220,27 @@ def test_work_item_worktree_metadata_uses_nested_schema_and_preserves_branch_on_
         "path": "/tmp/repo.worktrees/rename-me",
         "branch": "feature/original-branch",
         "pending": True,
+        "managed": False,
     }
+
+
+def test_legacy_worktree_payload_without_managed_infers_managed_and_rewrites(
+    tmp_path: Path,
+) -> None:
+    runtime_root = _state_root(tmp_path)
+    item = create_work_item(runtime_root, "legacy-managed-inference")
+    status_path = runtime_root / "work" / item.name / "__status.json"
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    payload["worktree"] = {
+        "path": "/tmp/legacy-worktree",
+        "branch": "feature/legacy-worktree",
+        "pending": False,
+    }
+    status_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    loaded = get_work_item(runtime_root, item.name)
+    assert loaded is not None
+    assert loaded.worktree_managed is True
+
+    rewritten = json.loads(status_path.read_text(encoding="utf-8"))
+    assert rewritten["worktree"]["managed"] is True

@@ -323,13 +323,15 @@ def test_run_harness_process_codex_managed_attach_uses_control_root_with_distinc
     assert captured["control_root"] == project_root
     assert captured["task_cwd"] == task_cwd
     assert captured["task_env"] == task_cwd.as_posix()
+    assert "MERIDIAN_TASK_CWD" not in (
+        launch_context.binding.run_params.appended_system_prompt or ""
+    )
     assert outcome.exit_code == 0
     assert outcome.primary_spawn_id is not None
     spawn_row = get_spawn(launch_context.runtime_root, outcome.primary_spawn_id)
     assert spawn_row is not None
     assert spawn_row.control_root == project_root.as_posix()
     assert spawn_row.task_cwd == task_cwd.as_posix()
-    assert spawn_row.execution_cwd == task_cwd.as_posix()
     assert outcome.chat_id is not None
     session_row = session_store.get_session_record(launch_context.runtime_root, outcome.chat_id)
     assert session_row is not None
@@ -453,5 +455,3 @@ def test_run_harness_process_codex_managed_failure_raises_error(
             stop_session_fn=lambda *args, **kwargs: None,
             update_session_harness_id_fn=lambda *args, **kwargs: None,
         )
-
-

@@ -198,6 +198,8 @@ All repos maintain a `CHANGELOG.md` at their root. Format is [Keep a Changelog](
 
 Write entries at commit time in an `[Unreleased]` section, not retroactively — reasoning flattens the longer you wait. Proactively update this CHANGELOG. Entry style: focus on behavioral changes downstream users will notice. For agent/skill repos the "API" is the prompt shape, so describe what agents now do differently, not which lines moved.
 
+Keep the pull request body current as the branch evolves, the same way you keep the changelog current. When a commit changes user-visible behavior, verification, risks/follow-ups, durable knowledge, or the outcome reviewers should expect, update the PR body before or with the commit instead of leaving stale launch-time text. The changelog remains the detailed release record; the PR body should stay outcome-oriented and reviewer-facing.
+
 Standard shape at any tagged commit:
 
 ```markdown

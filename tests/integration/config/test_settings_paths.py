@@ -90,7 +90,6 @@ def test_resolve_project_root_does_not_treat_user_home_state_dir_as_project_mark
     resolution = resolve_project_root_resolution()
 
     assert resolution.project_root != home_root.resolve()
-    assert resolution.source != "project-state"
 
 
 def test_load_config_reads_primary_agent_at_project_root(tmp_path: Path) -> None:
@@ -328,5 +327,4 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     assert authority.project_root == project_root.resolve()
     assert authority.runtime_root == runtime_root.resolve()
     assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
-
 

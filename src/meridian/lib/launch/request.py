@@ -121,6 +121,11 @@ class SpawnRequest(BaseModel):
     terminal_surface_mode: TerminalSurfaceMode | None = None
     # Preview command for dry-run display only.  Executors MUST NOT use this field.
     cli_command: tuple[str, ...] = ()
+    authority_root: str | None = None
+    task_cwd: str | None = None
+    reference_anchor: str | None = None
+    task_cwd_source: str | None = None
+    task_cwd_work_item: str | None = None
 
 
 class LaunchArgvIntent(StrEnum):

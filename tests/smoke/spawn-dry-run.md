@@ -124,6 +124,58 @@ uv run meridian spawn -a reviewer -p "Review this file" -f "$REF" --dry-run --js
 - [ ] Exit 0
 - [ ] `reference_files` array present, or filename appears somewhere in JSON payload
 
+## Task CWD / authority reporting + kb: path
+
+```bash
+KB_ROOT=$(uv run meridian context --json | uv run python -c 'import json,sys; print(json.load(sys.stdin)["kb_resolved"])')
+mkdir -p "$KB_ROOT/domain"
+echo "kb ref" > "$KB_ROOT/domain/page.md"
+uv run meridian spawn -a reviewer -p "Use kb ref" -f kb:domain/page.md --dry-run --json
+```
+- [ ] Exit 0
+- [ ] JSON includes `authority_root`, `task_cwd`, `reference_anchor`, `task_cwd_source`
+- [ ] `authority_root` matches project root
+- [ ] `task_cwd_source == "authority-root"` in default no-worktree case
+
+## --work picks worktree task cwd and reference anchor
+
+```bash
+uv run meridian work start smoke-worktree
+WT=$(mktemp -d)
+echo "relative ref" > "$WT/notes.md"
+uv run meridian work set-worktree smoke-worktree "$WT"
+uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f notes.md --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd` equals `$WT`
+- [ ] `reference_anchor` equals `$WT`
+- [ ] `task_cwd_source == "explicit-work-worktree"`
+- [ ] `task_cwd_work_item == "smoke-worktree"`
+- [ ] resolved `reference_files` entry points at `$WT/notes.md`
+
+## Stale worktree fails unless --no-worktree
+
+```bash
+uv run meridian work start stale-worktree
+STALE="$SCRATCH/stale-worktree-path"
+mkdir -p "$STALE"
+uv run meridian work set-worktree stale-worktree "$STALE"
+rmdir "$STALE"
+uv run meridian spawn -a reviewer -p "should fail" --work stale-worktree --dry-run --json
+```
+- [ ] Fails with stale/missing worktree path error
+
+```bash
+uv run meridian spawn -a reviewer -p "bypass stale worktree" --work stale-worktree --no-worktree --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd_source == "forced-no-worktree"`
+
+```bash
+uv run meridian spawn -a reviewer -p "bad old prefix" -f @domain/page.md --dry-run --json
+```
+- [ ] Fails with message directing `@...` to `kb:...`
+
 ## Empty prompt — no traceback
 
 ```bash
@@ -140,9 +192,11 @@ mkdir -p "$CANONICAL/.mars/agents"
 echo "# Reviewer" > "$CANONICAL/.mars/agents/reviewer.md"
 printf 'gitdir: /tmp/fake-worktree-git\n' > "$WORKTREE/.git"
 
-MERIDIAN_PROJECT_DIR=$CANONICAL MERIDIAN_HOME=$(mktemp -d) \
-  uv run meridian spawn -a reviewer -p "test" --dry-run --json
-# (run from $WORKTREE as cwd)
+(
+  cd "$WORKTREE"
+  MERIDIAN_PROJECT_DIR=$CANONICAL MERIDIAN_HOME=$(mktemp -d) \
+    uv run meridian spawn -a reviewer -p "test" --dry-run --json
+)
 ```
 - [ ] Exit 0
 - [ ] `resolved_authority.project_root` matches `$CANONICAL` (not the worktree cwd)

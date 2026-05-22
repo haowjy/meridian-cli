@@ -202,3 +202,46 @@ def test_spawn_action_dry_run_exposes_matched_policy_rule() -> None:
 
     assert wire["matched_policy_rule"] == "settings:2"
     assert "Matched policy rule: settings:2" in text
+
+
+def test_spawn_action_dry_run_exposes_task_cwd_fields() -> None:
+    output = SpawnActionOutput(
+        command="spawn.create",
+        status="dry-run",
+        authority_root="/repo/main",
+        task_cwd="/repo.worktrees/feature-x",
+        reference_anchor="/repo.worktrees/feature-x",
+        task_cwd_source="explicit-work-worktree",
+        task_cwd_work_item="feature-x",
+    )
+
+    wire = output.to_wire()
+    text = output.format_text()
+
+    assert wire["authority_root"] == "/repo/main"
+    assert wire["task_cwd"] == "/repo.worktrees/feature-x"
+    assert wire["reference_anchor"] == "/repo.worktrees/feature-x"
+    assert wire["task_cwd_source"] == "explicit-work-worktree"
+    assert wire["task_cwd_work_item"] == "feature-x"
+    assert "Authority: /repo/main" in text
+    assert "Task CWD:  /repo.worktrees/feature-x" in text
+
+
+def test_spawn_action_runtime_text_includes_distinct_task_cwd() -> None:
+    output = SpawnActionOutput(
+        command="spawn.create",
+        status="succeeded",
+        spawn_id="p6",
+        report="done",
+        authority_root="/repo/main",
+        task_cwd="/repo.worktrees/feature-x",
+        reference_anchor="/repo.worktrees/feature-x",
+        task_cwd_source="explicit-work-worktree",
+        task_cwd_work_item="feature-x",
+    )
+
+    text = output.format_text()
+    assert "Authority: /repo/main" in text
+    assert "Task CWD:  /repo.worktrees/feature-x" in text
+    assert "work: feature-x" in text
+    assert "Reference anchor: /repo.worktrees/feature-x" in text

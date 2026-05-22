@@ -75,6 +75,31 @@ For the REST path, `SpawnApplicationService.prepare_spawn()` enforces:
 argv — it populates `cli_command` for dry-run display. All actual execution paths
 use `SPEC_ONLY`. Do not set `REQUIRED` on execution paths.
 
+### Worktree Lifecycle Protection
+
+`ops/worktree_lifecycle.py` coordinates git worktree creation, restoration, cleanup,
+and crash recovery. It is intentionally limited to git/worktree concerns and returns
+structured results for callers (`work_lifecycle.py`) to persist and present elsewhere.
+
+**Destructive operations guard against three conditions:**
+
+1. **Manual worktrees** (`managed=False`): paths set via `work set-worktree` are never
+   removed or moved by `cleanup_for_done()`, `cleanup_for_delete()`, or `rename_worktree()`.
+   These return `skipped_manual` — the user owns the directory lifecycle.
+2. **Shared references**: when multiple work items reference the same worktree path,
+   cleanup returns `shared_reference` with the list of other item names. The worktree
+   is not removed while another item depends on it.
+3. **Unpushed commits** (done, not force): `cleanup_for_done()` checks for unpushed
+   commits before removal unless `--force` is passed. `cleanup_for_delete()` skips
+   this check — delete is already a destructive operation.
+
+**Worktree rename** (`rename_worktree()`) moves both the directory and the git branch
+to match the new work slug. Fails if the worktree is shared, missing, or not managed.
+
+**Crash recovery** (`recover_pending()`) handles interrupted `work start` between
+`git worktree add` and metadata write. If the worktree directory exists, it heals
+the record; otherwise it clears the pending flag.
+
 ### ops/init_ops.py — Init Orchestration
 
 `init_ops.py` is the single entry point for all `meridian init --add` and

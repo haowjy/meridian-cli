@@ -7,6 +7,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.cwd import LaunchDirectoryContext, resolve_task_cwd
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
 from meridian.lib.launch.request import (
     ExecutionBudget,
@@ -17,12 +18,15 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
+from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.utils.time import minutes_to_seconds
 
 from ..runtime import (
     OperationRuntime,
     build_runtime,
     resolve_runtime_authority_for_read,
+    runtime_context,
 )
 from .models import SpawnCreateInput
 
@@ -48,12 +52,10 @@ def build_create_payload(
     """Build a spawn request without leaking library warnings to stderr."""
 
     with capture_library_diagnostics():
-        _ = ctx
         if runtime is not None:
             if runtime.authority.runtime_root is None:
                 raise ValueError("Operation runtime is missing runtime authority root.")
             project_root = runtime.project_root
-            execution_cwd = runtime.authority.execution_cwd
             runtime_root = runtime.authority.runtime_root
             config = runtime.config
             harness_registry = runtime.harness_registry
@@ -61,7 +63,6 @@ def build_create_payload(
             authority = resolve_runtime_authority_for_read(payload.project_root)
             project_root = authority.project_root
             config = load_config(project_root, authority=authority)
-            execution_cwd = authority.execution_cwd
             runtime_root = authority.runtime_root or authority.project_state_dir
             harness_registry = get_default_harness_registry()
         else:
@@ -69,14 +70,36 @@ def build_create_payload(
             if runtime_bundle.authority.runtime_root is None:
                 raise ValueError("Built operation runtime is missing runtime authority root.")
             project_root = runtime_bundle.project_root
-            execution_cwd = runtime_bundle.authority.execution_cwd
             runtime_root = runtime_bundle.authority.runtime_root
             config = runtime_bundle.config
             harness_registry = runtime_bundle.harness_registry
 
+        resolved_context = runtime_context(ctx)
+        explicit_work_id = payload.work.strip() or None
+        ambient_work_id = (resolved_context.work_id or "").strip() or None
+        if ambient_work_id is None and resolved_context.chat_id:
+            try:
+                ambient_work_id = (
+                    get_session_active_work_id(runtime_root, resolved_context.chat_id) or ""
+                ).strip() or None
+            except Exception:
+                ambient_work_id = None
+        task_cwd_resolution = resolve_task_cwd(
+            project_root,
+            project_state_dir=resolve_project_paths(project_root).root_dir,
+            explicit_work_id=explicit_work_id,
+            ambient_work_id=ambient_work_id,
+            force_worktree=payload.worktree is True,
+            force_no_worktree=payload.worktree is False,
+        )
+        directory_context = LaunchDirectoryContext.from_task_cwd_resolution(
+            authority_root=project_root,
+            task_cwd_resolution=task_cwd_resolution,
+        )
         validated_paths = validate_reference_paths(
             payload.files,
-            base_dir=project_root,
+            reference_anchor=directory_context.reference_anchor,
+            kb_dir=resolve_kb_dir(project_root),
         )
         parsed_template_vars = parse_template_assignments(payload.template_vars)
         timeout_secs = minutes_to_seconds(payload.timeout)
@@ -126,6 +149,11 @@ def build_create_payload(
             goal=payload.goal,
             work_id_hint=payload.work.strip() or None,
             warning=preflight_warning,
+            authority_root=directory_context.authority_root.as_posix(),
+            task_cwd=directory_context.logical_task_cwd.as_posix(),
+            reference_anchor=directory_context.reference_anchor.as_posix(),
+            task_cwd_source=directory_context.task_cwd_source,
+            task_cwd_work_item=directory_context.work_item,
         )
 
         preview_context = build_launch_context(
@@ -143,10 +171,10 @@ def build_create_payload(
             runtime_root=runtime_root.as_posix(),
             config_root=project_root.as_posix(),
             control_root=project_root.as_posix(),
-            requested_task_cwd=execution_cwd.as_posix(),
+            requested_task_cwd=directory_context.logical_task_cwd.as_posix(),
             # Legacy aliases.
             project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=execution_cwd.as_posix(),
+            project_paths_execution_cwd=directory_context.logical_task_cwd.as_posix(),
         ),
             harness_registry=harness_registry,
             dry_run=True,

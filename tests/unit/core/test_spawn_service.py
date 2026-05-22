@@ -81,6 +81,7 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
     return _build_launch_context
 
 
+
 @pytest.mark.asyncio
 async def test_prepare_persists_trimmed_goal_from_spawn_request(
     tmp_path: Path,

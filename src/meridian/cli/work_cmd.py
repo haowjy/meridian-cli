@@ -27,19 +27,23 @@ from meridian.lib.ops.work_dashboard import (
 )
 from meridian.lib.ops.work_lifecycle import (
     WorkClearInput,
+    WorkClearWorktreeInput,
     WorkDeleteInput,
     WorkDeleteOutput,
     WorkDoneInput,
     WorkRenameInput,
     WorkReopenInput,
+    WorkSetWorktreeInput,
     WorkStartInput,
     WorkSwitchInput,
     WorkUpdateInput,
     work_clear_sync,
+    work_clear_worktree_sync,
     work_delete_sync,
     work_done_sync,
     work_rename_sync,
     work_reopen_sync,
+    work_set_worktree_sync,
     work_start_sync,
     work_switch_sync,
     work_update_sync,
@@ -273,6 +277,30 @@ def _work_clear(emit: Emitter) -> None:
     emit(work_clear_sync(WorkClearInput(chat_id=_runtime_chat_id())))
 
 
+def _work_set_worktree(
+    emit: Emitter,
+    work_id: Annotated[
+        str,
+        Parameter(help="Work item id."),
+    ],
+    path: Annotated[
+        str,
+        Parameter(help="Existing directory to assign as this work item's worktree path."),
+    ],
+) -> None:
+    emit(work_set_worktree_sync(WorkSetWorktreeInput(work_id=work_id, path=path)))
+
+
+def _work_clear_worktree(
+    emit: Emitter,
+    work_id: Annotated[
+        str,
+        Parameter(help="Work item id."),
+    ],
+) -> None:
+    emit(work_clear_worktree_sync(WorkClearWorktreeInput(work_id=work_id)))
+
+
 def _work_current(emit: Emitter) -> None:
     emit(work_current_sync(WorkCurrentInput()))
 
@@ -298,6 +326,8 @@ def register_work_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str,
         "meridian.work.reopen": lambda: partial(_work_reopen, emit),
         "meridian.work.rename": lambda: partial(_work_rename, emit),
         "meridian.work.clear": lambda: partial(_work_clear, emit),
+        "meridian.work.set-worktree": lambda: partial(_work_set_worktree, emit),
+        "meridian.work.clear-worktree": lambda: partial(_work_clear_worktree, emit),
     }
     return register_extension_cli_group(
         app,

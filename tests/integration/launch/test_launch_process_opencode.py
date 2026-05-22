@@ -106,10 +106,13 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
     project_root = tmp_path / "opencode-fallback"
     project_root.mkdir()
+    task_cwd = project_root / ".meridian" / "spawns" / "p-parent"
+    task_cwd.mkdir(parents=True)
     launch_context, harness_registry = _build_primary_launch_context(
         project_root=project_root,
         harness_id=HarnessId.OPENCODE,
         model="gemini-2.5-pro",
+        execution_cwd=task_cwd,
         session=SessionRequest(
             requested_harness_session_id="existing-opencode-session",
             continue_chat_id="c-opencode",
@@ -120,6 +123,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     managed_calls = 0
     black_box_calls = 0
     captured_spawn_dir: Path | None = None
+    captured_black_box_cwd: Path | None = None
 
     def failing_managed(
         harness_id: Any,
@@ -157,7 +161,9 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
         on_child_started: Any = None,
     ) -> tuple[int, int]:
         nonlocal black_box_calls
+        nonlocal captured_black_box_cwd
         black_box_calls += 1
+        captured_black_box_cwd = Path(cwd)
         assert output_log_path is None
         assert callable(on_child_started)
         on_child_started(9494)
@@ -179,6 +185,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert captured_spawn_dir is not None
     assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
     assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
+    assert captured_black_box_cwd == task_cwd
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0
 

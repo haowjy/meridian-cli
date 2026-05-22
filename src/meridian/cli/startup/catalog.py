@@ -383,6 +383,16 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(("work", "delete"), "Delete work item.", extension_ref="meridian.work.delete"),
     _write_runtime(("work", "rename"), "Rename work item.", extension_ref="meridian.work.rename"),
     _write_runtime(("work", "clear"), "Clear current work.", extension_ref="meridian.work.clear"),
+    _write_runtime(
+        ("work", "set-worktree"),
+        "Assign an existing worktree path to a work item.",
+        extension_ref="meridian.work.set-worktree",
+    ),
+    _write_runtime(
+        ("work", "clear-worktree"),
+        "Clear a work item's worktree path assignment.",
+        extension_ref="meridian.work.clear-worktree",
+    ),
     _read_project(
         ("config", "show"), "Show resolved config.", extension_ref="meridian.config.show"
     ),

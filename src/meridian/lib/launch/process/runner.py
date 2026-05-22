@@ -1053,16 +1053,19 @@ def run_harness_process(
                 child_env = dict(runtime_context.binding.environment.final_env)
                 if managed.chat_id:
                     child_env["MERIDIAN_CHAT_ID"] = managed.chat_id
-                task_cwd = (
-                    runtime_context.binding.child_cwd
-                    if runtime_context.binding.child_cwd.resolve() != control_root.resolve()
-                    else None
-                )
+                selected_task_cwd = runtime_context.task_cwd
                 spawn_store.update_spawn(
                     runtime_root,
                     primary_spawn_id,
                     control_root=control_root.as_posix(),
-                    task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
+                    task_cwd=(
+                        selected_task_cwd.as_posix()
+                        if (
+                            selected_task_cwd is not None
+                            and selected_task_cwd.resolve() != control_root.resolve()
+                        )
+                        else None
+                    ),
                     execution_cwd=runtime_context.binding.child_cwd.as_posix(),
                 )
                 lifecycle_service.bootstrap_from_disk(str(primary_spawn_id))
@@ -1176,9 +1179,7 @@ def run_harness_process(
                     primary_spawn_id=primary_spawn_id,
                     log_dir=log_dir,
                     control_root=control_root,
-                    launch_cwd=(
-                        launch_child_cwd if is_pi_native_primary_launch else control_root
-                    ),
+                    launch_cwd=launch_child_cwd,
                     task_cwd=task_cwd,
                     child_env=child_env,
                     launch_spec=launch_spec,

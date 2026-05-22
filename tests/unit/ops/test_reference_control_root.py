@@ -165,6 +165,7 @@ def test_spawn_continue_uses_persisted_source_control_root(
         prepared: Any = None,
     ) -> SpawnActionOutput:
         _ = (ctx, sink, prepared)
+        captured["create_input"] = create_input
         captured["session"] = create_input.session
         return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p2")
 
@@ -174,11 +175,14 @@ def test_spawn_continue_uses_persisted_source_control_root(
         SpawnContinueInput(
             spawn_id=spawn_id,
             prompt="Continue",
+            worktree=True,
             project_root=current_control_root.as_posix(),
         )
     )
 
     assert captured["session"].source_control_root == persisted_control_root.as_posix()
+    assert captured["create_input"].worktree is True
+
 
 
 def test_resolve_spawn_reference_legacy_rows_fall_back_to_current_control_root(

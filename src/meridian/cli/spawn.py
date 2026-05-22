@@ -275,14 +275,14 @@ def _spawn_create(
         bool | None,
         Parameter(
             name="--worktree",
-            help="Create a git worktree for the attached work item.",
+            help="Require and use the selected work item's configured worktree path as task cwd.",
         ),
     ] = None,
     no_worktree: Annotated[
         bool,
         Parameter(
             name="--no-worktree",
-            help="Skip worktree creation even if project default is set.",
+            help="Force authority root as task cwd, ignoring any configured worktree path.",
         ),
     ] = False,
     dry_run: Annotated[
@@ -477,6 +477,7 @@ def _spawn_create(
                 inherit_source_skills=True if not fork_is_fresh else skills is None,
                 desc=desc,
                 work=work,
+                worktree=worktree_intent,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -495,6 +496,7 @@ def _spawn_create(
                 goal=resolved_goal,
                 desc=desc,
                 work=work,
+                worktree=worktree_intent,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),

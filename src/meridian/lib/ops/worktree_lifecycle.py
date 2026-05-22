@@ -44,6 +44,8 @@ class WorktreeProvisionResult:
 class WorktreeRestoreResult:
     status: Literal[
         "not_configured",
+        "manual_assignment",
+        "manual_missing",
         "available",
         "restored",
         "fallback_project_root",
@@ -56,7 +58,15 @@ class WorktreeRestoreResult:
 
 @dataclass(frozen=True)
 class WorktreeCleanupResult:
-    status: Literal["not_configured", "missing", "validated", "removed", "failed"]
+    status: Literal[
+        "not_configured",
+        "skipped_manual",
+        "shared_reference",
+        "missing",
+        "validated",
+        "removed",
+        "failed",
+    ]
     metadata: WorktreeMetadata
     forced: bool = False
     error: str | None = None
@@ -70,7 +80,14 @@ class WorktreeRecoveryResult:
 
 @dataclass(frozen=True)
 class WorktreeRenameResult:
-    status: Literal["not_configured", "missing", "renamed", "failed"]
+    status: Literal[
+        "not_configured",
+        "skipped_manual",
+        "shared_reference",
+        "missing",
+        "renamed",
+        "failed",
+    ]
     metadata: WorktreeMetadata
     error: str | None = None
 
@@ -89,7 +106,7 @@ def _target_metadata(
     current = existing or WorktreeMetadata()
     path = current.path or str(resolve_worktree_path(repo_root, work_slug, config.worktree_base))
     branch = current.branch or default_worktree_branch(work_slug)
-    return WorktreeMetadata(path=path, branch=branch, pending=False)
+    return WorktreeMetadata(path=path, branch=branch, pending=False, managed=True)
 
 
 def provision_for_start(
@@ -104,7 +121,7 @@ def provision_for_start(
         metadata = existing or WorktreeMetadata(branch=default_worktree_branch(work_slug))
         return WorktreeProvisionResult(
             status="skipped_not_git_repo",
-            metadata=metadata.model_copy(update={"pending": False}),
+            metadata=metadata.model_copy(update={"pending": False, "managed": True}),
             created=False,
         )
 
@@ -130,7 +147,12 @@ def provision_for_start(
     )
     return WorktreeProvisionResult(
         status="provisioned",
-        metadata=WorktreeMetadata(path=str(result.path), branch=result.branch, pending=False),
+        metadata=WorktreeMetadata(
+            path=str(result.path),
+            branch=result.branch,
+            pending=False,
+            managed=True,
+        ),
         created=result.created,
     )
 
@@ -141,6 +163,11 @@ def restore_for_reopen(project_root: Path, item: WorkItem) -> WorktreeRestoreRes
         return WorktreeRestoreResult(status="not_configured", metadata=item.worktree)
 
     worktree_path = Path(item.worktree_path)
+    if not item.worktree_managed:
+        if worktree_path.is_dir():
+            return WorktreeRestoreResult(status="manual_assignment", metadata=item.worktree)
+        return WorktreeRestoreResult(status="manual_missing", metadata=item.worktree)
+
     if worktree_path.is_dir():
         return WorktreeRestoreResult(status="available", metadata=item.worktree)
 
@@ -164,7 +191,12 @@ def restore_for_reopen(project_root: Path, item: WorkItem) -> WorktreeRestoreRes
 
     return WorktreeRestoreResult(
         status="restored",
-        metadata=WorktreeMetadata(path=str(result.path), branch=result.branch, pending=False),
+        metadata=WorktreeMetadata(
+            path=str(result.path),
+            branch=result.branch,
+            pending=False,
+            managed=True,
+        ),
     )
 
 
@@ -174,10 +206,20 @@ def cleanup_for_done(
     *,
     force: bool = False,
     remove: bool = True,
+    shared_with: tuple[str, ...] = (),
 ) -> WorktreeCleanupResult:
     """Remove a worktree for a completed item, guarding against unpushed work."""
     if item.worktree_path is None:
         return WorktreeCleanupResult(status="not_configured", metadata=item.worktree, forced=force)
+    if not item.worktree_managed:
+        return WorktreeCleanupResult(status="skipped_manual", metadata=item.worktree, forced=force)
+    if shared_with:
+        return WorktreeCleanupResult(
+            status="shared_reference",
+            metadata=item.worktree,
+            forced=force,
+            error=", ".join(shared_with),
+        )
 
     worktree_path = Path(item.worktree_path)
     if not worktree_path.is_dir():
@@ -199,10 +241,24 @@ def cleanup_for_done(
     return WorktreeCleanupResult(status="removed", metadata=item.worktree, forced=force)
 
 
-def cleanup_for_delete(project_root: Path, item: WorkItem) -> WorktreeCleanupResult:
+def cleanup_for_delete(
+    project_root: Path,
+    item: WorkItem,
+    *,
+    shared_with: tuple[str, ...] = (),
+) -> WorktreeCleanupResult:
     """Remove a worktree for a deleted item without blocking on dirty state."""
     if item.worktree_path is None:
         return WorktreeCleanupResult(status="not_configured", metadata=item.worktree, forced=True)
+    if not item.worktree_managed:
+        return WorktreeCleanupResult(status="skipped_manual", metadata=item.worktree, forced=True)
+    if shared_with:
+        return WorktreeCleanupResult(
+            status="shared_reference",
+            metadata=item.worktree,
+            forced=True,
+            error=", ".join(shared_with),
+        )
 
     worktree_path = Path(item.worktree_path)
     if not worktree_path.is_dir():
@@ -240,10 +296,20 @@ def rename_worktree(
     item: WorkItem,
     new_slug: str,
     config: WorkConfig,
+    *,
+    shared_with: tuple[str, ...] = (),
 ) -> WorktreeRenameResult:
     """Move a worktree path and rename its branch for a renamed work item."""
     if item.worktree_path is None:
         return WorktreeRenameResult(status="not_configured", metadata=item.worktree)
+    if not item.worktree_managed:
+        return WorktreeRenameResult(status="skipped_manual", metadata=item.worktree)
+    if shared_with:
+        return WorktreeRenameResult(
+            status="shared_reference",
+            metadata=item.worktree,
+            error=", ".join(shared_with),
+        )
 
     repo_root = resolve_main_repo_root(project_root)
     if repo_root is None:
@@ -291,12 +357,19 @@ def rename_worktree(
             path=str(result.new_path),
             branch=result.new_branch,
             pending=False,
+            managed=True,
         ),
     )
 
 
 def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResult:
     """Heal or clear an interrupted worktree-create marker."""
+    if not item.worktree_managed:
+        return WorktreeRecoveryResult(
+            status="cleared",
+            metadata=item.worktree.model_copy(update={"pending": False}),
+        )
+
     config = load_config(project_root)
     branch = item.worktree_branch or default_worktree_branch(item.name)
     current_path = item.worktree_path
@@ -305,7 +378,12 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
     if main_root is None:
         return WorktreeRecoveryResult(
             status="cleared",
-            metadata=WorktreeMetadata(path=current_path, branch=branch, pending=False),
+            metadata=WorktreeMetadata(
+                path=current_path,
+                branch=branch,
+                pending=False,
+                managed=True,
+            ),
         )
 
     expected_path = (
@@ -324,11 +402,12 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
                 path=str(expected_path.resolve()),
                 branch=branch,
                 pending=False,
+                managed=True,
             ),
         )
     return WorktreeRecoveryResult(
         status="cleared",
-        metadata=WorktreeMetadata(path=current_path, branch=branch, pending=False),
+        metadata=WorktreeMetadata(path=current_path, branch=branch, pending=False, managed=True),
     )
 
 

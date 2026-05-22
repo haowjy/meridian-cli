@@ -48,6 +48,7 @@ from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import (
     load_context_config,
+    resolve_kb_dir,
     resolve_project_paths,
     resolve_spawn_log_dir,
     resolve_work_scratch_dir_for_project,
@@ -63,7 +64,7 @@ from .command import (
     resolve_launch_spec_stage,
 )
 from .composition import ComposedLaunchContent, ProjectedContent, PromptDocument
-from .cwd import resolve_child_execution_cwd
+from .cwd import LaunchDirectoryContext
 from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
 from .permissions import (
@@ -357,13 +358,17 @@ def resolve_task_context_inputs(
     *,
     context_from: tuple[str, ...],
     reference_files: tuple[str, ...],
-    project_root: Path,
+    authority_root: Path,
+    reference_anchor: Path,
 ) -> TaskContextInputs:
     """Resolve ``--from`` refs and ``-f`` files into user-turn context blocks."""
 
+    resolved_authority_root = authority_root.expanduser().resolve()
+    resolved_reference_anchor = reference_anchor.expanduser().resolve()
     loaded_references = load_reference_items(
         reference_files,
-        base_dir=project_root,
+        reference_anchor=resolved_reference_anchor,
+        kb_dir=resolve_kb_dir(resolved_authority_root),
     )
     resolved_context_from = context_from
     prior_output = ""
@@ -375,7 +380,7 @@ def resolve_task_context_inputs(
         )
 
         resolved_context_refs = tuple(
-            resolve_context_ref(project_root, ref) for ref in context_from
+            resolve_context_ref(resolved_authority_root, ref) for ref in context_from
         )
         resolved_context_from = tuple(
             resolved_context_ref_value(ref) for ref in resolved_context_refs
@@ -487,6 +492,7 @@ def materialize_launch_artifacts(
     report_output_path: str | None = None,
     context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
+    inject_task_cwd_instruction: bool = False,
     sandbox: str | None = None,
     tools: ToolsField | None = None,
     approval: str | None = None,
@@ -495,13 +501,13 @@ def materialize_launch_artifacts(
     """Build shared run/spec/permission launch artifacts."""
 
     task_cwd_instruction = ""
-    if task_cwd:
+    if task_cwd and inject_task_cwd_instruction:
         task_cwd_instruction = (
             "\n\n# Task Working Directory\n"
-            f"Your process cwd is NOT your task directory. "
-            f"Your task working directory is: {task_cwd}\n"
-            f"Use absolute paths or `cd {task_cwd}` before filesystem operations. "
-            f"The `MERIDIAN_TASK_CWD` environment variable contains this path.\n"
+            f"Your task working directory is: {task_cwd}\n\n"
+            "**Immediately `cd` into this directory before any filesystem operations.**\n\n"
+            f"```bash\ncd {task_cwd}\n```\n\n"
+            "The `MERIDIAN_TASK_CWD` environment variable contains this path.\n"
         )
     effective_appended_system = prompt_payload.appended_system_prompt or ""
     if task_cwd_instruction:
@@ -892,7 +898,8 @@ def _resolve_spawn_prepare_projection(
     task_ctx = resolve_task_context_inputs(
         context_from=request.context_from,
         reference_files=request.reference_files,
-        project_root=project_paths.project_root,
+        authority_root=project_paths.project_root,
+        reference_anchor=project_paths.execution_cwd,
     )
 
     resolved_template_variables = resolve_template_variables(request.template_vars)
@@ -1019,7 +1026,8 @@ def _resolve_primary_projection(
     task_ctx = resolve_task_context_inputs(
         context_from=request.context_from,
         reference_files=request.reference_files,
-        project_root=project_paths.project_root,
+        authority_root=project_paths.project_root,
+        reference_anchor=project_paths.execution_cwd,
     )
 
     projected = harness.project_content(
@@ -1309,6 +1317,7 @@ def _build_direct_surface(
     *,
     request: SpawnRequest,
     project_root: Path,
+    reference_anchor: Path,
     harness_registry: HarnessRegistry,
 ) -> PreparedLaunchSurface:
     """Build the lightweight prepared surface for already-resolved DIRECT launches."""
@@ -1325,7 +1334,8 @@ def _build_direct_surface(
     )
     loaded_references = load_reference_items(
         request.reference_files,
-        base_dir=resolved_project_root,
+        reference_anchor=reference_anchor.expanduser().resolve(),
+        kb_dir=resolve_kb_dir(resolved_project_root),
     )
 
     return PreparedLaunchSurface(
@@ -1400,16 +1410,21 @@ def bind_launch_context(
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
     report_output_path = bindings.report_output_path
-    execution_cwd = project_paths.execution_cwd
-    _bind_work_id = _normalize_explicit_work_id(
-        request_work_id_hint=resolved_request.work_id_hint,
-        runtime_work_id=bindings.runtime_work_id,
+    logical_task_cwd = project_paths.execution_cwd.resolve()
+    directory_context = LaunchDirectoryContext(
+        authority_root=resolved_control_root,
+        logical_task_cwd=logical_task_cwd,
+        reference_anchor=logical_task_cwd,
+        actual_process_cwd=logical_task_cwd,
+        task_cwd_source=(resolved_request.task_cwd_source or "").strip() or "authority-root",
+        work_item=(resolved_request.task_cwd_work_item or "").strip() or None,
     )
-    child_cwd = resolve_child_execution_cwd(
-        project_root=execution_cwd,
-        project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
-        work_id=_bind_work_id,
+    task_cwd = (
+        directory_context.logical_task_cwd if directory_context.has_distinct_task_cwd else None
     )
+    child_cwd = directory_context.logical_task_cwd
+    if harness.id == HarnessId.CLAUDE and directory_context.has_distinct_task_cwd:
+        child_cwd = resolved_control_root
     try:
         preflight = harness.preflight(
             execution_cwd=resolved_control_root,
@@ -1421,7 +1436,6 @@ def bind_launch_context(
             expanded_passthrough_args=tuple(resolved_request.extra_args)
         )
 
-    task_cwd = child_cwd if child_cwd.resolve() != resolved_control_root.resolve() else None
     workspace_authority_roots = _dedupe_roots_in_order(
         (
             *workspace_roots,
@@ -1429,6 +1443,20 @@ def bind_launch_context(
             *context_projection_roots,
         )
     )
+    if (
+        task_cwd is not None
+        and not _is_task_cwd_covered_by_projection(
+            task_cwd=task_cwd,
+            control_root=resolved_control_root,
+            projected_roots=workspace_authority_roots,
+        )
+    ):
+        workspace_authority_roots = _dedupe_roots_in_order(
+            (
+                *workspace_authority_roots,
+                task_cwd,
+            )
+        )
     projected_roots = _dedupe_roots_in_order(
         (
             *workspace_authority_roots,
@@ -1454,11 +1482,16 @@ def bind_launch_context(
             update={"warning": summarize_composition_warnings(composition_warnings)}
         )
 
-    if task_cwd is not None and not _is_task_cwd_covered_by_projection(
-        task_cwd=task_cwd,
-        control_root=resolved_control_root,
-        projected_roots=workspace_authority_roots,
-    ):
+    task_cwd_projection_missing = task_cwd is not None and (
+        workspace_projection.applicability != "active"
+        or not _is_task_cwd_covered_by_projection(
+            task_cwd=task_cwd,
+            control_root=resolved_control_root,
+            projected_roots=workspace_authority_roots,
+        )
+    )
+    if task_cwd_projection_missing:
+        assert task_cwd is not None
         composition_warnings = (
             *composition_warnings,
             CompositionWarning(
@@ -1476,6 +1509,14 @@ def bind_launch_context(
         resolved_request = resolved_request.model_copy(
             update={"warning": summarize_composition_warnings(composition_warnings)}
         )
+
+    if (
+        task_cwd is not None
+        and task_cwd_projection_missing
+        and workspace_projection.applicability != "active"
+    ):
+        child_cwd = resolved_control_root
+    directory_context = directory_context.with_actual_process_cwd(child_cwd)
 
     model = (resolved_request.model or "").strip()
     model_family = normalize_usage_model_family(model)
@@ -1518,7 +1559,8 @@ def bind_launch_context(
         prompt_payload=prompt_payload,
         extra_args=projected_extra_args,
         control_root=resolved_control_root.as_posix(),
-        task_cwd=task_cwd.as_posix() if task_cwd is not None else None,
+        task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
+        inject_task_cwd_instruction=directory_context.requires_task_cwd_instruction,
         mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
@@ -1616,7 +1658,7 @@ def bind_launch_context(
         request=prepared.launch_request or prepared.request,
         runtime=runtime,
         project_root=project_paths.project_root,
-        execution_cwd=execution_cwd,
+        execution_cwd=directory_context.logical_task_cwd,
         control_root=resolved_control_root,
         task_cwd=task_cwd,
         runtime_root=runtime_root,
@@ -1679,6 +1721,7 @@ def _build_launch_context_impl(
         prepared = _build_direct_surface(
             request=request,
             project_root=project_paths.project_root,
+            reference_anchor=project_paths.execution_cwd,
             harness_registry=harness_registry,
         )
 

@@ -75,3 +75,37 @@ uv run meridian work start original-name
 uv run meridian work rename original-name new-name
 ```
 - [ ] No `Traceback` in stderr (may exit 0 or non-zero depending on feature state)
+
+## work set-worktree / clear-worktree
+
+```bash
+uv run meridian work start with-worktree-path
+mkdir -p "$SCRATCH/worktree-target"
+uv run meridian work set-worktree with-worktree-path "$SCRATCH/worktree-target"
+uv run meridian work show with-worktree-path --json
+```
+- [ ] Exit 0
+- [ ] JSON shows worktree path set to `$SCRATCH/worktree-target`
+
+```bash
+uv run meridian work clear-worktree with-worktree-path
+uv run meridian work show with-worktree-path --json
+```
+- [ ] Exit 0
+- [ ] JSON shows worktree path is null/empty
+
+## manually assigned/shared worktree path is not removed by lifecycle
+
+```bash
+uv run meridian work start manual-a
+uv run meridian work start manual-b
+mkdir -p "$SCRATCH/shared-manual-worktree"
+uv run meridian work set-worktree manual-a "$SCRATCH/shared-manual-worktree"
+uv run meridian work set-worktree manual-b "$SCRATCH/shared-manual-worktree"
+uv run meridian work done manual-a
+test -d "$SCRATCH/shared-manual-worktree"
+uv run meridian work delete manual-b
+test -d "$SCRATCH/shared-manual-worktree"
+```
+- [ ] Both `test -d` checks pass
+- [ ] Lifecycle output says the path is manually assigned / not removed
