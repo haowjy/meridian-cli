@@ -10,6 +10,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian work set-worktree <work-item> <path>` and `meridian work clear-worktree <work-item>` for explicit worktree-path assignment/clearing on work items.
 
 ### Changed
+- `release-on-merge.yml` now supports `release:minor` and `release:major` PR labels with `major > minor > patch` precedence.
+- `CLAUDE.md` replaced with `@AGENTS.md` reference (no longer a symlink).
 - Spawn now separates authority root from task cwd: authority stays project/config/catalog/KB root; task cwd drives file work and relative `-f` anchor.
 - Relative `-f` paths now resolve only from task cwd/reference anchor; missing paths now hard-error with given path, anchor, and resolved path.
 - `-f @path` support removed; `kb:path` now handles KB references with confinement checks (empty/absolute/escape rejected).
