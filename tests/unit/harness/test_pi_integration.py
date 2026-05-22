@@ -46,7 +46,10 @@ async def _next_non_phase_event(event_iter):  # type: ignore[no-untyped-def]
 def _configure_extension_projection(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     source_root = root / "dist" / "extensions"
     (source_root / "background-tasks").mkdir(parents=True, exist_ok=True)
-    (source_root / "background-tasks" / "index.js").write_text("export default {}\\n", encoding="utf-8")
+    (source_root / "background-tasks" / "index.js").write_text(
+        "export default {}\\n",
+        encoding="utf-8",
+    )
     (source_root / "meridian-spawn-watch").mkdir(parents=True, exist_ok=True)
     (source_root / "meridian-spawn-watch" / "index.js").write_text(
         "export default {}\\n",
