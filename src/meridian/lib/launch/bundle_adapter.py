@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
     from meridian.lib.launch.resolve import ResolvedSkills
 
-_MARS_BUNDLE_MIN_VERSION = "0.5.0"
+_MARS_BUNDLE_MIN_VERSION = "0.6.1"
 _SUPPORTED_BUNDLE_SCHEMA_VERSION = 2
 
 

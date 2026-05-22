@@ -198,7 +198,7 @@ def test_request_and_resolve_uses_native_windows_root_path(monkeypatch: pytest.M
 def test_request_and_resolve_reports_missing_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: None)
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.5\.0"):
+    with pytest.raises(RuntimeError, match=r"mars >= 0\.6\.1"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -217,7 +217,7 @@ def test_request_and_resolve_reports_unsupported_launch_bundle_command(
         ),
     )
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.5\.0"):
+    with pytest.raises(RuntimeError, match=r"mars >= 0\.6\.1"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -254,7 +254,7 @@ def test_request_and_resolve_reports_unsupported_schema_version(
     payload = _valid_bundle_payload()
     payload["version"] = 99
 
-    with pytest.raises(RuntimeError, match=r"schema version 99 is unsupported.*mars >= 0\.5\.0"):
+    with pytest.raises(RuntimeError, match=r"schema version 99 is unsupported.*mars >= 0\.6\.1"):
         _resolve_with_payload(monkeypatch, payload)
 
 

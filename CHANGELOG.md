@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Meridian now accepts Mars 0.5.0 launch-bundle schema v2, so spawns do not fail when Mars returns schema version 2.
+- Meridian now accepts Mars launch-bundle schema v2 and requires mars-agents >= 0.6.0.
 
 ## [0.1.14-rc.5] - 2026-05-22
 
