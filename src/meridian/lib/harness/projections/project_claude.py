@@ -139,9 +139,6 @@ def _log_collision_if_needed(
         "Claude projection known managed flag %s also present in extra_args; "
         "user tail value wins by last-wins semantics"
     )
-    if managed_flag == "--append-system-prompt":
-        logger.warning(message, managed_flag)
-        return
     logger.debug(message, managed_flag)
 
 
