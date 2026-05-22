@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.14-rc.5] - 2026-05-22
+
 ### Added
 - `meridian work set-worktree <work-item> <path>` and `meridian work clear-worktree <work-item>` for explicit worktree-path assignment/clearing on work items.
 
