@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path, PureWindowsPath
 from typing import cast
@@ -9,7 +10,13 @@ import pytest
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.bundle_adapter import BundleRequest, request_and_resolve
+from meridian.lib.launch.bundle_adapter import (
+    _MARS_BUNDLE_MIN_VERSION,
+    BundleRequest,
+    request_and_resolve,
+)
+
+_ESCAPED_MIN_VERSION = re.escape(_MARS_BUNDLE_MIN_VERSION)
 
 
 def _completed(
@@ -198,7 +205,7 @@ def test_request_and_resolve_uses_native_windows_root_path(monkeypatch: pytest.M
 def test_request_and_resolve_reports_missing_mars_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: None)
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.6\.1"):
+    with pytest.raises(RuntimeError, match=rf"mars >= {_ESCAPED_MIN_VERSION}"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),
@@ -217,7 +224,7 @@ def test_request_and_resolve_reports_unsupported_launch_bundle_command(
         ),
     )
 
-    with pytest.raises(RuntimeError, match=r"mars >= 0\.6\.1"):
+    with pytest.raises(RuntimeError, match=rf"mars >= {_ESCAPED_MIN_VERSION}"):
         request_and_resolve(
             BundleRequest(agent=None, project_root=Path("/tmp/project")),
             harness_registry=get_default_harness_registry(),

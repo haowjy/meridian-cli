@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -26,7 +27,14 @@ if TYPE_CHECKING:
     from meridian.lib.launch.policies import ModelSelectionContext, ResolvedLaunchPolicy
     from meridian.lib.launch.resolve import ResolvedSkills
 
-_MARS_BUNDLE_MIN_VERSION = "0.6.1"
+def _resolve_mars_min_version() -> str:
+    try:
+        return version("mars-agents")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+_MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
 _SUPPORTED_BUNDLE_SCHEMA_VERSION = 2
 
 
