@@ -7,7 +7,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.cwd import resolve_task_cwd
+from meridian.lib.launch.cwd import LaunchDirectoryContext, resolve_task_cwd
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
 from meridian.lib.launch.request import (
     ExecutionBudget,
@@ -92,10 +92,13 @@ def build_create_payload(
             force_worktree=payload.worktree is True,
             force_no_worktree=payload.worktree is False,
         )
-        task_cwd = task_cwd_resolution.task_cwd
+        directory_context = LaunchDirectoryContext.from_task_cwd_resolution(
+            authority_root=project_root,
+            task_cwd_resolution=task_cwd_resolution,
+        )
         validated_paths = validate_reference_paths(
             payload.files,
-            reference_anchor=task_cwd,
+            reference_anchor=directory_context.reference_anchor,
             kb_dir=resolve_kb_dir(project_root),
         )
         parsed_template_vars = parse_template_assignments(payload.template_vars)
@@ -146,11 +149,11 @@ def build_create_payload(
             goal=payload.goal,
             work_id_hint=payload.work.strip() or None,
             warning=preflight_warning,
-            authority_root=project_root.as_posix(),
-            task_cwd=task_cwd.as_posix(),
-            reference_anchor=task_cwd.as_posix(),
-            task_cwd_source=task_cwd_resolution.source,
-            task_cwd_work_item=task_cwd_resolution.work_item,
+            authority_root=directory_context.authority_root.as_posix(),
+            task_cwd=directory_context.logical_task_cwd.as_posix(),
+            reference_anchor=directory_context.reference_anchor.as_posix(),
+            task_cwd_source=directory_context.task_cwd_source,
+            task_cwd_work_item=directory_context.work_item,
         )
 
         preview_context = build_launch_context(
@@ -168,10 +171,10 @@ def build_create_payload(
             runtime_root=runtime_root.as_posix(),
             config_root=project_root.as_posix(),
             control_root=project_root.as_posix(),
-            requested_task_cwd=task_cwd.as_posix(),
+            requested_task_cwd=directory_context.logical_task_cwd.as_posix(),
             # Legacy aliases.
             project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=task_cwd.as_posix(),
+            project_paths_execution_cwd=directory_context.logical_task_cwd.as_posix(),
         ),
             harness_registry=harness_registry,
             dry_run=True,

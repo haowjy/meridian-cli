@@ -137,6 +137,38 @@ uv run meridian spawn -a reviewer -p "Use kb ref" -f kb:domain/page.md --dry-run
 - [ ] `authority_root` matches project root
 - [ ] `task_cwd_source == "authority-root"` in default no-worktree case
 
+## --work picks worktree task cwd and reference anchor
+
+```bash
+uv run meridian work start smoke-worktree
+WT=$(mktemp -d)
+echo "relative ref" > "$WT/notes.md"
+uv run meridian work set-worktree smoke-worktree "$WT"
+uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f notes.md --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd` equals `$WT`
+- [ ] `reference_anchor` equals `$WT`
+- [ ] `task_cwd_source == "explicit-work-worktree"`
+- [ ] `task_cwd_work_item == "smoke-worktree"`
+- [ ] resolved `reference_files` entry points at `$WT/notes.md`
+
+## Stale worktree fails unless --no-worktree
+
+```bash
+uv run meridian work start stale-worktree
+MISSING="$SCRATCH/missing-worktree-path"
+uv run meridian work set-worktree stale-worktree "$MISSING"
+uv run meridian spawn -a reviewer -p "should fail" --work stale-worktree --dry-run --json
+```
+- [ ] Fails with stale/missing worktree path error
+
+```bash
+uv run meridian spawn -a reviewer -p "bypass stale worktree" --work stale-worktree --no-worktree --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd_source == "forced-no-worktree"`
+
 ```bash
 uv run meridian spawn -a reviewer -p "bad old prefix" -f @domain/page.md --dry-run --json
 ```

@@ -9,8 +9,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from meridian.lib.state.paths import resolve_kb_dir
-
 _TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 
@@ -471,15 +469,13 @@ def _ensure_reference_exists(
 def load_reference_items(
     paths: Sequence[str | Path],
     *,
-    base_dir: Path | None = None,
-    reference_anchor: Path | None = None,
-    kb_dir: Path | None = None,
+    reference_anchor: Path,
+    kb_dir: Path,
 ) -> tuple[ReferenceItem, ...]:
     """Load reference items (files or directories) in input order.
 
     Args:
         paths: Sequence of file or directory paths.
-        base_dir: Legacy alias for ``reference_anchor``.
         reference_anchor: Base directory for relative path resolution.
         kb_dir: KB root directory for ``kb:`` prefixed references.
 
@@ -489,8 +485,8 @@ def load_reference_items(
     Raises:
         FileNotFoundError: If a path doesn't exist.
     """
-    anchor = (reference_anchor or base_dir or Path.cwd()).resolve()
-    resolved_kb_dir = (kb_dir or resolve_kb_dir(anchor)).resolve()
+    anchor = reference_anchor.expanduser().resolve()
+    resolved_kb_dir = kb_dir.expanduser().resolve()
     loaded: list[ReferenceItem] = []
 
     for raw_path in paths:
@@ -517,15 +513,13 @@ def load_reference_items(
 def validate_reference_paths(
     paths: Sequence[str | Path],
     *,
-    base_dir: Path | None = None,
-    reference_anchor: Path | None = None,
-    kb_dir: Path | None = None,
+    reference_anchor: Path,
+    kb_dir: Path,
 ) -> tuple[Path, ...]:
     """Validate reference paths exist without reading content.
 
     Args:
         paths: Sequence of file or directory paths.
-        base_dir: Legacy alias for ``reference_anchor``.
         reference_anchor: Base directory for relative path resolution.
         kb_dir: KB root directory for ``kb:`` prefixed references.
 
@@ -535,8 +529,8 @@ def validate_reference_paths(
     Raises:
         FileNotFoundError: If a path doesn't exist.
     """
-    anchor = (reference_anchor or base_dir or Path.cwd()).resolve()
-    resolved_kb_dir = (kb_dir or resolve_kb_dir(anchor)).resolve()
+    anchor = reference_anchor.expanduser().resolve()
+    resolved_kb_dir = kb_dir.expanduser().resolve()
     validated: list[Path] = []
 
     for raw_path in paths:

@@ -64,6 +64,7 @@ from .command import (
     resolve_launch_spec_stage,
 )
 from .composition import ComposedLaunchContent, ProjectedContent, PromptDocument
+from .cwd import LaunchDirectoryContext
 from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
 from .permissions import (
@@ -491,6 +492,7 @@ def materialize_launch_artifacts(
     report_output_path: str | None = None,
     context_from_payload: tuple[str, ...] = (),
     reference_items: tuple[ReferenceItem, ...] = (),
+    inject_task_cwd_instruction: bool = False,
     sandbox: str | None = None,
     tools: ToolsField | None = None,
     approval: str | None = None,
@@ -499,7 +501,7 @@ def materialize_launch_artifacts(
     """Build shared run/spec/permission launch artifacts."""
 
     task_cwd_instruction = ""
-    if task_cwd:
+    if task_cwd and inject_task_cwd_instruction:
         task_cwd_instruction = (
             "\n\n# Task Working Directory\n"
             f"Your task working directory is: {task_cwd}\n\n"
@@ -1408,13 +1410,20 @@ def bind_launch_context(
     seed_harness_session_args = prepared.seed_session_args
     model_selection = prepared.model_selection
     report_output_path = bindings.report_output_path
-    execution_cwd = project_paths.execution_cwd
-    selected_task_cwd = (
-        execution_cwd if execution_cwd.resolve() != resolved_control_root.resolve() else None
+    logical_task_cwd = project_paths.execution_cwd.resolve()
+    directory_context = LaunchDirectoryContext(
+        authority_root=resolved_control_root,
+        logical_task_cwd=logical_task_cwd,
+        reference_anchor=logical_task_cwd,
+        actual_process_cwd=logical_task_cwd,
+        task_cwd_source=(resolved_request.task_cwd_source or "").strip() or "authority-root",
+        work_item=(resolved_request.task_cwd_work_item or "").strip() or None,
     )
-    task_cwd = selected_task_cwd
-    child_cwd = selected_task_cwd or resolved_control_root
-    if harness.id == HarnessId.CLAUDE and selected_task_cwd is not None:
+    task_cwd = (
+        directory_context.logical_task_cwd if directory_context.has_distinct_task_cwd else None
+    )
+    child_cwd = directory_context.logical_task_cwd
+    if harness.id == HarnessId.CLAUDE and directory_context.has_distinct_task_cwd:
         child_cwd = resolved_control_root
     try:
         preflight = harness.preflight(
@@ -1507,6 +1516,7 @@ def bind_launch_context(
         and workspace_projection.applicability != "active"
     ):
         child_cwd = resolved_control_root
+    directory_context = directory_context.with_actual_process_cwd(child_cwd)
 
     model = (resolved_request.model or "").strip()
     model_family = normalize_usage_model_family(model)
@@ -1550,6 +1560,7 @@ def bind_launch_context(
         extra_args=projected_extra_args,
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
+        inject_task_cwd_instruction=directory_context.requires_task_cwd_instruction,
         mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,
@@ -1647,7 +1658,7 @@ def bind_launch_context(
         request=prepared.launch_request or prepared.request,
         runtime=runtime,
         project_root=project_paths.project_root,
-        execution_cwd=execution_cwd,
+        execution_cwd=directory_context.logical_task_cwd,
         control_root=resolved_control_root,
         task_cwd=task_cwd,
         runtime_root=runtime_root,

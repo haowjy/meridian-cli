@@ -17,9 +17,15 @@ def test_compose_prompt_keeps_context_isolated_and_sanitized(tmp_path: Path) -> 
     hidden_ref = tmp_path / "hidden.md"
     safe_ref.write_text("Safe context {{CTX}}", encoding="utf-8")
     hidden_ref.write_text("INJECTION: should never leak", encoding="utf-8")
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
 
     # Load only the safe reference - hidden_ref should not be included
-    loaded_refs = load_reference_items([safe_ref])
+    loaded_refs = load_reference_items(
+        [safe_ref],
+        reference_anchor=tmp_path,
+        kb_dir=kb_dir,
+    )
     skill = SkillContent(
         name="worker",
         description="",
@@ -65,7 +71,13 @@ def test_compose_prompt_with_directory_renders_tree(tmp_path: Path) -> None:
     nested.mkdir()
     (nested / "deep.txt").write_text("Deep file")
 
-    loaded_refs = load_reference_items([subdir])
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    loaded_refs = load_reference_items(
+        [subdir],
+        reference_anchor=tmp_path,
+        kb_dir=kb_dir,
+    )
 
     composed = compose_run_prompt_text(
         skills=[],
@@ -100,7 +112,13 @@ def test_compose_prompt_mixed_files_and_directories(tmp_path: Path) -> None:
     mydir.mkdir()
     (mydir / "inner.py").write_text("# Inner")
 
-    loaded_refs = load_reference_items([single_file, mydir])
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    loaded_refs = load_reference_items(
+        [single_file, mydir],
+        reference_anchor=tmp_path,
+        kb_dir=kb_dir,
+    )
 
     composed = compose_run_prompt_text(
         skills=[],

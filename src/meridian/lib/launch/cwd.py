@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from meridian.lib.state import work_store
@@ -15,6 +15,50 @@ class TaskCwdResolution:
     task_cwd: Path
     source: str
     work_item: str | None
+
+
+@dataclass(frozen=True)
+class LaunchDirectoryContext:
+    """Resolved directory contract for launch composition and execution."""
+
+    authority_root: Path
+    logical_task_cwd: Path
+    reference_anchor: Path
+    actual_process_cwd: Path
+    task_cwd_source: str
+    work_item: str | None
+
+    @classmethod
+    def from_task_cwd_resolution(
+        cls,
+        *,
+        authority_root: Path,
+        task_cwd_resolution: TaskCwdResolution,
+    ) -> LaunchDirectoryContext:
+        resolved_authority_root = authority_root.expanduser().resolve()
+        resolved_task_cwd = task_cwd_resolution.task_cwd.expanduser().resolve()
+        return cls(
+            authority_root=resolved_authority_root,
+            logical_task_cwd=resolved_task_cwd,
+            reference_anchor=resolved_task_cwd,
+            actual_process_cwd=resolved_task_cwd,
+            task_cwd_source=task_cwd_resolution.source,
+            work_item=task_cwd_resolution.work_item,
+        )
+
+    def with_actual_process_cwd(self, actual_process_cwd: Path) -> LaunchDirectoryContext:
+        return replace(
+            self,
+            actual_process_cwd=actual_process_cwd.expanduser().resolve(),
+        )
+
+    @property
+    def has_distinct_task_cwd(self) -> bool:
+        return self.logical_task_cwd != self.authority_root
+
+    @property
+    def requires_task_cwd_instruction(self) -> bool:
+        return self.actual_process_cwd != self.logical_task_cwd
 
 
 def _worktree_path_for_item(

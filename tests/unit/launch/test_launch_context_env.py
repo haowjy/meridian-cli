@@ -272,11 +272,9 @@ def test_build_launch_context_split_root_task_cwd_contract(
         assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
         assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
         assert final_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
-        assert runtime_ctx.binding.run_params.appended_system_prompt is not None
-        assert "MERIDIAN_TASK_CWD" in runtime_ctx.binding.run_params.appended_system_prompt
-        assert execution_cwd.as_posix() in runtime_ctx.binding.run_params.appended_system_prompt
-        projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
-        assert execution_cwd.resolve() not in projected_roots
+        assert "MERIDIAN_TASK_CWD" not in (
+            runtime_ctx.binding.run_params.appended_system_prompt or ""
+        )
     else:
         assert runtime_ctx.binding.run_params.task_cwd is None
         assert "MERIDIAN_TASK_CWD" not in bind_env
@@ -344,6 +342,7 @@ def test_build_launch_context_falls_back_for_harness_without_workspace_projectio
     warning_codes = {warning.code for warning in runtime_ctx.warnings}
     assert "task_cwd_not_projected" in warning_codes
     assert runtime_ctx.binding.run_params.task_cwd == outside_task_cwd.as_posix()
+    assert "MERIDIAN_TASK_CWD" in (runtime_ctx.binding.run_params.appended_system_prompt or "")
     assert runtime_ctx.binding.child_cwd == tmp_path
 
 
