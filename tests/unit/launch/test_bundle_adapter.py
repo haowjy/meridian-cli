@@ -290,6 +290,30 @@ def test_request_and_resolve_extracts_schema_v2_routing_diagnostics(
     }
 
 
+def test_request_and_resolve_schema_v2_route_trace_falls_back_to_empty_dict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
+    payload = _valid_bundle_payload()
+    payload["routing"] = {
+        "model": "gpt-5.5",
+        "model_token": "gpt55",
+        "harness": "opencode",
+        "route_trace": ["alias-lookup", "policy-match"],
+    }
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: _completed(stdout=json.dumps(payload)),
+    )
+
+    bundle = request_and_resolve(
+        BundleRequest(agent=None, project_root=Path("/tmp/project")),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    assert bundle.route_trace == {}
+
+
 def test_request_and_resolve_reports_missing_routing_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("meridian.lib.launch.bundle_adapter._resolve_mars_binary", lambda: "mars")
     payload = _valid_bundle_payload()
