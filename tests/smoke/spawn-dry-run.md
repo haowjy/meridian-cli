@@ -157,8 +157,10 @@ uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f
 
 ```bash
 uv run meridian work start stale-worktree
-MISSING="$SCRATCH/missing-worktree-path"
-uv run meridian work set-worktree stale-worktree "$MISSING"
+STALE="$SCRATCH/stale-worktree-path"
+mkdir -p "$STALE"
+uv run meridian work set-worktree stale-worktree "$STALE"
+rmdir "$STALE"
 uv run meridian spawn -a reviewer -p "should fail" --work stale-worktree --dry-run --json
 ```
 - [ ] Fails with stale/missing worktree path error
@@ -190,9 +192,11 @@ mkdir -p "$CANONICAL/.mars/agents"
 echo "# Reviewer" > "$CANONICAL/.mars/agents/reviewer.md"
 printf 'gitdir: /tmp/fake-worktree-git\n' > "$WORKTREE/.git"
 
-MERIDIAN_PROJECT_DIR=$CANONICAL MERIDIAN_HOME=$(mktemp -d) \
-  uv run meridian spawn -a reviewer -p "test" --dry-run --json
-# (run from $WORKTREE as cwd)
+(
+  cd "$WORKTREE"
+  MERIDIAN_PROJECT_DIR=$CANONICAL MERIDIAN_HOME=$(mktemp -d) \
+    uv run meridian spawn -a reviewer -p "test" --dry-run --json
+)
 ```
 - [ ] Exit 0
 - [ ] `resolved_authority.project_root` matches `$CANONICAL` (not the worktree cwd)

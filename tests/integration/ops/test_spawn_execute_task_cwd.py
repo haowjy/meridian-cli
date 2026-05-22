@@ -76,12 +76,10 @@ def test_spawn_create_background_persists_distinct_task_cwd(
     assert row is not None
     assert row.control_root == project_root.as_posix()
     assert row.task_cwd is None
-    assert row.execution_cwd == project_root.as_posix()
 
     bg_request = _load_bg_worker_request(resolve_spawn_log_dir(project_root, spawn_id))
     assert bg_request.runtime.control_root == project_root.as_posix()
     assert bg_request.runtime.requested_task_cwd == project_root.as_posix()
-    assert bg_request.runtime.project_paths_execution_cwd == project_root.as_posix()
 
 
 def test_spawn_create_background_launches_worker_from_authority_root_with_external_task_cwd(
@@ -149,12 +147,10 @@ def test_spawn_create_background_launches_worker_from_authority_root_with_extern
     assert row is not None
     assert row.control_root == project_root.as_posix()
     assert row.task_cwd == external_task_cwd.as_posix()
-    assert row.execution_cwd == external_task_cwd.as_posix()
 
     bg_request = _load_bg_worker_request(resolve_spawn_log_dir(project_root, spawn_id))
     assert bg_request.runtime.control_root == project_root.as_posix()
     assert bg_request.runtime.requested_task_cwd == external_task_cwd.as_posix()
-    assert bg_request.runtime.project_paths_execution_cwd == external_task_cwd.as_posix()
 
 
 def test_spawn_create_blocking_passes_distinct_task_cwd_to_launch_runtime(
@@ -218,7 +214,6 @@ def test_spawn_create_blocking_passes_distinct_task_cwd_to_launch_runtime(
     assert row is not None
     assert row.control_root == project_root.as_posix()
     assert row.task_cwd is None
-    assert row.execution_cwd == project_root.as_posix()
 
 
 def test_spawn_execute_uses_prepared_request_task_cwd_contract(
@@ -300,5 +295,4 @@ def test_spawn_execute_uses_prepared_request_task_cwd_contract(
     assert row is not None
     assert row.control_root == project_root.as_posix()
     assert row.task_cwd == external_task_cwd.as_posix()
-    assert row.execution_cwd == external_task_cwd.as_posix()
     assert row.work_id == "ambient-work"

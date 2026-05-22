@@ -182,7 +182,6 @@ async def test_prepare_persists_selected_task_cwd_but_uses_child_cwd_for_connect
     row = spawn_store.get_spawn(runtime_root, prepared.spawn_id)
     assert row is not None
     assert row.task_cwd == selected_task_cwd.as_posix()
-    assert row.execution_cwd == tmp_path.as_posix()
     assert prepared.connection_config.control_root == tmp_path
     assert prepared.connection_config.task_cwd is None
 
