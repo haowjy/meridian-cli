@@ -25,7 +25,8 @@ class _FakeStdin(io.StringIO):
         return self._is_tty
 
 
-def test_spawn_prompt_file_dash_reads_stdin_through_main(
+@pytest.fixture(autouse=True)
+def _isolate_cli_main_invocations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -33,6 +34,11 @@ def test_spawn_prompt_file_dash_reads_stdin_through_main(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MERIDIAN_HOME", (tmp_path / "home").as_posix())
     monkeypatch.delenv("MERIDIAN_CONFIG", raising=False)
+
+
+def test_spawn_prompt_file_dash_reads_stdin_through_main(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
     def _fake_spawn_create_sync(
@@ -59,7 +65,6 @@ def test_spawn_rejects_prompt_and_prompt_file_together(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
 
     with pytest.raises(SystemExit) as exc_info:
@@ -74,7 +79,6 @@ def test_spawn_rejects_prompt_and_prompt_file_together(
 def test_spawn_goal_is_trimmed_and_passed_to_spawn_create(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
     captured: dict[str, object] = {}
 
@@ -101,7 +105,6 @@ def test_spawn_goal_rejects_empty_value(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
 
     with pytest.raises(SystemExit) as exc_info:
@@ -117,8 +120,6 @@ def test_spawn_runtime_error_is_reported_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
-
     def _fail_spawn_create_sync(
         payload: SpawnCreateInput,
         *,
@@ -147,7 +148,6 @@ def test_spawn_children_agent_mode_uses_children_text_view(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     output = SpawnListOutput(
         spawns=(
             SpawnListEntry(

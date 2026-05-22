@@ -326,6 +326,8 @@ def spawn_create_sync(
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
         prepared_goal = getattr(prepared_request, "goal", payload.goal)
+        agent_metadata = getattr(prepared_request, "agent_metadata", {}) or {}
+        terminal_surface_mode = getattr(prepared_request, "terminal_surface_mode", None)
         _emit_usage_spawn_launched(harness=prepared_request.harness)
         return SpawnActionOutput(
             command="spawn.create",
@@ -334,7 +336,7 @@ def spawn_create_sync(
             harness_id=prepared_request.harness or "",
             warning=_merge_warnings(prepared_request.warning, dry_run_work_warning),
             agent=prepared_request.agent,
-            agent_path=prepared_request.agent_metadata.get("session_agent_path") or None,
+            agent_path=agent_metadata.get("session_agent_path") or None,
             skills=prepared_request.skills,
             skill_paths=prepared_request.skill_paths,
             reference_files=prepared_request.reference_files,
@@ -350,8 +352,8 @@ def spawn_create_sync(
             matched_policy_rule=getattr(prepared_request, "matched_policy_rule", None),
             fallback_chain=tuple(getattr(prepared_request, "fallback_chain", ()) or ()),
             terminal_surface_mode=(
-                prepared_request.terminal_surface_mode.value
-                if prepared_request.terminal_surface_mode is not None
+                terminal_surface_mode.value
+                if terminal_surface_mode is not None
                 else None
             ),
             project_root=authority.project_root.as_posix(),
@@ -360,12 +362,12 @@ def spawn_create_sync(
             if authority.runtime_root is not None
             else None,
             runtime_root_source=authority.runtime_root_source,
-            authority_root=prepared_request.authority_root,
-            task_cwd=prepared_request.task_cwd,
-            reference_anchor=prepared_request.reference_anchor,
-            task_cwd_source=prepared_request.task_cwd_source,
-            task_cwd_work_item=prepared_request.task_cwd_work_item,
-            cli_command=prepared_request.cli_command,
+            authority_root=getattr(prepared_request, "authority_root", None),
+            task_cwd=getattr(prepared_request, "task_cwd", None),
+            reference_anchor=getattr(prepared_request, "reference_anchor", None),
+            task_cwd_source=getattr(prepared_request, "task_cwd_source", None),
+            task_cwd_work_item=getattr(prepared_request, "task_cwd_work_item", None),
+            cli_command=tuple(getattr(prepared_request, "cli_command", ()) or ()),
             message="Dry run complete.",
             forked_from=forked_from,
         )
