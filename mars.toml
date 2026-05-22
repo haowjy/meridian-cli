@@ -4,9 +4,6 @@ url = "https://github.com/haowjy/meridian-dev-workflow"
 [dependencies.meridian-prompter]
 url = "https://github.com/meridian-flow/meridian-prompter"
 
-[dependencies.pkg]
-path = "/tmp/tmp.scFJOuDlIj/pkg"
-
 [settings]
 targets = [
     ".pi",

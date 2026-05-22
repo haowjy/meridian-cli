@@ -50,6 +50,8 @@ Use `meridian spawn` (not `uv run meridian spawn`) to hand off tasks to subagent
 
 NEVER REVERT CHANGES — always assume it's someone else's work.
 
+**Destructive git operations are permission-gated.** `git restore`, `git checkout -- <file>`, `git stash`, `git reset`, and similar destructive commands will be denied by the sandbox. When you need to discard uncommitted changes, output the command for the user to run manually instead of attempting it yourself.
+
 ## Git Hooks
 
 Run `scripts/setup-hooks.sh` (or `scripts/setup-hooks.ps1` on Windows) once after cloning.
