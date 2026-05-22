@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-22
+
 ### Fixed
 - Meridian now accepts Mars launch-bundle schema v2 and requires mars-agents >= 0.6.0.
 
