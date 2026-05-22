@@ -11,6 +11,8 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+from meridian.lib.state import work_store
+from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from tests.support.launch import FakeBundleResult
 
 
@@ -188,3 +190,150 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
     dry_run_command = " ".join(dry_run_prepared.cli_command)
     assert "/spawns/preview/report.md" not in dry_run_command
     assert "<spawn-report-path>" in dry_run_command
+
+
+def test_build_create_payload_kb_reference_uses_authority_kb_dir_with_external_task_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
+    _stub_bundle_adapter(monkeypatch)
+    runtime = build_runtime_from_root_and_config(project_root, load_config(project_root))
+
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work = work_store.create_work_item(project_state_dir, "feature-x", "", None)
+    external_task_cwd = tmp_path / "external-worktree"
+    external_task_cwd.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        work.name,
+        path=external_task_cwd.as_posix(),
+    )
+
+    authority_kb_file = resolve_kb_dir(project_root) / "domain" / "decision.md"
+    authority_kb_file.parent.mkdir(parents=True, exist_ok=True)
+    authority_kb_file.write_text("authority kb", encoding="utf-8")
+    shadow_kb_file = external_task_cwd / ".meridian" / "kb" / "domain" / "decision.md"
+    shadow_kb_file.parent.mkdir(parents=True, exist_ok=True)
+    shadow_kb_file.write_text("task shadow kb", encoding="utf-8")
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="check kb",
+            model="gpt-5.4-mini",
+            project_root=project_root.as_posix(),
+            work=work.name,
+            files=("kb:domain/decision.md",),
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert prepared.task_cwd == external_task_cwd.as_posix()
+    assert prepared.reference_anchor == external_task_cwd.as_posix()
+    assert prepared.reference_files == (authority_kb_file.resolve().as_posix(),)
+
+
+def test_build_create_payload_relative_reference_resolves_from_selected_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
+    _stub_bundle_adapter(monkeypatch)
+    runtime = build_runtime_from_root_and_config(project_root, load_config(project_root))
+
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work = work_store.create_work_item(project_state_dir, "feature-x", "", None)
+    external_task_cwd = tmp_path / "feature-worktree"
+    external_task_cwd.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        work.name,
+        path=external_task_cwd.as_posix(),
+    )
+    reference_file = external_task_cwd / "notes.md"
+    reference_file.write_text("worktree notes", encoding="utf-8")
+
+    prepared = build_create_payload(
+        SpawnCreateInput(
+            prompt="review notes",
+            model="gpt-5.4-mini",
+            project_root=project_root.as_posix(),
+            work=work.name,
+            files=("notes.md",),
+            dry_run=True,
+        ),
+        runtime=runtime,
+    )
+
+    assert prepared.task_cwd == external_task_cwd.as_posix()
+    assert prepared.reference_anchor == external_task_cwd.as_posix()
+    assert prepared.task_cwd_source == "explicit-work-worktree"
+    assert prepared.task_cwd_work_item == work.name
+    assert prepared.reference_files == (reference_file.resolve().as_posix(),)
+
+
+def test_build_create_payload_worktree_flag_requires_configured_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
+    _stub_bundle_adapter(monkeypatch)
+    runtime = build_runtime_from_root_and_config(project_root, load_config(project_root))
+
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    work = work_store.create_work_item(project_state_dir, "no-worktree", "", None)
+
+    with pytest.raises(ValueError, match="has no configured worktree path"):
+        build_create_payload(
+            SpawnCreateInput(
+                prompt="must use worktree",
+                model="gpt-5.4-mini",
+                project_root=project_root.as_posix(),
+                work=work.name,
+                worktree=True,
+                dry_run=True,
+            ),
+            runtime=runtime,
+        )
+
+
+def test_build_create_payload_worktree_flag_requires_selected_work_item(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "mars.toml").write_text(
+        '[settings]\ntargets = [".claude", ".codex", ".opencode"]\n',
+        encoding="utf-8",
+    )
+    _stub_bundle_adapter(monkeypatch)
+    runtime = build_runtime_from_root_and_config(project_root, load_config(project_root))
+
+    with pytest.raises(ValueError, match="--worktree requires a selected work item"):
+        build_create_payload(
+            SpawnCreateInput(
+                prompt="must select work",
+                model="gpt-5.4-mini",
+                project_root=project_root.as_posix(),
+                worktree=True,
+                dry_run=True,
+            ),
+            runtime=runtime,
+        )

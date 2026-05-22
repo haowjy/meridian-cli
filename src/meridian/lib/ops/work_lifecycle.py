@@ -322,6 +322,50 @@ class WorkClearOutput(BaseModel):
         return ""
 
 
+class WorkSetWorktreeInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_id: str
+    path: str
+    project_root: str | None = None
+
+
+class WorkSetWorktreeOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_id: str
+    worktree_path: str
+    warning: str | None = None
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        lines = [f"Set worktree for '{self.work_id}' to: {self.worktree_path}"]
+        if self.warning:
+            lines.append(self.warning)
+        return "\n".join(lines)
+
+
+class WorkClearWorktreeInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_id: str
+    project_root: str | None = None
+
+
+class WorkClearWorktreeOutput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_id: str
+    warning: str | None = None
+
+    def format_text(self, ctx: FormatContext | None = None) -> str:
+        _ = ctx
+        lines = [f"Cleared worktree assignment for '{self.work_id}'."]
+        if self.warning:
+            lines.append(self.warning)
+        return "\n".join(lines)
+
+
 def _resolve_worktree_intent(
     *,
     explicit_worktree: bool | None,
@@ -816,6 +860,61 @@ def work_clear_sync(
     return WorkClearOutput(message=message, warning=warning)
 
 
+def work_set_worktree_sync(
+    payload: WorkSetWorktreeInput,
+    ctx: RuntimeContext | None = None,
+) -> WorkSetWorktreeOutput:
+    warning = _work_warning(ctx)
+    roots = resolve_roots(payload.project_root)
+    project_state_dir = roots.project_state_dir
+    _require_work_item(project_state_dir, payload.work_id)
+    resolved_path = Path(payload.path).expanduser().resolve()
+    if not resolved_path.exists():
+        raise ValueError(
+            f"Worktree path does not exist: {resolved_path}\n"
+            "Create it first, then run `meridian work set-worktree`."
+        )
+    if not resolved_path.is_dir():
+        raise ValueError(f"Worktree path is not a directory: {resolved_path}")
+    updated = work_store.update_work_item_worktree(
+        project_state_dir,
+        payload.work_id,
+        path=resolved_path.as_posix(),
+        pending=False,
+    )
+    _emit_work_transition(
+        "work.worktree_set",
+        work_id=updated.name,
+        data={"path": updated.worktree_path},
+    )
+    return WorkSetWorktreeOutput(
+        work_id=updated.name,
+        worktree_path=resolved_path.as_posix(),
+        warning=warning,
+    )
+
+
+def work_clear_worktree_sync(
+    payload: WorkClearWorktreeInput,
+    ctx: RuntimeContext | None = None,
+) -> WorkClearWorktreeOutput:
+    warning = _work_warning(ctx)
+    roots = resolve_roots(payload.project_root)
+    project_state_dir = roots.project_state_dir
+    _require_work_item(project_state_dir, payload.work_id)
+    updated = work_store.update_work_item_worktree(
+        project_state_dir,
+        payload.work_id,
+        path=None,
+        pending=False,
+    )
+    _emit_work_transition(
+        "work.worktree_cleared",
+        work_id=updated.name,
+    )
+    return WorkClearWorktreeOutput(work_id=updated.name, warning=warning)
+
+
 work_start = async_from_sync(work_start_sync)
 work_update = async_from_sync(work_update_sync)
 work_done = async_from_sync(work_done_sync)
@@ -824,11 +923,15 @@ work_reopen = async_from_sync(work_reopen_sync)
 work_switch = async_from_sync(work_switch_sync)
 work_rename = async_from_sync(work_rename_sync)
 work_clear = async_from_sync(work_clear_sync)
+work_set_worktree = async_from_sync(work_set_worktree_sync)
+work_clear_worktree = async_from_sync(work_clear_worktree_sync)
 
 
 __all__ = [
     "WorkClearInput",
     "WorkClearOutput",
+    "WorkClearWorktreeInput",
+    "WorkClearWorktreeOutput",
     "WorkDeleteInput",
     "WorkDeleteOutput",
     "WorkDoneInput",
@@ -836,6 +939,8 @@ __all__ = [
     "WorkRenameOutput",
     "WorkReopenInput",
     "WorkReopenOutput",
+    "WorkSetWorktreeInput",
+    "WorkSetWorktreeOutput",
     "WorkStartInput",
     "WorkStartOutput",
     "WorkSwitchInput",
@@ -844,6 +949,8 @@ __all__ = [
     "WorkUpdateOutput",
     "work_clear",
     "work_clear_sync",
+    "work_clear_worktree",
+    "work_clear_worktree_sync",
     "work_delete",
     "work_delete_sync",
     "work_done",
@@ -852,6 +959,8 @@ __all__ = [
     "work_rename_sync",
     "work_reopen",
     "work_reopen_sync",
+    "work_set_worktree",
+    "work_set_worktree_sync",
     "work_start",
     "work_start_sync",
     "work_switch",

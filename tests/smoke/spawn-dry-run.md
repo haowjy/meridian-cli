@@ -124,6 +124,24 @@ uv run meridian spawn -a reviewer -p "Review this file" -f "$REF" --dry-run --js
 - [ ] Exit 0
 - [ ] `reference_files` array present, or filename appears somewhere in JSON payload
 
+## Task CWD / authority reporting + kb: path
+
+```bash
+KB_ROOT=$(uv run meridian context --json | uv run python -c 'import json,sys; print(json.load(sys.stdin)["kb_resolved"])')
+mkdir -p "$KB_ROOT/domain"
+echo "kb ref" > "$KB_ROOT/domain/page.md"
+uv run meridian spawn -a reviewer -p "Use kb ref" -f kb:domain/page.md --dry-run --json
+```
+- [ ] Exit 0
+- [ ] JSON includes `authority_root`, `task_cwd`, `reference_anchor`, `task_cwd_source`
+- [ ] `authority_root` matches project root
+- [ ] `task_cwd_source == "authority-root"` in default no-worktree case
+
+```bash
+uv run meridian spawn -a reviewer -p "bad old prefix" -f @domain/page.md --dry-run --json
+```
+- [ ] Fails with message directing `@...` to `kb:...`
+
 ## Empty prompt — no traceback
 
 ```bash

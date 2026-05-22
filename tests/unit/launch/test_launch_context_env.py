@@ -13,6 +13,7 @@ import pytest
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch import context as launch_context_module
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -20,6 +21,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from meridian.lib.launch.workspace_projection import ProjectionResult
 from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
@@ -281,7 +283,7 @@ def test_build_launch_context_split_root_task_cwd_contract(
         assert "MERIDIAN_TASK_CWD" not in final_env
 
 
-def test_build_launch_context_warns_when_task_cwd_is_outside_control_and_projection(
+def test_build_launch_context_projects_external_task_cwd_for_active_harness_projection(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -299,12 +301,50 @@ def test_build_launch_context_warns_when_task_cwd_is_outside_control_and_project
         dry_run=True,
     )
 
-    warning_codes = {warning.code for warning in runtime_ctx.warnings}
     projected_roots = {path.resolve() for path in runtime_ctx.binding.spec.projected_roots}
 
+    warning_codes = {warning.code for warning in runtime_ctx.warnings}
+    assert "task_cwd_not_projected" not in warning_codes
+    assert runtime_ctx.binding.run_params.task_cwd == outside_task_cwd.as_posix()
+    assert outside_task_cwd.resolve() in projected_roots
+
+
+def test_build_launch_context_falls_back_for_harness_without_workspace_projection(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    outside_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task-pi"
+    outside_task_cwd.mkdir(parents=True, exist_ok=True)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    monkeypatch.setattr(
+        launch_context_module,
+        "project_workspace_roots",
+        lambda **_kwargs: ProjectionResult(applicability="unsupported:requires_config_generation"),
+    )
+    request = SpawnRequest(
+        model="gpt-5.4",
+        harness=HarnessId.CODEX.value,
+        prompt="hello",
+    )
+    runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=outside_task_cwd)
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-task-cwd-warning-pi",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    warning_codes = {warning.code for warning in runtime_ctx.warnings}
     assert "task_cwd_not_projected" in warning_codes
     assert runtime_ctx.binding.run_params.task_cwd == outside_task_cwd.as_posix()
-    assert outside_task_cwd.resolve() not in projected_roots
+    assert runtime_ctx.binding.child_cwd == tmp_path
 
 
 def test_build_launch_context_prefers_explicit_runtime_roots_over_legacy_aliases(

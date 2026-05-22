@@ -25,7 +25,6 @@ from meridian.lib.ops.runtime import (
     OperationRuntime,
     build_runtime_from_root_and_config,
     resolve_project_authority,
-    resolve_roots,
     resolve_runtime_authority_for_read,
     resolve_runtime_authority_for_write,
     resolve_runtime_root,
@@ -34,7 +33,6 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
@@ -249,80 +247,6 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     return " ".join(merged)
 
 
-def _provision_worktree(
-    *,
-    project_root: Path,
-    work_id: str,
-    explicit_worktree: bool | None,
-) -> None:
-    from meridian.lib.ops.worktree_lifecycle import provision_for_start
-
-    roots = resolve_roots(str(project_root))
-    project_state_dir = roots.project_state_dir
-    resolved_work_id, work_exists = _lookup_explicit_work_item(
-        project_state_dir=project_state_dir,
-        work_id=work_id,
-    )
-    item = work_store.get_work_item(project_state_dir, resolved_work_id)
-    created = False
-    if not work_exists:
-        resolved_work_id = ensure_explicit_work_item(project_state_dir, resolved_work_id)
-        created = True
-    item = work_store.get_work_item(project_state_dir, resolved_work_id)
-    if item is None:
-        return
-
-    try:
-        config = load_config(project_root)
-        worktree_requested = True if explicit_worktree is True else config.work.default_worktree
-
-        if not worktree_requested:
-            return
-
-        worktree_path_stale = (
-            item.worktree_path is not None and not Path(item.worktree_path).is_dir()
-        )
-        if item.worktree_path is not None and not worktree_path_stale:
-            return
-
-        work_store.update_work_item_worktree(project_state_dir, item.name, pending=True)
-        try:
-            provisioned = provision_for_start(
-                project_root,
-                item.name,
-                config.work,
-                existing=item.worktree,
-            )
-        except Exception:
-            work_store.update_work_item_worktree(project_state_dir, item.name, pending=False)
-            raise
-
-        if provisioned.status == "skipped_not_git_repo" and explicit_worktree is True:
-            work_store.update_work_item_worktree(
-                project_state_dir,
-                item.name,
-                branch=provisioned.metadata.branch,
-                pending=False,
-            )
-            raise ValueError(
-                f"Cannot create git worktree for '{item.name}': "
-                f"'{project_root}' is not inside a git repository. "
-                "Pass --no-worktree to skip worktree creation."
-            )
-
-        work_store.update_work_item_worktree(
-            project_state_dir,
-            item.name,
-            path=provisioned.metadata.path,
-            branch=provisioned.metadata.branch,
-            pending=provisioned.metadata.pending,
-        )
-    except Exception:
-        if created:
-            work_store.delete_work_item(project_state_dir, resolved_work_id, force=True)
-        raise
-
-
 def spawn_create_sync(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
@@ -436,16 +360,14 @@ def spawn_create_sync(
             if authority.runtime_root is not None
             else None,
             runtime_root_source=authority.runtime_root_source,
+            authority_root=prepared_request.authority_root,
+            task_cwd=prepared_request.task_cwd,
+            reference_anchor=prepared_request.reference_anchor,
+            task_cwd_source=prepared_request.task_cwd_source,
+            task_cwd_work_item=prepared_request.task_cwd_work_item,
             cli_command=prepared_request.cli_command,
             message="Dry run complete.",
             forked_from=forked_from,
-        )
-
-    if payload.work.strip() and payload.worktree is not False:
-        _provision_worktree(
-            project_root=resolved_root,
-            work_id=payload.work,
-            explicit_worktree=payload.worktree,
         )
 
     if runtime is None:
@@ -1603,6 +1525,7 @@ def _build_fork_create_input(
     requested_agent: str | None,
     inherited_skills: tuple[str, ...],
     requested_work: str,
+    requested_worktree: bool | None,
     requested_goal: str | None,
     harness: str | None,
 ) -> SpawnCreateInput:
@@ -1617,6 +1540,7 @@ def _build_fork_create_input(
         skills=inherited_skills,
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
+        worktree=requested_worktree,
         goal=requested_goal,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
@@ -1682,6 +1606,7 @@ def spawn_fork_sync(
     requested_model = payload.model.strip()
     requested_agent = (payload.agent or "").strip() or None
     requested_work = payload.work.strip()
+    requested_worktree = payload.worktree
     requested_goal = payload.goal
     if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
         source_row = read_spawn_row(
@@ -1708,6 +1633,7 @@ def spawn_fork_sync(
         requested_agent=requested_agent,
         inherited_skills=inherited_skills,
         requested_work=requested_work,
+        requested_worktree=requested_worktree,
         requested_goal=requested_goal,
         harness=requested_harness,
     )
@@ -1792,6 +1718,7 @@ def spawn_continue_sync(
         goal=resolved_goal,
         desc=payload.desc,
         work=payload.work,
+        worktree=payload.worktree,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
             continue_harness=resolved_reference.harness,

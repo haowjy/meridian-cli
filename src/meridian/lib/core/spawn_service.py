@@ -405,13 +405,17 @@ class SpawnApplicationService:
             launch_ctx,
             fallback=payload.runtime.config_snapshot,
         )
+        child_cwd = launch_ctx.binding.child_cwd
+        connection_task_cwd = (
+            child_cwd if child_cwd.resolve() != launch_ctx.control_root.resolve() else None
+        )
         connection_config = ConnectionConfig(
             spawn_id=final_spawn_id,
             harness_id=harness_id,
             prompt=launch_ctx.resolved_request.prompt,
             control_root=launch_ctx.control_root,
             env_overrides=dict(launch_ctx.binding.environment.bind_env_overrides),
-            task_cwd=launch_ctx.task_cwd,
+            task_cwd=connection_task_cwd,
             system=launch_ctx.binding.run_params.appended_system_prompt,
             pi_notification_timeout_seconds=resolve_pi_notification_timeout_seconds(
                 explicit_timeout_seconds=_resolve_explicit_timeout_seconds(resolved_request),

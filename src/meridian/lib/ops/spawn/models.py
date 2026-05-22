@@ -166,6 +166,11 @@ class SpawnActionOutput(BaseModel):
     project_root_source: str | None = None
     runtime_root: str | None = None
     runtime_root_source: str | None = None
+    authority_root: str | None = None
+    task_cwd: str | None = None
+    reference_anchor: str | None = None
+    task_cwd_source: str | None = None
+    task_cwd_work_item: str | None = None
     cli_command: tuple[str, ...] = ()
     exit_code: int | None = None
     duration_secs: float | None = None
@@ -176,6 +181,11 @@ class SpawnActionOutput(BaseModel):
     @property
     def goal_contract_preview(self) -> str | None:
         return build_goal_contract_preview(self.goal)
+
+    def _has_distinct_task_cwd(self) -> bool:
+        if self.authority_root is None or self.task_cwd is None:
+            return False
+        return self.task_cwd != self.authority_root
 
     def _transcript_command(self) -> str | None:
         if self.command != "spawn.create" or self.spawn_id is None or self.background:
@@ -206,6 +216,18 @@ class SpawnActionOutput(BaseModel):
             wire["exit_code"] = self.exit_code
         if self.context_from_resolved:
             wire["context_from_resolved"] = list(self.context_from_resolved)
+        include_task_context = self.status == "dry-run" or self._has_distinct_task_cwd()
+        if include_task_context:
+            if self.authority_root is not None:
+                wire["authority_root"] = self.authority_root
+            if self.task_cwd is not None:
+                wire["task_cwd"] = self.task_cwd
+            if self.task_cwd_source is not None:
+                wire["task_cwd_source"] = self.task_cwd_source
+            if self.task_cwd_work_item is not None:
+                wire["task_cwd_work_item"] = self.task_cwd_work_item
+            if self.reference_anchor is not None:
+                wire["reference_anchor"] = self.reference_anchor
         transcript_command = self._transcript_command()
         if transcript_command is not None:
             wire["transcript_command"] = transcript_command
@@ -274,6 +296,17 @@ class SpawnActionOutput(BaseModel):
             wire["wait_command"] = "meridian spawn wait"
         if self.warning is not None:
             wire["warning"] = self.warning
+        if self._has_distinct_task_cwd():
+            if self.authority_root is not None:
+                wire["authority_root"] = self.authority_root
+            if self.task_cwd is not None:
+                wire["task_cwd"] = self.task_cwd
+            if self.task_cwd_source is not None:
+                wire["task_cwd_source"] = self.task_cwd_source
+            if self.task_cwd_work_item is not None:
+                wire["task_cwd_work_item"] = self.task_cwd_work_item
+            if self.reference_anchor is not None:
+                wire["reference_anchor"] = self.reference_anchor
         return wire
 
     def to_cli_output(
@@ -313,6 +346,19 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Warning: {self.warning}")
         if self.error:
             lines.append(f"Error: {self.error}")
+        if self._has_distinct_task_cwd():
+            lines.append(f"Authority: {self.authority_root}")
+            task_line = f"Task CWD:  {self.task_cwd}"
+            attribution: list[str] = []
+            if self.task_cwd_work_item:
+                attribution.append(f"work: {self.task_cwd_work_item}")
+            if self.task_cwd_source:
+                attribution.append(self.task_cwd_source)
+            if attribution:
+                task_line += "  (" + ", ".join(attribution) + ")"
+            lines.append(task_line)
+            if self.reference_anchor:
+                lines.append(f"Reference anchor: {self.reference_anchor}")
         report_text = (self.report or "").strip()
         if report_text:
             lines.append("")
@@ -358,6 +404,21 @@ class SpawnActionOutput(BaseModel):
             lines.append(f"Write root: {self.runtime_root}")
             if self.runtime_root_source:
                 lines.append(f"Write root source: {self.runtime_root_source}")
+        if self.authority_root and self.task_cwd and self.task_cwd != self.authority_root:
+            lines.append(f"Authority: {self.authority_root}")
+            task_line = f"Task CWD:  {self.task_cwd}"
+            attribution: list[str] = []
+            if self.task_cwd_work_item:
+                attribution.append(f"work: {self.task_cwd_work_item}")
+            if self.task_cwd_source:
+                attribution.append(self.task_cwd_source)
+            if attribution:
+                task_line += "  (" + ", ".join(attribution) + ")"
+            lines.append(task_line)
+            if self.reference_anchor:
+                lines.append(f"Reference anchor: {self.reference_anchor}")
+        elif self.authority_root:
+            lines.append(f"CWD: {self.authority_root}")
         if self.status == "dry-run" and self.goal is not None:
             lines.append(f"Goal: {self.goal}")
             goal_contract_preview = self.goal_contract_preview
@@ -989,6 +1050,7 @@ class SpawnContinueInput(SpawnLaunchOptions):
     goal: str | None = None
     desc: str = ""
     work: str = ""
+    worktree: bool | None = None
     fork: bool = False
 
     @field_validator("goal", mode="before")
@@ -1011,6 +1073,7 @@ class SpawnForkInput(SpawnLaunchOptions):
     goal: str | None = None
     desc: str = ""
     work: str = ""
+    worktree: bool | None = None
 
     @field_validator("goal", mode="before")
     @classmethod

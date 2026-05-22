@@ -820,8 +820,11 @@ async def execute_with_streaming(
             run.spawn_id,
             control_root=control_root.as_posix(),
             task_cwd=(
-                child_cwd.as_posix()
-                if child_cwd.resolve() != control_root.resolve()
+                launch_context.task_cwd.as_posix()
+                if (
+                    launch_context.task_cwd is not None
+                    and launch_context.task_cwd.resolve() != control_root.resolve()
+                )
                 else None
             ),
             execution_cwd=str(child_cwd),
