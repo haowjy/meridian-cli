@@ -43,6 +43,7 @@ class WorktreeMetadata(BaseModel):
     path: str | None = None
     branch: str | None = None
     pending: bool = False
+    managed: bool = False
 
 
 class WorkItem(BaseModel):
@@ -67,6 +68,10 @@ class WorkItem(BaseModel):
     @property
     def worktree_pending(self) -> bool:
         return self.worktree.pending
+
+    @property
+    def worktree_managed(self) -> bool:
+        return self.worktree.managed
 
 
 def slugify(label: str) -> str:
@@ -137,6 +142,7 @@ def _worktree_payload(metadata: WorktreeMetadata | None = None) -> dict[str, Any
         "path": worktree.path,
         "branch": worktree.branch,
         "pending": worktree.pending,
+        "managed": worktree.managed,
     }
 
 
@@ -154,11 +160,13 @@ def _coerce_worktree_metadata(
         path_value = nested_dict.get("path")
         branch_value = nested_dict.get("branch")
         pending_value = nested_dict.get("pending")
+        managed_value = nested_dict.get("managed")
     else:
         path_value = raw.get("worktree_path")
         branch_value = raw.get("worktree_branch")
         pending_value = raw.get("worktree_pending")
-        legacy_keys = ("worktree_path", "worktree_branch", "worktree_pending")
+        managed_value = raw.get("worktree_managed")
+        legacy_keys = ("worktree_path", "worktree_branch", "worktree_pending", "worktree_managed")
         if nested is not None or any(key in raw for key in legacy_keys):
             changed = True
 
@@ -177,7 +185,14 @@ def _coerce_worktree_metadata(
         if pending_value is not None:
             changed = True
 
-    return WorktreeMetadata(path=path, branch=branch, pending=pending), changed
+    if isinstance(managed_value, bool):
+        managed = managed_value
+    else:
+        managed = fallback.managed
+        if managed_value is not None:
+            changed = True
+
+    return WorktreeMetadata(path=path, branch=branch, pending=pending, managed=managed), changed
 
 
 def _read_or_initialize_status(
@@ -384,6 +399,13 @@ def _normalize_goal(goal: str | None) -> str | None:
     return normalized or None
 
 
+def _normalize_worktree_path(path: str) -> str:
+    try:
+        return Path(path).expanduser().resolve().as_posix()
+    except OSError:
+        return Path(path).expanduser().as_posix()
+
+
 def create_work_item(
     runtime_root: Path,
     label: str,
@@ -568,6 +590,28 @@ def list_archived_work_items(
     return items[:limit], warnings
 
 
+def list_work_item_references_for_path(
+    runtime_root: Path,
+    worktree_path: str,
+    *,
+    exclude_work_id: str | None = None,
+) -> list[WorkItem]:
+    """Return active+archived work items that reference ``worktree_path``."""
+
+    target = _normalize_worktree_path(worktree_path)
+    active_items, _ = list_work_items(runtime_root)
+    archived_items, _ = list_archived_work_items(runtime_root, all_archived=True)
+    matches: list[WorkItem] = []
+    for item in (*active_items, *archived_items):
+        if exclude_work_id is not None and item.name == exclude_work_id:
+            continue
+        if item.worktree_path is None:
+            continue
+        if _normalize_worktree_path(item.worktree_path) == target:
+            matches.append(item)
+    return matches
+
+
 def update_work_item(
     runtime_root: Path,
     work_id: str,
@@ -627,6 +671,7 @@ def update_work_item_worktree(
     path: str | None | object = _UNSET,
     branch: str | None | object = _UNSET,
     pending: bool | object = _UNSET,
+    managed: bool | object = _UNSET,
 ) -> WorkItem:
     """Update only the nested worktree metadata for an active work item."""
 
@@ -647,6 +692,7 @@ def update_work_item_worktree(
         path=next_path,
         branch=next_branch,
         pending=current.worktree.pending if pending is _UNSET else bool(pending),
+        managed=current.worktree.managed if managed is _UNSET else bool(managed),
     )
     updated = WorkItem(
         name=current.name,

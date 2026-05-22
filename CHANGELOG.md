@@ -16,6 +16,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Spawn execute now consumes prepared authority/task-cwd contract from `SpawnRequest`, so launch cwd and reference-anchor behavior stays identical between dry-run and real launch.
 - Task cwd outside authority root is now added to harness workspace projection for active projection harnesses; unsupported harnesses still fall back to authority-root execution + task-cwd instruction.
 - `meridian work clear-worktree` now clears only `worktree.path` and keeps `worktree.branch` metadata.
+- Worktree metadata now separates manual path assignment from Meridian-managed ownership; done/delete/rename cleanup skips manual paths and shared managed paths.
 
 ## [0.1.14-rc.4] - 2026-05-21
 
