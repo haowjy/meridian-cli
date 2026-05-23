@@ -12,6 +12,7 @@ from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
+    _extract_text,  # pyright: ignore[reportPrivateUsage]
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
     extract_session_id_from_artifacts_with_patterns,
     extract_usage_from_artifacts,
@@ -30,28 +31,6 @@ _SESSION_ID_KEYS: tuple[str, ...] = (
     "conversation_id",
     "conversationId",
 )
-
-
-def _extract_text(value: object) -> str:
-    if isinstance(value, str):
-        return value.strip()
-
-    if isinstance(value, list):
-        parts = [_extract_text(item) for item in cast("list[object]", value)]
-        return "\n".join(part for part in parts if part).strip()
-
-    if isinstance(value, dict):
-        payload = cast("dict[str, object]", value)
-        parts: list[str] = []
-        for key in ("text", "result", "output", "content", "message"):
-            if key not in payload:
-                continue
-            text = _extract_text(payload[key])
-            if text:
-                parts.append(text)
-        return "\n".join(parts).strip()
-
-    return ""
 
 
 def _is_result_event(payload: Mapping[str, object]) -> bool:
