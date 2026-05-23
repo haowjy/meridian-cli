@@ -261,7 +261,7 @@ event types, command types, reconnect/replay, persistence, and harness support m
 | `meridian config get KEY` | Read a config value |
 | `meridian config reset KEY` | Reset a config value to default |
 | `meridian mars models list` | Inspect the model catalog |
-| `meridian models refresh` | Force-refresh the models.dev cache |
+| `meridian mars models refresh` | Force-refresh the models.dev cache |
 | `meridian doctor` | Per-project diagnostics and orphan reconciliation (cheap, safe to run anywhere) |
 | `meridian doctor --global` | Adds the machine-wide orphan-project-dir scan (`~/.meridian/projects/*`) to the normal current-project doctor checks; must run from the root process (not inside a spawn) |
 | `meridian doctor --prune` | Prune stale spawn artifacts and telemetry retention targets in the current project |
@@ -350,6 +350,13 @@ only. Those events are not visible through `tail`, `query`, or `status`.
 | `meridian mars list` | Show installed agents (grouped by mode) and skills |
 | `meridian mars upgrade` | Fetch latest versions and sync |
 | `meridian mars doctor` | Check for drift and integrity issues |
+
+Mars config (`mars.toml`, plus local Mars overlays) owns package dependencies,
+targets, model aliases/catalog settings, project routing defaults
+(`default_model`, `default_harness`), and `[agents.<name>]` runtime overlays.
+Meridian config (`meridian.toml`, `meridian.local.toml`, and user config) owns
+CLI/runtime behavior such as timeouts, output, state, work/context/workspace,
+hooks, harness defaults, and primary-session defaults.
 
 `meridian init` (no setup flags) bootstraps Meridian config/runtime only.
 

@@ -4,6 +4,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Configuration docs now show Mars-owned routing/agent overlays in `mars.toml`, not legacy Meridian `[agents]` config.
+- Model catalog command docs now use `meridian mars models ...`.
+
 ## [0.2.1] - 2026-05-23
 
 ### Added

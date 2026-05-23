@@ -138,7 +138,7 @@ Existing roots are projected to harness launches automatically — `--add-dir` f
 ## Next Steps
 
 - [commands.md](commands.md) — full CLI reference
-- [configuration.md](configuration.md) — config keys, model routing, environment variables
+- [configuration.md](configuration.md) — `mars.toml` vs `meridian.toml`, config keys, model routing, environment variables
 - [agent-profiles.md](agent-profiles.md) — agent profile format, `model-policies`, `no-fallback`, and `mode`
   (legacy `fanout` and `fallback-order` profiles must be migrated to `model-policies` list order + `no-fallback: true`)
 - [codex-tui-passthrough.md](codex-tui-passthrough.md) — managed Codex startup, bootstrap, and attach behavior

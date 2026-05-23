@@ -4,7 +4,9 @@ Agent profiles are markdown files that tell Meridian how to launch and configure
 
 ## Location
 
-Meridian reads agent profiles from `.mars/agents/*.md`. This directory is populated by `meridian mars sync` — do not edit it directly.
+Meridian reads agent profiles from `.mars/agents/*.md`. This directory is
+compiled by `meridian mars sync` from Mars packages — do not edit it directly.
+Change source packages or use Mars config overlays instead.
 
 ```
 .mars/
@@ -129,10 +131,13 @@ Scalar overrides in `override:` accept these runtime keys:
 Model-policy overrides sit between explicit user flags and the profile's generic defaults:
 
 ```
-CLI flag / ENV var  >  config overlay  >  model-policies match  >  profile defaults  >  config  >  alias defaults
+CLI flag / ENV var  >  Mars agent overlay  >  model-policies match  >  profile defaults  >  Meridian config  >  alias defaults
 ```
 
-Config overlays (`[agents.<name>]` in `meridian.toml` or `meridian.local.toml`) prepend their `model-policies` rules before profile rules to form one effective ordered list. See [configuration.md — Agent Runtime Overrides](configuration.md#agent-runtime-overrides).
+Agent overlays (`[agents.<name>]` in Mars config such as `mars.toml`) prepend
+their `model-policies` rules before profile rules to form one effective ordered
+list. Legacy `[agents]` sections in `meridian.toml` / `meridian.local.toml` are
+unsupported. See [configuration.md — Mars-Owned Routing and Agent Runtime](configuration.md#mars-owned-routing-and-agent-runtime).
 
 ## Implicit Fallback Ordering in `model-policies`
 

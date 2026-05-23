@@ -55,7 +55,10 @@ In the user's project root, run:
 meridian init --link .claude
 ```
 
-This creates `.meridian/` with baseline config and links `.agents/` into `.claude/` so Claude Code auto-discovers installed agents and skills.
+This creates `.meridian/` with baseline Meridian runtime config and delegates
+package target wiring to Mars. Mars compiles package content into `.mars/` and
+links harness-native content into `.claude/` so Claude Code can discover the
+installed skills/tooling it needs.
 Under the hood this is a convenience wrapper:
 - if `mars.toml` is missing, it runs `meridian mars init --link .claude`
 - if `mars.toml` already exists, it runs `meridian mars link .claude`
