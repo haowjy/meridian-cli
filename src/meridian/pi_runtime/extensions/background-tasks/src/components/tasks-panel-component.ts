@@ -423,6 +423,11 @@ export class TasksPanelComponent implements Component {
     lines.push(renderPanelRule(width, theme));
     lines.push(padLine(footer));
 
+    const targetRows = Math.max(16, (this.tui.terminal?.rows ?? 24) - 1);
+    while (lines.length < targetRows) {
+      lines.push(padLine(""));
+    }
+
     this.cachedLines = lines;
     this.cachedWidth = width;
     return this.cachedLines;

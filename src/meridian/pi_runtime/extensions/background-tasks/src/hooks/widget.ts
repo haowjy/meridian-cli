@@ -20,7 +20,14 @@ export type DockActions = {
   toggle: () => void;
 };
 
-const STATUS_WIDGET_ID = "meridian-background-tasks:status";
+export const STATUS_WIDGET_ID = "meridian-background-tasks:status";
+
+let refreshStatusWidgetRef: (() => Promise<void>) | null = null;
+
+/** Re-show the below-editor status widget after /ps closes. */
+export function refreshStatusWidget(): void {
+  void refreshStatusWidgetRef?.();
+}
 const LOG_DOCK_WIDGET_ID = "meridian-background-tasks:log-dock";
 
 /** Status widget line per task (pi-processes parity: name + state only; ping lives in /ps detail). */
@@ -185,6 +192,7 @@ export function setupTaskWidget(
     void updateWidget();
   });
 
+  refreshStatusWidgetRef = updateWidget;
   return { update: updateWidget, dockActions };
 }
 

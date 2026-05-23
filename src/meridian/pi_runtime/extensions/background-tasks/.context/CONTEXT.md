@@ -14,7 +14,7 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 - **`/ps`**: **`b`** on foreground row → `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** and **`ctrl+b`** when applicable.
 - Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
 - **Status widget** (below editor, pi-processes style): live tasks only — `tasks: <name> running`; optional **`(ctrl+b …)`** while foreground `$` blocks. No ping countdown or session policy line.
-- **`/ps` panel**: **1 row per task** (max 8); **4-line fixed log preview** (not full-height). **Enter** opens **Process Logs** overlay (`streamFollow` on live tasks) and returns to `/ps` on **q** — does not exit to chat. **`/ps:logs`** same overlay. **1s refresh** for runtime while open; log preview on **`meridian:task:output`** (~100ms). Ping policy in **`/ps:settings`** only.
+- **`/ps` panel**: full-terminal **overlay** (`width/maxHeight: 100%`); status widget hidden while open. **1 row per task** (max 8); **4-line** log preview. **Enter** → **Process Logs** stream overlay (`streamFollow`); **q** back to `/ps`, **q** again to chat. Pi may still show scrollback above the overlay — no extension API to hide transcript. **1s refresh** + **`meridian:task:output`** for preview.
 
 Consumes `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`) for unified `/ps` rows.
 

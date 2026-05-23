@@ -3,11 +3,21 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { LogOverlayComponent } from "../components/log-overlay-component";
 import { PsPanelFrame } from "../components/ps-panel-frame";
 import { formatPsTable } from "../format_rows";
+import { refreshStatusWidget, STATUS_WIDGET_ID } from "../hooks/widget";
 import type { TaskPanelHost } from "../panel/host";
 import type { DockActions } from "../hooks/widget";
 import { listUnifiedRows } from "./actions";
 import type { TaskRegistry } from "../task_registry";
 import type { BackgroundTaskRecord, PsRow } from "../types";
+
+/** Full-screen /ps takeover (covers editor + widgets; chat may remain above in Pi). */
+const PS_PANEL_OPTIONS = {
+  overlay: true as const,
+  overlayOptions: {
+    width: "100%",
+    maxHeight: "100%",
+  },
+};
 
 const LOG_OVERLAY_OPTIONS = {
   overlay: true as const,
@@ -64,34 +74,42 @@ export function registerPsCommand(
         return;
       }
 
-      await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
-        let frame: PsPanelFrame | null = null;
-        const actions = {
-          onQuit: (): void => {
-            frame?.dispose();
-            frame = null;
-            done(null);
+      ctx.ui.setWidget(STATUS_WIDGET_ID, undefined);
+      try {
+        await ctx.ui.custom<string | null>(
+          (tui, theme, _keybindings, done) => {
+            let frame: PsPanelFrame | null = null;
+            const actions = {
+              onQuit: (): void => {
+                frame?.dispose();
+                frame = null;
+                done(null);
+              },
+              onOpenStream: async (taskId: string): Promise<void> => {
+                await ctx.ui.custom<null>(
+                  (overlayTui, overlayTheme, _overlayKb, overlayDone) =>
+                    new LogOverlayComponent({
+                      tui: overlayTui,
+                      theme: overlayTheme,
+                      host: panelHost,
+                      initialProcessId: taskId,
+                      streamFollow: true,
+                      done: () => overlayDone(null),
+                    }),
+                  LOG_OVERLAY_OPTIONS,
+                );
+                frame?.invalidate();
+                tui.requestRender();
+              },
+            };
+            frame = new PsPanelFrame(tui, theme, actions, panelHost);
+            return frame;
           },
-          onOpenStream: async (taskId: string): Promise<void> => {
-            await ctx.ui.custom<null>(
-              (overlayTui, overlayTheme, _overlayKb, overlayDone) =>
-                new LogOverlayComponent({
-                  tui: overlayTui,
-                  theme: overlayTheme,
-                  host: panelHost,
-                  initialProcessId: taskId,
-                  streamFollow: true,
-                  done: () => overlayDone(null),
-                }),
-              LOG_OVERLAY_OPTIONS,
-            );
-            frame?.invalidate();
-            tui.requestRender();
-          },
-        };
-        frame = new PsPanelFrame(tui, theme, actions, panelHost);
-        return frame;
-      });
+          PS_PANEL_OPTIONS,
+        );
+      } finally {
+        refreshStatusWidget();
+      }
     },
   });
 }
