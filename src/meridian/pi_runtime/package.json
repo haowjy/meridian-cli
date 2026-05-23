@@ -8,7 +8,10 @@
     "build:extensions:meridian-spawn-watch": "tsup ./extensions/meridian-spawn-watch/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/meridian-spawn-watch --clean",
     "build:extensions": "npm run build:extensions:clean && npm run build:extensions:background-tasks && npm run build:extensions:meridian-spawn-watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:extensions": "npm run build:extensions && npm test",
+    "verify:extensions:watch": "npm run build:extensions && vitest",
+    "verify:extensions:loop": "node scripts/verify-extensions-loop.mjs"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.75.3",
