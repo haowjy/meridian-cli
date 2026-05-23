@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
-import { getForegroundUserBashTaskId, setOnForegroundBashChange } from "../bash_bridge";
+import { getForegroundUserBashTaskId, onForegroundBashChange } from "../bash_bridge";
 import { safeSendMessage } from "./utils";
 
 export const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
@@ -36,6 +36,7 @@ type ForegroundBashHintMessage = {
 };
 
 const hintedTaskIds = new Set<string>();
+let foregroundChangeUnsubscribe: (() => void) | null = null;
 
 export function clearForegroundBashHintDedupe(): void {
   hintedTaskIds.clear();
@@ -85,7 +86,8 @@ export function setupForegroundBashHint(pi: ExtensionAPI): void {
     );
   }
 
-  setOnForegroundBashChange(() => {
+  foregroundChangeUnsubscribe?.();
+  foregroundChangeUnsubscribe = onForegroundBashChange(() => {
     const taskId = getForegroundUserBashTaskId();
     if (taskId != null) {
       maybePostForegroundBashHint(pi, taskId);
@@ -99,6 +101,7 @@ export function setupForegroundBashHint(pi: ExtensionAPI): void {
 
 /** Clear listeners when extension unloads (tests). */
 export function teardownForegroundBashHint(): void {
-  setOnForegroundBashChange(null);
+  foregroundChangeUnsubscribe?.();
+  foregroundChangeUnsubscribe = null;
   clearForegroundBashHintDedupe();
 }

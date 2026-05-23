@@ -100,7 +100,13 @@ describe("TasksPanelComponent handleInput", () => {
 
   it("backgrounds the selected foreground row on b", async () => {
     setForegroundUserBashTaskId("fg-1");
-    const backgroundTask = vi.fn(async () => ({ ok: true }));
+    let resolveBackground!: () => void;
+    const backgroundTask = vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          resolveBackground = () => resolve({ ok: true });
+        }),
+    );
     const host = mockHost([
       { ...sampleEntry, id: "fg-1", isForeground: true },
       { ...sampleEntry, id: "t2", rowKey: "task:t2" },
@@ -118,7 +124,13 @@ describe("TasksPanelComponent handleInput", () => {
     });
 
     panel.handleInput("b");
+    panel.handleInput("b");
     expect(backgroundTask).toHaveBeenCalledWith("fg-1");
+    expect(backgroundTask).toHaveBeenCalledTimes(1);
+    resolveBackground();
+    await vi.waitFor(() => {
+      expect(host.list).toHaveBeenCalledTimes(2);
+    });
     setForegroundUserBashTaskId(null);
   });
 });

@@ -95,6 +95,7 @@ export class TasksPanelComponent implements Component {
   private cachedWidth = 0;
   private unsubscribe: (() => void) | null = null;
   private liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private backgroundingForeground = false;
 
   constructor(
     tui: PsPanelTui,
@@ -211,8 +212,14 @@ export class TasksPanelComponent implements Component {
 
     if (isPanelBackground(data)) {
       const proc = processes[this.selectedIndex];
-      if (proc?.isForeground) {
-        void backgroundForegroundBash(this.host).then(() => this.refreshEntries());
+      if (proc?.isForeground && !this.backgroundingForeground) {
+        this.backgroundingForeground = true;
+        void backgroundForegroundBash(this.host).finally(() => {
+          this.backgroundingForeground = false;
+          setTimeout(() => {
+            void this.refreshEntries();
+          }, 0);
+        });
       }
     }
   }
@@ -393,7 +400,7 @@ export class TasksPanelComponent implements Component {
     const footerLeft =
       `${dim("enter")} stream  ` +
       `${dim("j/k")} select  ` +
-      (hasForeground
+      (hasForeground && !this.backgroundingForeground
         ? `${warning("b")} background  ${dim("ctrl+b")}  `
         : "") +
       `${dim("x")} kill/cancel  ` +

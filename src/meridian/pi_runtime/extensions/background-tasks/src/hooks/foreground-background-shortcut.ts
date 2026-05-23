@@ -4,12 +4,14 @@ import { matchesKey } from "@earendil-works/pi-tui";
 import { backgroundForegroundBash } from "../background_foreground";
 import {
   getForegroundUserBashTaskId,
-  setOnForegroundBashChange,
+  onForegroundBashChange,
   USER_BASH_FOREGROUND_HINT,
 } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 
 const FOREGROUND_BASH_STATUS_KEY = "meridian-background-tasks:foreground-bash";
+
+let foregroundChangeUnsubscribe: (() => void) | null = null;
 
 export type CtrlBBackgroundStep = {
   action: "ignore" | "background";
@@ -48,7 +50,8 @@ export function setupForegroundBackgroundShortcut(
   let unsubTerminalInput: (() => void) | null = null;
   let activeCtx: ExtensionContext | null = null;
 
-  setOnForegroundBashChange(() => {
+  foregroundChangeUnsubscribe?.();
+  foregroundChangeUnsubscribe = onForegroundBashChange(() => {
     syncForegroundStatus(activeCtx);
   });
 
@@ -87,5 +90,6 @@ export function setupForegroundBackgroundShortcut(
 
 /** Clear foreground UI listener when extension unloads (tests). */
 export function teardownForegroundBackgroundShortcut(): void {
-  setOnForegroundBashChange(null);
+  foregroundChangeUnsubscribe?.();
+  foregroundChangeUnsubscribe = null;
 }

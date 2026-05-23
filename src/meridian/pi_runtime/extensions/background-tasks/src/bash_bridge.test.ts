@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  clearForegroundBashChangeListeners,
   getForegroundUserBashTaskId,
+  onForegroundBashChange,
   setForegroundUserBashTaskId,
   setOnAgentBashRunning,
   setupBashBridge,
@@ -29,6 +31,29 @@ describe("splitUserBashBackground", () => {
       background: false,
       execCommand: "&",
     });
+  });
+});
+
+describe("foreground bash change listeners", () => {
+  it("notifies all registered foreground listeners", () => {
+    clearForegroundBashChangeListeners();
+    setForegroundUserBashTaskId(null);
+
+    const first = vi.fn();
+    const second = vi.fn();
+    const unsubscribeFirst = onForegroundBashChange(first);
+    onForegroundBashChange(second);
+
+    setForegroundUserBashTaskId("fg-1");
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+
+    unsubscribeFirst();
+    setForegroundUserBashTaskId(null);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(2);
+
+    clearForegroundBashChangeListeners();
   });
 });
 

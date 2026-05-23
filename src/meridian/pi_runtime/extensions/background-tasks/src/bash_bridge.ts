@@ -135,7 +135,7 @@ export function splitUserBashBackground(command: string): {
 }
 
 let foregroundUserBashTaskId: string | null = null;
-let onForegroundBashChange: (() => void) | null = null;
+const foregroundBashChangeListeners = new Set<() => void>();
 let onAgentBashRunning: ((taskId: string, waitPolicy: unknown) => void) | null = null;
 
 /** Task id blocking Pi's interactive `$` slot, if any. */
@@ -143,8 +143,16 @@ export function getForegroundUserBashTaskId(): string | null {
   return foregroundUserBashTaskId;
 }
 
-export function setOnForegroundBashChange(handler: (() => void) | null): void {
-  onForegroundBashChange = handler;
+export function onForegroundBashChange(handler: () => void): () => void {
+  foregroundBashChangeListeners.add(handler);
+  return () => {
+    foregroundBashChangeListeners.delete(handler);
+  };
+}
+
+/** Clear foreground listeners between tests or extension teardown. */
+export function clearForegroundBashChangeListeners(): void {
+  foregroundBashChangeListeners.clear();
 }
 
 export function setOnAgentBashRunning(
@@ -157,7 +165,9 @@ export function setForegroundUserBashTaskId(taskId: string | null): void {
   const previous = foregroundUserBashTaskId;
   foregroundUserBashTaskId = taskId;
   if (previous !== taskId) {
-    onForegroundBashChange?.();
+    for (const listener of foregroundBashChangeListeners) {
+      listener();
+    }
   }
 }
 
