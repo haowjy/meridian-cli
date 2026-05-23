@@ -16,6 +16,9 @@ from meridian.lib.harness.common import (
     _coerce_optional_int,  # pyright: ignore[reportPrivateUsage]
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
 )
+from meridian.lib.launch.artifact_io import read_artifact_text
+from meridian.lib.launch.constants import HISTORY_FILENAME
+from meridian.lib.launch.report import extract_pi_failure_from_history
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.platform import IS_WINDOWS
@@ -350,9 +353,23 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return candidates[0]
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
+        history_text = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME)
+        if history_text.strip():
+            pi_failure = extract_pi_failure_from_history(history_text)
+            if pi_failure:
+                return pi_failure
+
         payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
         for payload in reversed(payloads):
-            if str(payload.get("type", "")).strip().lower() != "agent_end":
+            event_type = str(payload.get("type", "")).strip().lower()
+            if event_type == "response":
+                command = str(payload.get("command", "")).strip().lower()
+                if command == "prompt" and payload.get("success") is False:
+                    error = payload.get("error")
+                    if isinstance(error, str) and error.strip():
+                        return error.strip()
+                    return "pi_prompt_rejected"
+            if event_type != "agent_end":
                 continue
             messages_obj = payload.get("messages")
             if not isinstance(messages_obj, list):

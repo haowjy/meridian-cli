@@ -717,6 +717,7 @@ async def _run_streaming_attempt(
             with suppress(Exception):
                 await manager.stop_spawn(run.spawn_id)
 
+    pi_drain_terminal = config.harness_id == HarnessId.PI and drain_error is not None
     return _AttemptRuntime(
         connection=connection,
         drain_exit_code=drain_exit_code,
@@ -725,7 +726,7 @@ async def _run_streaming_attempt(
         received_signal=received_signal[0],
         budget_breach=budget_breach_holder[0],
         terminated_by_report_watchdog=terminated_by_report_watchdog,
-        terminal_observed=terminal_outcome is not None,
+        terminal_observed=terminal_outcome is not None or pi_drain_terminal,
     )
 
 
@@ -984,7 +985,7 @@ async def execute_with_streaming(
                     elif attempt.received_signal == signal.SIGTERM:
                         conclusion.failure_reason = "terminated"
                         attempt_cancelled = True
-                elif (
+                if (
                     conclusion.exit_code != 0
                     and conclusion.failure_reason is None
                     and attempt.drain_error is not None
@@ -1019,6 +1020,7 @@ async def execute_with_streaming(
                     harness_id=resolved_harness_id,
                     project_root=project_root,
                     secrets=secrets,
+                    failure_reason=conclusion.failure_reason,
                 )
                 conclusion.extracted = extraction
 
@@ -1183,6 +1185,7 @@ async def execute_with_streaming(
                     conclusion.exit_code,
                     stderr_text,
                     timed_out=attempt.timed_out,
+                    failure_message=attempt.drain_error,
                 )
                 if attempt.timed_out:
                     conclusion.failure_reason = "timeout"
@@ -1200,6 +1203,7 @@ async def execute_with_streaming(
                 if not should_retry(
                     exit_code=conclusion.exit_code,
                     stderr=stderr_text,
+                    failure_message=attempt.drain_error,
                     timed_out=attempt.timed_out,
                     retries_attempted=conclusion.retries_attempted,
                     max_retries=max_retries,

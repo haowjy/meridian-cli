@@ -9,6 +9,8 @@ import math
 import os
 import signal
 import time
+from contextlib import suppress
+from pathlib import Path
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator, Sequence
 from io import BufferedWriter
@@ -61,6 +63,7 @@ _STDOUT_READLINE_LIMIT: Final[int] = 10 * 1024 * 1024
 _PROCESS_ABORT_GRACE_SECONDS: Final[float] = 5.0
 _PROCESS_KILL_GRACE_SECONDS: Final[float] = 5.0
 _PARSE_ERROR_RAW_LINE_LIMIT: Final[int] = 2048
+_STDERR_SNIPPET_LIMIT: Final[int] = 4096
 _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
@@ -113,6 +116,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         self._spawn_id: SpawnId = SpawnId("")
         self._process: Process | None = None
         self._stderr_handle: BufferedWriter | None = None
+        self._stderr_log_path: Path | None = None
         self._event_stream_started = False
         self._session_id: str | None = None
         self._tracer = None
@@ -369,7 +373,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         or now_monotonic < first_stdout_deadline_monotonic
                     ):
                         continue
-                    detail = _PI_FIRST_EVENT_TIMEOUT_REASON
+                    detail = self._failure_detail_with_stderr(_PI_FIRST_EVENT_TIMEOUT_REASON)
                     self._mark_failed(detail)
                     self._waiting_for_first_pi_event_after_prompt = False
                     yield self._lifecycle_phase_event(
@@ -410,7 +414,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         and self._state not in {"stopping", "stopped"}
                     ):
                         self._waiting_for_first_pi_event_after_prompt = False
-                        detail = _PI_FIRST_EVENT_TIMEOUT_REASON
+                        detail = self._failure_detail_with_stderr(_PI_FIRST_EVENT_TIMEOUT_REASON)
                         self._mark_failed(detail)
                         yield self._lifecycle_phase_event(
                             "first_pi_event_eof_before_response",
@@ -420,7 +424,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
                         await self._terminate_process()
                         break
                     if return_code != 0 and self._state not in {"stopping", "stopped"}:
-                        detail = f"Pi subprocess exited with code {return_code}."
+                        detail = self._failure_detail_with_stderr(
+                            f"Pi subprocess exited with code {return_code}."
+                        )
                         self._mark_failed(detail)
                         yield self._error_event(detail)
                     break
@@ -481,6 +487,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         spawn_dir.mkdir(parents=True, exist_ok=True)
 
         stderr_path = spawn_dir / "stderr.log"
+        self._stderr_log_path = stderr_path
         self._stderr_handle = stderr_path.open("ab")
 
         command = project_subprocess_spec(
@@ -813,6 +820,29 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         trace_state_change(self._tracer, "pi", self._state, next_state)
         self._state = next_state
 
+    def _read_stderr_snippet(self) -> str | None:
+        if self._stderr_handle is not None:
+            with suppress(OSError):
+                self._stderr_handle.flush()
+        stderr_path = self._stderr_log_path
+        if stderr_path is None or not stderr_path.is_file():
+            return None
+        try:
+            raw = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return None
+        if not raw:
+            return None
+        if len(raw) <= _STDERR_SNIPPET_LIMIT:
+            return raw
+        return f"{raw[:_STDERR_SNIPPET_LIMIT]}…<truncated>"
+
+    def _failure_detail_with_stderr(self, detail: str) -> str:
+        stderr_snippet = self._read_stderr_snippet()
+        if not stderr_snippet:
+            return detail
+        return f"{detail}\n\nPi subprocess stderr:\n{stderr_snippet}"
+
     def _mark_failed(self, reason: str) -> None:
         if self._state not in {"failed", "stopped"}:
             try:
@@ -862,6 +892,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
 
     def _close_log_handles(self) -> None:
         if self._stderr_handle is not None:
+            with suppress(OSError):
+                self._stderr_handle.flush()
             self._stderr_handle.close()
             self._stderr_handle = None
         if self._lifecycle_tailer is not None:

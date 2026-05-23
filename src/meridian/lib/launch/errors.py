@@ -38,10 +38,14 @@ _UNRECOVERABLE_MARKERS: tuple[str, ...] = (
     "forbidden",
     "unauthorized",
     "invalid api key",
+    "no api key",
     "authentication failed",
     "token limit",
     "maximum tokens",
     "max tokens exceeded",
+    "pi_prompt_rejected",
+    "pi_rpc_no_response_after_initial_prompt",
+    "pi_rpc_spawned_prompt_required",
 )
 
 _STRATEGY_CHANGE_MARKERS: tuple[str, ...] = (
@@ -59,17 +63,25 @@ def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _normalized_failure_text(stderr: str, failure_message: str | None) -> str:
+    parts = [stderr]
+    if failure_message:
+        parts.append(failure_message)
+    return "\n".join(parts).lower()
+
+
 def classify_error(
     exit_code: int,
     stderr: str,
     timed_out: bool = False,
+    failure_message: str | None = None,
 ) -> ErrorCategory:
     """Classify one failed harness attempt into a retry strategy category."""
 
     if timed_out:
         return ErrorCategory.TIMEOUT
 
-    normalized = stderr.lower()
+    normalized = _normalized_failure_text(stderr, failure_message)
 
     # Context/output size issues need a different prompt strategy, not blind retries.
     if _contains_any(normalized, _STRATEGY_CHANGE_MARKERS):
@@ -93,6 +105,7 @@ def should_retry(
     exit_code: int,
     stderr: str,
     timed_out: bool = False,
+    failure_message: str | None = None,
     retries_attempted: int,
     max_retries: int = 3,
 ) -> bool:
@@ -105,6 +118,7 @@ def should_retry(
             exit_code,
             stderr,
             timed_out=timed_out,
+            failure_message=failure_message,
         )
         == ErrorCategory.RETRYABLE
     )
