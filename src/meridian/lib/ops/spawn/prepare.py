@@ -11,7 +11,6 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
-from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
@@ -21,6 +20,7 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.utils.time import minutes_to_seconds

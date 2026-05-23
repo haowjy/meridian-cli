@@ -164,11 +164,9 @@ def _is_pi_lifecycle_noise_payload(payload: dict[str, object]) -> bool:
         if inner_type != _PI_LIFECYCLE_PHASE_EVENT:
             return False
     phase = str(payload.get("phase", "")).strip().lower()
-    if phase in _PI_LIFECYCLE_NOISE_PHASES:
-        return True
-    if phase == "finalized" and not payload.get("error"):
-        return True
-    return False
+    return phase in _PI_LIFECYCLE_NOISE_PHASES or (
+        phase == "finalized" and not payload.get("error")
+    )
 
 
 def _pi_failure_from_payload(payload: dict[str, object]) -> str | None:

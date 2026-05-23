@@ -35,8 +35,8 @@ from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
-    resolve_pi_task_ping_interval_seconds,
     resolve_pi_notification_timeout_seconds,
+    resolve_pi_task_ping_interval_seconds,
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store

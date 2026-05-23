@@ -9,11 +9,11 @@ import math
 import os
 import signal
 import time
-from contextlib import suppress
-from pathlib import Path
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator, Sequence
+from contextlib import suppress
 from io import BufferedWriter
+from pathlib import Path
 from typing import Final, Literal, cast
 
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
@@ -615,7 +615,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         interval_seconds: float | None,
         reset_on_activity: bool | None,
     ) -> None:
-        if interval_seconds is not None and math.isfinite(interval_seconds) and interval_seconds > 0:
+        if (
+            interval_seconds is not None
+            and math.isfinite(interval_seconds)
+            and interval_seconds > 0
+        ):
             interval_ms = max(1, int(interval_seconds * 1000))
             env[_PI_TASK_PING_INTERVAL_MS_ENV] = str(interval_ms)
         if reset_on_activity is not None:
