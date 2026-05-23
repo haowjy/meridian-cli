@@ -92,3 +92,8 @@ export function isPanelClear(data: string): boolean {
   const ch = printableChar(data);
   return ch === "c" || ch === "C";
 }
+
+export function isPanelBackground(data: string): boolean {
+  const ch = printableChar(data);
+  return ch === "b" || ch === "B";
+}

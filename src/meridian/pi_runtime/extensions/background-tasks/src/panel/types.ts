@@ -1,4 +1,4 @@
-import type { PsRowKind } from "../types";
+import type { PsRowKind, TaskIngress } from "../types";
 
 export type PanelStatus =
   | "running"
@@ -36,4 +36,7 @@ export type PanelEntry = {
   nextPingAtMs: number | null;
   lastActivityAtMs: number | null;
   isLive: boolean;
+  ingress?: TaskIngress;
+  /** Blocks Pi's interactive `$` prompt until released or the process exits. */
+  isForeground?: boolean;
 };

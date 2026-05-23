@@ -20,6 +20,7 @@ Map: work dir `pi-processes-parity-map.md` (meridian-cli work item). Pair with `
 
 - Pi **`!`** runs a command shortcut — not used for background.
 - User **`$`** with a trailing shell **`&`** (e.g. `$ sleep 1000 &`) detaches immediately via `bash_bridge` `result` (frees `isBashRunning`); task stays in TaskRegistry and `/ps`.
+- Foreground **`$`** runs block the prompt until exit; `/ps` pins that row at the top with **`● fg`**, and **`b`** calls `releaseWait` without killing the process.
 - Agent **`bash`** tool calls are unchanged (no auto-background on `&`).
 
 ## Verify after each implementation pass

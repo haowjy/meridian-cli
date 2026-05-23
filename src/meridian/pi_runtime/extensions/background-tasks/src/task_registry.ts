@@ -180,6 +180,8 @@ export class TaskRegistry {
   private readonly sidecar: LifecycleSidecarWriter | null;
   private readonly spawnPingDefaults: SpawnTaskPingDefaults;
   private readonly jobs: Map<string, RuntimeTask> = new Map();
+  /** Resolves an in-flight `waitForCompletion` without ending the child process. */
+  private readonly waitReleases = new Map<string, () => void>();
   private pollTimer: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
 
@@ -789,6 +791,17 @@ export class TaskRegistry {
     return this.toPublicRecord(runtimeJob.record);
   }
 
+  /** Stop blocking on `waitForCompletion` while the task keeps running (e.g. `$` → background). */
+  releaseWait(jobId: string): boolean {
+    const release = this.waitReleases.get(jobId);
+    if (!release) {
+      return false;
+    }
+    this.waitReleases.delete(jobId);
+    release();
+    return true;
+  }
+
   async waitForCompletion(jobId: string, timeoutMs: number): Promise<BackgroundTaskRecord | null> {
     const runtimeJob = this.jobs.get(jobId);
     if (!runtimeJob) {
@@ -799,9 +812,16 @@ export class TaskRegistry {
       return this.toPublicRecord(runtimeJob.record);
     }
 
+    const releasedEarly = new Promise<StoredTaskRecord>((resolve) => {
+      this.waitReleases.set(jobId, () => {
+        resolve(runtimeJob.record);
+      });
+    });
+
     try {
       const done = await Promise.race<StoredTaskRecord>([
         runtimeJob.completion,
+        releasedEarly,
         delay(timeoutMs).then(() => {
           throw new Error("wait-timeout");
         }),
@@ -809,6 +829,8 @@ export class TaskRegistry {
       return this.toPublicRecord(done);
     } catch {
       return this.toPublicRecord(runtimeJob.record);
+    } finally {
+      this.waitReleases.delete(jobId);
     }
   }
 

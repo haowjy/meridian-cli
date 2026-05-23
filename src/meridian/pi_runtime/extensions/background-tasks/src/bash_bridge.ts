@@ -1,5 +1,11 @@
 import type { TaskRegistry } from "./task_registry";
 
+export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
+
+export type BashBridgeState = {
+  registry: TaskRegistry | null;
+};
+
 type ToolResultEvent = {
   toolName?: string;
   details?: Record<string, unknown>;
@@ -126,6 +132,17 @@ export function splitUserBashBackground(command: string): {
   return { background: true, execCommand };
 }
 
+let foregroundUserBashTaskId: string | null = null;
+
+/** Task id blocking Pi's interactive `$` slot, if any. */
+export function getForegroundUserBashTaskId(): string | null {
+  return foregroundUserBashTaskId;
+}
+
+function setForegroundUserBashTaskId(taskId: string | null): void {
+  foregroundUserBashTaskId = taskId;
+}
+
 function bashLifecycleState(details: Record<string, unknown>): string | null {
   const asyncState = readAsyncDetails(details)?.state;
   if (typeof asyncState === "string") {
@@ -173,10 +190,7 @@ async function syncExitedFromToolResult(
 }
 
 /** Register Pi `bash` tool_result and `$` user_bash into the unified TaskRegistry. */
-export function setupBashBridge(
-  pi: PiWithHooks,
-  state: { registry: TaskRegistry | null },
-): void {
+export function setupBashBridge(pi: PiWithHooks, state: BashBridgeState): void {
   pi.on?.("user_bash", async (event: unknown) => {
     const registry = state.registry;
     if (registry == null) {
@@ -227,23 +241,25 @@ export function setupBashBridge(
             Math.trunc((options.timeout ?? 300) * 1000),
           );
 
-          const { runtimeJob } = await registry.startJob(
-            execCommand,
-            "detached",
-            execCwd,
-            env,
-            undefined,
-            {
-              ingress: "bash",
-              onChunk: (chunk) => {
-                options.onData?.(chunk);
+          const taskId = (
+            await registry.startJob(
+              execCommand,
+              "detached",
+              execCwd,
+              env,
+              undefined,
+              {
+                ingress: "bash",
+                onChunk: (chunk) => {
+                  options.onData?.(chunk);
+                },
               },
-            },
-          );
-          await registry.detachJob(runtimeJob.record.task_id);
+            )
+          ).runtimeJob.record.task_id;
+          await registry.detachJob(taskId);
 
           const abortListener = (): void => {
-            void registry.killJob(runtimeJob.record.task_id);
+            void registry.killJob(taskId);
           };
           if (options.signal) {
             if (options.signal.aborted) {
@@ -253,13 +269,23 @@ export function setupBashBridge(
             }
           }
 
+          setForegroundUserBashTaskId(taskId);
           try {
-            const done = await registry.waitForCompletion(
-              runtimeJob.record.task_id,
-              timeoutMs,
-            );
+            const done = await registry.waitForCompletion(taskId, timeoutMs);
+            if (
+              done?.status === "running" &&
+              getForegroundUserBashTaskId() === null
+            ) {
+              options.onData?.(
+                Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"),
+              );
+              return { exitCode: 0 };
+            }
             return { exitCode: done?.exit_code ?? null };
           } finally {
+            if (foregroundUserBashTaskId === taskId) {
+              setForegroundUserBashTaskId(null);
+            }
             if (options.signal) {
               options.signal.removeEventListener("abort", abortListener);
             }

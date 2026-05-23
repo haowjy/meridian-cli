@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { setupBashBridge, splitUserBashBackground } from "./bash_bridge";
+import {
+  getForegroundUserBashTaskId,
+  setupBashBridge,
+  splitUserBashBackground,
+} from "./bash_bridge";
 import type { TaskRegistry } from "./task_registry";
 
 describe("splitUserBashBackground", () => {
@@ -179,5 +183,43 @@ describe("setupBashBridge", () => {
     expect(startJob).toHaveBeenCalled();
     expect(detachJob).toHaveBeenCalledWith("t-user");
     expect(waitForCompletion).toHaveBeenCalledWith("t-user", 5000);
+    expect(getForegroundUserBashTaskId()).toBeNull();
+  });
+
+  it("tracks foreground task id while user_bash exec is waiting", async () => {
+    let resolveWait!: () => void;
+    const waitForCompletion = vi.fn(
+      () =>
+        new Promise<{ exit_code: number }>((resolve) => {
+          resolveWait = () => resolve({ exit_code: 0 });
+        }),
+    );
+    const registry = {
+      startJob: vi.fn(async () => ({
+        runtimeJob: { record: { task_id: "t-fg" } },
+      })),
+      detachJob: vi.fn(async () => null),
+      waitForCompletion,
+      killJob: vi.fn(),
+    } as unknown as TaskRegistry;
+
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    setupBashBridge(
+      { on: (event, handler) => handlers.set(event, handler) },
+      { registry },
+    );
+
+    const hook = await handlers.get("user_bash")?.({
+      type: "user_bash",
+      command: "sleep 9",
+      cwd: "/tmp",
+    });
+    const execPromise = hook.operations.exec("sleep 9", "/tmp", { timeout: 60 });
+    await vi.waitFor(() => {
+      expect(getForegroundUserBashTaskId()).toBe("t-fg");
+    });
+    resolveWait();
+    await execPromise;
+    expect(getForegroundUserBashTaskId()).toBeNull();
   });
 });

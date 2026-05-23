@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
-import { setupBashBridge } from "./bash_bridge";
+import { getForegroundUserBashTaskId, setupBashBridge } from "./bash_bridge";
 import { setupPsCommands } from "./commands";
 import { setupTaskWidget } from "./hooks/widget";
 import { TaskPanelHost } from "./panel/host";
@@ -92,6 +92,7 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
     rowFeed.mergeRows,
     bus,
     spawnPingDefaults,
+    getForegroundUserBashTaskId,
   );
 
   const { dockActions } = setupTaskWidget(pi, state.panelHost);

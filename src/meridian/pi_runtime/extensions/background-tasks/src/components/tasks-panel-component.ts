@@ -3,6 +3,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/p
 
 import type { TaskPanelHost } from "../panel/host";
 import {
+  isPanelBackground,
   isPanelClear,
   isPanelConfirm,
   isPanelDown,
@@ -179,6 +180,14 @@ export class TasksPanelComponent implements Component {
 
     if (isPanelClear(data)) {
       void this.host.clearFinished().then(() => this.refreshEntries());
+      return;
+    }
+
+    if (isPanelBackground(data)) {
+      const proc = processes[this.selectedIndex];
+      if (proc?.isForeground) {
+        void this.host.backgroundTask(proc.id).then(() => this.refreshEntries());
+      }
     }
   }
 
@@ -312,6 +321,9 @@ export class TasksPanelComponent implements Component {
         for (const pingLine of formatPingDetailLines(selected)) {
           lines.push(padLine(dim(pingLine)));
         }
+        if (selected.isForeground) {
+          lines.push(padLine(warning("Foreground — blocks $ until backgrounded or exit")));
+        }
         lines.push(padLine(""));
 
         let renderedLines = 0;
@@ -353,9 +365,11 @@ export class TasksPanelComponent implements Component {
       }
     }
 
+    const hasForeground = processes.some((proc) => proc.isForeground);
     const footerLeft =
       `${dim("enter")} stream  ` +
       `${dim("j/k")} select  ` +
+      (hasForeground ? `${warning("b")} background  ` : "") +
       `${dim("x")} kill/cancel  ` +
       `${dim("c")} clear  ` +
       `${dim("q")} quit`;
@@ -399,13 +413,14 @@ export class TasksPanelComponent implements Component {
     const label = statusLabel(proc);
     const ping = formatPingBadge(proc);
     const pingSuffix = ping ? dim(` ${ping}`) : "";
+    const fgPrefix = proc.isForeground ? warn("● fg ") : "";
 
     if (proc.isLive) {
-      return success(`${icon} ${label}`) + pingSuffix;
+      return fgPrefix + success(`${icon} ${label}`) + pingSuffix;
     }
     if (proc.success === false) {
-      return error(`${icon} ${label}`) + pingSuffix;
+      return fgPrefix + error(`${icon} ${label}`) + pingSuffix;
     }
-    return dim(`${icon} ${label}`) + pingSuffix;
+    return fgPrefix + dim(`${icon} ${label}`) + pingSuffix;
   }
 }

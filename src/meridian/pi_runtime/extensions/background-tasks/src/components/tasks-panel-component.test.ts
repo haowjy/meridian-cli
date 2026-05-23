@@ -42,6 +42,7 @@ function mockHost(entries: PanelEntry[] = []): TaskPanelHost {
     setSyncEntries: vi.fn(),
     kill: vi.fn(async () => ({ ok: true })),
     clearFinished: vi.fn(async () => 0),
+    backgroundTask: vi.fn(async () => ({ ok: true })),
   } as unknown as TaskPanelHost;
 }
 
@@ -74,8 +75,30 @@ describe("TasksPanelComponent handleInput", () => {
       expect(panel).toBeDefined();
     });
 
-    for (const key of ["j", "k", "J", "K", "x", "c", "\r", "\x1b[A", "\x1b[B"]) {
+    for (const key of ["j", "k", "J", "K", "x", "c", "b", "\r", "\x1b[A", "\x1b[B"]) {
       expect(() => panel.handleInput(key)).not.toThrow();
     }
+  });
+
+  it("backgrounds the selected foreground row on b", async () => {
+    const backgroundTask = vi.fn(async () => ({ ok: true }));
+    const host = mockHost([
+      { ...sampleEntry, id: "fg-1", isForeground: true },
+      { ...sampleEntry, id: "t2", rowKey: "task:t2" },
+    ]);
+    (host as { backgroundTask: typeof backgroundTask }).backgroundTask = backgroundTask;
+
+    const panel = new TasksPanelComponent(
+      { requestRender: vi.fn() },
+      mockTheme(),
+      vi.fn(),
+      host,
+    );
+    await vi.waitFor(() => {
+      expect(host.list).toHaveBeenCalled();
+    });
+
+    panel.handleInput("b");
+    expect(backgroundTask).toHaveBeenCalledWith("fg-1");
   });
 });

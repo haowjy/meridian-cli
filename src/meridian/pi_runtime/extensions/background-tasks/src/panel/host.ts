@@ -16,6 +16,7 @@ import {
   resolveEffectivePingIntervalMs,
   type SpawnTaskPingDefaults,
 } from "../session_ping";
+import { setForegroundUserBashTaskId } from "../bash_bridge";
 import type { TaskRegistry } from "../task_registry";
 import type { BackgroundTaskRecord, PsRow } from "../types";
 import { LIVE_PANEL_STATUSES, type PanelEntry, type PanelStatus } from "./types";
@@ -52,6 +53,24 @@ function mapTaskStatus(status: string): PanelStatus {
   return status as PanelStatus;
 }
 
+export function pinForegroundEntry(
+  entries: PanelEntry[],
+  foregroundId: string | null,
+): PanelEntry[] {
+  if (!foregroundId) {
+    return entries;
+  }
+  const index = entries.findIndex((entry) => entry.id === foregroundId);
+  if (index < 0) {
+    return entries;
+  }
+  const pinned = [...entries];
+  const [foreground] = pinned.splice(index, 1);
+  foreground.isForeground = true;
+  pinned.unshift(foreground);
+  return pinned;
+}
+
 export class TaskPanelHost {
   private readonly emitter = new EventEmitter();
   private readonly unsubscribers: Array<() => void> = [];
@@ -61,6 +80,7 @@ export class TaskPanelHost {
     private readonly mergeRows: (tasks: BackgroundTaskRecord[]) => PsRow[],
     bus: MeridianEventBus,
     private readonly spawnPingDefaults: SpawnTaskPingDefaults,
+    private readonly getForegroundTaskId: () => string | null = () => null,
   ) {
     for (const channel of REFRESH_CHANNELS) {
       this.unsubscribers.push(
@@ -137,6 +157,7 @@ export class TaskPanelHost {
       nextPingAtMs: row.next_ping_at_ms ?? null,
       lastActivityAtMs: row.last_activity_at_ms ?? null,
       isLive: isLiveTaskRow(row),
+      ingress: row.ingress,
     };
   }
 
@@ -146,9 +167,27 @@ export class TaskPanelHost {
       return [];
     }
     const rows = await listUnifiedRows(registry, this.mergeRows, true);
-    return rows
+    const sorted = rows
       .map((row) => this.rowToEntry(row))
       .sort((a, b) => b.startTime - a.startTime);
+    return pinForegroundEntry(sorted, this.getForegroundTaskId());
+  }
+
+  async backgroundTask(id: string): Promise<{ ok: boolean; reason?: string }> {
+    const foregroundId = this.getForegroundTaskId();
+    if (!foregroundId || foregroundId !== id) {
+      return { ok: false, reason: "not_foreground" };
+    }
+    const registry = this.getRegistry();
+    if (!registry) {
+      return { ok: false, reason: "no_registry" };
+    }
+    if (!registry.releaseWait(id)) {
+      return { ok: false, reason: "not_waiting" };
+    }
+    setForegroundUserBashTaskId(null);
+    this.emitter.emit("change");
+    return { ok: true };
   }
 
   async get(id: string): Promise<PanelEntry | null> {
