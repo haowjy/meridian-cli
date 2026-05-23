@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import meridian.lib.harness.cursor as cursor_harness
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import (
     HarnessRegistry,
@@ -323,6 +324,7 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
+    monkeypatch.setattr(cursor_harness.shutil, "which", lambda _command: "/usr/bin/cursor")
     captured_requests = stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-opus-4-7",
