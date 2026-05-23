@@ -24,6 +24,11 @@ export type SessionBridge = {
   sendMessage: (message: string, options?: SessionMessageOptions) => Promise<void>;
 };
 
+export type ExtensionEventBus = {
+  emit: (channel: string, payload: Record<string, unknown>) => void;
+  on: (channel: string, handler: (payload: Record<string, unknown>) => void) => () => void;
+};
+
 export type ExtensionAPI = {
   registerTool?: (definition: ToolRegistration) => void;
   registerHook?: (name: string, handler: (...args: unknown[]) => unknown) => void;
@@ -35,6 +40,7 @@ export type ExtensionAPI = {
     },
   ) => void;
   on?: (event: string, handler: (...args: unknown[]) => unknown) => void;
-  events?: { emit: (channel: string, payload: Record<string, unknown>) => void };
+  /** Pi host shared bus — canonical cross-extension channel in production. */
+  events?: ExtensionEventBus;
   session?: SessionBridge;
 };

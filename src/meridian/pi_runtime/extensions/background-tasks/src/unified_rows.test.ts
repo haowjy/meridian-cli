@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { emitMeridianEvent } from "../../shared/meridian_bus";
+import { createLocalBus } from "../../shared/meridian_event_bus";
 import { createUnifiedRowFeed } from "./unified_rows";
 import type { BackgroundTaskRecord } from "./types";
 
@@ -27,8 +27,9 @@ function task(partial: Partial<BackgroundTaskRecord> & { task_id: string; comman
 
 describe("createUnifiedRowFeed", () => {
   it("merges spawn bus rows with task rows", () => {
-    const feed = createUnifiedRowFeed();
-    emitMeridianEvent("meridian:spawn:discovered", {
+    const bus = createLocalBus();
+    const feed = createUnifiedRowFeed(bus);
+    bus.emit("meridian:spawn:discovered", {
       spawn_id: "pabc",
       status: "running",
     });
@@ -43,9 +44,10 @@ describe("createUnifiedRowFeed", () => {
   });
 
   it("removes spawn rows on meridian:spawn:removed", () => {
-    const feed = createUnifiedRowFeed();
-    emitMeridianEvent("meridian:spawn:discovered", { spawn_id: "p1", status: "running" });
-    emitMeridianEvent("meridian:spawn:removed", { spawn_id: "p1" });
+    const bus = createLocalBus();
+    const feed = createUnifiedRowFeed(bus);
+    bus.emit("meridian:spawn:discovered", { spawn_id: "p1", status: "running" });
+    bus.emit("meridian:spawn:removed", { spawn_id: "p1" });
     const rows = feed.mergeRows([]);
     expect(rows.some((r) => r.kind === "meridian_spawn")).toBe(false);
     feed.dispose();

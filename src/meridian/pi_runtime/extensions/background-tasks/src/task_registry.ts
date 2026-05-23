@@ -5,9 +5,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { BackgroundTaskRecord, TaskStatus, WaitPolicy } from "./types";
-import { emitMeridianEvent } from "../../shared/meridian_bus";
-
-type InternalEventEmitter = (channel: string, payload: Record<string, unknown>) => void;
+import { createLocalBus, type MeridianEventBus } from "../../shared/meridian_event_bus";
 
 type RuntimeTask = {
   record: BackgroundTaskRecord;
@@ -167,7 +165,7 @@ export class TaskRegistry {
   private readonly tasksDir: string;
   private readonly sessionId: string;
   private readonly parentSpawnId: string | null;
-  private readonly emitInternalEvent: InternalEventEmitter;
+  private readonly bus: MeridianEventBus;
   private readonly jobs: Map<string, RuntimeTask> = new Map();
   private pollTimer: NodeJS.Timeout | null = null;
 
@@ -175,17 +173,13 @@ export class TaskRegistry {
     stateRoot: string,
     sessionId: string,
     parentSpawnId: string | null,
-    emitInternalEvent?: InternalEventEmitter,
+    bus: MeridianEventBus = createLocalBus(),
   ) {
     this.stateRoot = stateRoot;
     this.tasksDir = path.join(this.stateRoot, "background-tasks", sessionId, "tasks");
     this.sessionId = sessionId;
     this.parentSpawnId = parentSpawnId;
-    this.emitInternalEvent =
-      emitInternalEvent ??
-      ((channel, payload) => {
-        emitMeridianEvent(channel, payload);
-      });
+    this.bus = bus;
   }
 
   async initialize(): Promise<void> {
@@ -338,9 +332,9 @@ export class TaskRegistry {
       log_path: record.combined_log_path,
       label: record.label,
     };
-    this.emitInternalEvent(TASK_START_EVENT, payload);
+    this.bus.emit(TASK_START_EVENT, payload);
     if (isSpawn) {
-      this.emitInternalEvent("meridian:subspawn:start", payload);
+      this.bus.emit("meridian:subspawn:start", payload);
     }
   }
 
@@ -363,9 +357,9 @@ export class TaskRegistry {
       log_path: record.combined_log_path,
       label: record.label,
     };
-    this.emitInternalEvent(TASK_END_EVENT, payload);
+    this.bus.emit(TASK_END_EVENT, payload);
     if (isSpawn) {
-      this.emitInternalEvent("meridian:subspawn:end", payload);
+      this.bus.emit("meridian:subspawn:end", payload);
     }
   }
 

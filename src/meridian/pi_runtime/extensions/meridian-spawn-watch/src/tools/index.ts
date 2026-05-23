@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 
 import type { ExtensionAPI } from "../../types";
-import { emitMeridianEvent } from "../../../shared/meridian_bus";
+import type { MeridianEventBus } from "../../../shared/meridian_event_bus";
 import type { SpawnWatchManager } from "../spawn_manager";
 import { runMeridianCommand } from "../spawn_cli";
 
@@ -24,7 +24,11 @@ function parseStatus(text: string): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-export function setupSpawnWatchTool(pi: ExtensionAPI, manager: SpawnWatchManager): void {
+export function setupSpawnWatchTool(
+  pi: ExtensionAPI,
+  manager: SpawnWatchManager,
+  bus: MeridianEventBus,
+): void {
   if (!pi.registerTool) {
     return;
   }
@@ -68,7 +72,7 @@ export function setupSpawnWatchTool(pi: ExtensionAPI, manager: SpawnWatchManager
           node.status = status;
           await manager.tree.write(file);
         }
-        emitMeridianEvent("meridian:spawn:updated", { spawn_id: spawnId, status });
+        bus.emit("meridian:spawn:updated", { spawn_id: spawnId, status });
         return {
           content: [{ type: "text", text: result.stdout || result.stderr }],
           details: { action: "show", success: true, spawn_id: spawnId, status },
@@ -96,7 +100,7 @@ export function setupSpawnWatchTool(pi: ExtensionAPI, manager: SpawnWatchManager
           : 120_000;
         const result = await runMeridianCommand(["spawn", "wait", spawnId], timeoutMs);
         const status = parseStatus(result.stdout) ?? "unknown";
-        emitMeridianEvent("meridian:spawn:updated", { spawn_id: spawnId, status });
+        bus.emit("meridian:spawn:updated", { spawn_id: spawnId, status });
         return {
           content: [{ type: "text", text: result.stdout || result.stderr }],
           details: { action: "wait", success: result.exitCode === 0, spawn_id: spawnId, status },

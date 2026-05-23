@@ -1,5 +1,5 @@
 import { runMeridianCommand } from "../../../shared/meridian_cli";
-import { emitMeridianEvent } from "../../../shared/meridian_bus";
+import type { MeridianEventBus } from "../../../shared/meridian_event_bus";
 import type { SpawnWatchManager } from "../spawn_manager";
 import type { SpawnTreeFile } from "../tree";
 
@@ -42,7 +42,11 @@ export async function formatSpawnTree(file: SpawnTreeFile): Promise<string> {
   return lines.join("\n");
 }
 
-export async function showSpawn(manager: SpawnWatchManager, spawnId: string): Promise<string> {
+export async function showSpawn(
+  bus: MeridianEventBus,
+  manager: SpawnWatchManager,
+  spawnId: string,
+): Promise<string> {
   const result = await runMeridianCommand(["spawn", "show", spawnId, "--no-report"]);
   const status = parseStatus(result.stdout) ?? "unknown";
   const file = await manager.tree.read();
@@ -51,19 +55,23 @@ export async function showSpawn(manager: SpawnWatchManager, spawnId: string): Pr
     node.status = status;
     await manager.tree.write(file);
   }
-  emitMeridianEvent("meridian:spawn:updated", { spawn_id: spawnId, status });
+  bus.emit("meridian:spawn:updated", { spawn_id: spawnId, status });
   return (result.stdout || result.stderr).trim() || `spawn ${spawnId}: ${status}`;
 }
 
-export async function cancelSpawn(spawnId: string): Promise<string> {
+export async function cancelSpawn(bus: MeridianEventBus, spawnId: string): Promise<string> {
   const result = await runMeridianCommand(["spawn", "cancel", spawnId]);
-  emitMeridianEvent("meridian:spawn:removed", { spawn_id: spawnId });
+  bus.emit("meridian:spawn:removed", { spawn_id: spawnId });
   return (result.stdout || result.stderr).trim() || `cancelled ${spawnId}`;
 }
 
-export async function waitSpawn(spawnId: string, timeoutMs: number): Promise<string> {
+export async function waitSpawn(
+  bus: MeridianEventBus,
+  spawnId: string,
+  timeoutMs: number,
+): Promise<string> {
   const result = await runMeridianCommand(["spawn", "wait", spawnId], timeoutMs);
   const status = parseStatus(result.stdout) ?? "unknown";
-  emitMeridianEvent("meridian:spawn:updated", { spawn_id: spawnId, status });
+  bus.emit("meridian:spawn:updated", { spawn_id: spawnId, status });
   return (result.stdout || result.stderr).trim() || `wait ${spawnId}: ${status}`;
 }

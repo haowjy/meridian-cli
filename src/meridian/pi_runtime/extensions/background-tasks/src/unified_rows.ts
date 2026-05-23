@@ -1,4 +1,4 @@
-import { offMeridianEvent, onMeridianEvent } from "../../shared/meridian_bus";
+import type { MeridianEventBus } from "../../shared/meridian_event_bus";
 import type { BackgroundTaskRecord, PsRow } from "./types";
 
 const SPAWN_CHANNELS = [
@@ -14,15 +14,15 @@ export type SpawnRowProjection = {
   summary?: string;
 };
 
-export function createUnifiedRowFeed(): {
+export function createUnifiedRowFeed(bus: MeridianEventBus): {
   getSpawnRows: () => SpawnRowProjection[];
   mergeRows: (tasks: BackgroundTaskRecord[]) => PsRow[];
   dispose: () => void;
 } {
   const spawnRows = new Map<string, SpawnRowProjection>();
 
-  const handlers = SPAWN_CHANNELS.map((channel) => {
-    const handler = (payload: Record<string, unknown>) => {
+  const unsubs = SPAWN_CHANNELS.map((channel) =>
+    bus.on(channel, (payload) => {
       const spawnId = typeof payload.spawn_id === "string" ? payload.spawn_id : null;
       if (!spawnId) {
         return;
@@ -37,10 +37,8 @@ export function createUnifiedRowFeed(): {
         status: typeof payload.status === "string" ? payload.status : "unknown",
         summary: typeof payload.summary === "string" ? payload.summary : undefined,
       });
-    };
-    onMeridianEvent(channel, handler);
-    return { channel, handler };
-  });
+    }),
+  );
 
   return {
     getSpawnRows: () => [...spawnRows.values()],
@@ -60,8 +58,8 @@ export function createUnifiedRowFeed(): {
       return [...processRows, ...spawnPsRows];
     },
     dispose() {
-      for (const { channel, handler } of handlers) {
-        offMeridianEvent(channel, handler);
+      for (const unsub of unsubs) {
+        unsub();
       }
     },
   };

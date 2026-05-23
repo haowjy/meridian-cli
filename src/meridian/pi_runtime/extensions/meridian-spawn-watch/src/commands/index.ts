@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "../../types";
+import type { MeridianEventBus } from "../../shared/meridian_event_bus";
 import type { SpawnWatchManager } from "../spawn_manager";
 import {
   cancelSpawn,
@@ -31,7 +32,11 @@ function notify(ctx: CommandCtx, message: string, level = "info"): void {
   process.stdout.write(`${text}\n`);
 }
 
-export function setupSpawnsCommands(pi: PiWithCommands, manager: SpawnWatchManager): void {
+export function setupSpawnsCommands(
+  pi: PiWithCommands,
+  manager: SpawnWatchManager,
+  bus: MeridianEventBus,
+): void {
   if (!pi.registerCommand) {
     return;
   }
@@ -62,7 +67,7 @@ export function setupSpawnsCommands(pi: PiWithCommands, manager: SpawnWatchManag
       notify(ctx, "spawns:show requires spawn_id", "warning");
       return;
     }
-    notify(ctx, await showSpawn(manager, spawnId));
+    notify(ctx, await showSpawn(bus, manager, spawnId));
   });
 
   register("cancel", "Cancel a running spawn", async (args, ctx) => {
@@ -71,7 +76,7 @@ export function setupSpawnsCommands(pi: PiWithCommands, manager: SpawnWatchManag
       notify(ctx, "spawns:cancel requires spawn_id", "warning");
       return;
     }
-    notify(ctx, await cancelSpawn(spawnId));
+    notify(ctx, await cancelSpawn(bus, spawnId));
   });
 
   register("wait", "Wait for spawn completion", async (args, ctx) => {
@@ -82,7 +87,7 @@ export function setupSpawnsCommands(pi: PiWithCommands, manager: SpawnWatchManag
       return;
     }
     const timeoutMs = parts[1] ? Number.parseInt(parts[1], 10) : 120_000;
-    notify(ctx, await waitSpawn(spawnId, Number.isFinite(timeoutMs) ? timeoutMs : 120_000));
+    notify(ctx, await waitSpawn(bus, spawnId, Number.isFinite(timeoutMs) ? timeoutMs : 120_000));
   });
 
   register("clear", "Clear session spawn tree projection", async (_args, ctx) => {
@@ -102,6 +107,6 @@ export function setupSpawnsCommands(pi: PiWithCommands, manager: SpawnWatchManag
       notify(ctx, `Use /ps:logs ${node.task_id} for wrapper task logs.`);
       return;
     }
-    notify(ctx, await showSpawn(manager, spawnId));
+    notify(ctx, await showSpawn(bus, manager, spawnId));
   });
 }

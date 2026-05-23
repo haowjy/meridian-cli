@@ -1,4 +1,4 @@
-import { emitMeridianEvent, offMeridianEvent, onMeridianEvent } from "../../shared/meridian_bus";
+import type { MeridianEventBus } from "../../shared/meridian_event_bus";
 import type { SpawnTreeStore } from "./tree";
 
 const TASK_START = "meridian:task:start";
@@ -6,8 +6,8 @@ const TASK_END = "meridian:task:end";
 const SUBSPAWN_START = "meridian:subspawn:start";
 const SUBSPAWN_END = "meridian:subspawn:end";
 
-export function startSpawnCollector(tree: SpawnTreeStore): () => void {
-  const onTaskStart = async (payload: Record<string, unknown>) => {
+export function startSpawnCollector(tree: SpawnTreeStore, bus: MeridianEventBus): () => void {
+  const onDiscovered = async (payload: Record<string, unknown>) => {
     const spawnId = typeof payload.spawn_id === "string" ? payload.spawn_id : null;
     if (!spawnId) {
       return;
@@ -28,10 +28,10 @@ export function startSpawnCollector(tree: SpawnTreeStore): () => void {
       discovered_at_ms: Date.now(),
     });
     await tree.write(file);
-    emitMeridianEvent("meridian:spawn:discovered", { spawn_id: spawnId, ...payload });
+    bus.emit("meridian:spawn:discovered", { spawn_id: spawnId, ...payload });
   };
 
-  const onTaskEnd = async (payload: Record<string, unknown>) => {
+  const onUpdated = async (payload: Record<string, unknown>) => {
     const spawnId = typeof payload.spawn_id === "string" ? payload.spawn_id : null;
     if (!spawnId) {
       return;
@@ -42,18 +42,19 @@ export function startSpawnCollector(tree: SpawnTreeStore): () => void {
       node.status = typeof payload.status === "string" ? payload.status : "ended";
       await tree.write(file);
     }
-    emitMeridianEvent("meridian:spawn:updated", { spawn_id: spawnId, ...payload });
+    bus.emit("meridian:spawn:updated", { spawn_id: spawnId, ...payload });
   };
 
-  onMeridianEvent(TASK_START, onTaskStart);
-  onMeridianEvent(TASK_END, onTaskEnd);
-  onMeridianEvent(SUBSPAWN_START, onTaskStart);
-  onMeridianEvent(SUBSPAWN_END, onTaskEnd);
+  const unsubs = [
+    bus.on(TASK_START, onDiscovered),
+    bus.on(SUBSPAWN_START, onDiscovered),
+    bus.on(TASK_END, onUpdated),
+    bus.on(SUBSPAWN_END, onUpdated),
+  ];
 
   return () => {
-    offMeridianEvent(TASK_START, onTaskStart);
-    offMeridianEvent(TASK_END, onTaskEnd);
-    offMeridianEvent(SUBSPAWN_START, onTaskStart);
-    offMeridianEvent(SUBSPAWN_END, onTaskEnd);
+    for (const unsub of unsubs) {
+      unsub();
+    }
   };
 }

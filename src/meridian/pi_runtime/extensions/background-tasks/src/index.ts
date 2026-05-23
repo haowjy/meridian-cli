@@ -1,22 +1,13 @@
-import { Type } from "typebox";
-
 import type { ExtensionAPI } from "../../types";
+import { resolveExtensionBus } from "../../shared/meridian_event_bus";
 import { setupPsCommands } from "./commands";
 import { setupBackgroundTaskHooks } from "./hooks";
 import {
-  DEFAULT_BG_READ_BYTES,
-  DEFAULT_BG_WAIT_TIMEOUT_MS,
-  MAX_BG_READ_BYTES,
-  MAX_BG_WAIT_TIMEOUT_MS,
   TaskRegistry,
-  clamp,
   makeId,
-  normalizeWaitPolicy,
   parentSpawnIdFromEnv,
   resolveStateRoot,
   sessionIdFromContext,
-  toInt,
-  trimCombinedTails,
   type ToolContext,
 } from "./task_registry";
 import { setupBackgroundTaskTool } from "./tools";
@@ -24,7 +15,6 @@ import { createUnifiedRowFeed } from "./unified_rows";
 
 type PiExtension = ExtensionAPI & {
   on?: (event: string, handler: (...args: unknown[]) => unknown) => void;
-  events?: { emit: (channel: string, payload: Record<string, unknown>) => void };
 };
 
 const state: {
@@ -37,16 +27,17 @@ const state: {
   createRegistry: null,
 };
 
-async function buildRegistry(pi: PiExtension): Promise<{
+async function buildRegistry(
+  pi: PiExtension,
+  bus: ReturnType<typeof resolveExtensionBus>,
+): Promise<{
   registry: TaskRegistry;
   sessionId: string;
   createRegistry: (sessionId: string) => TaskRegistry;
 }> {
   const sessionId = makeId("session");
   const createRegistry = (sid: string): TaskRegistry =>
-    new TaskRegistry(resolveStateRoot(), sid, parentSpawnIdFromEnv(), (channel, payload) => {
-      pi.events?.emit(channel, payload);
-    });
+    new TaskRegistry(resolveStateRoot(), sid, parentSpawnIdFromEnv(), bus);
   const registry = createRegistry(sessionId);
 
   pi.on?.("session_start", async (_event, ctx) => {
@@ -68,12 +59,13 @@ async function buildRegistry(pi: PiExtension): Promise<{
 
 export default async function backgroundTasksExtension(pi: ExtensionAPI): Promise<void> {
   const piExt = pi as PiExtension;
-  const setup = await buildRegistry(piExt);
+  const bus = resolveExtensionBus(pi);
+  const setup = await buildRegistry(piExt, bus);
   state.registry = setup.registry;
   state.sessionId = setup.sessionId;
   state.createRegistry = setup.createRegistry;
 
-  const rowFeed = createUnifiedRowFeed();
+  const rowFeed = createUnifiedRowFeed(bus);
   setupBackgroundTaskTool(pi, {
     getRegistry: () => state.registry,
     getSessionId: () => state.sessionId,
