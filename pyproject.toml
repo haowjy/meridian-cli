@@ -24,7 +24,7 @@ dependencies = [
   "cyclopts>=3.0",
   "fastapi>=0.115",
   "markdown-it-py>=4.0",
-  "mars-agents==0.6.4",
+  "mars-agents==0.6.5",
   "mcp>=1.0",
   "pathspec>=1.1.0",
   "psutil>=7.2.2",

@@ -666,15 +666,15 @@ wheels = [
 
 [[package]]
 name = "mars-agents"
-version = "0.6.4"
+version = "0.6.5"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/02/b7/6ae117f7b8f31635dfb0d73ab8d8135b410bb5629757f0dfa22064623116/mars_agents-0.6.4.tar.gz", hash = "sha256:1e1a30f7032dabecd7a8d8a682a8502d219b5b94722dc30a24dc3dbb4f20a53a", size = 556237, upload-time = "2026-05-23T12:12:00.219Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/bb/6a2d26b2086921db6c246f622f46532443d9ff32b9b9e640d1728ab35664/mars_agents-0.6.5.tar.gz", hash = "sha256:280a68b9a9cc2b9d998c14579a7c586da639a9f14ef7e2ab5dbcde4f3fd1f89b", size = 560159, upload-time = "2026-05-23T19:38:55.985Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/02/c641257d5e219c2aefcf8396bf8c52b231a50fe2afa05188a1130c7e3f3c/mars_agents-0.6.4-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:55ac51fd6e3660f8305d1c8183d5c90c19c1b37fda46cedacff457e7992683da", size = 3185800, upload-time = "2026-05-23T12:11:50.331Z" },
-    { url = "https://files.pythonhosted.org/packages/56/35/6fb301ed4ce6dfc5d38536b3a52b8382aee20ae97d06c1aadd903eaaf447/mars_agents-0.6.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:9227d84950936dd2038abb737d7becc1e597a39bc1d2b66c1f0dee6e084acca8", size = 3044551, upload-time = "2026-05-23T12:11:52.304Z" },
-    { url = "https://files.pythonhosted.org/packages/92/80/6a98e8b9f0687c94f0e3ad97ece60fd325608b019222834877ef1e909991/mars_agents-0.6.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c13eadffb6b3650de3ddce58e6f3f3d378124b472a7436907b13141dd405b33c", size = 3090093, upload-time = "2026-05-23T12:11:54.149Z" },
-    { url = "https://files.pythonhosted.org/packages/70/77/9253d97bf4aa4919df2f888e357032ff55f653e76a59a322d68e0533880d/mars_agents-0.6.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4a10fb7f2f3149ff6d87d7fa4efcc1473e2c99b3cf9eb3c69a192af7ed6448e9", size = 3302259, upload-time = "2026-05-23T12:11:56.697Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/a9/b85445962f071711eae974d4d6073cc34b25503f00cec6f42bf677657775/mars_agents-0.6.4-py3-none-win_amd64.whl", hash = "sha256:6f50b8296f3ac189572475665c2ffa76958e03b722545fbe1584657e735e0cae", size = 3206275, upload-time = "2026-05-23T12:11:58.493Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/95/6c866d8f3c4099f954432e18823abce0bd2c7d8b0640574155e91d3c51a8/mars_agents-0.6.5-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:12221e05913d06344413a394fb822fa886a16c030c38255ab7cc943a66926794", size = 3190479, upload-time = "2026-05-23T19:38:47.289Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/b2/a7f25f50e58b31aa328e22eb2ce0aba423bc0de34c0ab1ad2b0ca055138a/mars_agents-0.6.5-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b76f3ba077798ad1927ea6e8d009a1afd56647cbd6df5e034358b390961fd302", size = 3059379, upload-time = "2026-05-23T19:38:49.02Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/a8/ecf3391d3276ffa1a3fb66a206712eda6dc2f0c20fceab95787bda69409f/mars_agents-0.6.5-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:bd6fb46fa53d51f1c944af4ac7d0fb4a608537d20c4eee0cce95e92d03fef194", size = 3097462, upload-time = "2026-05-23T19:38:50.588Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/6a/882b0ac0425f03d5d505c93f065f787bd3de52d05fd78a7f255b4d304af7/mars_agents-0.6.5-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7666c7312c7db2ef9312183c4dc490bf40043679ea340ca5aae076c03644ed52", size = 3303765, upload-time = "2026-05-23T19:38:52.448Z" },
+    { url = "https://files.pythonhosted.org/packages/83/96/62cf37b95c038d4249807455a6d2ea8c34d2d764198a7c2c596c057c0b2f/mars_agents-0.6.5-py3-none-win_amd64.whl", hash = "sha256:997a547bef546f1a50a8049e64b5ba1352131072913807cf68c1a709cdddd8e1", size = 3217945, upload-time = "2026-05-23T19:38:54.099Z" },
 ]
 
 [[package]]
@@ -763,7 +763,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'app'", specifier = ">=0.28" },
     { name = "jinja2", marker = "extra == 'templates'", specifier = ">=3.1" },
     { name = "markdown-it-py", specifier = ">=4.0" },
-    { name = "mars-agents", specifier = "==0.6.4" },
+    { name = "mars-agents", specifier = "==0.6.5" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "pathspec", specifier = ">=1.1.0" },
     { name = "psutil", specifier = ">=7.2.2" },
