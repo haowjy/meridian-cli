@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
@@ -17,7 +17,6 @@ from meridian.lib.harness.common import (
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
 )
 from meridian.lib.harness.connections.base import HarnessEvent
-from meridian.lib.launch.artifact_io import read_artifact_text
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import extract_pi_failure_from_history
@@ -310,6 +309,13 @@ def _assistant_message_text(message: Mapping[str, object]) -> str | None:
     return "\n".join(texts)
 
 
+def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
+    key = ArtifactKey(f"{spawn_id}/{name}")
+    if not artifacts.exists(key):
+        return ""
+    return artifacts.get(key).decode("utf-8", errors="ignore")
+
+
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Pi artifacts and events."""
 
@@ -353,7 +359,7 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return candidates[0]
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-        history_text = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME)
+        history_text = _read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME)
         if history_text.strip():
             pi_failure = extract_pi_failure_from_history(history_text)
             if pi_failure:
