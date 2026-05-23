@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   getForegroundUserBashTaskId,
+  setForegroundUserBashTaskId,
   setupBashBridge,
   splitUserBashBackground,
 } from "./bash_bridge";
@@ -220,6 +221,50 @@ describe("setupBashBridge", () => {
     });
     resolveWait();
     await execPromise;
+    expect(getForegroundUserBashTaskId()).toBeNull();
+  });
+
+  it("returns exit 0 when foreground wait is released from /ps", async () => {
+    let releaseWait!: () => void;
+    const waitForCompletion = vi.fn(
+      () =>
+        new Promise<{ status: string; exit_code: number | null }>((resolve) => {
+          releaseWait = () => resolve({ status: "running", exit_code: null });
+        }),
+    );
+    const onData = vi.fn();
+    const registry = {
+      startJob: vi.fn(async () => ({
+        runtimeJob: { record: { task_id: "t-bg-panel" } },
+      })),
+      detachJob: vi.fn(async () => null),
+      waitForCompletion,
+      killJob: vi.fn(),
+    } as unknown as TaskRegistry;
+
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    setupBashBridge(
+      { on: (event, handler) => handlers.set(event, handler) },
+      { registry },
+    );
+
+    const hook = await handlers.get("user_bash")?.({
+      type: "user_bash",
+      command: "sleep 99",
+      cwd: "/tmp",
+    });
+    const execPromise = hook.operations.exec("sleep 99", "/tmp", {
+      timeout: 120,
+      onData,
+    });
+    await vi.waitFor(() => {
+      expect(getForegroundUserBashTaskId()).toBe("t-bg-panel");
+    });
+    setForegroundUserBashTaskId(null);
+    releaseWait();
+    const result = await execPromise;
+    expect(result.exitCode).toBe(0);
+    expect(onData).toHaveBeenCalled();
     expect(getForegroundUserBashTaskId()).toBeNull();
   });
 });

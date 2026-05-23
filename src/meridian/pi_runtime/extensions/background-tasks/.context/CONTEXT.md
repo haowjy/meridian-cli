@@ -4,6 +4,14 @@ Generic OS background task registry, `background_task` tool, unified `/ps*` UI (
 
 State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 
+## Interactive `$` and /ps
+
+- Pi **`!`** is a run shortcut — not background.
+- Trailing **`&`** on **`$`** (`splitUserBashBackground`): immediate `{ result }`, detached task in registry/`/ps`, no `waitForCompletion`.
+- Foreground **`$`**: `operations.exec` blocks until exit or `/ps` background; foreground row pinned with **`● fg`**.
+- **`/ps`**: **`b`** on foreground row → `TaskPanelHost.backgroundTask` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** when applicable.
+- Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
+
 Consumes `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`) for unified `/ps` rows.
 
 ## UX reference
@@ -15,13 +23,6 @@ Clone and refresh before parity work:
 ```
 
 Map: work dir `pi-processes-parity-map.md` (meridian-cli work item). Pair with `meridian-spawn-watch` for `/spawns` tree.
-
-## Interactive `$` bash
-
-- Pi **`!`** runs a command shortcut — not used for background.
-- User **`$`** with a trailing shell **`&`** (e.g. `$ sleep 1000 &`) detaches immediately via `bash_bridge` `result` (frees `isBashRunning`); task stays in TaskRegistry and `/ps`.
-- Foreground **`$`** runs block the prompt until exit; `/ps` pins that row at the top with **`● fg`**, and **`b`** calls `releaseWait` without killing the process.
-- Agent **`bash`** tool calls are unchanged (no auto-background on `&`).
 
 ## Verify after each implementation pass
 

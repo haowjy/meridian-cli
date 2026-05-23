@@ -139,7 +139,7 @@ export function getForegroundUserBashTaskId(): string | null {
   return foregroundUserBashTaskId;
 }
 
-function setForegroundUserBashTaskId(taskId: string | null): void {
+export function setForegroundUserBashTaskId(taskId: string | null): void {
   foregroundUserBashTaskId = taskId;
 }
 

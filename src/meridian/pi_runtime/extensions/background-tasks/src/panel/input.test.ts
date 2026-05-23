@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isPanelKill, isPanelQuit, printableChar } from "./input";
+import { isPanelBackground, isPanelKill, isPanelQuit, printableChar } from "./input";
 
 describe("panel input", () => {
   it("recognizes plain q", () => {
@@ -16,5 +16,10 @@ describe("panel input", () => {
 
   it("recognizes kill key", () => {
     expect(isPanelKill("x")).toBe(true);
+  });
+
+  it("recognizes background key", () => {
+    expect(isPanelBackground("b")).toBe(true);
+    expect(isPanelBackground("B")).toBe(true);
   });
 });
