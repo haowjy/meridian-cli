@@ -2,6 +2,16 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import type { TaskPanelHost } from "../panel/host";
+import {
+  isPanelClear,
+  isPanelConfirm,
+  isPanelDown,
+  isPanelKill,
+  isPanelLogScrollDown,
+  isPanelLogScrollUp,
+  isPanelQuit,
+  isPanelUp,
+} from "../panel/input";
 import { formatPingBadge, formatPingDetailLines } from "../panel/ping_format";
 import { panelConfig } from "../panel/config";
 import type { PanelEntry } from "../panel/types";
