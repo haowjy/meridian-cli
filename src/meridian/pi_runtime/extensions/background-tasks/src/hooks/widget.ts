@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { LogDockComponent } from "../components/log-dock-component";
 import { panelConfig } from "../panel/config";
 import { formatPingBadge } from "../panel/ping_format";
+import { getForegroundUserBashTaskId, USER_BASH_FOREGROUND_HINT } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 import type { PanelEntry } from "../panel/types";
 import { formatDurationMs } from "../panel/ping_format";
@@ -126,8 +127,17 @@ export function setupTaskWidget(
         activeCtx.ui.theme,
         `${sessionPing} · ${resetLabel}`,
       );
+      const foregroundHint = getForegroundUserBashTaskId()
+        ? themeLine(activeCtx.ui.theme, USER_BASH_FOREGROUND_HINT)
+        : null;
       const widgetLines =
-        lines.length > 0 ? [...lines, policyLine] : entries.length > 0 ? [policyLine] : [];
+        lines.length > 0
+          ? [...lines, policyLine, ...(foregroundHint ? [foregroundHint] : [])]
+          : foregroundHint
+            ? [foregroundHint, policyLine]
+            : entries.length > 0
+              ? [policyLine]
+              : [];
       activeCtx.ui.setWidget(
         STATUS_WIDGET_ID,
         widgetLines.length > 0 ? widgetLines : undefined,

@@ -1,6 +1,8 @@
 import type { TaskRegistry } from "./task_registry";
 
 export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
+/** Shown in footer/status widget while a foreground `$` bash command is running. */
+export const USER_BASH_FOREGROUND_HINT = "(ctrl+b to run in background)";
 
 export type BashBridgeState = {
   registry: TaskRegistry | null;
@@ -133,14 +135,23 @@ export function splitUserBashBackground(command: string): {
 }
 
 let foregroundUserBashTaskId: string | null = null;
+let onForegroundBashChange: (() => void) | null = null;
 
 /** Task id blocking Pi's interactive `$` slot, if any. */
 export function getForegroundUserBashTaskId(): string | null {
   return foregroundUserBashTaskId;
 }
 
+export function setOnForegroundBashChange(handler: (() => void) | null): void {
+  onForegroundBashChange = handler;
+}
+
 export function setForegroundUserBashTaskId(taskId: string | null): void {
+  const previous = foregroundUserBashTaskId;
   foregroundUserBashTaskId = taskId;
+  if (previous !== taskId) {
+    onForegroundBashChange?.();
+  }
 }
 
 function bashLifecycleState(details: Record<string, unknown>): string | null {

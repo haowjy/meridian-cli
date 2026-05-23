@@ -3,51 +3,30 @@ import { describe, expect, it, vi } from "vitest";
 import { backgroundForegroundBash } from "../background_foreground";
 import { setForegroundUserBashTaskId } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
-import {
-  CTRL_B_CHORD_WINDOW_MS,
-  stepCtrlBBackgroundChord,
-} from "./foreground-background-shortcut";
+import { stepCtrlBBackground } from "./foreground-background-shortcut";
 
 const CTRL_B = "\x02";
 
-describe("stepCtrlBBackgroundChord", () => {
+describe("stepCtrlBBackground", () => {
   it("ignores non-ctrl+b input", () => {
-    const step = stepCtrlBBackgroundChord("q", 1000, null, true);
-    expect(step).toEqual({ action: "ignore", consume: false, nextLastCtrlBAtMs: null });
-  });
-
-  it("does not consume when no foreground bash", () => {
-    const step = stepCtrlBBackgroundChord(CTRL_B, 1000, null, false);
-    expect(step).toEqual({ action: "ignore", consume: false, nextLastCtrlBAtMs: null });
-  });
-
-  it("arms on first ctrl+b with foreground", () => {
-    const step = stepCtrlBBackgroundChord(CTRL_B, 1000, null, true);
-    expect(step).toEqual({ action: "arm", consume: true, nextLastCtrlBAtMs: 1000 });
-  });
-
-  it("backgrounds on second ctrl+b within the window", () => {
-    const step = stepCtrlBBackgroundChord(
-      CTRL_B,
-      1000 + CTRL_B_CHORD_WINDOW_MS,
-      1000,
-      true,
-    );
-    expect(step).toEqual({
-      action: "background",
-      consume: true,
-      nextLastCtrlBAtMs: null,
+    expect(stepCtrlBBackground("q", true)).toEqual({
+      action: "ignore",
+      consume: false,
     });
   });
 
-  it("re-arms after the chord window expires", () => {
-    const step = stepCtrlBBackgroundChord(
-      CTRL_B,
-      1000 + CTRL_B_CHORD_WINDOW_MS + 1,
-      1000,
-      true,
-    );
-    expect(step).toEqual({ action: "arm", consume: true, nextLastCtrlBAtMs: 1000 + CTRL_B_CHORD_WINDOW_MS + 1 });
+  it("does not consume when no foreground bash", () => {
+    expect(stepCtrlBBackground(CTRL_B, false)).toEqual({
+      action: "ignore",
+      consume: false,
+    });
+  });
+
+  it("backgrounds on single ctrl+b with foreground", () => {
+    expect(stepCtrlBBackground(CTRL_B, true)).toEqual({
+      action: "background",
+      consume: true,
+    });
   });
 });
 

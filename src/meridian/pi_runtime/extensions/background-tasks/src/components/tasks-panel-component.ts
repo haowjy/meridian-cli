@@ -371,7 +371,7 @@ export class TasksPanelComponent implements Component {
       `${dim("enter")} stream  ` +
       `${dim("j/k")} select  ` +
       (hasForeground
-        ? `${warning("b")} background  ${dim("ctrl+b×2")}  `
+        ? `${warning("b")} background  ${dim("ctrl+b")}  `
         : "") +
       `${dim("x")} kill/cancel  ` +
       `${dim("c")} clear  ` +

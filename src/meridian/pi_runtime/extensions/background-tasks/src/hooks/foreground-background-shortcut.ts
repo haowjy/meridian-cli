@@ -1,38 +1,45 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 import { backgroundForegroundBash } from "../background_foreground";
-import { getForegroundUserBashTaskId, USER_BASH_PANEL_BACKGROUND_MSG } from "../bash_bridge";
+import {
+  getForegroundUserBashTaskId,
+  setOnForegroundBashChange,
+  USER_BASH_FOREGROUND_HINT,
+  USER_BASH_PANEL_BACKGROUND_MSG,
+} from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 
-export const CTRL_B_CHORD_WINDOW_MS = 450;
+const FOREGROUND_BASH_STATUS_KEY = "meridian-background-tasks:foreground-bash";
 
-export type CtrlBChordAction = "ignore" | "arm" | "background";
-
-export type CtrlBChordStep = {
-  action: CtrlBChordAction;
+export type CtrlBBackgroundStep = {
+  action: "ignore" | "background";
   consume: boolean;
-  nextLastCtrlBAtMs: number | null;
 };
 
-/** Pure double Ctrl+B detector — only active when a foreground `$` bash task exists. */
-export function stepCtrlBBackgroundChord(
+/** Single Ctrl+B backgrounds foreground `$` bash (Claude Code parity). */
+export function stepCtrlBBackground(
   data: string,
-  nowMs: number,
-  lastCtrlBAtMs: number | null,
   hasForeground: boolean,
-  windowMs: number = CTRL_B_CHORD_WINDOW_MS,
-): CtrlBChordStep {
+): CtrlBBackgroundStep {
   if (!matchesKey(data, "ctrl+b")) {
-    return { action: "ignore", consume: false, nextLastCtrlBAtMs: lastCtrlBAtMs };
+    return { action: "ignore", consume: false };
   }
   if (!hasForeground) {
-    return { action: "ignore", consume: false, nextLastCtrlBAtMs: null };
+    return { action: "ignore", consume: false };
   }
-  if (lastCtrlBAtMs != null && nowMs - lastCtrlBAtMs <= windowMs) {
-    return { action: "background", consume: true, nextLastCtrlBAtMs: null };
+  return { action: "background", consume: true };
+}
+
+function syncForegroundStatus(ctx: ExtensionContext | null): void {
+  if (!ctx?.hasUI) {
+    return;
   }
-  return { action: "arm", consume: true, nextLastCtrlBAtMs: nowMs };
+  const hasForeground = getForegroundUserBashTaskId() != null;
+  ctx.ui.setStatus(
+    FOREGROUND_BASH_STATUS_KEY,
+    hasForeground ? USER_BASH_FOREGROUND_HINT : undefined,
+  );
 }
 
 export function setupForegroundBackgroundShortcut(
@@ -40,31 +47,27 @@ export function setupForegroundBackgroundShortcut(
   getPanelHost: () => TaskPanelHost | null,
 ): void {
   let unsubTerminalInput: (() => void) | null = null;
-  let lastCtrlBAtMs: number | null = null;
+  let activeCtx: ExtensionContext | null = null;
+
+  setOnForegroundBashChange(() => {
+    syncForegroundStatus(activeCtx);
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     unsubTerminalInput?.();
     unsubTerminalInput = null;
-    lastCtrlBAtMs = null;
+    activeCtx = ctx.hasUI ? ctx : null;
+    syncForegroundStatus(activeCtx);
 
     if (!ctx.hasUI) {
       return;
     }
 
     unsubTerminalInput = ctx.ui.onTerminalInput((data) => {
-      const step = stepCtrlBBackgroundChord(
-        data,
-        Date.now(),
-        lastCtrlBAtMs,
-        getForegroundUserBashTaskId() != null,
-      );
-      lastCtrlBAtMs = step.nextLastCtrlBAtMs;
+      const step = stepCtrlBBackground(data, getForegroundUserBashTaskId() != null);
 
       if (step.action === "ignore") {
         return undefined;
-      }
-      if (step.action === "arm") {
-        return { consume: true };
       }
 
       const host = getPanelHost();
@@ -82,6 +85,12 @@ export function setupForegroundBackgroundShortcut(
   pi.on("session_shutdown", async () => {
     unsubTerminalInput?.();
     unsubTerminalInput = null;
-    lastCtrlBAtMs = null;
+    syncForegroundStatus(activeCtx);
+    activeCtx = null;
   });
+}
+
+/** Clear foreground UI listener when extension unloads (tests). */
+export function teardownForegroundBackgroundShortcut(): void {
+  setOnForegroundBashChange(null);
 }
