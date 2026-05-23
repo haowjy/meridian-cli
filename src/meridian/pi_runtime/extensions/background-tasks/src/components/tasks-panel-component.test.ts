@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
+import { setForegroundUserBashTaskId } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 import type { PanelEntry } from "../panel/types";
 import { TasksPanelComponent } from "./tasks-panel-component";
@@ -81,6 +82,7 @@ describe("TasksPanelComponent handleInput", () => {
   });
 
   it("backgrounds the selected foreground row on b", async () => {
+    setForegroundUserBashTaskId("fg-1");
     const backgroundTask = vi.fn(async () => ({ ok: true }));
     const host = mockHost([
       { ...sampleEntry, id: "fg-1", isForeground: true },
@@ -100,5 +102,6 @@ describe("TasksPanelComponent handleInput", () => {
 
     panel.handleInput("b");
     expect(backgroundTask).toHaveBeenCalledWith("fg-1");
+    setForegroundUserBashTaskId(null);
   });
 });

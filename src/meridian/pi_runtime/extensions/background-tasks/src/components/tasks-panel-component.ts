@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
+import { backgroundForegroundBash } from "../background_foreground";
 import type { TaskPanelHost } from "../panel/host";
 import {
   isPanelBackground,
@@ -186,7 +187,7 @@ export class TasksPanelComponent implements Component {
     if (isPanelBackground(data)) {
       const proc = processes[this.selectedIndex];
       if (proc?.isForeground) {
-        void this.host.backgroundTask(proc.id).then(() => this.refreshEntries());
+        void backgroundForegroundBash(this.host).then(() => this.refreshEntries());
       }
     }
   }
@@ -369,7 +370,9 @@ export class TasksPanelComponent implements Component {
     const footerLeft =
       `${dim("enter")} stream  ` +
       `${dim("j/k")} select  ` +
-      (hasForeground ? `${warning("b")} background  ` : "") +
+      (hasForeground
+        ? `${warning("b")} background  ${dim("ctrl+b×2")}  `
+        : "") +
       `${dim("x")} kill/cancel  ` +
       `${dim("c")} clear  ` +
       `${dim("q")} quit`;

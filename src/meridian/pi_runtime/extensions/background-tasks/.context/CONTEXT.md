@@ -8,8 +8,9 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 
 - Pi **`!`** is a run shortcut — not background.
 - Trailing **`&`** on **`$`** (`splitUserBashBackground`): immediate `{ result }`, detached task in registry/`/ps`, no `waitForCompletion`.
-- Foreground **`$`**: `operations.exec` blocks until exit or `/ps` background; foreground row pinned with **`● fg`**.
-- **`/ps`**: **`b`** on foreground row → `TaskPanelHost.backgroundTask` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** when applicable.
+- Foreground **`$`**: `operations.exec` blocks until exit or background; foreground row pinned with **`● fg`**.
+- **`ctrl+b` twice** (within ~450ms, only while foreground `$` runs): same as `/ps` background via `onTerminalInput` chord — consumes both presses so readline does not see them.
+- **`/ps`**: **`b`** on foreground row → `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** and **`ctrl+b×2`** when applicable.
 - Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
 
 Consumes `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`) for unified `/ps` rows.
