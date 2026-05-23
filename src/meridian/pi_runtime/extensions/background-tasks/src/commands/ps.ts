@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { TasksPanelComponent } from "../components/tasks-panel-component";
+import { PsPanelFrame } from "../components/ps-panel-frame";
 import { formatPsTable } from "../format_rows";
 import type { TaskPanelHost } from "../panel/host";
 import type { DockActions } from "../hooks/widget";
@@ -54,20 +54,15 @@ export function registerPsCommand(
         return;
       }
 
-      const result = await ctx.ui.custom<string | null>(
-        (tui, theme, _keybindings, done) =>
-          new TasksPanelComponent(
-            tui,
-            theme,
-            (taskId?: string) => {
-              if (taskId) {
-                dockActions.setFocus(taskId);
-              }
-              done(taskId ?? null);
-            },
-            panelHost,
-          ),
-      );
+      const result = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
+        const onClose = (taskId?: string): void => {
+          if (taskId) {
+            dockActions.setFocus(taskId);
+          }
+          done(taskId ?? null);
+        };
+        return new PsPanelFrame(tui, theme, onClose, panelHost);
+      });
 
       if (result) {
         dockActions.setFocus(result);

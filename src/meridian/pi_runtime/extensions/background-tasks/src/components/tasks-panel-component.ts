@@ -1,10 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import {
-  type Component,
-  matchesKey,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import type { TaskPanelHost } from "../panel/host";
 import { formatPingBadge, formatPingDetailLines } from "../panel/ping_format";
@@ -108,10 +103,17 @@ export class TasksPanelComponent implements Component {
     this.tui.requestRender();
   }
 
-  handleInput(data: string): boolean {
+  handleInput(data: string): void {
     const processes = this.entries;
 
-    if (matchesKey(data, "down") || data === "j") {
+    if (isPanelQuit(data)) {
+      this.unsubscribe?.();
+      this.unsubscribe = null;
+      this.onClose();
+      return;
+    }
+
+    if (isPanelDown(data)) {
       if (processes.length > 0) {
         this.selectedIndex = Math.min(this.selectedIndex + 1, processes.length - 1);
         this.logScrollOffset = 0;
@@ -119,10 +121,10 @@ export class TasksPanelComponent implements Component {
         this.invalidate();
         this.tui.requestRender();
       }
-      return true;
+      return;
     }
 
-    if (matchesKey(data, "up") || data === "k") {
+    if (isPanelUp(data)) {
       if (processes.length > 0) {
         this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
         this.logScrollOffset = 0;
@@ -130,54 +132,44 @@ export class TasksPanelComponent implements Component {
         this.invalidate();
         this.tui.requestRender();
       }
-      return true;
+      return;
     }
 
-    if (data === "J") {
+    if (isPanelLogScrollUp(data)) {
       this.logScrollOffset = Math.max(0, this.logScrollOffset - 5);
       this.invalidate();
       this.tui.requestRender();
-      return true;
+      return;
     }
 
-    if (data === "K") {
+    if (isPanelLogScrollDown(data)) {
       this.logScrollOffset += 5;
       this.invalidate();
       this.tui.requestRender();
-      return true;
+      return;
     }
 
-    if (matchesKey(data, "return")) {
+    if (isPanelConfirm(data)) {
       const proc = processes[this.selectedIndex];
       if (proc) {
         this.unsubscribe?.();
         this.unsubscribe = null;
         this.onClose(proc.id);
       }
-      return true;
+      return;
     }
 
-    if (data === "x") {
+    if (isPanelKill(data)) {
       const proc = processes[this.selectedIndex];
       if (proc?.isLive) {
         void this.host.kill(proc.id).then(() => this.refreshEntries());
       }
-      return true;
+      return;
     }
 
-    if (data === "c" || data === "C") {
+    if (isPanelClear(data)) {
       void this.host.clearFinished().then(() => this.refreshEntries());
-      return true;
     }
-
-    if (matchesKey(data, "escape") || data === "q" || data === "Q") {
-      this.unsubscribe?.();
-      this.unsubscribe = null;
-      this.onClose();
-      return true;
-    }
-
-    return true;
   }
 
   private ensureProcessVisible(totalProcesses: number): void {

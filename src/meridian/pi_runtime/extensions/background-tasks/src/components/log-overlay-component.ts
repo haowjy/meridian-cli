@@ -24,6 +24,13 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { TaskPanelHost } from "../panel/host";
+import {
+  isPanelConfirm,
+  isPanelDown,
+  isPanelQuit,
+  isPanelUp,
+  printableChar,
+} from "../panel/input";
 import type { PanelEntry } from "../panel/types";
 import { LogFileViewer } from "./log-file-viewer";
 import { statusIcon } from "./status-format";
@@ -185,7 +192,7 @@ export class LogOverlayComponent implements Component {
   private handleNormalInput(data: string): boolean {
     const viewer = this.currentViewer();
 
-    if (matchesKey(data, "escape") || data === "q" || data === "Q") {
+    if (isPanelQuit(data)) {
       this.close();
       return true;
     }
@@ -211,12 +218,12 @@ export class LogOverlayComponent implements Component {
       this.tui.requestRender();
       return true;
     }
-    if (matchesKey(data, "down") || data === "j") {
+    if (isPanelDown(data)) {
       viewer.scrollBy(1);
       this.tui.requestRender();
       return true;
     }
-    if (matchesKey(data, "up") || data === "k") {
+    if (isPanelUp(data)) {
       viewer.scrollBy(-1);
       this.tui.requestRender();
       return true;
