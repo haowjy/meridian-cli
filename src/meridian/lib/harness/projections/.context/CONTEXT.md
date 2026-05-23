@@ -12,6 +12,7 @@ project_codex_subprocess.py → CodexLaunchSpec → args + env   (codex exec --j
 project_codex_streaming.py  → CodexLaunchSpec → args + env   (codex app-server)
 project_opencode_subprocess.py → OpenCodeLaunchSpec → args + env  (opencode run)
 project_opencode_streaming.py  → OpenCodeLaunchSpec → args + env  (opencode serve)
+project_cursor.py          → ResolvedLaunchSpec → args        (cursor agent)
 project_pi_rpc.py          → ResolvedLaunchSpec → args + env (pi rpc --mode rpc)
 project_pi_native_tui.py   → ResolvedLaunchSpec → args + env (pi native TUI, primary only)
 pi_extension_projection.py → (extension dist artifacts → per-launch materialization, no spec dependency)
@@ -44,6 +45,61 @@ projector causes import failure. This is not a test — it fires in production o
 first spawn. Fix by updating `_PROJECTED_FIELDS` or `_DELEGATED_FIELDS` in the
 projector.
 
+### Cursor Projection (`project_cursor.py`)
+
+#### Model + effort resolution
+
+Cursor bakes effort level (and sometimes thinking mode) into slug names. The naming
+is inconsistent across families: effort appears before or after "thinking", and effort
+labels differ (`xhigh` vs `extra-high`). The projector does not construct slug strings
+from rules — it searches `candidate_slugs` for the best match.
+
+**`_resolve_cursor_model(model, effort, candidate_slugs)`** rules:
+
+1. **Exact match + no effort** — `model` is already a full cursor slug in the catalog;
+   return verbatim. (User passed `claude-opus-4-7-thinking-high` directly.)
+2. **No effort** — return `model` unchanged; cursor uses its own default variant.
+3. **Effort specified** — search `candidate_slugs` for slugs where
+   `slug.startswith(model)` and `f"-{normalized_effort}" in slug`:
+   - One match → use it
+   - Multiple matches → prefer slugs containing `"thinking"` (shortest thinking match wins)
+   - No match → fall back to `f"{model}-{normalized_effort}"` (cursor will reject if invalid)
+
+**`candidate_slugs` source:** populated from `ResolvedLaunchSpec.candidate_slugs`, which
+mars routing fills with all raw cursor catalog slugs that prefix-match the requested
+`model_id`. Empty when offline, when cursor is not installed, or when mars predates
+cursor probe support. An empty list causes the no-match fallback path, which constructs
+a best-guess slug — caller error, not a silent failure.
+
+**Thinking preference:** when multiple effort matches exist, the projector prefers
+thinking variants. This is cursor-harness policy baked into projection, not a user flag.
+The preference reflects that thinking variants tend to be the intended target for
+Claude models with effort overrides.
+
+#### `_PROJECTED_FIELDS` includes `"effort"` and `"candidate_slugs"`
+
+Both fields are consumed by `_resolve_cursor_model` before the `--model` flag is
+emitted. They are not forwarded to the subprocess. Earlier versions had `effort` in
+`_DELEGATED_FIELDS`; moving it to `_PROJECTED_FIELDS` means the drift guard enforces
+that effort handling is explicit in this projector.
+
+#### MVP capability restrictions
+
+The following raise `HarnessCapabilityMismatch` immediately:
+- `spec.mcp_tools` set — per-spawn MCP tools not supported
+- `spec.continue_fork` set — fork-based session continuation not supported
+- `spec.continue_session_id` non-empty — session resume not supported
+- `spec.interactive` set — interactive mode not supported
+
+These are architecture gaps, not user errors. The adapter layer should filter them
+before reaching projection; if they arrive here, something upstream is wrong.
+
+#### `projected_roots` is silently ignored
+
+Cursor subprocess only projects `--workspace` from `task_cwd`. If `projected_roots`
+is non-empty, the projector logs a debug warning and continues — not an error, because
+`task_cwd` is the common case and extra roots are best-effort for cursor.
+
 ### Permission Flags (`permission_flags.py`)
 
 `resolve_permission_flags(permission_resolver, harness_id)` is the single entry point
@@ -56,12 +112,12 @@ for all permission/sandbox flag projection. It:
 
 Approval mode → flag mapping:
 
-| Mode | Claude | Codex |
-|---|---|---|
-| `yolo` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` |
-| `auto` | `--permission-mode acceptEdits` | `--full-auto` |
-| `confirm` | `--permission-mode default` | `--ask-for-approval untrusted` |
-| `default` | (none) | (sandbox flag if non-default sandbox) |
+| Mode | Claude | Codex | Cursor |
+|---|---|---|---|
+| `yolo` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--yolo` |
+| `auto` | `--permission-mode acceptEdits` | `--full-auto` | `--force` |
+| `confirm` | `--permission-mode default` | `--ask-for-approval untrusted` | (none) |
+| `default` | (none) | (sandbox flag if non-default sandbox) | (none) |
 
 OpenCode receives no permission flags from this function — OpenCode handles approval
 through workspace env injection (see parent `.context/`).
@@ -92,6 +148,7 @@ Raised when the requested launch configuration cannot be expressed on this harne
 Examples:
 - Unknown approval mode passed to `map_codex_approval_policy`
 - Unknown sandbox mode passed to `map_codex_sandbox_mode`
+- MVP-unsupported capability passed to cursor projection
 
 This is a caller error — the adapter layer should have validated the mode before
 reaching projection. If you catch this, something in the adapter pipeline is wrong.
