@@ -14,8 +14,8 @@ import {
   isPanelQuit,
   isPanelUp,
 } from "../panel/input";
-import { formatPingBadge, formatPingDetailLines } from "../panel/ping_format";
-import { panelConfig } from "../panel/config";
+import { formatTaskDetailLines } from "../panel/detail_format";
+import { computePanelLayout } from "../panel/layout";
 import type { PanelEntry } from "../panel/types";
 import { stripAnsi } from "../utils/ansi";
 import {
@@ -72,8 +72,15 @@ function fitCell(value: string, width: number, align: "left" | "right" = "left")
   return truncated + " ".repeat(pad);
 }
 
+type PsPanelTui = {
+  requestRender: () => void;
+  terminal?: { rows?: number };
+};
+
+const LIVE_REFRESH_MS = 1000;
+
 export class TasksPanelComponent implements Component {
-  private readonly tui: { requestRender: () => void };
+  private readonly tui: PsPanelTui;
   private readonly theme: Theme;
   private readonly onClose: (taskId?: string) => void;
   private readonly host: TaskPanelHost;
@@ -86,9 +93,10 @@ export class TasksPanelComponent implements Component {
   private cachedLines: string[] = [];
   private cachedWidth = 0;
   private unsubscribe: (() => void) | null = null;
+  private liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    tui: { requestRender: () => void },
+    tui: PsPanelTui,
     theme: Theme,
     onClose: (taskId?: string) => void,
     host: TaskPanelHost,
@@ -102,6 +110,24 @@ export class TasksPanelComponent implements Component {
     this.unsubscribe = this.host.onEvent(() => {
       void this.refreshEntries();
     });
+
+    this.liveRefreshTimer = setInterval(() => {
+      if (!this.entries.some((entry) => entry.isLive)) {
+        return;
+      }
+      this.invalidate();
+      this.tui.requestRender();
+    }, LIVE_REFRESH_MS);
+    this.liveRefreshTimer.unref?.();
+  }
+
+  dispose(): void {
+    if (this.liveRefreshTimer != null) {
+      clearInterval(this.liveRefreshTimer);
+      this.liveRefreshTimer = null;
+    }
+    this.unsubscribe?.();
+    this.unsubscribe = null;
   }
 
   private async refreshEntries(): Promise<void> {
@@ -193,7 +219,8 @@ export class TasksPanelComponent implements Component {
   }
 
   private ensureProcessVisible(totalProcesses: number): void {
-    const maxVisibleProcesses = panelConfig.processList.maxVisibleProcesses;
+    const terminalRows = this.tui.terminal?.rows ?? 24;
+    const maxVisibleProcesses = computePanelLayout(terminalRows, totalProcesses).maxVisibleProcesses;
     const visibleCount = Math.min(maxVisibleProcesses, totalProcesses);
     if (this.selectedIndex < this.processScrollOffset) {
       this.processScrollOffset = this.selectedIndex;
@@ -216,9 +243,10 @@ export class TasksPanelComponent implements Component {
       return this.cachedLines;
     }
 
-    const cfg = panelConfig.processList;
-    const maxVisibleProcesses = cfg.maxVisibleProcesses;
-    const maxPreviewLines = cfg.maxPreviewLines;
+    const terminalRows = this.tui.terminal?.rows ?? 24;
+    const layout = computePanelLayout(terminalRows, processes.length);
+    const maxVisibleProcesses = layout.maxVisibleProcesses;
+    const maxPreviewLines = layout.maxPreviewLines;
 
     const theme = this.theme;
     const dim = (s: string) => theme.fg("dim", s);
@@ -307,10 +335,6 @@ export class TasksPanelComponent implements Component {
         lines.push(padLine(isSelected ? `${accent(">")} ${row}` : `  ${row}`));
       }
 
-      for (let i = visibleProcessCount; i < maxVisibleProcesses; i++) {
-        lines.push(padLine(""));
-      }
-
       const selected = processes[this.selectedIndex];
       if (selected) {
         const output = this.host.getOutput(selected.id, maxPreviewLines * 2);
@@ -319,13 +343,13 @@ export class TasksPanelComponent implements Component {
         const logTitle = `Output: ${accent(selected.name)} ${dim(`(${selected.id})`)}`;
         lines.push(padLine(truncateToWidth(logTitle, innerWidth, "", true)));
 
-        for (const pingLine of formatPingDetailLines(selected)) {
-          lines.push(padLine(dim(pingLine)));
+        const detailLines = formatTaskDetailLines(selected);
+        for (const detailLine of detailLines) {
+          lines.push(padLine(warning(detailLine)));
         }
-        if (selected.isForeground) {
-          lines.push(padLine(warning("Foreground — blocks $ until backgrounded or exit")));
+        if (detailLines.length > 0) {
+          lines.push(padLine(""));
         }
-        lines.push(padLine(""));
 
         let renderedLines = 0;
         if (output) {
@@ -359,10 +383,6 @@ export class TasksPanelComponent implements Component {
           }
         }
 
-        while (renderedLines < maxPreviewLines) {
-          lines.push(padLine(""));
-          renderedLines++;
-        }
       }
     }
 
@@ -414,16 +434,14 @@ export class TasksPanelComponent implements Component {
 
     const icon = statusIcon(proc.status, proc.success);
     const label = statusLabel(proc);
-    const ping = formatPingBadge(proc);
-    const pingSuffix = ping ? dim(` ${ping}`) : "";
     const fgPrefix = proc.isForeground ? warn("● fg ") : "";
 
     if (proc.isLive) {
-      return fgPrefix + success(`${icon} ${label}`) + pingSuffix;
+      return fgPrefix + success(`${icon} ${label}`);
     }
     if (proc.success === false) {
-      return fgPrefix + error(`${icon} ${label}`) + pingSuffix;
+      return fgPrefix + error(`${icon} ${label}`);
     }
-    return fgPrefix + dim(`${icon} ${label}`) + pingSuffix;
+    return fgPrefix + dim(`${icon} ${label}`);
   }
 }

@@ -11,7 +11,11 @@ export class PsPanelFrame extends Container {
   private readonly panel: TasksPanelComponent;
 
   constructor(
-    tui: { requestRender: () => void; setFocus: (component: unknown) => void },
+    tui: {
+      requestRender: () => void;
+      setFocus: (component: unknown) => void;
+      terminal?: { rows?: number };
+    },
     theme: Theme,
     onClose: (taskId?: string) => void,
     host: TaskPanelHost,
@@ -19,6 +23,10 @@ export class PsPanelFrame extends Container {
     super();
     this.panel = new TasksPanelComponent(tui, theme, onClose, host);
     tui.setFocus(this);
+  }
+
+  dispose(): void {
+    this.panel.dispose();
   }
 
   render(width: number): string[] {

@@ -13,7 +13,8 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 - **In-chat hint** (`meridian:foreground-bash-hint`): once per foreground **`$`** task when the slot blocks — `/ps to manage tasks · ctrl+b to run in background`. Shown immediately (not `deliverAs: followUp`). Text in `details.hintText` (empty `content`); `triggerTurn: false`. Not for trailing **`&`** (already detached).
 - **`/ps`**: **`b`** on foreground row → `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** and **`ctrl+b`** when applicable.
 - Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
-- **Status widget** (below editor, pi-processes style): live tasks only — `tasks: <name> running`; optional **`(ctrl+b …)`** while foreground `$` blocks. No ping countdown or session policy line (ping detail in **`/ps`** selection + **`/ps:settings`**).
+- **Status widget** (below editor, pi-processes style): live tasks only — `tasks: <name> running`; optional **`(ctrl+b …)`** while foreground `$` blocks. No ping countdown or session policy line.
+- **`/ps` panel**: layout from terminal height (no fixed 8+12 blank rows). **1s refresh** while open and tasks are live (runtime column). Log/output refresh on **`meridian:task:output`** (~100ms throttle). Detail omits ping interval/countdown — use **`/ps:settings`** for policy; foreground row shows **`● fg`** + one-line hint when selected.
 
 Consumes `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`) for unified `/ps` rows.
 

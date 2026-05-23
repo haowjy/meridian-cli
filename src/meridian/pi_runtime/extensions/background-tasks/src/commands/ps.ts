@@ -55,13 +55,17 @@ export function registerPsCommand(
       }
 
       const result = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
+        let frame: PsPanelFrame | null = null;
         const onClose = (taskId?: string): void => {
+          frame?.dispose();
+          frame = null;
           if (taskId) {
             dockActions.setFocus(taskId);
           }
           done(taskId ?? null);
         };
-        return new PsPanelFrame(tui, theme, onClose, panelHost);
+        frame = new PsPanelFrame(tui, theme, onClose, panelHost);
+        return frame;
       });
 
       if (result) {

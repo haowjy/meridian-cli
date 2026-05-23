@@ -24,6 +24,7 @@ import { LIVE_PANEL_STATUSES, type PanelEntry, type PanelStatus } from "./types"
 const REFRESH_CHANNELS = [
   "meridian:task:start",
   "meridian:task:end",
+  "meridian:task:output",
   "meridian:task:ping",
   "meridian:spawn:discovered",
   "meridian:spawn:updated",

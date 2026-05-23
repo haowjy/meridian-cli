@@ -33,6 +33,8 @@ export const MAX_BG_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const TASK_START_EVENT = "meridian:task:start";
 const TASK_END_EVENT = "meridian:task:end";
 const TASK_PING_EVENT = "meridian:task:ping";
+const TASK_OUTPUT_EVENT = "meridian:task:output";
+const TASK_OUTPUT_THROTTLE_MS = 100;
 const SUBSPAWN_START_EVENT = "meridian:subspawn:start";
 const SUBSPAWN_END_EVENT = "meridian:subspawn:end";
 const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
@@ -184,6 +186,8 @@ export class TaskRegistry {
   private readonly waitReleases = new Map<string, () => void>();
   private pollTimer: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
+  private readonly lastOutputEmitAt = new Map<string, number>();
+  private readonly pendingOutputEmit = new Map<string, NodeJS.Timeout>();
 
   constructor(
     stateRoot: string,
@@ -269,6 +273,40 @@ export class TaskRegistry {
       record.next_ping_at_ms = atMs + this.effectivePingIntervalMs(record);
     }
     void this.persistRecord(record);
+  }
+
+  private clearTaskOutputNotify(taskId: string): void {
+    const timeout = this.pendingOutputEmit.get(taskId);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    this.pendingOutputEmit.delete(taskId);
+    this.lastOutputEmitAt.delete(taskId);
+  }
+
+  private notifyTaskOutput(taskId: string): void {
+    const now = nowMs();
+    const lastEmit = this.lastOutputEmitAt.get(taskId) ?? 0;
+    const elapsed = now - lastEmit;
+
+    if (elapsed >= TASK_OUTPUT_THROTTLE_MS) {
+      this.lastOutputEmitAt.set(taskId, now);
+      this.bus.emit(TASK_OUTPUT_EVENT, { task_id: taskId });
+      return;
+    }
+
+    if (!this.pendingOutputEmit.has(taskId)) {
+      const delay = TASK_OUTPUT_THROTTLE_MS - elapsed;
+      const timeout = setTimeout(() => {
+        this.pendingOutputEmit.delete(taskId);
+        if (!this.jobs.has(taskId)) {
+          return;
+        }
+        this.lastOutputEmitAt.set(taskId, nowMs());
+        this.bus.emit(TASK_OUTPUT_EVENT, { task_id: taskId });
+      }, delay);
+      this.pendingOutputEmit.set(taskId, timeout);
+    }
   }
 
   private async scanTaskPings(): Promise<void> {
@@ -608,6 +646,7 @@ export class TaskRegistry {
     if (record.emitted_start) {
       this.emitTaskEnd(record);
     }
+    this.clearTaskOutputNotify(jobId);
     runtimeJob.resolveCompletion(record);
     return this.toPublicRecord(record);
   }
@@ -752,6 +791,7 @@ export class TaskRegistry {
           await this.enforceLogCap(record);
         }
         this.bumpTaskActivity(record.task_id);
+        this.notifyTaskOutput(record.task_id);
       });
     };
 
@@ -1016,6 +1056,9 @@ export class TaskRegistry {
   async shutdownCleanup(): Promise<void> {
     this.stopPoller();
     this.stopPingWorker();
+    for (const taskId of this.pendingOutputEmit.keys()) {
+      this.clearTaskOutputNotify(taskId);
+    }
     for (const runtimeJob of this.jobs.values()) {
       const record = runtimeJob.record;
       if (record.status !== "running") {
@@ -1034,6 +1077,7 @@ export class TaskRegistry {
       if (runtimeJob.record.status === "running") {
         continue;
       }
+      this.clearTaskOutputNotify(taskId);
       this.jobs.delete(taskId);
       removed += 1;
     }
