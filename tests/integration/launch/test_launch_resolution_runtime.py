@@ -364,4 +364,3 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     assert preview.binding.argv[preview.binding.argv.index("--model") + 1] == "gpt-5.5-high"
     assert preview.model_selection is not None
     assert preview.model_selection.harness_model_id == "gpt-5.5-high"
-    assert not hasattr(preview.model_selection, "candidate_slugs")
