@@ -16,11 +16,21 @@ describe("maybePostForegroundBashHint", () => {
     setForegroundUserBashTaskId(null);
   });
 
+  it("skips hint when task is no longer foreground", () => {
+    const sendMessage = vi.fn();
+    const pi = { sendMessage } as never;
+
+    expect(maybePostForegroundBashHint(pi, "task-a")).toBe(false);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("posts user hint once per task id with display-only send options", () => {
+    setForegroundUserBashTaskId("task-a");
     const sendMessage = vi.fn();
     const pi = { sendMessage } as never;
 
     expect(maybePostForegroundBashHint(pi, "task-a")).toBe(true);
+    setForegroundUserBashTaskId("task-a");
     expect(maybePostForegroundBashHint(pi, "task-a")).toBe(false);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(

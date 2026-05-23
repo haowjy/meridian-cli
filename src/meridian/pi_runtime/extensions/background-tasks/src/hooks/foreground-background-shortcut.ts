@@ -6,7 +6,6 @@ import {
   getForegroundUserBashTaskId,
   setOnForegroundBashChange,
   USER_BASH_FOREGROUND_HINT,
-  USER_BASH_PANEL_BACKGROUND_MSG,
 } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 
@@ -72,11 +71,7 @@ export function setupForegroundBackgroundShortcut(
 
       const host = getPanelHost();
       if (host) {
-        void backgroundForegroundBash(host).then((result) => {
-          if (result.ok) {
-            ctx.ui.notify(USER_BASH_PANEL_BACKGROUND_MSG, "info");
-          }
-        });
+        void backgroundForegroundBash(host);
       }
       return { consume: true };
     });

@@ -17,9 +17,8 @@ export const FOREGROUND_BASH_HINT_TEXT =
 /** @deprecated Use {@link FOREGROUND_BASH_HINT_TEXT}. */
 export const USER_FOREGROUND_BASH_HINT_TEXT = FOREGROUND_BASH_HINT_TEXT;
 
-/** Pi sendMessage options: display-only hint (no agent turn). */
+/** Pi sendMessage options: display-only hint (no agent turn). No followUp — that delays until after bash ends. */
 export const FOREGROUND_BASH_HINT_SEND_OPTIONS = {
-  deliverAs: "followUp",
   triggerTurn: false,
   excludeFromContext: true,
 } as const;
@@ -45,6 +44,9 @@ export function clearForegroundBashHintDedupe(): void {
 /** Post at most one hint per task id when foreground `$` starts (tests and production). */
 export function maybePostForegroundBashHint(pi: ExtensionAPI, taskId: string): boolean {
   if (!taskId || hintedTaskIds.has(taskId)) {
+    return false;
+  }
+  if (getForegroundUserBashTaskId() !== taskId) {
     return false;
   }
 
