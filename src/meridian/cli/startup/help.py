@@ -136,7 +136,7 @@ Options:
   --json            Emit command output as JSON.
   --format TEXT     Set output format: text or json.
   --config TEXT     Path to a user config TOML overlay.
-  --harness TEXT    Force harness id (claude, codex, cursor, or opencode).
+  --harness TEXT    Force harness id (claude, codex, cursor, opencode, or pi).
   --model, -m TEXT  Model id or alias for primary harness.
 
 Commands:
