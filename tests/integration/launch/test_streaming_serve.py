@@ -34,6 +34,8 @@ def _fake_launch_context(
                 "appended_system_prompt": system,
                 "session_agent_path": str(child_cwd / "agent.md"),
             },
+            pi_task_ping_interval_seconds=None,
+            pi_task_ping_reset_on_activity=None,
         ),
         project_root=project_root,
         control_root=project_root,
@@ -49,7 +51,10 @@ def _fake_launch_context(
                 },
             ),
             spec=SimpleNamespace(name="fake-spec"),
-            run_params=SimpleNamespace(appended_system_prompt=system or ""),
+            run_params=SimpleNamespace(
+                appended_system_prompt=system or "",
+                interactive=False,
+            ),
         ),
     )
 
