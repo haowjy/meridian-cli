@@ -41,6 +41,8 @@ function mockHost(entries: PanelEntry[] = []): TaskPanelHost {
     list: vi.fn(async () => entries),
     onEvent: vi.fn(() => () => {}),
     setSyncEntries: vi.fn(),
+    getOutput: vi.fn(() => null),
+    getFileSize: vi.fn(() => null),
     kill: vi.fn(async () => ({ ok: true })),
     clearFinished: vi.fn(async () => 0),
     backgroundTask: vi.fn(async () => ({ ok: true })),
@@ -132,5 +134,50 @@ describe("TasksPanelComponent handleInput", () => {
       expect(host.list).toHaveBeenCalledTimes(2);
     });
     setForegroundUserBashTaskId(null);
+  });
+});
+
+describe("TasksPanelComponent layout", () => {
+  it("pins footer to the bottom with output preview above the process list", async () => {
+    const host = mockHost([sampleEntry]);
+    const panel = new TasksPanelComponent(
+      { requestRender: vi.fn(), terminal: { rows: 30 } },
+      mockTheme(),
+      { onQuit: vi.fn(), onOpenStream: vi.fn() },
+      host,
+    );
+    await vi.waitFor(() => {
+      expect(host.list).toHaveBeenCalled();
+    });
+
+    const rendered = panel.render(80);
+    const footerIndex = rendered.findIndex((line) => line.includes("q quit"));
+    const outputIndex = rendered.findIndex((line) => line.includes("enter → stream"));
+    const processHeaderIndex = rendered.findIndex((line) => line.includes("Process"));
+
+    expect(footerIndex).toBeGreaterThanOrEqual(0);
+    expect(outputIndex).toBeGreaterThanOrEqual(0);
+    expect(processHeaderIndex).toBeGreaterThan(outputIndex);
+    expect(footerIndex).toBe(rendered.length - 1);
+    expect(footerIndex).toBeGreaterThan(processHeaderIndex);
+  });
+
+  it("does not requestRender after dispose", async () => {
+    const requestRender = vi.fn();
+    const host = mockHost([sampleEntry]);
+    const panel = new TasksPanelComponent(
+      { requestRender, terminal: { rows: 24 } },
+      mockTheme(),
+      { onQuit: vi.fn(), onOpenStream: vi.fn() },
+      host,
+    );
+    await vi.waitFor(() => {
+      expect(host.list).toHaveBeenCalled();
+    });
+    requestRender.mockClear();
+    panel.dispose();
+    await host.list();
+    await Promise.resolve();
+    expect(requestRender).not.toHaveBeenCalled();
   });
 });

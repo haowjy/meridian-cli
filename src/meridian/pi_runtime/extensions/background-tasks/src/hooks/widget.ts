@@ -2,7 +2,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { LogDockComponent } from "../components/log-dock-component";
 import { panelConfig } from "../panel/config";
-import { getForegroundUserBashTaskId, USER_BASH_FOREGROUND_HINT } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 import type { PanelEntry } from "../panel/types";
 import {
@@ -120,16 +119,7 @@ export function setupTaskWidget(
 
     if (panelConfig.widget.showStatusWidget) {
       const maxWidth = process.stdout.columns || 120;
-      const lines = renderStatusWidget(entries, activeCtx.ui.theme, maxWidth);
-      const foregroundHint = getForegroundUserBashTaskId()
-        ? themeLine(activeCtx.ui.theme, USER_BASH_FOREGROUND_HINT)
-        : null;
-      const widgetLines =
-        lines.length > 0
-          ? [...lines, ...(foregroundHint ? [foregroundHint] : [])]
-          : foregroundHint
-            ? [foregroundHint]
-            : [];
+      const widgetLines = renderStatusWidget(entries, activeCtx.ui.theme, maxWidth);
       activeCtx.ui.setWidget(
         STATUS_WIDGET_ID,
         widgetLines.length > 0 ? widgetLines : undefined,
@@ -194,10 +184,6 @@ export function setupTaskWidget(
 
   refreshStatusWidgetRef = updateWidget;
   return { update: updateWidget, dockActions };
-}
-
-function themeLine(theme: ExtensionContext["ui"]["theme"], text: string): string {
-  return theme.fg("dim", text);
 }
 
 export function formatSettingsPingSummary(): string {

@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { TasksPanelComponent } from "../components/tasks-panel-component";
 import { LogOverlayComponent } from "../components/log-overlay-component";
-import { PsPanelFrame } from "../components/ps-panel-frame";
 import { formatPsTable } from "../format_rows";
 import { refreshStatusWidget, STATUS_WIDGET_ID } from "../hooks/widget";
 import type { TaskPanelHost } from "../panel/host";
@@ -10,7 +10,7 @@ import { listUnifiedRows } from "./actions";
 import type { TaskRegistry } from "../task_registry";
 import type { BackgroundTaskRecord, PsRow } from "../types";
 
-/** Full-screen /ps takeover (covers editor + widgets; chat may remain above in Pi). */
+/** Full-screen /ps overlay (covers editor + widgets; chat may remain above in Pi). */
 const PS_PANEL_OPTIONS = {
   overlay: true as const,
   overlayOptions: {
@@ -78,11 +78,11 @@ export function registerPsCommand(
       try {
         await ctx.ui.custom<string | null>(
           (tui, theme, _keybindings, done) => {
-            let frame: PsPanelFrame | null = null;
+            let panel: TasksPanelComponent | null = null;
             const actions = {
               onQuit: (): void => {
-                frame?.dispose();
-                frame = null;
+                panel?.dispose();
+                panel = null;
                 done(null);
               },
               onOpenStream: async (taskId: string): Promise<void> => {
@@ -98,12 +98,12 @@ export function registerPsCommand(
                     }),
                   LOG_OVERLAY_OPTIONS,
                 );
-                frame?.invalidate();
+                panel?.invalidate();
                 tui.requestRender();
               },
             };
-            frame = new PsPanelFrame(tui, theme, actions, panelHost);
-            return frame;
+            panel = new TasksPanelComponent(tui, theme, actions, panelHost);
+            return panel;
           },
           PS_PANEL_OPTIONS,
         );

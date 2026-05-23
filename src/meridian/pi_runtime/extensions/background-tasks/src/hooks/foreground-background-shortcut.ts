@@ -1,17 +1,9 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 import { backgroundForegroundBash } from "../background_foreground";
-import {
-  getForegroundUserBashTaskId,
-  onForegroundBashChange,
-  USER_BASH_FOREGROUND_HINT,
-} from "../bash_bridge";
+import { getForegroundUserBashTaskId } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
-
-const FOREGROUND_BASH_STATUS_KEY = "meridian-background-tasks:foreground-bash";
-
-let foregroundChangeUnsubscribe: (() => void) | null = null;
 
 export type CtrlBBackgroundStep = {
   action: "ignore" | "background";
@@ -32,34 +24,15 @@ export function stepCtrlBBackground(
   return { action: "background", consume: true };
 }
 
-function syncForegroundStatus(ctx: ExtensionContext | null): void {
-  if (!ctx?.hasUI) {
-    return;
-  }
-  const hasForeground = getForegroundUserBashTaskId() != null;
-  ctx.ui.setStatus(
-    FOREGROUND_BASH_STATUS_KEY,
-    hasForeground ? USER_BASH_FOREGROUND_HINT : undefined,
-  );
-}
-
 export function setupForegroundBackgroundShortcut(
   pi: ExtensionAPI,
   getPanelHost: () => TaskPanelHost | null,
 ): void {
   let unsubTerminalInput: (() => void) | null = null;
-  let activeCtx: ExtensionContext | null = null;
-
-  foregroundChangeUnsubscribe?.();
-  foregroundChangeUnsubscribe = onForegroundBashChange(() => {
-    syncForegroundStatus(activeCtx);
-  });
 
   pi.on("session_start", async (_event, ctx) => {
     unsubTerminalInput?.();
     unsubTerminalInput = null;
-    activeCtx = ctx.hasUI ? ctx : null;
-    syncForegroundStatus(activeCtx);
 
     if (!ctx.hasUI) {
       return;
@@ -83,13 +56,5 @@ export function setupForegroundBackgroundShortcut(
   pi.on("session_shutdown", async () => {
     unsubTerminalInput?.();
     unsubTerminalInput = null;
-    syncForegroundStatus(activeCtx);
-    activeCtx = null;
   });
-}
-
-/** Clear foreground UI listener when extension unloads (tests). */
-export function teardownForegroundBackgroundShortcut(): void {
-  foregroundChangeUnsubscribe?.();
-  foregroundChangeUnsubscribe = null;
 }

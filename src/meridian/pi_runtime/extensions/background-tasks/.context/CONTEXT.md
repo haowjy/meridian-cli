@@ -9,12 +9,12 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 - Pi **`!`** is a run shortcut — not background.
 - Trailing **`&`** on **`$`** (`splitUserBashBackground`): immediate `{ result }`, detached task in registry/`/ps`, no `waitForCompletion`.
 - Foreground **`$`**: `operations.exec` blocks until exit or background; foreground row pinned with **`● fg`**.
-- **`ctrl+b`** (single press, only while foreground `$` runs): same as `/ps` background via `onTerminalInput` — Claude Code parity. Hint: **`(ctrl+b to run in background)`** in status widget + footer while foreground bash runs (Pi core still shows escape/ctrl+c on the bash strip).
-- **In-chat hint** (`meridian:foreground-bash-hint`): once per foreground **`$`** task when the slot blocks — `/ps to manage tasks · ctrl+b to run in background`. Shown immediately (not `deliverAs: followUp`). Text in `details.hintText` (empty `content`); `triggerTurn: false`. Not for trailing **`&`** (already detached).
+- **`ctrl+b`** (single press, only while foreground `$` runs): same as `/ps` background via `onTerminalInput` — Claude Code parity.
+- **In-chat hint** (`meridian:foreground-bash-hint`): once per foreground **`$`** task — `/ps to manage tasks · ctrl+b to run in background`. User-only (`details.hintText`, empty `content`, `triggerTurn: false`). Not for trailing **`&`** (already detached).
 - **`/ps`**: **`b`** on foreground row → `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** and **`ctrl+b`** when applicable.
 - Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
-- **Status widget** (below editor, pi-processes style): live tasks only — `tasks: <name> running`; optional **`(ctrl+b …)`** while foreground `$` blocks. No ping countdown or session policy line.
-- **`/ps` panel**: full-terminal **overlay** (`width/maxHeight: 100%`); status widget hidden while open. **1 row per task** (max 8); **4-line** log preview. **Enter** → **Process Logs** stream overlay (`streamFollow`); **q** back to `/ps`, **q** again to chat. Pi may still show scrollback above the overlay — no extension API to hide transcript. **1s refresh** + **`meridian:task:output`** for preview.
+- **Status widget** (below editor): live tasks only — `tasks: <name> running | +N more`. Hidden while `/ps` is open.
+- **`/ps`**: `TasksPanelComponent` returned directly from `ui.custom` overlay — **never** call `tui.setFocus` (Pi `showOverlay` owns `preFocus`). Layout in `panel/ps-view.ts` (preview top, list + footer bottom). **1 row per task** (max 8); **4-line** preview. **Enter** → log stream overlay; **q** back. **1s** timer + **`meridian:task:output`** for live preview.
 
 Consumes `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`) for unified `/ps` rows.
 

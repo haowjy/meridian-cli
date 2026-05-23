@@ -1,8 +1,6 @@
 import type { TaskRegistry } from "./task_registry";
 
 export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
-/** Shown in footer/status widget while a foreground `$` bash command is running. */
-export const USER_BASH_FOREGROUND_HINT = "(ctrl+b to run in background)";
 
 export type BashBridgeState = {
   registry: TaskRegistry | null;
