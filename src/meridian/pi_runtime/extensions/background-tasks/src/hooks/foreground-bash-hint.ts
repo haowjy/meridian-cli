@@ -14,13 +14,9 @@ import { safeSendMessage } from "./utils";
 
 export const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
 
-/** In-chat follow-up when interactive `$` blocks the foreground slot. */
-export const USER_FOREGROUND_BASH_HINT_TEXT =
-  "/ps to manage tasks · ctrl+b to run in background (frees $) · $ cmd & · /ps then b";
-
-/** In-chat follow-up when agent `bash` is tracked (foreground tool run). */
-export const AGENT_FOREGROUND_BASH_HINT_TEXT =
-  "/ps to manage tasks · /ps then b to background this bash";
+/** In-chat follow-up when interactive `$` blocks the foreground slot (display-only; not LLM context). */
+export const FOREGROUND_BASH_HINT_TEXT =
+  "/ps to manage tasks · ctrl+b to run in background";
 
 export type ForegroundBashHintKind = "user" | "agent";
 
@@ -55,19 +51,16 @@ export function maybePostForegroundBashHint(
   if (!taskId || hintedTaskIds.has(taskId)) {
     return false;
   }
-  if (kind === "agent" && !isTrackedWaitPolicy(waitPolicy)) {
+  if (kind === "agent" || !isTrackedWaitPolicy(waitPolicy)) {
     return false;
   }
-
-  const content =
-    kind === "user" ? USER_FOREGROUND_BASH_HINT_TEXT : AGENT_FOREGROUND_BASH_HINT_TEXT;
 
   hintedTaskIds.add(taskId);
   safeSendMessage(
     pi,
     {
       customType: FOREGROUND_BASH_HINT_CUSTOM_TYPE,
-      content,
+      content: FOREGROUND_BASH_HINT_TEXT,
       display: true,
       details: { kind, taskId },
     },
