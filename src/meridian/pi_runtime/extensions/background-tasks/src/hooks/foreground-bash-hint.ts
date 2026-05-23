@@ -14,15 +14,27 @@ import { safeSendMessage } from "./utils";
 
 export const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
 
-/** In-chat follow-up when interactive `$` blocks the foreground slot (display-only; not LLM context). */
-export const FOREGROUND_BASH_HINT_TEXT =
-  "/ps to manage tasks · ctrl+b to run in background";
+/** In-chat follow-up when interactive `$` blocks the foreground slot. */
+export const USER_FOREGROUND_BASH_HINT_TEXT =
+  "Running in foreground — /ps · ctrl+b to background · & to detach";
+
+/** In-chat follow-up when agent `bash` is tracked (foreground tool run). */
+export const AGENT_FOREGROUND_BASH_HINT_TEXT = "Agent bash running — see /ps";
+
+/** Pi sendMessage options: display-only hint (no agent turn). */
+export const FOREGROUND_BASH_HINT_SEND_OPTIONS = {
+  deliverAs: "followUp",
+  triggerTurn: false,
+  excludeFromContext: true,
+} as const;
 
 export type ForegroundBashHintKind = "user" | "agent";
 
 type ForegroundBashHintDetails = {
   kind: ForegroundBashHintKind;
   taskId: string;
+  /** Shown in TUI only; kept out of message `content` so convertToLlm omits hint text. */
+  hintText: string;
 };
 
 type ForegroundBashHintMessage = {
@@ -51,27 +63,37 @@ export function maybePostForegroundBashHint(
   if (!taskId || hintedTaskIds.has(taskId)) {
     return false;
   }
-  if (kind === "agent" || !isTrackedWaitPolicy(waitPolicy)) {
+  if (kind === "agent" && !isTrackedWaitPolicy(waitPolicy)) {
     return false;
   }
+
+  const hintText =
+    kind === "user" ? USER_FOREGROUND_BASH_HINT_TEXT : AGENT_FOREGROUND_BASH_HINT_TEXT;
 
   hintedTaskIds.add(taskId);
   safeSendMessage(
     pi,
     {
       customType: FOREGROUND_BASH_HINT_CUSTOM_TYPE,
-      content: FOREGROUND_BASH_HINT_TEXT,
+      content: "",
       display: true,
-      details: { kind, taskId },
+      details: { kind, taskId, hintText },
     },
-    { deliverAs: "followUp", triggerTurn: false },
+    FOREGROUND_BASH_HINT_SEND_OPTIONS,
   );
   return true;
 }
 
+function hintTextFromMessage(message: ForegroundBashHintMessage): string {
+  const fromDetails = message.details?.hintText;
+  if (typeof fromDetails === "string" && fromDetails.length > 0) {
+    return fromDetails;
+  }
+  return typeof message.content === "string" ? message.content : "";
+}
+
 function renderHintLine(message: ForegroundBashHintMessage, theme: Theme): Text {
-  const text = typeof message.content === "string" ? message.content : "";
-  return new Text(theme.fg("dim", text), 0, 0);
+  return new Text(theme.fg("dim", hintTextFromMessage(message)), 0, 0);
 }
 
 export function setupForegroundBashHint(pi: ExtensionAPI): void {
