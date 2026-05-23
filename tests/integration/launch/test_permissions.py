@@ -126,6 +126,30 @@ def test_opencode_deny_defaults_and_claude_tool_projection() -> None:
     }
 
 
+def test_claude_tool_projection_keeps_allow_rules_without_deny_default() -> None:
+    _config, resolver = resolve_permission_pipeline(
+        sandbox="danger-full-access",
+        tools={
+            "bash": "allow",
+            "bash(meridian spawn *)": "allow",
+            "bash(meridian session *)": "allow",
+            "agent": "deny",
+            "write": "deny",
+        },
+        approval="auto",
+    )
+
+    assert isinstance(resolver, ToolsPermissionResolver)
+    assert resolve_permission_flags(resolver, HarnessId.CLAUDE) == (
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Bash,Bash(meridian spawn *),Bash(meridian session *)",
+        "--disallowedTools",
+        "Agent,Write",
+    )
+
+
 def test_tools_resolver_codex_ignores_claude_tool_flags() -> None:
     config, resolver = resolve_permission_pipeline(
         sandbox="workspace-write",

@@ -5,6 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- Claude tool projection now preserves explicit allow rules on allow-default profiles, so scoped Bash grants like `bash(meridian spawn *)` become `--allowedTools` instead of only projecting deny rules.
+- Bumped `mars-agents` to `0.7.0`.
 - Configuration docs now show Mars-owned routing/agent overlays in `mars.toml`, not legacy Meridian `[agents]` config.
 - Model catalog command docs now use `meridian mars models ...`.
 
