@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-23
+
 ### Added
 - Cursor subprocess harness integration: new `HarnessId.CURSOR`, `CursorAdapter`, `project_cursor_spec_to_cli_args`, and `CURSOR_EXTRACTOR`.
 - Cursor model alias in `mars.toml`: `composer` (`cursor/composer-2.5`).
