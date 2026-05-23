@@ -71,6 +71,61 @@ function commandFrom(event: ToolResultEvent): string {
   return "";
 }
 
+/** Trailing shell `&` on interactive `$` commands (quote-aware; not agent bash). */
+export function splitUserBashBackground(command: string): {
+  background: boolean;
+  execCommand: string;
+} {
+  const trimmed = command.trim();
+  if (!trimmed || trimmed === "&") {
+    return { background: false, execCommand: trimmed };
+  }
+
+  let inSingle = false;
+  let inDouble = false;
+  let escape = false;
+  let lastUnquotedAmpersand = -1;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && (inSingle || inDouble)) {
+      escape = true;
+      continue;
+    }
+    if (!inDouble && ch === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && ch === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === "&") {
+      lastUnquotedAmpersand = i;
+    }
+  }
+
+  if (lastUnquotedAmpersand < 0) {
+    return { background: false, execCommand: trimmed };
+  }
+
+  const afterAmpersand = trimmed.slice(lastUnquotedAmpersand + 1);
+  if (afterAmpersand.trim() !== "") {
+    return { background: false, execCommand: trimmed };
+  }
+
+  const execCommand = trimmed.slice(0, lastUnquotedAmpersand).trimEnd();
+  if (!execCommand) {
+    return { background: false, execCommand: trimmed };
+  }
+
+  return { background: true, execCommand };
+}
+
 function bashLifecycleState(details: Record<string, unknown>): string | null {
   const asyncState = readAsyncDetails(details)?.state;
   if (typeof asyncState === "string") {
@@ -133,6 +188,28 @@ export function setupBashBridge(
       return;
     }
     const cwd = typed.cwd?.trim() || process.cwd();
+    const { background, execCommand } = splitUserBashBackground(command);
+
+    if (background) {
+      const env = { ...process.env } as Record<string, string>;
+      const { runtimeJob } = await registry.startJob(
+        execCommand,
+        "detached",
+        cwd,
+        env,
+        undefined,
+        { ingress: "bash" },
+      );
+      await registry.detachJob(runtimeJob.record.task_id);
+      const taskId = runtimeJob.record.task_id;
+      return {
+        result: {
+          exitCode: 0,
+          output: `Detached task ${taskId} — /ps to manage\n`,
+          cancelled: false,
+        },
+      };
+    }
 
     return {
       operations: {
