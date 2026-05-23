@@ -136,7 +136,7 @@ Options:
   --json            Emit command output as JSON.
   --format TEXT     Set output format: text or json.
   --config TEXT     Path to a user config TOML overlay.
-  --harness TEXT    Force harness id (claude, codex, or opencode).
+  --harness TEXT    Force harness id (claude, codex, cursor, or opencode).
   --model, -m TEXT  Model id or alias for primary harness.
 
 Commands:
@@ -160,7 +160,7 @@ Primary launch/resume:
   identity changes and may reduce prompt-cache locality. --from starts
   fresh with prior context as reference material only.
 
-Global harness selection: --harness (or prefix with claude/codex/opencode)
+Global harness selection: --harness (or prefix with claude/codex/cursor/opencode)
 
 Bundled package manager: meridian mars ARGS...
 

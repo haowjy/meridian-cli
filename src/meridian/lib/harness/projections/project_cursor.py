@@ -113,9 +113,9 @@ def _resolve_cursor_model(
         return model
 
     # Rule 3: search candidates for boundary-aware prefix + effort match.
-    # Effort must appear as a complete trailing segment: the slug ends with
-    # ``-{effort}`` or ``-{effort}-thinking`` (not a substring of a longer
-    # effort name like ``-extra-high`` matching ``-high``).
+    # Effort must appear as a trailing segment (endswith) or before a known
+    # suffix like -thinking. When multiple slugs match (e.g. both "gpt-5.5-high"
+    # and "gpt-5.5-extra-high" end with "-high"), the shortest match wins.
     effort_suffix = f"-{normalized_effort}"
     effort_matches = [
         slug

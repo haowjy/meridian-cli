@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `candidate_slugs` field threaded from mars launch bundle through `bundle_adapter → ModelSelectionContext → SpawnParams → ResolvedLaunchSpec → project_cursor`; all non-cursor projections account for the field.
 - Unit tests for `_resolve_cursor_model` algorithm: boundary-aware prefix matching, effort segment matching, thinking-variant preference (D5), fallback construction.
 - `validate_prompt_size` guard in `CursorSubprocessConnection.start()`, matching other harness connections.
+- `cursor` harness shortcut added to `HARNESS_SHORTCUT_NAMES` — `meridian cursor spawn ...` now routes to the cursor harness.
+- Edge-case test: `effort="high"` with only `"extra-high"` in catalog matches via `endswith` and returns `gpt-5.5-extra-high`.
+- Windows smoke steps for cursor subprocess boundary: missing binary and non-JSON protocol failure, using PowerShell and `.bat` fake binaries.
 
 ### Changed
 - Launch constants now include `BASE_COMMAND_CURSOR_SUBPROCESS` for `cursor agent --print --output-format stream-json --trust`.
@@ -22,6 +25,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Removed invalid `MERIDIAN_CURSOR_BINARY` env-var reference from `docs/configuration.md`.
+- Corrected misleading comment in `_resolve_cursor_model`: comment claimed effort boundary prevented `extra-high` matching `high`, but both end with `-high`; shortest-match tiebreaker handles disambiguation.
+- Scoped `# Cursor only` comment to `candidate_slugs` only; `task_cwd` is general-purpose (used by all harnesses).
+- Added explanatory comment to `mid_turn_injection="queue"` in `CursorSubprocessConnection`: Literal type has no `"none"`; Cursor is single-turn so injection is unused in practice.
+- All harness shortcut help text now includes `cursor` alongside `claude`, `codex`, and `opencode`.
 
 ## [0.2.0] - 2026-05-22
 

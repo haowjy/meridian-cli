@@ -203,3 +203,9 @@ class TestResolveCursorModel:
     def test_effort_normalized_strip_whitespace(self) -> None:
         result = _resolve_cursor_model("gpt-5.5", "  high  ", ["gpt-5.5-high"])
         assert result == "gpt-5.5-high"
+
+    # Edge case: effort='high' with only 'extra-high' in catalog
+    def test_effort_high_matches_extra_high_when_no_plain_high(self) -> None:
+        """When effort='high' and only 'extra-high' exists, it matches via endswith."""
+        result = _resolve_cursor_model("gpt-5.5", "high", ["gpt-5.5-extra-high"])
+        assert result == "gpt-5.5-extra-high"

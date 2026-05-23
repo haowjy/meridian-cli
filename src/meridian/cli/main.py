@@ -308,7 +308,7 @@ def root(
     ] = "",
     harness: Annotated[
         str | None,
-        Parameter(name="--harness", help="Force harness id (claude, codex, or opencode)."),
+        Parameter(name="--harness", help="Force harness id (claude, codex, cursor, or opencode)."),
     ] = None,
     agent: Annotated[
         str | None,

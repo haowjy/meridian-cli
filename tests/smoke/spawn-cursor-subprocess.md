@@ -86,3 +86,39 @@ MERIDIAN_HOME=$(mktemp -d) MERIDIAN_PROJECT_DIR="$(pwd)" PATH="$FAKE_BIN:$PATH" 
 ### No terminal `result` event note
 
 If Cursor emits valid JSON events but no terminal `result`, spawn should still fail with an actionable timeout/failure reason (not transport lookup). Capture `spawn show --format json` evidence for review.
+
+## Windows equivalents
+
+Windows versions of the key POSIX smoke steps. Run in PowerShell or `cmd.exe`.
+
+### Missing `cursor` binary (PowerShell)
+
+```powershell
+$NO_CURSOR_BIN = New-TemporaryFile | % { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+$UV_BIN = (Get-Command uv).Source
+Copy-Item $UV_BIN "$NO_CURSOR_BIN\uv.exe"
+
+$env:PATH = "$NO_CURSOR_BIN;$env:PATH"
+$env:MERIDIAN_PROJECT_DIR = (Get-Location).Path
+uv run meridian spawn --harness cursor -m composer -p "Reply with exactly OK" --timeout 1 --format json
+```
+- [ ] Exit non-zero
+- [ ] Error is actionable (harness not installed / not on PATH)
+- [ ] No traceback
+
+### Non-JSON first line (PowerShell)
+
+```powershell
+$FAKE_BIN = New-TemporaryFile | % { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+$CURSOR_BAT = "$FAKE_BIN\cursor.bat"
+Set-Content $CURSOR_BAT "@echo not-json"
+
+$MERIDIAN_HOME = New-TemporaryFile | % { Remove-Item $_; New-Item -ItemType Directory -Path $_ }
+$env:MERIDIAN_HOME = $MERIDIAN_HOME.FullName
+$env:MERIDIAN_PROJECT_DIR = (Get-Location).Path
+$env:PATH = "$FAKE_BIN;$env:PATH"
+uv run meridian spawn --harness cursor -m composer -p "Reply with exactly OK" --format json
+```
+- [ ] Ends `failed`
+- [ ] `meridian spawn show <spawn_id> --format json` includes actionable protocol failure text
+- [ ] Failure is **not** a transport-registration/transport-lookup error

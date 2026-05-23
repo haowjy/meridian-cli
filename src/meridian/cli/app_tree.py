@@ -20,7 +20,7 @@ app = App(
         "  --fork preserves agent/model/skills identity. --fork-fresh allows\n"
         "  identity changes and may reduce prompt-cache locality. --from starts\n"
         "  fresh with prior context as reference material only.\n\n"
-        "Global harness selection: --harness (or prefix with claude/codex/opencode)\n\n"
+        "Global harness selection: --harness (or prefix with claude/codex/cursor/opencode)\n\n"
         "Bundled package manager: meridian mars ARGS...\n\n"
         'Run "meridian spawn -h" for subagent usage.\n'
     ),

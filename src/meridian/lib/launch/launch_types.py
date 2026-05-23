@@ -120,9 +120,8 @@ class ResolvedLaunchSpec(BaseModel):
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
 
-    # Cursor only
     task_cwd: str | None = None
-    candidate_slugs: tuple[str, ...] = ()
+    candidate_slugs: tuple[str, ...] = ()  # Cursor only: catalog-driven effort-to-slug resolution
 
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()

@@ -60,9 +60,12 @@ from rules — it searches `candidate_slugs` for the best match.
    return verbatim. (User passed `claude-opus-4-7-thinking-high` directly.)
 2. **No effort** — return `model` unchanged; cursor uses its own default variant.
 3. **Effort specified** — search `candidate_slugs` for slugs where
-   `slug.startswith(model)` and `f"-{normalized_effort}" in slug`:
+   `_prefix_matches(slug, model)` (i.e., `slug == model or slug.startswith(f"{model}-")`) and
+   (`slug.endswith(f"-{effort}")` or `f"-{effort}-" in slug`):
    - One match → use it
-   - Multiple matches → prefer slugs containing `"thinking"` (shortest thinking match wins)
+   - Multiple matches → prefer slugs containing `"thinking"` (shortest thinking match); if
+     none, pick shortest overall. The length tiebreaker means e.g. `gpt-5.5-high` wins over
+     `gpt-5.5-extra-high` when `effort=high` (both end with `-high`; shorter wins).
    - No match → fall back to `f"{model}-{normalized_effort}"` (cursor will reject if invalid)
 
 **`candidate_slugs` source:** populated from `ResolvedLaunchSpec.candidate_slugs`, which

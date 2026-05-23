@@ -39,6 +39,8 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
     """Subprocess Cursor harness connection over stdout NDJSON."""
 
     _CAPABILITIES = ConnectionCapabilities(
+        # Literal["queue"|"interrupt_restart"|"http_post"] has no "none"; Cursor is
+        # single-turn — send_user_message always raises, so injection is not usable.
         mid_turn_injection="queue",
         supports_steer=False,
         supports_cancel=True,
