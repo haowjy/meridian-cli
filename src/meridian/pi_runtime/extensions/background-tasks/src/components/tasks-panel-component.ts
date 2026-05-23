@@ -242,6 +242,7 @@ export class TasksPanelComponent implements Component {
       return this.cachedLines;
     }
 
+    const processes = this.entries;
     const terminalRows = this.tui.terminal?.rows ?? 24;
     const layout = computePanelLayout(terminalRows, processes.length);
     const maxVisibleProcesses = layout.maxVisibleProcesses;
@@ -253,7 +254,6 @@ export class TasksPanelComponent implements Component {
     const warning = (s: string) => theme.fg("warning", s);
 
     const lines: string[] = [];
-    const processes = this.entries;
     const innerWidth = width - 2;
 
     const basePadLine = createPanelPadder(width);
