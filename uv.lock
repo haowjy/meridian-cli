@@ -751,6 +751,7 @@ templates = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest-xdist" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -782,7 +783,10 @@ requires-dist = [
 provides-extras = ["app", "dev", "templates"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest-xdist", specifier = ">=3.8.0" }]
+dev = [
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "ruff", specifier = ">=0.15.11" },
+]
 
 [[package]]
 name = "multidict"
