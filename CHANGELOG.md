@@ -8,25 +8,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cursor subprocess harness integration: new `HarnessId.CURSOR`, `CursorAdapter`, `project_cursor_spec_to_cli_args`, and `CURSOR_EXTRACTOR`.
 - Cursor model alias in `mars.toml`: `composer` (`cursor/composer-2.5`).
 - Cursor harness unit tests for subprocess projection and stream-json extraction.
-- Cursor effort projection: `_resolve_cursor_model(model, effort, candidate_slugs)` resolves `--effort high` to catalog slug (e.g. `gpt-5.5-high`); prefers thinking variants for Claude models.
-- `candidate_slugs` field threaded from mars launch bundle through `bundle_adapter → ModelSelectionContext → SpawnParams → ResolvedLaunchSpec → project_cursor`; all non-cursor projections account for the field.
-- Unit tests for `_resolve_cursor_model` algorithm: boundary-aware prefix matching, effort segment matching, thinking-variant preference (D5), fallback construction.
 - `validate_prompt_size` guard in `CursorSubprocessConnection.start()`, matching other harness connections.
 - `cursor` harness shortcut added to `HARNESS_SHORTCUT_NAMES` — `meridian cursor spawn ...` now routes to the cursor harness.
-- Edge-case test: `effort="high"` with only `"extra-high"` in catalog matches via `endswith` and returns `gpt-5.5-extra-high`.
 - Windows smoke steps for cursor subprocess boundary: missing binary and non-JSON protocol failure, using PowerShell and `.bat` fake binaries.
 
 ### Changed
+- Cursor harness launch now trusts Mars `routing.harness_model` for effort routing; `project_cursor` passes `--model` through directly and no longer resolves effort slugs in Meridian.
 - Launch constants now include `BASE_COMMAND_CURSOR_SUBPROCESS` for `cursor agent --print --output-format stream-json --trust`.
 - `ResolvedLaunchSpec` now carries `task_cwd` so harness projections can consume explicit task working directory when needed.
 - Projection drift guards now account for `task_cwd` across all harness projection modules.
 - `CursorAdapter._CONSUMED_FIELDS`: removed `continue_harness_session_id` and `continue_fork` (moved to `_EXPLICITLY_IGNORED_FIELDS` — these fields are cleared before reaching the adapter when resume/fork are unsupported).
-- `policies.py`: direct `bundle_result.candidate_slugs` field access replaces defensive `getattr`; `FakeBundleResult` fixtures updated with `candidate_slugs` field.
+
+### Removed
+- Meridian-side Cursor effort slug threading: removed `candidate_slugs` through launch bundle parsing, model selection context, spawn params, launch specs, adapter ignored-field accounting, and projection delegated-field accounting.
 
 ### Fixed
 - Removed invalid `MERIDIAN_CURSOR_BINARY` env-var reference from `docs/configuration.md`.
-- Corrected misleading comment in `_resolve_cursor_model`: comment claimed effort boundary prevented `extra-high` matching `high`, but both end with `-high`; shortest-match tiebreaker handles disambiguation.
-- Scoped `# Cursor only` comment to `candidate_slugs` only; `task_cwd` is general-purpose (used by all harnesses).
 - Added explanatory comment to `mid_turn_injection="queue"` in `CursorSubprocessConnection`: Literal type has no `"none"`; Cursor is single-turn so injection is unused in practice.
 - All harness shortcut help text now includes `cursor` alongside `claude`, `codex`, and `opencode`.
 

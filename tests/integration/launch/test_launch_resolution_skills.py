@@ -46,7 +46,6 @@ class _FakeBundleResult:
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...] = ()
-    candidate_slugs: tuple[str, ...] = ()
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()

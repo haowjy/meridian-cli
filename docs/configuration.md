@@ -433,22 +433,22 @@ meridian cursor spawn -m composer -p "task"
 
 ### Effort and Slug Resolution
 
-`--effort` maps to the appropriate cursor model slug. Cursor model slugs encode effort as a suffix (e.g. `gpt-5.5-high`).
+Mars resolves `model + effort` to `routing.harness_model` in the launch bundle.
+Meridian passes that resolved harness model to Cursor as the effective `--model`.
+Cursor model slugs encode effort as a suffix (e.g. `gpt-5.5-high`).
 
 ```bash
-meridian spawn --harness cursor -m gpt-5.5 --effort high   # → --model gpt-5.5-high
-meridian spawn --harness cursor -m gpt-5.5 --effort low    # → --model gpt-5.5-low
-meridian spawn --harness cursor -m gpt-5.5                 # → --model gpt-5.5 (cursor picks default effort)
+meridian spawn --harness cursor -m gpt-5.5 --effort high   # → effective --model gpt-5.5-high (bundle-resolved)
+meridian spawn --harness cursor -m gpt-5.5 --effort low    # → effective --model gpt-5.5-low (bundle-resolved)
+meridian spawn --harness cursor -m gpt-5.5                 # → effective --model gpt-5.5 (bundle-resolved)
 ```
 
-**Claude models in Cursor:** when both standard and thinking variants are available for an effort level, the thinking variant is preferred automatically:
+**Claude models in Cursor:** if Mars resolves to a thinking variant for the selected effort, Meridian passes that effective resolved model through:
 
 ```bash
 meridian spawn --harness cursor -m claude-opus-4-7 --effort high
-# → --model claude-opus-4-7-thinking-high  (thinking variant preferred over claude-opus-4-7-high)
+# → effective --model claude-opus-4-7-thinking-high (bundle-resolved)
 ```
-
-This is harness-level policy — it is not configurable per-spawn.
 
 **Fast variants** (`-fast` suffix) are not yet available. Deferred to a future release.
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -20,8 +19,6 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_resolver",
         "extra_args",
         "task_cwd",
-        "effort",
-        "candidate_slugs",
     }
 )
 
@@ -33,6 +30,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "interactive",
         "mcp_tools",
         "projected_roots",
+        "effort",
         "agent_name",
         "appended_system_prompt",
         "agents_payload",
@@ -83,60 +81,6 @@ def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
         )
 
 
-def _prefix_matches(slug: str, model: str) -> bool:
-    """True when *slug* is *model* itself or starts with ``model-``."""
-    return slug == model or slug.startswith(f"{model}-")
-
-
-def _resolve_cursor_model(
-    model: str,
-    effort: str | None,
-    candidate_slugs: Sequence[str],
-) -> str:
-    """Resolve the best cursor slug for model + effort.
-
-    Rules:
-    1. Exact match in catalog with no effort → pass through verbatim.
-    2. No effort → return model unchanged.
-    3. Search candidates starting with ``model-`` containing ``-effort``
-       as a complete trailing segment; prefer thinking variants (D5).
-    4. No match → fallback to ``{model}-{effort}``.
-    """
-
-    normalized_effort = effort.strip().lower() if effort and effort.strip() else None
-
-    # Rule 1: exact catalog match with no effort override → verbatim.
-    if model in candidate_slugs and not normalized_effort:
-        return model
-
-    if not normalized_effort:
-        return model
-
-    # Rule 3: search candidates for boundary-aware prefix + effort match.
-    # Effort must appear as a trailing segment (endswith) or before a known
-    # suffix like -thinking. When multiple slugs match (e.g. both "gpt-5.5-high"
-    # and "gpt-5.5-extra-high" end with "-high"), the shortest match wins.
-    effort_suffix = f"-{normalized_effort}"
-    effort_matches = [
-        slug
-        for slug in candidate_slugs
-        if _prefix_matches(slug, model)
-        and (slug.endswith(effort_suffix) or f"{effort_suffix}-" in slug)
-    ]
-
-    if len(effort_matches) == 1:
-        return effort_matches[0]
-
-    if len(effort_matches) > 1:
-        # D5: prefer thinking variants (cursor Claude naming convention).
-        thinking = [slug for slug in effort_matches if "thinking" in slug]
-        if thinking:
-            return min(thinking, key=len)
-        return min(effort_matches, key=len)
-
-    return f"{model}-{normalized_effort}"
-
-
 def project_cursor_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -154,8 +98,7 @@ def project_cursor_spec_to_cli_args(
     command: list[str] = list(base_command)
 
     if spec.model is not None:
-        resolved_model = _resolve_cursor_model(spec.model, spec.effort, spec.candidate_slugs)
-        command.extend(("--model", resolved_model))
+        command.extend(("--model", spec.model))
 
     command.extend(_project_approval_flags(spec))
 

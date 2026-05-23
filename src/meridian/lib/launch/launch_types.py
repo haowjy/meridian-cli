@@ -121,7 +121,6 @@ class ResolvedLaunchSpec(BaseModel):
     reference_items: tuple[Any, ...] = ()
 
     task_cwd: str | None = None
-    candidate_slugs: tuple[str, ...] = ()  # Cursor only: catalog-driven effort-to-slug resolution
 
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()

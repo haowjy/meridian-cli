@@ -273,7 +273,6 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "context_from_payload",
             "reference_items",
             "task_cwd",
-            "candidate_slugs",
         }
     )
 

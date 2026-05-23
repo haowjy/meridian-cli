@@ -63,13 +63,6 @@ class AliasEntry(BaseModel):
     def mars_provided_harness(self) -> HarnessId | None:
         return self.resolved_harness
 
-    def harness_model_id_for(self, harness: str) -> str | None:
-        """Return the harness-specific model ID for a given harness, or None."""
-        for path in self.runnable_paths:
-            if path.harness == harness:
-                return path.harness_model_id
-        return None
-
     def format_text(self, ctx: object | None = None) -> str:
         _ = ctx
         from meridian.lib.core.formatting import kv_block

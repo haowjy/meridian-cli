@@ -56,7 +56,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "effort",
             "extra_args",
             "task_cwd",
-            "candidate_slugs",
             "mcp_tools",
             "projected_roots",
             "interactive",
@@ -156,7 +155,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             task_cwd=run.task_cwd,
-            candidate_slugs=run.candidate_slugs,
         )
 
     def preflight(

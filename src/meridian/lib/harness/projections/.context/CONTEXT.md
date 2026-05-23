@@ -49,42 +49,16 @@ projector.
 
 #### Model + effort resolution
 
-Cursor bakes effort level (and sometimes thinking mode) into slug names. The naming
-is inconsistent across families: effort appears before or after "thinking", and effort
-labels differ (`xhigh` vs `extra-high`). The projector does not construct slug strings
-from rules — it searches `candidate_slugs` for the best match.
+Cursor projection now treats `spec.model` as already-resolved runnable ID and passes it
+through directly to `--model`. It does not perform local slug/effort matching.
+Mars launch-bundle resolves Cursor effort into `routing.harness_model`, and Meridian
+bind selects that value as `effective_model` before `ResolvedLaunchSpec` is created.
+So by projection time there is nothing to resolve locally.
 
-**`_resolve_cursor_model(model, effort, candidate_slugs)`** rules:
+#### `_PROJECTED_FIELDS` excludes `"effort"`
 
-1. **Exact match + no effort** — `model` is already a full cursor slug in the catalog;
-   return verbatim. (User passed `claude-opus-4-7-thinking-high` directly.)
-2. **No effort** — return `model` unchanged; cursor uses its own default variant.
-3. **Effort specified** — search `candidate_slugs` for slugs where
-   `_prefix_matches(slug, model)` (i.e., `slug == model or slug.startswith(f"{model}-")`) and
-   (`slug.endswith(f"-{effort}")` or `f"-{effort}-" in slug`):
-   - One match → use it
-   - Multiple matches → prefer slugs containing `"thinking"` (shortest thinking match); if
-     none, pick shortest overall. The length tiebreaker means e.g. `gpt-5.5-high` wins over
-     `gpt-5.5-extra-high` when `effort=high` (both end with `-high`; shorter wins).
-   - No match → fall back to `f"{model}-{normalized_effort}"` (cursor will reject if invalid)
-
-**`candidate_slugs` source:** populated from `ResolvedLaunchSpec.candidate_slugs`, which
-mars routing fills with all raw cursor catalog slugs that prefix-match the requested
-`model_id`. Empty when offline, when cursor is not installed, or when mars predates
-cursor probe support. An empty list causes the no-match fallback path, which constructs
-a best-guess slug — caller error, not a silent failure.
-
-**Thinking preference:** when multiple effort matches exist, the projector prefers
-thinking variants. This is cursor-harness policy baked into projection, not a user flag.
-The preference reflects that thinking variants tend to be the intended target for
-Claude models with effort overrides.
-
-#### `_PROJECTED_FIELDS` includes `"effort"` and `"candidate_slugs"`
-
-Both fields are consumed by `_resolve_cursor_model` before the `--model` flag is
-emitted. They are not forwarded to the subprocess. Earlier versions had `effort` in
-`_DELEGATED_FIELDS`; moving it to `_PROJECTED_FIELDS` means the drift guard enforces
-that effort handling is explicit in this projector.
+Cursor still receives `effort` on `ResolvedLaunchSpec`, but projection no longer
+consumes it. The field is delegated/accounted to keep drift-guard coverage complete.
 
 #### MVP capability restrictions
 

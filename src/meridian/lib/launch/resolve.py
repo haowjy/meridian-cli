@@ -207,25 +207,6 @@ def resolve_harness(
     return override_harness
 
 
-def select_harness_model_id(
-    *,
-    model_entry: AliasEntry | None,
-    harness_id: HarnessId,
-    canonical_model_id: str,
-) -> str:
-    """Select the harness-specific model ID for the chosen route.
-
-    Returns canonical_model_id when no harness-specific ID is available.
-    """
-    if model_entry is None:
-        return canonical_model_id
-
-    specific_id = model_entry.harness_model_id_for(str(harness_id))
-    if isinstance(specific_id, str):
-        return specific_id
-    return canonical_model_id
-
-
 def _coerce_positive_timeout_seconds(value: object) -> float | None:
     if isinstance(value, bool):
         return None
@@ -321,6 +302,5 @@ __all__ = [
     "resolve_profile_path",
     "resolve_skill_paths",
     "resolve_skills_from_profile",
-    "select_harness_model_id",
     "validate_harness_compatibility",
 ]

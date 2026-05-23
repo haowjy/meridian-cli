@@ -44,7 +44,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "mcp_tools",
         "projected_roots",
         "task_cwd",
-        "candidate_slugs",
     }
 )
 
