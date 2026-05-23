@@ -1715,6 +1715,8 @@ async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_even
         "#!/bin/sh\n"
         "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
         f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        "# RPC mode: accept the initial prompt line, then die before any stdout event.\n"
+        "read -r _prompt_line || true\n"
         f"printf '%s\\n' '{crash_stderr}' >&2\n"
         "exit 1\n",
         encoding="utf-8",
