@@ -17,3 +17,14 @@ This writes stable entrypoints under `dist/extensions/`:
 - `dist/extensions/meridian-spawn-watch/index.js`
 
 Launch projection copies those extension entrypoints into Meridian-owned state for each spawned run.
+
+## Verify (every implementation pass)
+
+```bash
+npm run verify:extensions          # build + vitest + bundle smoke
+npm run verify:extensions:loop     # repeat on interval (local)
+```
+
+Then delegate **smoke-tester** for runtime verification (`meridian pi`, spawn flows). UX reference: `~/gitrepos/ref/pi-processes`. Work-item map: `pi-generic-background-tasks/pi-processes-parity-map.md` in the meridian-cli work dir.
+
+**Pi extension imports:** only package-root `@earendil-works/pi-tui` / `pi-coding-agent` — subpaths break under Pi's extension loader.
