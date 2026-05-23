@@ -428,7 +428,7 @@ meridian spawn --harness cursor -m gpt-5.5 -p "task"
 Use the `cursor` shortcut when cursor is your default harness:
 
 ```bash
-meridian cursor -m composer -p "task"
+meridian cursor spawn -m composer -p "task"
 ```
 
 ### Effort and Slug Resolution
