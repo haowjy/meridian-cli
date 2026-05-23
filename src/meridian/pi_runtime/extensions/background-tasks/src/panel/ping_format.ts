@@ -18,7 +18,7 @@ export function formatDurationMs(ms: number): string {
   return `${value}ms`;
 }
 
-/** Compact ping/persist summary for list rows and status widget. */
+/** Compact ping/persist summary for /ps list rows (not the below-editor status widget). */
 export function formatPingBadge(entry: PanelEntry): string {
   if (entry.kind === "meridian_spawn") {
     return "";

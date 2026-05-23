@@ -2,16 +2,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { LogDockComponent } from "../components/log-dock-component";
 import { panelConfig } from "../panel/config";
-import { formatPingBadge } from "../panel/ping_format";
 import { getForegroundUserBashTaskId, USER_BASH_FOREGROUND_HINT } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
 import type { PanelEntry } from "../panel/types";
-import { formatDurationMs } from "../panel/ping_format";
 import {
   resolveSpawnTaskPingDefaults,
   TASK_PING_INTERVAL_MS_ENV,
   TASK_PING_RESET_ON_ACTIVITY_ENV,
 } from "../session_ping";
+import { formatDurationMs } from "../panel/ping_format";
 
 export type DockActions = {
   getFocusedProcessId: () => string | null;
@@ -24,20 +23,19 @@ export type DockActions = {
 const STATUS_WIDGET_ID = "meridian-background-tasks:status";
 const LOG_DOCK_WIDGET_ID = "meridian-background-tasks:log-dock";
 
+/** Status widget line per task (pi-processes parity: name + state only; ping lives in /ps detail). */
 function formatEntryStatus(
   entry: PanelEntry,
   theme: ExtensionContext["ui"]["theme"],
 ): string {
   const name = entry.name.length > 18 ? `${entry.name.slice(0, 15)}...` : entry.name;
-  const ping = formatPingBadge(entry);
-  const pingSuffix = ping ? ` ${theme.fg("dim", ping)}` : "";
   if (entry.isLive) {
-    return `${theme.fg("accent", name)} ${theme.fg("dim", "running")}${pingSuffix}`;
+    return `${theme.fg("accent", name)} ${theme.fg("dim", "running")}`;
   }
   if (entry.success === false) {
-    return `${theme.fg("error", name)} ${theme.fg("error", entry.status)}${pingSuffix}`;
+    return `${theme.fg("error", name)} ${theme.fg("error", entry.status)}`;
   }
-  return `${theme.fg("dim", name)} ${theme.fg("dim", "done")}${pingSuffix}`;
+  return `${theme.fg("dim", name)} ${theme.fg("dim", "done")}`;
 }
 
 function renderStatusWidget(
@@ -45,12 +43,11 @@ function renderStatusWidget(
   theme: ExtensionContext["ui"]["theme"],
   maxWidth?: number,
 ): string[] {
-  if (entries.length === 0) {
+  const live = entries.filter((entry) => entry.isLive);
+  if (live.length === 0) {
     return [];
   }
-  const live = entries.filter((entry) => entry.isLive);
-  const finished = entries.filter((entry) => !entry.isLive);
-  const ordered = [...live, ...finished];
+  const ordered = live;
   const prefix = theme.fg("dim", "tasks: ");
   const effectiveMax = maxWidth ?? 200;
   const parts: string[] = [];
@@ -117,27 +114,15 @@ export function setupTaskWidget(
     if (panelConfig.widget.showStatusWidget) {
       const maxWidth = process.stdout.columns || 120;
       const lines = renderStatusWidget(entries, activeCtx.ui.theme, maxWidth);
-      const pingDefaults = resolveSpawnTaskPingDefaults();
-      const sessionPing =
-        pingDefaults.pingIntervalMs != null
-          ? `session ping ${formatDurationMs(pingDefaults.pingIntervalMs)}`
-          : "session ping default 55m";
-      const resetLabel = pingDefaults.pingResetOnActivity ? "reset on activity" : "no activity reset";
-      const policyLine = themeLine(
-        activeCtx.ui.theme,
-        `${sessionPing} · ${resetLabel}`,
-      );
       const foregroundHint = getForegroundUserBashTaskId()
         ? themeLine(activeCtx.ui.theme, USER_BASH_FOREGROUND_HINT)
         : null;
       const widgetLines =
         lines.length > 0
-          ? [...lines, policyLine, ...(foregroundHint ? [foregroundHint] : [])]
+          ? [...lines, ...(foregroundHint ? [foregroundHint] : [])]
           : foregroundHint
-            ? [foregroundHint, policyLine]
-            : entries.length > 0
-              ? [policyLine]
-              : [];
+            ? [foregroundHint]
+            : [];
       activeCtx.ui.setWidget(
         STATUS_WIDGET_ID,
         widgetLines.length > 0 ? widgetLines : undefined,
