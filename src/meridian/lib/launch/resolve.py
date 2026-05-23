@@ -269,6 +269,71 @@ def resolve_pi_notification_timeout_seconds(
     return float(wait_timeout_seconds)
 
 
+def parse_duration_seconds(value: str | None) -> float | None:
+    """Parse a duration token such as ``90m``, ``1h``, or ``3300`` (seconds)."""
+
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    multipliers = (
+        ("ms", 0.001),
+        ("s", 1.0),
+        ("m", 60.0),
+        ("h", 3600.0),
+    )
+    for suffix, multiplier in multipliers:
+        if normalized.endswith(suffix):
+            number_text = normalized[: -len(suffix)].strip()
+            if not number_text:
+                return None
+            try:
+                parsed = float(number_text)
+            except ValueError:
+                return None
+            return parsed * multiplier if parsed > 0 else None
+    try:
+        parsed = float(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _resolve_pi_task_ping_interval_from_config_snapshot(
+    config_snapshot: dict[str, object],
+) -> float | None:
+    raw_seconds = config_snapshot.get("pi_task_ping_interval_seconds")
+    timeout_seconds = _coerce_positive_timeout_seconds(raw_seconds)
+    if timeout_seconds is not None:
+        return timeout_seconds
+
+    timeouts_section = config_snapshot.get("timeouts")
+    if isinstance(timeouts_section, dict):
+        typed_timeouts_section = cast("dict[str, object]", timeouts_section)
+        section_value = typed_timeouts_section.get("pi_task_ping_interval_seconds")
+        timeout_seconds = _coerce_positive_timeout_seconds(section_value)
+        if timeout_seconds is not None:
+            return timeout_seconds
+    return None
+
+
+def resolve_pi_task_ping_interval_seconds(
+    *,
+    explicit_interval_seconds: float | None,
+    config_snapshot: dict[str, object] | None,
+) -> float | None:
+    """Resolve Pi background-task ping interval in seconds (None = extension default)."""
+
+    if explicit_interval_seconds is not None and explicit_interval_seconds > 0:
+        return float(explicit_interval_seconds)
+    if config_snapshot:
+        timeout_from_config = _resolve_pi_task_ping_interval_from_config_snapshot(config_snapshot)
+        if timeout_from_config is not None:
+            return timeout_from_config
+    return None
+
+
 def resolve_pi_child_wave_timeout_seconds(
     *,
     explicit_timeout_seconds: float | None,
@@ -297,8 +362,10 @@ __all__ = [
     "format_missing_skills_warning",
     "load_agent_profile_with_fallback",
     "resolve_harness",
+    "parse_duration_seconds",
     "resolve_pi_child_wave_timeout_seconds",
     "resolve_pi_notification_timeout_seconds",
+    "resolve_pi_task_ping_interval_seconds",
     "resolve_profile_path",
     "resolve_skill_paths",
     "resolve_skills_from_profile",

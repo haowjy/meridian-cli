@@ -73,6 +73,8 @@ _BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
 )
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 _PI_CHILD_WAVE_TIMEOUT_MS_ENV: Final[str] = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
+_PI_TASK_PING_INTERVAL_MS_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_INTERVAL_MS"
+_PI_TASK_PING_RESET_ON_ACTIVITY_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY"
 _STREAM_LINE_KIND: Final[Literal["line"]] = "line"
 _STREAM_EOF_KIND: Final[Literal["eof"]] = "eof"
 _STREAM_ERROR_KIND: Final[Literal["error"]] = "error"
@@ -511,6 +513,11 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             launch_role=launch_role,
             timeout_seconds=config.pi_child_wave_timeout_seconds,
         )
+        self._apply_pi_task_ping_env(
+            env=env,
+            interval_seconds=config.pi_task_ping_interval_seconds,
+            reset_on_activity=config.pi_task_ping_reset_on_activity,
+        )
         try:
             resolved_runtime = resolve_pi_runtime(env=env, role=launch_role)
         except PiRuntimeResolutionError as exc:
@@ -593,6 +600,21 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             return
         timeout_ms = max(1, int(timeout_seconds * 1000))
         env[_PI_CHILD_WAVE_TIMEOUT_MS_ENV] = str(timeout_ms)
+
+    def _apply_pi_task_ping_env(
+        self,
+        *,
+        env: dict[str, str],
+        interval_seconds: float | None,
+        reset_on_activity: bool | None,
+    ) -> None:
+        if interval_seconds is not None and math.isfinite(interval_seconds) and interval_seconds > 0:
+            interval_ms = max(1, int(interval_seconds * 1000))
+            env[_PI_TASK_PING_INTERVAL_MS_ENV] = str(interval_ms)
+        if reset_on_activity is not None:
+            env[_PI_TASK_PING_RESET_ON_ACTIVITY_ENV] = (
+                "true" if reset_on_activity else "false"
+            )
 
     def _parse_stdout_line(self, line: str) -> HarnessEvent | None:
         payload_text = line.strip()

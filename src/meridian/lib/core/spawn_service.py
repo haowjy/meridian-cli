@@ -35,6 +35,7 @@ from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
+    resolve_pi_task_ping_interval_seconds,
     resolve_pi_notification_timeout_seconds,
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
@@ -427,6 +428,11 @@ class SpawnApplicationService:
                 explicit_timeout_seconds=None,
                 config_snapshot=launch_config_snapshot,
             ),
+            pi_task_ping_interval_seconds=resolve_pi_task_ping_interval_seconds(
+                explicit_interval_seconds=resolved_request.pi_task_ping_interval_seconds,
+                config_snapshot=launch_config_snapshot,
+            ),
+            pi_task_ping_reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=payload.debug_tracer,
         )

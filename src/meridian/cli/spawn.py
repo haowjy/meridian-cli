@@ -163,6 +163,8 @@ def _shared_launch_input_kwargs(
     harness: str | None,
     passthrough_args: tuple[str, ...],
     debug: bool,
+    task_ping_interval: str | None,
+    task_ping_reset_on_activity: bool | None,
 ) -> SpawnLaunchOptionUpdates:
     return {
         "dry_run": dry_run,
@@ -180,6 +182,8 @@ def _shared_launch_input_kwargs(
         "harness": harness,
         "passthrough_args": passthrough_args,
         "debug": debug,
+        "task_ping_interval": task_ping_interval,
+        "task_ping_reset_on_activity": task_ping_reset_on_activity,
     }
 
 
@@ -412,6 +416,26 @@ def _spawn_create(
             ),
         ),
     ] = None,
+    task_ping_interval: Annotated[
+        str | None,
+        Parameter(
+            name="--task-ping-interval",
+            help=(
+                "Default background-task ping interval for spawned Pi "
+                "(e.g. 90m, 1h, 3300). Overrides the 55m extension default."
+            ),
+        ),
+    ] = None,
+    task_ping_reset_on_activity: Annotated[
+        bool | None,
+        Parameter(
+            name="--task-ping-reset-on-activity",
+            help=(
+                "When true, reset each task's ping deadline on log output or "
+                "task tool touch (default true when unset)."
+            ),
+        ),
+    ] = None,
     debug: Annotated[
         bool,
         Parameter(
@@ -462,6 +486,8 @@ def _spawn_create(
         sandbox=sandbox,
         harness=global_harness,
         passthrough_args=passthrough,
+        task_ping_interval=task_ping_interval,
+        task_ping_reset_on_activity=task_ping_reset_on_activity,
         debug=debug,
     )
     worktree_intent: bool | None = None

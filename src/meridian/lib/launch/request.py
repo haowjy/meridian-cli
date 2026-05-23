@@ -128,6 +128,8 @@ class SpawnRequest(BaseModel):
     reference_anchor: str | None = None
     task_cwd_source: str | None = None
     task_cwd_work_item: str | None = None
+    pi_task_ping_interval_seconds: float | None = None
+    pi_task_ping_reset_on_activity: bool | None = None
 
 
 class LaunchArgvIntent(StrEnum):

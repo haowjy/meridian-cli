@@ -11,6 +11,7 @@ from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
+from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
@@ -173,6 +174,8 @@ def build_create_payload(
             task_cwd_source=directory_context.task_cwd_source,
             task_cwd_work_item=directory_context.work_item,
             launch_policy_snapshot=payload.launch_policy_snapshot,
+            pi_task_ping_interval_seconds=parse_duration_seconds(payload.task_ping_interval),
+            pi_task_ping_reset_on_activity=payload.task_ping_reset_on_activity,
         )
 
         preview_context = build_launch_context(

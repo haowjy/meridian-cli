@@ -219,6 +219,8 @@ class ConnectionConfig:
     timeout_seconds: float | None = None
     pi_notification_timeout_seconds: float | None = None
     pi_child_wave_timeout_seconds: float | None = None
+    pi_task_ping_interval_seconds: float | None = None
+    pi_task_ping_reset_on_activity: bool | None = None
     ws_bind_host: str = "127.0.0.1"
     ws_port: int = 0
     pi_session_role: PiSessionRole | None = None

@@ -4,8 +4,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { BackgroundTaskRecord, TaskStatus, WaitPolicy } from "./types";
+import type { BackgroundTaskRecord, TaskIngress, TaskStatus, WaitPolicy } from "./types";
 import { createLocalBus, type MeridianEventBus } from "../../shared/meridian_event_bus";
+import type { LifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
+import {
+  resolveEffectivePingIntervalMs,
+  resolveSpawnTaskPingDefaults,
+  type SpawnTaskPingDefaults,
+} from "./session_ping";
 
 type RuntimeTask = {
   record: BackgroundTaskRecord;
@@ -26,13 +32,18 @@ export const DEFAULT_BG_WAIT_TIMEOUT_MS = 30_000;
 export const MAX_BG_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const TASK_START_EVENT = "meridian:task:start";
 const TASK_END_EVENT = "meridian:task:end";
+const TASK_PING_EVENT = "meridian:task:ping";
+const SUBSPAWN_START_EVENT = "meridian:subspawn:start";
+const SUBSPAWN_END_EVENT = "meridian:subspawn:end";
 const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
+const PING_SCAN_INTERVAL_MS = 60_000;
 
 /** Internal record shape persisted to meta.json (superset of BackgroundTaskRecord). */
 type StoredTaskRecord = BackgroundTaskRecord & {
   emitted_start: boolean;
   duration_ms: number | null;
   log_path: string;
+  ingress: TaskIngress;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -166,26 +177,34 @@ export class TaskRegistry {
   private readonly sessionId: string;
   private readonly parentSpawnId: string | null;
   private readonly bus: MeridianEventBus;
+  private readonly sidecar: LifecycleSidecarWriter | null;
+  private readonly spawnPingDefaults: SpawnTaskPingDefaults;
   private readonly jobs: Map<string, RuntimeTask> = new Map();
   private pollTimer: NodeJS.Timeout | null = null;
+  private pingTimer: NodeJS.Timeout | null = null;
 
   constructor(
     stateRoot: string,
     sessionId: string,
     parentSpawnId: string | null,
     bus: MeridianEventBus = createLocalBus(),
+    sidecar: LifecycleSidecarWriter | null = null,
+    spawnPingDefaults: SpawnTaskPingDefaults = resolveSpawnTaskPingDefaults(),
   ) {
     this.stateRoot = stateRoot;
     this.tasksDir = path.join(this.stateRoot, "background-tasks", sessionId, "tasks");
     this.sessionId = sessionId;
     this.parentSpawnId = parentSpawnId;
     this.bus = bus;
+    this.sidecar = sidecar;
+    this.spawnPingDefaults = spawnPingDefaults;
   }
 
   async initialize(): Promise<void> {
     await fs.mkdir(this.tasksDir, { recursive: true });
     await this.orphanScan();
     this.startPoller();
+    this.startPingWorker();
   }
 
   private startPoller(): void {
@@ -204,6 +223,81 @@ export class TaskRegistry {
     }
     clearInterval(this.pollTimer);
     this.pollTimer = null;
+  }
+
+  private startPingWorker(): void {
+    if (this.pingTimer != null) {
+      return;
+    }
+    this.pingTimer = setInterval(() => {
+      void this.scanTaskPings();
+    }, PING_SCAN_INTERVAL_MS);
+    this.pingTimer.unref?.();
+  }
+
+  private stopPingWorker(): void {
+    if (this.pingTimer == null) {
+      return;
+    }
+    clearInterval(this.pingTimer);
+    this.pingTimer = null;
+  }
+
+  private effectivePingIntervalMs(record: StoredTaskRecord): number {
+    return resolveEffectivePingIntervalMs(
+      record.ping_interval_ms,
+      this.spawnPingDefaults.pingIntervalMs,
+    );
+  }
+
+  private initializePingSchedule(record: StoredTaskRecord, atMs: number = nowMs()): void {
+    record.last_activity_at_ms = atMs;
+    record.next_ping_at_ms = atMs + this.effectivePingIntervalMs(record);
+  }
+
+  bumpTaskActivity(taskId: string): void {
+    const runtimeJob = this.jobs.get(taskId);
+    if (runtimeJob == null || runtimeJob.record.status !== "running") {
+      return;
+    }
+    const record = runtimeJob.record;
+    const atMs = nowMs();
+    record.last_activity_at_ms = atMs;
+    if (this.spawnPingDefaults.pingResetOnActivity) {
+      record.next_ping_at_ms = atMs + this.effectivePingIntervalMs(record);
+    }
+    void this.persistRecord(record);
+  }
+
+  private async scanTaskPings(): Promise<void> {
+    const now = nowMs();
+    for (const runtimeJob of this.jobs.values()) {
+      const record = runtimeJob.record;
+      if (record.status !== "running") {
+        continue;
+      }
+      if (record.next_ping_at_ms == null || now < record.next_ping_at_ms) {
+        continue;
+      }
+      this.emitTaskPing(record);
+      record.next_ping_at_ms = now + this.effectivePingIntervalMs(record);
+      await this.persistRecord(record);
+    }
+  }
+
+  private subspawnKind(record: StoredTaskRecord): string {
+    if (isMeridianSpawnCommand(record.command)) {
+      return "meridian_spawn_wrapper";
+    }
+    return record.ingress === "bash" ? "bash" : "process";
+  }
+
+  private sidecarSubspawnKind(record: StoredTaskRecord): string {
+    return record.ingress === "bash" ? "bash" : this.subspawnKind(record);
+  }
+
+  private emitSidecar(event: Record<string, unknown>): void {
+    this.sidecar?.append(event);
   }
 
   private taskDir(taskId: string): string {
@@ -283,6 +377,23 @@ export class TaskRegistry {
       combined_log_path: record.combined_log_path,
       log_bytes: record.log_bytes,
       log_truncated: record.log_truncated,
+      ingress: record.ingress,
+      persistent: record.persistent,
+      ping_interval_ms: record.ping_interval_ms,
+      last_activity_at_ms: record.last_activity_at_ms,
+      next_ping_at_ms: record.next_ping_at_ms,
+    };
+  }
+
+  private lifecycleJobSnapshot(record: StoredTaskRecord): Record<string, unknown> {
+    return {
+      job_id: record.task_id,
+      task_id: record.task_id,
+      wait_policy: record.wait_policy,
+      pid: record.pid,
+      status: record.status,
+      command: record.command,
+      persistent: record.persistent === true,
     };
   }
 
@@ -298,6 +409,12 @@ export class TaskRegistry {
       }
       if (typeof parsed.emitted_start !== "boolean") {
         parsed.emitted_start = false;
+      }
+      if (parsed.ingress !== "bash" && parsed.ingress !== "background_task") {
+        parsed.ingress = "background_task";
+      }
+      if (typeof parsed.persistent !== "boolean") {
+        parsed.persistent = false;
       }
       return parsed;
     } catch {
@@ -319,9 +436,11 @@ export class TaskRegistry {
   private emitTaskStart(record: StoredTaskRecord): void {
     const command = truncateCommand(record.command);
     const isSpawn = isMeridianSpawnCommand(record.command);
+    const kind = this.subspawnKind(record);
+    const envelope = this.buildSubspawnEnvelope(kind, record.task_id);
     const payload = {
       type: "meridian.task.start",
-      ...this.buildSubspawnEnvelope(isSpawn ? "meridian_spawn_wrapper" : "process", record.task_id),
+      ...envelope,
       task_id: record.task_id,
       subspawn_id: record.task_id,
       wait_policy: record.wait_policy,
@@ -331,19 +450,34 @@ export class TaskRegistry {
       started_at_ms: record.started_at_ms,
       log_path: record.combined_log_path,
       label: record.label,
+      persistent: record.persistent === true,
+      ping_interval_ms: this.effectivePingIntervalMs(record),
     };
     this.bus.emit(TASK_START_EVENT, payload);
-    if (isSpawn) {
-      this.bus.emit("meridian:subspawn:start", payload);
-    }
+    this.bus.emit(SUBSPAWN_START_EVENT, payload);
+    this.emitSidecar({
+      type: "meridian.subspawn.start",
+      ...envelope,
+      kind: this.sidecarSubspawnKind(record),
+      subspawn_id: record.task_id,
+      wait_policy: record.wait_policy,
+      command,
+      command_is_meridian_spawn: isSpawn,
+      pid: record.pid,
+      started_at_ms: record.started_at_ms,
+      log_path: record.combined_log_path,
+      persistent: record.persistent === true,
+    });
   }
 
   private emitTaskEnd(record: StoredTaskRecord): void {
     const command = truncateCommand(record.command);
     const isSpawn = isMeridianSpawnCommand(record.command);
+    const kind = this.subspawnKind(record);
+    const envelope = this.buildSubspawnEnvelope(kind, record.task_id);
     const payload = {
       type: "meridian.task.end",
-      ...this.buildSubspawnEnvelope(isSpawn ? "meridian_spawn_wrapper" : "process", record.task_id),
+      ...envelope,
       task_id: record.task_id,
       subspawn_id: record.task_id,
       wait_policy: record.wait_policy,
@@ -356,11 +490,42 @@ export class TaskRegistry {
       duration_ms: record.duration_ms,
       log_path: record.combined_log_path,
       label: record.label,
+      persistent: record.persistent === true,
     };
     this.bus.emit(TASK_END_EVENT, payload);
-    if (isSpawn) {
-      this.bus.emit("meridian:subspawn:end", payload);
-    }
+    this.bus.emit(SUBSPAWN_END_EVENT, payload);
+    this.emitSidecar({
+      type: "meridian.subspawn.end",
+      ...envelope,
+      kind: this.sidecarSubspawnKind(record),
+      subspawn_id: record.task_id,
+      wait_policy: record.wait_policy,
+      command,
+      command_is_meridian_spawn: isSpawn,
+      status: record.status,
+      exit_code: record.exit_code,
+      success: record.success,
+      signal: record.signal,
+      duration_ms: record.duration_ms,
+      log_path: record.combined_log_path,
+      persistent: record.persistent === true,
+    });
+  }
+
+  private emitTaskPing(record: StoredTaskRecord): void {
+    const payload = {
+      type: "meridian.task.ping",
+      ...this.buildSubspawnEnvelope(this.subspawnKind(record), record.task_id),
+      task_id: record.task_id,
+      subspawn_id: record.task_id,
+      wait_policy: record.wait_policy,
+      command: truncateCommand(record.command),
+      persistent: record.persistent === true,
+      last_activity_at_ms: record.last_activity_at_ms,
+      next_ping_at_ms: record.next_ping_at_ms,
+      ping_interval_ms: this.effectivePingIntervalMs(record),
+    };
+    this.bus.emit(TASK_PING_EVENT, payload);
   }
 
   private async enforceLogCap(record: StoredTaskRecord): Promise<void> {
@@ -500,6 +665,12 @@ export class TaskRegistry {
     cwd: string,
     env: Record<string, string>,
     label?: string,
+    options?: {
+      pingIntervalMs?: number | null;
+      persistent?: boolean;
+      ingress?: TaskIngress;
+      onChunk?: (chunk: Buffer) => void;
+    },
   ): Promise<{ runtimeJob: RuntimeTask; stdoutTail: string[]; stderrTail: string[] }> {
     const jobId = makeId("t");
     const startedAt = nowMs();
@@ -539,7 +710,14 @@ export class TaskRegistry {
       log_bytes: 0,
       log_truncated: false,
       emitted_start: false,
+      ingress: options?.ingress ?? "background_task",
+      persistent: options?.persistent ?? this.spawnPingDefaults.defaultPersistent,
+      ping_interval_ms:
+        typeof options?.pingIntervalMs === "number" && options.pingIntervalMs > 0
+          ? Math.trunc(options.pingIntervalMs)
+          : null,
     };
+    this.initializePingSchedule(record, startedAt);
 
     const runtimeJob = this.createRuntimeTask(record, child, logHandle);
     this.jobs.set(jobId, runtimeJob);
@@ -554,6 +732,7 @@ export class TaskRegistry {
       while (target.length > 32) {
         target.shift();
       }
+      options?.onChunk?.(chunk);
 
       this.enqueueLogWrite(runtimeJob, async () => {
         if (runtimeJob.logHandle == null || runtimeJob.logHandleClosed) {
@@ -570,6 +749,7 @@ export class TaskRegistry {
         if (record.log_bytes > MAX_LOG_BYTES + 64 * 1024) {
           await this.enforceLogCap(record);
         }
+        this.bumpTaskActivity(record.task_id);
       });
     };
 
@@ -614,6 +794,7 @@ export class TaskRegistry {
     if (!runtimeJob) {
       return null;
     }
+    this.bumpTaskActivity(jobId);
     if (runtimeJob.record.status !== "running") {
       return this.toPublicRecord(runtimeJob.record);
     }
@@ -647,6 +828,91 @@ export class TaskRegistry {
     return values;
   }
 
+  async syncBashToolRunning(input: {
+    taskId: string;
+    command: string;
+    pid: number | null;
+    waitPolicy: unknown;
+    cwd?: string;
+    logPath?: string;
+    pingIntervalMs?: number;
+    persistent?: boolean;
+  }): Promise<BackgroundTaskRecord | null> {
+    const waitPolicy = normalizeWaitPolicy(input.waitPolicy);
+    const existing = this.jobs.get(input.taskId);
+    const startedAt = nowMs();
+    const cwd = input.cwd?.trim() || process.cwd();
+    const logPath = input.logPath?.trim() || this.taskLogPath(input.taskId);
+
+    if (existing == null) {
+      await fs.mkdir(this.taskDir(input.taskId), { recursive: true });
+      const record: StoredTaskRecord = {
+        task_id: input.taskId,
+        label: input.command.trim().slice(0, 48) || input.taskId,
+        command: input.command,
+        cwd,
+        wait_policy: waitPolicy,
+        status: "running",
+        pid: input.pid,
+        started_at_ms: startedAt,
+        ended_at_ms: null,
+        duration_ms: null,
+        exit_code: null,
+        signal: null,
+        success: null,
+        stdout_log_path: logPath,
+        stderr_log_path: logPath,
+        combined_log_path: logPath,
+        log_path: logPath,
+        log_bytes: 0,
+        log_truncated: false,
+        emitted_start: false,
+        ingress: "bash",
+        persistent: input.persistent ?? this.spawnPingDefaults.defaultPersistent,
+        ping_interval_ms:
+          typeof input.pingIntervalMs === "number" && input.pingIntervalMs > 0
+            ? Math.trunc(input.pingIntervalMs)
+            : null,
+      };
+      this.initializePingSchedule(record, startedAt);
+      const runtimeJob = this.createRuntimeTask(record, null);
+      this.jobs.set(input.taskId, runtimeJob);
+      await this.persistRecord(record);
+    } else {
+      const record = existing.record;
+      record.command = input.command || record.command;
+      record.pid = input.pid ?? record.pid;
+      record.wait_policy = waitPolicy;
+      if (typeof input.pingIntervalMs === "number" && input.pingIntervalMs > 0) {
+        record.ping_interval_ms = Math.trunc(input.pingIntervalMs);
+      }
+      if (input.persistent === true) {
+        record.persistent = true;
+      }
+      await this.persistRecord(record);
+    }
+
+    return this.detachJob(input.taskId);
+  }
+
+  async syncBashToolExited(input: {
+    taskId: string;
+    exitCode: number | null;
+    signal: string | number | null;
+  }): Promise<BackgroundTaskRecord | null> {
+    const runtimeJob = this.jobs.get(input.taskId);
+    if (runtimeJob == null) {
+      return null;
+    }
+    if (runtimeJob.record.status !== "running") {
+      return this.toPublicRecord(runtimeJob.record);
+    }
+    return this.finishJob(input.taskId, {
+      exitCode: input.exitCode,
+      signal: input.signal,
+    });
+  }
+
   async readLog(jobId: string, maxBytes: number, offset?: number): Promise<{
     data: string;
     log_truncated: boolean;
@@ -658,6 +924,7 @@ export class TaskRegistry {
       return null;
     }
 
+    this.bumpTaskActivity(jobId);
     const record = runtimeJob.record;
     let statSize = 0;
     try {
@@ -707,6 +974,7 @@ export class TaskRegistry {
     if (!runtimeJob) {
       return null;
     }
+    this.bumpTaskActivity(jobId);
     if (runtimeJob.record.status !== "running") {
       return this.toPublicRecord(runtimeJob.record);
     }
@@ -725,6 +993,7 @@ export class TaskRegistry {
 
   async shutdownCleanup(): Promise<void> {
     this.stopPoller();
+    this.stopPingWorker();
     for (const runtimeJob of this.jobs.values()) {
       const record = runtimeJob.record;
       if (record.status !== "running") {

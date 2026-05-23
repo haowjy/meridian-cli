@@ -20,6 +20,7 @@ type InternalSubspawnEvent = {
   exit_code?: unknown;
   signal?: unknown;
   pid?: unknown;
+  persistent?: boolean;
 };
 
 type ToolContentPart = {
@@ -48,11 +49,13 @@ type ToolResultEvent = {
     text?: string;
     message?: string;
     output?: string;
+    persistent?: boolean;
     job?: {
       job_id?: string;
       wait_policy?: WaitPolicy;
       status?: string;
       command?: string;
+      persistent?: boolean;
     };
     jobs?: Array<{
       job_id?: string;
@@ -70,6 +73,7 @@ type ToolResultEvent = {
 type ChildState = {
   kind: "bash" | "meridian_spawn";
   waitPolicy: WaitPolicy;
+  persistent: boolean;
   startedAtMs: number;
   pid: number | null;
 };
@@ -236,6 +240,13 @@ function jobIdFrom(event: ToolResultEvent): string | null {
     event.input?.job_id ||
     null
   );
+}
+
+function persistentFromEvent(event: ToolResultEvent): boolean {
+  if (event.details?.persistent === true) {
+    return true;
+  }
+  return event.details?.job?.persistent === true;
 }
 
 function parseInternalSubspawnEvent(data: unknown): InternalSubspawnEvent | null {
@@ -674,7 +685,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
   const trackedCount = (): number => {
     let count = 0;
     for (const child of session.trackedChildren.values()) {
-      if (child.waitPolicy === "tracked") {
+      if (child.waitPolicy === "tracked" && !child.persistent) {
         count += 1;
       }
     }
@@ -762,7 +773,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
   const trackedChildIds = (): string[] => {
     const ids: string[] = [];
     for (const [childId, child] of session.trackedChildren.entries()) {
-      if (child.waitPolicy === "tracked") {
+      if (child.waitPolicy === "tracked" && !child.persistent) {
         ids.push(childId);
       }
     }
@@ -957,15 +968,21 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
     }
   };
 
-  const addTrackedChild = (childId: string, waitPolicy: WaitPolicy, kind: "bash" | "meridian_spawn"): void => {
+  const addTrackedChild = (
+    childId: string,
+    waitPolicy: WaitPolicy,
+    kind: "bash" | "meridian_spawn",
+    persistent = false,
+  ): void => {
     const existing = session.trackedChildren.get(childId);
     session.trackedChildren.set(childId, {
       waitPolicy,
       kind,
-      startedAtMs: nowMs(),
+      persistent,
+      startedAtMs: existing?.startedAtMs ?? nowMs(),
       pid: existing?.pid ?? null,
     });
-    if (waitPolicy === "tracked") {
+    if (waitPolicy === "tracked" && !persistent) {
       attachChildToActiveWave(childId);
       maybeQueueNotification();
     }
@@ -996,7 +1013,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
     outcome: ChildOutcome,
   ): void => {
     const childState = session.trackedChildren.get(childId);
-    if (childState?.waitPolicy === "tracked") {
+    if (childState?.waitPolicy === "tracked" && !childState.persistent) {
       recordWaveOutcome(outcome);
     }
     maybeRemoveChild(childId);
@@ -1108,7 +1125,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
         });
       }
       const child = session.trackedChildren.get(childId);
-      if (shouldCleanupTrackedChildren && child?.waitPolicy === "tracked") {
+      if (shouldCleanupTrackedChildren && child?.waitPolicy === "tracked" && !child.persistent) {
         if (child.pid != null) {
           killTasks.push(cancelTrackedPid(child.pid, childWaveKillGraceMs));
         }
@@ -1333,6 +1350,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
         event.subspawn_id,
         event.wait_policy === "detached" ? "detached" : "tracked",
         kind,
+        event.persistent === true,
       );
       setChildPid(event.subspawn_id, intFromUnknown(event.pid));
 
@@ -1358,7 +1376,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
       void (async () => {
         const subspawnId = event.subspawn_id;
         const childState = session.trackedChildren.get(subspawnId);
-        const isTracked = childState?.waitPolicy === "tracked";
+        const isTracked = childState?.waitPolicy === "tracked" && !childState.persistent;
         const isMeridianWrapper =
           session.meridianSpawnWrapperJobs.has(subspawnId) ||
           (kindFromInternalEvent(event) === "meridian_spawn" && !isMeridianSpawnId(subspawnId));
@@ -1439,7 +1457,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
       const taskId = resultJobId;
       if (taskId && commandLooksLikeMeridianSpawn) {
         session.meridianSpawnWrapperJobs.add(taskId);
-        addTrackedChild(taskId, waitPolicyFrom(event), "meridian_spawn");
+        addTrackedChild(taskId, waitPolicyFrom(event), "meridian_spawn", persistentFromEvent(event));
         setChildPid(taskId, intFromUnknown(event.details?.pid));
         handleObservedMeridianSpawnOutput(event, true, taskId);
         ensureChildStatusPoller();
@@ -1452,7 +1470,7 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
         const jobId = resultJobId;
         if (jobId) {
           const kind = commandLooksLikeMeridianSpawn ? "meridian_spawn" : "bash";
-          addTrackedChild(jobId, waitPolicyFrom(event), kind);
+          addTrackedChild(jobId, waitPolicyFrom(event), kind, persistentFromEvent(event));
           setChildPid(jobId, intFromUnknown(event.details?.pid));
           if (commandLooksLikeMeridianSpawn) {
             session.meridianSpawnWrapperJobs.add(jobId);
@@ -1551,7 +1569,12 @@ export function setupLifecycleSession(pi: ExtensionAPI): void {
           hasMeridianWrapper = true;
         }
         if (job.status === "running") {
-          addTrackedChild(jobId, job.wait_policy === "detached" ? "detached" : "tracked", isMeridianWrapper ? "meridian_spawn" : "bash");
+          addTrackedChild(
+            jobId,
+            job.wait_policy === "detached" ? "detached" : "tracked",
+            isMeridianWrapper ? "meridian_spawn" : "bash",
+            job.persistent === true,
+          );
           if (isMeridianWrapper) {
             session.meridianSpawnWrapperJobs.add(jobId);
           }

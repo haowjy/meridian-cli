@@ -6,9 +6,20 @@ const TASK_END = "meridian:task:end";
 const SUBSPAWN_START = "meridian:subspawn:start";
 const SUBSPAWN_END = "meridian:subspawn:end";
 
+function resolveSpawnId(payload: Record<string, unknown>): string | null {
+  if (typeof payload.spawn_id === "string" && payload.spawn_id.trim().length > 0) {
+    return payload.spawn_id;
+  }
+  const kind = payload.kind;
+  if (kind === "meridian_spawn" && typeof payload.subspawn_id === "string") {
+    return payload.subspawn_id;
+  }
+  return null;
+}
+
 export function startSpawnCollector(tree: SpawnTreeStore, bus: MeridianEventBus): () => void {
   const onDiscovered = async (payload: Record<string, unknown>) => {
-    const spawnId = typeof payload.spawn_id === "string" ? payload.spawn_id : null;
+    const spawnId = resolveSpawnId(payload);
     if (!spawnId) {
       return;
     }
@@ -32,7 +43,7 @@ export function startSpawnCollector(tree: SpawnTreeStore, bus: MeridianEventBus)
   };
 
   const onUpdated = async (payload: Record<string, unknown>) => {
-    const spawnId = typeof payload.spawn_id === "string" ? payload.spawn_id : null;
+    const spawnId = resolveSpawnId(payload);
     if (!spawnId) {
       return;
     }

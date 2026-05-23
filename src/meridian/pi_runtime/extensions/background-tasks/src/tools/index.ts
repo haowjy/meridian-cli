@@ -55,6 +55,8 @@ export function setupBackgroundTaskTool(pi: ExtensionAPI, host: BackgroundTaskTo
       max_bytes: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_BG_READ_BYTES })),
       offset: Type.Optional(Type.Number({ minimum: 0 })),
       timeout_ms: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_BG_WAIT_TIMEOUT_MS })),
+      ping_interval_ms: Type.Optional(Type.Number({ minimum: 1 })),
+      persistent: Type.Optional(Type.Boolean()),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, context) {
       const action = (params as { action?: BackgroundTaskAction }).action;
@@ -100,6 +102,30 @@ async function resolveRegistry(
   return host.getRegistry();
 }
 
+function lifecycleTaskDetails(
+  task: BackgroundTaskRecord,
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const state = task.status === "running" ? "running" : "exited";
+  return {
+    job_id: task.task_id,
+    task_id: task.task_id,
+    state,
+    wait_policy: task.wait_policy,
+    pid: task.pid,
+    job: {
+      job_id: task.task_id,
+      task_id: task.task_id,
+      wait_policy: task.wait_policy,
+      pid: task.pid,
+      status: task.status,
+      command: task.command,
+      persistent: task.persistent === true,
+    },
+    ...extras,
+  };
+}
+
 function errorResult(message: string): {
   content: Array<{ type: string; text: string }>;
   details: Record<string, unknown>;
@@ -128,8 +154,16 @@ async function startAction(
       : (context as ToolContext).cwd ?? process.cwd();
   const env = { ...process.env } as Record<string, string>;
   const label = typeof params.label === "string" ? params.label : undefined;
+  const pingIntervalMs =
+    typeof params.ping_interval_ms === "number" && params.ping_interval_ms > 0
+      ? Math.trunc(params.ping_interval_ms)
+      : undefined;
+  const persistent = params.persistent === true;
 
-  const { runtimeJob } = await registry.startJob(command, waitPolicy, cwd, env, label);
+  const { runtimeJob } = await registry.startJob(command, waitPolicy, cwd, env, label, {
+    pingIntervalMs,
+    persistent,
+  });
   const taskId = runtimeJob.record.task_id;
   await registry.detachJob(taskId);
   const task = (await registry.getTask(taskId)) ?? { task_id: taskId };
@@ -145,7 +179,9 @@ async function startAction(
       action: "start",
       success: true,
       task,
-      task_id: taskId,
+      tasks: [task],
+      jobs: [task],
+      ...lifecycleTaskDetails(task),
     },
   };
 }
@@ -171,7 +207,7 @@ async function listAction(
           .join("\n");
   return {
     content: [{ type: "text", text: lines }],
-    details: { action: "list", success: true, tasks, rows },
+    details: { action: "list", success: true, tasks, rows, jobs: tasks },
   };
 }
 
@@ -245,7 +281,12 @@ async function waitAction(
   if (record.status === "running") {
     return {
       content: [{ type: "text", text: `Task ${taskId} is still running.` }],
-      details: { action: "wait", success: true, state: "running", task: record },
+      details: {
+        action: "wait",
+        success: true,
+        task: record,
+        ...lifecycleTaskDetails(record),
+      },
     };
   }
   const log = await registry.readLog(taskId, DEFAULT_BG_READ_BYTES);
@@ -276,7 +317,13 @@ async function cancelAction(
   }
   return {
     content: [{ type: "text", text: `Task ${taskId} terminated.` }],
-    details: { action: "cancel", success: true, task: record },
+    details: {
+      action: "cancel",
+      success: true,
+      task: record,
+      found: true,
+      ...lifecycleTaskDetails(record),
+    },
   };
 }
 

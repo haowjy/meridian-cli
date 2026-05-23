@@ -1,6 +1,8 @@
 export type TaskStatus = "running" | "exited" | "failed" | "killed" | "timed_out";
 export type WaitPolicy = "tracked" | "detached";
 
+export type TaskIngress = "background_task" | "bash";
+
 export type BackgroundTaskRecord = {
   task_id: string;
   label: string;
@@ -19,6 +21,11 @@ export type BackgroundTaskRecord = {
   combined_log_path: string;
   log_bytes: number;
   log_truncated: boolean;
+  ingress?: TaskIngress;
+  persistent?: boolean;
+  ping_interval_ms?: number | null;
+  last_activity_at_ms?: number | null;
+  next_ping_at_ms?: number | null;
 };
 
 export type PsRowKind = "process" | "meridian_spawn_wrapper" | "meridian_spawn";

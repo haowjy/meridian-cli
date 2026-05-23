@@ -56,6 +56,7 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
+    resolve_pi_task_ping_interval_seconds,
     resolve_pi_notification_timeout_seconds,
 )
 from meridian.lib.launch.runner_helpers import (
@@ -790,6 +791,10 @@ async def execute_with_streaming(
             explicit_timeout_seconds=None,
             config_snapshot=launch_context.runtime.config_snapshot,
         )
+        pi_task_ping_interval_seconds = resolve_pi_task_ping_interval_seconds(
+            explicit_interval_seconds=request.pi_task_ping_interval_seconds,
+            config_snapshot=launch_context.runtime.config_snapshot,
+        )
         max_retries = max(request.retry.max_attempts - 1, 0)
         retry_backoff_seconds = request.retry.backoff_secs
 
@@ -851,6 +856,8 @@ async def execute_with_streaming(
             timeout_seconds=timeout_seconds,
             pi_notification_timeout_seconds=pi_notification_timeout_seconds,
             pi_child_wave_timeout_seconds=pi_child_wave_timeout_seconds,
+            pi_task_ping_interval_seconds=pi_task_ping_interval_seconds,
+            pi_task_ping_reset_on_activity=request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=tracer,
         )

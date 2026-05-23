@@ -1,7 +1,10 @@
 import type { ExtensionAPI } from "../../types";
+import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
+import { setupBashBridge } from "./bash_bridge";
 import { setupPsCommands } from "./commands";
 import { setupBackgroundTaskHooks } from "./hooks";
+import { resolveSpawnTaskPingDefaults } from "./session_ping";
 import {
   TaskRegistry,
   makeId,
@@ -21,10 +24,12 @@ const state: {
   registry: TaskRegistry | null;
   sessionId: string;
   createRegistry: ((sessionId: string) => TaskRegistry) | null;
+  sidecar: ReturnType<typeof createLifecycleSidecarWriter> | null;
 } = {
   registry: null,
   sessionId: makeId("session"),
   createRegistry: null,
+  sidecar: null,
 };
 
 async function buildRegistry(
@@ -36,8 +41,18 @@ async function buildRegistry(
   createRegistry: (sessionId: string) => TaskRegistry;
 }> {
   const sessionId = makeId("session");
+  const sidecar = createLifecycleSidecarWriter();
+  const spawnPingDefaults = resolveSpawnTaskPingDefaults();
   const createRegistry = (sid: string): TaskRegistry =>
-    new TaskRegistry(resolveStateRoot(), sid, parentSpawnIdFromEnv(), bus);
+    new TaskRegistry(
+      resolveStateRoot(),
+      sid,
+      parentSpawnIdFromEnv(),
+      bus,
+      sidecar,
+      spawnPingDefaults,
+    );
+  state.sidecar = sidecar;
   const registry = createRegistry(sessionId);
 
   pi.on?.("session_start", async (_event, ctx) => {
@@ -51,6 +66,7 @@ async function buildRegistry(
 
   pi.on?.("session_shutdown", async () => {
     await state.registry?.shutdownCleanup();
+    state.sidecar?.close();
   });
 
   await registry.initialize();
@@ -77,6 +93,7 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
     mergeRows: rowFeed.mergeRows,
   });
   setupBackgroundTaskHooks(piExt, state);
+  setupBashBridge(piExt, state);
   setupPsCommands(piExt, {
     getRegistry: () => state.registry,
     mergeRows: rowFeed.mergeRows,
