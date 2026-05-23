@@ -412,6 +412,62 @@ Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) auto-resol
 
 Use `meridian models refresh` to force a cache refresh from the models.dev catalog.
 
+Cursor models appear as `runnable` when the `cursor` binary is installed and the harness probe succeeds. If `cursor` is not on `PATH` (or `MERIDIAN_CURSOR_BINARY` is not set), cursor models show as `unavailable`. Run `meridian doctor` to check harness status.
+
+## Cursor Harness
+
+### Model Selection
+
+Pass a cursor model alias directly with `-m`:
+
+```bash
+meridian spawn --harness cursor -m composer -p "task"
+meridian spawn --harness cursor -m gpt-5.5 -p "task"
+```
+
+Use the `cursor` shortcut when cursor is your default harness:
+
+```bash
+meridian cursor -m composer -p "task"
+```
+
+### Effort and Slug Resolution
+
+`--effort` maps to the appropriate cursor model slug. Cursor model slugs encode effort as a suffix (e.g. `gpt-5.5-high`).
+
+```bash
+meridian spawn --harness cursor -m gpt-5.5 --effort high   # → --model gpt-5.5-high
+meridian spawn --harness cursor -m gpt-5.5 --effort low    # → --model gpt-5.5-low
+meridian spawn --harness cursor -m gpt-5.5                 # → --model gpt-5.5 (cursor picks default effort)
+```
+
+**Claude models in Cursor:** when both standard and thinking variants are available for an effort level, the thinking variant is preferred automatically:
+
+```bash
+meridian spawn --harness cursor -m claude-opus-4-7 --effort high
+# → --model claude-opus-4-7-thinking-high  (thinking variant preferred over claude-opus-4-7-high)
+```
+
+This is harness-level policy — it is not configurable per-spawn.
+
+**Fast variants** (`-fast` suffix) are not yet available. Deferred to a future release.
+
+### Approval
+
+| Meridian approval mode | Cursor flag |
+|---|---|
+| `yolo` | `--yolo` |
+| `auto` | `--force` |
+| `default` / `confirm` | *(no flag)* |
+
+### Limitations
+
+The following features are not yet supported for the Cursor harness:
+
+- Session resume and fork (`--continue`, `--fork`)
+- Per-spawn MCP tools
+- Interactive mode
+
 ## Environment Variables
 
 ### Core
