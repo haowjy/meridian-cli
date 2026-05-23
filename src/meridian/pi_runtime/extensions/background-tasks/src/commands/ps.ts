@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { LogOverlayComponent } from "../components/log-overlay-component";
 import { PsPanelFrame } from "../components/ps-panel-frame";
 import { formatPsTable } from "../format_rows";
 import type { TaskPanelHost } from "../panel/host";
@@ -8,10 +9,19 @@ import { listUnifiedRows } from "./actions";
 import type { TaskRegistry } from "../task_registry";
 import type { BackgroundTaskRecord, PsRow } from "../types";
 
+const LOG_OVERLAY_OPTIONS = {
+  overlay: true as const,
+  overlayOptions: {
+    width: "90%",
+    maxHeight: "80%",
+    anchor: "center" as const,
+  },
+};
+
 export function registerPsCommand(
   pi: ExtensionAPI,
   panelHost: TaskPanelHost,
-  dockActions: DockActions,
+  _dockActions: DockActions,
   host: {
     getRegistry: () => TaskRegistry | null;
     mergeRows: (tasks: BackgroundTaskRecord[]) => PsRow[];
@@ -54,23 +64,34 @@ export function registerPsCommand(
         return;
       }
 
-      const result = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
+      await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
         let frame: PsPanelFrame | null = null;
-        const onClose = (taskId?: string): void => {
-          frame?.dispose();
-          frame = null;
-          if (taskId) {
-            dockActions.setFocus(taskId);
-          }
-          done(taskId ?? null);
+        const actions = {
+          onQuit: (): void => {
+            frame?.dispose();
+            frame = null;
+            done(null);
+          },
+          onOpenStream: async (taskId: string): Promise<void> => {
+            await ctx.ui.custom<null>(
+              (overlayTui, overlayTheme, _overlayKb, overlayDone) =>
+                new LogOverlayComponent({
+                  tui: overlayTui,
+                  theme: overlayTheme,
+                  host: panelHost,
+                  initialProcessId: taskId,
+                  streamFollow: true,
+                  done: () => overlayDone(null),
+                }),
+              LOG_OVERLAY_OPTIONS,
+            );
+            frame?.invalidate();
+            tui.requestRender();
+          },
         };
-        frame = new PsPanelFrame(tui, theme, onClose, panelHost);
+        frame = new PsPanelFrame(tui, theme, actions, panelHost);
         return frame;
       });
-
-      if (result) {
-        dockActions.setFocus(result);
-      }
     },
   });
 }

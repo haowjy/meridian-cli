@@ -2,7 +2,7 @@
 export const panelConfig = {
   processList: {
     maxVisibleProcesses: 8,
-    maxPreviewLines: 12,
+    maxPreviewLines: 4,
   },
   widget: {
     showStatusWidget: true,

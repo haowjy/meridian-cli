@@ -49,6 +49,8 @@ interface LogOverlayOptions {
   host: TaskPanelHost;
   /** Pre-select this process on open. If absent, uses first in list. */
   initialProcessId?: string;
+  /** When true (e.g. /ps enter), live tasks start in tail-follow mode. */
+  streamFollow?: boolean;
   done: () => void;
 }
 
@@ -69,12 +71,14 @@ export class LogOverlayComponent implements Component {
   private searchInput: Input = new Input();
 
   private unsubscribeManager: (() => void) | null = null;
+  private readonly streamFollow: boolean;
 
   constructor(opts: LogOverlayOptions) {
     this.tui = opts.tui;
     this.theme = opts.theme;
     this.host = opts.host;
     this.done = opts.done;
+    this.streamFollow = opts.streamFollow === true;
 
     void this.refreshProcesses(opts.initialProcessId);
 
@@ -150,7 +154,7 @@ export class LogOverlayComponent implements Component {
         filePath: logFiles.combinedFile,
         format: "plain",
         theme: this.theme,
-        follow: false,
+        follow: this.streamFollow && proc.isLive,
       });
       this.viewers.set(proc.id, viewer);
     }

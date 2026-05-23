@@ -49,27 +49,44 @@ function mockHost(entries: PanelEntry[] = []): TaskPanelHost {
 
 describe("TasksPanelComponent handleInput", () => {
   it("handles quit without ReferenceError (plain and Kitty q)", () => {
-    const onClose = vi.fn();
+    const onQuit = vi.fn();
     const panel = new TasksPanelComponent(
       { requestRender: vi.fn() },
       mockTheme(),
-      onClose,
+      { onQuit, onOpenStream: vi.fn() },
       mockHost(),
     );
 
     expect(() => panel.handleInput("q")).not.toThrow();
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onQuit).toHaveBeenCalledTimes(1);
 
-    onClose.mockClear();
+    onQuit.mockClear();
     expect(() => panel.handleInput("\x1b[113u")).not.toThrow();
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onQuit).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens log stream on enter without quitting /ps", async () => {
+    const onOpenStream = vi.fn();
+    const host = mockHost([sampleEntry]);
+    const panel = new TasksPanelComponent(
+      { requestRender: vi.fn() },
+      mockTheme(),
+      { onQuit: vi.fn(), onOpenStream },
+      host,
+    );
+    await vi.waitFor(() => {
+      expect(host.list).toHaveBeenCalled();
+    });
+
+    panel.handleInput("\r");
+    expect(onOpenStream).toHaveBeenCalledWith("t1");
   });
 
   it("handles navigation and action keys without ReferenceError", async () => {
     const panel = new TasksPanelComponent(
       { requestRender: vi.fn() },
       mockTheme(),
-      vi.fn(),
+      { onQuit: vi.fn(), onOpenStream: vi.fn() },
       mockHost([sampleEntry, { ...sampleEntry, id: "t2", rowKey: "task:t2" }]),
     );
     await vi.waitFor(() => {
@@ -93,7 +110,7 @@ describe("TasksPanelComponent handleInput", () => {
     const panel = new TasksPanelComponent(
       { requestRender: vi.fn() },
       mockTheme(),
-      vi.fn(),
+      { onQuit: vi.fn(), onOpenStream: vi.fn() },
       host,
     );
     await vi.waitFor(() => {

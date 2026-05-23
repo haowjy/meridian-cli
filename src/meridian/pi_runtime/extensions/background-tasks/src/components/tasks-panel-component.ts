@@ -2,6 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { backgroundForegroundBash } from "../background_foreground";
+import type { PsPanelActions } from "./ps-panel-frame";
 import type { TaskPanelHost } from "../panel/host";
 import {
   isPanelBackground,
@@ -82,7 +83,7 @@ const LIVE_REFRESH_MS = 1000;
 export class TasksPanelComponent implements Component {
   private readonly tui: PsPanelTui;
   private readonly theme: Theme;
-  private readonly onClose: (taskId?: string) => void;
+  private readonly actions: PsPanelActions;
   private readonly host: TaskPanelHost;
 
   private entries: PanelEntry[] = [];
@@ -98,12 +99,12 @@ export class TasksPanelComponent implements Component {
   constructor(
     tui: PsPanelTui,
     theme: Theme,
-    onClose: (taskId?: string) => void,
+    actions: PsPanelActions,
     host: TaskPanelHost,
   ) {
     this.tui = tui;
     this.theme = theme;
-    this.onClose = onClose;
+    this.actions = actions;
     this.host = host;
 
     void this.refreshEntries();
@@ -147,7 +148,7 @@ export class TasksPanelComponent implements Component {
     if (isPanelQuit(data)) {
       this.unsubscribe?.();
       this.unsubscribe = null;
-      this.onClose();
+      this.actions.onQuit();
       return;
     }
 
@@ -190,9 +191,7 @@ export class TasksPanelComponent implements Component {
     if (isPanelConfirm(data)) {
       const proc = processes[this.selectedIndex];
       if (proc) {
-        this.unsubscribe?.();
-        this.unsubscribe = null;
-        this.onClose(proc.id);
+        void this.actions.onOpenStream(proc.id);
       }
       return;
     }
@@ -340,7 +339,7 @@ export class TasksPanelComponent implements Component {
         const output = this.host.getOutput(selected.id, maxPreviewLines * 2);
         lines.push(renderPanelRule(width, theme));
 
-        const logTitle = `Output: ${accent(selected.name)} ${dim(`(${selected.id})`)}`;
+        const logTitle = `Output: ${accent(selected.name)} ${dim(`(${selected.id})`)}  ${dim("enter → stream")}`;
         lines.push(padLine(truncateToWidth(logTitle, innerWidth, "", true)));
 
         const detailLines = formatTaskDetailLines(selected);
@@ -383,6 +382,10 @@ export class TasksPanelComponent implements Component {
           }
         }
 
+        while (renderedLines < maxPreviewLines) {
+          lines.push(padLine(""));
+          renderedLines++;
+        }
       }
     }
 

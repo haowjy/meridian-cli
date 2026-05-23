@@ -1,17 +1,17 @@
 const MAX_PROCESS_ROWS = 8;
+/** Fixed tail preview in /ps (pi-processes uses 12 padded; stream view is separate). */
+export const MAX_LOG_PREVIEW_LINES = 4;
 
 /**
- * Process list uses one row per task (up to 8); remaining height goes to log preview.
- * Unlike pi-processes, we do not pad empty process slots.
+ * Process list: one row per task (up to 8). Log area is a fixed small preview.
  */
 export function computePanelLayout(
   terminalRows: number,
   processCount: number,
 ): { maxVisibleProcesses: number; maxPreviewLines: number } {
-  const rows = Math.max(20, terminalRows);
   const maxVisibleProcesses = Math.min(Math.max(0, processCount), MAX_PROCESS_ROWS);
-  const chromeLines = 11;
-  const processBlock = maxVisibleProcesses;
-  const maxPreviewLines = Math.max(3, rows - chromeLines - processBlock);
-  return { maxVisibleProcesses, maxPreviewLines };
+  return {
+    maxVisibleProcesses,
+    maxPreviewLines: MAX_LOG_PREVIEW_LINES,
+  };
 }
