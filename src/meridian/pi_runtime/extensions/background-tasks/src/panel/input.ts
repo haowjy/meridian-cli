@@ -1,11 +1,25 @@
-import { getKeybindings, type KeybindingsManager } from "@earendil-works/pi-tui";
-import { decodePrintableKey, matchesKey } from "@earendil-works/pi-tui/dist/keys.js";
+import { getKeybindings, matchesKey, type KeybindingsManager } from "@earendil-works/pi-tui";
+
+/**
+ * Minimal Kitty/legacy printable decode — do not import pi-tui/dist/keys.js; Pi's
+ * extension loader aliases @earendil-works/pi-tui to dist/index.js and breaks subpaths.
+ */
+function decodeKittyPrintable(data: string): string | undefined {
+  const csiU = data.match(/^\x1b\[(\d{1,8})u$/);
+  if (csiU) {
+    const codepoint = Number.parseInt(csiU[1], 10);
+    if (Number.isFinite(codepoint) && codepoint >= 32 && codepoint < 0x110000) {
+      return String.fromCodePoint(codepoint);
+    }
+  }
+  return undefined;
+}
 
 /** Resolve a single printable character from raw terminal input (Kitty or legacy). */
 export function printableChar(data: string): string | undefined {
-  const decoded = decodePrintableKey(data);
-  if (decoded != null && decoded.length > 0) {
-    return decoded;
+  const kitty = decodeKittyPrintable(data);
+  if (kitty != null && kitty.length > 0) {
+    return kitty;
   }
   if (data.length === 1 && data.charCodeAt(0) >= 32) {
     return data;
@@ -62,13 +76,11 @@ export function isPanelDown(data: string): boolean {
 }
 
 export function isPanelLogScrollUp(data: string): boolean {
-  const ch = printableChar(data);
-  return ch === "J";
+  return printableChar(data) === "J";
 }
 
 export function isPanelLogScrollDown(data: string): boolean {
-  const ch = printableChar(data);
-  return ch === "K";
+  return printableChar(data) === "K";
 }
 
 export function isPanelKill(data: string): boolean {
