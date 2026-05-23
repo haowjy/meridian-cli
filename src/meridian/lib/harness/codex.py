@@ -279,7 +279,14 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"skills", "agent", "context_from_payload", "reference_items", "task_cwd"}
+        {
+            "skills",
+            "agent",
+            "context_from_payload",
+            "reference_items",
+            "task_cwd",
+            "candidate_slugs",
+        }
     )
 
     @property

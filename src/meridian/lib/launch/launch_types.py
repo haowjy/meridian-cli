@@ -122,6 +122,7 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Cursor only
     task_cwd: str | None = None
+    candidate_slugs: tuple[str, ...] = ()
 
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()

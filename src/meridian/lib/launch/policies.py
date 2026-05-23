@@ -58,6 +58,7 @@ class ModelSelectionContext:
     resolved_entry: AliasEntry | None
     harness_provenance: str
     harness_model_id: str | None = None
+    candidate_slugs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -433,6 +434,7 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         resolved_entry=None,
         harness_provenance=harness_provenance,
         harness_model_id=bundle_result.harness_model,
+        candidate_slugs=getattr(bundle_result, "candidate_slugs", ()),
     )
 
     bundle_execution_policy = bundle_result.execution_policy.as_overrides(

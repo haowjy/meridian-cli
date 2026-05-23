@@ -46,6 +46,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "report_output_path",
         "user_turn_content",
         "task_cwd",
+        "candidate_slugs",
     }
 )
 

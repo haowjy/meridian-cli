@@ -53,8 +53,10 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "prompt",
             "model",
+            "effort",
             "extra_args",
             "task_cwd",
+            "candidate_slugs",
             "continue_harness_session_id",
             "continue_fork",
             "mcp_tools",
@@ -64,7 +66,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
-            "effort",
             "skills",
             "agent",
             "adhoc_agent_payload",
@@ -145,6 +146,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return ResolvedLaunchSpec(
             harness=HarnessId.CURSOR,
             model=str(run.model).strip() if run.model else None,
+            effort=run.effort,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
@@ -154,6 +156,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             task_cwd=run.task_cwd,
+            candidate_slugs=run.candidate_slugs,
         )
 
     def preflight(

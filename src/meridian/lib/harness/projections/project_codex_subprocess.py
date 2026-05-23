@@ -46,6 +46,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "reference_items",
         "skills",
         "task_cwd",
+        "candidate_slugs",
     }
 )
 

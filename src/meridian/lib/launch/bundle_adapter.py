@@ -66,6 +66,7 @@ class _BundleResult:
     model_token: str
     harness: HarnessId
     harness_model: str | None
+    candidate_slugs: tuple[str, ...]
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...]
@@ -294,6 +295,7 @@ def _parse_bundle_payload(
     model_token = _normalize_str(routing.get("model_token")) or model
     harness = _parse_harness_id(routing.get("harness"), harness_registry=harness_registry)
     harness_model = _normalize_str(routing.get("harness_model")) or None
+    candidate_slugs = _as_str_tuple(routing.get("candidate_slugs"))
 
     execution_policy_payload = _required_object_field(payload, "execution_policy")
     execution_policy = ResolvedExecutionPolicy.model_validate(
@@ -316,6 +318,7 @@ def _parse_bundle_payload(
         model_token=model_token,
         harness=harness,
         harness_model=harness_model,
+        candidate_slugs=candidate_slugs,
         execution_policy=execution_policy,
         provenance=_as_str_dict(payload.get("provenance")),
         warnings=_as_str_tuple(payload.get("warnings")),

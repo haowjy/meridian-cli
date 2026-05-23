@@ -268,7 +268,13 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"report_output_path", "context_from_payload", "reference_items", "task_cwd"}
+        {
+            "report_output_path",
+            "context_from_payload",
+            "reference_items",
+            "task_cwd",
+            "candidate_slugs",
+        }
     )
 
     @property

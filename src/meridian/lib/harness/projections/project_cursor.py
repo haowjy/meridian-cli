@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
@@ -19,13 +20,14 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "permission_resolver",
         "extra_args",
         "task_cwd",
+        "effort",
+        "candidate_slugs",
     }
 )
 
 _DELEGATED_FIELDS: frozenset[str] = frozenset(
     {
         "harness",
-        "effort",
         "continue_session_id",
         "continue_fork",
         "interactive",
@@ -81,6 +83,39 @@ def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
         )
 
 
+def _resolve_cursor_model(
+    model: str,
+    effort: str | None,
+    candidate_slugs: Sequence[str],
+) -> str:
+    """Resolve the best cursor slug for model + effort."""
+
+    normalized_effort = effort.strip().lower() if effort and effort.strip() else None
+
+    if model in candidate_slugs and not normalized_effort:
+        return model
+
+    if not normalized_effort:
+        return model
+
+    effort_matches = [
+        slug
+        for slug in candidate_slugs
+        if slug.startswith(model) and f"-{normalized_effort}" in slug
+    ]
+
+    if len(effort_matches) == 1:
+        return effort_matches[0]
+
+    if len(effort_matches) > 1:
+        thinking = [slug for slug in effort_matches if "thinking" in slug]
+        if thinking:
+            return min(thinking, key=len)
+        return min(effort_matches, key=len)
+
+    return f"{model}-{normalized_effort}"
+
+
 def project_cursor_spec_to_cli_args(
     spec: ResolvedLaunchSpec,
     *,
@@ -98,7 +133,8 @@ def project_cursor_spec_to_cli_args(
     command: list[str] = list(base_command)
 
     if spec.model is not None:
-        command.extend(("--model", spec.model))
+        resolved_model = _resolve_cursor_model(spec.model, spec.effort, spec.candidate_slugs)
+        command.extend(("--model", resolved_model))
 
     command.extend(_project_approval_flags(spec))
 
@@ -113,6 +149,28 @@ def project_cursor_spec_to_cli_args(
     return command
 
 
+def _test_resolve_cursor_model() -> None:
+    slugs = ["gpt-5.5-high", "gpt-5.5-low", "gpt-5.5-medium"]
+    assert _resolve_cursor_model("gpt-5.5-high", None, slugs) == "gpt-5.5-high"
+    assert _resolve_cursor_model("gpt-5.5", "high", slugs) == "gpt-5.5-high"
+    slugs2 = ["claude-opus-4-7-high", "claude-opus-4-7-thinking-high"]
+    assert (
+        _resolve_cursor_model("claude-opus-4-7", "high", slugs2)
+        == "claude-opus-4-7-thinking-high"
+    )
+    slugs3 = ["claude-4.6-opus-high", "claude-4.6-opus-high-thinking"]
+    assert (
+        _resolve_cursor_model("claude-4.6-opus", "high", slugs3)
+        == "claude-4.6-opus-high-thinking"
+    )
+    assert _resolve_cursor_model("gpt-5.5", None, slugs) == "gpt-5.5"
+    assert _resolve_cursor_model("gpt-5.5", "high", ()) == "gpt-5.5-high"
+    assert _resolve_cursor_model("gpt-5.5", "ultra", slugs) == "gpt-5.5-ultra"
+
+
+_test_resolve_cursor_model()
+
+
 _check_projection_drift(
     ResolvedLaunchSpec,
     projected=_PROJECTED_FIELDS,
@@ -125,5 +183,6 @@ __all__ = [
     "_PROJECTED_FIELDS",
     "HarnessCapabilityMismatch",
     "_check_projection_drift",
+    "_resolve_cursor_model",
     "project_cursor_spec_to_cli_args",
 ]

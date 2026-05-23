@@ -225,6 +225,8 @@ class SpawnParams(BaseModel):
     extra_args: tuple[str, ...] = ()
     control_root: str | None = None
     task_cwd: str | None = None
+    # Cursor only
+    candidate_slugs: tuple[str, ...] = ()
     mcp_tools: tuple[str, ...] = ()
     projected_roots: tuple[Path, ...] = ()
     interactive: bool = False
