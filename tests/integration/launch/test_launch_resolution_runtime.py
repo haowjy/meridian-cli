@@ -325,17 +325,17 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     _write_minimal_mars_config(tmp_path)
     captured_requests = stub_bundle_request_and_resolve(
         monkeypatch,
-        model="gpt-5.5",
-        model_token="gpt55",
+        model="claude-opus-4-7",
+        model_token="opus47",
         harness=HarnessId.CURSOR,
-        harness_model="gpt-5.5-high",
+        harness_model="claude-opus-4-7-thinking-high",
         execution_policy=ResolvedExecutionPolicy(effort="high"),
         provenance={"harness_source": "cli", "effort_source": "cli"},
     )
 
     request = build_primary_spawn_request(
         request=LaunchRequest(
-            model="gpt55",
+            model="opus47",
             harness=HarnessId.CURSOR.value,
             execution_policy=ResolvedExecutionPolicy(effort="high"),
         )
@@ -352,15 +352,18 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     )
 
     assert len(captured_requests) == 1
-    assert captured_requests[0].model_override == "gpt55"
+    assert captured_requests[0].model_override == "opus47"
     assert captured_requests[0].harness_override == HarnessId.CURSOR.value
     assert captured_requests[0].effort_override == "high"
     assert preview.harness.id is HarnessId.CURSOR
-    assert preview.resolved_request.model == "gpt-5.5"
+    assert preview.resolved_request.model == "claude-opus-4-7"
     assert preview.resolved_request.execution_policy.effort == "high"
-    assert str(preview.binding.run_params.model) == "gpt-5.5-high"
-    assert preview.binding.spec.model == "gpt-5.5-high"
+    assert str(preview.binding.run_params.model) == "claude-opus-4-7-thinking-high"
+    assert preview.binding.spec.model == "claude-opus-4-7-thinking-high"
     assert "--model" in preview.binding.argv
-    assert preview.binding.argv[preview.binding.argv.index("--model") + 1] == "gpt-5.5-high"
+    assert (
+        preview.binding.argv[preview.binding.argv.index("--model") + 1]
+        == "claude-opus-4-7-thinking-high"
+    )
     assert preview.model_selection is not None
-    assert preview.model_selection.harness_model_id == "gpt-5.5-high"
+    assert preview.model_selection.harness_model_id == "claude-opus-4-7-thinking-high"

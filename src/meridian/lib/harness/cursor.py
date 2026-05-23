@@ -53,7 +53,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         {
             "prompt",
             "model",
-            "effort",
             "extra_args",
             "task_cwd",
             "mcp_tools",
@@ -74,6 +73,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "continue_harness_session_id",
             "continue_fork",
+            "effort",
         }
     )
 
@@ -145,7 +145,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return ResolvedLaunchSpec(
             harness=HarnessId.CURSOR,
             model=str(run.model).strip() if run.model else None,
-            effort=run.effort,
             prompt=run.prompt,
             continue_session_id=continue_session_id,
             continue_fork=run.continue_fork and continue_session_id is not None,
