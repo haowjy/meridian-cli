@@ -119,7 +119,7 @@ def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     assert "hello over stdin" not in command
 
 
-def test_pi_native_projection_loads_lifecycle_extension_only(
+def test_pi_native_projection_loads_all_extensions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,7 +139,7 @@ def test_pi_native_projection_loads_lifecycle_extension_only(
         appended_system_prompt="native primary",
         extra_args=("--provider", "openai"),
         interactive=True,
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_lifecycle_extension_entrypoint(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -152,9 +152,9 @@ def test_pi_native_projection_loads_lifecycle_extension_only(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
+        str(extension_target_root / "background-tasks" / "index.js"),
         str(extension_target_root / "meridian-spawn-watch" / "index.js"),
     ]
-    assert str(extension_target_root / "background-tasks" / "index.js") not in extension_values
     assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
     assert command[command.index("--append-system-prompt") + 1] == "native primary"
     assert command[command.index("--fork") + 1] == "019e3113-edc8-7751-bb29-9648304465d5"
@@ -208,7 +208,7 @@ def test_pi_native_projection_rejects_owned_cli_surface(
         project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
 
 
-def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primary(
+def test_pi_adapter_resolve_launch_spec_uses_all_extensions_for_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -226,6 +226,7 @@ def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primar
     )
 
     assert spec.pi_extension_entrypoints == (
+        str(extension_target_root / "background-tasks" / "index.js"),
         str(extension_target_root / "meridian-spawn-watch" / "index.js"),
     )
 

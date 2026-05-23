@@ -44,7 +44,6 @@ from meridian.lib.harness.pi_runtime_resolver import (
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
     resolve_pi_all_extension_entrypoints,
-    resolve_pi_lifecycle_extension_entrypoint,
 )
 from meridian.lib.harness.projections.project_pi_native_tui import (
     project_pi_native_tui_spec_to_cli_args,
@@ -185,11 +184,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            pi_extension_entrypoints=(
-                resolve_pi_lifecycle_extension_entrypoint()
-                if run.interactive
-                else resolve_pi_all_extension_entrypoints()
-            ),
+            pi_extension_entrypoints=resolve_pi_all_extension_entrypoints(),
             agent_name=None,
             skills=(),
         )

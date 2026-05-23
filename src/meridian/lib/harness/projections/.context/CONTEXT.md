@@ -113,8 +113,8 @@ Resolves and materializes Meridian-owned Pi extension entrypoints for each launc
   `MERIDIAN_PI_EXTENSION_TARGET_ROOT` for testing
 
 Two functions provide entrypoints:
-- `resolve_pi_lifecycle_extension_entrypoint()` — lifecycle extension only (primary mode)
-- `resolve_pi_all_extension_entrypoints()` — both managed-bash and lifecycle (spawned mode)
+- `resolve_pi_lifecycle_extension_entrypoint()` — lifecycle extension only (legacy helper)
+- `resolve_pi_all_extension_entrypoints()` — both background-tasks and lifecycle (primary and spawned)
 
 Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
 the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.
