@@ -1,16 +1,17 @@
-/** Split terminal height between process list and log preview (no fixed 8+12 padding). */
+const MAX_PROCESS_ROWS = 8;
+
+/**
+ * Process list uses one row per task (up to 8); remaining height goes to log preview.
+ * Unlike pi-processes, we do not pad empty process slots.
+ */
 export function computePanelLayout(
   terminalRows: number,
   processCount: number,
 ): { maxVisibleProcesses: number; maxPreviewLines: number } {
   const rows = Math.max(20, terminalRows);
+  const maxVisibleProcesses = Math.min(Math.max(0, processCount), MAX_PROCESS_ROWS);
   const chromeLines = 11;
-  const remaining = Math.max(6, rows - chromeLines);
-  const cappedCount = Math.max(1, Math.min(processCount, 8));
-  const processLines = Math.min(cappedCount, Math.max(1, Math.floor(remaining * 0.28)));
-  const logLines = Math.max(3, remaining - processLines);
-  return {
-    maxVisibleProcesses: processLines,
-    maxPreviewLines: logLines,
-  };
+  const processBlock = maxVisibleProcesses;
+  const maxPreviewLines = Math.max(3, rows - chromeLines - processBlock);
+  return { maxVisibleProcesses, maxPreviewLines };
 }
