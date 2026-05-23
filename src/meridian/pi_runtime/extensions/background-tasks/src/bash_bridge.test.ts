@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getForegroundUserBashTaskId,
   setForegroundUserBashTaskId,
+  setOnAgentBashRunning,
   setupBashBridge,
   splitUserBashBackground,
 } from "./bash_bridge";
@@ -108,6 +109,35 @@ describe("setupBashBridge", () => {
     expect(syncBashToolRunning).toHaveBeenCalledWith(
       expect.objectContaining({ taskId: "async-job-1", command: "sleep 9" }),
     );
+  });
+
+  it("notifies agent bash running only for tracked wait_policy", async () => {
+    const registry = {
+      syncBashToolRunning: vi.fn(async () => null),
+      syncBashToolExited: vi.fn(),
+    } as unknown as TaskRegistry;
+    const handlers = new Map<string, (event: unknown) => unknown>();
+    setupBashBridge(
+      { on: (event, handler) => handlers.set(event, handler) },
+      { registry },
+    );
+
+    const onRunning = vi.fn();
+    setOnAgentBashRunning(onRunning);
+
+    await handlers.get("tool_result")?.({
+      toolName: "bash",
+      details: { state: "running", job_id: "det-1", wait_policy: "detached" },
+    });
+    expect(onRunning).not.toHaveBeenCalled();
+
+    await handlers.get("tool_result")?.({
+      toolName: "bash",
+      details: { state: "running", job_id: "trk-1", wait_policy: "tracked" },
+    });
+    expect(onRunning).toHaveBeenCalledWith("trk-1", "tracked");
+
+    setOnAgentBashRunning(null);
   });
 
   it("returns user_bash result immediately for trailing &", async () => {

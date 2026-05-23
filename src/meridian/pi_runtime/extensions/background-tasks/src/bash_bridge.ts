@@ -136,6 +136,7 @@ export function splitUserBashBackground(command: string): {
 
 let foregroundUserBashTaskId: string | null = null;
 let onForegroundBashChange: (() => void) | null = null;
+let onAgentBashRunning: ((taskId: string, waitPolicy: unknown) => void) | null = null;
 
 /** Task id blocking Pi's interactive `$` slot, if any. */
 export function getForegroundUserBashTaskId(): string | null {
@@ -144,6 +145,12 @@ export function getForegroundUserBashTaskId(): string | null {
 
 export function setOnForegroundBashChange(handler: (() => void) | null): void {
   onForegroundBashChange = handler;
+}
+
+export function setOnAgentBashRunning(
+  handler: ((taskId: string, waitPolicy: unknown) => void) | null,
+): void {
+  onAgentBashRunning = handler;
 }
 
 export function setForegroundUserBashTaskId(taskId: string | null): void {
@@ -171,17 +178,21 @@ async function syncRunningFromToolResult(
   jobId: string,
 ): Promise<void> {
   const details = event.details ?? {};
+  const waitPolicy = details.wait_policy;
   await registry.syncBashToolRunning({
     taskId: jobId,
     command: commandFrom(event),
     pid: typeof details.pid === "number" ? details.pid : null,
-    waitPolicy: details.wait_policy,
+    waitPolicy,
     cwd: typeof details.cwd === "string" ? details.cwd : undefined,
     logPath: typeof details.log_path === "string" ? details.log_path : undefined,
     pingIntervalMs:
       typeof details.ping_interval_ms === "number" ? details.ping_interval_ms : undefined,
     persistent: details.persistent === true,
   });
+  if (waitPolicy !== "detached") {
+    onAgentBashRunning?.(jobId, waitPolicy);
+  }
 }
 
 async function syncExitedFromToolResult(
