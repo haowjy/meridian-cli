@@ -1527,6 +1527,21 @@ async def test_pi_spawn_manager_prompt_response_failure_fails_fast_with_reported
         assert outcome is not None
         assert outcome.status == "failed"
         assert outcome.error == "No API key configured"
+
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        response_events = [
+            event
+            for event in history
+            if event.get("event_type") == "response"
+            and event.get("payload", {}).get("success") is False
+        ]
+        assert len(response_events) == 1
+        assert response_events[0]["payload"]["error"] == "No API key configured"
     finally:
         await manager.shutdown()
 
@@ -1677,6 +1692,66 @@ async def test_pi_connection_launches_in_task_cwd_when_provided(
     _ = [event async for event in event_iter]
 
     assert observed_cwd.read_text(encoding="utf-8").strip() == str(task_cwd)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
+async def test_pi_rpc_connection_surfaces_stderr_on_early_exit_before_first_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_extension_projection(monkeypatch, tmp_path)
+    monkeypatch.setattr(pi_rpc_module, "_FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_ABORT_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(pi_rpc_module, "_PROCESS_KILL_GRACE_SECONDS", 0.01)
+
+    spawn_id = SpawnId("p-pi-stderr-early-exit")
+    crash_stderr = "TypeError: markAsUncloneable is not a function"
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "pi"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"--version\" ]; then echo 'pi 1.2.3'; exit 0; fi\n"
+        f"if [ \"$1\" = \"--help\" ]; then echo '{_PI_HELP_SURFACE}'; exit 0; fi\n"
+        f"printf '%s\\n' '{crash_stderr}' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    connection = PiRpcConnection()
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    events = [event async for event in connection.events()]
+    error_events = [
+        event
+        for event in events
+        if event.event_type == "error/connectionClosed"
+    ]
+    assert error_events
+    message = str(error_events[0].payload.get("message", ""))
+    assert crash_stderr in message
+    assert "Pi subprocess stderr:" in message
+
+    stderr_log = resolve_spawn_log_dir(tmp_path, spawn_id) / "stderr.log"
+    assert crash_stderr in stderr_log.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
