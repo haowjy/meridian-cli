@@ -18,6 +18,7 @@ from meridian.lib.launch.plan import (
     build_primary_launch_runtime,
     build_primary_spawn_request,
 )
+from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
 from tests.support.fixtures import write_agent, write_skill
@@ -315,3 +316,52 @@ def test_launch_resolution_fallback_policy_resolves_opencode_medium_via_bundle(
     assert preview.resolved_request.execution_policy.effort == "medium"
     assert str(preview.binding.run_params.model) == "openai/gpt-5.5"
     assert preview.binding.spec.model == "openai/gpt-5.5"
+
+
+def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    captured_requests = stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.5",
+        model_token="gpt55",
+        harness=HarnessId.CURSOR,
+        harness_model="gpt-5.5-high",
+        execution_policy=ResolvedExecutionPolicy(effort="high"),
+        provenance={"harness_source": "cli", "effort_source": "cli"},
+    )
+
+    request = build_primary_spawn_request(
+        request=LaunchRequest(
+            model="gpt55",
+            harness=HarnessId.CURSOR.value,
+            execution_policy=ResolvedExecutionPolicy(effort="high"),
+        )
+    )
+    runtime = build_primary_launch_runtime(project_root=tmp_path).model_copy(
+        update={"composition_surface": LaunchCompositionSurface.SPAWN_PREPARE}
+    )
+    preview = build_launch_context(
+        spawn_id="dry-run-cursor-bundle-harness-model",
+        request=request,
+        runtime=runtime,
+        harness_registry=_registry_with_harnesses(HarnessId.CURSOR),
+        dry_run=True,
+    )
+
+    assert len(captured_requests) == 1
+    assert captured_requests[0].model_override == "gpt55"
+    assert captured_requests[0].harness_override == HarnessId.CURSOR.value
+    assert captured_requests[0].effort_override == "high"
+    assert preview.harness.id is HarnessId.CURSOR
+    assert preview.resolved_request.model == "gpt-5.5"
+    assert preview.resolved_request.execution_policy.effort == "high"
+    assert str(preview.binding.run_params.model) == "gpt-5.5-high"
+    assert preview.binding.spec.model == "gpt-5.5-high"
+    assert "--model" in preview.binding.argv
+    assert preview.binding.argv[preview.binding.argv.index("--model") + 1] == "gpt-5.5-high"
+    assert preview.model_selection is not None
+    assert preview.model_selection.harness_model_id == "gpt-5.5-high"
+    assert not hasattr(preview.model_selection, "candidate_slugs")
