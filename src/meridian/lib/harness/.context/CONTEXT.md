@@ -40,7 +40,8 @@ Per-harness mapping:
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
-- Pi subprocess: `pi rpc --mode rpc` (JSON-RPC stdio); Pi has no subprocess-only path — the RPC mode is the connection
+- Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
+- Pi subprocess/connection: `pi rpc --mode rpc` (JSON-RPC stdio); Pi has no subprocess-only path — the RPC mode is the connection
 
 ### Pi: Extension-Based Architecture
 
@@ -107,12 +108,18 @@ Every `SpawnParams` field must appear in each adapter's `consumed_fields` **or**
 Currently ignored fields:
 - Claude ignores `report_output_path`, `task_cwd`, `context_from_payload`, `reference_items`
 - Codex ignores `skills`, `agent`, `task_cwd`, `context_from_payload`, `reference_items`
+- Cursor ignores `skills`, `agent`, `adhoc_agent_payload`, `control_root`,
+  `appended_system_prompt`, `report_output_path`, `user_turn_content`,
+  `context_from_payload`, `reference_items`, `continue_harness_session_id`,
+  `continue_fork`, `effort`
 
-`task_cwd` is ignored by harness adapters because the `control_root`/`task_cwd` split
+`task_cwd` is ignored by most harness adapters because the `control_root`/`task_cwd` split
 assigns different responsibilities to different layers: adapters consume `control_root`
 for spawn directory resolution and `--add-dir` roots, while `task_cwd` is injected into
 the agent's working context via system prompt in `bind_launch_context()` at the composition
-layer. The harness command never needs the raw `task_cwd` value.
+layer. The harness command never needs the raw `task_cwd` value. **Exception:** Cursor
+consumes `task_cwd` directly and projects it as `--workspace` — Cursor uses it as the
+working directory for the agent subprocess, not as a system-prompt injection.
 
 ### Projection Drift Guard
 
@@ -157,6 +164,8 @@ Key mappings:
 - Claude: `result` event with `is_error=True` → failed; `subtype in ("", "success")` and `terminal_reason in ("", "completed")` → succeeded
 - Codex: `turn/completed` → succeeded; `error/connectionClosed` → failed
 - OpenCode: `session.idle` → succeeded; `session.error` → failed
+- Cursor: `error/connectionClosed` → failed; no explicit success event — stdout EOF
+  + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
 - Pi: `agent_end` → succeeded with quiescence check; `cancelled`/`error` → failed.
   The `agent_end` → success mapping is conditional: the drain loop only breaks when
   quiescence is also confirmed (no pending children/notifications). See `PiRpcQuiescenceDrainPolicy`.
@@ -208,6 +217,26 @@ to break a circular import in Python 3.14: `harness/__init__` → `opencode.py` 
 was still initializing. The module only depends on `core.types` — it never depended
 on harness internals. `opencode_http.py` now imports `OPENCODE_CONFIG_CONTENT_ENV`
 from `meridian.lib.launch.workspace_projection`.
+
+### Cursor: Subprocess-Only, Read-Only stdout
+
+Cursor is a single-turn, subprocess-only harness. `cursor agent <prompt>` streams
+NDJSON events to stdout then exits — there is no stdin injection, no session resume,
+and no bidirectional transport. `CursorSubprocessConnection` is a connection adapter
+in name only: it reads stdout until EOF and process exit, then reports done.
+
+`task_cwd` is projected as `--workspace` rather than delegated to the system-prompt
+composition layer. Cursor's agent subprocess needs the workspace path as a CLI flag
+to set its working directory — system-prompt injection alone is insufficient.
+
+`effort` appears in `_DELEGATED_FIELDS` because Mars resolves `model + effort` →
+`harness_model` at bundle-build time. By the time `project_cursor_spec_to_cli_args()`
+runs, `spec.model` already contains the effort-resolved model string; `effort` has
+served its purpose and is not passed to the CLI.
+
+MVP scope exclusions (enforced by `_assert_supported_for_mvp()`): per-spawn
+`mcp_tools`, `continue_fork`, `continue_session_id`, and `interactive` all raise
+`HarnessCapabilityMismatch` at projection time.
 
 ### Pi: Quiescence Instead of Process Exit
 

@@ -39,6 +39,8 @@ Per-harness commands:
 - Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
+- Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
+- Pi subprocess/connection: `pi rpc --mode rpc` (JSON-RPC stdio; Pi has no subprocess-only path — the RPC mode is the connection)
 
 ## Bootstrap Sequence Is Load-Bearing
 
@@ -74,7 +76,7 @@ unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode 
 - `adapter.py` — `SpawnParams`, `HarnessAdapter`, `HarnessContract` and sub-models.
   Source of truth for what every adapter must implement.
 - `registry.py` — `HarnessRegistry`, `with_defaults()`. The global singleton.
-- `claude.py` / `codex.py` / `opencode.py` — concrete adapter implementations.
+- `claude.py` / `codex.py` / `opencode.py` / `cursor.py` — concrete adapter implementations.
 - `__init__.py` — `HARNESS_EXTENSION_TOUCHPOINTS` and `ensure_bootstrap()`.
   Read before adding a harness — lists every file that must be touched.
 - `semantics.py` — `terminal_outcome()`, `activity_transition()`, `clears_signal()`.
