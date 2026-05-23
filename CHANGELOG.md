@@ -8,6 +8,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cursor subprocess harness integration: new `HarnessId.CURSOR`, `CursorAdapter`, `project_cursor_spec_to_cli_args`, and `CURSOR_EXTRACTOR`.
 - Cursor model alias in `mars.toml`: `composer` (`cursor/composer-2.5`).
 - Cursor harness unit tests for subprocess projection and stream-json extraction.
+- Cursor effort projection: `_resolve_cursor_model(model, effort, candidate_slugs)` resolves `--effort high` to catalog slug (e.g. `gpt-5.5-high`); prefers thinking variants for Claude models.
+- `candidate_slugs` field threaded from mars launch bundle through `bundle_adapter → ModelSelectionContext → SpawnParams → ResolvedLaunchSpec → project_cursor`; all non-cursor projections account for the field.
 
 ### Changed
 - Launch constants now include `BASE_COMMAND_CURSOR_SUBPROCESS` for `cursor agent --print --output-format stream-json --trust`.
