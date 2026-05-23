@@ -12,9 +12,10 @@ description = "Cursor's native coding model. Fast, strong tool use."
 
 [settings]
 targets = [
-    ".pi",
     ".claude",
-    ".opencode",
+    ".pi",
+    ".cursor",
     ".codex",
+    ".opencode",
 ]
 models_cache_ttl_hours = 24
