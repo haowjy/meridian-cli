@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -167,7 +167,7 @@ async def test_spawn_manager_codex_hitl_requests_auto_rejected_for_spawned_agent
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: FakeConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: FakeConnection,
     )
 
     spawn_id = start_spawn(
@@ -312,7 +312,7 @@ async def test_spawn_manager_retryable_permission_send_failure_resolves_not_fail
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: FakeConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: FakeConnection,
     )
 
     spawn_id = start_spawn(

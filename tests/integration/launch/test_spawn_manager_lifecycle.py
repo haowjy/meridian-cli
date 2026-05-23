@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -152,7 +152,7 @@ async def test_wait_for_completion_survives_cleanup_without_private_hooks(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: FakeConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: FakeConnection,
     )
 
     spawn_id = start_spawn(
@@ -308,7 +308,7 @@ async def test_pi_terminal_waits_for_extension_subspawn_drain_boundary(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: FakePiConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: FakePiConnection,
     )
 
     spawn_id = start_spawn(
@@ -501,7 +501,7 @@ async def test_spawn_manager_serializes_control_actions_and_persists_transitions
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: FakeConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: FakeConnection,
     )
 
     spawn_id = start_spawn(

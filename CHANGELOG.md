@@ -4,6 +4,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Cursor subprocess harness integration: new `HarnessId.CURSOR`, `CursorAdapter`, `project_cursor_spec_to_cli_args`, and `CURSOR_EXTRACTOR`.
+- Cursor model alias in `mars.toml`: `composer` (`cursor/composer-2.5`).
+- Cursor harness unit tests for subprocess projection and stream-json extraction.
+
+### Changed
+- Launch constants now include `BASE_COMMAND_CURSOR_SUBPROCESS` for `cursor agent --print --output-format stream-json --trust`.
+- `ResolvedLaunchSpec` now carries `task_cwd` so harness projections can consume explicit task working directory when needed.
+- Projection drift guards now account for `task_cwd` across all harness projection modules.
+
 ## [0.2.0] - 2026-05-22
 
 ### Fixed

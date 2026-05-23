@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -116,7 +116,7 @@ async def test_streaming_runner_signal_cancel_invokes_send_cancel_once(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _SignalDrivenConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _SignalDrivenConnection,
     )
     monkeypatch.setattr(
         "meridian.lib.launch.streaming_runner._install_signal_handlers",

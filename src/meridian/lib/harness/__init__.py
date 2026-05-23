@@ -66,10 +66,12 @@ def _run_bootstrap() -> None:
     # 4) Cross-adapter SpawnParams accounting runs after all registrations.
     from meridian.lib.harness import claude as _claude
     from meridian.lib.harness import codex as _codex
+    from meridian.lib.harness import cursor as _cursor
     from meridian.lib.harness import opencode as _opencode
     from meridian.lib.harness import pi as _pi
 
     from meridian.lib.harness.projections import project_claude as _project_claude
+    from meridian.lib.harness.projections import project_cursor as _project_cursor
     from meridian.lib.harness.projections import (
         project_codex_streaming as _project_codex_streaming,
     )
@@ -86,6 +88,7 @@ def _run_bootstrap() -> None:
 
     from meridian.lib.harness.extractors import claude as _claude_extractor
     from meridian.lib.harness.extractors import codex as _codex_extractor
+    from meridian.lib.harness.extractors import cursor as _cursor_extractor
     from meridian.lib.harness.extractors import opencode as _opencode_extractor
     from meridian.lib.harness.extractors import pi as _pi_extractor
 
@@ -94,9 +97,11 @@ def _run_bootstrap() -> None:
     _bootstrap_imports = (
         _claude,
         _codex,
+        _cursor,
         _opencode,
         _pi,
         _project_claude,
+        _project_cursor,
         _project_codex_subprocess,
         _project_codex_streaming,
         _project_opencode_subprocess,
@@ -104,6 +109,7 @@ def _run_bootstrap() -> None:
         _project_pi_rpc,
         _claude_extractor,
         _codex_extractor,
+        _cursor_extractor,
         _opencode_extractor,
         _pi_extractor,
     )

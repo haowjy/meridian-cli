@@ -18,7 +18,7 @@ import psutil
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.types import HarnessId, SpawnId
+from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import HarnessEvent
@@ -506,7 +506,9 @@ async def dispatch_start(
             f"expected {bundle.spec_cls.__name__}"
         )
 
-    connection_class = get_connection_class(config.harness_id)
+    declared_transports = bundle.adapter.contract.transport.transport_ids
+    transport_id = _select_dispatch_transport(declared_transports)
+    connection_class = get_connection_class(config.harness_id, transport_id)
     request_handler: PermissionBroker | None = None
     connection_ref: dict[str, HarnessConnection[Any]] = {}
 
@@ -543,6 +545,18 @@ async def dispatch_start(
             error=exc,
         ) from exc
     return connection
+
+
+def _select_dispatch_transport(
+    declared_transports: tuple[TransportId, ...],
+) -> TransportId:
+    """Choose dispatch transport from adapter contract declarations."""
+
+    if len(declared_transports) == 1:
+        return declared_transports[0]
+    if TransportId.STREAMING in declared_transports:
+        return TransportId.STREAMING
+    return declared_transports[0]
 
 
 def _default_control_server_factory(

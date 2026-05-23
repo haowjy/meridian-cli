@@ -44,6 +44,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "user_turn_content",
         "skills",
         "reference_items",
+        "task_cwd",
     }
 )
 

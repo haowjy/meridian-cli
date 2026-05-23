@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.domain import Spawn
-from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.claude_utils import extract_session_id_from_args
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
@@ -225,7 +225,7 @@ async def test_execute_with_streaming_persists_claude_seed_before_start(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _ClaudeSeedPersistenceConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ClaudeSeedPersistenceConnection,
     )
 
     run = Spawn(
@@ -291,7 +291,7 @@ async def test_execute_with_streaming_uses_adapter_seed_port_not_harness_id(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _OpenCodeSeedPortConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _OpenCodeSeedPortConnection,
     )
 
     run = Spawn(
@@ -362,7 +362,7 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _OpenCodeSeedPortConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _OpenCodeSeedPortConnection,
     )
     monkeypatch.setattr(
         launch_context_module,
@@ -414,4 +414,3 @@ async def test_execute_with_streaming_persists_selected_task_cwd_on_projection_f
     assert row is not None
     assert row.control_root == tmp_path.as_posix()
     assert row.task_cwd == external_task_cwd.as_posix()
-

@@ -9,6 +9,7 @@ class HarnessId(StrEnum):
 
     CLAUDE = "claude"
     CODEX = "codex"
+    CURSOR = "cursor"
     OPENCODE = "opencode"
     PI = "pi"
 

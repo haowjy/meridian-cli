@@ -76,6 +76,26 @@ def terminal_outcome(event: HarnessEvent) -> TerminalEventOutcome | None:
             error = error or "claude_result_unknown"
         return TerminalEventOutcome(status="failed", exit_code=1, error=error)
 
+    if event.harness_id == HarnessId.CURSOR.value and event.event_type == "result":
+        if bool(event.payload.get("is_error")):
+            error = (
+                _stringify_terminal_error(event.payload.get("result"))
+                or _stringify_terminal_error(event.payload.get("error"))
+                or "cursor_result_error"
+            )
+            return TerminalEventOutcome(status="failed", exit_code=1, error=error)
+
+        subtype = str(event.payload.get("subtype", "")).strip().lower()
+        if subtype in {"", "success"}:
+            return TerminalEventOutcome(status="succeeded", exit_code=0)
+
+        error = _stringify_terminal_error(event.payload.get("result"))
+        return TerminalEventOutcome(
+            status="failed",
+            exit_code=1,
+            error=error or f"cursor_result_{subtype}",
+        )
+
     if event.harness_id == HarnessId.OPENCODE.value:
         if event.event_type == "session.idle":
             return TerminalEventOutcome(status="succeeded", exit_code=0)
@@ -159,6 +179,8 @@ def clears_signal(event: HarnessEvent) -> bool:
     """Return whether an event clears a pending user signal for its harness."""
 
     if event.harness_id == HarnessId.CLAUDE.value:
+        return event.event_type == "result"
+    if event.harness_id == HarnessId.CURSOR.value:
         return event.event_type == "result"
     if event.harness_id == HarnessId.CODEX.value:
         return event.event_type == "turn/completed"
