@@ -10,11 +10,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cursor harness unit tests for subprocess projection and stream-json extraction.
 - Cursor effort projection: `_resolve_cursor_model(model, effort, candidate_slugs)` resolves `--effort high` to catalog slug (e.g. `gpt-5.5-high`); prefers thinking variants for Claude models.
 - `candidate_slugs` field threaded from mars launch bundle through `bundle_adapter → ModelSelectionContext → SpawnParams → ResolvedLaunchSpec → project_cursor`; all non-cursor projections account for the field.
+- Unit tests for `_resolve_cursor_model` algorithm: boundary-aware prefix matching, effort segment matching, thinking-variant preference (D5), fallback construction.
+- `validate_prompt_size` guard in `CursorSubprocessConnection.start()`, matching other harness connections.
 
 ### Changed
 - Launch constants now include `BASE_COMMAND_CURSOR_SUBPROCESS` for `cursor agent --print --output-format stream-json --trust`.
 - `ResolvedLaunchSpec` now carries `task_cwd` so harness projections can consume explicit task working directory when needed.
 - Projection drift guards now account for `task_cwd` across all harness projection modules.
+- `CursorAdapter._CONSUMED_FIELDS`: removed `continue_harness_session_id` and `continue_fork` (moved to `_EXPLICITLY_IGNORED_FIELDS` — these fields are cleared before reaching the adapter when resume/fork are unsupported).
+- `policies.py`: direct `bundle_result.candidate_slugs` field access replaces defensive `getattr`; `FakeBundleResult` fixtures updated with `candidate_slugs` field.
+
+### Fixed
+- Removed invalid `MERIDIAN_CURSOR_BINARY` env-var reference from `docs/configuration.md`.
 
 ## [0.2.0] - 2026-05-22
 

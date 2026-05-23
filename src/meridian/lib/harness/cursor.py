@@ -57,8 +57,6 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "extra_args",
             "task_cwd",
             "candidate_slugs",
-            "continue_harness_session_id",
-            "continue_fork",
             "mcp_tools",
             "projected_roots",
             "interactive",
@@ -75,6 +73,8 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "user_turn_content",
             "context_from_payload",
             "reference_items",
+            "continue_harness_session_id",
+            "continue_fork",
         }
     )
 

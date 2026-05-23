@@ -22,6 +22,7 @@ from meridian.lib.harness.connections.base import (
     HarnessEvent,
     StopProgressCallback,
     StopResult,
+    validate_prompt_size,
 )
 from meridian.lib.launch.constants import BASE_COMMAND_CURSOR_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
 from meridian.lib.launch.env import inherit_child_env
@@ -87,6 +88,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
         if self._state != "created":
             raise RuntimeError(f"Cannot start Cursor connection from state '{self._state}'")
 
+        validate_prompt_size(config)
         self._spawn_id = config.spawn_id
         self._set_state("starting")
 

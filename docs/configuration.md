@@ -412,7 +412,7 @@ Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) auto-resol
 
 Use `meridian models refresh` to force a cache refresh from the models.dev catalog.
 
-Cursor models appear as `runnable` when the `cursor` binary is installed and the harness probe succeeds. If `cursor` is not on `PATH` (or `MERIDIAN_CURSOR_BINARY` is not set), cursor models show as `unavailable`. Run `meridian doctor` to check harness status.
+Cursor models appear as `runnable` when the `cursor` binary is installed and the harness probe succeeds. If `cursor` is not on `PATH`, cursor models show as `unavailable`. Run `meridian doctor` to check harness status.
 
 ## Cursor Harness
 

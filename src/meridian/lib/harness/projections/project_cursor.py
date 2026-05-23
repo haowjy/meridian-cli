@@ -83,31 +83,52 @@ def _assert_supported_for_mvp(spec: ResolvedLaunchSpec) -> None:
         )
 
 
+def _prefix_matches(slug: str, model: str) -> bool:
+    """True when *slug* is *model* itself or starts with ``model-``."""
+    return slug == model or slug.startswith(f"{model}-")
+
+
 def _resolve_cursor_model(
     model: str,
     effort: str | None,
     candidate_slugs: Sequence[str],
 ) -> str:
-    """Resolve the best cursor slug for model + effort."""
+    """Resolve the best cursor slug for model + effort.
+
+    Rules:
+    1. Exact match in catalog with no effort → pass through verbatim.
+    2. No effort → return model unchanged.
+    3. Search candidates starting with ``model-`` containing ``-effort``
+       as a complete trailing segment; prefer thinking variants (D5).
+    4. No match → fallback to ``{model}-{effort}``.
+    """
 
     normalized_effort = effort.strip().lower() if effort and effort.strip() else None
 
+    # Rule 1: exact catalog match with no effort override → verbatim.
     if model in candidate_slugs and not normalized_effort:
         return model
 
     if not normalized_effort:
         return model
 
+    # Rule 3: search candidates for boundary-aware prefix + effort match.
+    # Effort must appear as a complete trailing segment: the slug ends with
+    # ``-{effort}`` or ``-{effort}-thinking`` (not a substring of a longer
+    # effort name like ``-extra-high`` matching ``-high``).
+    effort_suffix = f"-{normalized_effort}"
     effort_matches = [
         slug
         for slug in candidate_slugs
-        if slug.startswith(model) and f"-{normalized_effort}" in slug
+        if _prefix_matches(slug, model)
+        and (slug.endswith(effort_suffix) or f"{effort_suffix}-" in slug)
     ]
 
     if len(effort_matches) == 1:
         return effort_matches[0]
 
     if len(effort_matches) > 1:
+        # D5: prefer thinking variants (cursor Claude naming convention).
         thinking = [slug for slug in effort_matches if "thinking" in slug]
         if thinking:
             return min(thinking, key=len)
@@ -149,28 +170,6 @@ def project_cursor_spec_to_cli_args(
     return command
 
 
-def _test_resolve_cursor_model() -> None:
-    slugs = ["gpt-5.5-high", "gpt-5.5-low", "gpt-5.5-medium"]
-    assert _resolve_cursor_model("gpt-5.5-high", None, slugs) == "gpt-5.5-high"
-    assert _resolve_cursor_model("gpt-5.5", "high", slugs) == "gpt-5.5-high"
-    slugs2 = ["claude-opus-4-7-high", "claude-opus-4-7-thinking-high"]
-    assert (
-        _resolve_cursor_model("claude-opus-4-7", "high", slugs2)
-        == "claude-opus-4-7-thinking-high"
-    )
-    slugs3 = ["claude-4.6-opus-high", "claude-4.6-opus-high-thinking"]
-    assert (
-        _resolve_cursor_model("claude-4.6-opus", "high", slugs3)
-        == "claude-4.6-opus-high-thinking"
-    )
-    assert _resolve_cursor_model("gpt-5.5", None, slugs) == "gpt-5.5"
-    assert _resolve_cursor_model("gpt-5.5", "high", ()) == "gpt-5.5-high"
-    assert _resolve_cursor_model("gpt-5.5", "ultra", slugs) == "gpt-5.5-ultra"
-
-
-_test_resolve_cursor_model()
-
-
 _check_projection_drift(
     ResolvedLaunchSpec,
     projected=_PROJECTED_FIELDS,
@@ -179,10 +178,6 @@ _check_projection_drift(
 
 
 __all__ = [
-    "_DELEGATED_FIELDS",
-    "_PROJECTED_FIELDS",
     "HarnessCapabilityMismatch",
-    "_check_projection_drift",
-    "_resolve_cursor_model",
     "project_cursor_spec_to_cli_args",
 ]

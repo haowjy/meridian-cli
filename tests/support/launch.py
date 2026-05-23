@@ -17,6 +17,7 @@ class FakeBundleResult:
     execution_policy: ResolvedExecutionPolicy
     provenance: dict[str, str]
     warnings: tuple[str, ...] = ()
+    candidate_slugs: tuple[str, ...] = ()
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()
@@ -32,6 +33,7 @@ def stub_bundle_request_and_resolve(
     execution_policy: ResolvedExecutionPolicy | None = None,
     provenance: dict[str, str] | None = None,
     warnings: tuple[str, ...] = (),
+    candidate_slugs: tuple[str, ...] = (),
     tools_allowed: tuple[str, ...] = (),
     tools_disallowed: tuple[str, ...] = (),
     tools_mcp: tuple[str, ...] = (),
@@ -59,6 +61,7 @@ def stub_bundle_request_and_resolve(
             execution_policy=resolved_policy,
             provenance=resolved_provenance,
             warnings=warnings,
+            candidate_slugs=candidate_slugs,
             tools_allowed=tools_allowed,
             tools_disallowed=tools_disallowed,
             tools_mcp=tools_mcp,
