@@ -37,6 +37,7 @@ _PRIMARY_AUTOCOMPACT_PCT_MAX = 100
 _PRIMARY_AUTOCOMPACT_TOKEN_MIN = 1000
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 _LEGACY_AGENTS_SECTION = "agents"
+_HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
 
 
 class _SettingsLoadContext(BaseModel):
@@ -309,7 +310,7 @@ def _normalize_harness_table(
     if not isinstance(raw_value, dict):
         raise ValueError(f"Invalid value for '{source}': expected table.")
 
-    allowed = frozenset({"claude", "codex", "opencode"})
+    allowed = _HARNESS_TABLE_KEYS
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
         if key not in allowed:
@@ -343,6 +344,15 @@ def _normalize_harness_table(
                             f"{type(harness_value).__name__} ({harness_value!r})."
                         )
                     harness_values["wait_yield_seconds"] = float(harness_value)
+                    continue
+                if key == "pi" and harness_key == "disable_managed_bash":
+                    if not isinstance(harness_value, bool):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.disable_managed_bash': "
+                            f"expected bool, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["disable_managed_bash"] = harness_value
                     continue
                 logger.warning(
                     "Ignoring unknown Meridian config key '%s.%s.%s'.",
@@ -1145,6 +1155,10 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
     ] = "opencode-go/kimi-k2.6"
 
 
+class PiHarnessProfileConfig(HarnessProfileConfig):
+    disable_managed_bash: bool = False
+
+
 class HarnessConfig(BaseModel):
     """Default model and wait-yield configuration for each harness adapter."""
 
@@ -1157,6 +1171,7 @@ class HarnessConfig(BaseModel):
         default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
     opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
+    pi: PiHarnessProfileConfig = Field(default_factory=PiHarnessProfileConfig)
 
 
 class MeridianConfig(BaseSettings):
@@ -1271,31 +1286,28 @@ class MeridianConfig(BaseSettings):
     def default_model_for_harness(self, harness_id: str) -> str | None:
         """Return configured default model for one harness ID."""
 
-        normalized = harness_id.strip().lower()
-        mapping: dict[str, HarnessProfileConfig] = {
-            "claude": self.harness.claude,
-            "codex": self.harness.codex,
-            "opencode": self.harness.opencode,
-        }
-        profile = mapping.get(normalized)
+        profile = self._harness_profile_for_id(harness_id)
         return None if profile is None else profile.model
 
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
         """Return clamped wait-yield seconds for a harness or the unknown default."""
 
-        normalized = (harness_id or "").strip().lower()
-        mapping: dict[str, HarnessProfileConfig] = {
-            "claude": self.harness.claude,
-            "codex": self.harness.codex,
-            "opencode": self.harness.opencode,
-        }
-        configured = mapping.get(normalized)
+        configured = self._harness_profile_for_id(harness_id)
         raw_value = (
             configured.wait_yield_seconds
             if configured is not None and configured.wait_yield_seconds is not None
             else self.default_wait_yield_seconds
         )
         return max(float(raw_value), float(self.min_wait_yield_seconds))
+
+    def _harness_profile_for_id(self, harness_id: str | None) -> HarnessProfileConfig | None:
+        normalized = (harness_id or "").strip().lower()
+        if normalized not in _HARNESS_TABLE_KEYS:
+            return None
+        profile = getattr(self.harness, normalized, None)
+        if not isinstance(profile, HarnessProfileConfig):
+            return None
+        return profile
 
     @classmethod
     def settings_customise_sources(
@@ -1406,3 +1418,24 @@ def load_config(
         return MeridianConfig()
     finally:
         _SETTINGS_CONTEXT.reset(token)
+
+
+def _truthy_env_value(raw_value: str) -> bool:
+    return raw_value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def resolve_pi_disable_managed_bash() -> bool:
+    """Resolve whether Meridian should skip Pi's managed bash extension."""
+
+    raw_disable = os.getenv("MERIDIAN_PI_DISABLE_MANAGED_BASH")
+    if raw_disable is not None and _truthy_env_value(raw_disable):
+        return True
+
+    raw_managed = os.getenv("MERIDIAN_PI_MANAGED_BASH")
+    if raw_managed is not None and raw_managed.strip() == "0":
+        return True
+
+    from meridian.lib.config.project_root import resolve_project_root_resolution
+
+    project_root = resolve_project_root_resolution().project_root
+    return load_config(project_root).harness.pi.disable_managed_bash

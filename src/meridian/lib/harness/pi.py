@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
+from meridian.lib.config.settings import resolve_pi_disable_managed_bash
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -43,7 +44,7 @@ from meridian.lib.harness.pi_runtime_resolver import (
     resolve_pi_runtime,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
-    resolve_pi_all_extension_entrypoints,
+    resolve_pi_extension_entrypoints,
 )
 from meridian.lib.harness.projections.project_pi_native_tui import (
     project_pi_native_tui_spec_to_cli_args,
@@ -171,6 +172,11 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
+        disable_managed_bash = resolve_pi_disable_managed_bash()
+        entrypoints = resolve_pi_extension_entrypoints(
+            disable_managed_bash=disable_managed_bash,
+            interactive=run.interactive,
+        )
         return ResolvedLaunchSpec(
             harness=HarnessId.PI,
             model=str(run.model).strip() if run.model else None,
@@ -184,7 +190,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             mcp_tools=run.mcp_tools,
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
-            pi_extension_entrypoints=resolve_pi_all_extension_entrypoints(),
+            pi_extension_entrypoints=entrypoints,
             agent_name=None,
             skills=(),
         )

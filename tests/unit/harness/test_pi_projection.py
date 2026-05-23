@@ -161,6 +161,64 @@ def test_pi_native_projection_loads_all_extensions(
     assert command[-2:] == ["--provider", "openai"]
 
 
+def test_pi_extension_projection_non_interactive_only_loads_spawn_watch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+
+    entrypoints = pi_extension_projection.resolve_pi_extension_entrypoints(
+        disable_managed_bash=False,
+        interactive=False,
+    )
+
+    assert entrypoints == (
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
+    )
+
+
+def test_pi_extension_projection_disable_managed_bash_interactive_only_loads_spawn_watch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+
+    entrypoints = pi_extension_projection.resolve_pi_extension_entrypoints(
+        disable_managed_bash=True,
+        interactive=True,
+    )
+
+    assert entrypoints == (
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
+    )
+
+
+def test_pi_all_extension_entrypoints_keeps_interactive_managed_bash_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+
+    entrypoints = pi_extension_projection.resolve_pi_all_extension_entrypoints()
+
+    assert entrypoints == (
+        str(extension_target_root / "background-tasks" / "index.js"),
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
+    )
+
+
 def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false() -> None:
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
@@ -217,6 +275,8 @@ def test_pi_adapter_resolve_launch_spec_uses_all_extensions_for_primary(
     _write_extension_fixture(extension_source_root)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+    monkeypatch.delenv("MERIDIAN_PI_DISABLE_MANAGED_BASH", raising=False)
+    monkeypatch.delenv("MERIDIAN_PI_MANAGED_BASH", raising=False)
 
     adapter = PiAdapter()
 
@@ -227,6 +287,30 @@ def test_pi_adapter_resolve_launch_spec_uses_all_extensions_for_primary(
 
     assert spec.pi_extension_entrypoints == (
         str(extension_target_root / "background-tasks" / "index.js"),
+        str(extension_target_root / "meridian-spawn-watch" / "index.js"),
+    )
+
+
+def test_pi_adapter_resolve_launch_spec_uses_spawn_watch_for_spawned_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    extension_target_root = tmp_path / "agent" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+    monkeypatch.delenv("MERIDIAN_PI_DISABLE_MANAGED_BASH", raising=False)
+    monkeypatch.delenv("MERIDIAN_PI_MANAGED_BASH", raising=False)
+
+    adapter = PiAdapter()
+
+    spec = adapter.resolve_launch_spec(
+        SpawnParams(prompt="spawned should run", interactive=False),
+        UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    assert spec.pi_extension_entrypoints == (
         str(extension_target_root / "meridian-spawn-watch" / "index.js"),
     )
 

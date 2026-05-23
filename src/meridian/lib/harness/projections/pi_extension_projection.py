@@ -20,8 +20,13 @@ _LIFECYCLE_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
     "meridian-spawn-watch/index.js",
 )
 
+_BACKGROUND_TASKS_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "background-tasks",
+    "background-tasks/index.js",
+)
+
 _ALL_REQUIRED_EXTENSION_RELATIVE_PATHS: Final[tuple[tuple[str, str], ...]] = (
-    ("background-tasks", "background-tasks/index.js"),
+    _BACKGROUND_TASKS_EXTENSION_RELATIVE_PATH,
     _LIFECYCLE_EXTENSION_RELATIVE_PATH,
 )
 
@@ -30,22 +35,48 @@ class PiExtensionProjectionError(RuntimeError):
     """Raised when required Pi extension artifacts cannot be projected."""
 
 
-def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
-    """Resolve and materialize the Meridian lifecycle Pi extension entrypoint."""
+def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
+    """Resolve and materialize the Meridian spawn-watch Pi extension entrypoint."""
 
     source_root = _resolve_extension_source_root()
     target_root = _resolve_extension_target_root()
     return (_materialize_entrypoint(source_root, target_root, *_LIFECYCLE_EXTENSION_RELATIVE_PATH),)
 
 
-def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
-    """Resolve and materialize all Meridian-owned Pi extension entrypoints."""
+def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
+    """Resolve spawn-watch entrypoint (legacy name)."""
+
+    return resolve_pi_spawn_watch_entrypoint()
+
+
+def resolve_pi_extension_entrypoints(
+    *,
+    disable_managed_bash: bool,
+    interactive: bool,
+) -> tuple[str, ...]:
+    """Resolve Pi extension entrypoints for one launch.
+
+    Spawn-watch is always included. Managed bash (background-tasks) loads only for
+    interactive primary sessions when managed bash is not disabled.
+    """
 
     source_root = _resolve_extension_source_root()
     target_root = _resolve_extension_target_root()
+    relative_paths: list[tuple[str, str]] = [_LIFECYCLE_EXTENSION_RELATIVE_PATH]
+    if interactive and not disable_managed_bash:
+        relative_paths.insert(0, _BACKGROUND_TASKS_EXTENSION_RELATIVE_PATH)
     return tuple(
         _materialize_entrypoint(source_root, target_root, extension_name, relative_path)
-        for extension_name, relative_path in _ALL_REQUIRED_EXTENSION_RELATIVE_PATHS
+        for extension_name, relative_path in relative_paths
+    )
+
+
+def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
+    """Resolve interactive-primary extensions (background-tasks + spawn-watch)."""
+
+    return resolve_pi_extension_entrypoints(
+        disable_managed_bash=False,
+        interactive=True,
     )
 
 
@@ -108,5 +139,7 @@ def _resolve_extension_target_root() -> Path:
 __all__ = [
     "PiExtensionProjectionError",
     "resolve_pi_all_extension_entrypoints",
+    "resolve_pi_extension_entrypoints",
     "resolve_pi_lifecycle_extension_entrypoint",
+    "resolve_pi_spawn_watch_entrypoint",
 ]

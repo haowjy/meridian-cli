@@ -116,6 +116,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
 | `harness.opencode` | str | Default model for OpenCode harness |
+| `harness.pi.disable_managed_bash` | bool | Disable Meridian's Pi managed bash/background-tasks extension |
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |
 | `state.retention_days` | int | TTL for stale state pruning (`-1` = never, `0` = immediate, default `30`) |
@@ -123,7 +124,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
 | `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
 
-Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile.
+Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile. Agent definitions live in `mars.toml`, not `meridian.toml`; run `meridian mars sync` after changing them.
 
 Project-level routing defaults (`default_model`, `default_harness`) live in
 `mars.toml` under `[settings]`, not in Meridian config.
@@ -248,6 +249,9 @@ max_depth = 4
 claude = "claude-opus-4-6"
 codex = "gpt-5.3-codex"
 opencode = "gemini-3.1-pro"
+
+[harness.pi]
+disable_managed_bash = false
 
 [output]
 show = ["lifecycle", "error"]
