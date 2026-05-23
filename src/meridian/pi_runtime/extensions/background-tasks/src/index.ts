@@ -1,9 +1,11 @@
-import type { ExtensionAPI } from "../../types";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
 import { setupBashBridge } from "./bash_bridge";
 import { setupPsCommands } from "./commands";
-import { setupBackgroundTaskHooks } from "./hooks";
+import { setupTaskWidget } from "./hooks/widget";
+import { TaskPanelHost } from "./panel/host";
 import { resolveSpawnTaskPingDefaults } from "./session_ping";
 import {
   TaskRegistry,
@@ -25,11 +27,13 @@ const state: {
   sessionId: string;
   createRegistry: ((sessionId: string) => TaskRegistry) | null;
   sidecar: ReturnType<typeof createLifecycleSidecarWriter> | null;
+  panelHost: TaskPanelHost | null;
 } = {
   registry: null,
   sessionId: makeId("session"),
   createRegistry: null,
   sidecar: null,
+  panelHost: null,
 };
 
 async function buildRegistry(
@@ -82,6 +86,16 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
   state.createRegistry = setup.createRegistry;
 
   const rowFeed = createUnifiedRowFeed(bus);
+  const spawnPingDefaults = resolveSpawnTaskPingDefaults();
+  state.panelHost = new TaskPanelHost(
+    () => state.registry,
+    rowFeed.mergeRows,
+    bus,
+    spawnPingDefaults,
+  );
+
+  const { dockActions } = setupTaskWidget(pi, state.panelHost);
+
   setupBackgroundTaskTool(pi, {
     getRegistry: () => state.registry,
     getSessionId: () => state.sessionId,
@@ -92,14 +106,15 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
     createRegistry: (sessionId) => state.createRegistry!(sessionId),
     mergeRows: rowFeed.mergeRows,
   });
-  setupBackgroundTaskHooks(piExt, state);
   setupBashBridge(piExt, state);
-  setupPsCommands(piExt, {
+  setupPsCommands(pi, state.panelHost, dockActions, {
     getRegistry: () => state.registry,
     mergeRows: rowFeed.mergeRows,
   });
 
   piExt.on?.("session_shutdown", async () => {
     rowFeed.dispose();
+    state.panelHost?.dispose();
+    state.panelHost = null;
   });
 }

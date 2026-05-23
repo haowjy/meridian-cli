@@ -4,17 +4,27 @@
   "type": "module",
   "scripts": {
     "build:extensions:clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('./dist/extensions', { recursive: true, force: true });\"",
-    "build:extensions:background-tasks": "tsup ./extensions/background-tasks/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/background-tasks --clean",
+    "build:extensions:background-tasks": "tsup ./extensions/background-tasks/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/background-tasks --clean --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui",
     "build:extensions:meridian-spawn-watch": "tsup ./extensions/meridian-spawn-watch/src/index.ts --format esm --target node20 --splitting false --out-dir ./dist/extensions/meridian-spawn-watch --clean",
     "build:extensions": "npm run build:extensions:clean && npm run build:extensions:background-tasks && npm run build:extensions:meridian-spawn-watch",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.3",
+    "@earendil-works/pi-tui": "^0.75.3",
     "@types/node": "^24.10.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">0.70.0 <1",
+    "@earendil-works/pi-tui": ">0.70.0 <1"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true }
   },
   "dependencies": {
     "typebox": "^1.1.38"
