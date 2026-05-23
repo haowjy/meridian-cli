@@ -10,9 +10,6 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
-from meridian.lib.catalog.catalog_session import CatalogSession
-from meridian.lib.catalog.model_aliases import AliasEntry
-from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.ops.spawn.models import SpawnContinueInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
@@ -53,28 +50,6 @@ def _seed_spawn(
         harness_session_id=harness_session_id,
         execution_cwd=execution_cwd,
     )
-
-
-def _patch_catalog_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    codex_entry = AliasEntry(
-        alias="gpt-5.3-codex",
-        model_id=ModelId("gpt-5.3-codex"),
-        resolved_harness=HarnessId.CODEX,
-    )
-    claude_entry = AliasEntry(
-        alias="claude-sonnet-4.5",
-        model_id=ModelId("claude-sonnet-4.5"),
-        resolved_harness=HarnessId.CLAUDE,
-    )
-
-    def resolve_model(self: CatalogSession, name: str) -> AliasEntry:
-        return {
-            codex_entry.alias: codex_entry,
-            claude_entry.alias: claude_entry,
-        }[name]
-
-    monkeypatch.setattr(CatalogSession, "resolve_model", resolve_model)
-    monkeypatch.setattr(CatalogSession, "load_aliases", lambda self: [codex_entry, claude_entry])
 
 
 def test_spawn_continue_errors_when_source_spawn_lacks_harness_session_id(
@@ -131,7 +106,11 @@ def test_spawn_continue_rejects_cross_harness_from_resolved_model_policy(
     project_root.mkdir()
     runtime_root = _state_root(project_root)
     _seed_spawn(runtime_root, spawn_id="p26", harness_session_id="session-26")
-    _patch_catalog_models(monkeypatch)
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        lambda _create_input, *, resolved_project_root=None: "claude",
+    )
 
     with pytest.raises(ValueError) as exc_info:
         spawn_api.spawn_continue_sync(

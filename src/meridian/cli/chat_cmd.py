@@ -72,7 +72,7 @@ def _chat(
     ] = None,
     harness: Annotated[
         str | None,
-        Parameter(name="--harness", help="Harness id: claude, codex, or opencode."),
+        Parameter(name="--harness", help="Harness id: claude, codex, cursor, or opencode."),
     ] = None,
     agent: Annotated[
         str | None,

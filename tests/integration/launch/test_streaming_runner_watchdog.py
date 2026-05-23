@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.core.domain import Spawn
-from meridian.lib.core.types import HarnessId, ModelId, SpawnId
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -408,7 +408,7 @@ async def test_execute_with_streaming_succeeds_after_report_watchdog_cleanup(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _ReportThenHangConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ReportThenHangConnection,
     )
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_POLL_SECONDS", 0.001)
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_GRACE_SECONDS", 0.001)
@@ -474,7 +474,7 @@ async def test_setup_failure_produces_terminal_event(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _ReportThenHangConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ReportThenHangConnection,
     )
 
     run = Spawn(
@@ -543,7 +543,7 @@ async def test_execute_with_streaming_finalizes_when_duration_clock_read_fails(
     monkeypatch.setattr(spawn_manager_module, "ControlSocketServer", _FakeControlSocketServer)
     monkeypatch.setattr(
         "meridian.lib.harness.connections.get_connection_class",
-        lambda _harness_id: _ReportThenHangConnection,
+        lambda _harness_id, _transport_id=TransportId.STREAMING: _ReportThenHangConnection,
     )
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_POLL_SECONDS", 0.001)
     monkeypatch.setattr(launch_constants, "REPORT_WATCHDOG_GRACE_SECONDS", 0.001)

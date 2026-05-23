@@ -39,37 +39,6 @@ def test_alias_entry_defaults_harness_candidates_and_runnable_paths_to_empty_tup
     assert alias_entry.runnable_paths == ()
 
 
-def test_alias_entry_harness_model_id_for_returns_matching_harness_path() -> None:
-    alias_entry = AliasEntry(
-        alias="fast",
-        model_id=ModelId("fake-model"),
-        runnable_paths=(
-            RunnablePath(harness="codex", harness_model_id="provider/codex-model"),
-            RunnablePath(harness="opencode", harness_model_id="provider/opencode-model"),
-        ),
-    )
-
-    assert alias_entry.harness_model_id_for("opencode") == "provider/opencode-model"
-
-
-def test_alias_entry_harness_model_id_for_returns_none_when_path_does_not_match() -> None:
-    alias_entry = AliasEntry(
-        alias="fast",
-        model_id=ModelId("fake-model"),
-        runnable_paths=(
-            RunnablePath(harness="codex", harness_model_id="provider/codex-model"),
-        ),
-    )
-
-    assert alias_entry.harness_model_id_for("opencode") is None
-
-
-def test_alias_entry_harness_model_id_for_returns_none_with_empty_paths() -> None:
-    alias_entry = AliasEntry(alias="fast", model_id=ModelId("fake-model"))
-
-    assert alias_entry.harness_model_id_for("opencode") is None
-
-
 def test_alias_entry_harness_property_requires_mars_resolved_harness() -> None:
     resolved_entry = AliasEntry(
         alias="fast",

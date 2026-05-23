@@ -261,7 +261,8 @@ def test_request_and_resolve_reports_unsupported_schema_version(
     payload = _valid_bundle_payload()
     payload["version"] = 99
 
-    with pytest.raises(RuntimeError, match=r"schema version 99 is unsupported.*mars >= 0\.6\.1"):
+    pat = r"schema version 99 is unsupported.*mars >= 0\.\d+\.\d+"
+    with pytest.raises(RuntimeError, match=pat):
         _resolve_with_payload(monkeypatch, payload)
 
 

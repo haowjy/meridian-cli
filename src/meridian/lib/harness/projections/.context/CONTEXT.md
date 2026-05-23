@@ -12,6 +12,7 @@ project_codex_subprocess.py → CodexLaunchSpec → args + env   (codex exec --j
 project_codex_streaming.py  → CodexLaunchSpec → args + env   (codex app-server)
 project_opencode_subprocess.py → OpenCodeLaunchSpec → args + env  (opencode run)
 project_opencode_streaming.py  → OpenCodeLaunchSpec → args + env  (opencode serve)
+project_cursor.py          → ResolvedLaunchSpec → args        (cursor agent)
 project_pi_rpc.py          → ResolvedLaunchSpec → args + env (pi rpc --mode rpc)
 project_pi_native_tui.py   → ResolvedLaunchSpec → args + env (pi native TUI, primary only)
 pi_extension_projection.py → (extension dist artifacts → per-launch materialization, no spec dependency)
@@ -44,6 +45,38 @@ projector causes import failure. This is not a test — it fires in production o
 first spawn. Fix by updating `_PROJECTED_FIELDS` or `_DELEGATED_FIELDS` in the
 projector.
 
+### Cursor Projection (`project_cursor.py`)
+
+#### Model + effort resolution
+
+Cursor projection now treats `spec.model` as already-resolved runnable ID and passes it
+through directly to `--model`. It does not perform local slug/effort matching.
+Mars launch-bundle resolves Cursor effort into `routing.harness_model`, and Meridian
+bind selects that value as `effective_model` before `ResolvedLaunchSpec` is created.
+So by projection time there is nothing to resolve locally.
+
+#### `_PROJECTED_FIELDS` excludes `"effort"`
+
+Cursor still receives `effort` on `ResolvedLaunchSpec`, but projection no longer
+consumes it. The field is delegated/accounted to keep drift-guard coverage complete.
+
+#### MVP capability restrictions
+
+The following raise `HarnessCapabilityMismatch` immediately:
+- `spec.mcp_tools` set — per-spawn MCP tools not supported
+- `spec.continue_fork` set — fork-based session continuation not supported
+- `spec.continue_session_id` non-empty — session resume not supported
+- `spec.interactive` set — interactive mode not supported
+
+These are architecture gaps, not user errors. The adapter layer should filter them
+before reaching projection; if they arrive here, something upstream is wrong.
+
+#### `projected_roots` is silently ignored
+
+Cursor subprocess only projects `--workspace` from `task_cwd`. If `projected_roots`
+is non-empty, the projector logs a debug warning and continues — not an error, because
+`task_cwd` is the common case and extra roots are best-effort for cursor.
+
 ### Permission Flags (`permission_flags.py`)
 
 `resolve_permission_flags(permission_resolver, harness_id)` is the single entry point
@@ -56,12 +89,12 @@ for all permission/sandbox flag projection. It:
 
 Approval mode → flag mapping:
 
-| Mode | Claude | Codex |
-|---|---|---|
-| `yolo` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` |
-| `auto` | `--permission-mode acceptEdits` | `--full-auto` |
-| `confirm` | `--permission-mode default` | `--ask-for-approval untrusted` |
-| `default` | (none) | (sandbox flag if non-default sandbox) |
+| Mode | Claude | Codex | Cursor |
+|---|---|---|---|
+| `yolo` | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--yolo` |
+| `auto` | `--permission-mode acceptEdits` | `--full-auto` | `--force` |
+| `confirm` | `--permission-mode default` | `--ask-for-approval untrusted` | (none) |
+| `default` | (none) | (sandbox flag if non-default sandbox) | (none) |
 
 OpenCode receives no permission flags from this function — OpenCode handles approval
 through workspace env injection (see parent `.context/`).
@@ -92,6 +125,7 @@ Raised when the requested launch configuration cannot be expressed on this harne
 Examples:
 - Unknown approval mode passed to `map_codex_approval_policy`
 - Unknown sandbox mode passed to `map_codex_sandbox_mode`
+- MVP-unsupported capability passed to cursor projection
 
 This is a caller error — the adapter layer should have validated the mode before
 reaching projection. If you catch this, something in the adapter pipeline is wrong.

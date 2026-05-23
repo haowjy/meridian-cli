@@ -43,6 +43,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "reference_items",
         "mcp_tools",
         "projected_roots",
+        "task_cwd",
     }
 )
 

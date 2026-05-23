@@ -46,8 +46,13 @@ def _empty_env_overrides() -> dict[str, str]:
 class ProjectionMode(StrEnum):
     """How one adapter projects semantic launch content onto harness channels."""
 
+    # Prompt is written to a temp prompt file and system instructions are
+    # appended into that file content before launch.
     PROMPT_FILE_APPEND_SYSTEM = "prompt_file_append_system"
+    # Harness accepts structured system/user fields separately.
     SYSTEM_FIELD_WITH_USER_TURN = "system_field_with_user_turn"
+    # Prompt is projected as one positional CLI argument.
+    POSITIONAL_PROMPT = "positional_prompt"
 
 
 class RuntimeHitlMode(StrEnum):

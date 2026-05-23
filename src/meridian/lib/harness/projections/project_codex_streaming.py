@@ -77,6 +77,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "prompt_file_path",
         "reference_items",
         "skills",
+        "task_cwd",
     }
 )
 

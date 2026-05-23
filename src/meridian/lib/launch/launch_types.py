@@ -120,6 +120,8 @@ class ResolvedLaunchSpec(BaseModel):
     # Using Any for reference_items to avoid circular import with ReferenceItem.
     reference_items: tuple[Any, ...] = ()
 
+    task_cwd: str | None = None
+
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()
 

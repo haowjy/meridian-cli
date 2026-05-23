@@ -8,6 +8,7 @@ from meridian.lib.harness.adapter import (
     BootstrapMode,
     ForkMaterializationMode,
     PrelaunchBootstrapMode,
+    ProjectionMode,
     RuntimeHitlMode,
     SessionSeedMode,
 )
@@ -31,6 +32,7 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
     claude = registry.get_contract(HarnessId.CLAUDE)
     assert claude.capabilities.terminal_surface_modes == (TerminalSurfaceMode.PTY_MEDIATED,)
     assert claude.capabilities.requires_initial_prompt is False
+    assert claude.projection.mode is ProjectionMode.PROMPT_FILE_APPEND_SYSTEM
     assert claude.bootstrap.mode.value == "subprocess_only"
     assert claude.bootstrap.fork_materialization is ForkMaterializationMode.NATIVE_CONTINUE_FORK
     assert claude.bootstrap.primary_session_seed_mode is SessionSeedMode.PROJECTED_ARGS
@@ -57,6 +59,10 @@ def test_harness_contracts_declare_terminal_surface_modes_and_bootstrap_modes() 
         assert contract.bootstrap.observer_controller is not None
         assert contract.transport.observer_controller_required is True
         assert contract.capabilities.requires_initial_prompt is (harness_id is HarnessId.CODEX)
+        assert contract.projection.mode is ProjectionMode.SYSTEM_FIELD_WITH_USER_TURN
+
+    cursor = registry.get_contract(HarnessId.CURSOR)
+    assert cursor.projection.mode is ProjectionMode.POSITIONAL_PROMPT
     assert (
         registry.get_contract(HarnessId.CODEX).bootstrap.fork_materialization
         is ForkMaterializationMode.MERIDIAN_MATERIALIZED_FORK
@@ -71,9 +77,17 @@ def test_harness_contracts_match_registered_transport_maps() -> None:
     ensure_bootstrap()
     registry = get_default_harness_registry()
 
+    expected_transport_ids = {
+        HarnessId.CLAUDE: (TransportId.STREAMING,),
+        HarnessId.CODEX: (TransportId.STREAMING,),
+        HarnessId.CURSOR: (TransportId.SUBPROCESS,),
+        HarnessId.OPENCODE: (TransportId.STREAMING,),
+        HarnessId.PI: (TransportId.STREAMING,),
+    }
+
     for harness_id in registry.ids():
         contract = registry.get_contract(harness_id)
-        assert contract.transport.transport_ids == (TransportId.STREAMING,)
+        assert contract.transport.transport_ids == expected_transport_ids[harness_id]
 
 
 def test_bundle_projection_ports_align_with_contract_bootstrap_modes() -> None:

@@ -4,13 +4,16 @@
 
 Meridian is a coordination layer — it needs at least one harness installed to run agents.
 
-| Harness     | Model prefixes                  | Install                                                              |
-| ----------- | ------------------------------- | -------------------------------------------------------------------- |
-| Claude Code | `claude-*`, `sonnet*`, `opus*`  | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
-| Codex CLI   | `gpt-*`, `codex*`, `o3*`, `o4*` | [github.com/openai/codex](https://github.com/openai/codex) |
-| OpenCode    | anything else                   | [opencode.ai](https://opencode.ai) |
+| Harness     | Model prefixes                            | Install                                                              |
+| ----------- | ----------------------------------------- | -------------------------------------------------------------------- |
+| Claude Code | `claude-*`, `sonnet*`, `opus*`            | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
+| Codex CLI   | `gpt-*`, `codex*`, `o3*`, `o4*`          | [github.com/openai/codex](https://github.com/openai/codex) |
+| Cursor      | `composer*`, `gpt-5.5*`, `claude-opus-*` | [cursor.com/downloads](https://cursor.com/downloads) |
+| OpenCode    | anything else                             | [opencode.ai](https://opencode.ai) |
 
 **Claude Code** is the most mature primary-session harness. Codex also supports managed primary TUI passthrough, including hidden instruction routing and managed session tracking. See [codex-tui-passthrough.md](codex-tui-passthrough.md).
+
+**Cursor** runs as a subprocess harness via `cursor agent`. Models are checked at spawn time — run `meridian mars models list` to confirm which cursor models show as available on your installation.
 
 **Platform**: macOS, Linux, Windows, WSL.
 

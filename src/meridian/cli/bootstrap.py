@@ -56,7 +56,7 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
         "--no-dry-run",
     }
 )
-HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "opencode", "pi"})
+HARNESS_SHORTCUT_NAMES = frozenset({"claude", "codex", "cursor", "opencode", "pi"})
 _CHAT_MANAGEMENT_SUBCOMMANDS = frozenset({"ls", "show", "log", "close"})
 _TOP_LEVEL_COMMAND_TOKENS = frozenset(COMMAND_CATALOG.top_level_names()) | HARNESS_SHORTCUT_NAMES
 

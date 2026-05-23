@@ -2,13 +2,14 @@
 
 ## Architecture
 
-Three concrete transports share the `HarnessConnection[SpecT]` ABC from `base.py`:
+Four concrete transports share the `HarnessConnection[SpecT]` ABC from `base.py`:
 
 | File | Class | Transport | Protocol |
 |---|---|---|---|
 | `claude_ws.py` | `ClaudeConnection` | stdin/stdout NDJSON | stream-json |
 | `codex_ws.py` | `CodexConnection` | WebSocket | JSON-RPC 2.0 |
 | `opencode_http.py` | `OpenCodeConnection` | HTTP + SSE | REST + event stream |
+| `cursor_subprocess.py` | `CursorSubprocessConnection` | stdout NDJSON (read-only) | stream-json |
 | `pi_rpc.py` | `PiRpcConnection` | stdin/stdout JSONL | JSON-RPC (pi rpc mode) |
 
 **`claude_ws.py` is not a WebSocket.** The filename is a historical artifact. The connection
@@ -72,7 +73,10 @@ event classification table.
 Frozen dataclass declared as `_CAPABILITIES` on each concrete class. Set once at class
 definition, not per-instance. Fields:
 
-- `mid_turn_injection`: `"queue"` (Claude), `"interrupt_restart"` (Codex), `"http_post"` (OpenCode)
+- `mid_turn_injection`: `"queue"` (Claude), `"interrupt_restart"` (Codex), `"http_post"` (OpenCode),
+  `"queue"` (Cursor — **but `send_user_message` always raises**; injection is not implemented
+  for MVP. The type does not have an "unsupported" literal, so `"queue"` is used as a
+  placeholder. Do not call `send_user_message` on a Cursor connection.)
 - `supports_cancel`, `supports_steer`, `runtime_model_switch`, `structured_reasoning`
 - `supports_primary_observer` — only Codex and OpenCode
 - `supports_runtime_hitl` — runtime HITL through the connection; only Codex

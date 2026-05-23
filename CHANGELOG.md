@@ -4,6 +4,29 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Cursor subprocess harness integration: new `HarnessId.CURSOR`, `CursorAdapter`, `project_cursor_spec_to_cli_args`, and `CURSOR_EXTRACTOR`.
+- Cursor model alias in `mars.toml`: `composer` (`cursor/composer-2.5`).
+- Cursor harness unit tests for subprocess projection and stream-json extraction.
+- `validate_prompt_size` guard in `CursorSubprocessConnection.start()`, matching other harness connections.
+- `cursor` harness shortcut added to `HARNESS_SHORTCUT_NAMES` — `meridian cursor spawn ...` now routes to the cursor harness.
+- Windows smoke steps for cursor subprocess boundary: missing binary and non-JSON protocol failure, using PowerShell and `.bat` fake binaries.
+
+### Changed
+- Cursor harness launch now trusts Mars `routing.harness_model` for effort routing; `project_cursor` passes `--model` through directly and no longer resolves effort slugs in Meridian.
+- Launch constants now include `BASE_COMMAND_CURSOR_SUBPROCESS` for `cursor agent --print --output-format stream-json --trust`.
+- `ResolvedLaunchSpec` now carries `task_cwd` so harness projections can consume explicit task working directory when needed.
+- Projection drift guards now account for `task_cwd` across all harness projection modules.
+- `CursorAdapter._CONSUMED_FIELDS`: removed `continue_harness_session_id` and `continue_fork` (moved to `_EXPLICITLY_IGNORED_FIELDS` — these fields are cleared before reaching the adapter when resume/fork are unsupported).
+
+### Removed
+- Meridian-side Cursor effort slug threading: removed `candidate_slugs` through launch bundle parsing, model selection context, spawn params, launch specs, adapter ignored-field accounting, and projection delegated-field accounting.
+
+### Fixed
+- Removed invalid `MERIDIAN_CURSOR_BINARY` env-var reference from `docs/configuration.md`.
+- Added explanatory comment to `mid_turn_injection="queue"` in `CursorSubprocessConnection`: Literal type has no `"none"`; Cursor is single-turn so injection is unused in practice.
+- All harness shortcut help text now includes `cursor` alongside `claude`, `codex`, and `opencode`.
+
 ## [0.2.0] - 2026-05-22
 
 ### Fixed

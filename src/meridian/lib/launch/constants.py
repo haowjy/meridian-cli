@@ -46,6 +46,14 @@ BASE_COMMAND_CLAUDE_STREAMING: Final[tuple[str, ...]] = (
 )
 BASE_COMMAND_CODEX_SUBPROCESS: Final[tuple[str, ...]] = ("codex", "exec", "--json")
 BASE_COMMAND_CODEX_STREAMING: Final[tuple[str, ...]] = ("codex", "app-server")
+BASE_COMMAND_CURSOR_SUBPROCESS: Final[tuple[str, ...]] = (
+    "cursor",
+    "agent",
+    "--print",
+    "--output-format",
+    "stream-json",
+    "--trust",
+)
 BASE_COMMAND_OPENCODE_SUBPROCESS: Final[tuple[str, ...]] = ("opencode", "run")
 BASE_COMMAND_OPENCODE_STREAMING: Final[tuple[str, ...]] = ("opencode", "serve")
 BASE_COMMAND_PI_SUBPROCESS: Final[tuple[str, ...]] = ("pi", "--mode", "rpc")
@@ -61,6 +69,7 @@ __all__ = [
     "BASE_COMMAND_CLAUDE_SUBPROCESS",
     "BASE_COMMAND_CODEX_STREAMING",
     "BASE_COMMAND_CODEX_SUBPROCESS",
+    "BASE_COMMAND_CURSOR_SUBPROCESS",
     "BASE_COMMAND_OPENCODE_STREAMING",
     "BASE_COMMAND_OPENCODE_SUBPROCESS",
     "BASE_COMMAND_PI_STREAMING",
