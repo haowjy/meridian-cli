@@ -14,10 +14,10 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.depth import current_meridian_depth, max_depth_reached
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import ModelId, SpawnId
-from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
@@ -35,6 +35,7 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.spawn.model import LaunchMode
 
 from ..runtime import OperationRuntime, resolve_chat_id, resolve_runtime_root, runtime_context
+from .models import SpawnActionOutput, SpawnCreateInput
 
 
 def build_spawn_mars_runtime(
@@ -68,7 +69,7 @@ def build_spawn_mars_runtime(
         project_paths_project_root=control_root_str,
         project_paths_execution_cwd=execution_cwd,
     )
-from .models import SpawnActionOutput, SpawnCreateInput
+
 
 logger = structlog.get_logger(__name__)
 
@@ -311,7 +312,6 @@ def _write_params_json(
 
 
 __all__ = [
-    "build_spawn_mars_runtime",
     "LaunchUserInputError",
     "_SpawnContext",
     "_emit_subrun_event",
@@ -319,6 +319,7 @@ __all__ = [
     "_spawn_background_worker_env",
     "_spawn_child_env",
     "_write_params_json",
+    "build_spawn_mars_runtime",
     "depth_exceeded_output",
     "depth_limits",
 ]
