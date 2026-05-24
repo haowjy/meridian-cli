@@ -30,6 +30,8 @@ State splits across two roots:
       inbound.jsonl                 — injected user messages
       control.sock                  — active-session control socket
   artifacts/                        — LocalStore blob store
+  worktree-temp/                    — session-scoped temporary worktree records
+    <safe-key>.json                 — TemporaryWorktreeRecord per session context
 ```
 
 The project ID in `.meridian/id` is the key that maps to
@@ -188,6 +190,20 @@ complexity without benefit.
 Rename is crash-safe: `work-items.rename.intent.json` is written before any rename
 begins. Leftover intent is replayed on startup/reconciliation.
 
+### Temporary Worktree Store Pattern
+
+`temp_worktree_store.py` stores session-scoped managed worktree records keyed by
+spawn_id or chat_id. Path: `~/.meridian/projects/<uuid>/worktree-temp/<safe-key>.json`.
+
+`TemporaryWorktreeRecord` fields: key, repo_path, worktree_name, worktree_path, branch,
+status (pending|ready), managed, updated_at. Status field supports crash recovery:
+`pending` means provisioning was interrupted; `ready` means available.
+`get_temporary_worktree_status()` in `ops/worktree_ensure.py` heals pending-but-dir-exists
+records by updating status to ready.
+
+API: `get_temporary_worktree()`, `put_temporary_worktree()`, `clear_temporary_worktree()`.
+All writes use `atomic_write_text()`.
+
 ### WorktreeMetadata: Path Assignment vs Managed Ownership
 
 `WorktreeMetadata` in `work_store.py` separates **path assignment** from **managed
@@ -208,6 +224,12 @@ references (multiple items referencing the same path) also block cleanup via the
 The `pending` flag supports crash recovery: set before `git worktree add`, cleared
 after. `recover_pending()` in `worktree_lifecycle.py` heals or clears interrupted
 provisions.
+
+**Path separator normalization**: `WorktreeMetadata.path` and `.repo_path` normalize
+backslash separators to POSIX (forward slash) at the Pydantic validation boundary via
+`@field_validator(..., mode="before")`. The coercion function `_coerce_worktree_metadata()`
+also detects separator normalization and marks legacy records for rewrite. This ensures
+stored metadata is stable when written on Windows and read elsewhere.
 
 ### User-Level Storage for New Features
 

@@ -77,9 +77,13 @@ use `SPEC_ONLY`. Do not set `REQUIRED` on execution paths.
 
 ### Worktree Lifecycle Protection
 
-`ops/worktree_lifecycle.py` coordinates git worktree creation, restoration, cleanup,
-and crash recovery. It is intentionally limited to git/worktree concerns and returns
-structured results for callers (`work_lifecycle.py`) to persist and present elsewhere.
+`ops/worktree_lifecycle.py` is the raw git worktree layer — it owns creation,
+restoration, cleanup, and crash recovery. It is intentionally limited to git/worktree
+concerns and returns structured results for callers to persist elsewhere.
+
+`ops/worktree_ensure.py` sits above it and provides high-level ensure semantics used
+by `work_worktree.py` and spawn logic. The split is: lifecycle owns raw git operations,
+ensure owns state management and idempotency.
 
 **Destructive operations guard against three conditions:**
 
@@ -123,6 +127,45 @@ directories (containing `SKILL.md`), agents as files, so the scan uses
 type (e.g., `{"agents": [...], "skills": [...]}`). This avoids coupling Python
 to the mars JSON report shape — new content types (hooks, MCP servers, etc.) are
 automatically counted without Python model changes.
+
+### ops/worktree_ensure.py — Managed Worktree Orchestration
+
+`worktree_ensure.py` sits above `worktree_lifecycle.py` and provides high-level
+ensure semantics with state management, dry-run support, and session-scoped temporary
+worktrees. Used by `work_worktree.py` and `spawn/api.py`.
+
+**Key contracts:**
+
+`ensure_work_item_worktree()` is idempotent — calling twice returns `already_available`
+on the second call. Once managed metadata (repo_path + name) is persisted, subsequent
+calls reuse it regardless of `--repo` or cwd. Accepts dry-run mode and `allow_missing_dry_run`
+for work items that don't exist yet. Returns `WorktreeEnsureResult` with status, metadata,
+repo_root, canonical_path, and optional warning.
+
+`ensure_temporary_worktree()` provides session-scoped isolation keyed by spawn_id/chat_id
+(via `_temporary_key(ctx)` → `worktree-temp/` store). Uses same pending/rollback discipline:
+set pending before git, clear on failure, upgrade to ready on success.
+
+`get_temporary_worktree_status()` is read-only; heals pending-but-dir-exists records.
+
+Repo resolution (`_resolve_target_repo()`, `_resolve_repo_root()`) supports path selectors,
+workspace aliases, and cwd-based inference. Dry-run mode uses `.git` marker scanning
+without running git commands.
+
+Managed path policy: `_canonical_target()` derives `<repo>.worktrees/<name>`. Non-canonical
+paths are detected as drift and fail clearly.
+
+### ops/work_worktree.py — Work Worktree Command Orchestration
+
+`work_worktree.py` orchestrates `meridian work worktree` command logic. Accepts
+`WorkWorktreeInput` (work_id, ensure, repo, chat_id, project_root), returns
+`WorkWorktreeOutput` with worktree path, branch, name, repo_root, managed status,
+exists flag, temporary flag, ensured flag, message, and warning.
+
+Routes based on whether a work item is active: calls `ensure_work_item_worktree()`
+if present, else delegates to `ensure_temporary_worktree()`. When `ensure=False`,
+returns status-only response (no-op) if path already exists. When work_id is empty
+and no active work item, uses temporary worktree path.
 
 ## Contracts
 
