@@ -354,6 +354,47 @@ def _normalize_harness_table(
                         )
                     harness_values["disable_managed_bash"] = harness_value
                     continue
+                if key == "pi" and harness_key == "load_all_pi_extensions":
+                    if not isinstance(harness_value, bool):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.load_all_pi_extensions': "
+                            f"expected bool, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["load_all_pi_extensions"] = harness_value
+                    continue
+                if key == "pi" and harness_key == "extra_extension_paths":
+                    if not isinstance(harness_value, list):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.extra_extension_paths': "
+                            f"expected array, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["extra_extension_paths"] = [
+                        str(item).strip()
+                        for item in harness_value
+                        if str(item).strip()
+                    ]
+                    continue
+                if key == "pi" and harness_key in {"background_tasks", "spawn_watch"}:
+                    if not isinstance(harness_value, dict):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.{harness_key}': "
+                            f"expected table, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    nested: dict[str, object] = {}
+                    enabled = harness_value.get("enabled")
+                    if enabled is not None:
+                        if not isinstance(enabled, bool):
+                            raise ValueError(
+                                f"Invalid value for '{source}.{key}.{harness_key}.enabled': "
+                                f"expected bool, got "
+                                f"{type(enabled).__name__} ({enabled!r})."
+                            )
+                        nested["enabled"] = enabled
+                    harness_values[harness_key] = nested
+                    continue
                 logger.warning(
                     "Ignoring unknown Meridian config key '%s.%s.%s'.",
                     source,
@@ -1155,8 +1196,25 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
     ] = "opencode-go/kimi-k2.6"
 
 
+class PiBundleToggleConfig(BaseModel):
+    """Per-bundle enable switch under ``[harness.pi]``."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: bool = True
+
+
 class PiHarnessProfileConfig(HarnessProfileConfig):
+    load_all_pi_extensions: bool = False
+    extra_extension_paths: tuple[str, ...] = ()
+    background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
+    spawn_watch: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
     disable_managed_bash: bool = False
+
+    def background_tasks_enabled(self) -> bool:
+        if self.disable_managed_bash:
+            return False
+        return self.background_tasks.enabled
 
 
 class HarnessConfig(BaseModel):
@@ -1424,18 +1482,29 @@ def _truthy_env_value(raw_value: str) -> bool:
     return raw_value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
-def resolve_pi_disable_managed_bash() -> bool:
-    """Resolve whether Meridian should skip Pi's managed bash extension."""
-
-    raw_disable = os.getenv("MERIDIAN_PI_DISABLE_MANAGED_BASH")
-    if raw_disable is not None and _truthy_env_value(raw_disable):
-        return True
-
-    raw_managed = os.getenv("MERIDIAN_PI_MANAGED_BASH")
-    if raw_managed is not None and raw_managed.strip() == "0":
-        return True
+def resolve_pi_harness_profile() -> PiHarnessProfileConfig:
+    """Resolve ``[harness.pi]`` from env overrides and project config."""
 
     from meridian.lib.config.project_root import resolve_project_root_resolution
 
-    project_root = resolve_project_root_resolution().project_root
-    return load_config(project_root).harness.pi.disable_managed_bash
+    profile = load_config(resolve_project_root_resolution().project_root).harness.pi
+
+    raw_load_all = os.getenv("MERIDIAN_PI_LOAD_ALL_EXTENSIONS")
+    if raw_load_all is not None:
+        return profile.model_copy(update={"load_all_pi_extensions": _truthy_env_value(raw_load_all)})
+
+    raw_disable = os.getenv("MERIDIAN_PI_DISABLE_MANAGED_BASH")
+    if raw_disable is not None and _truthy_env_value(raw_disable):
+        return profile.model_copy(update={"disable_managed_bash": True})
+
+    raw_managed = os.getenv("MERIDIAN_PI_MANAGED_BASH")
+    if raw_managed is not None and raw_managed.strip() == "0":
+        return profile.model_copy(update={"disable_managed_bash": True})
+
+    return profile
+
+
+def resolve_pi_disable_managed_bash() -> bool:
+    """Resolve whether Meridian should skip Pi's managed bash extension."""
+
+    return resolve_pi_harness_profile().disable_managed_bash

@@ -124,6 +124,7 @@ class ResolvedLaunchSpec(BaseModel):
 
     # Pi only
     pi_extension_entrypoints: tuple[str, ...] = ()
+    load_all_pi_extensions: bool = False
 
     @model_validator(mode="after")
     def _validate_continue_fork_requires_session(self) -> ResolvedLaunchSpec:

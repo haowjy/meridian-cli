@@ -1,6 +1,9 @@
 import path from "node:path";
 
+import { resolveStateRoot } from "../../shared/pi_state_paths";
 import { SpawnTreeStore } from "./tree";
+
+export { resolveStateRoot };
 
 export type SpawnWatchManagerOptions = {
   stateRoot: string;
@@ -21,14 +24,6 @@ export class SpawnWatchManager {
     );
     this.tree = new SpawnTreeStore(treePath);
   }
-}
-
-export function resolveStateRoot(): string {
-  const explicit = process.env.MERIDIAN_PI_STATE_DIR?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  return path.join(process.env.HOME ?? "/tmp", ".meridian", "pi-state");
 }
 
 export function resolveSessionId(context: unknown): string {

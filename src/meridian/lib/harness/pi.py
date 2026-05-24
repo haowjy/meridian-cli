@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-from meridian.lib.config.settings import resolve_pi_disable_managed_bash
+from meridian.lib.config.settings import resolve_pi_harness_profile
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import HarnessId, SpawnId, TransportId
 from meridian.lib.harness.adapter import (
@@ -41,6 +41,7 @@ from meridian.lib.harness.extractors.pi import (
 )
 from meridian.lib.harness.pi_paths import (
     pi_agent_dir_env_override,
+    pi_meridian_state_dir_env_override,
     pi_spawn_session_root_env_override,
     resolve_pi_spawn_session_root,
 )
@@ -49,6 +50,9 @@ from meridian.lib.harness.pi_runtime_resolver import (
     resolve_pi_runtime,
 )
 from meridian.lib.harness.projections.pi_extension_projection import (
+    PiExtensionLaunchProfile,
+    default_extra_extension_path,
+    resolve_extra_pi_extension_entrypoints,
     resolve_pi_extension_entrypoints,
 )
 from meridian.lib.harness.projections.project_pi_native_tui import (
@@ -176,11 +180,23 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        disable_managed_bash = resolve_pi_disable_managed_bash()
-        entrypoints = resolve_pi_extension_entrypoints(
-            disable_managed_bash=disable_managed_bash,
-            interactive=run.interactive,
+        pi_profile = resolve_pi_harness_profile()
+        meridian_entrypoints = resolve_pi_extension_entrypoints(
+            PiExtensionLaunchProfile(
+                background_tasks_enabled=pi_profile.background_tasks_enabled(),
+                spawn_watch_enabled=pi_profile.spawn_watch.enabled,
+                interactive=run.interactive,
+            )
         )
+        extra_entrypoints: tuple[str, ...] = ()
+        if pi_profile.load_all_pi_extensions:
+            extra_roots = (
+                tuple(Path(path).expanduser() for path in pi_profile.extra_extension_paths)
+                if pi_profile.extra_extension_paths
+                else (default_extra_extension_path(),)
+            )
+            extra_entrypoints = resolve_extra_pi_extension_entrypoints(extra_roots)
+        entrypoints = meridian_entrypoints + extra_entrypoints
         return ResolvedLaunchSpec(
             harness=HarnessId.PI,
             model=str(run.model).strip() if run.model else None,
@@ -195,6 +211,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             projected_roots=run.projected_roots,
             appended_system_prompt=run.appended_system_prompt,
             pi_extension_entrypoints=entrypoints,
+            load_all_pi_extensions=pi_profile.load_all_pi_extensions,
             agent_name=None,
             skills=(),
         )
@@ -255,12 +272,17 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         agent_dir_overrides = pi_agent_dir_env_override()
         child_env.update(agent_dir_overrides)
+        state_dir_overrides = pi_meridian_state_dir_env_override(env=child_env)
+        child_env.update(state_dir_overrides)
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
             **agent_dir_overrides,
+            **state_dir_overrides,
         }
         if scoped_session_dir is not None:
             env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
+            env_overrides["MERIDIAN_PI_STATE_DIR"] = scoped_session_dir
+            child_env["MERIDIAN_PI_STATE_DIR"] = scoped_session_dir
 
         return HarnessPrelaunchState(
             env_overrides=env_overrides,
@@ -304,6 +326,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return {
             **pi_agent_dir_env_override(),
             **pi_spawn_session_root_env_override(),
+            **pi_meridian_state_dir_env_override(),
         }
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:

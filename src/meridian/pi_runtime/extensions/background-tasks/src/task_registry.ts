@@ -12,6 +12,9 @@ import {
   resolveSpawnTaskPingDefaults,
   type SpawnTaskPingDefaults,
 } from "./session_ping";
+import { resolveStateRoot } from "../../shared/pi_state_paths";
+
+export { resolveStateRoot };
 
 type RuntimeTask = {
   record: BackgroundTaskRecord;
@@ -1085,18 +1088,6 @@ export class TaskRegistry {
   }
 }
 
-
-export function resolveStateRoot(): string {
-  const explicit = process.env.MERIDIAN_PI_STATE_DIR?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  const agentDir = process.env.PI_CODING_AGENT_DIR?.trim();
-  if (agentDir) {
-    return path.join(agentDir, ".meridian");
-  }
-  return path.join(process.cwd(), ".meridian");
-}
 
 export type ToolContext = {
   cwd?: string;

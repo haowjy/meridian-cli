@@ -28,6 +28,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "appended_system_prompt",
         "pi_extension_entrypoints",
+        "load_all_pi_extensions",
     }
 )
 
@@ -197,7 +198,7 @@ def project_pi_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--no-extensions",
-        has_managed_value=True,
+        has_managed_value=not spec.load_all_pi_extensions,
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(
@@ -234,9 +235,11 @@ def project_pi_spec_to_cli_args(
 
     command.extend(("--session-dir", _default_pi_session_dir()))
 
+    if not spec.load_all_pi_extensions:
+        command.append("--no-extensions")
+
     command.extend(
         (
-            "--no-extensions",
             "--no-skills",
             "--no-context-files",
             "--no-prompt-templates",

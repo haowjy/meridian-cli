@@ -41,7 +41,10 @@ from meridian.lib.harness.pi_lifecycle_events import (
     has_unsupported_pi_lifecycle_schema_version,
     redact_pi_command_for_history,
 )
-from meridian.lib.harness.pi_paths import pi_agent_dir_env_override
+from meridian.lib.harness.pi_paths import (
+    pi_agent_dir_env_override,
+    pi_meridian_state_dir_env_override,
+)
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
@@ -502,6 +505,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             blocked=_BLOCKED_CHILD_ENV_VARS,
         )
         env.update(pi_agent_dir_env_override())
+        env.update(pi_meridian_state_dir_env_override(env=env))
         lifecycle_file_path = prepare_pi_lifecycle_event_file(
             spawn_dir=spawn_dir,
             env=env,
@@ -514,6 +518,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
         if session_dir:
             command = self._apply_session_dir_arg(command, session_dir)
+            env["MERIDIAN_PI_STATE_DIR"] = session_dir
         launch_role = "spawned"
         if (self._launch_session_role or "").strip().lower() == "primary":
             launch_role = "primary"
