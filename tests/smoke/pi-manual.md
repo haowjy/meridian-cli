@@ -21,7 +21,8 @@ Prerequisites:
   `PI_CODING_AGENT_DIR` to that directory (or your override) for subprocess launches.
 - **Spawn session files:** `~/.meridian/meridian-pi/sessions/<spawn-id>/` (or under
   `MERIDIAN_HOME` when set)
-- **Materialized extensions:** `~/.pi/agent/extensions/meridian/<launch-id>/` per spawn
+- **Meridian extension bundles:** `~/.meridian/pi/extensions/` (or package `dist/extensions`);
+  default launches use `--no-extensions` plus explicit `-e` to those bundles only
 
 Optional: `. tests/smoke/scripts/pi-setup.sh --isolated-state` sets
 `MERIDIAN_PI_STATE_DIR` to a temp dir for extension background-task state only.
