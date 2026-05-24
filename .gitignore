@@ -27,6 +27,7 @@ plan/
 err
 out
 .mars/
+mars.lock
 mars.local.toml
 *.log
 .claude/scheduled_tasks.lock
