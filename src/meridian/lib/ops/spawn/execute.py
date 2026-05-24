@@ -14,7 +14,7 @@ from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_r
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.launch.cwd import resolve_task_cwd
-from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_boundary import (
@@ -41,7 +41,7 @@ from .execute_init import (
     _init_spawn,
     _spawn_background_worker_env,
     _write_params_json,
-    build_spawn_execution_launch_runtime,
+    build_spawn_mars_runtime,
     depth_exceeded_output,
     depth_limits,
 )
@@ -215,11 +215,12 @@ def execute_spawn_background(
     )
     try:
         persisted_request = request.model_copy(update={"work_id_hint": context.work_id})
-        launch_runtime = build_spawn_execution_launch_runtime(
+        launch_runtime = build_spawn_mars_runtime(
             runtime=runtime,
             runtime_root=context.runtime_root,
             control_root=execution_contract.control_root,
             execution_cwd=execution_cwd_str,
+            argv_intent=LaunchArgvIntent.SPEC_ONLY,
             debug=payload.debug,
         )
         _persist_bg_worker_request(
@@ -461,11 +462,12 @@ def execute_spawn_blocking(
             launch_prepared_spawn(
                 spawn=spawn,
                 request=request,
-                runtime_request=build_spawn_execution_launch_runtime(
+                runtime_request=build_spawn_mars_runtime(
                     runtime=runtime,
                     runtime_root=context.runtime_root,
                     control_root=execution_contract.control_root,
                     execution_cwd=execution_cwd_str,
+                    argv_intent=LaunchArgvIntent.SPEC_ONLY,
                     debug=payload.debug,
                 ),
                 runtime=runtime,

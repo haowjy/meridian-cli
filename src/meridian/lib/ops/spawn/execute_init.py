@@ -37,19 +37,21 @@ from meridian.lib.state.spawn.model import LaunchMode
 from ..runtime import OperationRuntime, resolve_chat_id, resolve_runtime_root, runtime_context
 
 
-def build_spawn_execution_launch_runtime(
+def build_spawn_mars_runtime(
     *,
     runtime: OperationRuntime,
     runtime_root: Path,
     control_root: Path,
     execution_cwd: str,
+    argv_intent: LaunchArgvIntent,
+    report_output_path: str | None = None,
     debug: bool = False,
 ) -> LaunchRuntime:
-    """Launch runtime for spawn execution (must match prepare surface for Mars routing)."""
+    """Launch runtime for spawn paths that need Mars harness_model routing."""
 
     control_root_str = control_root.as_posix()
     return LaunchRuntime(
-        argv_intent=LaunchArgvIntent.SPEC_ONLY,
+        argv_intent=argv_intent,
         composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
         config_snapshot=runtime.config.model_dump(mode="json", exclude_none=True),
         debug=debug,
@@ -57,6 +59,7 @@ def build_spawn_execution_launch_runtime(
             mode="json",
             exclude_none=True,
         ),
+        report_output_path=report_output_path,
         runtime_root=runtime_root.as_posix(),
         config_root=control_root_str,
         control_root=control_root_str,
@@ -308,7 +311,7 @@ def _write_params_json(
 
 
 __all__ = [
-    "build_spawn_execution_launch_runtime",
+    "build_spawn_mars_runtime",
     "LaunchUserInputError",
     "_SpawnContext",
     "_emit_subrun_event",

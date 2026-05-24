@@ -5,7 +5,6 @@ from pathlib import Path
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
@@ -14,8 +13,6 @@ from meridian.lib.launch.reference import parse_template_assignments, validate_r
 from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
-    LaunchCompositionSurface,
-    LaunchRuntime,
     RetryPolicy,
     SessionRequest,
     SpawnRequest,
@@ -28,9 +25,11 @@ from meridian.lib.utils.time import minutes_to_seconds
 from ..runtime import (
     OperationRuntime,
     build_runtime,
+    build_runtime_from_root_and_config,
     resolve_runtime_authority_for_read,
     runtime_context,
 )
+from .execute_init import build_spawn_mars_runtime
 from .models import SpawnCreateInput
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
@@ -178,26 +177,22 @@ def build_create_payload(
             pi_task_ping_reset_on_activity=payload.task_ping_reset_on_activity,
         )
 
+        mars_runtime_source = runtime or build_runtime_from_root_and_config(
+            project_root,
+            config,
+        )
+        preview_runtime = build_spawn_mars_runtime(
+            runtime=mars_runtime_source,
+            runtime_root=runtime_root,
+            control_root=project_root,
+            execution_cwd=directory_context.logical_task_cwd.as_posix(),
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            report_output_path=_DRY_RUN_REPORT_PATH,
+        )
         preview_context = build_launch_context(
             spawn_id="dry-run",
             request=raw_request,
-            runtime=LaunchRuntime(
-                argv_intent=LaunchArgvIntent.REQUIRED,
-                composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-                config_snapshot=config.model_dump(mode="json", exclude_none=True),
-                runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
-                    mode="json",
-                    exclude_none=True,
-            ),
-            report_output_path=_DRY_RUN_REPORT_PATH,
-            runtime_root=runtime_root.as_posix(),
-            config_root=project_root.as_posix(),
-            control_root=project_root.as_posix(),
-            requested_task_cwd=directory_context.logical_task_cwd.as_posix(),
-            # Legacy aliases.
-            project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=directory_context.logical_task_cwd.as_posix(),
-        ),
+            runtime=preview_runtime,
             harness_registry=harness_registry,
             dry_run=True,
         )

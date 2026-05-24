@@ -153,6 +153,7 @@ class LaunchRuntime(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     argv_intent: LaunchArgvIntent = LaunchArgvIntent.REQUIRED
+    # DIRECT = pre-resolved request; spawn must use build_spawn_mars_runtime.
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
     runtime_override_snapshot: dict[str, object] | None = None
