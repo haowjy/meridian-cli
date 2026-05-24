@@ -157,19 +157,29 @@ def resolve_main_repo_root(project_root: Path) -> Path | None:
     return Path(fallback.stdout.strip()).resolve()
 
 
+def managed_worktree_path(repo_root: Path, worktree_name: str) -> Path:
+    """Return Meridian's canonical managed worktree path."""
+    return (repo_root.parent / f"{repo_root.name}.worktrees" / worktree_name).resolve()
+
+
 def resolve_worktree_path(
     repo_root: Path,
     work_slug: str,
     worktree_base: str | None = None,
 ) -> Path:
-    """Compute the target filesystem path for a worktree."""
+    """Compute a worktree path.
+
+    Managed Meridian worktrees must use :func:`managed_worktree_path`.
+    ``worktree_base`` remains available only for legacy/custom path calculation
+    outside managed lifecycle flows.
+    """
     if worktree_base is not None:
         base_path = Path(worktree_base)
         if not base_path.is_absolute():
             base_path = repo_root / base_path
         base = base_path
     else:
-        base = repo_root.parent / f"{repo_root.name}.worktrees"
+        return managed_worktree_path(repo_root, work_slug)
     return (base / work_slug).resolve()
 
 
@@ -374,6 +384,7 @@ __all__ = [
     "current_worktree_branch",
     "detect_git_repo",
     "ensure_no_unpushed_commits",
+    "managed_worktree_path",
     "move_worktree",
     "remove_worktree",
     "resolve_main_repo_root",

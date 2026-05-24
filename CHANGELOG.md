@@ -4,6 +4,25 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `meridian work worktree` command family:
+  - `meridian work worktree [<work-id>]` shows worktree status for active/explicit work.
+  - `--ensure` creates/recovers managed worktrees.
+  - no active work + `--ensure` now creates a tracked temporary managed worktree.
+  - `--repo <path-or-alias>` selects target repo (path or `[workspace.<name>]` alias).
+
+### Changed
+- Preflight and check scripts now invoke lint/type/test tools through the `dev` extra, so fresh worktrees resolve Pyright as a dev dependency instead of a project script.
+- `meridian spawn --worktree` now ensures the selected work item's managed worktree before launch and supports `--repo` target selection.
+- `meridian work start --worktree` now routes through shared ensure logic and supports `--repo` target selection.
+- Managed worktree metadata now persists `repo_path` and `worktree_name` fields for canonical-path enforcement and repo-scoped recovery.
+- Managed worktree paths now always use `<repo>.worktrees/<worktree-name>`; config-driven managed bases removed from lifecycle flows.
+- `shared-workspace` guidance in docs now points to `meridian work worktree --ensure` instead of manual `git worktree add`.
+
+### Fixed
+- Worktree metadata path separators now normalize at the state boundary, protecting Windows-written managed paths from caller drift.
+- Temporary worktree provisioning failures now clear the pending record; pending still means interrupted create.
+
 ## [0.2.2] - 2026-05-23
 
 ### Fixed
@@ -11,6 +30,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bumped `mars-agents` to `0.7.0`.
 - Configuration docs now show Mars-owned routing/agent overlays in `mars.toml`, not legacy Meridian `[agents]` config.
 - Model catalog command docs now use `meridian mars models ...`.
+- Added shared worktree ensure policy for work items (canonical-path enforcement, manual assignment safeguards, pending recovery + reprovision path) and wired it into `meridian work worktree <work-id> --ensure`.
+- Existing managed worktree metadata now wins over cwd/`--repo` inference during recovery/reprovision.
+- Temporary managed worktrees now write pending records before `git worktree add` and report/recover interrupted creation.
+- Added focused unit coverage for worktree ensure decisions (manual-missing guard, canonical drift guard, pending recovery + reprovision, dry-run no-write behavior, workspace alias target resolution).
 
 ## [0.2.1] - 2026-05-23
 

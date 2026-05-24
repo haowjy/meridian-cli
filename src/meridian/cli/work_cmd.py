@@ -37,6 +37,7 @@ from meridian.lib.ops.work_lifecycle import (
     WorkStartInput,
     WorkSwitchInput,
     WorkUpdateInput,
+    WorkWorktreeInput,
     work_clear_sync,
     work_clear_worktree_sync,
     work_delete_sync,
@@ -47,6 +48,7 @@ from meridian.lib.ops.work_lifecycle import (
     work_start_sync,
     work_switch_sync,
     work_update_sync,
+    work_worktree_sync,
 )
 
 Emitter = Callable[[Any], None]
@@ -76,12 +78,22 @@ def _work_start(
     ] = None,
     worktree: Annotated[
         bool | None,
-        Parameter(name="--worktree", help="Create a git worktree for this work item."),
+        Parameter(
+            name="--worktree",
+            help="Ensure Meridian-managed canonical isolation for this work item.",
+        ),
     ] = None,
     no_worktree: Annotated[
         bool,
         Parameter(name="--no-worktree", help="Skip worktree creation even if default is set."),
     ] = False,
+    repo: Annotated[
+        str | None,
+        Parameter(
+            name="--repo",
+            help="Target implementation repository path or [workspace.<name>] alias.",
+        ),
+    ] = None,
 ) -> None:
     # Resolve explicit worktree intent from the two flags.
     # --no-worktree wins over --worktree if both are passed (degenerate case).
@@ -100,6 +112,7 @@ def _work_start(
                 goal=goal,
                 chat_id=_runtime_chat_id(),
                 worktree=worktree_intent,
+                repo=repo,
             )
         )
     )
@@ -277,6 +290,39 @@ def _work_clear(emit: Emitter) -> None:
     emit(work_clear_sync(WorkClearInput(chat_id=_runtime_chat_id())))
 
 
+def _work_worktree(
+    emit: Emitter,
+    work_id: Annotated[
+        str,
+        Parameter(help="Optional work item id. Defaults to active work for this session."),
+    ] = "",
+    ensure: Annotated[
+        bool,
+        Parameter(
+            name="--ensure",
+            help="Create/recover Meridian's canonical managed worktree if needed.",
+        ),
+    ] = False,
+    repo: Annotated[
+        str | None,
+        Parameter(
+            name="--repo",
+            help="Target implementation repository path or [workspace.<name>] alias.",
+        ),
+    ] = None,
+) -> None:
+    emit(
+        work_worktree_sync(
+            WorkWorktreeInput(
+                work_id=work_id,
+                ensure=ensure,
+                repo=repo,
+                chat_id=_runtime_chat_id(),
+            )
+        )
+    )
+
+
 def _work_set_worktree(
     emit: Emitter,
     work_id: Annotated[
@@ -326,6 +372,7 @@ def register_work_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str,
         "meridian.work.reopen": lambda: partial(_work_reopen, emit),
         "meridian.work.rename": lambda: partial(_work_rename, emit),
         "meridian.work.clear": lambda: partial(_work_clear, emit),
+        "meridian.work.worktree": lambda: partial(_work_worktree, emit),
         "meridian.work.set-worktree": lambda: partial(_work_set_worktree, emit),
         "meridian.work.clear-worktree": lambda: partial(_work_clear_worktree, emit),
     }

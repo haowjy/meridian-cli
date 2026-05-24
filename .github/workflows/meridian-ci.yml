@@ -68,10 +68,10 @@ jobs:
         run: uv sync --extra dev
 
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --extra dev ruff check .
 
       - name: Typecheck
-        run: uv run pyright
+        run: uv run --extra dev python -m pyright
 
   fast-gate:
     runs-on: ubuntu-latest
@@ -104,7 +104,7 @@ jobs:
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run fast gate
-        run: uv run pytest -n auto -m "not slow"
+        run: uv run --extra dev pytest -n auto -m "not slow"
 
   full-gate:
     runs-on: ubuntu-latest
@@ -170,7 +170,7 @@ jobs:
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run compatibility gate
-        run: uv run pytest -n auto -m "not windows_only"
+        run: uv run --extra dev pytest -n auto -m "not windows_only"
 
   windows-gate:
     runs-on: windows-latest
@@ -203,4 +203,4 @@ jobs:
         run: cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
 
       - name: Run Windows gate
-        run: uv run pytest -n auto -m "not slow"
+        run: uv run --extra dev pytest -n auto -m "not slow"

@@ -21,16 +21,21 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
+from meridian.lib.ops.work_worktree import (
+    WorkWorktreeInput,
+    WorkWorktreeOutput,
+    work_worktree,
+    work_worktree_sync,
+)
+from meridian.lib.ops.worktree_ensure import ensure_work_item_worktree
 from meridian.lib.ops.worktree_format import (
     format_cleanup_notice,
-    format_provision_notice,
     format_rename_notice,
     format_restore_notice,
 )
 from meridian.lib.ops.worktree_lifecycle import (
     cleanup_for_delete,
     cleanup_for_done,
-    provision_for_start,
     recover_pending,
     rename_worktree,
     restore_for_reopen,
@@ -155,6 +160,7 @@ class WorkStartInput(BaseModel):
     chat_id: str = ""
     project_root: str | None = None
     worktree: bool | None = None  # None = use config default
+    repo: str | None = None
 
 
 class WorkStartOutput(BaseModel):
@@ -445,6 +451,8 @@ def work_start_sync(
                     item.name,
                     path=recovered.metadata.path,
                     branch=recovered.metadata.branch,
+                    repo_path=recovered.metadata.repo_path,
+                    name=recovered.metadata.name,
                     pending=recovered.metadata.pending,
                     managed=recovered.metadata.managed,
                 )
@@ -461,85 +469,45 @@ def work_start_sync(
     # Worktree provisioning before session attachment so that WT-03 rollback
     # (new item deleted on git failure) leaves the session unaffected.
     worktree_warning: str | None = None
-    if was_reopened:
+    worktree_requested = _resolve_worktree_intent(
+        explicit_worktree=payload.worktree,
+        project_root=project_root,
+    )
+    if was_reopened and not worktree_requested:
         restored = restore_for_reopen(project_root, item)
         work_store.update_work_item_worktree(
             project_state_dir,
             item.name,
             path=restored.metadata.path,
             branch=restored.metadata.branch,
+            repo_path=restored.metadata.repo_path,
+            name=restored.metadata.name,
             pending=restored.metadata.pending,
             managed=restored.metadata.managed,
         )
         worktree_warning = format_restore_notice(restored)
         item = work_store.get_work_item(project_state_dir, item.name) or item
-    else:
-        worktree_requested = _resolve_worktree_intent(
-            explicit_worktree=payload.worktree,
-            project_root=project_root,
-        )
-        # Re-provision when: newly created, no path recorded, or path was removed externally.
-        worktree_path_stale = (
-            item.worktree_managed
-            and item.worktree_path is not None
-            and not Path(item.worktree_path).is_dir()
-        )
-        if worktree_requested and (created or item.worktree_path is None or worktree_path_stale):
-            from meridian.lib.config.settings import load_config  # local to avoid circular import
-
-            cfg = load_config(project_root)
-            previous_worktree = item.worktree
-            work_store.update_work_item_worktree(
-                project_state_dir,
-                item.name,
-                pending=True,
-                managed=True,
+    if worktree_requested:
+        try:
+            ensured = ensure_work_item_worktree(
+                project_root=project_root,
+                project_state_dir=project_state_dir,
+                work_id=item.name,
+                target_repo=payload.repo,
+                execution_cwd=roots.execution_cwd,
+                dry_run=False,
             )
-            try:
-                provisioned = provision_for_start(
-                    project_root,
-                    item.name,
-                    cfg.work,
-                    existing=previous_worktree,
-                )
-            except Exception:
-                work_store.update_work_item_worktree(
-                    project_state_dir,
-                    item.name,
-                    pending=False,
-                    managed=previous_worktree.managed,
-                )
-                if created:
-                    work_store.delete_work_item(project_state_dir, item.name, force=True)
-                raise
-
-            if provisioned.status == "skipped_not_git_repo" and payload.worktree is True:
-                work_store.update_work_item_worktree(
-                    project_state_dir,
-                    item.name,
-                    branch=provisioned.metadata.branch,
-                    pending=False,
-                    managed=provisioned.metadata.managed,
-                )
-                if created:
-                    work_store.delete_work_item(project_state_dir, item.name, force=True)
-                raise ValueError(
-                    f"Cannot create git worktree for '{item.name}': "
-                    f"'{project_root}' is not inside a git repository. "
-                    "Pass --no-worktree to skip worktree creation."
-                )
-
-            work_store.update_work_item_worktree(
-                project_state_dir,
-                item.name,
-                path=provisioned.metadata.path,
-                branch=provisioned.metadata.branch,
-                pending=provisioned.metadata.pending,
-                managed=provisioned.metadata.managed,
+        except Exception:
+            if created:
+                work_store.delete_work_item(project_state_dir, item.name, force=True)
+            raise
+        item = work_store.get_work_item(project_state_dir, item.name) or item
+        ensured_status = getattr(ensured, "status", None)
+        if ensured_status in {"provisioned", "recovered"} or getattr(ensured, "ensured", False):
+            ensured_path = getattr(getattr(ensured, "metadata", None), "path", None) or getattr(
+                ensured, "worktree_path", None
             )
-            worktree_warning = format_provision_notice(provisioned, work_id=item.name)
-            # Re-read to pick up updated worktree_path / cleared worktree_pending.
-            item = work_store.get_work_item(project_state_dir, item.name) or item
+            worktree_warning = ensured.warning or f"Ensured worktree at {ensured_path}"
 
     set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     _dispatch_work_hook_event(
@@ -754,6 +722,8 @@ def work_reopen_sync(
         item.name,
         path=restored.metadata.path,
         branch=restored.metadata.branch,
+        repo_path=restored.metadata.repo_path,
+        name=restored.metadata.name,
         pending=restored.metadata.pending,
         managed=restored.metadata.managed,
     )
@@ -797,6 +767,8 @@ def work_switch_sync(
             item.name,
             path=recovered.metadata.path,
             branch=recovered.metadata.branch,
+            repo_path=recovered.metadata.repo_path,
+            name=recovered.metadata.name,
             pending=recovered.metadata.pending,
             managed=recovered.metadata.managed,
         )
@@ -848,16 +820,14 @@ def work_rename_sync(
     worktree_moved = False
     worktree_path: str | None = item.worktree_path
     worktree_branch: str | None = item.worktree_branch
+    worktree_repo_path: str | None = item.worktree_repo_path
+    worktree_name: str | None = item.worktree_name
     if payload.rename_worktree and new_slug != old_name:
-        from meridian.lib.config.settings import load_config  # local to avoid circular import
-
-        cfg = load_config(project_root)
         shared_with = _shared_worktree_references(project_state_dir, item)
         wt_result = rename_worktree(
             project_root,
             item,
             new_slug,
-            cfg.work,
             shared_with=shared_with,
         )
         rename_notice = format_rename_notice(wt_result)
@@ -875,6 +845,8 @@ def work_rename_sync(
         worktree_moved = wt_result.status == "renamed"
         worktree_path = wt_result.metadata.path
         worktree_branch = wt_result.metadata.branch
+        worktree_repo_path = wt_result.metadata.repo_path
+        worktree_name = wt_result.metadata.name
 
     item = work_store.rename_work_item(project_state_dir, old_name, new_slug)
     if (
@@ -888,6 +860,8 @@ def work_rename_sync(
             item.name,
             path=worktree_path,
             branch=worktree_branch,
+            repo_path=worktree_repo_path,
+            name=worktree_name,
             pending=False,
             managed=True,
         )
@@ -954,6 +928,8 @@ def work_set_worktree_sync(
         payload.work_id,
         path=resolved_path.as_posix(),
         branch=None,
+        repo_path=None,
+        name=None,
         pending=False,
         managed=False,
     )
@@ -982,6 +958,8 @@ def work_clear_worktree_sync(
         payload.work_id,
         path=None,
         branch=None,
+        repo_path=None,
+        name=None,
         pending=False,
         managed=False,
     )
@@ -1024,6 +1002,8 @@ __all__ = [
     "WorkSwitchOutput",
     "WorkUpdateInput",
     "WorkUpdateOutput",
+    "WorkWorktreeInput",
+    "WorkWorktreeOutput",
     "work_clear",
     "work_clear_sync",
     "work_clear_worktree",
@@ -1044,4 +1024,6 @@ __all__ = [
     "work_switch_sync",
     "work_update",
     "work_update_sync",
+    "work_worktree",
+    "work_worktree_sync",
 ]

@@ -153,6 +153,47 @@ uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f
 - [ ] `task_cwd_work_item == "smoke-worktree"`
 - [ ] resolved `reference_files` entry points at `$WT/notes.md`
 
+## --worktree ensures managed worktree path when missing (dry-run only)
+
+`--worktree` means Meridian-managed canonical isolation at
+`<repo>.worktrees/<work-id>`. For a custom checkout path, launch from that
+checkout/worktree without `--worktree`.
+
+```bash
+git -C "$SCRATCH" init --quiet
+uv run meridian work start ensure-worktree --no-worktree
+uv run meridian spawn -a reviewer -p "ensure missing worktree" --work ensure-worktree --worktree --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd_source == "forced-worktree"`
+- [ ] `task_cwd == "${SCRATCH}.worktrees/ensure-worktree"`
+- [ ] `warning` mentions `Dry-run: would ensure worktree`
+
+## --worktree with --repo selects external target repository
+
+```bash
+mkdir -p "$SCRATCH/../external-target"
+git -C "$SCRATCH/../external-target" init
+uv run meridian work start ensure-external --no-worktree
+uv run meridian spawn -a reviewer -p "ensure external worktree" \
+  --work ensure-external --worktree --repo ../external-target --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd == "$(cd "$SCRATCH/../external-target/.." && pwd)/external-target.worktrees/ensure-external"`
+
+## --worktree uses ambient active work when --work is omitted
+
+```bash
+uv run meridian work start ambient-worktree --no-worktree
+MERIDIAN_ACTIVE_WORK_ID=ambient-worktree \
+  uv run meridian spawn -a reviewer -p "ensure ambient worktree" --worktree --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd_source == "forced-worktree"`
+- [ ] `task_cwd_work_item == "ambient-worktree"`
+- [ ] `task_cwd == "${SCRATCH}.worktrees/ambient-worktree"`
+- [ ] `reference_anchor == task_cwd`
+
 ## Stale worktree fails unless --no-worktree
 
 ```bash
@@ -170,6 +211,18 @@ uv run meridian spawn -a reviewer -p "bypass stale worktree" --work stale-worktr
 ```
 - [ ] Exit 0
 - [ ] `task_cwd_source == "forced-no-worktree"`
+
+## Missing manual assignment fails under --worktree
+
+```bash
+uv run meridian work start missing-manual --no-worktree
+MANUAL="$SCRATCH/missing-manual-worktree"
+mkdir -p "$MANUAL"
+uv run meridian work set-worktree missing-manual "$MANUAL"
+rmdir "$MANUAL"
+uv run meridian spawn -a reviewer -p "manual missing should fail" --work missing-manual --worktree --dry-run --json
+```
+- [ ] Fails with manual-assignment-missing guidance
 
 ```bash
 uv run meridian spawn -a reviewer -p "bad old prefix" -f @domain/page.md --dry-run --json

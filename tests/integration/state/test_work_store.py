@@ -219,6 +219,8 @@ def test_work_item_worktree_metadata_uses_nested_schema_and_preserves_branch_on_
     assert status_payload["worktree"] == {
         "path": "/tmp/repo.worktrees/rename-me",
         "branch": "feature/original-branch",
+        "repo_path": None,
+        "name": None,
         "pending": True,
         "managed": False,
     }

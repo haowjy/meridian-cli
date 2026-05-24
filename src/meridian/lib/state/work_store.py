@@ -13,11 +13,11 @@ import json
 import re
 import shutil
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -37,13 +37,35 @@ logger = structlog.get_logger(__name__)
 _UNSET = object()
 
 
+def _normalize_worktree_path_text(path: str) -> str:
+    """Store worktree filesystem paths with stable POSIX separators.
+
+    Python's ``Path.as_posix()`` only converts separators for the host platform.
+    Stored Meridian metadata must remain stable when written on Windows and read
+    elsewhere, so normalize separators at the metadata boundary.
+    """
+
+    return path.replace("\\", "/")
+
+
 class WorktreeMetadata(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     path: str | None = None
     branch: str | None = None
+    repo_path: str | None = None
+    name: str | None = None
     pending: bool = False
     managed: bool = False
+
+    @field_validator("path", "repo_path", mode="before")
+    @classmethod
+    def _normalize_path_separator(cls, value: object) -> object:
+        if isinstance(value, PurePath):
+            return value.as_posix()
+        if isinstance(value, str):
+            return _normalize_worktree_path_text(value)
+        return value
 
 
 class WorkItem(BaseModel):
@@ -64,6 +86,14 @@ class WorkItem(BaseModel):
     @property
     def worktree_branch(self) -> str | None:
         return self.worktree.branch
+
+    @property
+    def worktree_repo_path(self) -> str | None:
+        return self.worktree.repo_path
+
+    @property
+    def worktree_name(self) -> str | None:
+        return self.worktree.name
 
     @property
     def worktree_pending(self) -> bool:
@@ -141,6 +171,8 @@ def _worktree_payload(metadata: WorktreeMetadata | None = None) -> dict[str, Any
     return {
         "path": worktree.path,
         "branch": worktree.branch,
+        "repo_path": worktree.repo_path,
+        "name": worktree.name,
         "pending": worktree.pending,
         "managed": worktree.managed,
     }
@@ -159,25 +191,54 @@ def _coerce_worktree_metadata(
         nested_dict = cast("dict[str, object]", nested)
         path_value = nested_dict.get("path")
         branch_value = nested_dict.get("branch")
+        repo_path_value = nested_dict.get("repo_path")
+        name_value = nested_dict.get("name", nested_dict.get("worktree_name"))
         pending_value = nested_dict.get("pending")
         managed_value = nested_dict.get("managed")
         has_managed_key = "managed" in nested_dict
     else:
         path_value = raw.get("worktree_path")
         branch_value = raw.get("worktree_branch")
+        repo_path_value = raw.get("worktree_repo_path")
+        name_value = raw.get("worktree_name")
         pending_value = raw.get("worktree_pending")
         managed_value = raw.get("worktree_managed")
         has_managed_key = "worktree_managed" in raw
-        legacy_keys = ("worktree_path", "worktree_branch", "worktree_pending", "worktree_managed")
+        legacy_keys = (
+            "worktree_path",
+            "worktree_branch",
+            "worktree_repo_path",
+            "worktree_name",
+            "worktree_pending",
+            "worktree_managed",
+        )
         if nested is not None or any(key in raw for key in legacy_keys):
             changed = True
 
-    path = path_value if isinstance(path_value, str) and path_value else fallback.path
+    if isinstance(path_value, str) and path_value:
+        path = _normalize_worktree_path_text(path_value)
+        if path != path_value:
+            changed = True
+    else:
+        path = fallback.path
     if path_value not in (None, "") and not isinstance(path_value, str):
         changed = True
 
     branch = branch_value if isinstance(branch_value, str) and branch_value else fallback.branch
     if branch_value not in (None, "") and not isinstance(branch_value, str):
+        changed = True
+
+    if isinstance(repo_path_value, str) and repo_path_value:
+        repo_path = _normalize_worktree_path_text(repo_path_value)
+        if repo_path != repo_path_value:
+            changed = True
+    else:
+        repo_path = fallback.repo_path
+    if repo_path_value not in (None, "") and not isinstance(repo_path_value, str):
+        changed = True
+
+    name = name_value if isinstance(name_value, str) and name_value else fallback.name
+    if name_value not in (None, "") and not isinstance(name_value, str):
         changed = True
 
     if isinstance(pending_value, bool):
@@ -207,7 +268,17 @@ def _coerce_worktree_metadata(
         if managed_value is not None:
             changed = True
 
-    return WorktreeMetadata(path=path, branch=branch, pending=pending, managed=managed), changed
+    return (
+        WorktreeMetadata(
+            path=path,
+            branch=branch,
+            repo_path=repo_path,
+            name=name,
+            pending=pending,
+            managed=managed,
+        ),
+        changed,
+    )
 
 
 def _read_or_initialize_status(
@@ -707,6 +778,8 @@ def update_work_item_worktree(
     *,
     path: str | None | object = _UNSET,
     branch: str | None | object = _UNSET,
+    repo_path: str | None | object = _UNSET,
+    name: str | None | object = _UNSET,
     pending: bool | object = _UNSET,
     managed: bool | object = _UNSET,
 ) -> WorkItem:
@@ -725,9 +798,15 @@ def update_work_item_worktree(
     current = _work_item_from_dir(active_dir, archived=False)
     next_path = current.worktree.path if path is _UNSET else cast("str | None", path)
     next_branch = current.worktree.branch if branch is _UNSET else cast("str | None", branch)
+    next_repo_path = (
+        current.worktree.repo_path if repo_path is _UNSET else cast("str | None", repo_path)
+    )
+    next_name = current.worktree.name if name is _UNSET else cast("str | None", name)
     next_worktree = WorktreeMetadata(
         path=next_path,
         branch=next_branch,
+        repo_path=next_repo_path,
+        name=next_name,
         pending=current.worktree.pending if pending is _UNSET else bool(pending),
         managed=current.worktree.managed if managed is _UNSET else bool(managed),
     )

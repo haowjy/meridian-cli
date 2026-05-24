@@ -811,7 +811,7 @@ transcript translation is incomplete.
 
 ```bash
 uv run ruff check .
-uv run pyright
+uv run --extra dev python -m pyright
 uv run pytest -x -q
 uv build --no-sources
 ```

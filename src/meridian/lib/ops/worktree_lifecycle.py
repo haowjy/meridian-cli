@@ -13,7 +13,6 @@ from typing import Literal
 
 import structlog
 
-from meridian.lib.config.settings import WorkConfig, load_config
 from meridian.lib.ops.worktree_ops import (
     WorktreeError,
     WorktreeMoveFailed,
@@ -22,10 +21,10 @@ from meridian.lib.ops.worktree_ops import (
     current_worktree_branch,
     detect_git_repo,
     ensure_no_unpushed_commits,
+    managed_worktree_path,
     move_worktree,
     remove_worktree,
     resolve_main_repo_root,
-    resolve_worktree_path,
     worktree_exists,
 )
 from meridian.lib.state.work_store import WorkItem, WorktreeMetadata
@@ -96,23 +95,35 @@ def default_worktree_branch(work_slug: str) -> str:
     return f"feature/{work_slug}"
 
 
+def _stored_or_resolved_repo_root(project_root: Path, item: WorkItem) -> Path | None:
+    if item.worktree_managed and item.worktree.repo_path:
+        return Path(item.worktree.repo_path).expanduser().resolve()
+    return resolve_main_repo_root(project_root)
+
+
 def _target_metadata(
     *,
     repo_root: Path,
     work_slug: str,
-    config: WorkConfig,
     existing: WorktreeMetadata | None = None,
 ) -> WorktreeMetadata:
     current = existing or WorktreeMetadata()
-    path = current.path or str(resolve_worktree_path(repo_root, work_slug, config.worktree_base))
+    worktree_name = current.name or work_slug
+    path = current.path or managed_worktree_path(repo_root, worktree_name).as_posix()
     branch = current.branch or default_worktree_branch(work_slug)
-    return WorktreeMetadata(path=path, branch=branch, pending=False, managed=True)
+    return WorktreeMetadata(
+        path=path,
+        branch=branch,
+        repo_path=repo_root.as_posix(),
+        name=worktree_name,
+        pending=False,
+        managed=True,
+    )
 
 
 def provision_for_start(
     project_root: Path,
     work_slug: str,
-    config: WorkConfig,
     *,
     existing: WorktreeMetadata | None = None,
 ) -> WorktreeProvisionResult:
@@ -134,12 +145,9 @@ def provision_for_start(
     target = _target_metadata(
         repo_root=repo_root,
         work_slug=work_slug,
-        config=config,
         existing=existing,
     )
-    target_path = target.path or str(
-        resolve_worktree_path(repo_root, work_slug, config.worktree_base)
-    )
+    target_path = target.path or str(managed_worktree_path(repo_root, target.name or work_slug))
     result = create_worktree(
         repo_root,
         Path(target_path),
@@ -148,8 +156,10 @@ def provision_for_start(
     return WorktreeProvisionResult(
         status="provisioned",
         metadata=WorktreeMetadata(
-            path=str(result.path),
+            path=result.path.as_posix(),
             branch=result.branch,
+            repo_path=target.repo_path,
+            name=target.name,
             pending=False,
             managed=True,
         ),
@@ -174,7 +184,7 @@ def restore_for_reopen(project_root: Path, item: WorkItem) -> WorktreeRestoreRes
     if not item.worktree_branch:
         return WorktreeRestoreResult(status="branch_missing", metadata=item.worktree)
 
-    main_root = resolve_main_repo_root(project_root)
+    main_root = _stored_or_resolved_repo_root(project_root, item)
     if main_root is None:
         return WorktreeRestoreResult(status="fallback_project_root", metadata=item.worktree)
 
@@ -194,6 +204,8 @@ def restore_for_reopen(project_root: Path, item: WorkItem) -> WorktreeRestoreRes
         metadata=WorktreeMetadata(
             path=str(result.path),
             branch=result.branch,
+            repo_path=str(main_root),
+            name=item.worktree.name or item.name,
             pending=False,
             managed=True,
         ),
@@ -228,7 +240,9 @@ def cleanup_for_done(
     if not force:
         ensure_no_unpushed_commits(worktree_path)
 
-    repo_root = resolve_main_repo_root(project_root) or resolve_main_repo_root(worktree_path)
+    repo_root = _stored_or_resolved_repo_root(project_root, item) or resolve_main_repo_root(
+        worktree_path
+    )
     if repo_root is None:
         raise WorktreeRepoResolutionError(
             f"Could not determine git repository root for worktree at '{worktree_path}'."
@@ -264,7 +278,9 @@ def cleanup_for_delete(
     if not worktree_path.is_dir():
         return WorktreeCleanupResult(status="missing", metadata=item.worktree, forced=True)
 
-    repo_root = resolve_main_repo_root(project_root) or resolve_main_repo_root(worktree_path)
+    repo_root = _stored_or_resolved_repo_root(project_root, item) or resolve_main_repo_root(
+        worktree_path
+    )
     if repo_root is None:
         return WorktreeCleanupResult(
             status="failed",
@@ -295,7 +311,6 @@ def rename_worktree(
     project_root: Path,
     item: WorkItem,
     new_slug: str,
-    config: WorkConfig,
     *,
     shared_with: tuple[str, ...] = (),
 ) -> WorktreeRenameResult:
@@ -311,7 +326,7 @@ def rename_worktree(
             error=", ".join(shared_with),
         )
 
-    repo_root = resolve_main_repo_root(project_root)
+    repo_root = _stored_or_resolved_repo_root(project_root, item)
     if repo_root is None:
         return WorktreeRenameResult(
             status="failed",
@@ -319,7 +334,7 @@ def rename_worktree(
             error=f"Could not determine git repository root from '{project_root}'.",
         )
 
-    new_path = resolve_worktree_path(repo_root, new_slug, config.worktree_base)
+    new_path = managed_worktree_path(repo_root, new_slug)
     new_branch = default_worktree_branch(new_slug)
     old_path = Path(item.worktree_path)
     if not old_path.is_dir():
@@ -354,8 +369,10 @@ def rename_worktree(
     return WorktreeRenameResult(
         status="renamed",
         metadata=WorktreeMetadata(
-            path=str(result.new_path),
+            path=result.new_path.as_posix(),
             branch=result.new_branch,
+            repo_path=repo_root.as_posix(),
+            name=new_slug,
             pending=False,
             managed=True,
         ),
@@ -370,17 +387,23 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
             metadata=item.worktree.model_copy(update={"pending": False}),
         )
 
-    config = load_config(project_root)
     branch = item.worktree_branch or default_worktree_branch(item.name)
     current_path = item.worktree_path
+    worktree_name = item.worktree.name or item.name
 
-    main_root = resolve_main_repo_root(project_root)
+    main_root = (
+        Path(item.worktree.repo_path).expanduser().resolve()
+        if item.worktree.repo_path
+        else resolve_main_repo_root(project_root)
+    )
     if main_root is None:
         return WorktreeRecoveryResult(
             status="cleared",
             metadata=WorktreeMetadata(
                 path=current_path,
                 branch=branch,
+                repo_path=item.worktree.repo_path,
+                name=worktree_name,
                 pending=False,
                 managed=True,
             ),
@@ -389,25 +412,30 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
     expected_path = (
         Path(current_path)
         if current_path
-        else resolve_worktree_path(
-            main_root,
-            item.name,
-            config.work.worktree_base,
-        )
+        else managed_worktree_path(main_root, worktree_name)
     )
     if worktree_exists(expected_path):
         return WorktreeRecoveryResult(
             status="healed",
             metadata=WorktreeMetadata(
-                path=str(expected_path.resolve()),
+                path=expected_path.resolve().as_posix(),
                 branch=branch,
+                repo_path=main_root.as_posix(),
+                name=worktree_name,
                 pending=False,
                 managed=True,
             ),
         )
     return WorktreeRecoveryResult(
         status="cleared",
-        metadata=WorktreeMetadata(path=current_path, branch=branch, pending=False, managed=True),
+        metadata=WorktreeMetadata(
+            path=current_path,
+            branch=branch,
+            repo_path=item.worktree.repo_path,
+            name=worktree_name,
+            pending=False,
+            managed=True,
+        ),
     )
 
 

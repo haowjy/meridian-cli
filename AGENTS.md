@@ -142,13 +142,13 @@ For platform-sensitive unit/integration tests, make the OS contract explicit:
 - For shell/process tests, avoid Unix-only shell syntax unless the test is explicitly POSIX-only and named/documented that way; prefer argv arrays and cross-platform helpers.
 - A cross-platform test must survive Windows defaults: `HOME` may be ignored, `%LOCALAPPDATA%` may define cache/config roots, executable lookup may require `.exe`/`.bat`, and `PATH` uses `;` separators.
 - **Linting**: `uv run ruff check .`
-- **Type checking**: `uv run pyright` (must be 0 errors)
+- **Type checking**: `uv run --extra dev python -m pyright` (must be 0 errors)
 
 ```bash
 uv sync --extra dev      # Install from source
 uv run ruff check .      # Lint
 uv run pytest-llm        # Unit tests (token-efficient output)
-uv run pyright            # Type check
+uv run --extra dev python -m pyright            # Type check
 uv run meridian           # Smoke test the CLI directly
 uv add <package>          # Add a dependency (never use pip install)
 ```

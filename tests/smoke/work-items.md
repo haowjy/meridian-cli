@@ -94,6 +94,55 @@ uv run meridian work show with-worktree-path --json
 - [ ] Exit 0
 - [ ] JSON shows worktree path is null/empty
 
+## work worktree show / ensure
+
+Managed ensure always uses Meridian's canonical path
+`<repo>.worktrees/<worktree-name>`. `--repo` selects the target repository only
+on first managed ensure; existing managed metadata is reused until cleared or
+migrated explicitly. Use `work set-worktree` only for existing/manual custom
+paths that Meridian should not own.
+
+```bash
+uv run meridian work start ensure-item --no-worktree
+uv run meridian work worktree ensure-item --json
+```
+- [ ] Exit 0
+- [ ] JSON shows configured status without creating a worktree
+
+```bash
+uv run meridian work worktree ensure-item --ensure --json
+```
+- [ ] Exit 0
+- [ ] JSON shows `ensured=true`
+- [ ] `worktree_path` is canonical (`<repo>.worktrees/ensure-item`)
+
+## work worktree --ensure creates temporary worktree when no active work
+
+```bash
+uv run meridian work clear
+uv run meridian work worktree --ensure --repo . --json
+uv run meridian work worktree --json
+```
+- [ ] First command clears active work attachment
+- [ ] Ensure command exits 0 and returns `temporary=true`
+- [ ] Follow-up show reports the same tracked temporary worktree
+
+## work worktree --ensure (work-item form)
+
+```bash
+uv run meridian work start ensure-worktree-item --no-worktree
+uv run meridian work worktree ensure-worktree-item --ensure
+uv run meridian work worktree ensure-worktree-item
+```
+- [ ] Ensure command exits 0 and reports configured worktree path
+- [ ] Follow-up status command exits 0 and shows same worktree path
+
+```bash
+uv run meridian work clear
+uv run meridian work worktree
+```
+- [ ] Fails with guidance to run `meridian work start <name>` or pass a work id
+
 ## manually assigned/shared worktree path is not removed by lifecycle
 
 ```bash
