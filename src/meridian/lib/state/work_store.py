@@ -13,11 +13,11 @@ import json
 import re
 import shutil
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, cast
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -37,6 +37,17 @@ logger = structlog.get_logger(__name__)
 _UNSET = object()
 
 
+def _normalize_worktree_path_text(path: str) -> str:
+    """Store worktree filesystem paths with stable POSIX separators.
+
+    Python's ``Path.as_posix()`` only converts separators for the host platform.
+    Stored Meridian metadata must remain stable when written on Windows and read
+    elsewhere, so normalize separators at the metadata boundary.
+    """
+
+    return path.replace("\\", "/")
+
+
 class WorktreeMetadata(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -46,6 +57,15 @@ class WorktreeMetadata(BaseModel):
     name: str | None = None
     pending: bool = False
     managed: bool = False
+
+    @field_validator("path", "repo_path", mode="before")
+    @classmethod
+    def _normalize_path_separator(cls, value: object) -> object:
+        if isinstance(value, PurePath):
+            return value.as_posix()
+        if isinstance(value, str):
+            return _normalize_worktree_path_text(value)
+        return value
 
 
 class WorkItem(BaseModel):
@@ -195,7 +215,12 @@ def _coerce_worktree_metadata(
         if nested is not None or any(key in raw for key in legacy_keys):
             changed = True
 
-    path = path_value if isinstance(path_value, str) and path_value else fallback.path
+    if isinstance(path_value, str) and path_value:
+        path = _normalize_worktree_path_text(path_value)
+        if path != path_value:
+            changed = True
+    else:
+        path = fallback.path
     if path_value not in (None, "") and not isinstance(path_value, str):
         changed = True
 
@@ -203,11 +228,12 @@ def _coerce_worktree_metadata(
     if branch_value not in (None, "") and not isinstance(branch_value, str):
         changed = True
 
-    repo_path = (
-        repo_path_value
-        if isinstance(repo_path_value, str) and repo_path_value
-        else fallback.repo_path
-    )
+    if isinstance(repo_path_value, str) and repo_path_value:
+        repo_path = _normalize_worktree_path_text(repo_path_value)
+        if repo_path != repo_path_value:
+            changed = True
+    else:
+        repo_path = fallback.repo_path
     if repo_path_value not in (None, "") and not isinstance(repo_path_value, str):
         changed = True
 

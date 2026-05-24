@@ -1,7 +1,5 @@
 """Spawn create-input validation and payload preparation helpers."""
 
-from pathlib import Path
-
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -50,6 +48,7 @@ def build_create_payload(
     runtime: OperationRuntime | None = None,
     preflight_warning: str | None = None,
     ctx: RuntimeContext | None = None,
+    forced_task_cwd_resolution: TaskCwdResolution | None = None,
 ) -> SpawnRequest:
     """Build a spawn request without leaking library warnings to stderr."""
 
@@ -87,13 +86,8 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
-        selected_work_id = explicit_work_id or ambient_work_id
-        if payload.predicted_task_cwd is not None:
-            task_cwd_resolution = TaskCwdResolution(
-                task_cwd=Path(payload.predicted_task_cwd),
-                source="forced-worktree",
-                work_item=selected_work_id,
-            )
+        if forced_task_cwd_resolution is not None:
+            task_cwd_resolution = forced_task_cwd_resolution
         else:
             task_cwd_resolution = resolve_task_cwd(
                 project_root,

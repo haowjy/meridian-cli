@@ -496,7 +496,7 @@ def test_ensure_temporary_worktree_round_trips_status(
     assert status.repo_root == target_repo.resolve()
 
 
-def test_temporary_pending_record_is_written_before_provision(
+def test_temporary_failure_clears_pending_record_after_provision_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -528,8 +528,7 @@ def test_temporary_pending_record_is_written_before_provision(
         )
 
     stored = temp_worktree_store.get_temporary_worktree(runtime_root, "default")
-    assert stored is not None
-    assert stored.status == "pending"
+    assert stored is None
 
 
 def test_temporary_status_reports_pending_missing_worktree(tmp_path: Path) -> None:

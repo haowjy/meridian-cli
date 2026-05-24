@@ -155,7 +155,11 @@ def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
     monkeypatch.setattr(
         spawn_api,
         "build_create_payload",
-        lambda payload, runtime=None, preflight_warning=None, ctx=None: type(
+        lambda payload,
+        runtime=None,
+        preflight_warning=None,
+        ctx=None,
+        forced_task_cwd_resolution=None: type(
             "Prepared",
             (),
             {

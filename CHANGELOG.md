@@ -18,6 +18,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Managed worktree paths now always use `<repo>.worktrees/<worktree-name>`; config-driven managed bases removed from lifecycle flows.
 - `shared-workspace` guidance in docs now points to `meridian work worktree --ensure` instead of manual `git worktree add`.
 
+### Fixed
+- Worktree metadata path separators now normalize at the state boundary, protecting Windows-written managed paths from caller drift.
+- Temporary worktree provisioning failures now clear the pending record; pending still means interrupted create.
+
 ## [0.2.2] - 2026-05-23
 
 ### Fixed

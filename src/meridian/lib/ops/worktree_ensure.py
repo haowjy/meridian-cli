@@ -641,12 +641,17 @@ def ensure_temporary_worktree(
         status="pending",
         managed=True,
     )
-    provisioned = provision_for_start(
-        repo_root,
-        worktree_name,
-        existing=metadata,
-    )
+    try:
+        provisioned = provision_for_start(
+            repo_root,
+            worktree_name,
+            existing=metadata,
+        )
+    except Exception:
+        temp_worktree_store.clear_temporary_worktree(runtime_root, key)
+        raise
     if provisioned.status == "skipped_not_git_repo":
+        temp_worktree_store.clear_temporary_worktree(runtime_root, key)
         raise WorktreeEnsureError(
             f"Cannot ensure temporary worktree: '{repo_root}' is not inside a git repository."
         )

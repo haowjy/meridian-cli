@@ -19,6 +19,7 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_s
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.cwd import TaskCwdResolution
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
@@ -321,6 +322,7 @@ def spawn_create_sync(
                 "Dry-run leaves state unchanged; it would be created on launch."
             )
     ensure_warning: str | None = None
+    forced_task_cwd_resolution: TaskCwdResolution | None = None
     if payload.worktree is True:
         resolved_runtime_root = (
             _runtime_root_from_prepared_for_read(
@@ -350,10 +352,10 @@ def spawn_create_sync(
             )
             ensure_warning = ensured.warning
             if payload.dry_run:
-                payload = payload.model_copy(
-                    update={
-                        "predicted_task_cwd": ensured.metadata.path,
-                    }
+                forced_task_cwd_resolution = TaskCwdResolution(
+                    task_cwd=ensured.worktree_path,
+                    source="forced-worktree",
+                    work_item=selected_work_id,
                 )
     preflight_warning = _merge_warnings(preflight_warning, ensure_warning)
 
@@ -383,6 +385,7 @@ def spawn_create_sync(
         runtime=runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
+        forced_task_cwd_resolution=forced_task_cwd_resolution,
     )
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
