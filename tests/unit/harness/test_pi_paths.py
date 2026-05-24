@@ -49,8 +49,9 @@ def test_meridian_pi_state_dir_falls_back_to_session_dir() -> None:
 
 def test_pi_meridian_state_dir_env_override_matches_resolve() -> None:
     env = {"PI_CODING_AGENT_SESSION_DIR": "/scoped/session"}
+    expected = str(resolve_meridian_pi_state_dir(env=env))
     assert pi_meridian_state_dir_env_override(env=env) == {
-        "MERIDIAN_PI_STATE_DIR": "/scoped/session"
+        "MERIDIAN_PI_STATE_DIR": expected
     }
 
 
