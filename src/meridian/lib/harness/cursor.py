@@ -74,6 +74,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_harness_session_id",
             "continue_fork",
             "effort",
+            "pi_harness_profile",
         }
     )
 

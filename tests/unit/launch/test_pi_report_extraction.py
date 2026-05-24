@@ -32,7 +32,7 @@ def test_extract_or_fallback_report_prefers_response_over_cleanup_fixture() -> N
     report = extract_or_fallback_report(store, spawn_id, extractor=PI_EXTRACTOR)
 
     assert report.content == "No API key configured"
-    assert report.source == "assistant_message"
+    assert report.source == "pi_failure"
     assert "cleanup_completed" not in (report.content or "")
 
 

@@ -767,7 +767,7 @@ Follow `tests/smoke/pi-manual.md` and `tests/smoke/pi-rpc-quiescence.md`. Requir
 
 - [ ] Happy spawn succeeds; `report.md` is a normal reply, not lifecycle JSON only
 - [ ] Auth/model failures surface readable errors (#262), not `cleanup_completed` bodies
-- [ ] `pi_paths`: extensions under `~/.pi/agent/extensions/meridian/<launch-id>/`
+- [ ] `pi_paths`: Meridian bundles under `~/.meridian/pi/extensions/` (`-e` targets); `MERIDIAN_PI_STATE_DIR` for extension runtime state
 
 ### Runtime Resolution Smoke
 

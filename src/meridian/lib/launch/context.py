@@ -19,7 +19,12 @@ from meridian.lib.config.context_config import (
     ContextSourceType,
 )
 from meridian.lib.config.project_paths import ProjectConfigPaths
-from meridian.lib.config.settings import MeridianConfig, load_config
+from meridian.lib.config.settings import (
+    MeridianConfig,
+    PiHarnessProfileConfig,
+    load_config,
+    resolve_pi_harness_profile_for_launch,
+)
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
@@ -546,6 +551,7 @@ def materialize_launch_artifacts(
     tools: ToolsField | None = None,
     approval: str | None = None,
     unsafe_no_permissions: bool = False,
+    pi_harness_profile: PiHarnessProfileConfig | None = None,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -586,6 +592,7 @@ def materialize_launch_artifacts(
         context_from_payload=context_from_payload,
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
+        pi_harness_profile=pi_harness_profile,
     )
     permission_config, perms = resolve_permission_pipeline(
         sandbox=sandbox,
@@ -1635,6 +1642,14 @@ def bind_launch_context(
     inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
         runtime.composition_surface
     )
+    pi_harness_profile = (
+        resolve_pi_harness_profile_for_launch(
+            config_snapshot=runtime.config_snapshot,
+            project_root=project_paths.project_root,
+        )
+        if harness.id == HarnessId.PI
+        else None
+    )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,
@@ -1663,6 +1678,7 @@ def bind_launch_context(
         tools=resolved_request.tools,
         approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
+        pi_harness_profile=pi_harness_profile,
     )
     run_params = materialized.run_params
 

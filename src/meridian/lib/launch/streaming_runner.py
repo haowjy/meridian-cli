@@ -806,20 +806,21 @@ async def execute_with_streaming(
         child_env = dict(launch_context.binding.environment.final_env)
         harness = launch_context.harness
         harness_bundle = get_harness_bundle(resolved_harness_id)
-        if resolved_harness_id is HarnessId.PI:
-            prepare_pi_lifecycle_event_file(
-                spawn_dir=log_dir,
-                env=child_env,
-            )
-            _scope_pi_session_dir_for_spawn(
-                child_env=child_env,
-                spawn_id=run.spawn_id,
-            )
         pi_session_role = (
             resolve_pi_session_role(interactive=launch_context.binding.run_params.interactive)
             if resolved_harness_id is HarnessId.PI
             else None
         )
+        if resolved_harness_id is HarnessId.PI:
+            prepare_pi_lifecycle_event_file(
+                spawn_dir=log_dir,
+                env=child_env,
+            )
+            if pi_session_role == "spawned":
+                _scope_pi_session_dir_for_spawn(
+                    child_env=child_env,
+                    spawn_id=run.spawn_id,
+                )
 
         spawn_store.update_spawn(
             runtime_root,

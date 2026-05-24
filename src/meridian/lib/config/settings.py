@@ -1310,6 +1310,30 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
         ),
     ] = 30.0
+    pi_child_wave_timeout_seconds: Annotated[
+        float | None,
+        config_field(
+            "timeouts.pi_child_wave_timeout_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "pi_child_wave_timeout_seconds"),
+                file_alias(None, "pi_child_wave_timeout_seconds"),
+            ),
+            env_vars=("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS",),
+        ),
+    ] = None
+    pi_task_ping_interval_seconds: Annotated[
+        float | None,
+        config_field(
+            "timeouts.pi_task_ping_interval_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "pi_task_ping_interval_seconds"),
+                file_alias(None, "pi_task_ping_interval_seconds"),
+            ),
+            env_vars=("MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS",),
+        ),
+    ] = None
     default_wait_yield_seconds: Annotated[
         float,
         config_field(
@@ -1482,12 +1506,21 @@ def _truthy_env_value(raw_value: str) -> bool:
     return raw_value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
-def resolve_pi_harness_profile() -> PiHarnessProfileConfig:
-    """Resolve ``[harness.pi]`` from env overrides and project config."""
+def resolve_pi_harness_profile(
+    *,
+    base_profile: PiHarnessProfileConfig | None = None,
+    project_root: Path | None = None,
+) -> PiHarnessProfileConfig:
+    """Resolve ``[harness.pi]`` with optional launch snapshot and env overrides."""
 
-    from meridian.lib.config.project_root import resolve_project_root_resolution
+    if base_profile is not None:
+        profile = base_profile
+    elif project_root is not None:
+        profile = load_config(project_root).harness.pi
+    else:
+        from meridian.lib.config.project_root import resolve_project_root_resolution
 
-    profile = load_config(resolve_project_root_resolution().project_root).harness.pi
+        profile = load_config(resolve_project_root_resolution().project_root).harness.pi
 
     raw_load_all = os.getenv("MERIDIAN_PI_LOAD_ALL_EXTENSIONS")
     if raw_load_all is not None:
@@ -1502,6 +1535,25 @@ def resolve_pi_harness_profile() -> PiHarnessProfileConfig:
         return profile.model_copy(update={"disable_managed_bash": True})
 
     return profile
+
+
+def resolve_pi_harness_profile_for_launch(
+    *,
+    config_snapshot: dict[str, object] | None,
+    project_root: Path,
+) -> PiHarnessProfileConfig:
+    """Resolve ``[harness.pi]`` from a launch config snapshot (not ambient CWD)."""
+
+    base_profile: PiHarnessProfileConfig | None = None
+    if config_snapshot:
+        try:
+            base_profile = MeridianConfig.model_validate(config_snapshot).harness.pi
+        except Exception:
+            base_profile = None
+    return resolve_pi_harness_profile(
+        base_profile=base_profile,
+        project_root=project_root if base_profile is None else None,
+    )
 
 
 def resolve_pi_disable_managed_bash() -> bool:

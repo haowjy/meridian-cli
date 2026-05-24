@@ -13,7 +13,7 @@ from meridian.lib.state.artifact_store import ArtifactStore
 
 from .artifact_io import read_artifact_text
 
-ReportSource = Literal["report_md", "assistant_message", "failure_reason"]
+ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 _LOGGER = logging.getLogger(__name__)
 _PI_LIFECYCLE_PHASE_EVENT = "meridian.pi.lifecycle.phase"
 _PI_LIFECYCLE_NOISE_PHASES = frozenset(
@@ -291,6 +291,14 @@ def extract_or_fallback_report(
         else:
             adapted_text = adapted_report.strip() if adapted_report else ""
             if adapted_text and not _is_terminal_control_frame(adapted_text):
+                history_text = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME).strip()
+                pi_failure = (
+                    extract_pi_failure_from_history(_normalized_history_lines(history_text))
+                    if history_text
+                    else None
+                )
+                if pi_failure and pi_failure.strip() == adapted_text:
+                    return ExtractedReport(content=adapted_text, source="pi_failure")
                 return ExtractedReport(content=adapted_text, source="assistant_message")
 
     output_lines = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME).strip()
@@ -302,7 +310,7 @@ def extract_or_fallback_report(
     if output_lines.strip():
         pi_failure = extract_pi_failure_from_history(output_lines)
         if pi_failure and not _is_terminal_control_frame(pi_failure):
-            return ExtractedReport(content=pi_failure, source="assistant_message")
+            return ExtractedReport(content=pi_failure, source="pi_failure")
 
     assistant_message = _extract_last_assistant_message(output_lines)
     assistant_report = assistant_message.strip() if assistant_message else ""

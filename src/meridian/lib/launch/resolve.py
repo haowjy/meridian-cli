@@ -228,6 +228,17 @@ def _coerce_positive_timeout_seconds(value: object) -> float | None:
 def _resolve_pi_child_wave_timeout_from_config_snapshot(
     config_snapshot: dict[str, object],
 ) -> float | None:
+    try:
+        config = MeridianConfig.model_validate(config_snapshot)
+    except Exception:
+        config = None
+    if config is not None and config.pi_child_wave_timeout_seconds is not None:
+        timeout_seconds = _coerce_positive_timeout_seconds(
+            config.pi_child_wave_timeout_seconds
+        )
+        if timeout_seconds is not None:
+            return timeout_seconds
+
     raw_seconds = config_snapshot.get("pi_child_wave_timeout_seconds")
     timeout_seconds = _coerce_positive_timeout_seconds(raw_seconds)
     if timeout_seconds is not None:
@@ -303,18 +314,29 @@ def parse_duration_seconds(value: str | None) -> float | None:
 def _resolve_pi_task_ping_interval_from_config_snapshot(
     config_snapshot: dict[str, object],
 ) -> float | None:
+    try:
+        config = MeridianConfig.model_validate(config_snapshot)
+    except Exception:
+        config = None
+    if config is not None and config.pi_task_ping_interval_seconds is not None:
+        interval_seconds = _coerce_positive_timeout_seconds(
+            config.pi_task_ping_interval_seconds
+        )
+        if interval_seconds is not None:
+            return interval_seconds
+
     raw_seconds = config_snapshot.get("pi_task_ping_interval_seconds")
-    timeout_seconds = _coerce_positive_timeout_seconds(raw_seconds)
-    if timeout_seconds is not None:
-        return timeout_seconds
+    interval_seconds = _coerce_positive_timeout_seconds(raw_seconds)
+    if interval_seconds is not None:
+        return interval_seconds
 
     timeouts_section = config_snapshot.get("timeouts")
     if isinstance(timeouts_section, dict):
         typed_timeouts_section = cast("dict[str, object]", timeouts_section)
         section_value = typed_timeouts_section.get("pi_task_ping_interval_seconds")
-        timeout_seconds = _coerce_positive_timeout_seconds(section_value)
-        if timeout_seconds is not None:
-            return timeout_seconds
+        interval_seconds = _coerce_positive_timeout_seconds(section_value)
+        if interval_seconds is not None:
+            return interval_seconds
     return None
 
 

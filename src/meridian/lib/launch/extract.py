@@ -66,8 +66,8 @@ def _persist_report(
     redacted_content = redact_secrets(extracted.content, secrets)
     target = log_dir / REPORT_FILENAME
     report_key = ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}")
-    if extracted.source in {"assistant_message", "failure_reason"}:
-        heading = "# Spawn failed" if extracted.source == "failure_reason" else "# Report"
+    if extracted.source in {"assistant_message", "failure_reason", "pi_failure"}:
+        heading = "# Spawn failed" if extracted.source in {"failure_reason", "pi_failure"} else "# Report"
         wrapped = f"{heading}\n\n{redacted_content.strip()}\n"
         atomic_write_text(target, wrapped)
         artifacts.put(report_key, wrapped.encode("utf-8"))

@@ -106,6 +106,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "user_turn_content",
             "mcp_tools",
             "projected_roots",
+            "pi_harness_profile",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -180,7 +181,15 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         perms: PermissionResolver,
     ) -> ResolvedLaunchSpec:
         continue_session_id = (run.continue_harness_session_id or "").strip() or None
-        pi_profile = resolve_pi_harness_profile()
+        if run.pi_harness_profile is not None:
+            pi_profile = run.pi_harness_profile
+        else:
+            control_root = (run.control_root or "").strip()
+            pi_profile = resolve_pi_harness_profile(
+                project_root=Path(control_root).expanduser().resolve()
+                if control_root
+                else None,
+            )
         meridian_entrypoints = resolve_pi_extension_entrypoints(
             PiExtensionLaunchProfile(
                 background_tasks_enabled=pi_profile.background_tasks_enabled(),

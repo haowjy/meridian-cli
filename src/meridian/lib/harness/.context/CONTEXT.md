@@ -48,14 +48,16 @@ Per-harness mapping:
 Pi is the first harness with in-process TypeScript extensions rather than an opaque
 subprocess. Two Meridian-owned extensions run inside the Pi process:
 
-- **managed-bash** — replaces Pi's default bash tool with job tracking, background
-  execution, and lifecycle event emission. See `src/meridian/pi_runtime/extensions/managed-bash/`.
-- **meridian-lifecycle** — consumes internal events, tracks child spawns, manages wave
-  notifications, and emits canonical lifecycle events to a sidecar JSONL file. See
-  `src/meridian/pi_runtime/extensions/meridian-lifecycle/`.
+- **background-tasks** — task registry, `background_task` tool, bash bridge, `/ps*` UI.
+  See `src/meridian/pi_runtime/extensions/background-tasks/`.
+- **meridian-spawn-watch** — spawn detection, wave timeout, quiescence, `/spawns*`, lifecycle
+  sidecar. See `src/meridian/pi_runtime/extensions/meridian-spawn-watch/`.
 
-Extensions are TypeScript, built with `tsup`/esbuild, and materialized per-launch by
-`pi_extension_projection.py` into user-level state under `~/.meridian/meridian-pi/agent/extensions/<launch-id>/`.
+Extensions are TypeScript, built with `pnpm run build:extensions`, and loaded via stable
+`-e` paths from `pi_paths.resolve_meridian_pi_extension_root()` (`~/.meridian/pi/extensions/`
+or packaged `dist/extensions`). `[harness.pi]` toggles and `load_all_pi_extensions` are
+resolved from the launch config snapshot in `bind_launch_context()` → `SpawnParams.pi_harness_profile`
+→ `PiAdapter.resolve_launch_spec()` (not ambient CWD config reload).
 
 The runtime itself is resolved by `pi_runtime_resolver.py` — it probes the installed
 `pi` binary for compatibility (required `--help` surface tokens differ between primary

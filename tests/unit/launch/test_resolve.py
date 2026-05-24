@@ -165,3 +165,35 @@ def test_resolve_pi_task_ping_interval_from_config() -> None:
         )
         == 3300.0
     )
+
+
+def test_resolve_pi_child_wave_timeout_from_meridian_config_field() -> None:
+    from meridian.lib.config.settings import MeridianConfig
+
+    snapshot = MeridianConfig(pi_child_wave_timeout_seconds=99.0).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+    assert (
+        resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot=snapshot,
+        )
+        == 99.0
+    )
+
+
+def test_resolve_pi_task_ping_interval_from_meridian_config_field() -> None:
+    from meridian.lib.config.settings import MeridianConfig
+
+    snapshot = MeridianConfig(pi_task_ping_interval_seconds=1800.0).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+    assert (
+        resolve_pi_task_ping_interval_seconds(
+            explicit_interval_seconds=None,
+            config_snapshot=snapshot,
+        )
+        == 1800.0
+    )

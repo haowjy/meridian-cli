@@ -101,28 +101,25 @@ through workspace env injection (see parent `.context/`).
 
 ### Pi Extension Projection (`pi_extension_projection.py`)
 
-Resolves and materializes Meridian-owned Pi extension entrypoints for each launch:
+Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.py`):
 
-- **Source**: `pi_runtime/dist/extensions/<name>/index.js` — TypeScript extensions built
-  with `pnpm run build:extensions`
-- **Target**: `~/.meridian/meridian-pi/agent/extensions/<uuid4>/<name>/index.js` —
-  per-launch directory to prevent stale cached extensions
-- **Atomic copy**: uses `tempfile.mkstemp` + `shutil.copy2` + `os.replace` to avoid
-  partial writes
-- **Override env vars**: `MERIDIAN_PI_EXTENSION_SOURCE_ROOT` and
-  `MERIDIAN_PI_EXTENSION_TARGET_ROOT` for testing
+- **Bundle root**: `resolve_meridian_pi_extension_root()` → `~/.meridian/pi/extensions/` or
+  packaged `dist/extensions` (`MERIDIAN_PI_EXTENSION_SOURCE_ROOT` for tests)
+- **Default RPC**: `--no-extensions` plus explicit `-e` for enabled Meridian bundles only
+- **`load_all_pi_extensions = true`**: omit `--no-extensions` and scan `extra_extension_paths`
+  (default `~/.pi/agent/extensions`) for additional `-e` lines
 
 Entrypoint helpers:
-- `resolve_pi_spawn_watch_entrypoint()` — spawn-watch extension only
-- `resolve_pi_lifecycle_extension_entrypoint()` — spawn-watch extension only (legacy helper)
-- `resolve_pi_extension_entrypoints(disable_managed_bash, interactive)` — spawn-watch
-  always; background-tasks only for interactive primary sessions when managed bash is enabled
-- `resolve_pi_all_extension_entrypoints()` — both background-tasks and spawn-watch
-  for backwards-compatible interactive-primary projection
+- `resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` — honors
+  `background_tasks.enabled` and `spawn_watch.enabled` from the launch snapshot
+- `resolve_extra_pi_extension_entrypoints()` — user extensions when `load_all` is true
 
-`harness.pi.disable_managed_bash = true`, `MERIDIAN_PI_DISABLE_MANAGED_BASH`
-truthy, or `MERIDIAN_PI_MANAGED_BASH=0` disables the background-tasks entrypoint.
-Non-interactive Pi spawns always receive only spawn-watch.
+Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` from
+`resolve_pi_harness_profile_for_launch(config_snapshot, project_root)`; `PiAdapter`
+does not reload config from ambient CWD in the hot path.
+
+Legacy: `disable_managed_bash` / `MERIDIAN_PI_DISABLE_MANAGED_BASH` disable background-tasks.
+Spawned non-interactive RPC keeps spawn-watch only unless toggles say otherwise.
 
 Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
 the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.
