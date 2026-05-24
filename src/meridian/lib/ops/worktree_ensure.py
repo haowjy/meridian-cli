@@ -11,6 +11,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.ops.runtime import runtime_context
 from meridian.lib.ops.worktree_lifecycle import (
     default_worktree_branch,
+    ensure_worktree_mars_local_guard,
     provision_for_start,
     recover_pending,
 )
@@ -367,6 +368,8 @@ def ensure_work_item_worktree(
                     f"'{resolved_path}' is non-canonical; expected '{canonical_path}'. "
                     "Clear or migrate the assignment before ensuring."
                 )
+            if not dry_run:
+                ensure_worktree_mars_local_guard(resolved_path)
             was_pending = item.worktree_pending
             if not dry_run and (
                 was_pending or item.worktree_branch != canonical_metadata.branch
@@ -479,6 +482,8 @@ def ensure_work_item_worktree(
         and item.worktree_managed
         and Path(item.worktree_path).is_dir()
     ):
+        if not dry_run:
+            ensure_worktree_mars_local_guard(Path(item.worktree_path).expanduser().resolve())
         if (
             item.worktree_repo_path != canonical_metadata.repo_path
             or item.worktree.name != canonical_metadata.name
@@ -623,6 +628,8 @@ def ensure_temporary_worktree(
                 "or clear/recreate the temp worktree."
             )
         if recorded_path.is_dir():
+            if not dry_run:
+                ensure_worktree_mars_local_guard(recorded_path)
             if record.status == "pending" and not dry_run:
                 temp_worktree_store.put_temporary_worktree(
                     runtime_root,

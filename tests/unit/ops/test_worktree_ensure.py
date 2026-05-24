@@ -70,6 +70,41 @@ def test_provision_for_start_writes_mars_local_guard_for_created_worktree(
     )
 
 
+def test_provision_for_start_writes_mars_local_guard_for_reused_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    worktree_path = resolve_worktree_path(repo_root, "reused-worktree")
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_lifecycle.detect_git_repo", lambda _path: True)
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_lifecycle.resolve_main_repo_root",
+        lambda _path: repo_root,
+    )
+
+    def _fake_create_worktree(
+        _repo_root: Path,
+        target_path: Path,
+        branch: str,
+    ) -> WorktreeCreateResult:
+        target_path.mkdir(parents=True)
+        return WorktreeCreateResult(path=target_path, branch=branch, created=False)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_lifecycle.create_worktree",
+        _fake_create_worktree,
+    )
+
+    result = provision_for_start(repo_root, "reused-worktree")
+
+    assert result.created is False
+    assert (worktree_path / "mars.local.toml").read_text(encoding="utf-8") == (
+        "[settings]\ntargets = []\n"
+    )
+
+
 def test_provision_for_start_preserves_existing_mars_local(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -102,6 +137,36 @@ def test_provision_for_start_preserves_existing_mars_local(
     provision_for_start(repo_root, "existing-local")
 
     assert (worktree_path / "mars.local.toml").read_text(encoding="utf-8") == existing_content
+
+
+def test_ensure_existing_managed_worktree_writes_missing_mars_local_guard(
+    tmp_path: Path,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "existing-guard", "", None)
+    managed_path = resolve_worktree_path(project_root, item.name)
+    managed_path.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=managed_path.as_posix(),
+        branch=f"feature/{item.name}",
+        repo_path=project_root.as_posix(),
+        name=item.name,
+        pending=False,
+        managed=True,
+    )
+
+    result = ensure_work_item_worktree(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        work_id=item.name,
+    )
+
+    assert result.status == "already_available"
+    assert (managed_path / "mars.local.toml").read_text(encoding="utf-8") == (
+        "[settings]\ntargets = []\n"
+    )
 
 
 def test_ensure_temporary_without_repo_uses_execution_cwd_repo(
@@ -708,6 +773,37 @@ def test_ensure_temporary_heals_pending_existing_worktree(
     stored = temp_worktree_store.get_temporary_worktree(runtime_root, "default")
     assert stored is not None
     assert stored.status == "ready"
+
+
+def test_ensure_temporary_existing_worktree_writes_missing_mars_local_guard(
+    tmp_path: Path,
+) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    target_repo = tmp_path / "temp-target"
+    subprocess.run(["git", "init", str(target_repo)], check=True, capture_output=True, text=True)
+    canonical_path = resolve_worktree_path(target_repo, "temp-default")
+    canonical_path.mkdir(parents=True, exist_ok=True)
+    temp_worktree_store.put_temporary_worktree(
+        runtime_root,
+        key="default",
+        repo_path=target_repo.as_posix(),
+        worktree_name="temp-default",
+        worktree_path=canonical_path.as_posix(),
+        branch="feature/temp-default",
+        status="ready",
+        managed=True,
+    )
+
+    result = ensure_temporary_worktree(
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+
+    assert result.status == "temporary_available"
+    assert (canonical_path / "mars.local.toml").read_text(encoding="utf-8") == (
+        "[settings]\ntargets = []\n"
+    )
 
 
 def test_ensure_work_item_fails_for_non_git_target(tmp_path: Path) -> None:

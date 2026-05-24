@@ -27,6 +27,7 @@ from meridian.lib.ops.worktree_ops import (
     resolve_main_repo_root,
     worktree_exists,
 )
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.work_store import WorkItem, WorktreeMetadata
 
 logger = structlog.get_logger(__name__)
@@ -121,13 +122,13 @@ def _target_metadata(
     )
 
 
-def _write_worktree_mars_local_guard(worktree_path: Path) -> None:
+def ensure_worktree_mars_local_guard(worktree_path: Path) -> None:
     """Prevent managed worktrees from syncing repo-local harness targets."""
 
     guard_path = worktree_path / "mars.local.toml"
     if guard_path.exists():
         return
-    guard_path.write_text("[settings]\ntargets = []\n", encoding="utf-8")
+    atomic_write_text(guard_path, "[settings]\ntargets = []\n")
 
 
 def provision_for_start(
@@ -162,8 +163,7 @@ def provision_for_start(
         Path(target_path),
         target.branch or default_worktree_branch(work_slug),
     )
-    if result.created:
-        _write_worktree_mars_local_guard(result.path)
+    ensure_worktree_mars_local_guard(result.path)
     return WorktreeProvisionResult(
         status="provisioned",
         metadata=WorktreeMetadata(
@@ -190,6 +190,7 @@ def restore_for_reopen(project_root: Path, item: WorkItem) -> WorktreeRestoreRes
         return WorktreeRestoreResult(status="manual_missing", metadata=item.worktree)
 
     if worktree_path.is_dir():
+        ensure_worktree_mars_local_guard(worktree_path)
         return WorktreeRestoreResult(status="available", metadata=item.worktree)
 
     if not item.worktree_branch:
@@ -209,6 +210,8 @@ def restore_for_reopen(project_root: Path, item: WorkItem) -> WorktreeRestoreRes
             error=str(exc),
         )
         return WorktreeRestoreResult(status="failed", metadata=item.worktree, error=str(exc))
+
+    ensure_worktree_mars_local_guard(result.path)
 
     return WorktreeRestoreResult(
         status="restored",
