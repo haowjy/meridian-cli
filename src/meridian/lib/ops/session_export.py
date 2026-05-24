@@ -12,7 +12,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.transcript import TranscriptMessage
 from meridian.lib.ops.runtime import async_from_sync
-from meridian.lib.ops.session_read import read_session_transcript
+from meridian.lib.ops.session_transcript import read_session_transcript
 from meridian.lib.state import session_store, spawn_store
 
 _TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
@@ -270,27 +270,27 @@ def session_export_sync(
     ctx: RuntimeContext | None = None,
 ) -> SessionExportOutput:
     _ = ctx
-    read = read_session_transcript(
+    transcript = read_session_transcript(
         ref=payload.ref,
         file_path=payload.file_path,
         project_root=payload.project_root,
     )
-    ref = payload.ref.strip() or read.target.session_id
-    chat_id = _chat_id_for_ref(read.runtime_root, ref)
+    ref = payload.ref.strip() or transcript.target.session_id
+    chat_id = _chat_id_for_ref(transcript.runtime_root, ref)
     parent_id = ref if ref.startswith("p") and ref[1:].isdigit() else None
     appendices = (
-        _spawn_appendices(read.runtime_root, chat_id=chat_id, parent_id=parent_id)
+        _spawn_appendices(transcript.runtime_root, chat_id=chat_id, parent_id=parent_id)
         if payload.include_spawns
         else []
     )
     markdown = _render_markdown(
-        session_id=read.target.session_id,
-        source=read.target.source,
-        metadata=_session_metadata(read.runtime_root, ref),
-        messages=_flatten_segments(read.segments),
+        session_id=transcript.target.session_id,
+        source=transcript.target.source,
+        metadata=_session_metadata(transcript.runtime_root, ref),
+        messages=_flatten_segments(transcript.segments),
         appendices=appendices,
     )
-    return SessionExportOutput(session_id=read.target.session_id, markdown=markdown)
+    return SessionExportOutput(session_id=transcript.target.session_id, markdown=markdown)
 
 
 session_export = async_from_sync(session_export_sync)

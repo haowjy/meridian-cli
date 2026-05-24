@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import shlex
-
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync
-from meridian.lib.ops.session_read import read_session_transcript
 from meridian.lib.ops.session_render import (
-    AbsoluteTranscriptMessage,
-    flatten_transcript_segments,
-    paginate_recent_messages,
-    resolve_segment_index,
-    segment_label,
     showing_window,
     window_from_around_context,
     window_from_before_limit,
     window_from_from_limit,
+    window_from_tail,
+)
+from meridian.lib.ops.session_transcript import (
+    AbsoluteTranscriptMessage,
+    build_session_log_command,
+    read_session_transcript,
 )
 
 
@@ -28,15 +26,12 @@ class SessionLogInput(BaseModel):
 
     ref: str = ""
     segment: str | None = None
-    compaction: int | None = None
     tail: int | None = None
     from_ordinal: int | None = None
     before_ordinal: int | None = None
     around_ordinal: int | None = None
     limit: int | None = None
     context: int | None = None
-    last_n: int | None = None
-    offset: int = 0
     file_path: str | None = None
     project_root: str | None = None
 
@@ -100,39 +95,43 @@ class SessionLogOutput(BaseModel):
         return "\n".join(lines)
 
 
-def _nav_ref(payload: SessionLogInput, *, resolved_session_id: str) -> str:
-    normalized_ref = payload.ref.strip()
-    return normalized_ref or resolved_session_id
-
-
-def _build_log_command(
-    payload: SessionLogInput,
-    *,
-    resolved_session_id: str,
-    from_ordinal: int,
-    limit: int,
-) -> str:
-    if payload.file_path is not None and payload.file_path.strip():
-        return (
-            f"meridian session log --file {shlex.quote(payload.file_path.strip())} "
-            f"--from {from_ordinal} --limit {limit}"
-        )
-    ref = _nav_ref(payload, resolved_session_id=resolved_session_id)
-    return f"meridian session log {shlex.quote(ref)} --from {from_ordinal} --limit {limit}"
-
-
 def _window_hints(payload: SessionLogInput, *, uses_absolute_window: bool) -> tuple[str, ...]:
-    if uses_absolute_window:
+    if uses_absolute_window or payload.tail is not None:
         return ()
-    hints: list[str] = []
-    if payload.tail is not None:
-        hints.append("Use --tail N to adjust recent-message view size.")
-    elif payload.last_n is not None or payload.offset > 0:
-        hints.append("Legacy window mode: --last/--offset.")
-        hints.append("Prefer --tail, --from/--limit, or --around/--context.")
-    else:
-        hints.append("Use --tail for recent messages.")
-    return tuple(hints)
+    return ("Use --tail [N] for recent messages.",)
+
+
+def _resolve_segment_index(*, total_segments: int, segment: str | None) -> int:
+    if total_segments <= 0:
+        return 0
+
+    normalized = (segment or "current").strip().lower()
+    if normalized == "current":
+        return total_segments - 1
+    if normalized == "previous":
+        if total_segments < 2:
+            raise ValueError("No previous segment is available.")
+        return total_segments - 2
+
+    if not normalized.isdigit():
+        raise ValueError("segment must be 'current', 'previous', or a non-negative integer.")
+
+    segment_index = int(normalized)
+    if segment_index >= total_segments:
+        raise ValueError(
+            f"Segment {segment_index} out of range (available: 0-{total_segments - 1})"
+        )
+    return segment_index
+
+
+def _segment_label(*, selected_index: int, total_segments: int) -> str:
+    if total_segments <= 0:
+        return "segment 0"
+    if selected_index == total_segments - 1:
+        return f"segment {selected_index} (current)"
+    if total_segments >= 2 and selected_index == total_segments - 2:
+        return f"segment {selected_index} (previous)"
+    return f"segment {selected_index}"
 
 
 def _message_row(message: AbsoluteTranscriptMessage) -> SessionLogMessage:
@@ -165,12 +164,9 @@ def session_log_sync(
     if uses_absolute_window:
         if payload.tail is not None:
             raise ValueError("--tail cannot be combined with --from/--before/--around.")
-        if payload.last_n is not None or payload.offset > 0:
-            raise ValueError(
-                "--last/--offset cannot be combined with --from/--before/--around."
-            )
-        if payload.segment is not None or payload.compaction is not None:
-            raise ValueError("--segment/--compaction cannot be combined with absolute windows.")
+        if payload.segment is not None:
+            raise ValueError("--segment cannot be combined with absolute windows.")
+
     if payload.context is not None and payload.around_ordinal is None:
         raise ValueError("--context requires --around.")
     if payload.limit is not None and not (payload.from_ordinal or payload.before_ordinal):
@@ -182,46 +178,44 @@ def session_log_sync(
     if payload.around_ordinal is not None and payload.context is None:
         raise ValueError("--around requires --context.")
 
-    read = read_session_transcript(
+    parsed = read_session_transcript(
         ref=payload.ref,
         file_path=payload.file_path,
         project_root=payload.project_root,
     )
-    flattened = flatten_transcript_segments(read.segments)
 
     selected_segment_index: int | None = None
     selected_segment_label: str | None = None
     selected_segment_messages: int | None = None
+
     if not uses_absolute_window:
-        selected_segment_index = resolve_segment_index(
-            segments=read.segments,
+        selected_segment_index = _resolve_segment_index(
+            total_segments=len(parsed.segments),
             segment=payload.segment,
-            compaction=payload.compaction,
         )
-        selected_segment_label = segment_label(
+        selected_segment_label = _segment_label(
             selected_index=selected_segment_index,
-            total_segments=len(read.segments),
+            total_segments=len(parsed.segments),
         )
 
-        segment_filtered = [
-            message for message in flattened if message.segment_index == selected_segment_index
+        segment_messages = [
+            message
+            for message in parsed.messages
+            if message.segment_index == selected_segment_index
         ]
-        selected_segment_messages = len(segment_filtered)
-        if payload.tail is not None:
-            page = paginate_recent_messages(segment_filtered, last_n=payload.tail, offset=0)
-        else:
-            page = paginate_recent_messages(
-                segment_filtered,
-                last_n=payload.last_n,
-                offset=payload.offset,
-            )
+        selected_segment_messages = len(segment_messages)
+        page = window_from_tail(segment_messages, tail=payload.tail)
     elif payload.from_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
-        page = window_from_from_limit(flattened, start_ordinal=payload.from_ordinal, limit=limit)
+        page = window_from_from_limit(
+            parsed.messages,
+            start_ordinal=payload.from_ordinal,
+            limit=limit,
+        )
     elif payload.before_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
         page = window_from_before_limit(
-            flattened,
+            parsed.messages,
             before_ordinal=payload.before_ordinal,
             limit=limit,
         )
@@ -229,7 +223,7 @@ def session_log_sync(
         around_ordinal = payload.around_ordinal if payload.around_ordinal is not None else 1
         context = payload.context if payload.context is not None else 0
         page = window_from_around_context(
-            flattened,
+            parsed.messages,
             around_ordinal=around_ordinal,
             context=context,
         )
@@ -243,16 +237,14 @@ def session_log_sync(
             else (payload.context if payload.context is not None else 5) * 2 + 1
         )
         if page.previous_from is not None:
-            previous_command = _build_log_command(
-                payload,
-                resolved_session_id=read.target.session_id,
+            previous_command = build_session_log_command(
+                parsed.route,
                 from_ordinal=page.previous_from,
                 limit=nav_limit,
             )
         if page.next_from is not None:
-            next_command = _build_log_command(
-                payload,
-                resolved_session_id=read.target.session_id,
+            next_command = build_session_log_command(
+                parsed.route,
                 from_ordinal=page.next_from,
                 limit=nav_limit,
             )
@@ -260,10 +252,10 @@ def session_log_sync(
     output_messages = tuple(_message_row(item) for item in page.messages)
 
     return SessionLogOutput(
-        session_id=read.target.session_id,
-        source=read.target.source,
-        total_messages=len(flattened),
-        total_segments=len(read.segments),
+        session_id=parsed.target.session_id,
+        source=parsed.target.source,
+        total_messages=len(parsed.messages),
+        total_segments=len(parsed.segments),
         segment_index=selected_segment_index,
         segment_messages=selected_segment_messages,
         segment_label=selected_segment_label,

@@ -45,7 +45,7 @@ def _write_codex_rollout(
     )
 
 
-def test_session_search_workspace_scope_includes_workspace_project(
+def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -58,7 +58,6 @@ def test_session_search_workspace_scope_includes_workspace_project(
 
     workspace_root = tmp_path / "workspace-repo"
     workspace_root.mkdir()
-    (workspace_root / "meridian.toml").write_text("", encoding="utf-8")
     (current_root / "meridian.local.toml").write_text(
         "[workspace.docs]\npath = '../workspace-repo'\n",
         encoding="utf-8",
@@ -109,6 +108,8 @@ def test_session_search_workspace_scope_includes_workspace_project(
     assert len(output.matches) == 1
     match = output.matches[0]
     assert match.corpus == workspace_root.as_posix()
+    assert not (workspace_root / "meridian.toml").exists()
+    assert not (workspace_root / ".git").exists()
     assert match.open_command.startswith("meridian session log --file ")
     assert "--around 1 --context 5" in match.open_command
 

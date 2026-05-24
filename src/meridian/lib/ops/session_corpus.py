@@ -26,24 +26,13 @@ def _runtime_has_session_data(runtime_root: Path) -> bool:
     )
 
 
-def _looks_like_meridian_project_root(project_root: Path) -> bool:
-    return (
-        (project_root / "meridian.toml").is_file()
-        or (project_root / ".mars").is_dir()
-        or (project_root / ".git").exists()
-        or (project_root / ".meridian" / "id").is_file()
-    )
-
-
 def _workspace_scopes(current_project_root: Path) -> tuple[SessionCorpusScope, ...]:
     snapshot = resolve_workspace_snapshot(current_project_root)
     scopes: list[SessionCorpusScope] = []
     for root in get_projectable_roots(snapshot):
-        if not _looks_like_meridian_project_root(root):
-            continue
         authority = resolve_runtime_authority_for_read(root)
-        runtime_root = authority.runtime_root
-        if runtime_root is None or not _runtime_has_session_data(runtime_root):
+        runtime_root = authority.runtime_root or authority.project_state_dir
+        if not _runtime_has_session_data(runtime_root):
             continue
         scopes.append(
             SessionCorpusScope(

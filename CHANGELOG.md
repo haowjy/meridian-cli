@@ -15,6 +15,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Recent-context view is now explicit via `meridian session log REF --tail [N]` (bare `--tail` defaults to 5).
 - Session-search corpus now defaults to current project when REF is omitted.
 - Work-session association logic is now shared through `ops/work_sessions.py` instead of being duplicated in dashboard/search paths.
+- Session transcript loading now flows through one canonical parsed-transcript boundary shared by `session log`, `session search`, and `session export`.
+- Workspace search scope now includes roots based on runtime/session evidence, not ad-hoc repo marker checks.
+
+### Removed
+- Legacy `meridian session log` compatibility flags `--compaction/-c`, `--last/-n`, and `--offset`.
 
 ## [0.2.5] - 2026-05-25
 

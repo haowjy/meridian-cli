@@ -34,15 +34,6 @@ def _session_log(
             ),
         ),
     ] = None,
-    compaction: Annotated[
-        int | None,
-        Parameter(
-            name=["--compaction", "-c"],
-            help=(
-                "Legacy segment selector (0 = current, 1 = previous). Prefer --segment."
-            ),
-        ),
-    ] = None,
     tail: Annotated[
         list[int] | None,
         Parameter(
@@ -73,23 +64,6 @@ def _session_log(
         int | None,
         Parameter(name="--context", help="Messages on each side for --around."),
     ] = None,
-    last_n: Annotated[
-        int | None,
-        Parameter(
-            name=["--last", "-n"],
-            help=(
-                "Legacy page size inside selected segment. Use --tail / --limit instead. "
-                "Use -n 0 for all."
-            ),
-        ),
-    ] = None,
-    offset: Annotated[
-        int,
-        Parameter(
-            name="--offset",
-            help="Skip this many messages from the end of the selected segment.",
-        ),
-    ] = 0,
     file_path: Annotated[
         str | None,
         Parameter(
@@ -98,7 +72,6 @@ def _session_log(
         ),
     ] = None,
 ) -> None:
-    mapped_last_n: int | None = None if last_n == 0 else last_n
     resolved_tail: int | None = None
     if tail is not None:
         if len(tail) > 1:
@@ -109,15 +82,12 @@ def _session_log(
             SessionLogInput(
                 ref=ref,
                 segment=segment,
-                compaction=compaction,
                 tail=resolved_tail,
                 from_ordinal=from_ordinal,
                 before_ordinal=before_ordinal,
                 around_ordinal=around_ordinal,
                 limit=limit,
                 context=context,
-                last_n=mapped_last_n,
-                offset=offset,
                 file_path=file_path,
             )
         )
@@ -250,8 +220,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session log c123 --from 120 --limit 30\n\n"
                 "  meridian session log c123 --around 240 --context 8\n\n"
                 "  meridian session log c123 --segment previous\n\n"
-                "Legacy compatibility:\n\n"
-                "  meridian session log c123 -c 1 --offset 10 --last 20\n"
+                "  meridian session log c123 --before 240 --limit 30\n"
             ),
             "meridian.session.export": (
                 "Examples:\n\n"

@@ -96,7 +96,7 @@ def test_session_log_spawn_missing_harness_session_id_reads_live_output(
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == "p42"
@@ -178,7 +178,7 @@ def test_session_log_active_child_spawn_prefers_live_output(tmp_path: Path) -> N
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == "p42"
@@ -219,7 +219,7 @@ def test_session_log_child_spawn_falls_back_to_artifact_output_when_native_unava
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == "p42"
@@ -268,7 +268,7 @@ def test_session_log_chat_missing_harness_session_id_does_not_read_primary_spawn
 
         with pytest.raises(ValueError) as exc:
             session_log_sync(
-                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), last_n=5)
+                SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
             )
         assert str(exc.value) == (
             "Session 'c42' exists but no transcript is available yet "

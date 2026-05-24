@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import shlex
-
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.harness.transcript import parse_transcript_file
 from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_corpus import resolve_session_search_corpus
-from meridian.lib.ops.session_read import read_session_transcript
-from meridian.lib.ops.session_render import flatten_transcript_segments
-from meridian.lib.ops.session_target import SessionLogTarget, resolve_session_log_target
+from meridian.lib.ops.session_target import resolve_session_log_target
+from meridian.lib.ops.session_transcript import (
+    ParsedSessionTranscript,
+    build_session_log_command,
+    parse_session_target,
+    read_session_transcript,
+    route_for_corpus_target,
+)
 from meridian.lib.state import session_store
 
 _PREVIEW_LIMIT = 200
@@ -106,44 +108,16 @@ def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> 
     return f"{prefix}{highlighted}{suffix}"
 
 
-def _open_command_for_target(
+def _matches_for_transcript(
     *,
-    payload: SessionSearchInput,
-    target: SessionLogTarget,
-    message_ordinal: int,
-    corpus_mode: bool,
-) -> str:
-    if payload.file_path is not None and payload.file_path.strip():
-        return (
-            f"meridian session log --file {shlex.quote(payload.file_path.strip())} "
-            f"--around {message_ordinal} --context {_OPEN_CONTEXT}"
-        )
-    if corpus_mode:
-        return (
-            f"meridian session log --file {shlex.quote(target.file_path.as_posix())} "
-            f"--around {message_ordinal} --context {_OPEN_CONTEXT}"
-        )
-    ref = payload.ref.strip() or target.session_id
-    return (
-        f"meridian session log {shlex.quote(ref)} "
-        f"--around {message_ordinal} --context {_OPEN_CONTEXT}"
-    )
-
-
-def _matches_for_target(
-    *,
-    payload: SessionSearchInput,
-    target: SessionLogTarget,
+    transcript: ParsedSessionTranscript,
     query: str,
     query_lower: str,
     corpus: str,
     chat_id: str,
-    corpus_mode: bool,
 ) -> list[SessionSearchMatch]:
-    segments, _total_compactions = parse_transcript_file(target.file_path)
-    flattened = flatten_transcript_segments(segments)
     matches: list[SessionSearchMatch] = []
-    for message in flattened:
+    for message in transcript.messages:
         normalized_content = _normalize_content(message.content)
         if not normalized_content:
             continue
@@ -153,18 +127,17 @@ def _matches_for_target(
             SessionSearchMatch(
                 corpus=corpus,
                 chat_id=chat_id,
-                session_id=target.session_id,
-                source=target.source,
+                session_id=transcript.target.session_id,
+                source=transcript.target.source,
                 segment=message.segment_index,
                 message_index=message.segment_message_index,
                 message_ordinal=message.ordinal,
                 role=message.role,
                 content_preview=_build_preview(normalized_content, query=query),
-                open_command=_open_command_for_target(
-                    payload=payload,
-                    target=target,
-                    message_ordinal=message.ordinal,
-                    corpus_mode=corpus_mode,
+                open_command=build_session_log_command(
+                    transcript.route,
+                    around_ordinal=message.ordinal,
+                    context=_OPEN_CONTEXT,
                 ),
             )
         )
@@ -172,20 +145,18 @@ def _matches_for_target(
 
 
 def _search_single_target(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
-    read = read_session_transcript(
+    transcript = read_session_transcript(
         ref=payload.ref,
         file_path=payload.file_path,
         project_root=payload.project_root,
     )
     query_lower = query.lower()
-    matches = _matches_for_target(
-        payload=payload,
-        target=read.target,
+    matches = _matches_for_transcript(
+        transcript=transcript,
         query=query,
         query_lower=query_lower,
-        corpus=read.target.source or "session",
-        chat_id=payload.ref.strip() or read.target.session_id,
-        corpus_mode=False,
+        corpus=transcript.target.source or "session",
+        chat_id=payload.ref.strip() or transcript.target.session_id,
     )
     return SessionSearchOutput(matches=tuple(matches))
 
@@ -207,6 +178,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
         for record in records:
             if scope.chat_filter is not None and record.chat_id not in scope.chat_filter:
                 continue
+
             project_root = scope.project_root or scope.runtime_root
             try:
                 target = resolve_session_log_target(
@@ -218,17 +190,22 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
             except (ValueError, FileNotFoundError, OSError):
                 continue
 
+            transcript = parse_session_target(
+                project_root=project_root,
+                runtime_root=scope.runtime_root,
+                target=target,
+                route=route_for_corpus_target(target),
+            )
             matches.extend(
-                _matches_for_target(
-                    payload=payload,
-                    target=target,
+                _matches_for_transcript(
+                    transcript=transcript,
                     query=query,
                     query_lower=query_lower,
                     corpus=scope.label,
                     chat_id=record.chat_id,
-                    corpus_mode=True,
                 )
             )
+
     matches.sort(key=lambda match: (match.corpus, match.chat_id, match.message_ordinal))
     return SessionSearchOutput(matches=tuple(matches))
 

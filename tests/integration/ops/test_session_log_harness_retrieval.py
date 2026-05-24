@@ -189,9 +189,7 @@ def test_session_log_resolves_opencode_db_transcript_when_session_diff_is_empty(
         SessionLogInput(
             ref="p1",
             project_root=project_root.as_posix(),
-            compaction=0,
-            last_n=5,
-            offset=0,
+            tail=5,
         )
     )
 
@@ -238,9 +236,7 @@ def test_session_log_resolves_codex_session_file_from_codex_home_env(
         SessionLogInput(
             ref="p1",
             project_root=project_root.as_posix(),
-            compaction=0,
-            last_n=5,
-            offset=0,
+            tail=5,
         )
     )
 
@@ -286,9 +282,7 @@ def test_session_log_resolves_claude_session_file_from_claude_config_dir_env(
         SessionLogInput(
             ref="p1",
             project_root=project_root.as_posix(),
-            compaction=0,
-            last_n=5,
-            offset=0,
+            tail=5,
         )
     )
 

@@ -131,7 +131,7 @@ def test_session_log_chat_missing_harness_session_id_detects_and_persists_primar
         )
 
         output = session_log_sync(
-            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), last_n=5)
+            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
         )
 
         assert output.session_id == session_id
@@ -192,7 +192,7 @@ def test_session_log_chat_missing_harness_session_id_reads_primary_meta_session_
         _write_primary_meta(runtime_root, "p42", harness_session_id=session_id)
 
         output = session_log_sync(
-            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), last_n=5)
+            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
         )
 
         assert output.session_id == session_id
@@ -241,7 +241,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_detects_native_ses
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == session_id
@@ -291,7 +291,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_reads_primary_meta
     _write_primary_meta(runtime_root, "p42", harness_session_id=session_id)
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == session_id
@@ -334,7 +334,7 @@ def test_session_log_primary_spawn_missing_harness_session_id_does_not_read_spaw
     )
 
     with pytest.raises(ValueError) as exc:
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5))
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5))
     assert str(exc.value) == (
         "Spawn 'p42' has no transcript available yet (no harness session id recorded)."
     )
@@ -373,7 +373,7 @@ def test_session_log_primary_spawn_pi_never_created_skips_default_root_detection
     )
 
     with pytest.raises(ValueError) as exc:
-        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5))
+        session_log_sync(SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5))
     assert str(exc.value) == (
         "Spawn 'p42' has no transcript available yet (no harness session id recorded)."
     )
