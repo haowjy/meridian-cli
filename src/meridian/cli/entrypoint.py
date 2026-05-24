@@ -30,7 +30,7 @@ def _is_root_help_request(argv: Sequence[str]) -> bool:
 def _is_version_request(argv: Sequence[str]) -> bool:
     """Return true when argv requests the root version before a command path."""
 
-    if "--version" not in argv:
+    if not any(token in {"--version", "-v"} for token in argv):
         return False
     return first_positional_token(argv) is None
 

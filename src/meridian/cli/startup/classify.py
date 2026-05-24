@@ -11,7 +11,7 @@ from meridian.cli.bootstrap import (
 )
 from meridian.cli.startup.catalog import CommandCatalog, CommandDescriptor
 
-_ROOT_HELP_FLAGS = frozenset({"--help", "-h", "--version"})
+_ROOT_HELP_FLAGS = frozenset({"--help", "-h", "--version", "-v"})
 
 
 def _split_before_passthrough(argv: Sequence[str]) -> list[str]:

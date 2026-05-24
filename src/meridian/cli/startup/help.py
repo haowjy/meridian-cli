@@ -132,7 +132,7 @@ Multi-agent orchestration across Claude, Codex, and OpenCode.
 
 Options:
   --help, -h        Show this message and exit.
-  --version         Show the application version.
+  --version, -v     Show the application version.
   --json            Emit command output as JSON.
   --format TEXT     Set output format: text or json.
   --config TEXT     Path to a user config TOML overlay.
