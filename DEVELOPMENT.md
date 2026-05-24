@@ -16,7 +16,7 @@ Hook policy:
 
 - Pre-commit is not installed by default, so checkpoint commits stay fast. Humans who want a local fast `ruff` guardrail can opt in by copying or symlinking `.githooks/optional/pre-commit` into their active hooks path.
 - Pre-push is strict: it runs `scripts/preflight.sh`, which currently runs
-  `uv run ruff check .`, `uv run pyright`, `uv run pytest -x -q`, and
+  `uv run ruff check .`, `uv run --extra dev python -m pyright`, `uv run pytest -x -q`, and
   `uv build --no-sources`, then blocks direct `v*` tag pushes. `v*` tags are
   CI-owned; they are created automatically after normal pushes to `main`.
 - Humans may bypass hooks with Git's standard `--no-verify` only when they are
@@ -93,7 +93,7 @@ Individual checks:
 ```bash
 uv run ruff check .
 uv run pytest-llm
-uv run pyright
+uv run --extra dev python -m pyright
 ```
 
 ## Release

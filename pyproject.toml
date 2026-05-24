@@ -44,7 +44,6 @@ Issues = "https://github.com/haowjy/meridian-cli/issues"
 
 [project.scripts]
 meridian = "meridian.cli.entrypoint:main"
-pyright = "pyright.cli:entrypoint"
 pytests = "meridian.dev.pytests:main"
 pytest-llm = "meridian.dev.pytests:main"
 

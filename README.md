@@ -144,7 +144,7 @@ graph TB
 uv sync --extra dev
 uv run ruff check .
 uv run pytest-llm
-uv run pyright
+uv run --extra dev python -m pyright
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full dev setup.

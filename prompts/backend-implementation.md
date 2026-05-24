@@ -45,7 +45,7 @@ Strict: B0 → B1 → B2 → B3
 Each phase has an exit gate in its plan file. Run the gate checks before moving to the next phase:
 - `uv run ruff check .`
 - `uv run pytest-llm`
-- `uv run pyright`
+- `uv run --extra dev python -m pyright`
 - Phase-specific smoke tests
 
 ## Commit Cadence

@@ -13,13 +13,13 @@ run_step() {
 case "$MODE" in
   fast)
     cd "$ROOT_DIR"
-    run_step uv run ruff check .
+    run_step uv run --extra dev ruff check .
     ;;
   full)
     cd "$ROOT_DIR"
-    run_step uv run ruff check .
-    run_step uv run pyright
-    run_step uv run pytest -x -q
+    run_step uv run --extra dev ruff check .
+    run_step uv run --extra dev python -m pyright
+    run_step uv run --extra dev pytest -x -q
     run_step uv build --no-sources
     ;;
   *)

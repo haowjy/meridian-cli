@@ -12,6 +12,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `--repo <path-or-alias>` selects target repo (path or `[workspace.<name>]` alias).
 
 ### Changed
+- Preflight and check scripts now invoke lint/type/test tools through the `dev` extra, so fresh worktrees resolve Pyright as a dev dependency instead of a project script.
 - `meridian spawn --worktree` now ensures the selected work item's managed worktree before launch and supports `--repo` target selection.
 - `meridian work start --worktree` now routes through shared ensure logic and supports `--repo` target selection.
 - Managed worktree metadata now persists `repo_path` and `worktree_name` fields for canonical-path enforcement and repo-scoped recovery.

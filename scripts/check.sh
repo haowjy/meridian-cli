@@ -21,20 +21,20 @@ for arg in "$@"; do
 done
 
 echo "==> Linting..."
-uv run ruff check .
+uv run --extra dev ruff check .
 
 echo "==> Type checking..."
-uv run pyright
+uv run --extra dev python -m pyright
 
 echo "==> Running unit tests..."
-uv run pytest tests/unit/ -q
+uv run --extra dev pytest tests/unit/ -q
 
 echo "==> Running contract tests..."
-uv run pytest tests/contract/ -q
+uv run --extra dev pytest tests/contract/ -q
 
 if [ "$QUICK" -eq 0 ]; then
     echo "==> Running smoke tests..."
-    uv run pytest tests/smoke/ -q
+    uv run --extra dev pytest tests/smoke/ -q
 else
     echo "==> Skipping smoke tests (--quick mode)"
 fi
