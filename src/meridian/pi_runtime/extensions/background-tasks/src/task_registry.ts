@@ -12,6 +12,7 @@ import {
   resolveSpawnTaskPingDefaults,
   type SpawnTaskPingDefaults,
 } from "./session_ping";
+import { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import { resolveStateRoot } from "../../shared/pi_state_paths";
 
 export { resolveStateRoot };
@@ -40,7 +41,6 @@ const TASK_OUTPUT_EVENT = "meridian:task:output";
 const TASK_OUTPUT_THROTTLE_MS = 100;
 const SUBSPAWN_START_EVENT = "meridian:subspawn:start";
 const SUBSPAWN_END_EVENT = "meridian:subspawn:end";
-const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
 const PING_SCAN_INTERVAL_MS = 60_000;
 
 /** Internal record shape persisted to meta.json (superset of BackgroundTaskRecord). */
@@ -118,10 +118,6 @@ function makeId(prefix: string): string {
 
 function normalizeWaitPolicy(value: unknown): WaitPolicy {
   return value === "detached" ? "detached" : "tracked";
-}
-
-function isMeridianSpawnCommand(command: string): boolean {
-  return MERIDIAN_SPAWN_COMMAND_PATTERN.test(command);
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -1082,8 +1078,23 @@ export class TaskRegistry {
       }
       this.clearTaskOutputNotify(taskId);
       this.jobs.delete(taskId);
+      await fs.rm(this.taskDir(taskId), { recursive: true, force: true }).catch(() => undefined);
       removed += 1;
     }
+
+    const entries = await fs.readdir(this.tasksDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || this.jobs.has(entry.name)) {
+        continue;
+      }
+      const record = await this.loadRecord(this.taskMetaPath(entry.name));
+      if (record == null || record.status === "running") {
+        continue;
+      }
+      await fs.rm(this.taskDir(entry.name), { recursive: true, force: true }).catch(() => undefined);
+      removed += 1;
+    }
+
     return removed;
   }
 }
@@ -1114,4 +1125,5 @@ export function parentSpawnIdFromEnv(): string | null {
   return raw.length > 0 ? raw : null;
 }
 
-export { clamp, toInt, makeId, normalizeWaitPolicy, isMeridianSpawnCommand, trimCombinedTails };
+export { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
+export { clamp, toInt, makeId, normalizeWaitPolicy, trimCombinedTails };
