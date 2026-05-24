@@ -226,7 +226,9 @@ def test_run_harness_process_black_box_primary_uses_control_root_with_distinct_t
 
     assert captured["cwd"] == project_root
     assert captured["task_env"] == task_cwd.as_posix()
-    assert "MERIDIAN_TASK_CWD" in (launch_context.binding.run_params.appended_system_prompt or "")
+    assert "MERIDIAN_TASK_CWD" not in (
+        launch_context.binding.run_params.appended_system_prompt or ""
+    )
     projected_roots = {path.resolve() for path in launch_context.binding.spec.projected_roots}
     assert task_cwd.resolve() not in projected_roots
     assert outcome.exit_code == 0

@@ -1549,6 +1549,10 @@ def bind_launch_context(
             )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    inject_task_cwd_instruction = (
+        task_cwd is not None
+        and runtime.composition_surface != LaunchCompositionSurface.PRIMARY
+    )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,
@@ -1560,7 +1564,7 @@ def bind_launch_context(
         extra_args=projected_extra_args,
         control_root=resolved_control_root.as_posix(),
         task_cwd=(task_cwd.as_posix() if task_cwd is not None else None),
-        inject_task_cwd_instruction=directory_context.requires_task_cwd_instruction,
+        inject_task_cwd_instruction=inject_task_cwd_instruction,
         mcp_tools=resolved_request.mcp_tools,
         projected_roots=projected_roots,
         interactive=is_primary_launch,

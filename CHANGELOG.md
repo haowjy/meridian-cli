@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Child spawns with distinct task cwd now always receive task-cwd `cd` guidance, and Codex managed-primary launches/bootstrap threads from the task cwd when present.
+
 ## [0.2.3] - 2026-05-24
 
 ### Added

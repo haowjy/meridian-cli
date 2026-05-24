@@ -312,6 +312,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
 
         env = inherit_child_env(os.environ, config.env_overrides)
         self._codex_home = resolve_codex_home(env)
+        effective_cwd = config.task_cwd or config.control_root
         spawn_dir = resolve_spawn_log_dir(config.control_root, config.spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
         self._stderr_log_path = spawn_dir / "stderr.log"
@@ -329,7 +330,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
                 self._emit_startup_phase(StartupPhase.LAUNCHING_SUBPROCESS)
                 self._process = await asyncio.create_subprocess_exec(
                     *appserver_command,
-                    cwd=str(config.control_root),
+                    cwd=str(effective_cwd),
                     env=env,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=self._stderr_handle,
@@ -1149,7 +1150,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
             if (
                 find_attachable_rollout_session_id(
                     codex_home=codex_home,
-                    project_root=config.control_root,
+                    project_root=config.task_cwd or config.control_root,
                     session_id=thread_id,
                 )
                 == thread_id
@@ -1182,7 +1183,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         projected = project_managed_primary_bootstrap(
             self.harness_id,
             spec,
-            project_root=config.control_root,
+            project_root=config.task_cwd or config.control_root,
         )
         if not isinstance(projected, tuple):
             raise TypeError("Codex managed-primary bootstrap must be (method, payload)")

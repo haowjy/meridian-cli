@@ -272,14 +272,41 @@ def test_build_launch_context_split_root_task_cwd_contract(
         assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
         assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
         assert final_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
-        assert "MERIDIAN_TASK_CWD" not in (
-            runtime_ctx.binding.run_params.appended_system_prompt or ""
-        )
+        system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
+        assert f"Your task working directory is: {execution_cwd.as_posix()}" in system_prompt
+        assert "Immediately `cd` into this directory" in system_prompt
     else:
         assert runtime_ctx.binding.run_params.task_cwd is None
         assert "MERIDIAN_TASK_CWD" not in bind_env
         assert "MERIDIAN_TASK_CWD" not in final_env
 
+
+def test_build_launch_context_primary_does_not_inject_task_cwd_instruction(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "0")
+    execution_cwd = tmp_path.parent / f"{tmp_path.name}-primary-task"
+    execution_cwd.mkdir(parents=True, exist_ok=True)
+    request = _build_spawn_request()
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        execution_cwd=execution_cwd,
+        composition_surface=LaunchCompositionSurface.PRIMARY,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-primary-task-cwd",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
+    assert "MERIDIAN_TASK_CWD" not in (
+        runtime_ctx.binding.run_params.appended_system_prompt or ""
+    )
 
 def test_build_launch_context_projects_external_task_cwd_for_active_harness_projection(
     monkeypatch: MonkeyPatch,
