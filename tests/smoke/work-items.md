@@ -96,6 +96,12 @@ uv run meridian work show with-worktree-path --json
 
 ## work worktree show / ensure
 
+Managed ensure always uses Meridian's canonical path
+`<repo>.worktrees/<worktree-name>`. `--repo` selects the target repository only
+on first managed ensure; existing managed metadata is reused until cleared or
+migrated explicitly. Use `work set-worktree` only for existing/manual custom
+paths that Meridian should not own.
+
 ```bash
 uv run meridian work start ensure-item --no-worktree
 uv run meridian work worktree ensure-item --json

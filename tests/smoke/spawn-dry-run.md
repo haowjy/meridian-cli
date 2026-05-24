@@ -155,6 +155,10 @@ uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f
 
 ## --worktree ensures managed worktree path when missing (dry-run only)
 
+`--worktree` means Meridian-managed canonical isolation at
+`<repo>.worktrees/<work-id>`. For a custom checkout path, launch from that
+checkout/worktree without `--worktree`.
+
 ```bash
 uv run meridian work start ensure-worktree --no-worktree
 uv run meridian spawn -a reviewer -p "ensure missing worktree" --work ensure-worktree --worktree --dry-run --json

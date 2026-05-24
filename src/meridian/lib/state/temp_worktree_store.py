@@ -6,7 +6,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,6 +23,7 @@ class TemporaryWorktreeRecord(BaseModel):
     worktree_name: str
     worktree_path: str
     branch: str
+    status: Literal["pending", "ready"] = "ready"
     managed: bool = True
     updated_at: str
 
@@ -68,6 +69,7 @@ def put_temporary_worktree(
     worktree_name: str,
     worktree_path: str,
     branch: str,
+    status: Literal["pending", "ready"] = "ready",
     managed: bool = True,
 ) -> TemporaryWorktreeRecord:
     record = TemporaryWorktreeRecord(
@@ -76,6 +78,7 @@ def put_temporary_worktree(
         worktree_name=worktree_name,
         worktree_path=worktree_path,
         branch=branch,
+        status=status,
         managed=managed,
         updated_at=_now_iso(),
     )
@@ -102,4 +105,3 @@ __all__ = [
     "get_temporary_worktree",
     "put_temporary_worktree",
 ]
-

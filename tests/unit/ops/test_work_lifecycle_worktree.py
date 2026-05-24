@@ -253,13 +253,15 @@ def test_work_start_worktree_routes_repo_into_ensure(
         project_root: Path,
         project_state_dir: Path,
         work_id: str,
-        repo_selector: str | None,
+        target_repo: str | None,
+        execution_cwd: Path | None = None,
         dry_run: bool = False,
     ) -> object:
         captured["project_root"] = project_root
         captured["project_state_dir"] = project_state_dir
         captured["work_id"] = work_id
-        captured["repo_selector"] = repo_selector
+        captured["target_repo"] = target_repo
+        captured["execution_cwd"] = execution_cwd
         captured["dry_run"] = dry_run
         return type(
             "_Ensured",
@@ -284,5 +286,5 @@ def test_work_start_worktree_routes_repo_into_ensure(
     )
     assert output.name == "repo-routed"
     assert captured["work_id"] == "repo-routed"
-    assert captured["repo_selector"] == "../mars-agents"
+    assert captured["target_repo"] == "../mars-agents"
     assert captured["dry_run"] is False

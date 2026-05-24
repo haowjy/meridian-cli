@@ -275,7 +275,10 @@ def _spawn_create(
         bool | None,
         Parameter(
             name="--worktree",
-            help="Ensure and use the selected work item's managed worktree as task cwd.",
+            help=(
+                "Ensure and use the selected work item's Meridian-managed canonical "
+                "worktree as task cwd."
+            ),
         ),
     ] = None,
     no_worktree: Annotated[
@@ -289,7 +292,10 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--repo",
-            help="Target implementation repository path or workspace alias for worktree ensure.",
+            help=(
+                "Target implementation repository path or workspace alias for first "
+                "managed worktree ensure."
+            ),
         ),
     ] = None,
     dry_run: Annotated[

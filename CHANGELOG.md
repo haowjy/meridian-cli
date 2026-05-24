@@ -15,6 +15,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `meridian spawn --worktree` now ensures the selected work item's managed worktree before launch and supports `--repo` target selection.
 - `meridian work start --worktree` now routes through shared ensure logic and supports `--repo` target selection.
 - Managed worktree metadata now persists `repo_path` and `worktree_name` fields for canonical-path enforcement and repo-scoped recovery.
+- Managed worktree paths now always use `<repo>.worktrees/<worktree-name>`; config-driven managed bases removed from lifecycle flows.
 - `shared-workspace` guidance in docs now points to `meridian work worktree --ensure` instead of manual `git worktree add`.
 
 ## [0.2.2] - 2026-05-23
@@ -25,6 +26,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Configuration docs now show Mars-owned routing/agent overlays in `mars.toml`, not legacy Meridian `[agents]` config.
 - Model catalog command docs now use `meridian mars models ...`.
 - Added shared worktree ensure policy for work items (canonical-path enforcement, manual assignment safeguards, pending recovery + reprovision path) and wired it into `meridian work worktree <work-id> --ensure`.
+- Existing managed worktree metadata now wins over cwd/`--repo` inference during recovery/reprovision.
+- Temporary managed worktrees now write pending records before `git worktree add` and report/recover interrupted creation.
 - Added focused unit coverage for worktree ensure decisions (manual-missing guard, canonical drift guard, pending recovery + reprovision, dry-run no-write behavior, workspace alias target resolution).
 
 ## [0.2.1] - 2026-05-23

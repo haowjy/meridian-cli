@@ -78,7 +78,10 @@ def _work_start(
     ] = None,
     worktree: Annotated[
         bool | None,
-        Parameter(name="--worktree", help="Ensure a managed git worktree for this work item."),
+        Parameter(
+            name="--worktree",
+            help="Ensure Meridian-managed canonical isolation for this work item.",
+        ),
     ] = None,
     no_worktree: Annotated[
         bool,
@@ -295,7 +298,10 @@ def _work_worktree(
     ] = "",
     ensure: Annotated[
         bool,
-        Parameter(name="--ensure", help="Create/recover the managed worktree if needed."),
+        Parameter(
+            name="--ensure",
+            help="Create/recover Meridian's canonical managed worktree if needed.",
+        ),
     ] = False,
     repo: Annotated[
         str | None,

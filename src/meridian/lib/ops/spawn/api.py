@@ -344,7 +344,8 @@ def spawn_create_sync(
                 project_root=resolved_root,
                 project_state_dir=resolve_project_paths(resolved_root).root_dir,
                 work_id=selected_work_id,
-                repo_selector=payload.repo,
+                target_repo=payload.repo,
+                execution_cwd=authority.execution_cwd,
                 dry_run=payload.dry_run,
             )
             ensure_warning = ensured.warning

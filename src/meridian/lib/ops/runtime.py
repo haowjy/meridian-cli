@@ -126,6 +126,7 @@ class ResolvedRoots:
     project_root: Path
     project_state_dir: Path
     runtime_root: Path
+    execution_cwd: Path
 
 
 def runtime_context(ctx: RuntimeContext | None) -> RuntimeContext:
@@ -361,6 +362,7 @@ def resolve_roots(project_root: str | None) -> ResolvedRoots:
         project_root=authority.project_root,
         project_state_dir=authority.project_state_dir,
         runtime_root=authority.runtime_root,
+        execution_cwd=authority.execution_cwd,
     )
 
 
@@ -370,6 +372,7 @@ def resolve_roots_for_read(project_root: str | None) -> ResolvedRoots:
         project_root=authority.project_root,
         project_state_dir=authority.project_state_dir,
         runtime_root=authority.runtime_root or authority.project_state_dir,
+        execution_cwd=authority.execution_cwd,
     )
 
 

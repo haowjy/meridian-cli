@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from meridian.lib.config.settings import load_config
 from meridian.lib.config.workspace import resolve_workspace_snapshot
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.ops.runtime import runtime_context
@@ -17,8 +16,8 @@ from meridian.lib.ops.worktree_lifecycle import (
 )
 from meridian.lib.ops.worktree_ops import (
     detect_git_repo,
+    managed_worktree_path,
     resolve_main_repo_root,
-    resolve_worktree_path,
 )
 from meridian.lib.state import temp_worktree_store, work_store
 from meridian.lib.state.work_store import WorkItem, WorktreeMetadata
@@ -31,6 +30,7 @@ WorktreeEnsureStatus = Literal[
     "would_use_existing",
     "would_provision",
     "temporary_available",
+    "temporary_pending",
     "temporary_provisioned",
     "temporary_would_provision",
 ]
@@ -86,8 +86,47 @@ def _looks_like_path_selector(selector: str) -> bool:
     )
 
 
-def _resolve_repo_selector(project_root: Path, repo_selector: str | None) -> Path:
+def _resolve_execution_repo_root(
+    execution_cwd: Path | None,
+    *,
+    project_root: Path,
+    dry_run: bool,
+) -> Path | None:
+    if execution_cwd is None:
+        return None
+
+    candidate = execution_cwd.expanduser().resolve()
+    if dry_run:
+        repo_root = _repo_root_without_git_commands(candidate)
+    else:
+        if not detect_git_repo(candidate):
+            return None
+        repo_root = resolve_main_repo_root(candidate)
+
+    if repo_root is None:
+        return None
+    resolved_repo = repo_root.resolve()
+    if resolved_repo == project_root.resolve():
+        return None
+    return resolved_repo
+
+
+def _resolve_target_repo(
+    project_root: Path,
+    repo_selector: str | None,
+    *,
+    execution_cwd: Path | None = None,
+    dry_run: bool = False,
+) -> Path:
     if repo_selector is None or not repo_selector.strip():
+        execution_repo = _resolve_execution_repo_root(
+            execution_cwd,
+            project_root=project_root,
+            dry_run=dry_run,
+        )
+        if execution_repo is not None:
+            return execution_repo
+
         snapshot = resolve_workspace_snapshot(project_root)
         if snapshot.status == "invalid":
             details = (
@@ -204,7 +243,7 @@ def _canonical_target(
 ) -> tuple[Path, WorktreeMetadata]:
     worktree_name = item.worktree.name or item.name
     branch = item.worktree_branch or default_worktree_branch(item.name)
-    canonical_path = resolve_worktree_path(repo_root, worktree_name, worktree_base=None)
+    canonical_path = managed_worktree_path(repo_root, worktree_name)
     metadata = item.worktree.model_copy(
         update={
             "path": str(canonical_path),
@@ -216,6 +255,18 @@ def _canonical_target(
         }
     )
     return canonical_path, metadata
+
+
+def _stored_managed_repo_root(item: WorkItem) -> Path | None:
+    """Return the recorded managed repo root, if this item already has one."""
+    if not item.worktree_managed:
+        return None
+    if not item.worktree_repo_path or not item.worktree.name:
+        raise WorktreeEnsureError(
+            f"Managed worktree metadata for '{item.name}' is missing canonical repo/name "
+            "fields. Clear or migrate the assignment before ensuring."
+        )
+    return Path(item.worktree_repo_path).expanduser().resolve()
 
 
 def _temporary_key(ctx: RuntimeContext | None = None) -> str:
@@ -253,8 +304,8 @@ def ensure_work_item_worktree(
     project_root: Path,
     project_state_dir: Path,
     work_id: str,
-    repo_selector: str | None = None,
-    repo: str | None = None,
+    target_repo: str | None = None,
+    execution_cwd: Path | None = None,
     dry_run: bool = False,
 ) -> WorktreeEnsureResult:
     """Ensure the selected work item's managed worktree exists at canonical path."""
@@ -267,31 +318,27 @@ def ensure_work_item_worktree(
             f"Work item '{work_id}' is archived. Reopen it before ensuring a worktree."
         )
 
+    stored_repo_root = _stored_managed_repo_root(item)
     if item.worktree_path is not None:
         existing_path = Path(item.worktree_path).expanduser()
         if existing_path.is_dir():
             resolved_path = existing_path.resolve()
-            repo_root = (
-                Path(item.worktree_repo_path).expanduser().resolve()
-                if item.worktree_repo_path
-                else project_root.resolve()
-            )
             if not item.worktree_managed:
                 return WorktreeEnsureResult(
                     status="manual_available",
                     work_id=work_id,
                     metadata=item.worktree,
-                    repo_root=repo_root,
+                    repo_root=project_root.resolve(),
                     canonical_path=resolved_path,
                 )
-            if not item.worktree_repo_path or not item.worktree.name:
+            if stored_repo_root is None:
                 raise WorktreeEnsureError(
-                    f"Managed worktree metadata for '{work_id}' is missing canonical "
-                    "repo/name fields. Clear or migrate the assignment before ensuring."
+                    f"Managed worktree metadata for '{work_id}' is missing canonical repo/name "
+                    "fields. Clear or migrate the assignment before ensuring."
                 )
             canonical_path, canonical_metadata = _canonical_target(
                 item=item,
-                repo_root=repo_root,
+                repo_root=stored_repo_root,
             )
             if resolved_path != canonical_path:
                 raise WorktreeEnsureError(
@@ -319,7 +366,7 @@ def ensure_work_item_worktree(
                 ),
                 work_id=work_id,
                 metadata=item.worktree,
-                repo_root=repo_root,
+                repo_root=stored_repo_root,
                 canonical_path=canonical_path,
                 warning=(
                     "Pending marker present; runtime ensure will heal metadata."
@@ -333,9 +380,33 @@ def ensure_work_item_worktree(
                 f"'{item.worktree_path}'. Restore it, clear the assignment with "
                 f"`meridian work clear-worktree {work_id}`, or use --no-worktree."
             )
+        elif stored_repo_root is not None:
+            canonical_path, _canonical_metadata = _canonical_target(
+                item=item,
+                repo_root=stored_repo_root,
+            )
+            if existing_path.resolve() != canonical_path:
+                raise WorktreeEnsureError(
+                    f"Managed worktree path drift for '{work_id}': "
+                    f"'{existing_path.resolve()}' is non-canonical; expected "
+                    f"'{canonical_path}'. Clear or migrate the assignment before ensuring."
+                )
+        else:
+            raise WorktreeEnsureError(
+                f"Managed worktree metadata for '{work_id}' is missing canonical repo/name "
+                "fields. Clear or migrate the assignment before ensuring."
+            )
 
-    target_repo = _resolve_repo_selector(project_root, repo_selector or repo)
-    repo_root = _resolve_repo_root(target_repo, dry_run=dry_run)
+    if stored_repo_root is not None:
+        repo_root = _resolve_repo_root(stored_repo_root, dry_run=dry_run)
+    else:
+        target_repo_path = _resolve_target_repo(
+            project_root,
+            target_repo,
+            execution_cwd=execution_cwd,
+            dry_run=dry_run,
+        )
+        repo_root = _resolve_repo_root(target_repo_path, dry_run=dry_run)
     canonical_path, canonical_metadata = _canonical_target(
         item=item,
         repo_root=repo_root,
@@ -409,9 +480,6 @@ def ensure_work_item_worktree(
         provisioned = provision_for_start(
             repo_root,
             canonical_metadata.name or item.name,
-            # Canonical target path is pinned through `existing.path`; config base is ignored.
-            # Keep using a local config snapshot for branch/other defaults.
-            load_config(project_root).work,
             existing=canonical_metadata,
         )
     except Exception:
@@ -445,7 +513,12 @@ def ensure_work_item_worktree(
     return WorktreeEnsureResult(
         status=(
             "recovered"
-            if (recovered_pending or previous.path is not None or previous.pending)
+            if (
+                recovered_pending
+                or previous.managed
+                or previous.path is not None
+                or previous.pending
+            )
             else "provisioned"
         ),
         work_id=work_id,
@@ -460,30 +533,57 @@ def ensure_temporary_worktree(
     project_root: Path,
     runtime_root: Path,
     ctx: RuntimeContext | None = None,
-    repo_selector: str | None = None,
-    repo: str | None = None,
+    target_repo: str | None = None,
+    execution_cwd: Path | None = None,
     dry_run: bool = False,
 ) -> WorktreeEnsureResult:
     """Ensure a managed temporary worktree for current session/task."""
 
     key = _temporary_key(ctx)
-    target_repo = _resolve_repo_selector(project_root, repo_selector or repo)
-    repo_root = _resolve_repo_root(target_repo, dry_run=dry_run)
     record = temp_worktree_store.get_temporary_worktree(runtime_root, key)
+    requested_repo_selector = target_repo
+    if record is not None:
+        repo_root = Path(record.repo_path).expanduser().resolve()
+        if requested_repo_selector is not None:
+            requested_repo = _resolve_target_repo(
+                project_root,
+                requested_repo_selector,
+                execution_cwd=execution_cwd,
+                dry_run=dry_run,
+            )
+            requested_root = _resolve_repo_root(requested_repo, dry_run=dry_run)
+            if requested_root != repo_root:
+                raise WorktreeEnsureError(
+                    "Tracked temporary worktree belongs to a different target repository.\n"
+                    f"  tracked:   {repo_root}\n"
+                    f"  requested: {requested_root}\n"
+                    "Use the tracked repository, clear the temporary record, or choose a "
+                    "different session/task context."
+                )
+        repo_root = _resolve_repo_root(repo_root, dry_run=dry_run)
+    else:
+        target_repo_path = _resolve_target_repo(
+            project_root,
+            requested_repo_selector,
+            execution_cwd=execution_cwd,
+            dry_run=dry_run,
+        )
+        repo_root = _resolve_repo_root(target_repo_path, dry_run=dry_run)
     worktree_name = record.worktree_name if record is not None else _temporary_name(
         project_root=project_root,
         key=key,
     )
     branch = record.branch if record is not None else default_worktree_branch(worktree_name)
-    canonical_path = resolve_worktree_path(repo_root, worktree_name, worktree_base=None).resolve()
+    canonical_path = managed_worktree_path(repo_root, worktree_name).resolve()
     metadata = WorktreeMetadata(
         path=canonical_path.as_posix(),
         branch=branch,
         repo_path=repo_root.as_posix(),
         name=worktree_name,
-        pending=False,
+        pending=record.status == "pending" if record is not None else False,
         managed=True,
     )
+    warning: str | None = None
     if record is not None:
         recorded_path = Path(record.worktree_path).expanduser().resolve()
         if recorded_path != canonical_path:
@@ -495,12 +595,27 @@ def ensure_temporary_worktree(
                 "or clear/recreate the temp worktree."
             )
         if recorded_path.is_dir():
+            if record.status == "pending" and not dry_run:
+                temp_worktree_store.put_temporary_worktree(
+                    runtime_root,
+                    key=key,
+                    repo_path=repo_root.as_posix(),
+                    worktree_name=worktree_name,
+                    worktree_path=recorded_path.as_posix(),
+                    branch=branch,
+                    status="ready",
+                    managed=True,
+                )
+                warning = f"Recovered interrupted temporary worktree at {recorded_path}"
             return WorktreeEnsureResult(
                 status="temporary_available",
                 work_id=None,
-                metadata=metadata.model_copy(update={"path": recorded_path.as_posix()}),
+                metadata=metadata.model_copy(
+                    update={"path": recorded_path.as_posix(), "pending": False}
+                ),
                 repo_root=repo_root,
                 canonical_path=canonical_path,
+                warning=warning,
             )
     if dry_run:
         return WorktreeEnsureResult(
@@ -509,13 +624,26 @@ def ensure_temporary_worktree(
             metadata=metadata,
             repo_root=repo_root,
             canonical_path=canonical_path,
-            warning=f"Dry-run: would ensure temporary worktree at {canonical_path}",
+            warning=(
+                f"Dry-run: would recover pending temporary worktree at {canonical_path}"
+                if record is not None and record.status == "pending"
+                else f"Dry-run: would ensure temporary worktree at {canonical_path}"
+            ),
         )
 
+    temp_worktree_store.put_temporary_worktree(
+        runtime_root,
+        key=key,
+        repo_path=repo_root.as_posix(),
+        worktree_name=worktree_name,
+        worktree_path=canonical_path.as_posix(),
+        branch=branch,
+        status="pending",
+        managed=True,
+    )
     provisioned = provision_for_start(
         repo_root,
         worktree_name,
-        load_config(project_root).work,
         existing=metadata,
     )
     if provisioned.status == "skipped_not_git_repo":
@@ -531,13 +659,18 @@ def ensure_temporary_worktree(
         worktree_name=worktree_name,
         worktree_path=resolved_path.as_posix(),
         branch=resolved_branch,
+        status="ready",
         managed=True,
     )
     return WorktreeEnsureResult(
         status="temporary_provisioned",
         work_id=None,
         metadata=metadata.model_copy(
-            update={"path": resolved_path.as_posix(), "branch": resolved_branch}
+            update={
+                "path": resolved_path.as_posix(),
+                "branch": resolved_branch,
+                "pending": False,
+            }
         ),
         repo_root=repo_root,
         canonical_path=canonical_path,
@@ -555,24 +688,41 @@ def get_temporary_worktree_status(
         return None
     worktree_path = Path(record.worktree_path).expanduser().resolve()
     repo_root = Path(record.repo_path).expanduser().resolve()
-    canonical_path = resolve_worktree_path(
-        repo_root,
-        record.worktree_name,
-        worktree_base=None,
-    ).resolve()
+    canonical_path = managed_worktree_path(repo_root, record.worktree_name).resolve()
+    pending = record.status == "pending"
+    warning: str | None = None
+    if pending and worktree_path.is_dir():
+        temp_worktree_store.put_temporary_worktree(
+            runtime_root,
+            key=key,
+            repo_path=repo_root.as_posix(),
+            worktree_name=record.worktree_name,
+            worktree_path=worktree_path.as_posix(),
+            branch=record.branch,
+            status="ready",
+            managed=record.managed,
+        )
+        pending = False
+        warning = f"Recovered interrupted temporary worktree at {worktree_path}"
+    elif pending:
+        warning = (
+            f"Temporary worktree provisioning was interrupted before {worktree_path} "
+            "became available. Run `meridian work worktree --ensure` to recover it."
+        )
     return WorktreeEnsureResult(
-        status="temporary_available",
+        status="temporary_pending" if pending else "temporary_available",
         work_id=None,
         metadata=WorktreeMetadata(
             path=worktree_path.as_posix(),
             branch=record.branch,
             repo_path=repo_root.as_posix(),
             name=record.worktree_name,
-            pending=False,
+            pending=pending,
             managed=record.managed,
         ),
         repo_root=repo_root,
         canonical_path=canonical_path,
+        warning=warning,
     )
 
 

@@ -385,7 +385,7 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
     _write_runtime(("work", "clear"), "Clear current work.", extension_ref="meridian.work.clear"),
     _write_runtime(
         ("work", "worktree"),
-        "Show or ensure worktree state for a work item.",
+        "Show or ensure canonical managed worktree state.",
         extension_ref="meridian.work.worktree",
     ),
     _write_runtime(
