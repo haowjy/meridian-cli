@@ -4,6 +4,7 @@ import asyncio
 import os
 import time
 from pathlib import Path
+from typing import cast
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -20,8 +21,9 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_s
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
+from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import TaskCwdResolution
-from meridian.lib.launch.request import SessionRequest
+from meridian.lib.launch.request import SessionRequest, SpawnRequest
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
     OperationRuntime,
@@ -89,6 +91,20 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
+
+
+def _unpack_create_payload(
+    artifacts: object,
+) -> tuple[SpawnRequest, PreparedLaunchSurface | None]:
+    """Normalize create payload for tests that still return bare SpawnRequest."""
+
+    if isinstance(artifacts, SpawnCreateArtifacts):
+        return artifacts.request, artifacts.prepared
+    if isinstance(artifacts, SpawnRequest):
+        return artifacts, None
+    request = getattr(artifacts, "request", artifacts)
+    prepared = getattr(artifacts, "prepared", None)
+    return cast("SpawnRequest", request), cast("PreparedLaunchSurface | None", prepared)
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -393,15 +409,15 @@ def spawn_create_sync(
             sink=sink,
         )
 
-    create_artifacts: SpawnCreateArtifacts = build_create_payload(
-        payload,
-        runtime=runtime,
-        preflight_warning=preflight_warning,
-        ctx=resolved_context,
-        forced_task_cwd_resolution=forced_task_cwd_resolution,
+    prepared_request, prepared_surface = _unpack_create_payload(
+        build_create_payload(
+            payload,
+            runtime=runtime,
+            preflight_warning=preflight_warning,
+            ctx=resolved_context,
+            forced_task_cwd_resolution=forced_task_cwd_resolution,
+        )
     )
-    prepared_request = create_artifacts.request
-    prepared_surface = create_artifacts.prepared
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
         prepared_goal = getattr(prepared_request, "goal", payload.goal)
