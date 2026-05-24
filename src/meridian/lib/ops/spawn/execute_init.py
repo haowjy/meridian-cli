@@ -17,7 +17,13 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import ModelId, SpawnId
-from meridian.lib.launch.request import SpawnRequest
+from meridian.lib.core.overrides import RuntimeOverrides
+from meridian.lib.launch.request import (
+    LaunchArgvIntent,
+    LaunchCompositionSurface,
+    LaunchRuntime,
+    SpawnRequest,
+)
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state.atomic import atomic_write_text
@@ -29,6 +35,36 @@ from meridian.lib.state.paths import (
 from meridian.lib.state.spawn.model import LaunchMode
 
 from ..runtime import OperationRuntime, resolve_chat_id, resolve_runtime_root, runtime_context
+
+
+def build_spawn_execution_launch_runtime(
+    *,
+    runtime: OperationRuntime,
+    runtime_root: Path,
+    control_root: Path,
+    execution_cwd: str,
+    debug: bool = False,
+) -> LaunchRuntime:
+    """Launch runtime for spawn execution (must match prepare surface for Mars routing)."""
+
+    control_root_str = control_root.as_posix()
+    return LaunchRuntime(
+        argv_intent=LaunchArgvIntent.SPEC_ONLY,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        config_snapshot=runtime.config.model_dump(mode="json", exclude_none=True),
+        debug=debug,
+        runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
+            mode="json",
+            exclude_none=True,
+        ),
+        runtime_root=runtime_root.as_posix(),
+        config_root=control_root_str,
+        control_root=control_root_str,
+        requested_task_cwd=execution_cwd,
+        # Legacy aliases.
+        project_paths_project_root=control_root_str,
+        project_paths_execution_cwd=execution_cwd,
+    )
 from .models import SpawnActionOutput, SpawnCreateInput
 
 logger = structlog.get_logger(__name__)
@@ -272,6 +308,7 @@ def _write_params_json(
 
 
 __all__ = [
+    "build_spawn_execution_launch_runtime",
     "LaunchUserInputError",
     "_SpawnContext",
     "_emit_subrun_event",

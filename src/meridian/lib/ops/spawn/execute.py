@@ -13,9 +13,8 @@ import structlog
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
-from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.cwd import resolve_task_cwd
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
 from meridian.lib.state import spawn_store
 from meridian.lib.state.launch_boundary import (
@@ -42,6 +41,7 @@ from .execute_init import (
     _init_spawn,
     _spawn_background_worker_env,
     _write_params_json,
+    build_spawn_execution_launch_runtime,
     depth_exceeded_output,
     depth_limits,
 )
@@ -215,20 +215,12 @@ def execute_spawn_background(
     )
     try:
         persisted_request = request.model_copy(update={"work_id_hint": context.work_id})
-        launch_runtime = LaunchRuntime(
-            argv_intent=LaunchArgvIntent.SPEC_ONLY,
+        launch_runtime = build_spawn_execution_launch_runtime(
+            runtime=runtime,
+            runtime_root=context.runtime_root,
+            control_root=execution_contract.control_root,
+            execution_cwd=execution_cwd_str,
             debug=payload.debug,
-            runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
-                mode="json",
-                exclude_none=True,
-            ),
-            runtime_root=context.runtime_root.as_posix(),
-            config_root=execution_contract.control_root.as_posix(),
-            control_root=execution_contract.control_root.as_posix(),
-            requested_task_cwd=execution_cwd_str,
-            # Legacy aliases.
-            project_paths_project_root=execution_contract.control_root.as_posix(),
-            project_paths_execution_cwd=execution_cwd_str,
         )
         _persist_bg_worker_request(
             log_dir,
@@ -469,20 +461,12 @@ def execute_spawn_blocking(
             launch_prepared_spawn(
                 spawn=spawn,
                 request=request,
-                runtime_request=LaunchRuntime(
-                    argv_intent=LaunchArgvIntent.SPEC_ONLY,
+                runtime_request=build_spawn_execution_launch_runtime(
+                    runtime=runtime,
+                    runtime_root=context.runtime_root,
+                    control_root=execution_contract.control_root,
+                    execution_cwd=execution_cwd_str,
                     debug=payload.debug,
-                    runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
-                        mode="json",
-                        exclude_none=True,
-                    ),
-                    runtime_root=context.runtime_root.as_posix(),
-                    config_root=execution_contract.control_root.as_posix(),
-                    control_root=execution_contract.control_root.as_posix(),
-                    requested_task_cwd=execution_cwd_str,
-                    # Legacy aliases.
-                    project_paths_project_root=execution_contract.control_root.as_posix(),
-                    project_paths_execution_cwd=execution_cwd_str,
                 ),
                 runtime=runtime,
                 runtime_root=context.runtime_root,
