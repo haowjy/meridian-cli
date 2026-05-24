@@ -13,6 +13,7 @@ import structlog
 from meridian.lib.bootstrap.services import build_spawn_lifecycle_service_from_roots
 from meridian.lib.config.project_paths import resolve_project_config_paths
 from meridian.lib.core.context import RuntimeContext
+from meridian.lib.launch.context import PreparedLaunchSurface
 from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.platform import IS_WINDOWS
@@ -392,6 +393,7 @@ def execute_spawn_blocking(
     request: SpawnRequest,
     runtime: OperationRuntime,
     ctx: RuntimeContext | None = None,
+    prepared: PreparedLaunchSurface | None = None,
 ) -> SpawnActionOutput:
     resolved_context = runtime_context(ctx)
     project_paths = resolve_project_config_paths(
@@ -480,6 +482,7 @@ def execute_spawn_blocking(
                 event_observer=event_observer,
                 debug=payload.debug,
                 ctx=resolved_context,
+                prepared=prepared,
             )
         )
     except Exception as exc:

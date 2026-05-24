@@ -79,7 +79,7 @@ from .models import (
     SpawnWrittenFilesInput,
     SpawnWrittenFilesOutput,
 )
-from .prepare import build_create_payload, validate_create_input
+from .prepare import SpawnCreateArtifacts, build_create_payload, validate_create_input
 from .query import (
     detail_from_row,
     read_spawn_row,
@@ -393,13 +393,15 @@ def spawn_create_sync(
             sink=sink,
         )
 
-    prepared_request = build_create_payload(
+    create_artifacts: SpawnCreateArtifacts = build_create_payload(
         payload,
         runtime=runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
         forced_task_cwd_resolution=forced_task_cwd_resolution,
     )
+    prepared_request = create_artifacts.request
+    prepared_surface = create_artifacts.prepared
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
         prepared_goal = getattr(prepared_request, "goal", payload.goal)
@@ -464,6 +466,7 @@ def spawn_create_sync(
             request=prepared_request,
             runtime=runtime,
             ctx=resolved_context,
+            prepared=prepared_surface,
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
@@ -1815,7 +1818,7 @@ def _resolve_effective_fork_target_harness(
     preview_request = build_create_payload(
         validated_payload,
         preflight_warning=preflight_warning,
-    )
+    ).request
     resolved_harness = (preview_request.harness or "").strip()
     if not resolved_harness:
         raise ValueError("Fork target harness could not be resolved.")

@@ -18,12 +18,8 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import ModelId, SpawnId
-from meridian.lib.launch.request import (
-    LaunchArgvIntent,
-    LaunchCompositionSurface,
-    LaunchRuntime,
-    SpawnRequest,
-)
+from meridian.lib.launch.plan import build_spawn_mars_runtime
+from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.state.atomic import atomic_write_text
@@ -36,39 +32,6 @@ from meridian.lib.state.spawn.model import LaunchMode
 
 from ..runtime import OperationRuntime, resolve_chat_id, resolve_runtime_root, runtime_context
 from .models import SpawnActionOutput, SpawnCreateInput
-
-
-def build_spawn_mars_runtime(
-    *,
-    runtime: OperationRuntime,
-    runtime_root: Path,
-    control_root: Path,
-    execution_cwd: str,
-    argv_intent: LaunchArgvIntent,
-    report_output_path: str | None = None,
-    debug: bool = False,
-) -> LaunchRuntime:
-    """Launch runtime for spawn paths that need Mars harness_model routing."""
-
-    control_root_str = control_root.as_posix()
-    return LaunchRuntime(
-        argv_intent=argv_intent,
-        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-        config_snapshot=runtime.config.model_dump(mode="json", exclude_none=True),
-        debug=debug,
-        runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
-            mode="json",
-            exclude_none=True,
-        ),
-        report_output_path=report_output_path,
-        runtime_root=runtime_root.as_posix(),
-        config_root=control_root_str,
-        control_root=control_root_str,
-        requested_task_cwd=execution_cwd,
-        # Legacy aliases.
-        project_paths_project_root=control_root_str,
-        project_paths_execution_cwd=execution_cwd,
-    )
 
 
 logger = structlog.get_logger(__name__)

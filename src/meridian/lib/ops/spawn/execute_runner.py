@@ -20,7 +20,17 @@ from meridian.lib.harness.adapter import (
 )
 from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import PI_RUNTIME_META_FILENAME
-from meridian.lib.launch.context import LaunchContext, build_launch_context
+from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.launch.composition_spawn import (
+    bind_spawn_launch_context,
+    compose_spawn_launch_surface,
+)
+from meridian.lib.launch.context import (
+    LaunchContext,
+    PreparedLaunchSurface,
+    RuntimeBindings,
+)
+from meridian.lib.launch.context import _resolve_report_output_path as resolve_report_output_path
 from meridian.lib.launch.fork import materialize_fork
 from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
 from meridian.lib.launch.streaming_runner import execute_with_streaming
@@ -41,6 +51,16 @@ from .execute_session import (
 from .failure_policy import finalize_launch_failure
 
 logger = structlog.get_logger(__name__)
+
+
+def _spawn_request_needs_recompose(before: SpawnRequest, after: SpawnRequest) -> bool:
+    """Return whether session/fork resolution changed policy-relevant request fields."""
+
+    if before.session != after.session:
+        return True
+    if (before.agent or "").strip() != (after.agent or "").strip():
+        return True
+    return False
 
 
 def _normalized_prelaunch_metadata_text(
@@ -118,11 +138,13 @@ async def _prepare_execution_handoff(
     execution_cwd: str,
     work_id: str | None,
     ctx: RuntimeContext | None,
+    prepared: PreparedLaunchSurface | None = None,
 ) -> PreparedExecutionHandoff:
     """Prepare execution context; close session scope before re-raising on failure."""
 
     resolved_context = runtime_context(ctx)
     local_stack = ExitStack()
+    request_before_session = request
     try:
         harness_id = HarnessId(request.harness or "")
         harness_adapter = runtime.harness_registry.get_subprocess_harness(harness_id)
@@ -228,13 +250,44 @@ async def _prepare_execution_handoff(
                 "project_paths_execution_cwd": execution_cwd,
             }
         )
-        launch_context = build_launch_context(
+        execution_project_paths = ProjectConfigPaths(
+            project_root=project_paths.project_root,
+            execution_cwd=Path(execution_cwd),
+        )
+        report_output_path = resolve_report_output_path(
+            runtime=launch_runtime,
+            project_paths=execution_project_paths,
             spawn_id=str(spawn.spawn_id),
-            request=final_request,
+        )
+        bindings = RuntimeBindings(
+            spawn_id=str(spawn.spawn_id),
+            report_output_path=report_output_path,
+            runtime_work_id=runtime_work_id,
+            plan_overrides=dict(run_env_overrides),
+            dry_run=False,
+        )
+        needs_recompose = (
+            prepared is None
+            or _spawn_request_needs_recompose(request_before_session, final_request)
+        )
+        if needs_recompose:
+            mars_cache = MarsResultCache()
+            prepared_surface = compose_spawn_launch_surface(
+                request=final_request,
+                runtime=launch_runtime,
+                harness_registry=runtime.harness_registry,
+                dry_run=False,
+                runtime_work_id=runtime_work_id,
+                cache=mars_cache,
+            )
+        else:
+            prepared_surface = prepared
+        launch_context = bind_spawn_launch_context(
+            prepared=prepared_surface,
+            bindings=bindings,
             runtime=launch_runtime,
             harness_registry=runtime.harness_registry,
             plan_overrides=run_env_overrides,
-            runtime_work_id=runtime_work_id,
         )
         write_projection_artifacts(
             log_dir=resolve_spawn_log_dir(project_paths.project_root, spawn.spawn_id),
@@ -310,6 +363,7 @@ async def launch_prepared_spawn(
     harness_session_id_observer: Callable[[str], None] | None = None,
     debug: bool = False,
     ctx: RuntimeContext | None = None,
+    prepared: PreparedLaunchSurface | None = None,
 ) -> int:
     """Shared post-row, pre-run launch handoff for foreground/background spawns."""
 
@@ -327,6 +381,7 @@ async def launch_prepared_spawn(
             execution_cwd=execution_cwd,
             work_id=work_id,
             ctx=ctx,
+            prepared=prepared,
         )
     except Exception as exc:
         await finalize_launch_failure(
@@ -465,5 +520,6 @@ __all__ = [
     "_close_execution_handoff",
     "_invoke_runner",
     "_prepare_execution_handoff",
+    "_spawn_request_needs_recompose",
     "launch_prepared_spawn",
 ]
