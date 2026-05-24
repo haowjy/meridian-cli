@@ -1,7 +1,6 @@
 import { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import type { LifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 import type { MeridianEventBus } from "../../shared/meridian_event_bus";
-import type { TaskIngress } from "./types";
 import {
   SUBSPAWN_END_EVENT,
   SUBSPAWN_START_EVENT,
@@ -164,5 +163,3 @@ export function defaultEffectivePingIntervalMs(
 ): number {
   return resolveEffectivePingIntervalMs(record.ping_interval_ms, defaults.pingIntervalMs);
 }
-
-export type { TaskIngress };

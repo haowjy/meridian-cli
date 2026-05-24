@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "../../types";
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
+import { isSpawnWatchExtensionEnabled } from "../../shared/pi_harness_profile";
 import { startSpawnCollector } from "./collector";
 import { setupLifecycleSession } from "./lifecycle_session";
 import { setupSpawnsCommands } from "./commands";
@@ -15,6 +16,9 @@ type PiExtension = ExtensionAPI & {
 };
 
 export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
+  if (!isSpawnWatchExtensionEnabled()) {
+    return;
+  }
   const bus = resolveExtensionBus(pi);
   const sessionId = resolveSessionId({ sessionManager: pi.session });
   const manager = new SpawnWatchManager({

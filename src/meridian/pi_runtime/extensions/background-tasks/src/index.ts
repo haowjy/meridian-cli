@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
+import { isBackgroundTasksExtensionEnabled } from "../../shared/pi_harness_profile";
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
 import { getForegroundUserBashTaskId, setupBashBridge } from "./bash_bridge";
 import { setupPsCommands } from "./commands";
@@ -80,6 +81,9 @@ async function buildRegistry(
 }
 
 export default async function backgroundTasksExtension(pi: ExtensionAPI): Promise<void> {
+  if (!isBackgroundTasksExtensionEnabled(true)) {
+    return;
+  }
   const piExt = pi as PiExtension;
   const bus = resolveExtensionBus(pi);
   const setup = await buildRegistry(piExt, bus);
