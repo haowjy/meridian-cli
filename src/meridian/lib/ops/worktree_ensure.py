@@ -299,6 +299,23 @@ def _persist_metadata(project_state_dir: Path, work_id: str, metadata: WorktreeM
     )
 
 
+def _merge_warnings(*warnings: str | None) -> str | None:
+    merged = [warning.strip() for warning in warnings if warning and warning.strip()]
+    if not merged:
+        return None
+    return " ".join(merged)
+
+
+def _dry_run_missing_work_item(work_id: str) -> WorkItem:
+    normalized = work_store.slugify(work_id)
+    if not normalized or normalized != work_id:
+        raise WorktreeEnsureError(
+            f"Invalid work item name '{work_id}'. "
+            f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{normalized or 'my-feature'}'."
+        )
+    return WorkItem(name=normalized, status="open", created_at="")
+
+
 def ensure_work_item_worktree(
     *,
     project_root: Path,
@@ -307,12 +324,16 @@ def ensure_work_item_worktree(
     target_repo: str | None = None,
     execution_cwd: Path | None = None,
     dry_run: bool = False,
+    allow_missing_dry_run: bool = False,
 ) -> WorktreeEnsureResult:
     """Ensure the selected work item's managed worktree exists at canonical path."""
 
     item = work_store.get_work_item(project_state_dir, work_id)
+    missing_dry_run_item = item is None and dry_run and allow_missing_dry_run
     if item is None:
-        raise WorktreeEnsureError(f"Work item '{work_id}' not found")
+        if not missing_dry_run_item:
+            raise WorktreeEnsureError(f"Work item '{work_id}' not found")
+        item = _dry_run_missing_work_item(work_id)
     if item.status == "done":
         raise WorktreeEnsureError(
             f"Work item '{work_id}' is archived. Reopen it before ensuring a worktree."
@@ -426,9 +447,16 @@ def ensure_work_item_worktree(
                 canonical_path=canonical_path,
             )
         warning = None
-        if item.worktree_pending:
+        if missing_dry_run_item:
             warning = (
-                "Pending marker present; runtime ensure will run recovery before provisioning."
+                f"Work item '{work_id}' does not exist. Dry-run leaves state unchanged; "
+                "it would be created on launch with managed worktree at "
+                f"{canonical_path.as_posix()}."
+            )
+        if item.worktree_pending:
+            warning = _merge_warnings(
+                warning,
+                "Pending marker present; runtime ensure will run recovery before provisioning.",
             )
         return WorktreeEnsureResult(
             status="would_provision",

@@ -290,6 +290,29 @@ def test_ensure_dry_run_uses_target_repo_without_persisting(
     assert updated.worktree_managed is False
 
 
+def test_ensure_missing_work_item_dry_run_can_plan_without_persisting(
+    tmp_path: Path,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    _mark_git_repo(project_root)
+    canonical_path = resolve_worktree_path(project_root, "new-worktree")
+
+    result = ensure_work_item_worktree(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        work_id="new-worktree",
+        dry_run=True,
+        allow_missing_dry_run=True,
+    )
+
+    assert result.status == "would_provision"
+    assert result.work_id == "new-worktree"
+    assert result.worktree_path == canonical_path
+    assert result.metadata.branch == "feature/new-worktree"
+    assert "would be created on launch" in (result.warning or "")
+    assert work_store.get_work_item(project_state_dir, "new-worktree") is None
+
+
 def test_ensure_missing_managed_worktree_reprovisions_in_stored_repo(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

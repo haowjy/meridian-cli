@@ -34,6 +34,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.ops.worktree_ensure import ensure_work_item_worktree
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.paths import resolve_project_paths
@@ -316,7 +317,7 @@ def spawn_create_sync(
             work_id=payload.work,
         )
         payload = payload.model_copy(update={"work": resolved_work_id})
-        if not work_exists:
+        if not work_exists and payload.worktree is not True:
             dry_run_work_warning = (
                 f"Work item '{resolved_work_id}' does not exist. "
                 "Dry-run leaves state unchanged; it would be created on launch."
@@ -342,13 +343,22 @@ def spawn_create_sync(
             runtime_root=resolved_runtime_root,
         )
         if selected_work_id is not None:
+            project_state_dir = resolve_project_paths(resolved_root).root_dir
+            explicit_work_requested = bool(payload.work.strip())
+            if explicit_work_requested and not payload.dry_run:
+                selected_work_id = ensure_explicit_work_item(
+                    project_state_dir,
+                    selected_work_id,
+                )
+                payload = payload.model_copy(update={"work": selected_work_id})
             ensured = ensure_work_item_worktree(
                 project_root=resolved_root,
-                project_state_dir=resolve_project_paths(resolved_root).root_dir,
+                project_state_dir=project_state_dir,
                 work_id=selected_work_id,
                 target_repo=payload.repo,
                 execution_cwd=authority.execution_cwd,
                 dry_run=payload.dry_run,
+                allow_missing_dry_run=explicit_work_requested,
             )
             ensure_warning = ensured.warning
             if payload.dry_run:

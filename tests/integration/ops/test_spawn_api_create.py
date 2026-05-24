@@ -7,6 +7,7 @@ Query/list/cancel/wait tests live in test_spawn_api_query.py.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +15,7 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
-from meridian.lib.ops.spawn.models import SpawnCreateInput
+from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnCreateInput
 from meridian.lib.ops.worktree_ops import resolve_worktree_path
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths
@@ -313,3 +314,100 @@ def test_spawn_create_dry_run_worktree_uses_ambient_work_item(
     updated = work_store.get_work_item(project_state_dir, work.name)
     assert updated is not None
     assert updated.worktree == WorktreeMetadata()
+
+
+def test_spawn_create_dry_run_worktree_with_new_explicit_work_is_non_mutating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    canonical_path = resolve_worktree_path(project_root, "new-worktree")
+
+    assert work_store.get_work_item(project_state_dir, "new-worktree") is None
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.4-mini",
+            work="new-worktree",
+            worktree=True,
+            project_root=project_root.as_posix(),
+            dry_run=True,
+        )
+    )
+
+    assert result.status == "dry-run"
+    assert work_store.get_work_item(project_state_dir, "new-worktree") is None
+    assert result.task_cwd_source == "forced-worktree"
+    assert result.task_cwd == canonical_path.as_posix()
+    assert result.reference_anchor == canonical_path.as_posix()
+    assert result.task_cwd_work_item == "new-worktree"
+    assert result.warning is not None
+    assert "would be created on launch" in result.warning
+    assert "managed worktree" in result.warning
+
+
+def test_spawn_create_real_worktree_creates_explicit_work_before_ensure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    (project_root / ".git").mkdir()
+    (project_root / "mars.toml").write_text("", encoding="utf-8")
+    prepared = prepare_for_runtime_write(project_root)
+    project_state_dir = resolve_project_paths(project_root).root_dir
+    calls: list[str] = []
+
+    assert work_store.get_work_item(project_state_dir, "real-worktree") is None
+
+    def _fake_ensure_worktree(**kwargs: object) -> SimpleNamespace:
+        calls.append("ensure_worktree")
+        work_id = kwargs["work_id"]
+        assert work_id == "real-worktree"
+        assert work_store.get_work_item(project_state_dir, "real-worktree") is not None
+        return SimpleNamespace(warning=None, worktree_path=project_root / "unused")
+
+    def _fake_build_create_payload(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        calls.append("build_payload")
+        return SimpleNamespace(harness="codex")
+
+    def _fake_execute_spawn_blocking(*_args: object, **_kwargs: object) -> SpawnActionOutput:
+        calls.append("execute")
+        return SpawnActionOutput(
+            command="spawn.create",
+            status="succeeded",
+            spawn_id="p1",
+            model="gpt-5.4-mini",
+            harness_id="codex",
+        )
+
+    monkeypatch.setattr(spawn_api, "ensure_work_item_worktree", _fake_ensure_worktree)
+    monkeypatch.setattr(spawn_api, "build_create_payload", _fake_build_create_payload)
+    monkeypatch.setattr(spawn_api, "execute_spawn_blocking", _fake_execute_spawn_blocking)
+
+    result = spawn_api.spawn_create_sync(
+        SpawnCreateInput(
+            prompt="run",
+            model="gpt-5.4-mini",
+            harness="codex",
+            work="real-worktree",
+            worktree=True,
+            project_root=project_root.as_posix(),
+        ),
+        prepared=prepared,
+    )
+
+    assert result.status == "succeeded"
+    assert calls == ["ensure_worktree", "build_payload", "execute"]
+    assert work_store.get_work_item(project_state_dir, "real-worktree") is not None
