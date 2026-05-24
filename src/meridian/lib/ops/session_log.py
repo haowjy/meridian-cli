@@ -50,6 +50,7 @@ class SessionLogOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     session_id: str
+    requested_ref: str | None = None
     source: str | None = None
     total_messages: int
     total_segments: int
@@ -64,11 +65,20 @@ class SessionLogOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        source = f" ({self.source})" if self.source else ""
+        source = self.source or ""
+        normalized_requested_ref = (self.requested_ref or "").strip()
+        if normalized_requested_ref and normalized_requested_ref != self.session_id:
+            session_label = (
+                f"{normalized_requested_ref} ({source}: {self.session_id})"
+                if source
+                else f"{normalized_requested_ref} ({self.session_id})"
+            )
+        else:
+            session_label = f"{self.session_id} ({source})" if source else self.session_id
         message_label = "message" if self.total_messages == 1 else "messages"
         lines = [
             (
-                f"Session {self.session_id}{source} — showing "
+                f"Session {session_label} — showing "
                 f"{self.showing} of {self.total_messages} {message_label}"
             )
         ]
@@ -253,6 +263,7 @@ def session_log_sync(
 
     return SessionLogOutput(
         session_id=parsed.target.session_id,
+        requested_ref=payload.ref.strip() or None,
         source=parsed.target.source,
         total_messages=len(parsed.messages),
         total_segments=len(parsed.segments),

@@ -32,6 +32,33 @@ def test_session_log_default_shows_full_current_segment(tmp_path: Path) -> None:
     assert [message.index for message in output.messages] == [3, 4]
 
 
+def test_session_log_header_preserves_requested_ref_when_resolved_id_differs() -> None:
+    from meridian.lib.ops.session_log import SessionLogMessage, SessionLogOutput
+
+    output = SessionLogOutput(
+        session_id="harness-session-123",
+        requested_ref="p2490",
+        source="codex transcript",
+        total_messages=1,
+        total_segments=1,
+        showing="1-1",
+        messages=(
+            SessionLogMessage(
+                index=1,
+                segment=0,
+                segment_message=1,
+                role="assistant",
+                content="done",
+            ),
+        ),
+    )
+
+    assert output.format_text().splitlines()[0] == (
+        "Session p2490 (codex transcript: harness-session-123) — "
+        "showing 1-1 of 1 message"
+    )
+
+
 def test_session_log_tail_and_absolute_window_are_deterministic(tmp_path: Path) -> None:
     session_file = tmp_path / "session.jsonl"
     _write_session_file(session_file)
