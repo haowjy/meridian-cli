@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -608,11 +609,11 @@ def test_temporary_status_heals_pending_existing_worktree(tmp_path: Path) -> Non
 
 def test_ensure_temporary_heals_pending_existing_worktree(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root, _project_state_dir = _setup_project(tmp_path)
     runtime_root = tmp_path / "runtime-root"
     target_repo = tmp_path / "temp-target"
+    subprocess.run(["git", "init", str(target_repo)], check=True, capture_output=True, text=True)
     canonical_path = resolve_worktree_path(target_repo, "temp-default")
     canonical_path.mkdir(parents=True, exist_ok=True)
     temp_worktree_store.put_temporary_worktree(
@@ -625,11 +626,6 @@ def test_ensure_temporary_heals_pending_existing_worktree(
         status="pending",
         managed=True,
     )
-    monkeypatch.setattr(
-        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
-        lambda _target, *, dry_run: target_repo.resolve(),
-    )
-
     result = ensure_temporary_worktree(
         project_root=project_root,
         runtime_root=runtime_root,
