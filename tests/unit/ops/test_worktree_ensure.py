@@ -5,10 +5,18 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.ops.runtime import resolve_roots
-from meridian.lib.ops.worktree_ensure import WorktreeEnsureError, ensure_work_item_worktree
-from meridian.lib.ops.worktree_lifecycle import WorktreeProvisionResult, WorktreeRecoveryResult
+from meridian.lib.ops.worktree_ensure import (
+    WorktreeEnsureError,
+    ensure_temporary_worktree,
+    ensure_work_item_worktree,
+    get_temporary_worktree_status,
+)
+from meridian.lib.ops.worktree_lifecycle import (
+    WorktreeProvisionResult,
+    WorktreeRecoveryResult,
+)
 from meridian.lib.ops.worktree_ops import resolve_worktree_path
-from meridian.lib.state import work_store
+from meridian.lib.state import temp_worktree_store, work_store
 from meridian.lib.state.work_store import WorktreeMetadata
 
 
@@ -20,19 +28,18 @@ def _setup_project(tmp_path: Path) -> tuple[Path, Path]:
     return project_root, roots.project_state_dir
 
 
-def test_ensure_uses_existing_managed_canonical_worktree(
+def test_ensure_existing_managed_worktree_does_not_require_repo_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root, project_state_dir = _setup_project(tmp_path)
-    item = work_store.create_work_item(project_state_dir, "feature-canonical", "", None)
-
-    canonical_path = resolve_worktree_path(project_root, item.name)
-    canonical_path.mkdir(parents=True, exist_ok=True)
+    item = work_store.create_work_item(project_state_dir, "existing-managed", "", None)
+    managed_path = resolve_worktree_path(project_root, item.name)
+    managed_path.mkdir(parents=True, exist_ok=True)
     work_store.update_work_item_worktree(
         project_state_dir,
         item.name,
-        path=canonical_path.as_posix(),
+        path=managed_path.as_posix(),
         branch=f"feature/{item.name}",
         repo_path=project_root.as_posix(),
         name=item.name,
@@ -40,10 +47,10 @@ def test_ensure_uses_existing_managed_canonical_worktree(
         managed=True,
     )
 
-    monkeypatch.setattr(
-        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
-        lambda _target, *, dry_run: project_root,
-    )
+    def _fail_selector(_project_root: Path, _selector: str | None) -> Path:
+        raise AssertionError("repo selector should not be resolved for existing worktrees")
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_ensure._resolve_repo_selector", _fail_selector)
 
     result = ensure_work_item_worktree(
         project_root=project_root,
@@ -52,7 +59,69 @@ def test_ensure_uses_existing_managed_canonical_worktree(
     )
 
     assert result.status == "already_available"
-    assert result.metadata.path == canonical_path.as_posix()
+    assert result.worktree_path == managed_path.resolve()
+
+
+def test_ensure_existing_pending_managed_worktree_heals_without_repo_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "pending-existing", "", None)
+    managed_path = resolve_worktree_path(project_root, item.name)
+    managed_path.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=managed_path.as_posix(),
+        branch=f"feature/{item.name}",
+        repo_path=project_root.as_posix(),
+        name=item.name,
+        pending=True,
+        managed=True,
+    )
+
+    def _fail_selector(_project_root: Path, _selector: str | None) -> Path:
+        raise AssertionError("repo selector should not be resolved for existing worktrees")
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_ensure._resolve_repo_selector", _fail_selector)
+
+    result = ensure_work_item_worktree(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        work_id=item.name,
+    )
+
+    updated = work_store.get_work_item(project_state_dir, item.name)
+    assert result.status == "recovered"
+    assert updated is not None
+    assert updated.worktree_pending is False
+
+
+def test_ensure_existing_manual_worktree_does_not_require_repo_selection(
+    tmp_path: Path,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "existing-manual", "", None)
+    manual_path = tmp_path / "manual-worktree"
+    manual_path.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=manual_path.as_posix(),
+        pending=False,
+        managed=False,
+    )
+
+    result = ensure_work_item_worktree(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        work_id=item.name,
+        repo_selector="ambiguous-alias",
+    )
+
+    assert result.status == "manual_available"
+    assert result.worktree_path == manual_path.resolve()
 
 
 def test_ensure_provisions_when_no_worktree_configured(
@@ -104,6 +173,113 @@ def test_ensure_provisions_when_no_worktree_configured(
     updated = work_store.get_work_item(project_state_dir, item.name)
     assert updated is not None
     assert updated.worktree_path == canonical_path.as_posix()
+    assert updated.worktree_managed is True
+
+
+def test_ensure_dry_run_uses_target_repo_without_persisting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    target_repo = tmp_path / "external-target"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    item = work_store.create_work_item(project_state_dir, "dry-run-target", "", None)
+    canonical_path = resolve_worktree_path(target_repo, item.name)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
+        lambda _target, *, dry_run: target_repo,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_ensure.provision_for_start",
+        lambda *_args, **_kwargs: pytest.fail("dry-run should not provision a worktree"),
+    )
+
+    result = ensure_work_item_worktree(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        work_id=item.name,
+        repo_selector=target_repo.as_posix(),
+        dry_run=True,
+    )
+
+    assert result.status == "would_provision"
+    assert result.repo_root == target_repo.resolve()
+    assert result.canonical_path == canonical_path
+    assert result.worktree_path == canonical_path
+    updated = work_store.get_work_item(project_state_dir, item.name)
+    assert updated is not None
+    assert updated.worktree_path is None
+    assert updated.worktree_managed is False
+
+
+def test_ensure_missing_managed_worktree_reprovisions_in_selected_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    target_repo = tmp_path / "external-target"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    item = work_store.create_work_item(project_state_dir, "managed-repair", "", None)
+    missing_path = tmp_path / "managed-repair-missing"
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=missing_path.as_posix(),
+        branch=f"feature/{item.name}",
+        repo_path=project_root.as_posix(),
+        name=item.name,
+        pending=False,
+        managed=True,
+    )
+    canonical_path = resolve_worktree_path(target_repo, item.name)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
+        lambda _target, *, dry_run: target_repo,
+    )
+
+    def _fake_provision(
+        _project_root: Path,
+        _work_slug: str,
+        _config: object,
+        *,
+        existing: WorktreeMetadata | None = None,
+    ) -> WorktreeProvisionResult:
+        assert existing is not None
+        assert existing.path == canonical_path.as_posix()
+        assert existing.branch == f"feature/{item.name}"
+        assert existing.repo_path == target_repo.as_posix()
+        assert existing.name == item.name
+        return WorktreeProvisionResult(
+            status="provisioned",
+            metadata=WorktreeMetadata(
+                path=canonical_path.as_posix(),
+                branch=f"feature/{item.name}",
+                repo_path=target_repo.as_posix(),
+                name=item.name,
+                pending=False,
+                managed=True,
+            ),
+            created=True,
+        )
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_ensure.provision_for_start", _fake_provision)
+
+    result = ensure_work_item_worktree(
+        project_root=project_root,
+        project_state_dir=project_state_dir,
+        work_id=item.name,
+        repo_selector=target_repo.as_posix(),
+    )
+
+    assert result.status == "recovered"
+    assert result.repo_root == target_repo.resolve()
+    assert result.canonical_path == canonical_path
+    updated = work_store.get_work_item(project_state_dir, item.name)
+    assert updated is not None
+    assert updated.worktree_path == canonical_path.as_posix()
+    assert updated.worktree_repo_path == target_repo.resolve().as_posix()
     assert updated.worktree_managed is True
 
 
@@ -176,6 +352,74 @@ def test_ensure_recovers_pending_then_provisions_when_recovery_clears(
     assert result.status == "recovered"
 
 
+def test_ensure_temporary_worktree_round_trips_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    target_repo = tmp_path / "temp-target"
+    target_repo.mkdir(parents=True, exist_ok=True)
+    canonical_path = resolve_worktree_path(target_repo, "temp-default")
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
+        lambda _target, *, dry_run: target_repo,
+    )
+
+    def _fake_provision(
+        _project_root: Path,
+        _work_slug: str,
+        _config: object,
+        *,
+        existing: WorktreeMetadata | None = None,
+    ) -> WorktreeProvisionResult:
+        assert existing is not None
+        assert existing.path == canonical_path.as_posix()
+        assert existing.branch == "feature/temp-default"
+        assert existing.repo_path == target_repo.as_posix()
+        assert existing.name == "temp-default"
+        return WorktreeProvisionResult(
+            status="provisioned",
+            metadata=WorktreeMetadata(
+                path=canonical_path.as_posix(),
+                branch="feature/temp-default",
+                repo_path=target_repo.as_posix(),
+                name="temp-default",
+                pending=False,
+                managed=True,
+            ),
+            created=True,
+        )
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_ensure.provision_for_start", _fake_provision)
+
+    result = ensure_temporary_worktree(
+        project_root=project_root,
+        runtime_root=runtime_root,
+        repo_selector=target_repo.as_posix(),
+    )
+
+    assert result.status == "temporary_provisioned"
+    assert result.work_id is None
+    assert result.repo_root == target_repo.resolve()
+    assert result.canonical_path == canonical_path
+    assert result.metadata.name == "temp-default"
+    assert result.metadata.path == canonical_path.as_posix()
+
+    stored = temp_worktree_store.get_temporary_worktree(runtime_root, "default")
+    assert stored is not None
+    assert stored.repo_path == target_repo.resolve().as_posix()
+    assert stored.worktree_name == "temp-default"
+    assert stored.worktree_path == canonical_path.as_posix()
+
+    status = get_temporary_worktree_status(runtime_root=runtime_root)
+    assert status is not None
+    assert status.status == "temporary_available"
+    assert status.worktree_path == canonical_path
+    assert status.repo_root == target_repo.resolve()
+
+
 def test_ensure_manual_missing_errors_without_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -209,12 +453,10 @@ def test_ensure_manual_missing_errors_without_replacement(
 
 def test_ensure_non_canonical_managed_path_raises_drift(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root, project_state_dir = _setup_project(tmp_path)
     item = work_store.create_work_item(project_state_dir, "drifted", "", None)
 
-    canonical = resolve_worktree_path(project_root, item.name)
     drifted = tmp_path / "repo-drifted-path"
     drifted.mkdir(parents=True, exist_ok=True)
     work_store.update_work_item_worktree(
@@ -228,11 +470,6 @@ def test_ensure_non_canonical_managed_path_raises_drift(
         managed=True,
     )
 
-    monkeypatch.setattr(
-        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
-        lambda _target, *, dry_run: project_root,
-    )
-
     with pytest.raises(WorktreeEnsureError, match="non-canonical"):
         ensure_work_item_worktree(
             project_root=project_root,
@@ -240,4 +477,28 @@ def test_ensure_non_canonical_managed_path_raises_drift(
             work_id=item.name,
         )
 
-    assert canonical != drifted
+
+def test_ensure_legacy_managed_metadata_without_canonical_fields_errors(
+    tmp_path: Path,
+) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "legacy-managed", "", None)
+    legacy_path = tmp_path / "legacy-managed-path"
+    legacy_path.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_worktree(
+        project_state_dir,
+        item.name,
+        path=legacy_path.as_posix(),
+        branch=f"feature/{item.name}",
+        repo_path=None,
+        name=None,
+        pending=False,
+        managed=True,
+    )
+
+    with pytest.raises(WorktreeEnsureError, match="missing canonical repo/name"):
+        ensure_work_item_worktree(
+            project_root=project_root,
+            project_state_dir=project_state_dir,
+            work_id=item.name,
+        )

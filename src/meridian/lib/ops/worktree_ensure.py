@@ -267,27 +267,72 @@ def ensure_work_item_worktree(
             f"Work item '{work_id}' is archived. Reopen it before ensuring a worktree."
         )
 
-    if item.worktree_path is not None and not item.worktree_managed:
-        manual_path = Path(item.worktree_path)
-        if manual_path.is_dir():
-            target_repo = _resolve_repo_selector(project_root, repo_selector or repo)
-            repo_root = _resolve_repo_root(target_repo, dry_run=dry_run)
-            canonical_path, _canonical_metadata = _canonical_target(
+    if item.worktree_path is not None:
+        existing_path = Path(item.worktree_path).expanduser()
+        if existing_path.is_dir():
+            resolved_path = existing_path.resolve()
+            repo_root = (
+                Path(item.worktree_repo_path).expanduser().resolve()
+                if item.worktree_repo_path
+                else project_root.resolve()
+            )
+            if not item.worktree_managed:
+                return WorktreeEnsureResult(
+                    status="manual_available",
+                    work_id=work_id,
+                    metadata=item.worktree,
+                    repo_root=repo_root,
+                    canonical_path=resolved_path,
+                )
+            if not item.worktree_repo_path or not item.worktree.name:
+                raise WorktreeEnsureError(
+                    f"Managed worktree metadata for '{work_id}' is missing canonical "
+                    "repo/name fields. Clear or migrate the assignment before ensuring."
+                )
+            canonical_path, canonical_metadata = _canonical_target(
                 item=item,
                 repo_root=repo_root,
             )
+            if resolved_path != canonical_path:
+                raise WorktreeEnsureError(
+                    f"Managed worktree path drift for '{work_id}': "
+                    f"'{resolved_path}' is non-canonical; expected '{canonical_path}'. "
+                    "Clear or migrate the assignment before ensuring."
+                )
+            was_pending = item.worktree_pending
+            if not dry_run and (
+                was_pending or item.worktree_branch != canonical_metadata.branch
+            ):
+                _persist_metadata(
+                    project_state_dir,
+                    work_id,
+                    canonical_metadata.model_copy(
+                        update={"path": item.worktree_path, "pending": False}
+                    )
+                )
+                item = work_store.get_work_item(project_state_dir, work_id) or item
             return WorktreeEnsureResult(
-                status="manual_available",
+                status=(
+                    "would_use_existing"
+                    if dry_run
+                    else ("recovered" if was_pending else "already_available")
+                ),
                 work_id=work_id,
                 metadata=item.worktree,
                 repo_root=repo_root,
                 canonical_path=canonical_path,
+                warning=(
+                    "Pending marker present; runtime ensure will heal metadata."
+                    if dry_run and was_pending
+                    else None
+                ),
             )
-        raise WorktreeEnsureError(
-            f"Work item '{work_id}' has a manual worktree assignment that is missing: "
-            f"'{item.worktree_path}'. Restore it, clear the assignment with "
-            f"`meridian work clear-worktree {work_id}`, or use --no-worktree."
-        )
+        elif not item.worktree_managed:
+            raise WorktreeEnsureError(
+                f"Work item '{work_id}' has a manual worktree assignment that is missing: "
+                f"'{item.worktree_path}'. Restore it, clear the assignment with "
+                f"`meridian work clear-worktree {work_id}`, or use --no-worktree."
+            )
 
     target_repo = _resolve_repo_selector(project_root, repo_selector or repo)
     repo_root = _resolve_repo_root(target_repo, dry_run=dry_run)
@@ -295,14 +340,6 @@ def ensure_work_item_worktree(
         item=item,
         repo_root=repo_root,
     )
-
-    if item.worktree_path is not None and item.worktree_managed:
-        existing_path = Path(item.worktree_path).expanduser().resolve()
-        if existing_path != canonical_path:
-            raise WorktreeEnsureError(
-                f"Managed worktree path drift for '{work_id}': '{existing_path}' is non-canonical; "
-                f"expected '{canonical_path}'. Clear or migrate the assignment before ensuring."
-            )
 
     if dry_run:
         if (
