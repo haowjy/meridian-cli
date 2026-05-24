@@ -121,6 +121,15 @@ def _target_metadata(
     )
 
 
+def _write_worktree_mars_local_guard(worktree_path: Path) -> None:
+    """Prevent managed worktrees from syncing repo-local harness targets."""
+
+    guard_path = worktree_path / "mars.local.toml"
+    if guard_path.exists():
+        return
+    guard_path.write_text("[settings]\ntargets = []\n", encoding="utf-8")
+
+
 def provision_for_start(
     project_root: Path,
     work_slug: str,
@@ -153,6 +162,8 @@ def provision_for_start(
         Path(target_path),
         target.branch or default_worktree_branch(work_slug),
     )
+    if result.created:
+        _write_worktree_mars_local_guard(result.path)
     return WorktreeProvisionResult(
         status="provisioned",
         metadata=WorktreeMetadata(

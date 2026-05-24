@@ -334,6 +334,41 @@ def test_build_launch_context_projects_external_task_cwd_for_active_harness_proj
     assert outside_task_cwd.resolve() in projected_roots
 
 
+def test_build_launch_context_opencode_projects_external_task_cwd_as_wildcard(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MERIDIAN_DEPTH", "1")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gemini-2.5-pro",
+        harness=HarnessId.OPENCODE,
+    )
+    monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
+    outside_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-opencode-task"
+    outside_task_cwd.mkdir(parents=True, exist_ok=True)
+    request = _build_spawn_request().model_copy(update={"harness": HarnessId.OPENCODE.value})
+    runtime = _build_launch_runtime(tmp_path=tmp_path, execution_cwd=outside_task_cwd)
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-opencode-task-parent",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    bind_env = runtime_ctx.binding.environment.bind_env_overrides
+    config = json.loads(bind_env["OPENCODE_CONFIG_CONTENT"])
+    external_dirs = config.get("permission", {}).get("external_directory", {})
+    task_cwd_pattern = outside_task_cwd.as_posix() + "/**"
+
+    assert "task_cwd_not_projected" not in {warning.code for warning in runtime_ctx.warnings}
+    assert runtime_ctx.binding.run_params.task_cwd == outside_task_cwd.as_posix()
+    assert task_cwd_pattern in external_dirs
+    assert external_dirs[task_cwd_pattern] == "allow"
+
+
 def test_build_launch_context_falls_back_for_harness_without_workspace_projection(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,

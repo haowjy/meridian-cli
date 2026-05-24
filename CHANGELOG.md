@@ -6,6 +6,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Child spawns with distinct task cwd now always receive task-cwd `cd` guidance, and Codex managed-primary launches/bootstrap threads from the task cwd when present.
+- Managed worktree creation now writes `mars.local.toml` with `targets = []` so worktree-local Mars sync does not materialize harness targets.
+- External task cwd projection now grants the task cwd itself for active projection harnesses.
 
 ## [0.2.3] - 2026-05-24
 

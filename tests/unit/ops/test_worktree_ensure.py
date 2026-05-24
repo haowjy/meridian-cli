@@ -15,8 +15,9 @@ from meridian.lib.ops.worktree_ensure import (
 from meridian.lib.ops.worktree_lifecycle import (
     WorktreeProvisionResult,
     WorktreeRecoveryResult,
+    provision_for_start,
 )
-from meridian.lib.ops.worktree_ops import resolve_worktree_path
+from meridian.lib.ops.worktree_ops import WorktreeCreateResult, resolve_worktree_path
 from meridian.lib.state import temp_worktree_store, work_store
 from meridian.lib.state.work_store import WorktreeMetadata
 
@@ -32,6 +33,75 @@ def _setup_project(tmp_path: Path) -> tuple[Path, Path]:
 def _mark_git_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / ".git").mkdir(exist_ok=True)
+
+
+def test_provision_for_start_writes_mars_local_guard_for_created_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    worktree_path = resolve_worktree_path(repo_root, "guarded-worktree")
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_lifecycle.detect_git_repo", lambda _path: True)
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_lifecycle.resolve_main_repo_root",
+        lambda _path: repo_root,
+    )
+
+    def _fake_create_worktree(
+        _repo_root: Path,
+        target_path: Path,
+        branch: str,
+    ) -> WorktreeCreateResult:
+        target_path.mkdir(parents=True)
+        return WorktreeCreateResult(path=target_path, branch=branch, created=True)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_lifecycle.create_worktree",
+        _fake_create_worktree,
+    )
+
+    result = provision_for_start(repo_root, "guarded-worktree")
+
+    assert result.created is True
+    assert (worktree_path / "mars.local.toml").read_text(encoding="utf-8") == (
+        "[settings]\ntargets = []\n"
+    )
+
+
+def test_provision_for_start_preserves_existing_mars_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    worktree_path = resolve_worktree_path(repo_root, "existing-local")
+    existing_content = "[settings]\ntargets = [\".custom\"]\n"
+
+    monkeypatch.setattr("meridian.lib.ops.worktree_lifecycle.detect_git_repo", lambda _path: True)
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_lifecycle.resolve_main_repo_root",
+        lambda _path: repo_root,
+    )
+
+    def _fake_create_worktree(
+        _repo_root: Path,
+        target_path: Path,
+        branch: str,
+    ) -> WorktreeCreateResult:
+        target_path.mkdir(parents=True)
+        (target_path / "mars.local.toml").write_text(existing_content, encoding="utf-8")
+        return WorktreeCreateResult(path=target_path, branch=branch, created=True)
+
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_lifecycle.create_worktree",
+        _fake_create_worktree,
+    )
+
+    provision_for_start(repo_root, "existing-local")
+
+    assert (worktree_path / "mars.local.toml").read_text(encoding="utf-8") == existing_content
 
 
 def test_ensure_temporary_without_repo_uses_execution_cwd_repo(

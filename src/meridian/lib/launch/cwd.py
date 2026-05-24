@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.state import work_store
 
 
@@ -56,9 +57,16 @@ class LaunchDirectoryContext:
     def has_distinct_task_cwd(self) -> bool:
         return self.logical_task_cwd != self.authority_root
 
-    @property
-    def requires_task_cwd_instruction(self) -> bool:
-        return self.actual_process_cwd != self.logical_task_cwd
+    def should_inject_task_cwd_instruction(self, surface: LaunchCompositionSurface) -> bool:
+        """Whether launch composition should tell the agent to cd into task cwd.
+
+        Child spawn tool cwd can vary by harness even when Meridian requests the
+        task cwd. Be conservative for all non-primary child launches with a
+        distinct task cwd; keep primary sessions quiet unless a future primary
+        flow needs explicit task-cwd steering.
+        """
+
+        return self.has_distinct_task_cwd and surface != LaunchCompositionSurface.PRIMARY
 
 
 def _active_worktree_path_for_item(

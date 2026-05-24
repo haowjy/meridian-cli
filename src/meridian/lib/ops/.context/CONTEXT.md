@@ -85,6 +85,11 @@ concerns and returns structured results for callers to persist elsewhere.
 by `work_worktree.py` and spawn logic. The split is: lifecycle owns raw git operations,
 ensure owns state management and idempotency.
 
+Managed worktree creation writes a `mars.local.toml` guard with
+`[settings] targets = []` when the worktree is newly created. This prevents
+repo-local `meridian mars sync` from materializing harness targets inside each
+worktree. Existing `mars.local.toml` files are user-owned and preserved.
+
 **Destructive operations guard against three conditions:**
 
 1. **Manual worktrees** (`managed=False`): paths set via `work set-worktree` are never

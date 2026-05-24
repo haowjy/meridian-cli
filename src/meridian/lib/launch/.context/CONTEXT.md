@@ -196,11 +196,13 @@ to `logical_task_cwd` but may differ — Claude harness forces it to `authority_
 when `has_distinct_task_cwd` is true, because Claude's `--add-dir` grants access
 without needing the process to start in the task directory.
 
-**Task CWD instruction injection.** When `actual_process_cwd != logical_task_cwd`,
-the launch composition adds a prompt instruction telling the agent to `cd` into
-the task cwd before any filesystem operations. This is the fallback mechanism —
-the agent is informed of the intended working directory when the process didn't
-start there. Controlled by `LaunchDirectoryContext.requires_task_cwd_instruction`.
+**Task CWD instruction injection.** For non-primary child spawns with a distinct
+`logical_task_cwd`, launch composition always adds a prompt instruction telling
+the agent to `cd` into the task cwd before filesystem operations. This is a
+conservative child-spawn safety contract: harnesses may bind tools differently
+than Meridian's requested process cwd. Primary sessions stay quiet unless a
+future primary flow explicitly needs task-cwd steering. Controlled by
+`LaunchDirectoryContext.should_inject_task_cwd_instruction(surface)`.
 
 Resolution priority in `resolve_task_cwd()`:
 1. `--no-worktree` → authority root
@@ -263,11 +265,13 @@ Two steps inside `bind_launch_context()`:
    `--add-dir` args; OpenCode gets `OPENCODE_CONFIG_CONTENT` env override (deep-merged).
 
 Roots include workspace roots, git context clone roots, context projection roots
-(work, kb, extras), runtime root, and system temp dir — deduplicated in order.
-Extra args remain user-owned passthrough; they are not a workspace projection channel.
+(work, kb, extras), task cwd when task cwd is external, runtime root, and system
+temp dir — deduplicated in order. Extra args remain user-owned passthrough; they
+are not a workspace projection channel.
 
 **Task CWD projection gap.** When `task_cwd` is outside both `control_root` and
-all projected workspace roots, and workspace projection is not active, a
+all projected workspace roots, launch composition projects the exact task cwd
+for active projection harnesses. If workspace projection is not active, a
 `task_cwd_not_projected` warning is emitted. The launch continues but the agent
 doesn't automatically get access to the task directory — harness-specific
 configuration would be needed.

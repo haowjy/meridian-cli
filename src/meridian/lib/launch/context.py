@@ -1549,9 +1549,8 @@ def bind_launch_context(
             )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    inject_task_cwd_instruction = (
-        task_cwd is not None
-        and runtime.composition_surface != LaunchCompositionSurface.PRIMARY
+    inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
+        runtime.composition_surface
     )
     materialized = materialize_launch_artifacts(
         harness=harness,
