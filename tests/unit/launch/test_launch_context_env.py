@@ -248,6 +248,12 @@ def test_build_launch_context_split_root_task_cwd_contract(
     execution_cwd_factory: Callable[[Path], Path],
     expect_task_cwd: bool,
 ) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     execution_cwd = execution_cwd_factory(tmp_path)
     execution_cwd.mkdir(parents=True, exist_ok=True)
@@ -285,6 +291,12 @@ def test_build_launch_context_primary_does_not_inject_task_cwd_instruction(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     monkeypatch.setenv("MERIDIAN_DEPTH", "0")
     execution_cwd = tmp_path.parent / f"{tmp_path.name}-primary-task"
     execution_cwd.mkdir(parents=True, exist_ok=True)
@@ -312,6 +324,12 @@ def test_build_launch_context_projects_external_task_cwd_for_active_harness_proj
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
     monkeypatch.setenv("MERIDIAN_DEPTH", "1")
     outside_task_cwd = tmp_path.parent / f"{tmp_path.name}-outside-task"
     outside_task_cwd.mkdir(parents=True, exist_ok=True)
