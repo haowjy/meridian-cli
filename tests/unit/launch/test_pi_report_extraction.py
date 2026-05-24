@@ -20,14 +20,14 @@ def _store_from_fixture(name: str, spawn_id: SpawnId) -> _MemoryArtifactStore:
     return _MemoryArtifactStore({f"{spawn_id}/{HISTORY_FILENAME}": text.encode("utf-8")})
 
 
-def test_extract_pi_failure_from_shim_response_fixture() -> None:
-    history = (_FIXTURES / "history_shim_response_failure.jsonl").read_text(encoding="utf-8")
+def test_extract_pi_failure_from_prompt_rejection_fixture() -> None:
+    history = (_FIXTURES / "history_prompt_rejection.jsonl").read_text(encoding="utf-8")
     assert extract_pi_failure_from_history(history) == "No API key configured"
 
 
 def test_extract_or_fallback_report_prefers_response_over_cleanup_fixture() -> None:
     spawn_id = SpawnId("p-pi-fixture-response")
-    store = _store_from_fixture("history_shim_response_failure.jsonl", spawn_id)
+    store = _store_from_fixture("history_prompt_rejection.jsonl", spawn_id)
 
     report = extract_or_fallback_report(store, spawn_id, extractor=PI_EXTRACTOR)
 

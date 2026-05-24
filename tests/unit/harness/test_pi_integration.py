@@ -411,7 +411,7 @@ async def test_pi_rpc_connection_launches_resolved_runtime_with_scoped_session_d
         _lifecycle_sidecar_path(tmp_path, SpawnId("p-pi-direct-runtime"))
     )
     assert observed_env["PI_CODING_AGENT_SESSION_DIR"] == str(scoped_session_dir)
-    assert "PI_CODING_AGENT_DIR" not in observed_env
+    assert observed_env["PI_CODING_AGENT_DIR"].endswith("/.pi/agent")
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")

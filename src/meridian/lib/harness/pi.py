@@ -39,6 +39,11 @@ from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
     detect_pi_session_id_from_session_files,
 )
+from meridian.lib.harness.pi_paths import (
+    pi_agent_dir_env_override,
+    pi_spawn_session_root_env_override,
+    resolve_pi_spawn_session_root,
+)
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
@@ -66,7 +71,6 @@ from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.safety.permissions import PermissionConfig
 from meridian.lib.state.paths import spawn_log_subpath
-from meridian.lib.state.user_paths import get_user_home
 
 
 def _project_pi_subprocess_cli_args(
@@ -240,7 +244,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 scoped_session_dir = source_session_dir
 
         session_dir = child_env.get("PI_CODING_AGENT_SESSION_DIR", "").strip() or str(
-            get_user_home() / "meridian-pi" / "sessions"
+            resolve_pi_spawn_session_root(env=child_env)
         )
         if scoped_session_dir is not None:
             session_dir = scoped_session_dir
@@ -249,7 +253,12 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             spawn_dir=spawn_dir,
             env=child_env,
         )
-        env_overrides = {"MERIDIAN_PI_BINARY": resolved_runtime.binary_path}
+        agent_dir_overrides = pi_agent_dir_env_override()
+        child_env.update(agent_dir_overrides)
+        env_overrides: dict[str, str] = {
+            "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
+            **agent_dir_overrides,
+        }
         if scoped_session_dir is not None:
             env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
 
@@ -260,7 +269,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 "pi_runtime_path": resolved_runtime.binary_path,
                 "pi_runtime_version": resolved_runtime.runtime_version,
                 "pi_runtime_session_dir": session_dir,
-                "pi_runtime_auth_policy": "inherit-runtime-default-auth-config",
+                "pi_runtime_agent_dir": agent_dir_overrides["PI_CODING_AGENT_DIR"],
+                "pi_runtime_auth_policy": "shared-pi-agent-dir",
             },
         )
 
@@ -292,7 +302,8 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def env_overrides(self, config: PermissionConfig) -> dict[str, str]:
         _ = config
         return {
-            "PI_CODING_AGENT_SESSION_DIR": str(get_user_home() / "meridian-pi" / "sessions"),
+            **pi_agent_dir_env_override(),
+            **pi_spawn_session_root_env_override(),
         }
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:
@@ -314,11 +325,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     ) -> str | None:
         _ = started_at_local_iso
         return detect_pi_session_id_from_session_files(
-            launch_env={
-                "PI_CODING_AGENT_SESSION_DIR": str(
-                    get_user_home() / "meridian-pi" / "sessions"
-                ),
-            },
+            launch_env=pi_spawn_session_root_env_override(),
             child_cwd=project_root,
             started_at_epoch=started_at_epoch,
             expected_session_id=expected_session_id,

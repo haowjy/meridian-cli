@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final
 from uuid import uuid4
 
-from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.harness.pi_paths import resolve_pi_extension_target_root
 
 _EXTENSION_SOURCE_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_SOURCE_ROOT"
 _EXTENSION_TARGET_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_TARGET_ROOT"
@@ -133,7 +133,7 @@ def _resolve_extension_target_root() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     launch_id = uuid4().hex
-    return get_user_home() / "meridian-pi" / "agent" / "extensions" / launch_id
+    return resolve_pi_extension_target_root(launch_id)
 
 
 __all__ = [

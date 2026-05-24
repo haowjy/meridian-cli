@@ -21,7 +21,7 @@ from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import extract_pi_failure_from_history
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.state.user_paths import get_user_home
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 
 from .base import HarnessExtractor
 
@@ -47,7 +47,7 @@ def _pi_session_root(launch_env: Mapping[str, str]) -> Path:
     if agent_dir:
         return Path(agent_dir).expanduser() / "sessions"
 
-    return get_user_home() / "meridian-pi" / "sessions"
+    return resolve_pi_spawn_session_root(env=launch_env)
 
 
 def _iter_session_id_candidates_from_artifacts(

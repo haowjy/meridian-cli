@@ -41,6 +41,7 @@ from meridian.lib.harness.pi_lifecycle_events import (
     has_unsupported_pi_lifecycle_schema_version,
     redact_pi_command_for_history,
 )
+from meridian.lib.harness.pi_paths import pi_agent_dir_env_override
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
@@ -500,6 +501,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             config.env_overrides,
             blocked=_BLOCKED_CHILD_ENV_VARS,
         )
+        env.update(pi_agent_dir_env_override())
         lifecycle_file_path = prepare_pi_lifecycle_event_file(
             spawn_dir=spawn_dir,
             env=env,
