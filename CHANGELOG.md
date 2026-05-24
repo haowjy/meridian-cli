@@ -9,6 +9,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `timeouts.pi_child_wave_timeout_seconds` and `timeouts.pi_task_ping_interval_seconds` in `meridian.toml` / env (`MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS`, `MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS`).
 
 ### Fixed
+- OpenCode report extraction no longer returns raw `session.idle` envelopes when assistant text arrives via `message.part.updated` or `opencode.db` session storage.
 - Pi auth/prompt failures now persist `report.md` with `# Spawn failed` (`source=pi_failure`) instead of `# Auto-extracted Report`.
 - Streaming Pi launches scope `PI_CODING_AGENT_SESSION_DIR` per spawn only for **spawned** RPC sessions; primary sessions keep the configured session root.
 
