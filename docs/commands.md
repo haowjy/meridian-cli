@@ -114,7 +114,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian spawn report show ID` | Show one spawn's report |
 | `meridian spawn report search "query"` | Search across all spawn reports |
 | `meridian session log REF` | Read conversation/progress logs for a chat, spawn, or harness session |
-| `meridian session search "query" REF` | Search session transcripts |
+| `meridian session search "query" [REF]` | Search one session or a scoped session corpus (`--workspace`, `--global`, `--work`) |
 
 ## Work Items
 

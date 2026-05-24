@@ -4,6 +4,18 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `meridian session log` absolute window navigation: `--from N --limit M`, `--before N --limit M`, `--around N --context M`.
+- `meridian session log --segment current|previous|N` with numeric segment indexes absolute from transcript start.
+- `meridian session search` scope flags: `--work WORK_ID`, `--workspace`, `--global`.
+- Deterministic session-search `Open:` commands with absolute message anchors (`--around ... --context ...`).
+
+### Changed
+- `meridian session log REF` now renders the full current/latest segment top-to-bottom by default.
+- Recent-context view is now explicit via `meridian session log REF --tail [N]` (bare `--tail` defaults to 5).
+- Session-search corpus now defaults to current project when REF is omitted.
+- Work-session association logic is now shared through `ops/work_sessions.py` instead of being duplicated in dashboard/search paths.
+
 ## [0.2.5] - 2026-05-25
 
 ### Changed

@@ -25,7 +25,7 @@ MERIDIAN_DEPTH=1 uv run meridian spawn --help
 MERIDIAN_DEPTH=1 uv run meridian session --help
 ```
 - [ ] Exit 0
-- [ ] `search QUERY REF` appears in output
+- [ ] `search QUERY [REF]` appears in output
 - [ ] `meridian session search <query> <ref>` does NOT appear (angle-bracket form avoided)
 
 ## doctor --help in agent mode includes agent notes

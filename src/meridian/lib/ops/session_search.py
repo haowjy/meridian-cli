@@ -1,4 +1,4 @@
-"""Session search operation across all compaction segments."""
+"""Session search operation with deterministic open commands and corpus scopes."""
 
 from __future__ import annotations
 
@@ -8,12 +8,16 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
-from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.harness.transcript import parse_transcript_file
+from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
+from meridian.lib.ops.session_corpus import resolve_session_search_corpus
 from meridian.lib.ops.session_read import read_session_transcript
+from meridian.lib.ops.session_render import flatten_transcript_segments
+from meridian.lib.ops.session_target import SessionLogTarget, resolve_session_log_target
+from meridian.lib.state import session_store
 
 _PREVIEW_LIMIT = 200
-_NAV_WINDOW_SIZE = 10
-_NAV_CENTER_OFFSET = 5
+_OPEN_CONTEXT = 5
 
 
 class SessionSearchInput(BaseModel):
@@ -23,38 +27,47 @@ class SessionSearchInput(BaseModel):
     ref: str = ""
     file_path: str | None = None
     project_root: str | None = None
+    work_id: str | None = None
+    workspace: bool = False
+    global_scope: bool = False
 
 
 class SessionSearchMatch(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    corpus: str
+    chat_id: str
+    session_id: str
+    source: str | None = None
     segment: int
     message_index: int
+    message_ordinal: int
     role: str
     content_preview: str
-    nav_command: str
+    open_command: str
 
 
 class SessionSearchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    session_id: str
     matches: tuple[SessionSearchMatch, ...]
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         if not self.matches:
-            return f"Session {self.session_id} — no matches"
+            return "Session search — no matches"
 
         match_label = "match" if len(self.matches) == 1 else "matches"
-        lines = [f"Session {self.session_id} — {len(self.matches)} {match_label}"]
+        lines = [f"Session search — {len(self.matches)} {match_label}"]
         for match in self.matches:
             lines.append("")
             lines.append(
-                f"--- segment {match.segment}, message {match.message_index} [{match.role}] ---"
+                f"--- {match.corpus} :: {match.chat_id} ({match.session_id}) "
+                f"message {match.message_ordinal} [segment {match.segment}, "
+                f"message {match.message_index}] [{match.role}] ---"
             )
             lines.append(match.content_preview)
-            lines.append(f"Navigate: {match.nav_command}")
+            lines.append(f"Open: {match.open_command}")
         return "\n".join(lines)
 
 
@@ -93,26 +106,131 @@ def _build_preview(content: str, *, query: str, limit: int = _PREVIEW_LIMIT) -> 
     return f"{prefix}{highlighted}{suffix}"
 
 
-def _build_nav_command(
+def _open_command_for_target(
     *,
     payload: SessionSearchInput,
-    resolved_session_id: str,
-    segment: int,
-    message_index: int,
-    segment_message_count: int,
+    target: SessionLogTarget,
+    message_ordinal: int,
+    corpus_mode: bool,
 ) -> str:
-    offset = max(segment_message_count - message_index - _NAV_CENTER_OFFSET, 0)
     if payload.file_path is not None and payload.file_path.strip():
         return (
             f"meridian session log --file {shlex.quote(payload.file_path.strip())} "
-            f"-c {segment} --offset {offset} --last {_NAV_WINDOW_SIZE}"
+            f"--around {message_ordinal} --context {_OPEN_CONTEXT}"
         )
-
-    ref = payload.ref.strip() or resolved_session_id
+    if corpus_mode:
+        return (
+            f"meridian session log --file {shlex.quote(target.file_path.as_posix())} "
+            f"--around {message_ordinal} --context {_OPEN_CONTEXT}"
+        )
+    ref = payload.ref.strip() or target.session_id
     return (
         f"meridian session log {shlex.quote(ref)} "
-        f"-c {segment} --offset {offset} --last {_NAV_WINDOW_SIZE}"
+        f"--around {message_ordinal} --context {_OPEN_CONTEXT}"
     )
+
+
+def _matches_for_target(
+    *,
+    payload: SessionSearchInput,
+    target: SessionLogTarget,
+    query: str,
+    query_lower: str,
+    corpus: str,
+    chat_id: str,
+    corpus_mode: bool,
+) -> list[SessionSearchMatch]:
+    segments, _total_compactions = parse_transcript_file(target.file_path)
+    flattened = flatten_transcript_segments(segments)
+    matches: list[SessionSearchMatch] = []
+    for message in flattened:
+        normalized_content = _normalize_content(message.content)
+        if not normalized_content:
+            continue
+        if query_lower not in normalized_content.lower():
+            continue
+        matches.append(
+            SessionSearchMatch(
+                corpus=corpus,
+                chat_id=chat_id,
+                session_id=target.session_id,
+                source=target.source,
+                segment=message.segment_index,
+                message_index=message.segment_message_index,
+                message_ordinal=message.ordinal,
+                role=message.role,
+                content_preview=_build_preview(normalized_content, query=query),
+                open_command=_open_command_for_target(
+                    payload=payload,
+                    target=target,
+                    message_ordinal=message.ordinal,
+                    corpus_mode=corpus_mode,
+                ),
+            )
+        )
+    return matches
+
+
+def _search_single_target(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
+    read = read_session_transcript(
+        ref=payload.ref,
+        file_path=payload.file_path,
+        project_root=payload.project_root,
+    )
+    query_lower = query.lower()
+    matches = _matches_for_target(
+        payload=payload,
+        target=read.target,
+        query=query,
+        query_lower=query_lower,
+        corpus=read.target.source or "session",
+        chat_id=payload.ref.strip() or read.target.session_id,
+        corpus_mode=False,
+    )
+    return SessionSearchOutput(matches=tuple(matches))
+
+
+def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
+    roots = resolve_roots_for_read(payload.project_root)
+    scopes = resolve_session_search_corpus(
+        project_root=roots.project_root,
+        runtime_root=roots.runtime_root,
+        workspace=payload.workspace,
+        global_scope=payload.global_scope,
+        work_id=payload.work_id,
+    )
+
+    matches: list[SessionSearchMatch] = []
+    query_lower = query.lower()
+    for scope in scopes:
+        records = session_store.list_all_session_records(scope.runtime_root)
+        for record in records:
+            if scope.chat_filter is not None and record.chat_id not in scope.chat_filter:
+                continue
+            project_root = scope.project_root or scope.runtime_root
+            try:
+                target = resolve_session_log_target(
+                    ref=record.chat_id,
+                    file_path=None,
+                    project_root=project_root,
+                    runtime_root=scope.runtime_root,
+                )
+            except (ValueError, FileNotFoundError, OSError):
+                continue
+
+            matches.extend(
+                _matches_for_target(
+                    payload=payload,
+                    target=target,
+                    query=query,
+                    query_lower=query_lower,
+                    corpus=scope.label,
+                    chat_id=record.chat_id,
+                    corpus_mode=True,
+                )
+            )
+    matches.sort(key=lambda match: (match.corpus, match.chat_id, match.message_ordinal))
+    return SessionSearchOutput(matches=tuple(matches))
 
 
 def session_search_sync(
@@ -123,44 +241,15 @@ def session_search_sync(
     query = payload.query.strip()
     if not query:
         raise ValueError("query must not be empty")
+    if payload.file_path and (payload.workspace or payload.global_scope or payload.work_id):
+        raise ValueError("--file cannot be combined with search scope flags.")
 
-    read = read_session_transcript(
-        ref=payload.ref,
-        file_path=payload.file_path,
-        project_root=payload.project_root,
-    )
+    if payload.ref.strip() or (payload.file_path and payload.file_path.strip()):
+        if payload.workspace or payload.global_scope or payload.work_id:
+            raise ValueError("REF/--file cannot be combined with --workspace/--global/--work.")
+        return _search_single_target(payload, query=query)
 
-    query_lower = query.lower()
-    matches: list[SessionSearchMatch] = []
-    for segment_index, messages in enumerate(read.segments):
-        segment = read.total_compactions - segment_index
-        segment_message_count = len(messages)
-        for message_index, message in enumerate(messages, start=1):
-            normalized_content = _normalize_content(message.content)
-            if not normalized_content:
-                continue
-            if query_lower not in normalized_content.lower():
-                continue
-            matches.append(
-                SessionSearchMatch(
-                    segment=segment,
-                    message_index=message_index,
-                    role=message.role,
-                    content_preview=_build_preview(normalized_content, query=query),
-                    nav_command=_build_nav_command(
-                        payload=payload,
-                        resolved_session_id=read.target.session_id,
-                        segment=segment,
-                        message_index=message_index,
-                        segment_message_count=segment_message_count,
-                    ),
-                )
-            )
-
-    return SessionSearchOutput(
-        session_id=read.target.session_id,
-        matches=tuple(matches),
-    )
+    return _search_corpus(payload, query=query)
 
 
 session_search = async_from_sync(session_search_sync)

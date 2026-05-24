@@ -118,7 +118,7 @@ def _build_wait_timeout_message(pending_spawn_ids: set[str], elapsed_secs: float
         "Check progress:",
     ]
     for spawn_id in sorted_ids[:3]:
-        lines.append(f"  meridian session log {spawn_id} --last 5")
+        lines.append(f"  meridian session log {spawn_id} --tail")
     if len(sorted_ids) > 3:
         lines.append(f"  ... (+{len(sorted_ids) - 3} more)")
 
