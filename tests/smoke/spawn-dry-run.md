@@ -160,6 +160,7 @@ uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f
 checkout/worktree without `--worktree`.
 
 ```bash
+git -C "$SCRATCH" init --quiet
 uv run meridian work start ensure-worktree --no-worktree
 uv run meridian spawn -a reviewer -p "ensure missing worktree" --work ensure-worktree --worktree --dry-run --json
 ```
@@ -179,6 +180,19 @@ uv run meridian spawn -a reviewer -p "ensure external worktree" \
 ```
 - [ ] Exit 0
 - [ ] `task_cwd == "$(cd "$SCRATCH/../external-target/.." && pwd)/external-target.worktrees/ensure-external"`
+
+## --worktree uses ambient active work when --work is omitted
+
+```bash
+uv run meridian work start ambient-worktree --no-worktree
+MERIDIAN_ACTIVE_WORK_ID=ambient-worktree \
+  uv run meridian spawn -a reviewer -p "ensure ambient worktree" --worktree --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `task_cwd_source == "forced-worktree"`
+- [ ] `task_cwd_work_item == "ambient-worktree"`
+- [ ] `task_cwd == "${SCRATCH}.worktrees/ambient-worktree"`
+- [ ] `reference_anchor == task_cwd`
 
 ## Stale worktree fails unless --no-worktree
 

@@ -21,7 +21,7 @@ from meridian.lib.ops.work_lifecycle import (
     work_start_sync,
     work_worktree_sync,
 )
-from meridian.lib.state import work_store
+from meridian.lib.state import temp_worktree_store, work_store
 
 
 def _setup_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -239,6 +239,24 @@ def test_work_worktree_missing_manual_assignment_fails_with_guidance(tmp_path: P
                 project_root=project_root.as_posix(),
             )
         )
+
+
+def test_work_worktree_explicit_missing_id_ensure_does_not_create_temp_worktree(
+    tmp_path: Path,
+) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = resolve_roots(project_root.as_posix()).runtime_root
+
+    with pytest.raises(ValueError, match="Work item 'missing-work' not found"):
+        work_worktree_sync(
+            WorkWorktreeInput(
+                work_id="missing-work",
+                ensure=True,
+                project_root=project_root.as_posix(),
+            )
+        )
+
+    assert temp_worktree_store.get_temporary_worktree(runtime_root, "default") is None
 
 
 def test_work_start_worktree_routes_repo_into_ensure(

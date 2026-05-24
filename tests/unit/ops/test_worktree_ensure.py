@@ -104,9 +104,14 @@ def test_ensure_temporary_without_execution_repo_preserves_workspace_ambiguity(
 
 def test_ensure_existing_managed_worktree_does_not_require_repo_selection(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root, project_state_dir = _setup_project(tmp_path)
+    external_repo = tmp_path / "external-target"
+    _mark_git_repo(external_repo)
+    (project_root / "meridian.toml").write_text(
+        '[workspace.external]\npath = "../external-target"\n',
+        encoding="utf-8",
+    )
     item = work_store.create_work_item(project_state_dir, "existing-managed", "", None)
     managed_path = resolve_worktree_path(project_root, item.name)
     managed_path.mkdir(parents=True, exist_ok=True)
@@ -121,26 +126,28 @@ def test_ensure_existing_managed_worktree_does_not_require_repo_selection(
         managed=True,
     )
 
-    def _fail_selector(_project_root: Path, _selector: str | None) -> Path:
-        raise AssertionError("repo selector should not be resolved for existing worktrees")
-
-    monkeypatch.setattr("meridian.lib.ops.worktree_ensure._resolve_target_repo", _fail_selector)
-
     result = ensure_work_item_worktree(
         project_root=project_root,
         project_state_dir=project_state_dir,
         work_id=item.name,
+        target_repo="unknown-alias",
     )
 
     assert result.status == "already_available"
     assert result.worktree_path == managed_path.resolve()
+    assert result.repo_root == project_root.resolve()
 
 
 def test_ensure_existing_pending_managed_worktree_heals_without_repo_selection(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root, project_state_dir = _setup_project(tmp_path)
+    external_repo = tmp_path / "external-target"
+    _mark_git_repo(external_repo)
+    (project_root / "meridian.toml").write_text(
+        '[workspace.external]\npath = "../external-target"\n',
+        encoding="utf-8",
+    )
     item = work_store.create_work_item(project_state_dir, "pending-existing", "", None)
     managed_path = resolve_worktree_path(project_root, item.name)
     managed_path.mkdir(parents=True, exist_ok=True)
@@ -155,21 +162,18 @@ def test_ensure_existing_pending_managed_worktree_heals_without_repo_selection(
         managed=True,
     )
 
-    def _fail_selector(_project_root: Path, _selector: str | None) -> Path:
-        raise AssertionError("repo selector should not be resolved for existing worktrees")
-
-    monkeypatch.setattr("meridian.lib.ops.worktree_ensure._resolve_target_repo", _fail_selector)
-
     result = ensure_work_item_worktree(
         project_root=project_root,
         project_state_dir=project_state_dir,
         work_id=item.name,
+        target_repo="unknown-alias",
     )
 
     updated = work_store.get_work_item(project_state_dir, item.name)
     assert result.status == "recovered"
     assert updated is not None
     assert updated.worktree_pending is False
+    assert result.repo_root == project_root.resolve()
 
 
 def test_ensure_existing_manual_worktree_does_not_require_repo_selection(
@@ -310,10 +314,6 @@ def test_ensure_missing_managed_worktree_reprovisions_in_stored_repo(
     monkeypatch.setattr(
         "meridian.lib.ops.worktree_ensure._resolve_repo_root",
         lambda target, *, dry_run: target.resolve(),
-    )
-    monkeypatch.setattr(
-        "meridian.lib.ops.worktree_ensure._resolve_target_repo",
-        lambda *_args, **_kwargs: pytest.fail("stored managed repo should win"),
     )
 
     def _fake_provision(
@@ -554,6 +554,158 @@ def test_temporary_status_reports_pending_missing_worktree(tmp_path: Path) -> No
     assert status.status == "temporary_pending"
     assert status.metadata.pending is True
     assert "interrupted" in (status.warning or "")
+
+
+def test_temporary_status_heals_pending_existing_worktree(tmp_path: Path) -> None:
+    _project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    target_repo = tmp_path / "temp-target"
+    canonical_path = resolve_worktree_path(target_repo, "temp-default")
+    canonical_path.mkdir(parents=True, exist_ok=True)
+    temp_worktree_store.put_temporary_worktree(
+        runtime_root,
+        key="default",
+        repo_path=target_repo.as_posix(),
+        worktree_name="temp-default",
+        worktree_path=canonical_path.as_posix(),
+        branch="feature/temp-default",
+        status="pending",
+        managed=True,
+    )
+
+    status = get_temporary_worktree_status(runtime_root=runtime_root)
+
+    assert status is not None
+    assert status.status == "temporary_available"
+    assert status.metadata.pending is False
+    assert "Recovered interrupted temporary worktree" in (status.warning or "")
+    stored = temp_worktree_store.get_temporary_worktree(runtime_root, "default")
+    assert stored is not None
+    assert stored.status == "ready"
+
+
+def test_ensure_temporary_heals_pending_existing_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    target_repo = tmp_path / "temp-target"
+    canonical_path = resolve_worktree_path(target_repo, "temp-default")
+    canonical_path.mkdir(parents=True, exist_ok=True)
+    temp_worktree_store.put_temporary_worktree(
+        runtime_root,
+        key="default",
+        repo_path=target_repo.as_posix(),
+        worktree_name="temp-default",
+        worktree_path=canonical_path.as_posix(),
+        branch="feature/temp-default",
+        status="pending",
+        managed=True,
+    )
+    monkeypatch.setattr(
+        "meridian.lib.ops.worktree_ensure._resolve_repo_root",
+        lambda _target, *, dry_run: target_repo.resolve(),
+    )
+
+    result = ensure_temporary_worktree(
+        project_root=project_root,
+        runtime_root=runtime_root,
+    )
+
+    assert result.status == "temporary_available"
+    assert result.metadata.pending is False
+    assert result.worktree_path == canonical_path
+    assert "Recovered interrupted temporary worktree" in (result.warning or "")
+    stored = temp_worktree_store.get_temporary_worktree(runtime_root, "default")
+    assert stored is not None
+    assert stored.status == "ready"
+
+
+def test_ensure_work_item_fails_for_non_git_target(tmp_path: Path) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "plain-target", "", None)
+
+    with pytest.raises(WorktreeEnsureError, match="not inside a git repository"):
+        ensure_work_item_worktree(
+            project_root=project_root,
+            project_state_dir=project_state_dir,
+            work_id=item.name,
+            target_repo=project_root.as_posix(),
+        )
+
+    updated = work_store.get_work_item(project_state_dir, item.name)
+    assert updated is not None
+    assert updated.worktree_path is None
+    assert updated.worktree_pending is False
+
+
+def test_ensure_temporary_fails_for_non_git_target(tmp_path: Path) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+
+    with pytest.raises(WorktreeEnsureError, match="not inside a git repository"):
+        ensure_temporary_worktree(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            target_repo=project_root.as_posix(),
+        )
+
+    assert temp_worktree_store.get_temporary_worktree(runtime_root, "default") is None
+
+
+def test_temporary_record_with_non_canonical_path_errors(tmp_path: Path) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    target_repo = tmp_path / "temp-target"
+    _mark_git_repo(target_repo)
+    non_canonical_path = tmp_path / "custom-temp-path"
+    non_canonical_path.mkdir(parents=True, exist_ok=True)
+    temp_worktree_store.put_temporary_worktree(
+        runtime_root,
+        key="default",
+        repo_path=target_repo.as_posix(),
+        worktree_name="temp-default",
+        worktree_path=non_canonical_path.as_posix(),
+        branch="feature/temp-default",
+        status="ready",
+        managed=True,
+    )
+
+    with pytest.raises(WorktreeEnsureError, match="non-canonical"):
+        ensure_temporary_worktree(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            dry_run=True,
+        )
+
+
+def test_temporary_record_rejects_different_requested_repo(tmp_path: Path) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    _mark_git_repo(repo_a)
+    _mark_git_repo(repo_b)
+    canonical_path = resolve_worktree_path(repo_a, "temp-default")
+    temp_worktree_store.put_temporary_worktree(
+        runtime_root,
+        key="default",
+        repo_path=repo_a.as_posix(),
+        worktree_name="temp-default",
+        worktree_path=canonical_path.as_posix(),
+        branch="feature/temp-default",
+        status="ready",
+        managed=True,
+    )
+
+    with pytest.raises(WorktreeEnsureError, match="different target repository"):
+        ensure_temporary_worktree(
+            project_root=project_root,
+            runtime_root=runtime_root,
+            target_repo=repo_b.as_posix(),
+            dry_run=True,
+        )
 
 
 def test_ensure_manual_missing_errors_without_replacement(
