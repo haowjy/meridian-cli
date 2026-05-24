@@ -17,11 +17,11 @@ from meridian.lib.harness.common import (
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
 )
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import extract_pi_failure_from_history
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 
 from .base import HarnessExtractor
 

@@ -1524,7 +1524,9 @@ def resolve_pi_harness_profile(
 
     raw_load_all = os.getenv("MERIDIAN_PI_LOAD_ALL_EXTENSIONS")
     if raw_load_all is not None:
-        return profile.model_copy(update={"load_all_pi_extensions": _truthy_env_value(raw_load_all)})
+        return profile.model_copy(
+            update={"load_all_pi_extensions": _truthy_env_value(raw_load_all)}
+        )
 
     raw_disable = os.getenv("MERIDIAN_PI_DISABLE_MANAGED_BASH")
     if raw_disable is not None and _truthy_env_value(raw_disable):

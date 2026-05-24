@@ -29,7 +29,6 @@ from meridian.lib.state.primary_meta import (
     read_primary_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.user_paths import get_user_home
 
 _CODEX_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"

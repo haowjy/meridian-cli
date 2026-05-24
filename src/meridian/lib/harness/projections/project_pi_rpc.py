@@ -6,11 +6,11 @@ import logging
 from collections.abc import Sequence
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
-from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 
 logger = logging.getLogger(__name__)
