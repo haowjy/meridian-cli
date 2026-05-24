@@ -16,6 +16,14 @@ from .artifact_io import read_artifact_text
 ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 _LOGGER = logging.getLogger(__name__)
 _PI_LIFECYCLE_PHASE_EVENT = "meridian.pi.lifecycle.phase"
+_OPENCODE_CONTROL_EVENT_TYPES = frozenset(
+    {
+        "session.idle",
+        "session.error",
+        "session.status",
+        "sync",
+    }
+)
 _PI_LIFECYCLE_NOISE_PHASES = frozenset(
     {
         "cleanup_running",
@@ -53,6 +61,24 @@ def _event_name(payload: dict[str, object]) -> str:
     )
 
 
+def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
+    event_type = _event_name(payload)
+    if event_type in _OPENCODE_CONTROL_EVENT_TYPES:
+        return True
+    if event_type.startswith("session.") and event_type not in {"session.created"}:
+        return True
+
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        nested_payload = cast("dict[str, object]", nested)
+        nested_type = _event_name(nested_payload)
+        if nested_type in _OPENCODE_CONTROL_EVENT_TYPES:
+            return True
+        if nested_type.startswith("session.") and nested_type not in {"session.created"}:
+            return True
+    return False
+
+
 def _is_terminal_control_frame(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
@@ -67,11 +93,15 @@ def _is_terminal_control_frame(text: str) -> bool:
     payload = cast("dict[str, object]", payload_obj)
     if _event_name(payload) in {"cancelled", "error"}:
         return True
+    if _is_opencode_control_payload(payload):
+        return True
 
     nested = payload.get("payload")
     if isinstance(nested, dict):
         nested_payload = cast("dict[str, object]", nested)
         if _event_name(nested_payload) in {"cancelled", "error"}:
+            return True
+        if _is_opencode_control_payload(nested_payload):
             return True
     return False
 
@@ -233,6 +263,11 @@ def _extract_last_assistant_message(output_lines: str) -> str | None:
         if record is not None:
             payload = _unwrap_history_payload(record)
             if _is_pi_lifecycle_noise_payload(payload):
+                continue
+            if _is_opencode_control_payload(payload):
+                continue
+        elif isinstance(payload_obj, dict):
+            if _is_opencode_control_payload(cast("dict[str, object]", payload_obj)):
                 continue
         assistants = _assistant_texts(payload_obj)
         if assistants:

@@ -126,3 +126,36 @@ class OpenCodeStorageTranscriptProvider:
             events.append({"role": role, "content": content})
 
         return events
+
+
+def _text_from_value(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
+def _empty_json_events(_path: Path) -> Iterator[dict[str, object]]:
+    return iter(())
+
+
+def extract_last_assistant_report_from_session_path(path: Path) -> str | None:
+    """Return the last assistant message text for one OpenCode session file."""
+
+    provider = OpenCodeStorageTranscriptProvider(
+        text_from_value=_text_from_value,
+        iter_json_events=_empty_json_events,
+    )
+    last_assistant: str | None = None
+    for event in provider.iter_events(path):
+        if str(event.get("role", "")).strip().lower() != "assistant":
+            continue
+        content = _text_from_value(event.get("content"))
+        if content:
+            last_assistant = content
+    return last_assistant
+
+
+__all__ = [
+    "OpenCodeStorageTranscriptProvider",
+    "extract_last_assistant_report_from_session_path",
+]
