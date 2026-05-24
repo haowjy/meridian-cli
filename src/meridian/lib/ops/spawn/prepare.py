@@ -200,7 +200,11 @@ def build_create_payload(
             runtime_root=runtime_root,
             control_root=project_root,
             execution_cwd=directory_context.logical_task_cwd.as_posix(),
-            argv_intent=LaunchArgvIntent.REQUIRED if composition_dry_run else LaunchArgvIntent.SPEC_ONLY,
+            argv_intent=(
+                LaunchArgvIntent.REQUIRED
+                if composition_dry_run
+                else LaunchArgvIntent.SPEC_ONLY
+            ),
             report_output_path=_DRY_RUN_REPORT_PATH,
         )
         prepared_surface = compose_spawn_launch_surface(

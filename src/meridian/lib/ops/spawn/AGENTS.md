@@ -57,7 +57,7 @@ raises before any state is created.
   `execute_init.py` (spawn record init), `execute_bg.py` (background worker),
   `execute_runner.py` (blocking path), `execute_session.py` (session management).
   Import from `execute.py` only — do not import `execute_*` modules from outside `ops/spawn/`.
-- `prepare.py` — `build_create_payload()` for dry-run display only.
+- `prepare.py` — `build_create_payload()` → `SpawnCreateArtifacts` (compose once; dry-run bind for `cli_command`).
 - `query.py` — `resolve_spawn_reference()`, read spawn records and written files.
 - `context_ref.py` — `resolve_context_ref()` for `-f` references.
 - `failure_policy.py` — depth guard, depth limit helpers.

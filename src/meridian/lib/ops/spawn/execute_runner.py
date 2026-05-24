@@ -9,6 +9,7 @@ from types import MappingProxyType
 
 import structlog
 
+from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn
@@ -19,12 +20,11 @@ from meridian.lib.harness.adapter import (
     StreamEvent,
 )
 from meridian.lib.launch.artifact_io import write_projection_artifacts
-from meridian.lib.launch.constants import PI_RUNTIME_META_FILENAME
-from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
+from meridian.lib.launch.constants import PI_RUNTIME_META_FILENAME
 from meridian.lib.launch.context import (
     LaunchContext,
     PreparedLaunchSurface,
@@ -58,9 +58,7 @@ def _spawn_request_needs_recompose(before: SpawnRequest, after: SpawnRequest) ->
 
     if before.session != after.session:
         return True
-    if (before.agent or "").strip() != (after.agent or "").strip():
-        return True
-    return False
+    return (before.agent or "").strip() != (after.agent or "").strip()
 
 
 def _normalized_prelaunch_metadata_text(

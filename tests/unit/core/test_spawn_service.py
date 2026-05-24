@@ -58,9 +58,11 @@ def _start_spawn(
 
 
 def _fake_launch_context_builder(child_cwd: Path) -> Any:
-    def _build_launch_context(**kwargs: object) -> SimpleNamespace:
-        request = cast("SpawnRequest", kwargs["request"])
-        spawn_id = str(kwargs["spawn_id"])
+    def _bind_spawn_launch_context(**kwargs: object) -> SimpleNamespace:
+        prepared = cast("Any", kwargs["prepared"])
+        bindings = cast("Any", kwargs["bindings"])
+        request = cast("SpawnRequest", prepared.request)
+        spawn_id = str(bindings.spawn_id)
         runtime = cast("LaunchRuntime", kwargs["runtime"])
         return SimpleNamespace(
             resolved_request=request,
@@ -78,8 +80,27 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
             ),
         )
 
-    return _build_launch_context
+    return _bind_spawn_launch_context
 
+
+def _patch_prepare_compose_bind(
+    monkeypatch: pytest.MonkeyPatch,
+    child_cwd: Path,
+    *,
+    reserved_spawn_id: str = "p1",
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.compose_spawn_launch_surface",
+        lambda **kwargs: SimpleNamespace(request=kwargs["request"]),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.bind_spawn_launch_context",
+        _fake_launch_context_builder(child_cwd),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.spawn_store.reserve_spawn_id",
+        lambda _root: reserved_spawn_id,
+    )
 
 
 @pytest.mark.asyncio
@@ -90,10 +111,7 @@ async def test_prepare_persists_trimmed_goal_from_spawn_request(
     runtime_root = _runtime_root(tmp_path)
     child_cwd = tmp_path / "child-cwd"
     child_cwd.mkdir()
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.build_launch_context",
-        _fake_launch_context_builder(child_cwd),
-    )
+    _patch_prepare_compose_bind(monkeypatch, child_cwd, reserved_spawn_id="p1")
 
     service = _service(runtime_root)
     prepared = await service.prepare(
@@ -127,10 +145,7 @@ async def test_prepare_spawn_rejects_blank_goal_without_persisting_row(
     runtime_root = _runtime_root(tmp_path)
     child_cwd = tmp_path / "child-cwd"
     child_cwd.mkdir()
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.build_launch_context",
-        _fake_launch_context_builder(child_cwd),
-    )
+    _patch_prepare_compose_bind(monkeypatch, child_cwd)
 
     service = _service(runtime_root)
 
@@ -265,10 +280,7 @@ async def test_prepare_sets_pi_notification_timeout_from_wait_timeout_config(
     runtime_root = _runtime_root(tmp_path)
     child_cwd = tmp_path / "child-cwd"
     child_cwd.mkdir()
-    monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.build_launch_context",
-        _fake_launch_context_builder(child_cwd),
-    )
+    _patch_prepare_compose_bind(monkeypatch, child_cwd)
 
     runtime = _runtime_request(tmp_path, runtime_root).model_copy(
         update={

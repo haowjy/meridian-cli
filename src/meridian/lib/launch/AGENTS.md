@@ -89,9 +89,11 @@ Three concentric layers, each defined by function scope:
 | `DIRECT` | No | Tests and truly pre-resolved `SpawnRequest` only |
 
 `DIRECT` does not mean “pass model to Mars”; it means skip policy and trust the request.
-Production spawn paths that need Mars must use `build_spawn_mars_runtime` in `ops/spawn/execute_init.py`
-(`SPAWN_PREPARE` + config snapshot). Persisted `SpawnRequest.model` stays the canonical CLI token
-after prepare; spawn execute **re-runs Mars** (not a bug) so `binding.spec.model` matches harness argv.
+Production spawn paths that need Mars must use `build_spawn_mars_runtime` in `launch/plan.py`
+(`SPAWN_PREPARE` + config snapshot). Spawn uses **prepare-once / bind-twice**: `compose_spawn_launch_surface`
+once per operation, then `bind_spawn_launch_context` for preview (dry-run `REQUIRED` argv) and execute
+(`SPEC_ONLY`). Persisted `SpawnRequest.model` stays the canonical CLI token; `binding.spec.model` comes
+from Mars `harness_model` at bind. Re-compose only when session/fork resolution mutates the request.
 
 Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED` is only for
 `ops/spawn/prepare.py` dry-run display (needs real argv for `cli_command`). **Do not set

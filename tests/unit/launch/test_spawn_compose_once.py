@@ -1,4 +1,4 @@
-"""Spawn Mars runtime: SPAWN_PREPARE surface and harness_model on execute."""
+"""Mars call budget: one compose per blocking spawn create+execute handoff."""
 
 from __future__ import annotations
 
@@ -6,22 +6,19 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.core.types import HarnessId
+from meridian.lib.config.project_paths import resolve_project_config_paths
+from meridian.lib.core.domain import Spawn
+from meridian.lib.core.types import HarnessId, ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.composition_spawn import bind_spawn_launch_context
 from meridian.lib.launch.context import RuntimeBindings
 from meridian.lib.launch.plan import build_spawn_mars_runtime
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchCompositionSurface
+from meridian.lib.launch.request import LaunchArgvIntent
 from meridian.lib.ops.runtime import build_runtime
+from meridian.lib.ops.spawn.execute_runner import _prepare_execution_handoff
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
 from tests.support.launch import stub_bundle_request_and_resolve
-
-_HARNESS_CASES: tuple[tuple[str, str, str, HarnessId], ...] = (
-    ("pi", "openai-codex/gpt-5.4-mini", "openai-codex/gpt-5.4-mini", HarnessId.PI),
-    ("cursor", "opus47", "claude-opus-4-7-thinking-high", HarnessId.CURSOR),
-    ("opencode", "gpt-5.5", "openai/gpt-5.5", HarnessId.OPENCODE),
-)
 
 
 def _seed_project(tmp_path: Path) -> Path:
@@ -29,25 +26,17 @@ def _seed_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize(
-    ("harness", "cli_model", "stub_harness_model", "harness_id"),
-    _HARNESS_CASES,
-    ids=[case[0] for case in _HARNESS_CASES],
-)
-def test_spawn_execute_uses_harness_model_from_mars(
+@pytest.mark.asyncio
+async def test_blocking_spawn_compose_once_then_bind_only_execute(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    harness: str,
-    cli_model: str,
-    stub_harness_model: str,
-    harness_id: HarnessId,
 ) -> None:
     project_root = _seed_project(tmp_path)
-    stub_bundle_request_and_resolve(
+    captured = stub_bundle_request_and_resolve(
         monkeypatch,
-        model=cli_model,
-        harness=harness_id,
-        harness_model=stub_harness_model,
+        model="openai-codex/gpt-5.4-mini",
+        harness=HarnessId.PI,
+        harness_model="openai-codex/gpt-5.4-mini",
     )
     runtime = build_runtime(project_root)
     runtime_root = project_root / ".meridian"
@@ -56,12 +45,14 @@ def test_spawn_execute_uses_harness_model_from_mars(
     artifacts = build_create_payload(
         SpawnCreateInput(
             prompt="hi",
-            model=cli_model,
-            harness=harness,
+            model="openai-codex/gpt-5.4-mini",
+            harness="pi",
             project_root=str(project_root),
         ),
         runtime=runtime,
     )
+    assert len(captured) == 1
+
     launch_runtime = build_spawn_mars_runtime(
         runtime=runtime,
         runtime_root=runtime_root,
@@ -69,41 +60,42 @@ def test_spawn_execute_uses_harness_model_from_mars(
         execution_cwd=project_root.as_posix(),
         argv_intent=LaunchArgvIntent.SPEC_ONLY,
     )
-    assert launch_runtime.composition_surface is LaunchCompositionSurface.SPAWN_PREPARE
-    assert launch_runtime.config_snapshot
-
-    ctx = bind_spawn_launch_context(
-        prepared=artifacts.prepared,
-        bindings=RuntimeBindings(
-            spawn_id="p-exec",
-            report_output_path=project_root / "report.md",
-            dry_run=False,
-        ),
-        runtime=launch_runtime,
-        harness_registry=get_default_harness_registry(),
+    project_paths = resolve_project_config_paths(project_root=project_root)
+    spawn = Spawn(
+        spawn_id=SpawnId("p1"),
+        prompt="hi",
+        model=ModelId("openai-codex/gpt-5.4-mini"),
+        status="running",
     )
-    assert ctx.binding.spec.model == stub_harness_model
+
+    handoff = await _prepare_execution_handoff(
+        spawn=spawn,
+        request=artifacts.request,
+        runtime_request=launch_runtime,
+        runtime=runtime,
+        runtime_root=runtime_root,
+        project_paths=project_paths,
+        spawn_record=None,
+        execution_cwd=project_root.as_posix(),
+        work_id=None,
+        ctx=None,
+        prepared=artifacts.prepared,
+    )
+    assert len(captured) == 1
+    assert handoff.launch_context.binding.spec.model == "openai-codex/gpt-5.4-mini"
+    handoff.session_exit_stack.close()
 
 
-@pytest.mark.parametrize(
-    ("harness", "cli_model", "stub_harness_model", "harness_id"),
-    _HARNESS_CASES,
-    ids=[f"prepare-execute-{case[0]}" for case in _HARNESS_CASES],
-)
-def test_spawn_prepare_then_execute_binding_spec_model(
+def test_bind_spawn_launch_context_does_not_call_mars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    harness: str,
-    cli_model: str,
-    stub_harness_model: str,
-    harness_id: HarnessId,
 ) -> None:
     project_root = _seed_project(tmp_path)
     captured = stub_bundle_request_and_resolve(
         monkeypatch,
-        model=cli_model,
-        harness=harness_id,
-        harness_model=stub_harness_model,
+        model="opus47",
+        harness=HarnessId.CURSOR,
+        harness_model="claude-opus-4-7-thinking-high",
     )
     runtime = build_runtime(project_root)
     runtime_root = project_root / ".meridian"
@@ -112,29 +104,29 @@ def test_spawn_prepare_then_execute_binding_spec_model(
     artifacts = build_create_payload(
         SpawnCreateInput(
             prompt="hi",
-            model=cli_model,
-            harness=harness,
+            model="opus47",
+            harness="cursor",
             project_root=str(project_root),
         ),
         runtime=runtime,
     )
     assert len(captured) == 1
-    execute_runtime = build_spawn_mars_runtime(
+
+    launch_runtime = build_spawn_mars_runtime(
         runtime=runtime,
         runtime_root=runtime_root,
         control_root=project_root,
         execution_cwd=project_root.as_posix(),
         argv_intent=LaunchArgvIntent.SPEC_ONLY,
     )
-    ctx = bind_spawn_launch_context(
+    bind_spawn_launch_context(
         prepared=artifacts.prepared,
         bindings=RuntimeBindings(
-            spawn_id="p-exec",
+            spawn_id="p2",
             report_output_path=project_root / "report.md",
             dry_run=False,
         ),
-        runtime=execute_runtime,
+        runtime=launch_runtime,
         harness_registry=get_default_harness_registry(),
     )
     assert len(captured) == 1
-    assert ctx.binding.spec.model == stub_harness_model

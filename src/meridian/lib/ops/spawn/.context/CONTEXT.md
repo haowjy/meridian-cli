@@ -101,13 +101,24 @@ the **only** execution path that builds a real argv — used for `--dry-run` dis
 `cli_command` in `SpawnActionOutput`. All actual execution paths use `SPEC_ONLY`. Do not add
 `REQUIRED` elsewhere.
 
-## Background Spawn Trust Model
+## Compose-once handoff (foreground + REST)
 
-The background worker reads a persisted `BackgroundWorkerLaunchRequest` from disk (canonical
-`SpawnRequest` plus `LaunchRuntime` with `SPAWN_PREPARE`). At execute it re-runs Mars via
-`build_spawn_mars_runtime` so `binding.spec.model` gets `harness_model`, same as foreground.
-Persisted `SpawnRequest.model` stays canonical CLI token; harness argv uses Mars output. An empty
-`model` field is accepted (model-optional profiles exist).
+`prepare.py` returns `SpawnCreateArtifacts(request, prepared)` after `compose_spawn_launch_surface`.
+Blocking CLI execute passes `prepared` into `launch_prepared_spawn` for **bind-only** when session/fork
+did not change policy inputs (`_spawn_request_needs_recompose`). Full re-compose only on session/fork
+mutation. Dry-run create uses `dry_run=True` on compose; real spawns use `dry_run=False` (not CLI
+`--dry-run` alone).
+
+REST `SpawnApplicationService.prepare` composes once, reserves `spawn_id`, then bind-only with final
+`MERIDIAN_SPAWN_ID` overrides. `streaming_serve` reuses `PreparedSpawn.launch_context` — no third compose.
+
+## Background Spawn Trust Model (Phase 3A)
+
+Parent create still composes once (`build_create_payload`). The detached worker loads persisted
+`BackgroundWorkerLaunchRequest` (`SpawnRequest` + `LaunchRuntime`) and composes once at worker launch
+(one Mars call in the worker; no persisted `PreparedLaunchSurface` yet). Persisted `SpawnRequest.model`
+stays canonical CLI token; harness argv uses Mars `harness_model` at bind. Phase 3B (persisted prepared
+handoff for worker bind-only) is deferred unless worker startup remains too slow.
 
 ## SpawnActionOutput Wire Shape
 

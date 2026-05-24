@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
@@ -31,7 +32,6 @@ from meridian.lib.core.telemetry import (
 )
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
-from meridian.lib.catalog.model_aliases import MarsResultCache
 from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
