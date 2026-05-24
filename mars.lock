@@ -11,8 +11,8 @@ commit = "524f25b96a57d10d8cca3a160d10f1a7e101cde2"
 
 [dependencies.meridian-dev-workflow]
 url = "github.com/haowjy/meridian-dev-workflow"
-version = "v0.7.18"
-commit = "680dd5c5a327fe7ec8c7bfd9921b6b3be1283406"
+version = "v0.7.19"
+commit = "14524236cf9ea23c08f476e60df8b9c33e141ad4"
 
 [dependencies.meridian-prompter]
 url = "github.com/meridian-flow/meridian-prompter"
@@ -27,7 +27,7 @@ commit = "3a1bafc8b4e973c72d0364eb5b427d1ce0aa8317"
 [items."agent/alignment-reviewer"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:d814a3c2259519f61391de5d6c4ced9a19eabd0632d04cc0585a0cc4a13408ac"
 
 [[items."agent/alignment-reviewer".outputs]]
@@ -38,7 +38,7 @@ installed_checksum = "sha256:d814a3c2259519f61391de5d6c4ced9a19eabd0632d04cc0585
 [items."agent/architect"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:fc91a2f68df84fb5a0b7524a45be3fca939fa1b6a95322a1fc3ae49116e1d646"
 
 [[items."agent/architect".outputs]]
@@ -49,7 +49,7 @@ installed_checksum = "sha256:fc91a2f68df84fb5a0b7524a45be3fca939fa1b6a95322a1fc3
 [items."agent/browser"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:9373d4e7fc46568ab5f8e301ba01fb241a9309ee8e0c5e0d51425842c19f3a25"
 
 [[items."agent/browser".outputs]]
@@ -60,7 +60,7 @@ installed_checksum = "sha256:9373d4e7fc46568ab5f8e301ba01fb241a9309ee8e0c5e0d514
 [items."agent/browser-tester"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:4bbc2922134c84e3fb2f994537a6d067071bb7f55ff54c0d17f27ed5147af7be"
 
 [[items."agent/browser-tester".outputs]]
@@ -71,7 +71,7 @@ installed_checksum = "sha256:4bbc2922134c84e3fb2f994537a6d067071bb7f55ff54c0d17f
 [items."agent/code-mirror"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:3271be366622b6b687769e2b65d2ab05d5c0ccbba7202f2c8ae4b249bb30afdc"
 
 [[items."agent/code-mirror".outputs]]
@@ -82,18 +82,18 @@ installed_checksum = "sha256:3271be366622b6b687769e2b65d2ab05d5c0ccbba7202f2c8ae
 [items."agent/coder"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
-source_checksum = "sha256:89a05ade169a8a20ab8248deb3edaf59344ba98b6d24ba392cab68831627e197"
+version = "v0.7.19"
+source_checksum = "sha256:444bfcff93a9d5d2d39a56ffa301c7d8a8f5a8bd2a32bf82c4e3e4051f358790"
 
 [[items."agent/coder".outputs]]
 target_root = ".mars"
 dest_path = "agents/coder.md"
-installed_checksum = "sha256:89a05ade169a8a20ab8248deb3edaf59344ba98b6d24ba392cab68831627e197"
+installed_checksum = "sha256:444bfcff93a9d5d2d39a56ffa301c7d8a8f5a8bd2a32bf82c4e3e4051f358790"
 
 [items."agent/design-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:9acc84a252665d5b78725668d628a246b1dfda6ba5df5f9c2b404fac43e61388"
 
 [[items."agent/design-lead".outputs]]
@@ -104,7 +104,7 @@ installed_checksum = "sha256:9acc84a252665d5b78725668d628a246b1dfda6ba5df5f9c2b4
 [items."agent/design-writer"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:159d23a9fc6b073c4f78ef0a788d25838d74c9d7c43edafe30e90ebd49eddbe8"
 
 [[items."agent/design-writer".outputs]]
@@ -126,7 +126,7 @@ installed_checksum = "sha256:f5b6e0f51ad7c33f4f9f7873570ad749c6cf92139763c23e870
 [items."agent/frontend-coder"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:e5c29529dd90f5a0bae1dc13d32cddb01895e1494aaa28a4849c66b06030e2a1"
 
 [[items."agent/frontend-coder".outputs]]
@@ -137,7 +137,7 @@ installed_checksum = "sha256:e5c29529dd90f5a0bae1dc13d32cddb01895e1494aaa28a4849
 [items."agent/frontend-designer"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:6dfd2c7dd0a5fc12ff75c5bc80abfc943e7c5caec24c391c17820b2bddbde5b1"
 
 [[items."agent/frontend-designer".outputs]]
@@ -148,7 +148,7 @@ installed_checksum = "sha256:6dfd2c7dd0a5fc12ff75c5bc80abfc943e7c5caec24c391c178
 [items."agent/imagegen"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:b6bfa87d5f775004f24f73f800b595a9a844edcb9859a5ad957d06532ec505d9"
 
 [[items."agent/imagegen".outputs]]
@@ -159,7 +159,7 @@ installed_checksum = "sha256:b6bfa87d5f775004f24f73f800b595a9a844edcb9859a5ad957
 [items."agent/integration-tester"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:3055b4d1f0482ae71ebe7a5dfe4439da0196f85f3e73ed59d1dac528815a0770"
 
 [[items."agent/integration-tester".outputs]]
@@ -170,7 +170,7 @@ installed_checksum = "sha256:3055b4d1f0482ae71ebe7a5dfe4439da0196f85f3e73ed59d1d
 [items."agent/investigator"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:bbde976e20d92812073c92ffa3ae92cbf2b0f27322b681d533abdfd9819446a1"
 
 [[items."agent/investigator".outputs]]
@@ -181,7 +181,7 @@ installed_checksum = "sha256:bbde976e20d92812073c92ffa3ae92cbf2b0f27322b681d533a
 [items."agent/kb-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:4c6fa43bec0b30dc7e1c75a7bc493dc234477ad00302bb00d6a639ce130d4a8d"
 
 [[items."agent/kb-lead".outputs]]
@@ -236,7 +236,7 @@ installed_checksum = "sha256:9aff23fa784393acaf1570b32415045de4ef952ab6378f967b6
 [items."agent/mockup-gen"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:d71d6f3adbfa6495c4cf4603938353eafeb195e6c78e87ec4d342ec99c27f31f"
 
 [[items."agent/mockup-gen".outputs]]
@@ -247,7 +247,7 @@ installed_checksum = "sha256:d71d6f3adbfa6495c4cf4603938353eafeb195e6c78e87ec4d3
 [items."agent/planner"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:326e3d12f84254552a92acc133e3cacf005977740032a808ac6659f6b44aea13"
 
 [[items."agent/planner".outputs]]
@@ -258,13 +258,13 @@ installed_checksum = "sha256:326e3d12f84254552a92acc133e3cacf005977740032a808ac6
 [items."agent/product-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
-source_checksum = "sha256:1394fa2476de763456ec6c7cb0c06c22958fca99636a1729cf47ba18e5a47913"
+version = "v0.7.19"
+source_checksum = "sha256:8ff5f08e8f5e1e7d3e78b1180369acb823de2b075c8d268c7c4cfd48495f18ed"
 
 [[items."agent/product-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/product-lead.md"
-installed_checksum = "sha256:1394fa2476de763456ec6c7cb0c06c22958fca99636a1729cf47ba18e5a47913"
+installed_checksum = "sha256:8ff5f08e8f5e1e7d3e78b1180369acb823de2b075c8d268c7c4cfd48495f18ed"
 
 [items."agent/prompt-dev"]
 source = "meridian-prompter"
@@ -313,18 +313,18 @@ installed_checksum = "sha256:7c454478fad4d27e40c66d0047bd42e403d83cb4334d239f097
 [items."agent/qa-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
-source_checksum = "sha256:f9b2e5d6b9d365f5892cb7ebbe4875c1faee9ac4f1181c1e80bbf08a9a25b04a"
+version = "v0.7.19"
+source_checksum = "sha256:41d898dcdae9173f77d9501ebc38c52d097c4eda36314def2eb6fe335698cfee"
 
 [[items."agent/qa-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/qa-lead.md"
-installed_checksum = "sha256:f9b2e5d6b9d365f5892cb7ebbe4875c1faee9ac4f1181c1e80bbf08a9a25b04a"
+installed_checksum = "sha256:41d898dcdae9173f77d9501ebc38c52d097c4eda36314def2eb6fe335698cfee"
 
 [items."agent/reviewer"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:d67b962d33bac0405927f23ae2fdf2e24226cce9fcae4adb8794d10c416ab54d"
 
 [[items."agent/reviewer".outputs]]
@@ -346,7 +346,7 @@ installed_checksum = "sha256:02e114bdd270825474574c9873d37f86aea0a163abebdbf3ba1
 [items."agent/simplify-reviewer"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:5f8d107e0c2c692a96dfaa91ae68e7770a78d1826e4787bc4dc9ae098f5dd64b"
 
 [[items."agent/simplify-reviewer".outputs]]
@@ -357,7 +357,7 @@ installed_checksum = "sha256:5f8d107e0c2c692a96dfaa91ae68e7770a78d1826e4787bc4dc
 [items."agent/smoke-tester"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:b4f02a74ef4aef7fd353f93b2e1ad9b54e80e63757020a837684f25a4ac6fd6a"
 
 [[items."agent/smoke-tester".outputs]]
@@ -368,18 +368,18 @@ installed_checksum = "sha256:b4f02a74ef4aef7fd353f93b2e1ad9b54e80e63757020a83768
 [items."agent/tech-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
-source_checksum = "sha256:45afc7b0db0b236c14af27cf5311d531da21c5b90966932caadfc58afdd3258b"
+version = "v0.7.19"
+source_checksum = "sha256:ec0c95fda6da76c658b700ed54a657cb8cf8a48b4f53370509b500515fa32a69"
 
 [[items."agent/tech-lead".outputs]]
 target_root = ".mars"
 dest_path = "agents/tech-lead.md"
-installed_checksum = "sha256:45afc7b0db0b236c14af27cf5311d531da21c5b90966932caadfc58afdd3258b"
+installed_checksum = "sha256:ec0c95fda6da76c658b700ed54a657cb8cf8a48b4f53370509b500515fa32a69"
 
 [items."agent/tech-writer"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:94321ecb70095957c3ca35f37991e9da294556b4fbff1e8fea1c3011f725426b"
 
 [[items."agent/tech-writer".outputs]]
@@ -390,7 +390,7 @@ installed_checksum = "sha256:94321ecb70095957c3ca35f37991e9da294556b4fbff1e8fea1
 [items."agent/unit-tester"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:7881bbfa8d547b4437bd153cfbe8639815f33fd8db419c651d35f9a214edab98"
 
 [[items."agent/unit-tester".outputs]]
@@ -401,7 +401,7 @@ installed_checksum = "sha256:7881bbfa8d547b4437bd153cfbe8639815f33fd8db419c651d3
 [items."agent/ux-lead"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:ae4ae5b3bfe393e09e9741c78444689b70f2269eb5683344fa7008d36ddd4c81"
 
 [[items."agent/ux-lead".outputs]]
@@ -423,7 +423,7 @@ installed_checksum = "sha256:1485bc6725d07e2d1565f0ad4af1485cf8d1dd23c4504f669fd
 [items."agent/web-researcher"]
 source = "meridian-dev-workflow"
 kind = "agent"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:862f31ba7589dd38fa32857459ed4f73d40d886a1ea5c024e53787f4bbb1a821"
 
 [[items."agent/web-researcher".outputs]]
@@ -445,7 +445,7 @@ installed_checksum = "sha256:661a72b41dd8157a0ad291e4354537701e8901c92f2b622141e
 [items."bootstrap-doc/feature-worktree"]
 source = "meridian-dev-workflow"
 kind = "bootstrapdoc"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:3e83d26621b9a092a80d31fa5347be6f26663da34a760fed4d0c0810f2874894"
 
 [[items."bootstrap-doc/feature-worktree".outputs]]
@@ -467,7 +467,7 @@ installed_checksum = "sha256:2a25bc3823f8b9c6d18cd721aec06fa6b5f9533cb628057c8f9
 [items."bootstrap-doc/imagegen-setup"]
 source = "meridian-dev-workflow"
 kind = "bootstrapdoc"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:dee0e65612919fb1810541619eebfcfdf98147dc183033fdad185b08530085f1"
 
 [[items."bootstrap-doc/imagegen-setup".outputs]]
@@ -583,43 +583,43 @@ installed_checksum = "sha256:394652810d1121435c3e46d6328a60a0b16f3d0803e55ac4d07
 [items."skill/agent-staffing"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
-source_checksum = "sha256:b43b4c1173d8eefa2084f83d531d9c06680d9e6103629b02ff26bdad6d09349a"
+version = "v0.7.19"
+source_checksum = "sha256:d8dfbe039718af79d36b4102fba00dab5019d92b58a66fc697b7282964cb61d1"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".claude"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:a444f7d99ebd25c542e346b6923eb7e1dd43238a561e14683b82c775fe8c1218"
+installed_checksum = "sha256:8c870c5373d2c5800ab97b9816e38ffbe012bbde577ccca7e1d9fbcb18becda1"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".codex"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:9b41c53a80805587bc6fafff4f9c32992cd9f0d148df345490bf63039b8b3fc3"
+installed_checksum = "sha256:ff6cb5495c344bb49705aabf00168d000494bc8ebc93a3e3e463f2271bacadbe"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".cursor"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:a444f7d99ebd25c542e346b6923eb7e1dd43238a561e14683b82c775fe8c1218"
+installed_checksum = "sha256:8c870c5373d2c5800ab97b9816e38ffbe012bbde577ccca7e1d9fbcb18becda1"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".mars"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:b43b4c1173d8eefa2084f83d531d9c06680d9e6103629b02ff26bdad6d09349a"
+installed_checksum = "sha256:d8dfbe039718af79d36b4102fba00dab5019d92b58a66fc697b7282964cb61d1"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".opencode"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:da319e9611fd79d7795df3c7c6865a2f94663556e816fa82ff7ad6ffade3f330"
+installed_checksum = "sha256:3b3d8cf7312885bc480978455ee850f13494b2864f08a2e4da5f2803582507de"
 
 [[items."skill/agent-staffing".outputs]]
 target_root = ".pi"
 dest_path = "skills/agent-staffing"
-installed_checksum = "sha256:a444f7d99ebd25c542e346b6923eb7e1dd43238a561e14683b82c775fe8c1218"
+installed_checksum = "sha256:8c870c5373d2c5800ab97b9816e38ffbe012bbde577ccca7e1d9fbcb18becda1"
 
 [items."skill/architecture"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:83ada02531216041f51c8acc5ab5a400bef65ac36fe08a3aff18e4634780e589"
 
 [[items."skill/architecture".outputs]]
@@ -655,7 +655,7 @@ installed_checksum = "sha256:8d20326d4dfa93142dcd1933121795f916c015faf65e1830c3a
 [items."skill/browser-test"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:103c55d69ae841fc7d729ee839514a8508b9287cf7bcc32dbb39bb435bad6628"
 
 [[items."skill/browser-test".outputs]]
@@ -763,79 +763,79 @@ installed_checksum = "sha256:3ecbd3bc7b4ac5490bc2cf8805a8ca90bf66ef0825baaffdccd
 [items."skill/dev-artifacts"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
-source_checksum = "sha256:5373d4ab7e8355c78b2d2caff750543e047021b659490cb31a0121cf4da8d3fc"
+version = "v0.7.19"
+source_checksum = "sha256:9f5a7dafc76270529da05b11f84ad6d9f19dd2d66d5748260df79caaa0033861"
 
 [[items."skill/dev-artifacts".outputs]]
 target_root = ".claude"
 dest_path = "skills/dev-artifacts"
-installed_checksum = "sha256:4a2f0cecee45f0b2fb574cbbf8e55bb992f133a233b225bb783aa245fc17834f"
+installed_checksum = "sha256:3197bfe6bc9e9664033613df30a693aebfeca7254d884b5b5307948c7e83ad10"
 
 [[items."skill/dev-artifacts".outputs]]
 target_root = ".codex"
 dest_path = "skills/dev-artifacts"
-installed_checksum = "sha256:87ae1dca14964cd73ae32b1facdb136574a9040cb8b6e9f6ac531f65a73205d0"
+installed_checksum = "sha256:aeb12d28267572a5f023712d15de0c19974c4c316899f207b3a757e6a9fa3746"
 
 [[items."skill/dev-artifacts".outputs]]
 target_root = ".cursor"
 dest_path = "skills/dev-artifacts"
-installed_checksum = "sha256:4a2f0cecee45f0b2fb574cbbf8e55bb992f133a233b225bb783aa245fc17834f"
+installed_checksum = "sha256:3197bfe6bc9e9664033613df30a693aebfeca7254d884b5b5307948c7e83ad10"
 
 [[items."skill/dev-artifacts".outputs]]
 target_root = ".mars"
 dest_path = "skills/dev-artifacts"
-installed_checksum = "sha256:5373d4ab7e8355c78b2d2caff750543e047021b659490cb31a0121cf4da8d3fc"
+installed_checksum = "sha256:9f5a7dafc76270529da05b11f84ad6d9f19dd2d66d5748260df79caaa0033861"
 
 [[items."skill/dev-artifacts".outputs]]
 target_root = ".opencode"
 dest_path = "skills/dev-artifacts"
-installed_checksum = "sha256:4732371d2dcb9854d4a78039b6996801547949fffd523f5304b2777f29ab6a45"
+installed_checksum = "sha256:62b1587383e15870d40c4ae0cfc855a8305f4ca988ff62cfc17d98e956369a75"
 
 [[items."skill/dev-artifacts".outputs]]
 target_root = ".pi"
 dest_path = "skills/dev-artifacts"
-installed_checksum = "sha256:4a2f0cecee45f0b2fb574cbbf8e55bb992f133a233b225bb783aa245fc17834f"
+installed_checksum = "sha256:3197bfe6bc9e9664033613df30a693aebfeca7254d884b5b5307948c7e83ad10"
 
 [items."skill/dev-principles"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
-source_checksum = "sha256:b0bf8e8d79511d31010de777a3f7e9f5ced9ae0e646365c2e5d78f0f2b2b32f2"
+version = "v0.7.19"
+source_checksum = "sha256:d1d770ad1788023c45c60dbb648d80c74d9a354af89f359ddd480fe867a129f4"
 
 [[items."skill/dev-principles".outputs]]
 target_root = ".claude"
 dest_path = "skills/dev-principles"
-installed_checksum = "sha256:3413003abf540f4f97e9de55cba8edbe140741add2cc56699dfeafa74a1d02c6"
+installed_checksum = "sha256:fed9960ba1fab61ddb7ceb53d4cb69c550fe2dedcf957dcdc864acb144cc74d8"
 
 [[items."skill/dev-principles".outputs]]
 target_root = ".codex"
 dest_path = "skills/dev-principles"
-installed_checksum = "sha256:2e2d562e3b4420e9303f1955e1a3f39fc754afb47d41cf3ca98696e28a4a1cf6"
+installed_checksum = "sha256:55403f726bc1f53ab89629b278b6804716d744dc38c843926e7c4f0cf154158c"
 
 [[items."skill/dev-principles".outputs]]
 target_root = ".cursor"
 dest_path = "skills/dev-principles"
-installed_checksum = "sha256:3413003abf540f4f97e9de55cba8edbe140741add2cc56699dfeafa74a1d02c6"
+installed_checksum = "sha256:fed9960ba1fab61ddb7ceb53d4cb69c550fe2dedcf957dcdc864acb144cc74d8"
 
 [[items."skill/dev-principles".outputs]]
 target_root = ".mars"
 dest_path = "skills/dev-principles"
-installed_checksum = "sha256:b0bf8e8d79511d31010de777a3f7e9f5ced9ae0e646365c2e5d78f0f2b2b32f2"
+installed_checksum = "sha256:d1d770ad1788023c45c60dbb648d80c74d9a354af89f359ddd480fe867a129f4"
 
 [[items."skill/dev-principles".outputs]]
 target_root = ".opencode"
 dest_path = "skills/dev-principles"
-installed_checksum = "sha256:3413003abf540f4f97e9de55cba8edbe140741add2cc56699dfeafa74a1d02c6"
+installed_checksum = "sha256:fed9960ba1fab61ddb7ceb53d4cb69c550fe2dedcf957dcdc864acb144cc74d8"
 
 [[items."skill/dev-principles".outputs]]
 target_root = ".pi"
 dest_path = "skills/dev-principles"
-installed_checksum = "sha256:3413003abf540f4f97e9de55cba8edbe140741add2cc56699dfeafa74a1d02c6"
+installed_checksum = "sha256:fed9960ba1fab61ddb7ceb53d4cb69c550fe2dedcf957dcdc864acb144cc74d8"
 
 [items."skill/ears-parsing"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:1db85ac3f7a0344ce88510ebdf36480de600c6798617d64f988564ed113bd89b"
 
 [[items."skill/ears-parsing".outputs]]
@@ -942,7 +942,7 @@ installed_checksum = "sha256:eeb33654dc1836a9e1890ae6e4a21ad8b6d3a666adb65c5c759
 [items."skill/integration-test"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:c39117e86b7779b7fbb787022d72a373ecd9aa10f522dd84413ffbcc65d9be1c"
 
 [[items."skill/integration-test".outputs]]
@@ -1014,7 +1014,7 @@ installed_checksum = "sha256:e7781744a3ed3c948a1ae8a91a2bfa29ea0ae428ea6117197a8
 [items."skill/issues"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:95445491ec949d37f5a07badb478c958c183ac1283d17444347b62c0004b9bc4"
 
 [[items."skill/issues".outputs]]
@@ -1266,7 +1266,7 @@ installed_checksum = "sha256:19571b856825c69781d687d4d4def087dff3195367b25d2af01
 [items."skill/planning"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:219d6e212229aa0411d206f43ad9b41e583fca447ba6b2e8cc6d66b90bab482d"
 
 [[items."skill/planning".outputs]]
@@ -1338,7 +1338,7 @@ installed_checksum = "sha256:7ab9bd394deb0f7a480c94f1ae8390cce862219534b33139336
 [items."skill/post-impl-capture"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:9da7585ab7d06392cdfcabc305a6096c5c4117032724df665e0b1c4bf2c4aad1"
 
 [[items."skill/post-impl-capture".outputs]]
@@ -1518,38 +1518,38 @@ installed_checksum = "sha256:45a0fc37edde74e3fc7bf7dc930d2e4105109838f579fd0d72d
 [items."skill/review"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
-source_checksum = "sha256:d43dc1edbd72b2a99a2f660d8f14c8abfa094c4d75ae9a7904d641b229119cb8"
+version = "v0.7.19"
+source_checksum = "sha256:2b6aa485fd7aadd8bfdb23325527c81d55a5615cc2bfda6460c793410beed90c"
 
 [[items."skill/review".outputs]]
 target_root = ".claude"
 dest_path = "skills/review"
-installed_checksum = "sha256:b5f047afae3f097dbafeed66f6ff53b95d23977b631e6def61241b3be82883b8"
+installed_checksum = "sha256:f33a3bce367b6317ff479b3e116a9fc8be5043008e363b687dc16ecf59218304"
 
 [[items."skill/review".outputs]]
 target_root = ".codex"
 dest_path = "skills/review"
-installed_checksum = "sha256:36ed8f5eec9c064c98abb9671681b662b7889cb55ba223b83835fd12d22dbde8"
+installed_checksum = "sha256:4685109656e270accaaf8ccc31cd43f169677182d4732024581584e08089e828"
 
 [[items."skill/review".outputs]]
 target_root = ".cursor"
 dest_path = "skills/review"
-installed_checksum = "sha256:b5f047afae3f097dbafeed66f6ff53b95d23977b631e6def61241b3be82883b8"
+installed_checksum = "sha256:f33a3bce367b6317ff479b3e116a9fc8be5043008e363b687dc16ecf59218304"
 
 [[items."skill/review".outputs]]
 target_root = ".mars"
 dest_path = "skills/review"
-installed_checksum = "sha256:d43dc1edbd72b2a99a2f660d8f14c8abfa094c4d75ae9a7904d641b229119cb8"
+installed_checksum = "sha256:2b6aa485fd7aadd8bfdb23325527c81d55a5615cc2bfda6460c793410beed90c"
 
 [[items."skill/review".outputs]]
 target_root = ".opencode"
 dest_path = "skills/review"
-installed_checksum = "sha256:47d389ec876b61631c675de32a4381a56ecd62c8c3a273604339c0baf64a1741"
+installed_checksum = "sha256:d1f8594d7385139b2da4c960f5e48cecd6b40f511cdacffef23a4537c2675f3c"
 
 [[items."skill/review".outputs]]
 target_root = ".pi"
 dest_path = "skills/review"
-installed_checksum = "sha256:b5f047afae3f097dbafeed66f6ff53b95d23977b631e6def61241b3be82883b8"
+installed_checksum = "sha256:f33a3bce367b6317ff479b3e116a9fc8be5043008e363b687dc16ecf59218304"
 
 [items."skill/session-mining"]
 source = "meridian-base"
@@ -1662,7 +1662,7 @@ installed_checksum = "sha256:c3111b2af93330091e87feb4f47992f5e18711865e7256802e5
 [items."skill/simplify"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:83cd9531cf4c209be0ef6fc8c02865d4222a30a0dc28030e511d2f10fb36e1dc"
 
 [[items."skill/simplify".outputs]]
@@ -1734,43 +1734,43 @@ installed_checksum = "sha256:1cc78b9166e04b7c2501010164b83e48bde06994fe55b5eed29
 [items."skill/smoke-test"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
-source_checksum = "sha256:d9d49cfacd7c78d023aca3646a3e58f9a455e8f6eeffbfe8afa2cfd2c5c01cd4"
+version = "v0.7.19"
+source_checksum = "sha256:2ae424475c81cf33c6676e269e13fc459966b549f146849bddd6a29131605093"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".claude"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:6d9a83f3dfafb48bea638f7bc4d696f89ea1850dc5e63b7b5330983e184a6bf8"
+installed_checksum = "sha256:ca29671e3efb6babcdd61ea28c36285d6a4c1b30af86d297ef076ccd49cc1d8a"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".codex"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:4a2d916d4d83d4257ec84be2936558c4501efc89ab19b6ddd0423c0a72990875"
+installed_checksum = "sha256:34f6bf01f2b05c6d104f8654be33e1c06894ae287a7572d2b72cb6e1cf42a31e"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".cursor"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:6d9a83f3dfafb48bea638f7bc4d696f89ea1850dc5e63b7b5330983e184a6bf8"
+installed_checksum = "sha256:ca29671e3efb6babcdd61ea28c36285d6a4c1b30af86d297ef076ccd49cc1d8a"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".mars"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:d9d49cfacd7c78d023aca3646a3e58f9a455e8f6eeffbfe8afa2cfd2c5c01cd4"
+installed_checksum = "sha256:2ae424475c81cf33c6676e269e13fc459966b549f146849bddd6a29131605093"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".opencode"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:3b28e9f086e50a8bf0bdb74dd8c8784ad10d45f79f755df8ea90c04de3ce20ee"
+installed_checksum = "sha256:2645b98e547f94fd5cf2a288d88559977407aa40d315512aaa6d211a9b54b496"
 
 [[items."skill/smoke-test".outputs]]
 target_root = ".pi"
 dest_path = "skills/smoke-test"
-installed_checksum = "sha256:6d9a83f3dfafb48bea638f7bc4d696f89ea1850dc5e63b7b5330983e184a6bf8"
+installed_checksum = "sha256:ca29671e3efb6babcdd61ea28c36285d6a4c1b30af86d297ef076ccd49cc1d8a"
 
 [items."skill/tech-docs"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:fda08cb816343ae01ebd7b97886902c4d9c2f160338b608f9475289bc30897cf"
 
 [[items."skill/tech-docs".outputs]]
@@ -1806,43 +1806,43 @@ installed_checksum = "sha256:3b600894d307ff379f6b4b033008e456358e4ab8f7800036343
 [items."skill/testing-principles"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
-source_checksum = "sha256:649223ef2503d3f1080071b78f99baa85a3d950f7669faabffbad2d5a24699c1"
+version = "v0.7.19"
+source_checksum = "sha256:f4cd288a58af6ce8a49414b82f09c8c5d986239c7b0ea43ea5034f2ccb2c9bac"
 
 [[items."skill/testing-principles".outputs]]
 target_root = ".claude"
 dest_path = "skills/testing-principles"
-installed_checksum = "sha256:971ec0f2890c360f3cf3604e325fda40f7787523d44b166ab5d6e24cac27b377"
+installed_checksum = "sha256:8464c73ad4e90b06ab5354c08099cd308c5f2d371d39279f5a338dc7bc44b1cc"
 
 [[items."skill/testing-principles".outputs]]
 target_root = ".codex"
 dest_path = "skills/testing-principles"
-installed_checksum = "sha256:b7eb5ef4415b45cc1c318ec2ba37379b299ec4bcf9969445989d1a2b78881561"
+installed_checksum = "sha256:64f10a75ab0964037b1dce40c4991c42e46044681321787d5730a49e3a7f7985"
 
 [[items."skill/testing-principles".outputs]]
 target_root = ".cursor"
 dest_path = "skills/testing-principles"
-installed_checksum = "sha256:971ec0f2890c360f3cf3604e325fda40f7787523d44b166ab5d6e24cac27b377"
+installed_checksum = "sha256:8464c73ad4e90b06ab5354c08099cd308c5f2d371d39279f5a338dc7bc44b1cc"
 
 [[items."skill/testing-principles".outputs]]
 target_root = ".mars"
 dest_path = "skills/testing-principles"
-installed_checksum = "sha256:649223ef2503d3f1080071b78f99baa85a3d950f7669faabffbad2d5a24699c1"
+installed_checksum = "sha256:f4cd288a58af6ce8a49414b82f09c8c5d986239c7b0ea43ea5034f2ccb2c9bac"
 
 [[items."skill/testing-principles".outputs]]
 target_root = ".opencode"
 dest_path = "skills/testing-principles"
-installed_checksum = "sha256:fd20b4618820739b720a964c8882d0a6a33b53ab50fd29ef2a70787e865606de"
+installed_checksum = "sha256:847ebd2d4ecf6bd7c5aca4834ac8dded917a346b54730f938b6fd7e02437a7d2"
 
 [[items."skill/testing-principles".outputs]]
 target_root = ".pi"
 dest_path = "skills/testing-principles"
-installed_checksum = "sha256:971ec0f2890c360f3cf3604e325fda40f7787523d44b166ab5d6e24cac27b377"
+installed_checksum = "sha256:8464c73ad4e90b06ab5354c08099cd308c5f2d371d39279f5a338dc7bc44b1cc"
 
 [items."skill/thermo-nuclear-review"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:5c8bbc28a1f60122f428f16d6c37ef851abd87d492f22d3ee38c68e1231801e5"
 
 [[items."skill/thermo-nuclear-review".outputs]]
@@ -1878,7 +1878,7 @@ installed_checksum = "sha256:a67e38512c1a5ac71f4cd602c9063785ec72b32aea874b535a0
 [items."skill/unit-test"]
 source = "meridian-dev-workflow"
 kind = "skill"
-version = "v0.7.18"
+version = "v0.7.19"
 source_checksum = "sha256:7beeb1698f3ddb89fa659daecf09c38d44f040d285c113b45b6b49606d27f364"
 
 [[items."skill/unit-test".outputs]]

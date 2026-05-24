@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.work_lifecycle import (
@@ -10,16 +11,17 @@ from meridian.lib.ops.work_lifecycle import (
     WorkDoneInput,
     WorkRenameInput,
     WorkSetWorktreeInput,
+    WorkStartInput,
+    WorkWorktreeInput,
     work_clear_worktree_sync,
     work_delete_sync,
     work_done_sync,
     work_rename_sync,
     work_set_worktree_sync,
+    work_start_sync,
+    work_worktree_sync,
 )
 from meridian.lib.state import work_store
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def _setup_project(tmp_path: Path) -> tuple[Path, Path]:
@@ -201,3 +203,86 @@ def test_shared_managed_worktree_rename_skips_move(tmp_path: Path) -> None:
     assert result.worktree_moved is False
     assert "still referenced by work item(s): rename-b" in (result.warning or "")
     assert shared_path.is_dir()
+
+
+def test_work_worktree_without_active_item_shows_guidance(tmp_path: Path) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    output = work_worktree_sync(
+        WorkWorktreeInput(
+            ensure=False,
+            chat_id="chat-without-active-work",
+            project_root=project_root.as_posix(),
+        )
+    )
+    assert "No active work item and no tracked temporary worktree" in output.message
+
+
+def test_work_worktree_missing_manual_assignment_fails_with_guidance(tmp_path: Path) -> None:
+    project_root, project_state_dir = _setup_project(tmp_path)
+    item = work_store.create_work_item(project_state_dir, "manual-missing", "", None)
+    manual_path = tmp_path / "manual-missing-path"
+    manual_path.mkdir(parents=True, exist_ok=True)
+    work_set_worktree_sync(
+        WorkSetWorktreeInput(
+            work_id=item.name,
+            path=manual_path.as_posix(),
+            project_root=project_root.as_posix(),
+        )
+    )
+    manual_path.rmdir()
+
+    with pytest.raises(ValueError, match="manual worktree assignment that is missing"):
+        work_worktree_sync(
+            WorkWorktreeInput(
+                work_id=item.name,
+                ensure=True,
+                project_root=project_root.as_posix(),
+            )
+        )
+
+
+def test_work_start_worktree_routes_repo_into_ensure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _project_state_dir = _setup_project(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_ensure(
+        *,
+        project_root: Path,
+        project_state_dir: Path,
+        work_id: str,
+        repo_selector: str | None,
+        dry_run: bool = False,
+    ) -> object:
+        captured["project_root"] = project_root
+        captured["project_state_dir"] = project_state_dir
+        captured["work_id"] = work_id
+        captured["repo_selector"] = repo_selector
+        captured["dry_run"] = dry_run
+        return type(
+            "_Ensured",
+            (),
+            {
+                "ensured": True,
+                "warning": None,
+                "worktree_path": project_root / ".dummy",
+            },
+        )()
+
+    monkeypatch.setattr("meridian.lib.ops.work_lifecycle.ensure_work_item_worktree", _fake_ensure)
+
+    output = work_start_sync(
+        WorkStartInput(
+            label="repo-routed",
+            description="",
+            worktree=True,
+            repo="../mars-agents",
+            project_root=project_root.as_posix(),
+        )
+    )
+    assert output.name == "repo-routed"
+    assert captured["work_id"] == "repo-routed"
+    assert captured["repo_selector"] == "../mars-agents"
+    assert captured["dry_run"] is False

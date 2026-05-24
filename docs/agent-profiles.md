@@ -180,6 +180,8 @@ skills:
   - shared-workspace
 ```
 
+`shared-workspace` guidance should use Meridian-managed isolation (`meridian work worktree --ensure`, optionally `--repo <path-or-alias>`) instead of manual `git worktree add`.
+
 **Variant selection.** Skills can ship harness- or model-specific body overrides in a `variants/` subdirectory. Meridian selects the best matching variant at launch time using a 4-step specificity ladder:
 
 1. `variants/<harness>/<model-alias>/SKILL.md` — model alias + harness

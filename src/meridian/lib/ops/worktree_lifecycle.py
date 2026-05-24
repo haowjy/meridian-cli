@@ -104,9 +104,19 @@ def _target_metadata(
     existing: WorktreeMetadata | None = None,
 ) -> WorktreeMetadata:
     current = existing or WorktreeMetadata()
-    path = current.path or str(resolve_worktree_path(repo_root, work_slug, config.worktree_base))
+    worktree_name = current.name or work_slug
+    path = current.path or str(
+        resolve_worktree_path(repo_root, worktree_name, config.worktree_base)
+    )
     branch = current.branch or default_worktree_branch(work_slug)
-    return WorktreeMetadata(path=path, branch=branch, pending=False, managed=True)
+    return WorktreeMetadata(
+        path=path,
+        branch=branch,
+        repo_path=str(repo_root),
+        name=worktree_name,
+        pending=False,
+        managed=True,
+    )
 
 
 def provision_for_start(
@@ -138,7 +148,7 @@ def provision_for_start(
         existing=existing,
     )
     target_path = target.path or str(
-        resolve_worktree_path(repo_root, work_slug, config.worktree_base)
+        resolve_worktree_path(repo_root, target.name or work_slug, config.worktree_base)
     )
     result = create_worktree(
         repo_root,
@@ -150,6 +160,8 @@ def provision_for_start(
         metadata=WorktreeMetadata(
             path=str(result.path),
             branch=result.branch,
+            repo_path=target.repo_path,
+            name=target.name,
             pending=False,
             managed=True,
         ),
@@ -373,6 +385,7 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
     config = load_config(project_root)
     branch = item.worktree_branch or default_worktree_branch(item.name)
     current_path = item.worktree_path
+    worktree_name = item.worktree.name or item.name
 
     main_root = resolve_main_repo_root(project_root)
     if main_root is None:
@@ -381,6 +394,8 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
             metadata=WorktreeMetadata(
                 path=current_path,
                 branch=branch,
+                repo_path=item.worktree.repo_path,
+                name=worktree_name,
                 pending=False,
                 managed=True,
             ),
@@ -391,7 +406,7 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
         if current_path
         else resolve_worktree_path(
             main_root,
-            item.name,
+            worktree_name,
             config.work.worktree_base,
         )
     )
@@ -401,13 +416,22 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
             metadata=WorktreeMetadata(
                 path=str(expected_path.resolve()),
                 branch=branch,
+                repo_path=str(main_root),
+                name=worktree_name,
                 pending=False,
                 managed=True,
             ),
         )
     return WorktreeRecoveryResult(
         status="cleared",
-        metadata=WorktreeMetadata(path=current_path, branch=branch, pending=False, managed=True),
+        metadata=WorktreeMetadata(
+            path=current_path,
+            branch=branch,
+            repo_path=item.worktree.repo_path,
+            name=worktree_name,
+            pending=False,
+            managed=True,
+        ),
     )
 
 

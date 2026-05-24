@@ -33,6 +33,7 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
+from meridian.lib.ops.worktree_ensure import ensure_work_item_worktree
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
@@ -247,6 +248,30 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     return " ".join(merged)
 
 
+def _resolve_selected_work_item(
+    *,
+    payload_work: str,
+    context: RuntimeContext,
+    runtime_root: Path,
+) -> str | None:
+    explicit_work_id = payload_work.strip() or None
+    if explicit_work_id is not None:
+        return explicit_work_id
+
+    ambient_work_id = (context.work_id or "").strip() or None
+    if ambient_work_id is not None:
+        return ambient_work_id
+
+    chat_id = (context.chat_id or "").strip()
+    if not chat_id:
+        return None
+    try:
+        active_work_id = session_store.get_session_active_work_id(runtime_root, chat_id) or ""
+        return active_work_id.strip() or None
+    except Exception:
+        return None
+
+
 def spawn_create_sync(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
@@ -295,6 +320,41 @@ def spawn_create_sync(
                 f"Work item '{resolved_work_id}' does not exist. "
                 "Dry-run leaves state unchanged; it would be created on launch."
             )
+    ensure_warning: str | None = None
+    if payload.worktree is True:
+        resolved_runtime_root = (
+            _runtime_root_from_prepared_for_read(
+                prepared_context,
+                project_root=resolved_root,
+            )
+            if prepared_context is not None
+            else (
+                authority.runtime_root
+                if authority.runtime_root is not None
+                else resolve_runtime_root_for_read(resolved_root)
+            )
+        )
+        selected_work_id = _resolve_selected_work_item(
+            payload_work=payload.work,
+            context=resolved_context,
+            runtime_root=resolved_runtime_root,
+        )
+        if selected_work_id is not None:
+            ensured = ensure_work_item_worktree(
+                project_root=resolved_root,
+                project_state_dir=resolve_project_paths(resolved_root).root_dir,
+                work_id=selected_work_id,
+                repo_selector=payload.repo,
+                dry_run=payload.dry_run,
+            )
+            ensure_warning = ensured.warning
+            if payload.dry_run:
+                payload = payload.model_copy(
+                    update={
+                        "predicted_task_cwd": ensured.metadata.path,
+                    }
+                )
+    preflight_warning = _merge_warnings(preflight_warning, ensure_warning)
 
     runtime = None
     if not payload.dry_run:
@@ -1528,6 +1588,7 @@ def _build_fork_create_input(
     inherited_skills: tuple[str, ...],
     requested_work: str,
     requested_worktree: bool | None,
+    requested_repo: str | None,
     requested_goal: str | None,
     harness: str | None,
 ) -> SpawnCreateInput:
@@ -1543,6 +1604,7 @@ def _build_fork_create_input(
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
         worktree=requested_worktree,
+        repo=requested_repo,
         goal=requested_goal,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
@@ -1609,6 +1671,7 @@ def spawn_fork_sync(
     requested_agent = (payload.agent or "").strip() or None
     requested_work = payload.work.strip()
     requested_worktree = payload.worktree
+    requested_repo = payload.repo
     requested_goal = payload.goal
     if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
         source_row = read_spawn_row(
@@ -1636,6 +1699,7 @@ def spawn_fork_sync(
         inherited_skills=inherited_skills,
         requested_work=requested_work,
         requested_worktree=requested_worktree,
+        requested_repo=requested_repo,
         requested_goal=requested_goal,
         harness=requested_harness,
     )
@@ -1721,6 +1785,7 @@ def spawn_continue_sync(
         desc=payload.desc,
         work=payload.work,
         worktree=payload.worktree,
+        repo=payload.repo,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
             continue_harness=resolved_reference.harness,

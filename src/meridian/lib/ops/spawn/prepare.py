@@ -1,5 +1,7 @@
 """Spawn create-input validation and payload preparation helpers."""
 
+from pathlib import Path
+
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -7,7 +9,7 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
-from meridian.lib.launch.cwd import LaunchDirectoryContext, resolve_task_cwd
+from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
 from meridian.lib.launch.request import (
     ExecutionBudget,
@@ -84,14 +86,23 @@ def build_create_payload(
                 ).strip() or None
             except Exception:
                 ambient_work_id = None
-        task_cwd_resolution = resolve_task_cwd(
-            project_root,
-            project_state_dir=resolve_project_paths(project_root).root_dir,
-            explicit_work_id=explicit_work_id,
-            ambient_work_id=ambient_work_id,
-            force_worktree=payload.worktree is True,
-            force_no_worktree=payload.worktree is False,
-        )
+        project_state_dir = resolve_project_paths(project_root).root_dir
+        selected_work_id = explicit_work_id or ambient_work_id
+        if payload.predicted_task_cwd is not None:
+            task_cwd_resolution = TaskCwdResolution(
+                task_cwd=Path(payload.predicted_task_cwd),
+                source="forced-worktree",
+                work_item=selected_work_id,
+            )
+        else:
+            task_cwd_resolution = resolve_task_cwd(
+                project_root,
+                project_state_dir=project_state_dir,
+                explicit_work_id=explicit_work_id,
+                ambient_work_id=ambient_work_id,
+                force_worktree=payload.worktree is True,
+                force_no_worktree=payload.worktree is False,
+            )
         directory_context = LaunchDirectoryContext.from_task_cwd_resolution(
             authority_root=project_root,
             task_cwd_resolution=task_cwd_resolution,
@@ -148,7 +159,7 @@ def build_create_payload(
             template_vars=parsed_template_vars,
             goal=payload.goal,
             work_id_hint=payload.work.strip() or None,
-            warning=preflight_warning,
+            warning=preflight_warning.strip() if preflight_warning is not None else None,
             authority_root=directory_context.authority_root.as_posix(),
             task_cwd=directory_context.logical_task_cwd.as_posix(),
             reference_anchor=directory_context.reference_anchor.as_posix(),

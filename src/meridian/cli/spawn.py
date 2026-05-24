@@ -275,7 +275,7 @@ def _spawn_create(
         bool | None,
         Parameter(
             name="--worktree",
-            help="Require and use the selected work item's configured worktree path as task cwd.",
+            help="Ensure and use the selected work item's managed worktree as task cwd.",
         ),
     ] = None,
     no_worktree: Annotated[
@@ -285,6 +285,13 @@ def _spawn_create(
             help="Force authority root as task cwd, ignoring any configured worktree path.",
         ),
     ] = False,
+    repo: Annotated[
+        str | None,
+        Parameter(
+            name="--repo",
+            help="Target implementation repository path or workspace alias for worktree ensure.",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         Parameter(name="--dry-run", help="Preview without executing harness."),
@@ -478,6 +485,7 @@ def _spawn_create(
                 desc=desc,
                 work=work,
                 worktree=worktree_intent,
+                repo=repo,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -497,6 +505,7 @@ def _spawn_create(
                 desc=desc,
                 work=work,
                 worktree=worktree_intent,
+                repo=repo,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -516,6 +525,7 @@ def _spawn_create(
                 goal=resolved_goal,
                 work=work,
                 worktree=worktree_intent,
+                repo=repo,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),

@@ -123,6 +123,8 @@ class SpawnCreateInput(SpawnLaunchOptions):
     desc: str = ""
     work: str = ""
     worktree: bool | None = None
+    repo: str | None = None
+    predicted_task_cwd: str | None = None
     session: SessionRequest = SessionRequest()
 
     @field_validator("goal", mode="before")
@@ -1051,6 +1053,7 @@ class SpawnContinueInput(SpawnLaunchOptions):
     desc: str = ""
     work: str = ""
     worktree: bool | None = None
+    repo: str | None = None
     fork: bool = False
 
     @field_validator("goal", mode="before")
@@ -1074,6 +1077,7 @@ class SpawnForkInput(SpawnLaunchOptions):
     desc: str = ""
     work: str = ""
     worktree: bool | None = None
+    repo: str | None = None
 
     @field_validator("goal", mode="before")
     @classmethod
