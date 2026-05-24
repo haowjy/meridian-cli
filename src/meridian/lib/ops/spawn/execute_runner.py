@@ -278,8 +278,10 @@ async def _prepare_execution_handoff(
                 runtime_work_id=runtime_work_id,
                 cache=mars_cache,
             )
-        else:
+        elif prepared is not None:
             prepared_surface = prepared
+        else:
+            raise RuntimeError("spawn execute requires prepared surface or re-compose inputs")
         launch_context = bind_spawn_launch_context(
             prepared=prepared_surface,
             bindings=bindings,
