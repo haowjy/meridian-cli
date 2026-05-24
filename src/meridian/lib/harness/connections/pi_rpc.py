@@ -19,6 +19,7 @@ from typing import Final, Literal, cast
 from meridian.lib.core.telemetry import StartupPhase, StartupPhaseEmitter
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.bundle import project_subprocess_spec
+from meridian.lib.launch.report import compact_pi_failure_output
 from meridian.lib.harness.connections.base import (
     ConnectionCapabilities,
     ConnectionConfig,
@@ -844,6 +845,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             return None
         if not raw:
             return None
+        raw = compact_pi_failure_output(raw)
         if len(raw) <= _STDERR_SNIPPET_LIMIT:
             return raw
         return f"{raw[:_STDERR_SNIPPET_LIMIT]}…<truncated>"

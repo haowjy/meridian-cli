@@ -40,6 +40,7 @@ import {
   resolveWaveKillGraceMs,
   runCommand,
   truncateText,
+  extractMeridianSpawnIds,
 } from "./lifecycle_utils";
 
 const lifecycleWriter = createLifecycleSidecarWriter(ROLE);

@@ -8,7 +8,11 @@ from meridian.lib.core.types import SpawnId
 from meridian.lib.harness.extractors.pi import PI_EXTRACTOR
 from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.errors import should_retry
-from meridian.lib.launch.report import extract_or_fallback_report, extract_pi_failure_from_history
+from meridian.lib.launch.report import (
+    compact_pi_failure_output,
+    extract_or_fallback_report,
+    extract_pi_failure_from_history,
+)
 from meridian.lib.launch.streaming_runner import StreamingRunConclusion, _AttemptRuntime
 from tests.unit.harness.test_extract_opencode_report import _MemoryArtifactStore
 
@@ -23,6 +27,28 @@ def _store_from_fixture(name: str, spawn_id: SpawnId) -> _MemoryArtifactStore:
 def test_extract_pi_failure_from_prompt_rejection_fixture() -> None:
     history = (_FIXTURES / "history_prompt_rejection.jsonl").read_text(encoding="utf-8")
     assert extract_pi_failure_from_history(history) == "No API key configured"
+
+
+def test_compact_pi_failure_output_strips_extension_js_stack() -> None:
+    message = (
+        'Extension "/home/user/meridian-spawn-watch/index.js" error: '
+        "extractMeridianSpawnIds is not defined\n"
+        "  at Object.handleObservedMeridianSpawnOutput "
+        "(file:///home/user/meridian-spawn-watch/index.js:1081:22)\n"
+        "  at handleToolResult (file:///home/user/pi/tool.js:42:10)"
+    )
+    compact = compact_pi_failure_output(message, verbose=False)
+    assert compact == (
+        'Extension "/home/user/meridian-spawn-watch/index.js" error: '
+        "extractMeridianSpawnIds is not defined"
+    )
+    assert "at Object" not in compact
+    assert compact_pi_failure_output(message, verbose=True) == message.strip()
+
+
+def test_compact_pi_failure_output_preserves_plain_multi_line_errors() -> None:
+    message = "Mars model resolution failed\nAdd mars.toml or use a fully qualified model id."
+    assert compact_pi_failure_output(message, verbose=False) == message
 
 
 def test_extract_or_fallback_report_prefers_response_over_cleanup_fixture() -> None:
