@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 import meridian.cli.entrypoint as entrypoint_module
 
