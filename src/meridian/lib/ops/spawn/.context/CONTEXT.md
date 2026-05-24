@@ -103,9 +103,11 @@ the **only** execution path that builds a real argv — used for `--dry-run` dis
 
 ## Background Spawn Trust Model
 
-The background worker reads a persisted `BackgroundWorkerLaunchRequest` from disk. It trusts this
-request entirely — it does not re-resolve model, harness, or profile. The request is already fully
-resolved at persist time. An empty `model` field is accepted (model-optional profiles exist).
+The background worker reads a persisted `BackgroundWorkerLaunchRequest` from disk (canonical
+`SpawnRequest` plus `LaunchRuntime` with `SPAWN_PREPARE`). At execute it re-runs Mars via
+`build_spawn_mars_runtime` so `binding.spec.model` gets `harness_model`, same as foreground.
+Persisted `SpawnRequest.model` stays canonical CLI token; harness argv uses Mars output. An empty
+`model` field is accepted (model-optional profiles exist).
 
 ## SpawnActionOutput Wire Shape
 
