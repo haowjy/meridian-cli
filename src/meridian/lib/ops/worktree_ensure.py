@@ -246,9 +246,9 @@ def _canonical_target(
     canonical_path = managed_worktree_path(repo_root, worktree_name)
     metadata = item.worktree.model_copy(
         update={
-            "path": str(canonical_path),
+            "path": canonical_path.as_posix(),
             "branch": branch,
-            "repo_path": str(repo_root),
+            "repo_path": repo_root.as_posix(),
             "name": worktree_name,
             "pending": False,
             "managed": True,

@@ -109,12 +109,12 @@ def _target_metadata(
 ) -> WorktreeMetadata:
     current = existing or WorktreeMetadata()
     worktree_name = current.name or work_slug
-    path = current.path or str(managed_worktree_path(repo_root, worktree_name))
+    path = current.path or managed_worktree_path(repo_root, worktree_name).as_posix()
     branch = current.branch or default_worktree_branch(work_slug)
     return WorktreeMetadata(
         path=path,
         branch=branch,
-        repo_path=str(repo_root),
+        repo_path=repo_root.as_posix(),
         name=worktree_name,
         pending=False,
         managed=True,
@@ -156,7 +156,7 @@ def provision_for_start(
     return WorktreeProvisionResult(
         status="provisioned",
         metadata=WorktreeMetadata(
-            path=str(result.path),
+            path=result.path.as_posix(),
             branch=result.branch,
             repo_path=target.repo_path,
             name=target.name,
@@ -369,9 +369,9 @@ def rename_worktree(
     return WorktreeRenameResult(
         status="renamed",
         metadata=WorktreeMetadata(
-            path=str(result.new_path),
+            path=result.new_path.as_posix(),
             branch=result.new_branch,
-            repo_path=str(repo_root),
+            repo_path=repo_root.as_posix(),
             name=new_slug,
             pending=False,
             managed=True,
@@ -418,9 +418,9 @@ def recover_pending(project_root: Path, item: WorkItem) -> WorktreeRecoveryResul
         return WorktreeRecoveryResult(
             status="healed",
             metadata=WorktreeMetadata(
-                path=str(expected_path.resolve()),
+                path=expected_path.resolve().as_posix(),
                 branch=branch,
-                repo_path=str(main_root),
+                repo_path=main_root.as_posix(),
                 name=worktree_name,
                 pending=False,
                 managed=True,
