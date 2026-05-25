@@ -81,7 +81,11 @@ Progressive disclosure:
 meridian spawn -a reviewer -p "task"              # compact: status + report
 meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens/path inline
 meridian spawn show p123                           # full detailed record (unchanged)
-meridian session log p123                          # full transcript (unchanged)
+meridian session log p123                          # recent transcript entries (last 5, chronological, safe content previews)
+meridian session log p123 --full                   # full selected segment, including entry 0 prologue/handoff slot
+meridian session log p123 --segment current --from 0 --limit 1  # read just segment prologue/handoff slot
+meridian session log p123 --global --from 0 --limit 1           # read first entry in global cross-segment stream
+meridian session log p123 --full --no-truncate     # full selected segment with full message content
 ```
 
 `spawn show` includes primary-session metadata when available from `primary_meta.json`:
@@ -114,7 +118,7 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | `meridian spawn report show ID` | Show one spawn's report |
 | `meridian spawn report search "query"` | Search across all spawn reports |
 | `meridian session log REF` | Read conversation/progress logs for a chat, spawn, or harness session |
-| `meridian session search "query" REF` | Search session transcripts |
+| `meridian session search "query" [REF]` | Search one session or a scoped session corpus (`--workspace`, `--global`, `--work`) |
 
 ## Work Items
 

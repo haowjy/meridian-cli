@@ -133,7 +133,7 @@ def test_session_log_chat_prefers_detected_transcript_without_mutating_tracked_i
         )
 
         output = session_log_sync(
-            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), last_n=5)
+            SessionLogInput(ref=chat_id, project_root=project_root.as_posix(), tail=5)
         )
 
         assert output.session_id == detected_session_id
@@ -198,7 +198,7 @@ def test_session_log_spawn_prefers_detected_transcript_without_mutating_tracked_
         )
 
         output = session_log_sync(
-            SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+            SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
         )
 
         assert output.session_id == detected_session_id

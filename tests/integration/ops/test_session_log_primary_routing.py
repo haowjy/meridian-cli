@@ -124,7 +124,7 @@ def test_session_log_active_managed_primary_prefers_live_output_over_native_tran
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == "p42"
@@ -178,7 +178,7 @@ def test_session_log_completed_managed_primary_prefers_native_transcript(
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == session_id
@@ -221,7 +221,7 @@ def test_session_log_completed_managed_primary_falls_back_to_output_when_native_
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == "p42"
@@ -264,7 +264,7 @@ def test_session_log_completed_managed_opencode_fallback_is_best_effort(
     )
 
     output = session_log_sync(
-        SessionLogInput(ref="p42", project_root=project_root.as_posix(), last_n=5)
+        SessionLogInput(ref="p42", project_root=project_root.as_posix(), tail=5)
     )
 
     assert output.session_id == "p42"

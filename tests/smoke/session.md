@@ -35,12 +35,22 @@ uv run meridian session log --help
 ```
 - [ ] Exit 0
 - [ ] `log` or `session` appears in output (case-insensitive)
+- [ ] `--tail` appears in output
+- [ ] `--full` appears in output
+- [ ] `--no-truncate` appears in output
+- [ ] `--segment` appears in output
+- [ ] `--from` appears in output
+- [ ] `--around` appears in output
+- [ ] `--last` does not appear in output
+- [ ] `--offset` does not appear in output
 
 ```bash
 uv run meridian session search --help
 ```
 - [ ] Exit 0
 - [ ] `search` appears in output (case-insensitive)
+- [ ] `--workspace` appears in output
+- [ ] `--global` appears in output
 
 ```bash
 uv run meridian session repair --help

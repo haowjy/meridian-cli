@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import NamedTuple, Protocol, cast
 
@@ -25,6 +25,18 @@ _MAX_PREVIEW = 120
 class TranscriptMessage(NamedTuple):
     role: str
     content: str
+
+
+class TranscriptParseResult(NamedTuple):
+    segments: list[list[TranscriptMessage]]
+    total_compactions: int
+    segment_setups: tuple[str | None, ...]
+    consumed_setup_event_indexes: tuple[int, ...] = ()
+
+    @property
+    def segment_prologues(self) -> tuple[str | None, ...]:
+        """Backward-compatible alias for session setup slots."""
+        return self.segment_setups
 
 
 class TranscriptEventParser(Protocol):
@@ -347,23 +359,190 @@ def _provider_for_path(path: Path) -> TranscriptProvider:
     return JsonlTranscriptProvider()
 
 
+def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
+    if "event_type" in event and isinstance(event.get("payload"), dict):
+        nested = dict(cast("dict[str, object]", event["payload"]))
+        nested.setdefault("event_type", event["event_type"])
+        return _unwrap_seq_envelope(nested)
+    return event
+
+
+def _join_message_content(messages: list[TranscriptMessage]) -> str | None:
+    parts = [message.content.strip() for message in messages if message.content.strip()]
+    if not parts:
+        return None
+    return "\n\n".join(parts).strip()
+
+
+def _is_claude_compaction_boundary(event: dict[str, object]) -> bool:
+    event_type = normalize_harness_event_type(event)
+    subtype = str(event.get("subtype", "")).strip().lower()
+    return event_type == "system" and subtype == "compact_boundary"
+
+
+def _is_opencode_compaction_boundary(event: dict[str, object]) -> bool:
+    part = event.get("part")
+    if not isinstance(part, dict):
+        return False
+    part_payload = cast("dict[str, object]", part)
+    return str(part_payload.get("type", "")).strip().lower() == "compaction"
+
+
+def _extract_claude_system_prologue(event: dict[str, object]) -> str | None:
+    event_type = normalize_harness_event_type(event)
+    if event_type != "system":
+        return None
+    if _is_claude_compaction_boundary(event):
+        return None
+    return text_from_value(event.get("content")) or text_from_value(event.get("text")) or None
+
+
+def _extract_claude_boundary_handoff(event: dict[str, object]) -> str | None:
+    if not _is_claude_compaction_boundary(event):
+        return None
+    return (
+        text_from_value(event.get("summary"))
+        or text_from_value(event.get("handoff"))
+        or text_from_value(event.get("content"))
+        or None
+    )
+
+
+def _extract_claude_follow_on_handoff(
+    event: dict[str, object],
+    extracted_messages: list[TranscriptMessage],
+) -> str | None:
+    if normalize_harness_event_type(event) != "user":
+        return None
+    if not bool(event.get("isSynthetic")):
+        return None
+    return _join_message_content(extracted_messages)
+
+
+def _extract_opencode_follow_on_handoff(
+    event: dict[str, object],
+    extracted_messages: list[TranscriptMessage],
+) -> str | None:
+    role = str(event.get("role", "")).strip().lower()
+    mode = str(event.get("mode", "")).strip().lower()
+    agent = str(event.get("agent", "")).strip().lower()
+    if role != "assistant" or mode != "compaction" or agent != "compaction":
+        return None
+
+    part_texts: list[str] = []
+    for key in ("part", "parts"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            part_payload = cast("dict[str, object]", value)
+            if str(part_payload.get("type", "")).strip().lower() == "text":
+                text = text_from_value(part_payload.get("text"))
+                if text:
+                    part_texts.append(text)
+        elif isinstance(value, list):
+            for item in cast("list[object]", value):
+                if not isinstance(item, dict):
+                    continue
+                part_payload = cast("dict[str, object]", item)
+                if str(part_payload.get("type", "")).strip().lower() != "text":
+                    continue
+                text = text_from_value(part_payload.get("text"))
+                if text:
+                    part_texts.append(text)
+
+    if part_texts:
+        return "\n".join(part_texts).strip()
+    return _join_message_content(extracted_messages)
+
+
+def _parse_events_with_prologues(
+    events: Iterable[dict[str, object]],
+    *,
+    parser: TranscriptEventParser,
+) -> TranscriptParseResult:
+    segments: list[list[TranscriptMessage]] = [[]]
+    segment_setups: list[str | None] = [None]
+    total_compactions = 0
+    consumed_setup_event_indexes: list[int] = []
+    pending_follow_on_summary: tuple[int, str] | None = None
+
+    for event_index, event in enumerate(events):
+        normalized_event = _unwrap_seq_envelope(event)
+        extracted_messages, parser_boundary = parser.parse(event)
+
+        is_opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
+        is_claude_boundary = _is_claude_compaction_boundary(normalized_event)
+        boundary = parser_boundary or is_opencode_boundary
+
+        if boundary:
+            total_compactions += 1
+            segments.append([])
+            handoff = (
+                _extract_claude_boundary_handoff(normalized_event)
+                if is_claude_boundary
+                else None
+            )
+            segment_setups.append(handoff)
+            next_segment_index = len(segments) - 1
+            if handoff is None:
+                if is_claude_boundary:
+                    pending_follow_on_summary = (next_segment_index, "claude")
+                elif is_opencode_boundary:
+                    pending_follow_on_summary = (next_segment_index, "opencode")
+                else:
+                    pending_follow_on_summary = None
+            else:
+                pending_follow_on_summary = None
+            continue
+
+        if pending_follow_on_summary is not None:
+            segment_index, source = pending_follow_on_summary
+            setup_text: str | None = None
+            if source == "claude":
+                setup_text = _extract_claude_follow_on_handoff(
+                    normalized_event, extracted_messages
+                )
+            elif source == "opencode":
+                setup_text = _extract_opencode_follow_on_handoff(
+                    normalized_event, extracted_messages
+                )
+            pending_follow_on_summary = None
+            if setup_text:
+                segment_setups[segment_index] = setup_text
+                consumed_setup_event_indexes.append(event_index)
+                continue
+
+        if segment_setups[-1] is None:
+            prologue = _extract_claude_system_prologue(normalized_event)
+            if prologue:
+                segment_setups[-1] = prologue
+
+        if extracted_messages:
+            segments[-1].extend(extracted_messages)
+
+    return TranscriptParseResult(
+        segments=segments,
+        total_compactions=total_compactions,
+        segment_setups=tuple(segment_setups),
+        consumed_setup_event_indexes=tuple(consumed_setup_event_indexes),
+    )
+
+
 def parse_transcript_events(
     events: Sequence[dict[str, object]],
     *,
     parser: TranscriptEventParser | None = None,
 ) -> tuple[list[list[TranscriptMessage]], int]:
+    parsed = parse_transcript_events_with_prologues(events, parser=parser)
+    return parsed.segments, parsed.total_compactions
+
+
+def parse_transcript_events_with_prologues(
+    events: Sequence[dict[str, object]],
+    *,
+    parser: TranscriptEventParser | None = None,
+) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
-    segments: list[list[TranscriptMessage]] = [[]]
-    total_compactions = 0
-    for event in events:
-        extracted, boundary = resolved_parser.parse(event)
-        if boundary:
-            total_compactions += 1
-            segments.append([])
-            continue
-        if extracted:
-            segments[-1].extend(extracted)
-    return segments, total_compactions
+    return _parse_events_with_prologues(events, parser=resolved_parser)
 
 
 def iter_transcript_events(path: Path) -> Iterator[dict[str, object]]:
@@ -376,18 +555,17 @@ def parse_transcript_file(
     *,
     parser: TranscriptEventParser | None = None,
 ) -> tuple[list[list[TranscriptMessage]], int]:
+    parsed = parse_transcript_file_with_prologues(path, parser=parser)
+    return parsed.segments, parsed.total_compactions
+
+
+def parse_transcript_file_with_prologues(
+    path: Path,
+    *,
+    parser: TranscriptEventParser | None = None,
+) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
-    segments: list[list[TranscriptMessage]] = [[]]
-    total_compactions = 0
-    for event in iter_transcript_events(path):
-        extracted, boundary = resolved_parser.parse(event)
-        if boundary:
-            total_compactions += 1
-            segments.append([])
-            continue
-        if extracted:
-            segments[-1].extend(extracted)
-    return segments, total_compactions
+    return _parse_events_with_prologues(iter_transcript_events(path), parser=resolved_parser)
 
 
 __all__ = [
@@ -397,10 +575,13 @@ __all__ = [
     "OpenCodeStorageTranscriptProvider",
     "TranscriptEventParser",
     "TranscriptMessage",
+    "TranscriptParseResult",
     "TranscriptProvider",
     "_text_from_value",
     "iter_transcript_events",
     "parse_transcript_events",
+    "parse_transcript_events_with_prologues",
     "parse_transcript_file",
+    "parse_transcript_file_with_prologues",
     "text_from_value",
 ]

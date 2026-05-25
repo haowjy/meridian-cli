@@ -24,32 +24,81 @@ def _session_log(
             help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
         ),
     ] = "",
-    compaction: Annotated[
-        int,
+    segment: Annotated[
+        str | None,
         Parameter(
-            name=["--compaction", "-c"],
+            name="--segment",
             help=(
-                "Compaction segment index (0 = after last boundary, 1 = previous segment, etc.)."
+                "Segment selector: current | previous | N. "
+                "Numeric N is absolute from transcript start (segment 0 is initial)."
             ),
         ),
-    ] = 0,
-    last_n: Annotated[
+    ] = None,
+    global_scope: Annotated[
+        bool,
+        Parameter(
+            name="--global",
+            help=(
+                "Use one global stream across all segment entries (including entry 0 slots) "
+                "for --from/--before/--around. "
+                "Conflicts with --segment."
+            ),
+        ),
+    ] = False,
+    full: Annotated[
+        bool,
+        Parameter(
+            name="--full",
+            help="Show full selected segment instead of the default recent-entry window.",
+        ),
+    ] = False,
+    no_truncate: Annotated[
+        bool,
+        Parameter(
+            name="--no-truncate",
+            help="Show full entry/message content (default output truncates oversized content).",
+        ),
+    ] = False,
+    tail: Annotated[
+        list[int] | None,
+        Parameter(
+            name="--tail",
+            consume_multiple=True,
+            help=(
+                "Tail view over entries/chunks. Use `--tail` for last 5 entries, "
+                "or `--tail N` for last N entries."
+            ),
+        ),
+    ] = None,
+    from_ordinal: Annotated[
         int | None,
         Parameter(
-            name=["--last", "-n"],
-            help=(
-                "Number of messages to show inside the selected segment "
-                "(default: 5; use -n 0 for all)."
-            ),
+            name="--from",
+            help="Window start (segment-local by default; use --global for global ordinals).",
         ),
-    ] = 5,
-    offset: Annotated[
-        int,
+    ] = None,
+    before_ordinal: Annotated[
+        int | None,
         Parameter(
-            name="--offset",
-            help="Skip this many messages from the end of the selected segment.",
+            name="--before",
+            help="Window ends before this ordinal (segment-local by default).",
         ),
-    ] = 0,
+    ] = None,
+    around_ordinal: Annotated[
+        int | None,
+        Parameter(
+            name="--around",
+            help="Window centered on this ordinal (segment-local by default).",
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        Parameter(name="--limit", help="Window size for --from/--before (entries)."),
+    ] = None,
+    context: Annotated[
+        int | None,
+        Parameter(name="--context", help="Entries on each side for --around."),
+    ] = None,
     file_path: Annotated[
         str | None,
         Parameter(
@@ -58,14 +107,25 @@ def _session_log(
         ),
     ] = None,
 ) -> None:
-    mapped_last_n: int | None = None if last_n == 0 else last_n
+    resolved_tail: int | None = None
+    if tail is not None:
+        if len(tail) > 1:
+            raise ValueError("--tail accepts at most one value.")
+        resolved_tail = 5 if len(tail) == 0 else tail[0]
     emit(
         session_log_sync(
             SessionLogInput(
                 ref=ref,
-                compaction=compaction,
-                last_n=mapped_last_n,
-                offset=offset,
+                segment=segment,
+                global_scope=global_scope,
+                full=full,
+                truncate=not no_truncate,
+                tail=resolved_tail,
+                from_ordinal=from_ordinal,
+                before_ordinal=before_ordinal,
+                around_ordinal=around_ordinal,
+                limit=limit,
+                context=context,
                 file_path=file_path,
             )
         )
@@ -115,9 +175,11 @@ def _session_search(
     ref: Annotated[
         str,
         Parameter(
-            help=("Session reference: chat id (c123), spawn id (p123), or harness session id.")
+            help=(
+                "Optional session reference. If omitted, searches across the selected corpus."
+            )
         ),
-    ],
+    ] = "",
     file_path: Annotated[
         str | None,
         Parameter(
@@ -125,6 +187,21 @@ def _session_search(
             help="Read this session JSONL file directly instead of resolving REF.",
         ),
     ] = None,
+    work_id: Annotated[
+        str | None,
+        Parameter(
+            name="--work",
+            help="Search sessions attached to this work item (historical associations included).",
+        ),
+    ] = None,
+    workspace: Annotated[
+        bool,
+        Parameter(name="--workspace", help="Search current project plus workspace roots."),
+    ] = False,
+    global_scope: Annotated[
+        bool,
+        Parameter(name="--global", help="Search all local Meridian runtime roots."),
+    ] = False,
 ) -> None:
     emit(
         session_search_sync(
@@ -132,6 +209,9 @@ def _session_search(
                 query=query,
                 ref=ref,
                 file_path=file_path,
+                work_id=work_id,
+                workspace=workspace,
+                global_scope=global_scope,
             )
         )
     )
@@ -173,11 +253,16 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
             "meridian.session.log": (
                 "Examples:\n\n"
                 "  meridian session log c123\n\n"
-                "  meridian session log c123 -n 20\n\n"
-                "  meridian session log p107 --last 20\n\n"
-                "  meridian session log c123 -c 0 -n 0    # latest segment, all messages\n\n"
-                "  meridian session log c123 -c 2          # older segment "
-                "(higher numbers walk backward)\n"
+                "  meridian session log c123 --tail\n\n"
+                "  meridian session log c123 --tail 20\n\n"
+                "  meridian session log c123 --full\n\n"
+                "  meridian session log c123 --full --no-truncate\n\n"
+                "  meridian session log c123 --from 120 --limit 30\n\n"
+                "  meridian session log c123 --around 240 --context 8\n\n"
+                "  meridian session log c123 --global --around 240 --context 8\n\n"
+                "  meridian session log c123 --segment previous\n\n"
+                "  meridian session log c123 --segment current --from 0 --limit 1\n\n"
+                "  meridian session log c123 --before 240 --limit 30\n"
             ),
             "meridian.session.export": (
                 "Examples:\n\n"
@@ -185,10 +270,11 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session export p107 --include-spawns > transcript.md\n"
             ),
             "meridian.session.search": (
-                "Example:\n\n"
+                "Examples:\n\n"
                 '  meridian session search "auth bug" c123\n\n'
-                "Search is case-insensitive. Output includes navigation hints, for example:\n\n"
-                "  Navigate: meridian session log c123 -c 0 --offset 37 --last 10\n"
+                '  meridian session search "timeout" --workspace\n\n'
+                '  meridian session search "report" --work feature/api-audit\n\n'
+                "Search is case-insensitive. Each match includes a deterministic Open command.\n"
             ),
             "meridian.session.repair": (
                 "Examples:\n\n"
