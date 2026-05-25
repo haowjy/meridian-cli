@@ -521,13 +521,15 @@ def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPro
     )
 
 
-def build_launch_policy_snapshot(request: SpawnRequest) -> LaunchPolicySnapshot:
+def build_launch_policy_snapshot(
+    request: SpawnRequest,
+    *,
+    model_selection: ModelSelectionContext | None = None,
+) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 
     model = (request.model or "").strip()
     harness = (request.harness or "").strip()
-    if not model:
-        raise ValueError("Resolved request is missing model for launch policy snapshot.")
     if not harness:
         raise ValueError("Resolved request is missing harness for launch policy snapshot.")
     return LaunchPolicySnapshot(
@@ -547,11 +549,15 @@ def build_launch_policy_snapshot(request: SpawnRequest) -> LaunchPolicySnapshot:
         extra_args=request.extra_args,
         model_selection_requested_token=request.model_selection_requested_token,
         model_selection_selected_token=(
-            request.model_selection_requested_token or (request.model or "").strip() or None
+            model_selection.selected_model_token
+            if model_selection is not None
+            else request.model_selection_requested_token or (request.model or "").strip() or None
         ),
         model_selection_canonical_id=request.model_selection_canonical_id,
         model_selection_harness_provenance=request.model_selection_harness_provenance,
-        model_selection_harness_model_id=None,
+        model_selection_harness_model_id=(
+            model_selection.harness_model_id if model_selection is not None else None
+        ),
         matched_policy_rule=request.matched_policy_rule,
         fallback_chain=request.fallback_chain,
         terminal_surface_mode=request.terminal_surface_mode,
@@ -1399,6 +1405,15 @@ def prepare_launch_surface(
             **model_selection_update,
         }
     )
+    resolved_request = resolved_request.model_copy(
+        update={
+            "launch_policy_snapshot": request.launch_policy_snapshot
+            or build_launch_policy_snapshot(
+                resolved_request,
+                model_selection=model_selection,
+            )
+        }
+    )
     return PreparedLaunchSurface(
         request=resolved_request,
         harness=harness,
@@ -1442,7 +1457,13 @@ def _build_direct_surface(
     )
 
     return PreparedLaunchSurface(
-        request=request,
+        request=(
+            request
+            if request.launch_policy_snapshot is not None
+            else request.model_copy(
+                update={"launch_policy_snapshot": build_launch_policy_snapshot(request)}
+            )
+        ),
         harness=harness,
         composition_warnings=composition_warnings,
         content=PreparedLaunchContent(

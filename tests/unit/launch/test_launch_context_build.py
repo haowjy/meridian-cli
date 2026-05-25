@@ -261,8 +261,32 @@ def test_primary_bundle_auto_approval_projects_claude_accept_edits(
     )
 
     assert runtime_ctx.resolved_request.execution_policy.approval == "auto"
+    assert runtime_ctx.resolved_request.launch_policy_snapshot is not None
+    assert (
+        runtime_ctx.resolved_request.launch_policy_snapshot.model_selection_harness_model_id
+        == "claude-sonnet-4-6"
+    )
     assert "--permission-mode" in runtime_ctx.binding.argv
     assert "acceptEdits" in runtime_ctx.binding.argv
+
+
+def test_direct_launch_context_synthesizes_policy_snapshot(tmp_path: Path) -> None:
+    runtime_ctx = build_launch_context(
+        spawn_id="p-direct-snapshot",
+        request=SpawnRequest(
+            model="gpt-5.4",
+            harness=HarnessId.CODEX.value,
+            prompt="direct prompt",
+        ),
+        runtime=_build_launch_runtime(tmp_path=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    snapshot = runtime_ctx.resolved_request.launch_policy_snapshot
+    assert snapshot is not None
+    assert snapshot.model == "gpt-5.4"
+    assert snapshot.harness == HarnessId.CODEX.value
 
 
 def test_spawn_prepare_reuses_policy_snapshot_over_live_env(
