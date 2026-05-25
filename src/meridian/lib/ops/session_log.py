@@ -91,14 +91,6 @@ class SessionLogOutput(BaseModel):
     def messages(self) -> tuple[SessionLogEntryMessage, ...]:
         return tuple(message for entry in self.entries for message in entry.messages)
 
-    @property
-    def total_messages(self) -> int:
-        return self.total_entries
-
-    @property
-    def segment_messages(self) -> int | None:
-        return self.segment_entries
-
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         source = self.source or ""

@@ -50,14 +50,6 @@ class SessionSearchMatch(BaseModel):
     content_preview: str
     open_command: str
 
-    @property
-    def message_ordinal(self) -> int:
-        return self.entry_ordinal
-
-    @property
-    def message_index(self) -> int:
-        return self.segment_start_message
-
 
 class SessionSearchOutput(BaseModel):
     model_config = ConfigDict(frozen=True)

@@ -18,16 +18,6 @@ class SessionWindow(NamedTuple):
     previous_from: int | None
     next_from: int | None
 
-    @property
-    def messages(self) -> list[AbsoluteTranscriptEntry]:
-        """Backward-compatible alias while call sites migrate to entry naming."""
-        return self.entries
-
-    @property
-    def total_messages(self) -> int:
-        """Backward-compatible alias while call sites migrate to entry naming."""
-        return self.total_entries
-
 
 def _window_bounds(
     entries: list[AbsoluteTranscriptEntry],

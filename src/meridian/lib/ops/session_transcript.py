@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 from typing import Literal, NamedTuple
 
+from meridian.lib.core.command_strings import format_command_for_display
 from meridian.lib.harness.transcript import TranscriptMessage, parse_transcript_file_with_prologues
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.session_target import SessionLogTarget, resolve_session_log_target
@@ -247,7 +247,7 @@ def _route_from_request(
 
 
 def route_for_corpus_target(target: SessionLogTarget) -> SessionLogRoute:
-    return SessionLogRoute(mode="file", value=target.file_path.as_posix())
+    return SessionLogRoute(mode="file", value=str(target.file_path))
 
 
 def parse_session_target(
@@ -318,33 +318,37 @@ def build_session_log_command(
     around_ordinal: int | None = None,
     context: int | None = None,
 ) -> str:
+    command: list[str] = ["meridian", "session", "log"]
     if route.mode == "file":
-        base = f"meridian session log --file {shlex.quote(route.value)}"
+        command.extend(["--file", route.value])
     else:
-        base = f"meridian session log {shlex.quote(route.value)}"
+        command.append(route.value)
     if global_scope:
         if segment_index is not None:
             raise ValueError("--global cannot be combined with --segment.")
-        base = f"{base} --global"
+        command.append("--global")
     if segment_index is not None:
-        base = f"{base} --segment {segment_index}"
+        command.extend(["--segment", str(segment_index)])
 
     if from_ordinal is not None:
         if limit is None:
             raise ValueError("--from requires --limit.")
-        return f"{base} --from {from_ordinal} --limit {limit}"
+        command.extend(["--from", str(from_ordinal), "--limit", str(limit)])
+        return format_command_for_display(command)
 
     if before_ordinal is not None:
         if limit is None:
             raise ValueError("--before requires --limit.")
-        return f"{base} --before {before_ordinal} --limit {limit}"
+        command.extend(["--before", str(before_ordinal), "--limit", str(limit)])
+        return format_command_for_display(command)
 
     if around_ordinal is not None:
         if context is None:
             raise ValueError("--around requires --context.")
-        return f"{base} --around {around_ordinal} --context {context}"
+        command.extend(["--around", str(around_ordinal), "--context", str(context)])
+        return format_command_for_display(command)
 
-    return base
+    return format_command_for_display(command)
 
 
 __all__ = [
