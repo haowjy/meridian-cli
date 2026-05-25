@@ -317,12 +317,12 @@ def test_primary_launch_policy_snapshot_persists_loaded_skills(
     snapshot = runtime_ctx.resolved_request.launch_policy_snapshot
     assert snapshot is not None
     assert snapshot.skills == ("testing-principles",)
-    assert snapshot.skill_paths == (skill_path.resolve().as_posix(),)
+    assert snapshot.skill_paths == (str(skill_path.resolve()),)
     assert snapshot.loaded_skills == (
         SkillContent(
             name="testing-principles",
             description="testing-principles skill",
-            path=skill_path.resolve().as_posix(),
+            path=str(skill_path.resolve()),
             content=skill_path.read_text(encoding="utf-8"),
             skill_type="reference",
         ),

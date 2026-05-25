@@ -687,5 +687,5 @@ def test_snapshot_replay_uses_persisted_loaded_skills_after_live_catalog_changes
     assert replayed_policy.resolved_skills.skill_names == ("testing-principles",)
     assert replayed_policy.resolved_skills.loaded_skills == original_skills
     assert replayed_policy.resolved_skills.loaded_skills[0].name == "testing-principles"
-    assert replayed_policy.resolved_skills.loaded_skills[0].path == skill_path.as_posix()
+    assert replayed_policy.resolved_skills.loaded_skills[0].path == str(skill_path)
     assert replayed_policy.resolved_skills.loaded_skills[0].content == original_skills[0].content
