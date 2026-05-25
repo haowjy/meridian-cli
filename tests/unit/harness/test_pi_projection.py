@@ -23,8 +23,9 @@ from meridian.lib.state.user_paths import get_user_home
 
 
 def _write_extension_fixture(root: Path) -> None:
-    (root / "background-tasks").mkdir(parents=True, exist_ok=True)
-    (root / "background-tasks" / "index.js").write_text("export default {}\n", encoding="utf-8")
+    for extension_name in ("managed-bash", "meridian-spawn-watch"):
+        (root / extension_name).mkdir(parents=True, exist_ok=True)
+        (root / extension_name / "index.js").write_text("export default {}\n", encoding="utf-8")
 
 
 def _bundle_path(root: Path, name: str) -> str:
@@ -73,7 +74,8 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
-        _bundle_path(extension_source_root, "background-tasks"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     ]
     assert command[-2:] == ["--provider", "anthropic"]
     assert "solve this" not in command
@@ -114,7 +116,7 @@ def test_pi_rpc_projection_omits_no_extensions_when_load_all_enabled(
     extension_values = [
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
-    assert _bundle_path(extension_source_root, "background-tasks") in extension_values
+    assert _bundle_path(extension_source_root, "meridian-spawn-watch") in extension_values
     assert str((user_extensions / "custom-ext" / "index.js").resolve()) in extension_values
 
 
@@ -192,7 +194,8 @@ def test_pi_native_projection_loads_all_extensions(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
-        _bundle_path(extension_source_root, "background-tasks"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     ]
     assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
     assert command[command.index("--append-system-prompt") + 1] == "native primary"
@@ -216,7 +219,10 @@ def test_pi_extension_projection_non_interactive_loads_background_tasks(
         )
     )
 
-    assert entrypoints == (_bundle_path(extension_source_root, "background-tasks"),)
+    assert entrypoints == (
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
+    )
 
 
 def test_pi_extension_projection_spawn_watch_alias_loads_background_tasks(
@@ -235,7 +241,7 @@ def test_pi_extension_projection_spawn_watch_alias_loads_background_tasks(
         )
     )
 
-    assert entrypoints == (_bundle_path(extension_source_root, "background-tasks"),)
+    assert entrypoints == (_bundle_path(extension_source_root, "meridian-spawn-watch"),)
 
 
 def test_pi_all_extension_entrypoints_keeps_interactive_managed_bash_default(
@@ -248,7 +254,10 @@ def test_pi_all_extension_entrypoints_keeps_interactive_managed_bash_default(
 
     entrypoints = pi_extension_projection.resolve_pi_all_extension_entrypoints()
 
-    assert entrypoints == (_bundle_path(extension_source_root, "background-tasks"),)
+    assert entrypoints == (
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
+    )
 
 
 def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false() -> None:
@@ -316,7 +325,8 @@ def test_pi_adapter_resolve_launch_spec_uses_all_extensions_for_primary(
     )
 
     assert spec.pi_extension_entrypoints == (
-        _bundle_path(extension_source_root, "background-tasks"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     )
     assert spec.load_all_pi_extensions is False
 
@@ -339,7 +349,8 @@ def test_pi_adapter_resolve_launch_spec_uses_background_tasks_for_spawned_non_in
     )
 
     assert spec.pi_extension_entrypoints == (
-        _bundle_path(extension_source_root, "background-tasks"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     )
 
 
@@ -388,5 +399,5 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
         pi_extension_projection.resolve_pi_all_extension_entrypoints()
 
     message = str(exc_info.value)
-    assert "background-tasks" in message and "index.js" in message
+    assert "managed-bash" in message and "index.js" in message
     assert "Build Pi extensions first" in message

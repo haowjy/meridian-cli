@@ -22,7 +22,7 @@ def configure_pi_extension_projection(
 
     source_root = tmp_path / "pi-extension-source"
     target_root = tmp_path / "pi-extension-target"
-    for extension_name in ("background-tasks",):
+    for extension_name in ("managed-bash", "meridian-spawn-watch"):
         entrypoint = source_root / extension_name / "index.js"
         entrypoint.parent.mkdir(parents=True, exist_ok=True)
         entrypoint.write_text("export default {}\n", encoding="utf-8")

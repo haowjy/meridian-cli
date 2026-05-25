@@ -14,9 +14,13 @@ from meridian.lib.harness.pi_paths import (
 
 _EXTENSION_SOURCE_ROOT_OVERRIDE: Final[str] = "MERIDIAN_PI_EXTENSION_SOURCE_ROOT"
 
-_BACKGROUND_TASKS_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
-    "background-tasks",
-    "background-tasks/index.js",
+_MANAGED_BASH_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "managed-bash",
+    "managed-bash/index.js",
+)
+_MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH: Final[tuple[str, str]] = (
+    "meridian-spawn-watch",
+    "meridian-spawn-watch/index.js",
 )
 
 
@@ -33,27 +37,33 @@ class PiExtensionLaunchProfile:
     interactive: bool
 
     def bundle_enabled(self) -> bool:
-        """Whether the unified background-tasks bundle should load."""
+        """Whether any Meridian Pi extension bundle should load."""
 
         return self.background_tasks_enabled or self.spawn_watch_enabled
 
 
-def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
-    """Legacy alias — spawn-watch merged into background-tasks."""
+def resolve_pi_managed_bash_entrypoint() -> tuple[str, ...]:
+    """Resolve the Meridian managed-bash Pi extension entrypoint."""
 
-    return resolve_pi_background_tasks_entrypoint()
+    return (_resolve_bundle_entrypoint(*_MANAGED_BASH_EXTENSION_RELATIVE_PATH),)
+
+
+def resolve_pi_spawn_watch_entrypoint() -> tuple[str, ...]:
+    """Resolve the Meridian spawn-watch Pi extension entrypoint."""
+
+    return (_resolve_bundle_entrypoint(*_MERIDIAN_SPAWN_WATCH_EXTENSION_RELATIVE_PATH),)
 
 
 def resolve_pi_lifecycle_extension_entrypoint() -> tuple[str, ...]:
-    """Legacy alias — lifecycle bundle merged into background-tasks."""
+    """Legacy alias for the spawn-watch policy extension."""
 
-    return resolve_pi_background_tasks_entrypoint()
+    return resolve_pi_spawn_watch_entrypoint()
 
 
 def resolve_pi_background_tasks_entrypoint() -> tuple[str, ...]:
-    """Resolve the Meridian background-tasks Pi extension entrypoint."""
+    """Legacy alias for the managed-bash mechanism extension."""
 
-    return (_resolve_bundle_entrypoint(*_BACKGROUND_TASKS_EXTENSION_RELATIVE_PATH),)
+    return resolve_pi_managed_bash_entrypoint()
 
 
 def resolve_pi_extension_entrypoints(
@@ -61,13 +71,16 @@ def resolve_pi_extension_entrypoints(
 ) -> tuple[str, ...]:
     """Resolve Meridian ``-e`` bundle paths for one launch."""
 
-    if not profile.bundle_enabled():
-        return ()
-    return resolve_pi_background_tasks_entrypoint()
+    entrypoints: list[str] = []
+    if profile.background_tasks_enabled:
+        entrypoints.extend(resolve_pi_managed_bash_entrypoint())
+    if profile.spawn_watch_enabled:
+        entrypoints.extend(resolve_pi_spawn_watch_entrypoint())
+    return tuple(entrypoints)
 
 
 def resolve_pi_all_extension_entrypoints() -> tuple[str, ...]:
-    """Resolve the default Meridian Pi bundle (background-tasks only)."""
+    """Resolve the default Meridian Pi extension bundles."""
 
     return resolve_pi_extension_entrypoints(
         PiExtensionLaunchProfile(
@@ -153,5 +166,6 @@ __all__ = [
     "resolve_pi_background_tasks_entrypoint",
     "resolve_pi_extension_entrypoints",
     "resolve_pi_lifecycle_extension_entrypoint",
+    "resolve_pi_managed_bash_entrypoint",
     "resolve_pi_spawn_watch_entrypoint",
 ]

@@ -1,6 +1,6 @@
 /**
  * TS mirror of Python `PiExtensionLaunchProfile` / `[harness.pi]` bundle toggles.
- * Python omits disabled bundles from `-e`; extensions no-op when loaded anyway.
+ * Python normally omits disabled bundles from `-e`; extensions can also no-op when loaded directly.
  */
 
 export type PiExtensionLaunchProfile = {
@@ -69,13 +69,16 @@ export function resolvePiExtensionLaunchProfile(
   };
 }
 
-export function isBackgroundTasksExtensionEnabled(interactive = true): boolean {
+export function isManagedBashExtensionEnabled(interactive = true): boolean {
   const launch = resolvePiExtensionLaunchProfile(interactive);
   return launch.interactive && launch.background_tasks_enabled;
 }
 
-/** @deprecated Spawn-watch merged into background-tasks; alias for bundle gate. */
+/** @deprecated Use isManagedBashExtensionEnabled. */
+export function isBackgroundTasksExtensionEnabled(interactive = true): boolean {
+  return isManagedBashExtensionEnabled(interactive);
+}
+
 export function isSpawnWatchExtensionEnabled(): boolean {
-  const profile = resolvePiHarnessProfile();
-  return profile.background_tasks_enabled || profile.spawn_watch_enabled;
+  return resolvePiHarnessProfile().spawn_watch_enabled;
 }

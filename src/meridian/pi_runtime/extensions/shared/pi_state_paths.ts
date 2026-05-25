@@ -20,3 +20,27 @@ export function resolveStateRoot(): string {
   }
   return path.join(process.cwd(), ".meridian");
 }
+
+export function currentSpawnIdFromEnv(): string {
+  return process.env.MERIDIAN_SPAWN_ID?.trim() || "unknown";
+}
+
+export function resolvePiBashDir(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolveStateRoot(), "pi-bash", spawnId);
+}
+
+export function resolveBashRecordsPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "bash-records.json");
+}
+
+export function resolveLastNotificationPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "last-notification.json");
+}
+
+export function resolveBashLogsDir(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "logs");
+}
+
+export function resolveSpawnsDir(): string {
+  return path.join(resolveStateRoot(), "spawns");
+}

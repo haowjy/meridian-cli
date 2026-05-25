@@ -42,6 +42,7 @@ class SpawnRecord(BaseModel):
     id: str
     chat_id: str | None
     parent_id: str | None
+    originating_bash_id: str | None = None
     model: str | None
     agent: str | None
     agent_path: str | None
