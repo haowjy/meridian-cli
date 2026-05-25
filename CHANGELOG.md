@@ -5,7 +5,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Pi `/ps` and `/mspawn` now share a full-screen selectable UI with row preview, `j/k` navigation, `enter` action, and `r` refresh.
+- Pi `/ps` and `/mspawn` now share a full-screen selectable UI with row preview, colored key hints, `j/k` navigation, `enter` action, and `r` refresh.
+- Pi `/ps` now sorts running bash tasks before completed tasks.
 
 ### Added
 - Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.

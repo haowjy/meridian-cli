@@ -126,6 +126,17 @@ function padLine(content: string, width: number, theme: Theme): string {
   return `${theme.fg("dim", "│")}${truncated}${" ".repeat(pad)}${theme.fg("dim", "│")}`;
 }
 
+function renderFooter(footer: string, theme: Theme): string {
+  return footer
+    .split(" · ")
+    .map((segment) => {
+      const match = segment.match(/^(\S+)(.*)$/);
+      if (!match) return theme.fg("dim", segment);
+      return `${theme.fg("accent", match[1] ?? "")}${theme.fg("dim", match[2] ?? "")}`;
+    })
+    .join(theme.fg("dim", " · "));
+}
+
 function renderTableLine<Row>(
   row: Row | null,
   columns: SelectablePanelColumn<Row>[],
@@ -181,7 +192,7 @@ export function renderSelectablePanel<Row>(
     }
   }
 
-  const footerLines = [borderLine(width, "├", "─", "┤", theme), padLine(theme.fg("dim", footer), width, theme)];
+  const footerLines = [borderLine(width, "├", "─", "┤", theme), padLine(renderFooter(footer, theme), width, theme)];
   const targetRows = Math.max(16, terminalRows - 1);
   const spacerCount = Math.max(0, targetRows - topLines.length - tableLines.length - footerLines.length);
   const spacerLines = Array.from({ length: spacerCount }, () => padLine("", width, theme));

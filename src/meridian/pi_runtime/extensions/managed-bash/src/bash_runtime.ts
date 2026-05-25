@@ -372,6 +372,7 @@ export class BashRuntime {
   private listRows(includeCompleted: boolean): Array<Record<string, unknown>> {
     return [...this.records.values()]
       .filter((record) => includeCompleted || record.status === "running")
+      .sort(compareBashRecordsForPanel)
       .map((record) => ({
         type: "bash",
         bash_id: record.bash_id,
@@ -457,6 +458,13 @@ function normalizeTimeoutMin(value: number | undefined, fallback: number): numbe
     throw new Error(`timeout_min must be between 1 and ${MAX_TIMEOUT_MIN}`);
   }
   return Math.floor(value);
+}
+
+function compareBashRecordsForPanel(a: BashRecord, b: BashRecord): number {
+  const statusRank = (record: BashRecord): number => (record.status === "running" ? 0 : 1);
+  const rankDelta = statusRank(a) - statusRank(b);
+  if (rankDelta !== 0) return rankDelta;
+  return b.started_at_ms - a.started_at_ms;
 }
 
 function durationSecs(record: BashRecord): number {
