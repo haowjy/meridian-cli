@@ -5,6 +5,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
@@ -110,6 +111,7 @@ class SpawnRequest(BaseModel):
     warning: str | None = None
     agent_metadata: dict[str, str] = Field(default_factory=_empty_agent_metadata)
     prompt_payload: RequestPromptPayload = Field(default_factory=RequestPromptPayload)
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
     # Resolved metadata (computed at prepare time; NOT used by executors for composition)
     skill_paths: tuple[str, ...] = ()
@@ -205,6 +207,7 @@ __all__ = [
     "ExecutionBudget",
     "LaunchArgvIntent",
     "LaunchCompositionSurface",
+    "LaunchPolicySnapshot",
     "LaunchRuntime",
     "RequestPromptPayload",
     "RetryPolicy",

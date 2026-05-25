@@ -1588,6 +1588,38 @@ def _model_for_follow_up(source_spawn: SpawnRecord, override_model: str) -> str:
     return (source_spawn.model or "").strip()
 
 
+def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
+    """Reject launch-contract changes for exact continuation."""
+
+    rejected: list[str] = []
+    if payload.model.strip():
+        rejected.append("--model")
+    if payload.agent is not None and payload.agent.strip():
+        rejected.append("--agent")
+    if payload.skills:
+        rejected.append("--skills")
+    if (payload.harness or "").strip():
+        rejected.append("--harness")
+    if payload.approval is not None:
+        rejected.append("--approval")
+    if payload.sandbox is not None:
+        rejected.append("--sandbox")
+    if payload.effort is not None:
+        rejected.append("--effort")
+    if payload.autocompact is not None:
+        rejected.append("--autocompact")
+    if payload.autocompact_pct is not None:
+        rejected.append("--autocompact-pct")
+    if payload.passthrough_args:
+        rejected.append("--")
+    if rejected:
+        flags = ", ".join(rejected)
+        raise ValueError(
+            f"Cannot use policy-changing option(s) with spawn --continue: {flags}. "
+            "Use --fork-fresh to change launch identity or policy."
+        )
+
+
 def _with_command(result: SpawnActionOutput, command: str) -> SpawnActionOutput:
     return result.model_copy(update={"command": command})
 
@@ -1772,6 +1804,9 @@ def spawn_continue_sync(
             f"Spawn '{resolved_spawn_id}' has no recorded session — cannot continue/fork."
         )
 
+    _reject_continue_policy_overrides(payload)
+    source_snapshot = source_spawn.launch_policy_snapshot
+
     requested_harness = (payload.harness or "").strip() or None
     source_harness = (resolved_reference.harness or "").strip() or None
     if (
@@ -1787,19 +1822,37 @@ def spawn_continue_sync(
     derived_prompt = _prompt_for_follow_up(source_spawn, resolved_spawn_id, payload.prompt)
     resolved_goal = payload.goal if payload.goal is not None else source_spawn.goal
     launch_options = payload.launch_option_updates()
-    launch_options["harness"] = requested_harness
+    if source_snapshot is not None:
+        launch_options.update(
+            {
+                "approval": source_snapshot.execution_policy.approval,
+                "autocompact": source_snapshot.execution_policy.autocompact,
+                "autocompact_pct": source_snapshot.execution_policy.autocompact_pct,
+                "effort": source_snapshot.execution_policy.effort,
+                "sandbox": source_snapshot.execution_policy.sandbox,
+                "harness": source_snapshot.harness,
+                "passthrough_args": source_snapshot.extra_args,
+            }
+        )
+    else:
+        launch_options["harness"] = requested_harness
     create_input = SpawnCreateInput(
         prompt=derived_prompt,
-        model=_model_for_follow_up(source_spawn, payload.model),
+        model=(
+            source_snapshot.model
+            if source_snapshot is not None
+            else _model_for_follow_up(source_spawn, payload.model)
+        ),
         files=payload.files,
         template_vars=payload.template_vars,
-        agent=payload.agent,
-        skills=payload.skills,
+        agent=source_snapshot.agent if source_snapshot is not None else payload.agent,
+        skills=source_snapshot.skills if source_snapshot is not None else payload.skills,
         goal=resolved_goal,
         desc=payload.desc,
         work=payload.work,
         worktree=payload.worktree,
         repo=payload.repo,
+        launch_policy_snapshot=source_snapshot,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
             continue_harness=resolved_reference.harness,
@@ -1815,9 +1868,13 @@ def spawn_continue_sync(
         ),
         **launch_options,
     )
-    target_harness = _resolve_effective_fork_target_harness(
-        create_input,
-        resolved_project_root=project_root,
+    target_harness = (
+        source_snapshot.harness
+        if source_snapshot is not None
+        else _resolve_effective_fork_target_harness(
+            create_input,
+            resolved_project_root=project_root,
+        )
     )
     if source_harness is not None and source_harness != target_harness:
         raise ValueError(

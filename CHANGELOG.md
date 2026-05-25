@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Spawn rows now persist `launch_policy_snapshot`; older `state.json` files without the field still read cleanly.
+
+### Changed
+- `spawn --continue` now replays the source launch policy snapshot and rejects policy-changing overrides.
+
 ## [0.2.7] - 2026-05-25
 
 ### Added

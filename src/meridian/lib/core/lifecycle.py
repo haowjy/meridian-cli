@@ -57,7 +57,12 @@ if TYPE_CHECKING:
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
-    from meridian.lib.state.spawn.model import LaunchMode, SpawnOrigin, SpawnRecord
+    from meridian.lib.state.spawn.model import (
+        LaunchMode,
+        LaunchPolicySnapshot,
+        SpawnOrigin,
+        SpawnRecord,
+    )
     from meridian.lib.state.spawn_store import FinalizeOutcome
 
 logger = structlog.get_logger(__name__)
@@ -245,6 +250,7 @@ class SpawnLifecycleService:
         launch_mode: LaunchMode | None = None,
         worker_pid: int | None = None,
         runner_pid: int | None = None,
+        launch_policy_snapshot: LaunchPolicySnapshot | None = None,
         status: SpawnStatus = "running",
         started_at: str | None = None,
         clock: Clock | None = None,
@@ -276,6 +282,7 @@ class SpawnLifecycleService:
                 launch_mode=launch_mode,
                 worker_pid=worker_pid,
                 runner_pid=runner_pid,
+                launch_policy_snapshot=launch_policy_snapshot,
                 status=status,
                 started_at=started_at,
                 clock=clock,

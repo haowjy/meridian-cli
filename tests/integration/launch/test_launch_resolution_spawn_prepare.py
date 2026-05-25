@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.context import build_launch_context
@@ -94,6 +95,47 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.resolved_request.prompt
     assert "# Meridian Agents" not in preview.resolved_request.prompt
     assert "# Meridian Agents" in preview.projected_content.system_prompt
+
+
+def test_spawn_prepare_profile_resolved_claude_approval_auto_projects_accept_edits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(approval="auto"),
+        provenance={
+            "model_source": "profile-default",
+            "harness_source": "provider",
+            "approval_source": "profile-default",
+        },
+    )
+    write_agent(tmp_path, name="coder", model="claude-sonnet-4-6")
+
+    preview = build_launch_context(
+        spawn_id="dry-run-claude-spawn-prepare-approval-auto",
+        request=SpawnRequest(
+            prompt="task prompt",
+            prompt_is_composed=False,
+            agent="coder",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.resolved_request.execution_policy.approval == "auto"
+    assert "--permission-mode" in preview.binding.argv
+    assert "acceptEdits" in preview.binding.argv
 
 
 @pytest.mark.parametrize(
@@ -298,3 +340,39 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
     assert "continue the task" in projected.user_turn_content
     assert "# Skill:" not in projected.user_turn_content
     assert "# Meridian Agents" not in projected.user_turn_content
+
+
+def test_spawn_prepare_claude_projects_profile_auto_approval_without_cli_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-5",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(approval="auto"),
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-claude-spawn-prepare-approval-auto",
+        request=SpawnRequest(
+            prompt="task",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness="claude",
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    argv = preview.binding.argv
+    assert "--permission-mode" in argv
+    assert "acceptEdits" in argv

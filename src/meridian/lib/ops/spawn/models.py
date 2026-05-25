@@ -6,6 +6,7 @@ from typing import NotRequired, TypedDict
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_serializer
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.request import SessionRequest
@@ -125,6 +126,7 @@ class SpawnCreateInput(SpawnLaunchOptions):
     worktree: bool | None = None
     repo: str | None = None
     session: SessionRequest = SessionRequest()
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
     @field_validator("goal", mode="before")
     @classmethod

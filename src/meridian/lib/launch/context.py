@@ -103,6 +103,7 @@ from .reference import (
 from .request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
+    LaunchPolicySnapshot,
     LaunchRuntime,
     RequestPromptPayload,
     SpawnRequest,
@@ -520,6 +521,43 @@ def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPro
     )
 
 
+def build_launch_policy_snapshot(request: SpawnRequest) -> LaunchPolicySnapshot:
+    """Build a durable launch-policy snapshot from a resolved request."""
+
+    model = (request.model or "").strip()
+    harness = (request.harness or "").strip()
+    if not model:
+        raise ValueError("Resolved request is missing model for launch policy snapshot.")
+    if not harness:
+        raise ValueError("Resolved request is missing harness for launch policy snapshot.")
+    return LaunchPolicySnapshot(
+        model=model,
+        harness=harness,
+        agent=(request.agent or "").strip() or None,
+        agent_path=(request.agent_metadata.get("session_agent_path") or "").strip() or None,
+        agent_description=(
+            request.agent_metadata.get("session_agent_description") or ""
+        ).strip(),
+        agent_profile_body=request.agent_metadata.get("session_agent_profile_body") or "",
+        skills=request.skills,
+        skill_paths=request.skill_paths,
+        execution_policy=request.execution_policy,
+        tools=request.tools,
+        mcp_tools=request.mcp_tools,
+        extra_args=request.extra_args,
+        model_selection_requested_token=request.model_selection_requested_token,
+        model_selection_selected_token=(
+            request.model_selection_requested_token or (request.model or "").strip() or None
+        ),
+        model_selection_canonical_id=request.model_selection_canonical_id,
+        model_selection_harness_provenance=request.model_selection_harness_provenance,
+        model_selection_harness_model_id=None,
+        matched_policy_rule=request.matched_policy_rule,
+        fallback_chain=request.fallback_chain,
+        terminal_surface_mode=request.terminal_surface_mode,
+    )
+
+
 def materialize_launch_artifacts(
     *,
     harness: SubprocessHarness,
@@ -913,6 +951,7 @@ def compile_prepared_policy_surface(
             harness_registry=harness_registry,
             skills_readonly=dry_run,
             requested_skills=request.skills,
+            policy_snapshot=request.launch_policy_snapshot,
         )
     )
 
@@ -1222,6 +1261,7 @@ def prepare_launch_surface(
     active_work_dir = prepared_policy.active_work_dir
     policies = prepared_policy.resolved_policy
     profile = policies.profile
+    using_policy_snapshot = request.launch_policy_snapshot is not None
     has_profile = profile is not None
     execution_policy = policies.execution_policy
     model_selection = policies.model_selection
@@ -1292,6 +1332,10 @@ def prepare_launch_surface(
     session_agent_path = resolve_profile_path(profile)
     if resolved_agent_name is not None:
         agent_metadata["session_agent"] = resolved_agent_name
+    if profile is not None and profile.description.strip():
+        agent_metadata["session_agent_description"] = profile.description.strip()
+    if profile is not None and profile.body.strip():
+        agent_metadata["session_agent_profile_body"] = profile.body
     if session_agent_path:
         agent_metadata["session_agent_path"] = session_agent_path
     adhoc_agent_payload = ""
@@ -1314,7 +1358,9 @@ def prepare_launch_surface(
         agent_inventory_prompt=content.agent_inventory_prompt,
         context_prompt=content.context_prompt,
     )
-    profile_tools_for_nested_deny = policies.resolved_tools if profile is not None else None
+    profile_tools_for_nested_deny = (
+        policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
+    )
 
     resolved_request = request.model_copy(
         update={
@@ -1326,10 +1372,16 @@ def prepare_launch_surface(
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
             "mcp_tools": (
-                policies.resolved_mcp_tools if profile is not None else request.mcp_tools
+                policies.resolved_mcp_tools
+                if (profile is not None or using_policy_snapshot)
+                else request.mcp_tools
             ),
             "execution_policy": execution_policy,
-            "tools": policies.resolved_tools if profile is not None else request.tools,
+            "tools": (
+                policies.resolved_tools
+                if (profile is not None or using_policy_snapshot)
+                else request.tools
+            ),
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1357,7 +1409,7 @@ def prepare_launch_surface(
             seed_session_args=seed_session_args,
         ),
         profile_tools_for_nested_deny=profile_tools_for_nested_deny,
-        has_profile_for_nested_deny=has_profile,
+        has_profile_for_nested_deny=has_profile or using_policy_snapshot,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1839,6 +1891,7 @@ __all__ = [
     "bind_launch_context",
     "build_child_runtime_env_overrides",
     "build_launch_context",
+    "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
     "merge_env_overrides",

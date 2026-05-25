@@ -9,11 +9,16 @@ test_spawn_store_finalize.py.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_start import SpawnStartMetadata
+from meridian.lib.state.paths import RuntimePaths
+from meridian.lib.state.spawn.repository import read_state
 from meridian.lib.state.spawn_store import (
     finalize_spawn,
     get_spawn,
@@ -122,6 +127,69 @@ def test_start_spawn_persists_goal_from_start_metadata(tmp_path: Path) -> None:
     assert row.desc == "goal test"
     assert row.work_id == "w-goal"
     assert row.goal == "keep scope tight"
+
+
+def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness="claude",
+        agent="coder",
+        skills=("testing-principles",),
+        execution_policy=ResolvedExecutionPolicy(
+            approval="auto",
+            sandbox="workspace-write",
+            effort="high",
+        ),
+        tools={"write": "allow"},
+        mcp_tools=("github",),
+        extra_args=("--append-system-prompt", "stable"),
+        terminal_surface_mode="pty_mediated",
+        matched_policy_rule="profile-default",
+        model_selection_requested_token="sonnet",
+        model_selection_canonical_id="claude-sonnet-4-6",
+        model_selection_harness_provenance="alias-default",
+        fallback_chain=({"source": "snapshot"},),
+    )
+
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="claude-sonnet-4-6",
+            agent="coder",
+            harness="claude",
+            prompt="hello",
+            launch_policy_snapshot=snapshot,
+        )
+    )
+
+    row = get_spawn(runtime_root, spawn_id)
+    assert row is not None
+    assert row.launch_policy_snapshot == snapshot
+
+
+def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="gpt-5.4",
+            agent="coder",
+            harness="codex",
+            prompt="hello",
+        )
+    )
+    paths = RuntimePaths.from_root_dir(runtime_root)
+    state_path = paths.spawns_dir / spawn_id / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload.pop("launch_policy_snapshot", None)
+    state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    row = read_state(paths.spawns_dir, spawn_id)
+    assert row is not None
+    assert row.launch_policy_snapshot is None
 
 
 def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:

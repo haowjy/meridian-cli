@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+
 
 @dataclass(frozen=True)
 class SpawnStartMetadata:
@@ -12,3 +14,4 @@ class SpawnStartMetadata:
     desc: str | None = None
     work_id: str | None = None
     goal: str | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
@@ -32,7 +33,7 @@ from .launch_types import (
     ResolvedLaunchRouting,
     TerminalSurfaceMode,
 )
-from .request import LaunchCompositionSurface
+from .request import LaunchCompositionSurface, LaunchPolicySnapshot
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -70,6 +71,7 @@ class SurfacePolicyInput:
     harness_registry: HarnessRegistry
     skills_readonly: bool = True
     requested_skills: tuple[str, ...] = ()
+    policy_snapshot: LaunchPolicySnapshot | None = None
     supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
         _DEFAULT_EXECUTION_POLICY_FIELDS
     )
@@ -524,12 +526,98 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     )
 
 
+def _resolve_policy_from_snapshot(
+    *,
+    surface: SurfacePolicyInput,
+    snapshot: LaunchPolicySnapshot,
+) -> ResolvedLaunchPolicy:
+    """Resolve launch policy from a persisted launch-policy snapshot."""
+
+    project_root = surface.catalog.project_root
+    snapshot_model = snapshot.model.strip()
+    snapshot_harness = snapshot.harness.strip()
+    if not snapshot_model:
+        raise ValueError("Launch policy snapshot is missing model.")
+    if not snapshot_harness:
+        raise ValueError("Launch policy snapshot is missing harness.")
+    harness_id = HarnessId(snapshot_harness)
+    adapter = surface.harness_registry.get_subprocess_harness(harness_id)
+
+    snapshot_agent = (snapshot.agent or "").strip() or None
+    profile = None
+    if snapshot_agent is not None:
+        profile_path = (
+            Path(snapshot.agent_path).expanduser().resolve()
+            if snapshot.agent_path is not None and snapshot.agent_path.strip()
+            else (project_root / ".mars" / "agents" / f"{snapshot_agent}.md").resolve()
+        )
+        profile = AgentProfile(
+            name=snapshot_agent,
+            description=snapshot.agent_description,
+            skills=dedupe_skill_names(snapshot.skills),
+            body=snapshot.agent_profile_body,
+            path=profile_path,
+            raw_content=snapshot.agent_profile_body,
+        )
+
+    resolved_skills = resolve_skills_from_profile(
+        profile_skills=dedupe_skill_names(snapshot.skills),
+        project_root=project_root,
+        readonly=surface.skills_readonly,
+        harness_id=harness_id.value,
+        selected_model_token=snapshot.model_selection_requested_token or snapshot_model,
+        canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
+    )
+    model_selection = ModelSelectionContext(
+        requested_token=snapshot.model_selection_requested_token or snapshot_model,
+        selected_model_token=snapshot.model_selection_selected_token
+        or snapshot.model_selection_requested_token
+        or snapshot_model,
+        canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
+        harness_provenance=snapshot.model_selection_harness_provenance or "snapshot",
+        harness_model_id=snapshot.model_selection_harness_model_id,
+    )
+    terminal_surface_mode = _resolve_terminal_surface_mode(harness_id=harness_id)
+    if snapshot.terminal_surface_mode is not None:
+        try:
+            terminal_surface_mode = TerminalSurfaceMode(snapshot.terminal_surface_mode)
+        except ValueError:
+            _LOGGER.warning(
+                "Ignoring unsupported snapshot terminal_surface_mode '%s'.",
+                snapshot.terminal_surface_mode,
+            )
+    return ResolvedLaunchPolicy(
+        profile=profile,
+        model=snapshot_model,
+        harness=harness_id,
+        adapter=adapter,
+        resolved_skills=resolved_skills,
+        routing=ResolvedLaunchRouting(
+            model=model_selection.selected_model_token,
+            harness=harness_id,
+            agent=snapshot_agent,
+        ),
+        execution_policy=snapshot.execution_policy,
+        resolved_tools=snapshot.tools,
+        resolved_mcp_tools=snapshot.mcp_tools,
+        terminal_surface_mode=terminal_surface_mode,
+        matched_policy_rule=snapshot.matched_policy_rule,
+        model_selection=model_selection,
+        fallback_chain=snapshot.fallback_chain,
+        warnings=(),
+        alias_catalog=surface.catalog.alias_map(),
+    )
+
+
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     """Resolve the shared launch policy boundary for one launch-like surface.
 
     PRIMARY and SPAWN_PREPARE both use the mars launch-bundle path.  DIRECT is
     handled separately (no policy resolution needed — already-resolved inputs).
     """
+
+    if surface.policy_snapshot is not None:
+        return _resolve_policy_from_snapshot(surface=surface, snapshot=surface.policy_snapshot)
 
     if surface.surface in {
         LaunchCompositionSurface.PRIMARY,

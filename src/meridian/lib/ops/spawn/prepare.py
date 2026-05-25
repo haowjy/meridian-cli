@@ -6,7 +6,7 @@ from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.context import build_launch_context, build_launch_policy_snapshot
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
 from meridian.lib.launch.request import (
@@ -159,6 +159,7 @@ def build_create_payload(
             reference_anchor=directory_context.reference_anchor.as_posix(),
             task_cwd_source=directory_context.task_cwd_source,
             task_cwd_work_item=directory_context.work_item,
+            launch_policy_snapshot=payload.launch_policy_snapshot,
         )
 
         preview_context = build_launch_context(
@@ -185,7 +186,12 @@ def build_create_payload(
             dry_run=True,
         )
         return preview_context.resolved_request.model_copy(
-            update={"cli_command": preview_context.binding.argv}
+            update={
+                "cli_command": preview_context.binding.argv,
+                "launch_policy_snapshot": build_launch_policy_snapshot(
+                    preview_context.resolved_request
+                ),
+            }
         )
 
 
