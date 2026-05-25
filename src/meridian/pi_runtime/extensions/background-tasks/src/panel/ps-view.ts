@@ -218,7 +218,11 @@ export function renderPsPanel(
             model.logScrollOffset > 0 ? logLines.length - logEnd : 0;
 
           for (const line of visibleLogLines) {
-            const displayLine = truncate(stripAnsi(line.text), innerWidth - 2);
+            const plain = stripAnsi(line.text);
+            const displayLine =
+              visibleWidth(plain) > innerWidth
+                ? truncateToWidth(plain, innerWidth, "", true)
+                : plain;
             topLines.push(
               padLine(line.type === "stderr" ? warning(displayLine) : displayLine),
             );

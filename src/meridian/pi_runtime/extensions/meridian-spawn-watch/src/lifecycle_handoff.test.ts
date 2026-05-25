@@ -67,4 +67,35 @@ describe("lifecycle wrapper handoff", () => {
     );
     expect(failureEnd).toBeTruthy();
   });
+
+  it("tracks meridian spawn ids as tracked after detached wrapper handoff", async () => {
+    const bus = createLocalBus();
+    const pi = makePi(bus);
+    const tracker = createLifecycleChildTracker(pi, bus);
+    tracker.registerBusListeners();
+    registerLifecycleToolHandlers(pi, tracker);
+
+    bus.emit("meridian:subspawn:start", {
+      subspawn_id: "t-wrapper",
+      wait_policy: "detached",
+      kind: "meridian_spawn",
+      command: "time uv run meridian spawn -m gpt -p hi",
+      command_is_meridian_spawn: true,
+    });
+
+    bus.emit("meridian:subspawn:end", {
+      subspawn_id: "t-wrapper",
+      wait_policy: "detached",
+      kind: "meridian_spawn",
+      status: "exited",
+      success: true,
+      reason: "spawn p2507 succeeded",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const child = tracker.session.trackedChildren.get("p2507");
+    expect(child?.waitPolicy).toBe("tracked");
+    expect(child?.kind).toBe("meridian_spawn");
+  });
 });

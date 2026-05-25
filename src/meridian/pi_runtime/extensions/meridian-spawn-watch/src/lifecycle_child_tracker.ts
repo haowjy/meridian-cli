@@ -570,17 +570,19 @@ export function createLifecycleChildTracker(
     sendWaveNotification("wave_deadline", trackedCountAtDeadline);
   };
 
-  const registerMeridianSpawnId = (spawnId: string, waitPolicy: WaitPolicy): void => {
+  const registerMeridianSpawnId = (spawnId: string, _waitPolicy: WaitPolicy): void => {
     if (!isMeridianSpawnId(spawnId)) {
       return;
     }
-    addTrackedChild(spawnId, waitPolicy, "meridian_spawn");
+    // Real spawn ids (p*) always participate in waves — interactive `$` wrappers use detached.
+    const effectivePolicy: WaitPolicy = "tracked";
+    addTrackedChild(spawnId, effectivePolicy, "meridian_spawn");
     if (session.knownMeridianSpawnIds.has(spawnId)) {
       return;
     }
 
     session.knownMeridianSpawnIds.add(spawnId);
-    emitCanonicalSubspawnStart(spawnId, "meridian_spawn", waitPolicy);
+    emitCanonicalSubspawnStart(spawnId, "meridian_spawn", effectivePolicy);
   };
 
   const discoverMeridianSpawnIdsFromWrapperEnd = async (event: InternalSubspawnEvent): Promise<string[]> => {

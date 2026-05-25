@@ -69,4 +69,30 @@ describe("renderPsPanel", () => {
     expect(headerLine).toBeDefined();
     expect(headerLine).not.toMatch(/CommandStatus/);
   });
+
+  it("truncates log preview lines with tabs to inner width", () => {
+    const tabbedTiming = "real\t0m11.501s";
+    const host = {
+      getOutput: vi.fn(() => ({
+        stdout: [tabbedTiming],
+        stderr: [] as string[],
+      })),
+      getFileSize: vi.fn(() => ({ stdout: 0, stderr: 0 })),
+    } as unknown as TaskPanelHost;
+
+    const panelWidth = 91;
+    const lines = renderPsPanel(panelWidth, 24, mockTheme(), host, {
+      entries: [sampleEntry],
+      selectedIndex: 0,
+      processScrollOffset: 0,
+      logScrollOffset: 0,
+      backgroundingForeground: false,
+      logScroll: { above: 0, below: 0 },
+    });
+
+    const timingLine = lines.find((line) => line.includes("real"));
+    expect(timingLine).toBeDefined();
+    const plain = timingLine!.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(visibleWidth(plain)).toBeLessThanOrEqual(panelWidth);
+  });
 });
