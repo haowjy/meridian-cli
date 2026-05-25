@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { Key, matchesKey } from "@earendil-works/pi-tui";
+
 import { renderTable } from "../../shared/ui";
 import { BashRuntime, type BashManageParams, type BashParams } from "./bash_runtime";
 
@@ -63,19 +65,34 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         rows?: Array<Record<string, unknown>>;
       };
       const rows = result.rows ?? [];
-      const lines = rows.length
-        ? renderTable(
-            [
-              { header: "ID", width: 10, render: (row) => String(row.bash_id ?? "") },
-              { header: "STATE", width: 12, render: (row) => String(row.status ?? "") },
-              { header: "DUR", width: 8, render: (row) => `${Math.floor(Number(row.duration_secs ?? 0))}s` },
-              { header: "COMMAND", width: 40, render: (row) => String(row.command ?? "") },
-            ],
-            rows,
-            100,
-          )
-        : ["No Meridian-managed bash tasks."];
-      ctx.ui.notify(lines.join("\n"), "info");
+      const columns = [
+        { header: "ID", width: 10, render: (row: Record<string, unknown>) => String(row.bash_id ?? "") },
+        { header: "STATE", width: 12, render: (row: Record<string, unknown>) => String(row.status ?? "") },
+        { header: "DUR", width: 8, render: (row: Record<string, unknown>) => `${Math.floor(Number(row.duration_secs ?? 0))}s` },
+        { header: "COMMAND", width: 48, render: (row: Record<string, unknown>) => String(row.command ?? "") },
+      ];
+      await ctx.ui.custom(
+        (_tui, theme, _keybindings, done) => ({
+          render(width: number): string[] {
+            const title = theme.fg("accent", theme.bold(" Meridian /ps — managed bash "));
+            const body = rows.length ? renderTable(columns, rows, Math.max(20, width - 4)) : ["No Meridian-managed bash tasks."];
+            return [
+              theme.fg("border", "╭" + "─".repeat(Math.max(0, width - 2)) + "╮"),
+              theme.fg("border", "│ ") + title,
+              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
+              ...body.map((line) => theme.fg("border", "│ ") + line),
+              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
+              theme.fg("dim", "│ q/esc close • /ps:logs <id> • /ps:kill <id>"),
+              theme.fg("border", "╰" + "─".repeat(Math.max(0, width - 2)) + "╯"),
+            ];
+          },
+          handleInput(data: string): void {
+            if (matchesKey(data, Key.escape) || data === "q") done(undefined);
+          },
+          invalidate(): void {},
+        }),
+        { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%" } },
+      );
     },
   });
 

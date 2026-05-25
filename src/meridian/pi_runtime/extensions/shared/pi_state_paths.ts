@@ -2,6 +2,10 @@ import path from "node:path";
 
 /** Mirrors ``pi_paths.resolve_meridian_pi_state_dir`` — extension runtime state root. */
 export function resolveStateRoot(): string {
+  const runtimeRoot = process.env.MERIDIAN_RUNTIME_DIR?.trim();
+  if (runtimeRoot) {
+    return runtimeRoot;
+  }
   const explicit = process.env.MERIDIAN_PI_STATE_DIR?.trim();
   if (explicit) {
     return explicit;
