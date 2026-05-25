@@ -4,7 +4,7 @@ import type { TaskPanelHost } from "../panel/host";
 import type { DockActions } from "../hooks/widget";
 import type { TaskRegistry } from "../task_registry";
 import type { BackgroundTaskRecord, PsRow } from "../types";
-import { registerPsBackgroundCommand } from "./background";
+import { registerPsBackgroundCommands } from "./background";
 import { registerPsClearCommand } from "./clear";
 import { registerPsDockCommand } from "./dock";
 import { registerPsKillCommand } from "./kill";
@@ -23,7 +23,7 @@ export function setupPsCommands(
   },
 ): void {
   registerPsCommand(pi, panelHost, dockActions, host);
-  registerPsBackgroundCommand(pi, panelHost);
+  registerPsBackgroundCommands(pi, panelHost);
   registerPsLogsCommand(pi, panelHost);
   registerPsPinCommand(pi, panelHost, dockActions);
   registerPsKillCommand(pi, panelHost, dockActions, host);

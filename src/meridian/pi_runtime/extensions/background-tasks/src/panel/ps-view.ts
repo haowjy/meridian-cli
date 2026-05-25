@@ -297,7 +297,7 @@ export function renderPsPanel(
     `${dim("enter")} stream  ` +
     `${dim("j/k")} select  ` +
     (hasForeground && !model.backgroundingForeground
-      ? `${warning("b")} background  ${dim("/ps b")}  `
+      ? `${warning("b")} background  ${dim("/ps:b")}  `
       : "") +
     `${dim("x")} kill/cancel  ` +
     `${dim("c")} clear  ` +

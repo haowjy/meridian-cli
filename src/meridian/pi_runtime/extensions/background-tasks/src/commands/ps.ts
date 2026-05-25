@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { isPsBackgroundSubcommand, runPsBackgroundForeground } from "./background";
 import { TasksPanelComponent } from "../components/tasks-panel-component";
 import { LogOverlayComponent } from "../components/log-overlay-component";
 import { formatPsTable } from "../format_rows";
@@ -40,7 +39,7 @@ export function registerPsCommand(
 ): void {
   pi.registerCommand("ps", {
     description:
-      "View and manage background tasks and spawns (/ps b backgrounds foreground $)",
+      "View and manage background tasks and spawns (ps:b, ps:kill, ps:logs, …)",
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       const registry = host.getRegistry();
@@ -62,11 +61,6 @@ export function registerPsCommand(
         } else {
           process.stdout.write(`${text}\n`);
         }
-        return;
-      }
-
-      if (isPsBackgroundSubcommand(trimmed)) {
-        await runPsBackgroundForeground(panelHost, ctx);
         return;
       }
 

@@ -3,37 +3,44 @@ import { describe, expect, it, vi } from "vitest";
 import { backgroundForegroundBash } from "../background_foreground";
 import { USER_BASH_PANEL_BACKGROUND_MSG } from "../bash_bridge";
 import type { TaskPanelHost } from "../panel/host";
-import { registerPsBackgroundCommand } from "./background";
+import { registerPsBackgroundCommands } from "./background";
 
 vi.mock("../background_foreground", () => ({
   backgroundForegroundBash: vi.fn(),
 }));
 
-describe("registerPsBackgroundCommand /ps:background", () => {
-  it("backgrounds foreground task without opening overlay", async () => {
+describe("registerPsBackgroundCommands", () => {
+  it("registers ps:b and ps:background with the same behavior", async () => {
     vi.mocked(backgroundForegroundBash).mockResolvedValue({ ok: true });
 
-    let handler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+    const handlers = new Map<string, (args: string, ctx: unknown) => Promise<void>>();
     const panelHost = {} as TaskPanelHost;
     const pi = {
       registerCommand: (
         name: string,
         spec: { handler: (args: string, ctx: unknown) => Promise<void> },
       ) => {
-        expect(name).toBe("ps:background");
-        handler = spec.handler;
+        handlers.set(name, spec.handler);
       },
     };
 
-    registerPsBackgroundCommand(pi as never, panelHost);
+    registerPsBackgroundCommands(pi as never, panelHost);
+
+    expect(handlers.has("ps:b")).toBe(true);
+    expect(handlers.has("ps:background")).toBe(true);
 
     const notify = vi.fn();
     const custom = vi.fn();
-    await handler!("", {
-      ui: { notify, custom },
-      hasUI: true,
-    });
+    const ctx = { ui: { notify, custom }, hasUI: true };
 
+    await handlers.get("ps:b")!("", ctx);
+    expect(backgroundForegroundBash).toHaveBeenCalledWith(panelHost);
+    expect(notify).toHaveBeenCalledWith(USER_BASH_PANEL_BACKGROUND_MSG, "info");
+
+    vi.mocked(backgroundForegroundBash).mockClear();
+    notify.mockClear();
+
+    await handlers.get("ps:background")!("", ctx);
     expect(backgroundForegroundBash).toHaveBeenCalledWith(panelHost);
     expect(notify).toHaveBeenCalledWith(USER_BASH_PANEL_BACKGROUND_MSG, "info");
     expect(custom).not.toHaveBeenCalled();
@@ -45,14 +52,16 @@ describe("registerPsBackgroundCommand /ps:background", () => {
     let handler: ((args: string, ctx: unknown) => Promise<void>) | undefined;
     const pi = {
       registerCommand: (
-        _name: string,
+        name: string,
         spec: { handler: (args: string, ctx: unknown) => Promise<void> },
       ) => {
-        handler = spec.handler;
+        if (name === "ps:b") {
+          handler = spec.handler;
+        }
       },
     };
 
-    registerPsBackgroundCommand(pi as never, {} as TaskPanelHost);
+    registerPsBackgroundCommands(pi as never, {} as TaskPanelHost);
 
     const notify = vi.fn();
     await handler!("", { ui: { notify }, hasUI: true });

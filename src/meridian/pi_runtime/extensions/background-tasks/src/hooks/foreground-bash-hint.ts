@@ -12,7 +12,7 @@ export const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
 
 /** In-chat follow-up when interactive `$` blocks the foreground slot. */
 export const FOREGROUND_BASH_HINT_TEXT =
-  "/ps to manage tasks · /ps b to run in background";
+  "/ps to manage tasks · /ps:b to run in background";
 
 /** @deprecated Use {@link FOREGROUND_BASH_HINT_TEXT}. */
 export const USER_FOREGROUND_BASH_HINT_TEXT = FOREGROUND_BASH_HINT_TEXT;

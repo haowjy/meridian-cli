@@ -24,10 +24,6 @@ export function psBackgroundSubcommandMessage(result: {
   };
 }
 
-export function isPsBackgroundSubcommand(trimmed: string): boolean {
-  return trimmed === "b" || trimmed === "background";
-}
-
 function notifyPs(
   ctx: { ui?: { notify?: (msg: string, level?: string) => void } },
   level: PsNotifyLevel,
@@ -49,14 +45,24 @@ export async function runPsBackgroundForeground(
   notifyPs(ctx, level, message);
 }
 
-export function registerPsBackgroundCommand(
+export function registerPsBackgroundCommands(
   pi: ExtensionAPI,
   panelHost: TaskPanelHost,
 ): void {
+  const handler = async (
+    _args: string,
+    ctx: { ui?: { notify?: (msg: string, level?: string) => void } },
+  ): Promise<void> => {
+    await runPsBackgroundForeground(panelHost, ctx);
+  };
+
+  pi.registerCommand("ps:b", {
+    description: "Background the foreground $ task (short)",
+    handler,
+  });
+
   pi.registerCommand("ps:background", {
-    description: "Background the foreground $ task (alias for /ps b)",
-    handler: async (_args, ctx) => {
-      await runPsBackgroundForeground(panelHost, ctx);
-    },
+    description: "Background the foreground $ task",
+    handler,
   });
 }
