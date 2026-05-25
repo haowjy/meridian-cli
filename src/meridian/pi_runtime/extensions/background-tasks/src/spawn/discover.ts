@@ -5,7 +5,7 @@ import { extractMeridianSpawnIdsFromText, isMeridianSpawnId } from "../../../sha
 import type { TaskRegistry } from "../task_registry";
 import {
   confirmSpawnRecord,
-  fetchSpawnListIds,
+  fetchSpawnChildrenIds,
   isActiveSpawnStatus,
   type ConfirmedSpawnRecord,
 } from "./spawn_record";
@@ -16,6 +16,8 @@ const POLL_MS = 5_000;
 
 type DiscoverOptions = {
   getRegistry: () => TaskRegistry | null;
+  /** Host spawn for this Pi session (`MERIDIAN_SPAWN_ID`); scopes CLI discovery. */
+  getOwnerSpawnId?: () => string | null;
 };
 
 function readLogTail(path: string, maxBytes = 32_768): string {
@@ -64,13 +66,17 @@ async function confirmAndEmit(
   await emitConfirmedSpawn(bus, known, record, channel);
 }
 
-async function discoverFromRegistry(
-  bus: MeridianEventBus,
-  known: Map<string, ConfirmedSpawnRecord>,
+export async function collectSpawnCandidateIds(
   registry: TaskRegistry | null,
-): Promise<void> {
-  const listIds = await fetchSpawnListIds();
-  const candidateIds = new Set<string>(listIds);
+  ownerSpawnId: string | null,
+): Promise<Set<string>> {
+  const candidateIds = new Set<string>();
+
+  if (ownerSpawnId && isMeridianSpawnId(ownerSpawnId)) {
+    for (const id of await fetchSpawnChildrenIds(ownerSpawnId)) {
+      candidateIds.add(id);
+    }
+  }
 
   if (registry) {
     for (const task of await registry.list(true)) {
@@ -83,6 +89,17 @@ async function discoverFromRegistry(
       }
     }
   }
+
+  return candidateIds;
+}
+
+async function discoverFromRegistry(
+  bus: MeridianEventBus,
+  known: Map<string, ConfirmedSpawnRecord>,
+  registry: TaskRegistry | null,
+  ownerSpawnId: string | null,
+): Promise<void> {
+  const candidateIds = await collectSpawnCandidateIds(registry, ownerSpawnId);
 
   for (const spawnId of candidateIds) {
     if (!isMeridianSpawnId(spawnId)) {
@@ -118,7 +135,8 @@ export function startSpawnDiscovery(
     }
     refreshInFlight = true;
     try {
-      await discoverFromRegistry(bus, known, options.getRegistry());
+      const ownerSpawnId = options.getOwnerSpawnId?.() ?? null;
+      await discoverFromRegistry(bus, known, options.getRegistry(), ownerSpawnId);
       await refreshActiveSpawns(bus, known);
     } finally {
       refreshInFlight = false;

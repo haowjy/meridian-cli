@@ -29,7 +29,7 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 
 | Step | Mechanism |
 |------|-----------|
-| Discover ids | `meridian --json spawn list` (chat-scoped) on task end / periodic refresh |
+| Discover ids | Task log tails + `meridian --json spawn children $MERIDIAN_SPAWN_ID` (never global `spawn list`) on task end / periodic refresh |
 | Log fallback | Parse `pNNNN` from task combined log, then still confirm |
 | Confirm + status | `meridian --json spawn show` per id |
 | `/ps` row | `meridian:spawn:*` bus → `meridian_spawn` kind in `unified_rows.ts` |

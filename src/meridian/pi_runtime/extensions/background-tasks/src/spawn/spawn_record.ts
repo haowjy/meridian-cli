@@ -108,8 +108,15 @@ function parseSpawnListPayload(text: string): string[] {
   }
 }
 
-export async function fetchSpawnListIds(): Promise<string[]> {
-  const result = await runMeridianCommand(["--json", "spawn", "list"], 15_000);
+/** Direct children of the Pi host spawn (session subtree), not global active spawns. */
+export async function fetchSpawnChildrenIds(ownerSpawnId: string): Promise<string[]> {
+  if (!isMeridianSpawnId(ownerSpawnId)) {
+    return [];
+  }
+  const result = await runMeridianCommand(
+    ["--json", "spawn", "children", ownerSpawnId],
+    15_000,
+  );
   if ((result.exitCode ?? 1) !== 0) {
     return [];
   }

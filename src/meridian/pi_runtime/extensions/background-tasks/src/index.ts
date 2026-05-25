@@ -15,6 +15,7 @@ import { resolveSpawnTaskPingDefaults } from "./session_ping";
 import {
   TaskRegistry,
   makeId,
+  currentSpawnIdFromEnv,
   parentSpawnIdFromEnv,
   resolveStateRoot,
   sessionIdFromContext,
@@ -130,6 +131,7 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
   state.stopSpawnCollector = startSpawnCollector(bus);
   state.stopSpawnDiscovery = startSpawnDiscovery(bus, {
     getRegistry: () => state.registry,
+    getOwnerSpawnId: currentSpawnIdFromEnv,
   });
 
   piExt.on?.("session_shutdown", async () => {

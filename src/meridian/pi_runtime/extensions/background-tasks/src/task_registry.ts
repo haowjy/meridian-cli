@@ -174,6 +174,11 @@ export function sessionIdFromContext(ctx: ToolContext | undefined, fallback: str
   return fallback;
 }
 
+export function currentSpawnIdFromEnv(): string | null {
+  const raw = process.env.MERIDIAN_SPAWN_ID?.trim() || "";
+  return raw.length > 0 ? raw : null;
+}
+
 export function parentSpawnIdFromEnv(): string | null {
   const raw =
     process.env.MERIDIAN_PARENT_SPAWN_ID?.trim() ||
