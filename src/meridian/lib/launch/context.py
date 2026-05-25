@@ -442,8 +442,10 @@ def _build_composition_warnings(
     return tuple(warnings)
 
 
+_INLINE_FILE_REFS_WARNING_THRESHOLD = 5
+
 _INLINE_FILE_REFS_WARNING_MESSAGE = (
-    "Multiple file refs will be inlined and may drain context; "
+    "Many file refs will be inlined and may drain context; "
     "prefer folder refs or a design/context artifact."
 )
 
@@ -467,7 +469,7 @@ def _build_inline_file_refs_warning(content: PreparedLaunchContent) -> Compositi
     contributions = build_inline_file_contributions(
         reference_items, reference_routing, exclude_warning_only=True
     )
-    if len(contributions) < 2:
+    if len(contributions) < _INLINE_FILE_REFS_WARNING_THRESHOLD:
         return None
 
     return CompositionWarning(

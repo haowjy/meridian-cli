@@ -8,7 +8,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Launch projection artifacts now write `inline-file-reference-bytes.json` with total bytes for inline-routed file refs plus largest file contributors.
 
 ### Changed
-- Spawn/launch composition now emits a soft warning when 2+ file refs route inline: warns about context drain and recommends folder refs or design/context artifacts.
+- Spawn/launch composition now emits a soft warning when 5+ file refs route inline: warns about context drain and recommends folder refs or design/context artifacts.
 
 ## [0.2.6] - 2026-05-25
 
