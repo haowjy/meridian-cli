@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import path from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 
 import { readJsonFile, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
@@ -16,6 +15,12 @@ import {
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
 import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
+import {
+  openSelectablePanel,
+  openTextOverlay,
+  type PanelCommandContext,
+  type SelectablePanelColumn,
+} from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 
 type PiWithMessages = ExtensionAPI & {
@@ -390,6 +395,30 @@ function formatBashNotification(items: NotificationItem[]): string {
   ].join("\n");
 }
 
+function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
+  const dim = (value: string) => theme.fg("dim", value);
+  const status = isTerminalSpawnStatus(String(row.status ?? ""))
+    ? dim(String(row.status ?? "unknown"))
+    : theme.fg("success", String(row.status ?? "unknown"));
+  const lines = [
+    `${theme.fg("accent", row.id)} ${status} ${dim(formatDurationSecs(row.duration_secs))}`,
+    dim(`${row.agent ?? "spawn"}${row.model ? ` · ${row.model}` : ""}`),
+  ];
+  if (row.originating_bash_id) lines.push(dim(`launched by ${row.originating_bash_id}`));
+  if (row.started_at) lines.push(dim(`started ${row.started_at}`));
+  if (row.finished_at) lines.push(dim(`finished ${row.finished_at}`));
+  return lines;
+}
+
+const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
+  { header: "ID", width: 10, render: (row) => row.id },
+  { header: "STATUS", width: 12, render: (row) => String(row.status ?? "") },
+  { header: "DUR", width: 8, render: (row) => formatDurationSecs(row.duration_secs), align: "right" },
+  { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
+  { header: "MODEL", width: 24, render: (row) => String(row.model ?? "") },
+  { header: "← BASH", width: 10, render: (row) => String(row.originating_bash_id ?? "") },
+];
+
 export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   const runtime = new SpawnWatchRuntime(pi as PiWithMessages);
   pi.on?.("session_start", () => runtime.start());
@@ -398,36 +427,34 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.registerCommand("mspawn", {
     description: "List Meridian spawns correlated to this Pi session.",
     handler: async (_args, ctx) => {
-      const rows = await runtime.rows(true);
-      const columns = [
-        { header: "ID", width: 10, render: (row: SpawnStateFile) => row.id },
-        { header: "STATUS", width: 12, render: (row: SpawnStateFile) => String(row.status ?? "") },
-        { header: "AGENT", width: 16, render: (row: SpawnStateFile) => String(row.agent ?? "") },
-        { header: "MODEL", width: 24, render: (row: SpawnStateFile) => String(row.model ?? "") },
-        { header: "← BASH", width: 10, render: (row: SpawnStateFile) => String(row.originating_bash_id ?? "") },
-      ];
-      await ctx.ui.custom(
-        (_tui, theme, _keybindings, done) => ({
-          render(width: number): string[] {
-            const title = theme.fg("accent", theme.bold(" Meridian /mspawn — correlated spawns "));
-            const body = rows.length ? renderTable(columns, rows, Math.max(20, width - 4)) : ["No correlated Meridian spawns."];
-            return [
-              theme.fg("border", "╭" + "─".repeat(Math.max(0, width - 2)) + "╮"),
-              theme.fg("border", "│ ") + title,
-              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
-              ...body.map((line) => theme.fg("border", "│ ") + line),
-              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
-              theme.fg("dim", "│ q/esc close • /mspawn:show <id> • /mspawn:log <id>"),
-              theme.fg("border", "╰" + "─".repeat(Math.max(0, width - 2)) + "╯"),
-            ];
-          },
-          handleInput(data: string): void {
-            if (matchesKey(data, Key.escape) || data === "q") done(undefined);
-          },
-          invalidate(): void {},
-        }),
-        { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%" } },
-      );
+      const loadRows = async (): Promise<SpawnStateFile[]> => runtime.rows(true);
+
+      if (ctx.hasUI === false || !ctx.ui?.custom) {
+        const rows = await loadRows();
+        const text = rows.length ? renderTable(SPAWN_PANEL_COLUMNS, rows, 100).join("\n") : "No correlated Meridian spawns.";
+        process.stdout.write(`${text}\n`);
+        return;
+      }
+
+      await openSelectablePanel(ctx as PanelCommandContext, {
+        title: "Meridian /mspawn — correlated spawns",
+        columns: SPAWN_PANEL_COLUMNS,
+        loadRows,
+        getRowId: (row) => row.id,
+        renderPreview: renderSpawnPreview,
+        emptyMessage: "No correlated Meridian spawns.",
+        footer: "enter show · j/k select · r refresh · q close",
+        onEnter: async (row) => {
+          await openTextOverlay(ctx as PanelCommandContext, {
+            title: `Spawn ${row.id}`,
+            footer: "r refresh · q close",
+            loadText: async () => {
+              const result = await runMeridianCommand(["spawn", "show", row.id], 15_000);
+              return (result.stdout || result.stderr).trimEnd() || `No output for ${row.id}`;
+            },
+          });
+        },
+      });
     },
   });
 

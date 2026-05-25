@@ -1,9 +1,15 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { Key, matchesKey } from "@earendil-works/pi-tui";
-
-import { renderTable } from "../../shared/ui";
+import {
+  openSelectablePanel,
+  openTextOverlay,
+  type PanelCommandContext,
+  type SelectablePanelColumn,
+} from "../../shared/selectable_panel";
+import { formatDurationSecs, renderTable } from "../../shared/ui";
 import { BashRuntime, type BashManageParams, type BashParams } from "./bash_runtime";
 
 function formatToolResult(result: unknown): string {
@@ -37,13 +43,64 @@ function formatRows(rows: unknown[]): string {
     [
       { header: "ID", width: 10, render: (row: Record<string, unknown>) => String(row.bash_id ?? "") },
       { header: "STATE", width: 12, render: (row: Record<string, unknown>) => String(row.status ?? "") },
-      { header: "DUR", width: 8, render: (row: Record<string, unknown>) => `${Math.floor(Number(row.duration_secs ?? 0))}s` },
+      { header: "DUR", width: 8, render: (row: Record<string, unknown>) => formatDurationSecs(Number(row.duration_secs ?? 0)) },
       { header: "COMMAND", width: 60, render: (row: Record<string, unknown>) => String(row.command ?? "") },
     ],
     objects,
     100,
   ).join("\n");
 }
+
+type BashPanelRow = {
+  bash_id: string;
+  command: string;
+  cwd: string;
+  status: string;
+  is_background: boolean;
+  is_tracked: boolean;
+  exit_code: number | null;
+  duration_secs: number;
+  log_path: string;
+  log_bytes: number;
+};
+
+function toBashPanelRows(result: unknown): BashPanelRow[] {
+  const rows = (result as { rows?: unknown[] } | null)?.rows ?? [];
+  return rows.filter((row): row is BashPanelRow => {
+    const obj = row as Partial<BashPanelRow> | null;
+    return Boolean(obj) && typeof obj === "object" && typeof obj.bash_id === "string";
+  });
+}
+
+function tailFile(filePath: string, maxBytes = 4096): string {
+  try {
+    const text = readFileSync(filePath, "utf-8");
+    return text.slice(Math.max(0, text.length - maxBytes));
+  } catch {
+    return "";
+  }
+}
+
+function renderBashPreview(row: BashPanelRow, theme: Theme): string[] {
+  const dim = (value: string) => theme.fg("dim", value);
+  const status = row.status === "running" ? theme.fg("success", row.status) : dim(row.status);
+  const output = tailFile(row.log_path, 2048).trimEnd();
+  const lines = output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
+  return [
+    `${theme.fg("accent", row.bash_id)} ${status} ${dim(formatDurationSecs(row.duration_secs))}`,
+    dim(row.command),
+    ...lines,
+  ];
+}
+
+const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
+  { header: "ID", width: 10, render: (row) => row.bash_id },
+  { header: "STATE", width: 10, render: (row) => row.status },
+  { header: "BG", width: 3, render: (row) => (row.is_background ? "yes" : "no") },
+  { header: "DUR", width: 8, render: (row) => formatDurationSecs(row.duration_secs), align: "right" },
+  { header: "SIZE", width: 8, render: (row) => `${row.log_bytes}B`, align: "right" },
+  { header: "COMMAND", width: 56, render: (row) => row.command },
+];
 
 export default function managedBashExtension(pi: ExtensionAPI): void {
   const runtime = new BashRuntime();
@@ -100,38 +157,33 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ps", {
     description: "List Meridian-managed bash tasks for this Pi session.",
     handler: async (_args, ctx) => {
-      const result = (await runtime.manage({ action: "list", include_completed: true })) as {
-        rows?: Array<Record<string, unknown>>;
-      };
-      const rows = result.rows ?? [];
-      const columns = [
-        { header: "ID", width: 10, render: (row: Record<string, unknown>) => String(row.bash_id ?? "") },
-        { header: "STATE", width: 12, render: (row: Record<string, unknown>) => String(row.status ?? "") },
-        { header: "DUR", width: 8, render: (row: Record<string, unknown>) => `${Math.floor(Number(row.duration_secs ?? 0))}s` },
-        { header: "COMMAND", width: 48, render: (row: Record<string, unknown>) => String(row.command ?? "") },
-      ];
-      await ctx.ui.custom(
-        (_tui, theme, _keybindings, done) => ({
-          render(width: number): string[] {
-            const title = theme.fg("accent", theme.bold(" Meridian /ps — managed bash "));
-            const body = rows.length ? renderTable(columns, rows, Math.max(20, width - 4)) : ["No Meridian-managed bash tasks."];
-            return [
-              theme.fg("border", "╭" + "─".repeat(Math.max(0, width - 2)) + "╮"),
-              theme.fg("border", "│ ") + title,
-              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
-              ...body.map((line) => theme.fg("border", "│ ") + line),
-              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
-              theme.fg("dim", "│ q/esc close • /ps:logs <id> • /ps:kill <id>"),
-              theme.fg("border", "╰" + "─".repeat(Math.max(0, width - 2)) + "╯"),
-            ];
-          },
-          handleInput(data: string): void {
-            if (matchesKey(data, Key.escape) || data === "q") done(undefined);
-          },
-          invalidate(): void {},
-        }),
-        { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%" } },
-      );
+      const loadRows = async (): Promise<BashPanelRow[]> =>
+        toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
+
+      if (ctx.hasUI === false || !ctx.ui?.custom) {
+        process.stdout.write(`${formatRows(await loadRows())}\n`);
+        return;
+      }
+
+      await openSelectablePanel(ctx as PanelCommandContext, {
+        title: "Meridian /ps — managed bash",
+        columns: BASH_PANEL_COLUMNS,
+        loadRows,
+        getRowId: (row) => row.bash_id,
+        renderPreview: renderBashPreview,
+        emptyMessage: "No Meridian-managed bash tasks.",
+        footer: "enter logs · j/k select · r refresh · q close",
+        onEnter: async (row) => {
+          await openTextOverlay(ctx as PanelCommandContext, {
+            title: `Bash log ${row.bash_id}`,
+            footer: "r refresh · q close",
+            loadText: async () => {
+              const result = await runtime.manage({ action: "output", bash_id: row.bash_id });
+              return String((result as { output?: unknown }).output ?? formatToolResult(result));
+            },
+          });
+        },
+      });
     },
   });
 
@@ -146,8 +198,19 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ps:logs", {
     description: "Show a Meridian-managed bash task log tail.",
     handler: async (args, ctx) => {
-      const result = await runtime.manage({ action: "output", bash_id: args.trim() });
-      ctx.ui.notify(JSON.stringify(result, null, 2), "info");
+      const bashId = args.trim();
+      const loadText = async (): Promise<string> => {
+        const result = await runtime.manage({ action: "output", bash_id: bashId });
+        return String((result as { output?: unknown }).output ?? formatToolResult(result));
+      };
+      if (ctx.hasUI !== false && ctx.ui?.custom) {
+        await openTextOverlay(ctx as PanelCommandContext, {
+          title: `Bash log ${bashId}`,
+          loadText,
+        });
+        return;
+      }
+      process.stdout.write(`${await loadText()}\n`);
     },
   });
 

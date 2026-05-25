@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Pi `/ps` and `/mspawn` now share a selectable overlay UI with row preview, `j/k` navigation, `enter` action, and `r` refresh.
 
 ### Added
 - Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.

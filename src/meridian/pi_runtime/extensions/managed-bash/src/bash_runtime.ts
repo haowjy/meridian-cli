@@ -287,13 +287,20 @@ export class BashRuntime {
       .map((record) => ({
         type: "bash",
         bash_id: record.bash_id,
-        command: record.command.slice(0, 60),
+        command: record.command,
+        cwd: record.cwd,
+        pid: record.pid,
         status: record.status,
         is_background: record.is_background,
+        is_tracked: record.is_tracked,
         started_at_ms: record.started_at_ms,
         ended_at_ms: record.ended_at_ms,
         exit_code: record.exit_code,
         duration_secs: durationSecs(record),
+        log_path: record.log_path,
+        log_bytes: record.log_bytes,
+        timeout_min: record.timeout_min,
+        originating_bash_id: record.originating_bash_id,
       }));
   }
 
