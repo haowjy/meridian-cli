@@ -42,11 +42,20 @@ class SessionSearchMatch(BaseModel):
     session_id: str
     source: str | None = None
     segment: int
-    message_index: int
-    message_ordinal: int
+    segment_start_message: int
+    segment_end_message: int
+    entry_ordinal: int
     role: str
     content_preview: str
     open_command: str
+
+    @property
+    def message_ordinal(self) -> int:
+        return self.entry_ordinal
+
+    @property
+    def message_index(self) -> int:
+        return self.segment_start_message
 
 
 class SessionSearchOutput(BaseModel):
@@ -65,8 +74,9 @@ class SessionSearchOutput(BaseModel):
             lines.append("")
             lines.append(
                 f"--- {match.corpus} :: {match.chat_id} ({match.session_id}) "
-                f"message {match.message_ordinal} [segment {match.segment}, "
-                f"message {match.message_index}] [{match.role}] ---"
+                f"entry {match.entry_ordinal} [segment {match.segment}, "
+                f"messages {match.segment_start_message}-{match.segment_end_message}] "
+                f"[{match.role}] ---"
             )
             lines.append(match.content_preview)
             lines.append(f"Open: {match.open_command}")
@@ -117,8 +127,8 @@ def _matches_for_transcript(
     chat_id: str,
 ) -> list[SessionSearchMatch]:
     matches: list[SessionSearchMatch] = []
-    for message in transcript.messages:
-        normalized_content = _normalize_content(message.content)
+    for entry in transcript.entries:
+        normalized_content = _normalize_content(entry.content)
         if not normalized_content:
             continue
         if query_lower not in normalized_content.lower():
@@ -129,14 +139,15 @@ def _matches_for_transcript(
                 chat_id=chat_id,
                 session_id=transcript.target.session_id,
                 source=transcript.target.source,
-                segment=message.segment_index,
-                message_index=message.segment_message_index,
-                message_ordinal=message.ordinal,
-                role=message.role,
+                segment=entry.segment_index,
+                segment_start_message=entry.start_segment_message_index,
+                segment_end_message=entry.end_segment_message_index,
+                entry_ordinal=entry.ordinal,
+                role=entry.role,
                 content_preview=_build_preview(normalized_content, query=query),
                 open_command=build_session_log_command(
                     transcript.route,
-                    around_ordinal=message.ordinal,
+                    around_ordinal=entry.ordinal,
                     context=_OPEN_CONTEXT,
                 ),
             )
@@ -206,7 +217,7 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 )
             )
 
-    matches.sort(key=lambda match: (match.corpus, match.chat_id, match.message_ordinal))
+    matches.sort(key=lambda match: (match.corpus, match.chat_id, match.entry_ordinal))
     return SessionSearchOutput(matches=tuple(matches))
 
 

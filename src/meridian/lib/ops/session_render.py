@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from meridian.lib.ops.session_transcript import AbsoluteTranscriptMessage
+from meridian.lib.ops.session_transcript import AbsoluteTranscriptEntry
 
 
 class SessionWindow(NamedTuple):
-    messages: list[AbsoluteTranscriptMessage]
+    messages: list[AbsoluteTranscriptEntry]
     total_messages: int
     start_ordinal: int
     end_ordinal: int
@@ -19,7 +19,7 @@ class SessionWindow(NamedTuple):
     next_from: int | None
 
 
-def _window_bounds(messages: list[AbsoluteTranscriptMessage]) -> tuple[int, int]:
+def _window_bounds(messages: list[AbsoluteTranscriptEntry]) -> tuple[int, int]:
     if not messages:
         return (0, 0)
     return (messages[0].ordinal, messages[-1].ordinal)
@@ -27,8 +27,8 @@ def _window_bounds(messages: list[AbsoluteTranscriptMessage]) -> tuple[int, int]
 
 def _window_with_navigation(
     *,
-    all_messages: Sequence[AbsoluteTranscriptMessage],
-    selected: list[AbsoluteTranscriptMessage],
+    all_messages: Sequence[AbsoluteTranscriptEntry],
+    selected: list[AbsoluteTranscriptEntry],
     nav_limit: int | None = None,
 ) -> SessionWindow:
     total_messages = len(all_messages)
@@ -61,7 +61,7 @@ def _window_with_navigation(
 
 
 def window_from_tail(
-    messages: Sequence[AbsoluteTranscriptMessage],
+    messages: Sequence[AbsoluteTranscriptEntry],
     *,
     tail: int | None,
 ) -> SessionWindow:
@@ -73,13 +73,13 @@ def window_from_tail(
 
 
 def window_from_from_limit(
-    messages: Sequence[AbsoluteTranscriptMessage],
+    messages: Sequence[AbsoluteTranscriptEntry],
     *,
     start_ordinal: int,
     limit: int,
 ) -> SessionWindow:
     if start_ordinal < 1:
-        raise ValueError("--from expects a message ordinal >= 1.")
+        raise ValueError("--from expects an entry ordinal >= 1.")
     if limit < 0:
         raise ValueError("--limit must be >= 0.")
     start_index = start_ordinal - 1
@@ -92,13 +92,13 @@ def window_from_from_limit(
 
 
 def window_from_before_limit(
-    messages: Sequence[AbsoluteTranscriptMessage],
+    messages: Sequence[AbsoluteTranscriptEntry],
     *,
     before_ordinal: int,
     limit: int,
 ) -> SessionWindow:
     if before_ordinal < 1:
-        raise ValueError("--before expects a message ordinal >= 1.")
+        raise ValueError("--before expects an entry ordinal >= 1.")
     if limit < 0:
         raise ValueError("--limit must be >= 0.")
     end_index = max(before_ordinal - 1, 0)
@@ -112,7 +112,7 @@ def window_from_before_limit(
 
 
 def window_from_around_context(
-    messages: Sequence[AbsoluteTranscriptMessage],
+    messages: Sequence[AbsoluteTranscriptEntry],
     *,
     around_ordinal: int,
     context: int,
@@ -120,10 +120,10 @@ def window_from_around_context(
     if context < 0:
         raise ValueError("--context must be >= 0.")
     if around_ordinal < 1:
-        raise ValueError("--around expects a message ordinal >= 1.")
+        raise ValueError("--around expects an entry ordinal >= 1.")
     if around_ordinal > len(messages):
         raise ValueError(
-            f"--around {around_ordinal} out of range (transcript has {len(messages)} messages)."
+            f"--around {around_ordinal} out of range (transcript has {len(messages)} entries)."
         )
     start_index = max(around_ordinal - 1 - context, 0)
     end_index = min(around_ordinal + context, len(messages))

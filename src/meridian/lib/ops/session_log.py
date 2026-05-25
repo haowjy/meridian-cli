@@ -15,10 +15,14 @@ from meridian.lib.ops.session_render import (
     window_from_tail,
 )
 from meridian.lib.ops.session_transcript import (
+    AbsoluteTranscriptEntry,
     AbsoluteTranscriptMessage,
     build_session_log_command,
     read_session_transcript,
 )
+
+_CONTENT_PREVIEW_MAX_LINES = 80
+_CONTENT_PREVIEW_MAX_CHARS = 8000
 
 
 class SessionLogInput(BaseModel):
@@ -26,6 +30,8 @@ class SessionLogInput(BaseModel):
 
     ref: str = ""
     segment: str | None = None
+    full: bool = False
+    truncate: bool = True
     tail: int | None = None
     from_ordinal: int | None = None
     before_ordinal: int | None = None
@@ -36,14 +42,24 @@ class SessionLogInput(BaseModel):
     project_root: str | None = None
 
 
-class SessionLogMessage(BaseModel):
+class SessionLogEntryMessage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    segment_message: int
+    role: str
+    content: str
+
+
+class SessionLogEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     index: int
     segment: int
-    segment_message: int
+    segment_start_message: int
+    segment_end_message: int
     role: str
     content: str
+    messages: tuple[SessionLogEntryMessage, ...]
 
 
 class SessionLogOutput(BaseModel):
@@ -52,16 +68,28 @@ class SessionLogOutput(BaseModel):
     session_id: str
     requested_ref: str | None = None
     source: str | None = None
-    total_messages: int
+    total_entries: int
     total_segments: int
     segment_index: int | None = None
-    segment_messages: int | None = None
+    segment_entries: int | None = None
     segment_label: str | None = None
     showing: str
-    messages: tuple[SessionLogMessage, ...]
+    entries: tuple[SessionLogEntry, ...]
     previous_command: str | None = None
     next_command: str | None = None
     hints: tuple[str, ...] = ()
+
+    @property
+    def messages(self) -> tuple[SessionLogEntryMessage, ...]:
+        return tuple(message for entry in self.entries for message in entry.messages)
+
+    @property
+    def total_messages(self) -> int:
+        return self.total_entries
+
+    @property
+    def segment_messages(self) -> int | None:
+        return self.segment_entries
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -75,22 +103,30 @@ class SessionLogOutput(BaseModel):
             )
         else:
             session_label = f"{self.session_id} ({source})" if source else self.session_id
-        message_label = "message" if self.total_messages == 1 else "messages"
+        entry_label = "entry" if self.total_entries == 1 else "entries"
         lines = [
             (
                 f"Session {session_label} — showing "
-                f"{self.showing} of {self.total_messages} {message_label}"
+                f"{self.showing} of {self.total_entries} {entry_label}"
             )
         ]
-        if self.segment_label is not None and self.segment_messages is not None:
-            lines.append(f"{self.segment_label}; {self.segment_messages} messages in segment")
-        for message in self.messages:
+        if self.segment_label is not None and self.segment_entries is not None:
+            lines.append(f"{self.segment_label}; {self.segment_entries} entries in segment")
+        for entry in self.entries:
             lines.append("")
             lines.append(
-                f"--- {message.index} [segment {message.segment} · "
-                f"message {message.segment_message}] [{message.role}] ---"
+                f"--- {entry.index} [segment {entry.segment} · "
+                f"messages {entry.segment_start_message}-{entry.segment_end_message}] "
+                f"[{entry.role}] ---"
             )
-            lines.append(message.content)
+            if len(entry.messages) == 1:
+                lines.append(entry.messages[0].content)
+                continue
+
+            for message in entry.messages:
+                lines.append("")
+                lines.append(f"[message {message.segment_message} · {message.role}]")
+                lines.append(message.content)
         nav_lines: list[str] = []
         if self.previous_command is not None:
             nav_lines.append(f"Previous: {self.previous_command}")
@@ -106,9 +142,11 @@ class SessionLogOutput(BaseModel):
 
 
 def _window_hints(payload: SessionLogInput, *, uses_absolute_window: bool) -> tuple[str, ...]:
-    if uses_absolute_window or payload.tail is not None:
+    if uses_absolute_window or payload.full:
         return ()
-    return ("Use --tail [N] for recent messages.",)
+    if payload.tail is None:
+        return ("Use --full to show the entire selected segment.",)
+    return ()
 
 
 def _resolve_segment_index(*, total_segments: int, segment: str | None) -> int:
@@ -144,13 +182,63 @@ def _segment_label(*, selected_index: int, total_segments: int) -> str:
     return f"segment {selected_index}"
 
 
-def _message_row(message: AbsoluteTranscriptMessage) -> SessionLogMessage:
-    return SessionLogMessage(
-        index=message.ordinal,
-        segment=message.segment_index,
+def _truncate_preview(content: str) -> str:
+    if not content:
+        return content
+
+    line_parts = content.splitlines(keepends=True)
+    limited_by_lines = len(line_parts) > _CONTENT_PREVIEW_MAX_LINES
+    preview = (
+        "".join(line_parts[:_CONTENT_PREVIEW_MAX_LINES]) if limited_by_lines else content
+    )
+    if len(preview) > _CONTENT_PREVIEW_MAX_CHARS:
+        preview = preview[:_CONTENT_PREVIEW_MAX_CHARS]
+
+    omitted_chars = len(content) - len(preview)
+    if omitted_chars <= 0:
+        return content
+
+    omitted_lines = (
+        len(line_parts) - _CONTENT_PREVIEW_MAX_LINES if limited_by_lines else 0
+    )
+    line_label = "line" if omitted_lines == 1 else "lines"
+    char_label = "char" if omitted_chars == 1 else "chars"
+    marker = (
+        f"...[truncated: omitted {omitted_lines} {line_label}, "
+        f"{omitted_chars} {char_label}; rerun with --no-truncate]"
+    )
+    if not preview:
+        return marker
+    separator = "" if preview.endswith("\n") else "\n"
+    return f"{preview}{separator}{marker}"
+
+
+def _entry_message_row(
+    message: AbsoluteTranscriptMessage,
+    *,
+    truncate_content: bool,
+) -> SessionLogEntryMessage:
+    content = _truncate_preview(message.content) if truncate_content else message.content
+    return SessionLogEntryMessage(
         segment_message=message.segment_message_index,
         role=message.role,
-        content=message.content,
+        content=content,
+    )
+
+
+def _entry_row(entry: AbsoluteTranscriptEntry, *, truncate_content: bool) -> SessionLogEntry:
+    content = _truncate_preview(entry.content) if truncate_content else entry.content
+    return SessionLogEntry(
+        index=entry.ordinal,
+        segment=entry.segment_index,
+        segment_start_message=entry.start_segment_message_index,
+        segment_end_message=entry.end_segment_message_index,
+        role=entry.role,
+        content=content,
+        messages=tuple(
+            _entry_message_row(message, truncate_content=truncate_content)
+            for message in entry.messages
+        ),
     )
 
 
@@ -176,6 +264,10 @@ def session_log_sync(
             raise ValueError("--tail cannot be combined with --from/--before/--around.")
         if payload.segment is not None:
             raise ValueError("--segment cannot be combined with absolute windows.")
+        if payload.full:
+            raise ValueError("--full cannot be combined with --from/--before/--around.")
+    elif payload.full and payload.tail is not None:
+        raise ValueError("--full cannot be combined with --tail.")
 
     if payload.context is not None and payload.around_ordinal is None:
         raise ValueError("--context requires --around.")
@@ -196,7 +288,7 @@ def session_log_sync(
 
     selected_segment_index: int | None = None
     selected_segment_label: str | None = None
-    selected_segment_messages: int | None = None
+    selected_segment_entries: int | None = None
 
     if not uses_absolute_window:
         selected_segment_index = _resolve_segment_index(
@@ -208,24 +300,23 @@ def session_log_sync(
             total_segments=len(parsed.segments),
         )
 
-        segment_messages = [
-            message
-            for message in parsed.messages
-            if message.segment_index == selected_segment_index
+        segment_entries = [
+            entry for entry in parsed.entries if entry.segment_index == selected_segment_index
         ]
-        selected_segment_messages = len(segment_messages)
-        page = window_from_tail(segment_messages, tail=payload.tail)
+        selected_segment_entries = len(segment_entries)
+        resolved_tail = None if payload.full else (payload.tail if payload.tail is not None else 5)
+        page = window_from_tail(segment_entries, tail=resolved_tail)
     elif payload.from_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
         page = window_from_from_limit(
-            parsed.messages,
+            parsed.entries,
             start_ordinal=payload.from_ordinal,
             limit=limit,
         )
     elif payload.before_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
         page = window_from_before_limit(
-            parsed.messages,
+            parsed.entries,
             before_ordinal=payload.before_ordinal,
             limit=limit,
         )
@@ -233,7 +324,7 @@ def session_log_sync(
         around_ordinal = payload.around_ordinal if payload.around_ordinal is not None else 1
         context = payload.context if payload.context is not None else 0
         page = window_from_around_context(
-            parsed.messages,
+            parsed.entries,
             around_ordinal=around_ordinal,
             context=context,
         )
@@ -259,19 +350,21 @@ def session_log_sync(
                 limit=nav_limit,
             )
 
-    output_messages = tuple(_message_row(item) for item in page.messages)
+    output_entries = tuple(
+        _entry_row(item, truncate_content=payload.truncate) for item in page.messages
+    )
 
     return SessionLogOutput(
         session_id=parsed.target.session_id,
         requested_ref=payload.ref.strip() or None,
         source=parsed.target.source,
-        total_messages=len(parsed.messages),
+        total_entries=len(parsed.entries),
         total_segments=len(parsed.segments),
         segment_index=selected_segment_index,
-        segment_messages=selected_segment_messages,
+        segment_entries=selected_segment_entries,
         segment_label=selected_segment_label,
         showing=showing_window(page.start_ordinal, page.end_ordinal),
-        messages=output_messages,
+        entries=output_entries,
         previous_command=previous_command,
         next_command=next_command,
         hints=_window_hints(payload, uses_absolute_window=uses_absolute_window),
@@ -282,8 +375,9 @@ session_log = async_from_sync(session_log_sync)
 
 
 __all__ = [
+    "SessionLogEntry",
+    "SessionLogEntryMessage",
     "SessionLogInput",
-    "SessionLogMessage",
     "SessionLogOutput",
     "session_log",
     "session_log_sync",

@@ -34,35 +34,50 @@ def _session_log(
             ),
         ),
     ] = None,
+    full: Annotated[
+        bool,
+        Parameter(
+            name="--full",
+            help="Show full selected segment instead of the default recent-entry window.",
+        ),
+    ] = False,
+    no_truncate: Annotated[
+        bool,
+        Parameter(
+            name="--no-truncate",
+            help="Show full entry/message content (default output truncates oversized content).",
+        ),
+    ] = False,
     tail: Annotated[
         list[int] | None,
         Parameter(
             name="--tail",
             consume_multiple=True,
             help=(
-                "Tail view. Use `--tail` for last 5 messages, or `--tail N` for last N messages."
+                "Tail view over entries/chunks. Use `--tail` for last 5 entries, "
+                "or `--tail N` for last N entries."
             ),
         ),
     ] = None,
     from_ordinal: Annotated[
         int | None,
-        Parameter(name="--from", help="Window start (absolute message ordinal)."),
+        Parameter(name="--from", help="Window start (absolute entry ordinal)."),
     ] = None,
     before_ordinal: Annotated[
         int | None,
-        Parameter(name="--before", help="Window ends before this absolute message ordinal."),
+        Parameter(name="--before", help="Window ends before this absolute entry ordinal."),
     ] = None,
     around_ordinal: Annotated[
         int | None,
-        Parameter(name="--around", help="Window centered on this absolute message ordinal."),
+        Parameter(name="--around", help="Window centered on this absolute entry ordinal."),
     ] = None,
     limit: Annotated[
         int | None,
-        Parameter(name="--limit", help="Window size for --from/--before."),
+        Parameter(name="--limit", help="Window size for --from/--before (entries)."),
     ] = None,
     context: Annotated[
         int | None,
-        Parameter(name="--context", help="Messages on each side for --around."),
+        Parameter(name="--context", help="Entries on each side for --around."),
     ] = None,
     file_path: Annotated[
         str | None,
@@ -82,6 +97,8 @@ def _session_log(
             SessionLogInput(
                 ref=ref,
                 segment=segment,
+                full=full,
+                truncate=not no_truncate,
                 tail=resolved_tail,
                 from_ordinal=from_ordinal,
                 before_ordinal=before_ordinal,
@@ -217,6 +234,8 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session log c123\n\n"
                 "  meridian session log c123 --tail\n\n"
                 "  meridian session log c123 --tail 20\n\n"
+                "  meridian session log c123 --full\n\n"
+                "  meridian session log c123 --full --no-truncate\n\n"
                 "  meridian session log c123 --from 120 --limit 30\n\n"
                 "  meridian session log c123 --around 240 --context 8\n\n"
                 "  meridian session log c123 --segment previous\n\n"

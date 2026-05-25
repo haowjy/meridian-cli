@@ -37,8 +37,8 @@ def test_session_search_file_mode_emits_deterministic_open_command(tmp_path: Pat
     )
 
     assert len(output.matches) == 1
-    assert output.matches[0].message_ordinal == 2
-    assert output.matches[0].open_command.endswith("--around 2 --context 5")
+    assert output.matches[0].entry_ordinal == 1
+    assert output.matches[0].open_command.endswith("--around 1 --context 5")
 
 
 def test_session_search_single_target_parses_transcript_once(
@@ -80,5 +80,5 @@ def test_session_search_single_target_parses_transcript_once(
         SessionSearchInput(query="needle", file_path=session_file.as_posix())
     )
 
-    assert len(output.matches) == 2
+    assert len(output.matches) == 1
     assert calls["count"] == 1

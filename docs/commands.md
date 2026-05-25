@@ -81,7 +81,9 @@ Progressive disclosure:
 meridian spawn -a reviewer -p "task"              # compact: status + report
 meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens/path inline
 meridian spawn show p123                           # full detailed record (unchanged)
-meridian session log p123                          # full transcript (unchanged)
+meridian session log p123                          # recent transcript entries (last 5, chronological, safe content previews)
+meridian session log p123 --full                   # full selected segment (still preview-truncated by default)
+meridian session log p123 --full --no-truncate     # full selected segment with full message content
 ```
 
 `spawn show` includes primary-session metadata when available from `primary_meta.json`:

@@ -32,3 +32,16 @@ def test_session_log_tail_value_maps_directly(monkeypatch) -> None:
     session_cmd._session_log(lambda _output: None, ref="c1", tail=[9])
 
     assert captured[0].tail == 9
+
+
+def test_session_log_no_truncate_maps_to_truncate_false(monkeypatch) -> None:
+    captured: list[SessionLogInput] = []
+
+    def _fake_session_log_sync(payload: SessionLogInput) -> SessionLogInput:
+        captured.append(payload)
+        return payload
+
+    monkeypatch.setattr(session_cmd, "session_log_sync", _fake_session_log_sync)
+    session_cmd._session_log(lambda _output: None, ref="c1", no_truncate=True)
+
+    assert captured[0].truncate is False
