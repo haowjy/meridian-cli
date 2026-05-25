@@ -4,12 +4,6 @@ url = "https://github.com/haowjy/meridian-dev-workflow"
 [dependencies.meridian-prompter]
 url = "https://github.com/meridian-flow/meridian-prompter"
 
-[models.composer]
-harness = "cursor"
-model = "composer-2.5"
-provider = "cursor"
-description = "Cursor's native coding model. Fast, strong tool use."
-
 [settings]
 targets = [
     ".claude",
