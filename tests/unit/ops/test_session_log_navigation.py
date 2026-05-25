@@ -285,7 +285,7 @@ def test_session_log_global_absolute_window_uses_global_ordinals_across_segments
     assert output.showing == "3-3"
     assert [entry.index for entry in output.entries] == [3]
     assert output.entries[0].segment == 1
-    assert output.entries[0].content == "u2"
+    assert output.entries[0].content == "handoff summary"
     assert output.previous_command is not None
     assert "--global --from 2 --limit 1" in output.previous_command
     assert output.next_command is not None
@@ -312,7 +312,27 @@ def test_session_log_bare_selectors_default_to_current_segment_local(tmp_path: P
     assert "--segment 1 --from 0 --limit 1" in output.previous_command
 
 
-def test_session_log_global_from_uses_global_interaction_ordinals(tmp_path: Path) -> None:
+def test_session_log_global_from_zero_reads_first_global_entry(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            global_scope=True,
+            from_ordinal=0,
+            limit=1,
+        )
+    )
+
+    assert output.segment_index is None
+    assert output.showing == "0-0"
+    assert [entry.index for entry in output.entries] == [0]
+    assert output.entries[0].segment == 0
+    assert output.entries[0].content == "initial system prompt"
+
+
+def test_session_log_global_from_uses_global_entry_ordinals(tmp_path: Path) -> None:
     session_file = tmp_path / "session-compacted.jsonl"
     _write_compacted_session_file(session_file, include_handoff=True)
 
@@ -329,6 +349,26 @@ def test_session_log_global_from_uses_global_interaction_ordinals(tmp_path: Path
     assert output.showing == "2-2"
     assert [entry.index for entry in output.entries] == [2]
     assert output.entries[0].content == "a1"
+
+
+def test_session_log_global_from_reaches_later_segment_reserved_entry(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            global_scope=True,
+            from_ordinal=3,
+            limit=1,
+        )
+    )
+
+    assert output.segment_index is None
+    assert output.showing == "3-3"
+    assert [entry.index for entry in output.entries] == [3]
+    assert output.entries[0].segment == 1
+    assert output.entries[0].content == "handoff summary"
 
 
 def test_session_log_rejects_global_with_segment(tmp_path: Path) -> None:

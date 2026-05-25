@@ -39,7 +39,8 @@ def _session_log(
         Parameter(
             name="--global",
             help=(
-                "Use global interaction-entry ordinals for --from/--before/--around. "
+                "Use one global stream across all segment entries (including entry 0 slots) "
+                "for --from/--before/--around. "
                 "Conflicts with --segment."
             ),
         ),

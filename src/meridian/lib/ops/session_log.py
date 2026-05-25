@@ -261,14 +261,19 @@ def _entry_row_with_index(
     )
 
 
-def _entries_with_absolute_ordinals(
-    entries: tuple[AbsoluteTranscriptEntry, ...],
+def _global_entries_with_unique_ordinals(
+    segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...],
 ) -> tuple[AbsoluteTranscriptEntry, ...]:
-    return tuple(
-        entry._replace(ordinal=entry.absolute_ordinal)
-        for entry in entries
-        if entry.absolute_ordinal is not None
-    )
+    flattened: list[AbsoluteTranscriptEntry] = []
+    for entries in segment_entries:
+        for entry in entries:
+            flattened.append(
+                entry._replace(
+                    ordinal=len(flattened),
+                    absolute_ordinal=len(flattened),
+                )
+            )
+    return tuple(flattened)
 
 
 class _NavigationAddressSpace(NamedTuple):
@@ -387,8 +392,8 @@ def session_log_sync(
     if payload.global_scope:
         address_space = _NavigationAddressSpace(
             mode="global",
-            entries=_entries_with_absolute_ordinals(parsed.entries),
-            first_ordinal=1,
+            entries=_global_entries_with_unique_ordinals(parsed.segment_entries),
+            first_ordinal=0,
             segment_index=None,
             segment_label=None,
             segment_entries=None,
@@ -486,15 +491,10 @@ def session_log_sync(
         segment_entries_by_index=parsed.segment_entries,
     )
 
-    use_global_display_index = payload.global_scope
     output_entries = tuple(
         _entry_row_with_index(
             item,
-            index=(
-                item.absolute_ordinal
-                if use_global_display_index and item.absolute_ordinal
-                else item.ordinal
-            ),
+            index=item.ordinal,
             truncate_content=payload.truncate,
         )
         for item in page.messages

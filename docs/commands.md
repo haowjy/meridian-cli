@@ -84,6 +84,7 @@ meridian spawn show p123                           # full detailed record (uncha
 meridian session log p123                          # recent transcript entries (last 5, chronological, safe content previews)
 meridian session log p123 --full                   # full selected segment, including entry 0 prologue/handoff slot
 meridian session log p123 --segment current --from 0 --limit 1  # read just segment prologue/handoff slot
+meridian session log p123 --global --from 0 --limit 1           # read first entry in global cross-segment stream
 meridian session log p123 --full --no-truncate     # full selected segment with full message content
 ```
 
