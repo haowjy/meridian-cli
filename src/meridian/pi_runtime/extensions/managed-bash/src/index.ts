@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import {
@@ -11,6 +12,9 @@ import {
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 import { BashRuntime, type BashManageParams, type BashParams } from "./bash_runtime";
+
+const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
+const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in background";
 
 function formatToolResult(result: unknown): string {
   if (!result || typeof result !== "object") return String(result ?? "");
@@ -115,11 +119,142 @@ const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
   { header: "COMMAND", width: 56, render: (row) => row.command },
 ];
 
+type PiWithForegroundHint = ExtensionAPI & {
+  sendMessage?: (
+    message: { customType?: string; content: string; display?: boolean; details?: Record<string, unknown> },
+    options?: { triggerTurn?: boolean; excludeFromContext?: boolean },
+  ) => void | Promise<void>;
+  registerMessageRenderer?: <Details>(
+    customType: string,
+    renderer: (
+      message: { content: string; details?: Details },
+      options: MessageRenderOptions,
+      theme: Theme,
+    ) => Text,
+  ) => void;
+};
+
+const hintedForegroundBashIds = new Set<string>();
+
+function setupForegroundBashHint(pi: PiWithForegroundHint): void {
+  pi.registerMessageRenderer?.<{ taskId: string; hintText: string }>(
+    FOREGROUND_BASH_HINT_CUSTOM_TYPE,
+    (message, _options, theme) => new Text(theme.fg("dim", message.details?.hintText ?? message.content), 0, 0),
+  );
+}
+
+function postForegroundBashHint(pi: PiWithForegroundHint, bashId: string): void {
+  if (hintedForegroundBashIds.has(bashId)) return;
+  hintedForegroundBashIds.add(bashId);
+  try {
+    void pi.sendMessage?.(
+      {
+        customType: FOREGROUND_BASH_HINT_CUSTOM_TYPE,
+        content: "",
+        display: true,
+        details: { taskId: bashId, hintText: FOREGROUND_BASH_HINT_TEXT },
+      },
+      { triggerTurn: false, excludeFromContext: true },
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("stale")) throw error;
+  }
+}
+
+function notify(ctx: { ui?: { notify?: (msg: string, level?: string) => void } }, message: string, level: "info" | "warning" = "info"): void {
+  if (ctx.ui?.notify) ctx.ui.notify(message, level);
+  else process.stdout.write(`${message}\n`);
+}
+
+type UserBashEvent = {
+  command?: string;
+  cwd?: string;
+};
+
+type BashExecOptions = {
+  onData?: (data: Buffer) => void;
+  signal?: AbortSignal;
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+};
+
+function splitUserBashBackground(command: string): { background: boolean; execCommand: string } {
+  const trimmed = command.trim();
+  if (!trimmed || trimmed === "&") return { background: false, execCommand: trimmed };
+
+  let inSingle = false;
+  let inDouble = false;
+  let escape = false;
+  let lastUnquotedAmpersand = -1;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const ch = trimmed[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && (inSingle || inDouble)) {
+      escape = true;
+      continue;
+    }
+    if (!inDouble && ch === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && ch === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === "&") lastUnquotedAmpersand = i;
+  }
+
+  if (lastUnquotedAmpersand < 0) return { background: false, execCommand: trimmed };
+  if (trimmed.slice(lastUnquotedAmpersand + 1).trim() !== "") return { background: false, execCommand: trimmed };
+
+  const execCommand = trimmed.slice(0, lastUnquotedAmpersand).trimEnd();
+  return execCommand ? { background: true, execCommand } : { background: false, execCommand: trimmed };
+}
+
 export default function managedBashExtension(pi: ExtensionAPI): void {
-  const runtime = new BashRuntime();
+  const hintPi = pi as PiWithForegroundHint;
+  setupForegroundBashHint(hintPi);
+  const runtime = new BashRuntime({
+    onForegroundStart: (bashId) => postForegroundBashHint(hintPi, bashId),
+  });
 
   pi.on?.("session_shutdown", async () => {
+    hintedForegroundBashIds.clear();
     await runtime.shutdown();
+  });
+
+  pi.on?.("user_bash", async (event: unknown) => {
+    const typed = event as UserBashEvent;
+    const command = typed.command?.trim();
+    if (!command) return undefined;
+
+    const cwd = typed.cwd?.trim() || process.cwd();
+    const { background, execCommand } = splitUserBashBackground(command);
+    if (background) {
+      const { bash_id: bashId } = await runtime.startDetachedUserBash(execCommand, cwd, process.env);
+      return {
+        result: {
+          exitCode: 0,
+          output: `Detached task ${bashId} — /ps to manage\n`,
+          cancelled: false,
+        },
+      };
+    }
+
+    return {
+      operations: {
+        exec: async (
+          execCommandFromPi: string,
+          execCwd: string,
+          options: BashExecOptions,
+        ): Promise<{ exitCode: number | null }> =>
+          await runtime.executeUserBash(execCommandFromPi, execCwd, options),
+      },
+    };
   });
 
   pi.registerTool({
@@ -227,10 +362,19 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     },
   });
 
+  const backgroundForegroundHandler = async (_args: string, ctx: { ui?: { notify?: (msg: string, level?: string) => void } }): Promise<void> => {
+    const result = await runtime.backgroundForeground();
+    if (result.ok) return;
+    notify(ctx, "No foreground $ task to background", "warning");
+  };
+
   pi.registerCommand("ps:b", {
-    description: "Foreground-to-background promotion is automatic via bash timeout_min.",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify("Use bash({ timeout_min }) to auto-background long-running foreground commands.", "info");
-    },
+    description: "Background the foreground $ task.",
+    handler: backgroundForegroundHandler,
+  });
+
+  pi.registerCommand("ps:background", {
+    description: "Background the foreground $ task.",
+    handler: backgroundForegroundHandler,
   });
 }

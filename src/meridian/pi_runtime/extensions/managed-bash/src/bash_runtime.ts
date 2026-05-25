@@ -26,9 +26,21 @@ export type BashManageParams = {
   timeout_min?: number;
 };
 
+export type UserBashExecOptions = {
+  onData?: (data: Buffer) => void;
+  signal?: AbortSignal;
+  env?: NodeJS.ProcessEnv;
+};
+
 type RuntimeRecord = BashRecord & {
   child: ChildProcess | null;
   waiters: Array<() => void>;
+  foregroundFinish: ((result: unknown) => void) | null;
+};
+
+export type BashRuntimeHooks = {
+  onForegroundStart?: (bashId: string) => void;
+  onForegroundStop?: (bashId: string) => void;
 };
 
 type ExecResult = {
@@ -41,10 +53,13 @@ const DEFAULT_TIMEOUT_MIN = 55;
 const DEFAULT_WAIT_TIMEOUT_MIN = 10;
 const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
+export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
 export class BashRuntime {
   private readonly spawnId = currentSpawnIdFromEnv();
   private readonly records = new Map<string, RuntimeRecord>();
+
+  constructor(private readonly hooks: BashRuntimeHooks = {}) {}
 
   async execute(params: BashParams, signal: AbortSignal | undefined): Promise<unknown> {
     const timeoutMin = normalizeTimeoutMin(params.timeout_min, DEFAULT_TIMEOUT_MIN);
@@ -56,15 +71,19 @@ export class BashRuntime {
       return { bash_id: record.bash_id, status: "started" };
     }
 
+    this.hooks.onForegroundStart?.(record.bash_id);
     return await new Promise<unknown>((resolve) => {
       let settled = false;
       const finish = (result: unknown): void => {
         if (settled) return;
         settled = true;
+        record.foregroundFinish = null;
         clearTimeout(timeout);
         signal?.removeEventListener("abort", abort);
+        this.hooks.onForegroundStop?.(record.bash_id);
         resolve(result);
       };
+      record.foregroundFinish = finish;
       const abort = async (): Promise<void> => {
         await this.killBash(record.bash_id, "aborted");
         finish({ stdout: await this.readLog(record, LOG_TAIL_BYTES), stderr: "[command aborted]", exit_code: -1 });
@@ -75,7 +94,7 @@ export class BashRuntime {
         finish({
           bash_id: record.bash_id,
           status: "backgrounded",
-          message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${record.bash_id}. Use bash_manage to wait or kill.`,
+          message: `Command exceeded timeout_min=${timeoutMin} and was backgrounded as ${record.bash_id}. Use /ps to manage it.`,
         });
       }, timeoutMin * 60_000);
 
@@ -90,6 +109,66 @@ export class BashRuntime {
         finish(output);
       });
     });
+  }
+
+  async executeUserBash(
+    command: string,
+    cwd: string,
+    options: UserBashExecOptions = {},
+  ): Promise<{ exitCode: number | null }> {
+    const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, options.onData);
+    this.hooks.onForegroundStart?.(record.bash_id);
+
+    return await new Promise<{ exitCode: number | null }>((resolve) => {
+      let settled = false;
+      const finish = (exitCode: number | null): void => {
+        if (settled) return;
+        settled = true;
+        record.foregroundFinish = null;
+        options.signal?.removeEventListener("abort", abort);
+        this.hooks.onForegroundStop?.(record.bash_id);
+        resolve({ exitCode });
+      };
+      const abort = (): void => {
+        void this.killBash(record.bash_id, "aborted").finally(() => finish(-1));
+      };
+      record.foregroundFinish = () => {
+        options.onData?.(Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"));
+        finish(0);
+      };
+
+      if (options.signal?.aborted) {
+        abort();
+        return;
+      }
+      options.signal?.addEventListener("abort", abort, { once: true });
+      this.onTerminal(record, () => finish(record.exit_code));
+    });
+  }
+
+  async startDetachedUserBash(command: string, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ bash_id: string }> {
+    const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
+    record.is_background = true;
+    await this.persist();
+    return { bash_id: record.bash_id };
+  }
+
+  async backgroundForeground(): Promise<{ ok: boolean; reason?: string; bash_id?: string }> {
+    const foreground = [...this.records.values()]
+      .filter((record) => record.status === "running" && !record.is_background && record.foregroundFinish != null)
+      .sort((a, b) => b.started_at_ms - a.started_at_ms)[0];
+    if (!foreground) {
+      return { ok: false, reason: "no_foreground" };
+    }
+
+    foreground.is_background = true;
+    await this.persist();
+    foreground.foregroundFinish?.({
+      bash_id: foreground.bash_id,
+      status: "backgrounded",
+      message: USER_BASH_PANEL_BACKGROUND_MSG,
+    });
+    return { ok: true, bash_id: foreground.bash_id };
   }
 
   async manage(params: BashManageParams): Promise<unknown> {
@@ -145,7 +224,13 @@ export class BashRuntime {
     await this.persist();
   }
 
-  private async startRecord(command: string, timeoutMin: number): Promise<RuntimeRecord> {
+  private async startRecord(
+    command: string,
+    timeoutMin: number,
+    cwd = process.cwd(),
+    env: NodeJS.ProcessEnv = process.env,
+    onData?: (data: Buffer) => void,
+  ): Promise<RuntimeRecord> {
     const bashId = makeBashId();
     const logsDir = resolveBashLogsDir(this.spawnId);
     await mkdir(logsDir, { recursive: true });
@@ -155,7 +240,7 @@ export class BashRuntime {
     const record: RuntimeRecord = {
       bash_id: bashId,
       command,
-      cwd: process.cwd(),
+      cwd,
       pid: null,
       status: "running",
       is_background: false,
@@ -169,18 +254,19 @@ export class BashRuntime {
       originating_bash_id: process.env.MERIDIAN_PI_BASH_ID || null,
       child: null,
       waiters: [],
+      foregroundFinish: null,
     };
     this.records.set(bashId, record);
 
     const child = spawn(command, {
-      cwd: process.cwd(),
-      env: { ...process.env, MERIDIAN_PI_BASH_ID: bashId },
+      cwd,
+      env: { ...env, MERIDIAN_PI_BASH_ID: bashId },
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     record.child = child;
     record.pid = child.pid ?? null;
-    this.attachOutput(record, child);
+    this.attachOutput(record, child, onData);
 
     child.once("error", async (error) => {
       await this.appendLog(record, `\n[failed to start command: ${error.message}]\n`);
@@ -195,14 +281,16 @@ export class BashRuntime {
     return record;
   }
 
-  private attachOutput(record: RuntimeRecord, child: ChildProcess): void {
-    child.stdout?.setEncoding("utf-8");
+  private attachOutput(record: RuntimeRecord, child: ChildProcess, onData?: (data: Buffer) => void): void {
     child.stdout?.on("data", (chunk: string | Buffer) => {
-      void this.appendLog(record, typeof chunk === "string" ? chunk : chunk.toString("utf-8"));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
+      onData?.(buffer);
+      void this.appendLog(record, buffer.toString("utf-8"));
     });
-    child.stderr?.setEncoding("utf-8");
     child.stderr?.on("data", (chunk: string | Buffer) => {
-      void this.appendLog(record, typeof chunk === "string" ? chunk : chunk.toString("utf-8"));
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
+      onData?.(buffer);
+      void this.appendLog(record, buffer.toString("utf-8"));
     });
   }
 
@@ -346,7 +434,7 @@ export class BashRuntime {
   private async persist(): Promise<void> {
     const records: Record<string, BashRecord> = {};
     for (const [id, record] of this.records.entries()) {
-      const { child: _child, waiters: _waiters, ...plain } = record;
+      const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, ...plain } = record;
       records[id] = plain;
     }
     const file: BashRecordsFile = {
