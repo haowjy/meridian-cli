@@ -11,6 +11,7 @@ from meridian.lib.core.types import ArtifactKey, HarnessId, SpawnId
 from meridian.lib.launch.composition import (
     ProjectionChannels,
     ReferenceRouting,
+    build_inline_file_contributions,
     build_reference_routing,
 )
 from meridian.lib.state.artifact_store import ArtifactStore
@@ -86,6 +87,33 @@ def _resolve_projection_channels(
     )
 
 
+def _write_inline_file_reference_byte_accounting(
+    *,
+    log_dir: Path,
+    launch_context: LaunchContext,
+    reference_routing: tuple[ReferenceRouting, ...],
+) -> None:
+    reference_items = launch_context.binding.run_params.reference_items
+    if not reference_items:
+        return
+    contributions = build_inline_file_contributions(reference_items, reference_routing)
+    if not contributions:
+        return
+
+    payload = {
+        "total_inline_file_bytes": sum(
+            contribution.byte_count for contribution in contributions
+        ),
+        "largest_inline_file_references": [
+            contribution.to_dict() for contribution in contributions
+        ],
+    }
+    atomic_write_text(
+        log_dir / "inline-file-reference-bytes.json",
+        json.dumps(payload, indent=2) + "\n",
+    )
+
+
 def write_projection_artifacts(
     *,
     log_dir: Path,
@@ -116,6 +144,11 @@ def write_projection_artifacts(
             log_dir / "references.json",
             json.dumps([route.to_dict() for route in reference_routing], indent=2) + "\n",
         )
+    _write_inline_file_reference_byte_accounting(
+        log_dir=log_dir,
+        launch_context=launch_context,
+        reference_routing=reference_routing,
+    )
 
     channels = _resolve_projection_channels(
         launch_context=launch_context,

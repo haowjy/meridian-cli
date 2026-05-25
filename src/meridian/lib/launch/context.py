@@ -63,7 +63,13 @@ from .command import (
     normalize_system_prompt_passthrough_args,
     resolve_launch_spec_stage,
 )
-from .composition import ComposedLaunchContent, ProjectedContent, PromptDocument
+from .composition import (
+    ComposedLaunchContent,
+    ProjectedContent,
+    PromptDocument,
+    build_inline_file_contributions,
+    build_reference_routing,
+)
 from .cwd import LaunchDirectoryContext
 from .env import build_env_plan
 from .env import merge_env_overrides as _merge_env_overrides
@@ -434,6 +440,40 @@ def _build_composition_warnings(
             continue
         warnings.append(CompositionWarning(code=code, message=normalized))
     return tuple(warnings)
+
+
+_INLINE_FILE_REFS_WARNING_MESSAGE = (
+    "Multiple file refs will be inlined and may drain context; "
+    "prefer folder refs or a design/context artifact."
+)
+
+
+def _build_inline_file_refs_warning(content: PreparedLaunchContent) -> CompositionWarning | None:
+    """Warn when multiple file references route inline into prompt context."""
+
+    reference_items = content.loaded_references
+    if not reference_items:
+        return None
+
+    reference_routing = (
+        content.projected_content.reference_routing
+        if content.projected_content is not None
+        else build_reference_routing(reference_items)
+    )
+    contributions = build_inline_file_contributions(reference_items, reference_routing)
+    if len(contributions) < 2:
+        return None
+
+    return CompositionWarning(
+        code="inline_file_refs_context_risk",
+        message=_INLINE_FILE_REFS_WARNING_MESSAGE,
+        detail={
+            "inline_file_reference_count": str(len(contributions)),
+            "total_inline_file_bytes": str(
+                sum(contribution.byte_count for contribution in contributions)
+            ),
+        },
+    )
 
 
 def prepare_prompt_payload(
@@ -1223,6 +1263,9 @@ def prepare_launch_surface(
         missing_skills_warning=missing_skills_warning,
         continuation_warning=continuation.warning,
     )
+    inline_file_refs_warning = _build_inline_file_refs_warning(content)
+    if inline_file_refs_warning is not None:
+        composition_warnings = (*composition_warnings, inline_file_refs_warning)
     warning = summarize_composition_warnings(composition_warnings)
 
     agent_metadata = dict(request.agent_metadata)

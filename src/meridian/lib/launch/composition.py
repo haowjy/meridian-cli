@@ -73,6 +73,21 @@ class ReferenceRouting:
 
 
 @dataclass(frozen=True)
+class InlineFileReferenceContribution:
+    """Byte contribution for one inline-routed file reference."""
+
+    path: str
+    byte_count: int
+
+    def to_dict(self) -> dict[str, str | int]:
+        """Serialize contribution for artifact output."""
+        return {
+            "path": self.path,
+            "byte_count": self.byte_count,
+        }
+
+
+@dataclass(frozen=True)
 class ProjectionChannels:
     """Adapter-resolved channel decisions for semantic content categories."""
 
@@ -187,6 +202,31 @@ def build_reference_routing(
     )
 
 
+def build_inline_file_contributions(
+    reference_items: tuple[ReferenceItem, ...],
+    reference_routing: tuple[ReferenceRouting, ...],
+) -> tuple[InlineFileReferenceContribution, ...]:
+    """Return inline file references and their UTF-8 byte contribution.
+
+    Includes only file items routed ``inline``. Directory references are excluded.
+    """
+
+    contributions = tuple(
+        InlineFileReferenceContribution(
+            path=item.path.as_posix(),
+            byte_count=len(item.body.encode("utf-8")),
+        )
+        for item, route in zip(reference_items, reference_routing, strict=True)
+        if item.kind == "file" and route.routing == "inline"
+    )
+    return tuple(
+        sorted(
+            contributions,
+            key=lambda contribution: (-contribution.byte_count, contribution.path),
+        )
+    )
+
+
 def join_content_blocks(*blocks: str) -> str:
     """Join non-empty content blocks with double newlines."""
     return "\n\n".join(block.strip() for block in blocks if block.strip())
@@ -284,10 +324,12 @@ __all__ = [
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
     "ComposedLaunchContent",
+    "InlineFileReferenceContribution",
     "ProjectedContent",
     "ProjectionChannels",
     "PromptDocument",
     "ReferenceRouting",
+    "build_inline_file_contributions",
     "build_reference_routing",
     "join_content_blocks",
     "project_inline_content",

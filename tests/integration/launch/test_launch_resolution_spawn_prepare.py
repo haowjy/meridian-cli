@@ -94,6 +94,66 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.resolved_request.prompt
     assert "# Meridian Agents" not in preview.resolved_request.prompt
     assert "# Meridian Agents" in preview.projected_content.system_prompt
+    warning_codes = {warning.code for warning in preview.warnings}
+    assert "inline_file_refs_context_risk" not in warning_codes
+
+
+def test_spawn_prepare_warns_for_multiple_inline_file_references(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    first_file = tmp_path / "first.md"
+    first_file.write_text("a\n", encoding="utf-8")
+    second_file = tmp_path / "second.md"
+    second_file.write_text("bbbb\n", encoding="utf-8")
+    dir_ref = tmp_path / "docs"
+    dir_ref.mkdir()
+    (dir_ref / "index.md").write_text("# index\n", encoding="utf-8")
+
+    preview = build_launch_context(
+        spawn_id="dry-run-codex-spawn-prepare-inline-ref-warning",
+        request=SpawnRequest(
+            prompt="task prompt",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness="codex",
+            reference_files=(
+                first_file.as_posix(),
+                second_file.as_posix(),
+                dir_ref.as_posix(),
+            ),
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    warning = next(
+        (item for item in preview.warnings if item.code == "inline_file_refs_context_risk"),
+        None,
+    )
+    assert warning is not None
+    assert (
+        warning.message
+        == "Multiple file refs will be inlined and may drain context; "
+        "prefer folder refs or a design/context artifact."
+    )
+    assert warning.detail == {
+        "inline_file_reference_count": "2",
+        "total_inline_file_bytes": "7",
+    }
 
 
 @pytest.mark.parametrize(

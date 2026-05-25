@@ -190,6 +190,96 @@ def test_run_harness_process_writes_codex_system_field_primary_projection_manife
 
 
 @pytest.mark.slow
+def test_run_harness_process_writes_inline_file_reference_byte_accounting_for_codex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_CHAT_ID", raising=False)
+
+    project_root = tmp_path / "codex-inline-reference-bytes"
+    project_root.mkdir()
+    _write_minimal_mars_config(project_root)
+    file_a = project_root / "a.md"
+    file_a.write_text("a\n", encoding="utf-8")
+    file_b = project_root / "b.md"
+    file_b.write_text("bbbb\n", encoding="utf-8")
+    directory_ref = project_root / "docs"
+    directory_ref.mkdir()
+    (directory_ref / "index.md").write_text("# index\n", encoding="utf-8")
+
+    harness_registry = get_default_harness_registry()
+    config = load_config(project_root)
+    launch_context = build_launch_context(
+        spawn_id="dry-run-primary-codex-inline-reference-bytes",
+        request=SpawnRequest(
+            prompt="codex primary prompt",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness=HarnessId.CODEX.value,
+            reference_files=(file_a.as_posix(), file_b.as_posix(), directory_ref.as_posix()),
+            session=SessionRequest(
+                requested_harness_session_id="existing-codex-session",
+                continue_chat_id="c-codex",
+                primary_session_mode=SessionMode.RESUME.value,
+            ),
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.PRIMARY,
+            config_snapshot=config.model_dump(mode="json", exclude_none=True),
+            runtime_root=(project_root / ".meridian").as_posix(),
+            project_paths_project_root=project_root.as_posix(),
+            project_paths_execution_cwd=project_root.as_posix(),
+        ),
+        harness_registry=harness_registry,
+        dry_run=True,
+    )
+    adapter = harness_registry.get_subprocess_harness(HarnessId.CODEX)
+    monkeypatch.setattr(adapter, "observe_session_id", lambda **kwargs: None)
+
+    captured: dict[str, object] = {}
+
+    def fake_run_primary_attach(
+        harness_id: Any,
+        spawn_id: Any,
+        spawn_dir: Any,
+        control_root: Any,
+        task_cwd: Any,
+        env: Any,
+        spec: Any,
+        process_launcher: Any,
+        on_running: Any = None,
+    ) -> PrimaryAttachOutcome:
+        _ = harness_id, spawn_id, control_root, task_cwd, env, spec, process_launcher, on_running
+        captured["log_dir"] = Path(spawn_dir)
+        return PrimaryAttachOutcome(exit_code=0, session_id=None, tui_pid=333)
+
+    outcome = run_harness_process(
+        launch_context,
+        harness_registry,
+        run_primary_attach_fn=fake_run_primary_attach,
+        run_primary_process_with_capture_fn=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("managed primary path should avoid black-box launcher")
+        ),
+        stop_session_fn=lambda *args, **kwargs: None,
+        update_session_harness_id_fn=lambda *args, **kwargs: None,
+    )
+
+    log_dir = captured["log_dir"]
+    assert isinstance(log_dir, Path)
+    assert json.loads(
+        (log_dir / "inline-file-reference-bytes.json").read_text(encoding="utf-8")
+    ) == {
+        "total_inline_file_bytes": 7,
+        "largest_inline_file_references": [
+            {"path": file_b.as_posix(), "byte_count": 5},
+            {"path": file_a.as_posix(), "byte_count": 2},
+        ],
+    }
+    assert outcome.exit_code == 0
+
+
+@pytest.mark.slow
 def test_run_harness_process_codex_primary_routes_to_managed_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
