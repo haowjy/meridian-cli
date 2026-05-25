@@ -147,6 +147,9 @@ def test_spawn_continue_rejects_model_override_before_legacy_fallback_resolution
         ({"autocompact": 5000}, "--autocompact"),
         ({"autocompact_pct": 35}, "--autocompact-pct"),
         ({"passthrough_args": ("--custom",)}, "--"),
+        ({"work": "other-work"}, "--work"),
+        ({"worktree": True}, "--worktree/--no-worktree"),
+        ({"repo": "../other"}, "--repo"),
     ],
 )
 def test_spawn_continue_rejects_policy_flags_without_snapshot(

@@ -285,6 +285,7 @@ def test_direct_launch_context_synthesizes_policy_snapshot(tmp_path: Path) -> No
 
     snapshot = runtime_ctx.resolved_request.launch_policy_snapshot
     assert snapshot is not None
+    assert runtime_ctx.request.launch_policy_snapshot == snapshot
     assert snapshot.model == "gpt-5.4"
     assert snapshot.harness == HarnessId.CODEX.value
 

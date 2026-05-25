@@ -1612,6 +1612,12 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
         rejected.append("--autocompact-pct")
     if payload.passthrough_args:
         rejected.append("--")
+    if payload.work.strip():
+        rejected.append("--work")
+    if payload.worktree is not None:
+        rejected.append("--worktree/--no-worktree")
+    if payload.repo is not None and payload.repo.strip():
+        rejected.append("--repo")
     if rejected:
         flags = ", ".join(rejected)
         raise ValueError(
@@ -1849,9 +1855,9 @@ def spawn_continue_sync(
         skills=source_snapshot.skills if source_snapshot is not None else payload.skills,
         goal=resolved_goal,
         desc=payload.desc,
-        work=payload.work,
-        worktree=payload.worktree,
-        repo=payload.repo,
+        work=source_spawn.work_id or "",
+        worktree=None,
+        repo=None,
         launch_policy_snapshot=source_snapshot,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,

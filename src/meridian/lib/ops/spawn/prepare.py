@@ -1,5 +1,7 @@
 """Spawn create-input validation and payload preparation helpers."""
 
+from pathlib import Path
+
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
@@ -86,8 +88,19 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
+        continued_source_execution_cwd = (
+            (payload.session.source_execution_cwd or "").strip() or None
+            if payload.session.continue_source_tracked
+            else None
+        )
         if forced_task_cwd_resolution is not None:
             task_cwd_resolution = forced_task_cwd_resolution
+        elif continued_source_execution_cwd is not None:
+            task_cwd_resolution = TaskCwdResolution(
+                task_cwd=Path(continued_source_execution_cwd),
+                source="continued-source",
+                work_item=explicit_work_id,
+            )
         else:
             task_cwd_resolution = resolve_task_cwd(
                 project_root,

@@ -1455,15 +1455,16 @@ def _build_direct_surface(
         reference_anchor=reference_anchor.expanduser().resolve(),
         kb_dir=resolve_kb_dir(resolved_project_root),
     )
+    resolved_request = (
+        request
+        if request.launch_policy_snapshot is not None
+        else request.model_copy(
+            update={"launch_policy_snapshot": build_launch_policy_snapshot(request)}
+        )
+    )
 
     return PreparedLaunchSurface(
-        request=(
-            request
-            if request.launch_policy_snapshot is not None
-            else request.model_copy(
-                update={"launch_policy_snapshot": build_launch_policy_snapshot(request)}
-            )
-        ),
+        request=resolved_request,
         harness=harness,
         composition_warnings=composition_warnings,
         content=PreparedLaunchContent(
@@ -1486,7 +1487,7 @@ def _build_direct_surface(
         has_profile_for_nested_deny=False,
         model_selection=None,
         alias_catalog=None,
-        launch_request=request,
+        launch_request=resolved_request,
     )
 
 
