@@ -12,24 +12,37 @@ function formatToolResult(result: unknown): string {
 
   if (typeof obj.error === "string") return `Error: ${obj.error}`;
 
-  if ("stdout" in obj || "stderr" in obj || "exit_code" in obj) {
+  if ("stdout" in obj || "stderr" in obj) {
     const stdout = typeof obj.stdout === "string" ? obj.stdout : "";
     const stderr = typeof obj.stderr === "string" ? obj.stderr : "";
-    const exitCode = typeof obj.exit_code === "number" ? obj.exit_code : null;
-    const parts = [stdout, stderr].filter((part) => part.length > 0);
-    if (exitCode !== null && exitCode !== 0) parts.push(`[exit_code: ${exitCode}]`);
-    if (parts.length > 0) return parts.join("\n").trimEnd();
-    return exitCode === null ? "" : `[exit_code: ${exitCode}]`;
+    return stdout + stderr;
   }
 
-  if (typeof obj.output === "string") return obj.output.trimEnd();
+  if (typeof obj.output === "string") return obj.output;
   if (typeof obj.message === "string") return obj.message;
+
+  if (Array.isArray(obj.rows)) return formatRows(obj.rows);
 
   if (typeof obj.bash_id === "string" && typeof obj.status === "string") {
     return `${obj.bash_id}: ${obj.status}`;
   }
 
-  return JSON.stringify(result, null, 2);
+  return String(result);
+}
+
+function formatRows(rows: unknown[]): string {
+  const objects = rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object");
+  if (objects.length === 0) return "No managed bash tasks.";
+  return renderTable(
+    [
+      { header: "ID", width: 10, render: (row: Record<string, unknown>) => String(row.bash_id ?? "") },
+      { header: "STATE", width: 12, render: (row: Record<string, unknown>) => String(row.status ?? "") },
+      { header: "DUR", width: 8, render: (row: Record<string, unknown>) => `${Math.floor(Number(row.duration_secs ?? 0))}s` },
+      { header: "COMMAND", width: 60, render: (row: Record<string, unknown>) => String(row.command ?? "") },
+    ],
+    objects,
+    100,
+  ).join("\n");
 }
 
 export default function managedBashExtension(pi: ExtensionAPI): void {
