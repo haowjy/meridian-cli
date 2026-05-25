@@ -1,7 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { backgroundForegroundBash } from "../background_foreground";
-import { USER_BASH_PANEL_BACKGROUND_MSG } from "../bash_bridge";
+import { isPsBackgroundSubcommand, runPsBackgroundForeground } from "./background";
 import { TasksPanelComponent } from "../components/tasks-panel-component";
 import { LogOverlayComponent } from "../components/log-overlay-component";
 import { formatPsTable } from "../format_rows";
@@ -11,42 +10,6 @@ import type { DockActions } from "../hooks/widget";
 import { listUnifiedRows } from "./actions";
 import type { TaskRegistry } from "../task_registry";
 import type { BackgroundTaskRecord, PsRow } from "../types";
-
-type PsNotifyLevel = "info" | "warning";
-
-export function psBackgroundSubcommandMessage(result: {
-  ok: boolean;
-  reason?: string;
-}): { level: PsNotifyLevel; message: string } {
-  if (result.ok) {
-    return { level: "info", message: USER_BASH_PANEL_BACKGROUND_MSG };
-  }
-  if (result.reason === "no_foreground") {
-    return { level: "warning", message: "No foreground $ task to background" };
-  }
-  return {
-    level: "warning",
-    message: result.reason
-      ? `Could not background task: ${result.reason}`
-      : "Could not background task",
-  };
-}
-
-function notifyPs(
-  ctx: { ui?: { notify?: (msg: string, level?: string) => void } },
-  level: PsNotifyLevel,
-  message: string,
-): void {
-  if (ctx.ui?.notify) {
-    ctx.ui.notify(message, level);
-  } else {
-    process.stdout.write(`${message}\n`);
-  }
-}
-
-export function isPsBackgroundSubcommand(trimmed: string): boolean {
-  return trimmed === "b" || trimmed === "background";
-}
 
 /** Full-screen /ps overlay (covers editor + widgets; chat may remain above in Pi). */
 const PS_PANEL_OPTIONS = {
@@ -103,9 +66,7 @@ export function registerPsCommand(
       }
 
       if (isPsBackgroundSubcommand(trimmed)) {
-        const result = await backgroundForegroundBash(panelHost);
-        const { level, message } = psBackgroundSubcommandMessage(result);
-        notifyPs(ctx, level, message);
+        await runPsBackgroundForeground(panelHost, ctx);
         return;
       }
 

@@ -9,7 +9,7 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 - Pi **`!`** is a run shortcut — not background.
 - Trailing **`&`** on **`$`** (`splitUserBashBackground`): immediate `{ result }`, detached task in registry/`/ps`, no `waitForCompletion`.
 - Foreground **`$`**: `operations.exec` blocks until exit or background; foreground row pinned with **`● fg`**.
-- **`/ps b`** or **`/ps background`** (space args on `ps`, like `json`): backgrounds the blocking foreground **`$`** without opening the overlay — `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`.
+- **`/ps b`** or **`/ps background`** (space args on `ps`, like `json`): backgrounds the blocking foreground **`$`** without opening the overlay — `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Optional discoverability alias: **`/ps:background`** (same handler as `ps:kill`-style subcommands).
 - **In-chat hint** (`meridian:foreground-bash-hint`): once per foreground **`$`** task — `/ps to manage tasks · /ps b to run in background`. User-only (`details.hintText`, empty `content`, `triggerTurn: false`). Not for trailing **`&`** (already detached).
 - **`/ps` overlay**: **`b`** on foreground row → same background path. Footer shows **`b` background** and **`/ps b`** when applicable.
 - Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
