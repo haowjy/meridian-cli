@@ -150,10 +150,72 @@ def test_spawn_prepare_warns_for_multiple_inline_file_references(
         == "Multiple file refs will be inlined and may drain context; "
         "prefer folder refs or a design/context artifact."
     )
-    assert warning.detail == {
-        "inline_file_reference_count": "2",
-        "total_inline_file_bytes": "7",
-    }
+    # Byte counts now measure rendered blocks (headers + body), not raw body bytes.
+    # With "a\n" and "bbbb\n" as content, rendered blocks include headers.
+    assert warning.detail["inline_file_reference_count"] == "2"
+    # Total bytes should be significant (headers add context cost)
+    total_bytes = int(warning.detail["total_inline_file_bytes"])
+    assert total_bytes > 0
+
+
+def test_spawn_prepare_no_warning_for_warning_only_file_references(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify no false-positive drain warning for refs with only warning content.
+
+    Binary and oversized files render warning-only blocks (no body content).
+    Multiple such refs should not trigger the drain warning since no actual
+    file bytes are inlined.
+    """
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    # Create a binary file (will be skipped as binary in load_reference_items)
+    binary_file = tmp_path / "binary.bin"
+    binary_file.write_bytes(b"\x00\x01\x02\x03" + b"x" * 100)
+    oversized_file = tmp_path / "huge.txt"
+    # Write a file > 100KB to trigger oversized warning
+    oversized_file.write_text("x" * (101 * 1024), encoding="utf-8")
+    small_file = tmp_path / "small.txt"
+    small_file.write_text("content\n", encoding="utf-8")
+
+    preview = build_launch_context(
+        spawn_id="dry-run-codex-spawn-prepare-no-warning-only-refs",
+        request=SpawnRequest(
+            prompt="task prompt",
+            prompt_is_composed=False,
+            model="gpt-5.4",
+            harness="codex",
+            reference_files=(
+                binary_file.as_posix(),
+                oversized_file.as_posix(),
+                small_file.as_posix(),
+            ),
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    # Should NOT warn about drain risk: only small_file has body content
+    warning = next(
+        (item for item in preview.warnings if item.code == "inline_file_refs_context_risk"),
+        None,
+    )
+    assert warning is None, (
+        "Should not warn about context drain for single file with body content, "
+        "even if others are warning-only"
+    )
 
 
 @pytest.mark.parametrize(

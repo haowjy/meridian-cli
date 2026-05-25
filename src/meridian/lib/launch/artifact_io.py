@@ -104,7 +104,7 @@ def _write_inline_file_reference_byte_accounting(
         "total_inline_file_bytes": sum(
             contribution.byte_count for contribution in contributions
         ),
-        "largest_inline_file_references": [
+        "inline_file_references_by_size": [
             contribution.to_dict() for contribution in contributions
         ],
     }

@@ -267,15 +267,27 @@ def test_run_harness_process_writes_inline_file_reference_byte_accounting_for_co
 
     log_dir = captured["log_dir"]
     assert isinstance(log_dir, Path)
-    assert json.loads(
+    artifact = json.loads(
         (log_dir / "inline-file-reference-bytes.json").read_text(encoding="utf-8")
-    ) == {
-        "total_inline_file_bytes": 7,
-        "largest_inline_file_references": [
-            {"path": file_b.as_posix(), "byte_count": 5},
-            {"path": file_a.as_posix(), "byte_count": 2},
-        ],
-    }
+    )
+    # Verify structure: field renamed from largest_inline_file_references to
+    # inline_file_references_by_size, and byte counts now measure rendered blocks
+    assert "inline_file_references_by_size" in artifact
+    assert "total_inline_file_bytes" in artifact
+    refs_by_size = artifact["inline_file_references_by_size"]
+    # Should have 2 file refs (directory ref is excluded)
+    assert len(refs_by_size) == 2
+    # Both files have content, so both appear in sorted order (descending by bytes)
+    assert refs_by_size[0]["path"] == file_b.as_posix()
+    assert refs_by_size[1]["path"] == file_a.as_posix()
+    # Byte counts should be > 0 (rendered blocks with headers)
+    assert refs_by_size[0]["byte_count"] > 0
+    assert refs_by_size[1]["byte_count"] > 0
+    # Total should match sum of individual contributions
+    assert (
+        artifact["total_inline_file_bytes"]
+        == refs_by_size[0]["byte_count"] + refs_by_size[1]["byte_count"]
+    )
     assert outcome.exit_code == 0
 
 

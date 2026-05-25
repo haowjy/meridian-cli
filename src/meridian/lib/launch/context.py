@@ -449,7 +449,11 @@ _INLINE_FILE_REFS_WARNING_MESSAGE = (
 
 
 def _build_inline_file_refs_warning(content: PreparedLaunchContent) -> CompositionWarning | None:
-    """Warn when multiple file references route inline into prompt context."""
+    """Warn when multiple file references with actual content route inline into prompt context.
+
+    Warning-only refs (binary, oversized, etc.) are excluded to avoid false positives
+    since they contribute metadata, not file content.
+    """
 
     reference_items = content.loaded_references
     if not reference_items:
@@ -460,7 +464,9 @@ def _build_inline_file_refs_warning(content: PreparedLaunchContent) -> Compositi
         if content.projected_content is not None
         else build_reference_routing(reference_items)
     )
-    contributions = build_inline_file_contributions(reference_items, reference_routing)
+    contributions = build_inline_file_contributions(
+        reference_items, reference_routing, exclude_warning_only=True
+    )
     if len(contributions) < 2:
         return None
 
