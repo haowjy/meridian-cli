@@ -116,14 +116,14 @@ function titleLine(title: string, width: number, theme: Theme): string {
   const label = ` ${title} `;
   const truncated = truncateToWidth(label, innerWidth, "", true);
   const remaining = Math.max(0, innerWidth - visibleWidth(truncated));
-  return theme.fg("dim", `╭${truncated}${"─".repeat(remaining)}╮`);
+  return theme.fg("dim", `┌${truncated}${"─".repeat(remaining)}┐`);
 }
 
 function padLine(content: string, width: number, theme: Theme): string {
-  const innerWidth = Math.max(0, width - 4);
+  const innerWidth = Math.max(0, width - 2);
   const truncated = truncateToWidth(content, innerWidth, "", true);
   const pad = Math.max(0, innerWidth - visibleWidth(truncated));
-  return `${theme.fg("dim", "│ ")}${truncated}${" ".repeat(pad)}${theme.fg("dim", " │")}`;
+  return `${theme.fg("dim", "│")}${truncated}${" ".repeat(pad)}${theme.fg("dim", "│")}`;
 }
 
 function renderTableLine<Row>(
@@ -132,15 +132,16 @@ function renderTableLine<Row>(
   width: number,
   theme: Theme,
   selected: boolean,
+  suffix = "",
 ): string {
-  const innerWidth = Math.max(0, width - 4);
+  const innerWidth = Math.max(0, width - 2);
   const prefix = row == null ? "  " : selected ? theme.fg("accent", "> ") : "  ";
   const cells = columns.map((column) => {
     const value = row == null ? column.header : column.render(row);
     const rendered = row == null ? theme.fg("dim", value) : value;
     return fitCell(rendered, column.width, column.align);
   });
-  return padLine(truncateToWidth(prefix + cells.join("  "), innerWidth, "", true), width, theme);
+  return padLine(truncateToWidth(prefix + cells.join("  ") + suffix, innerWidth, "", true), width, theme);
 }
 
 export function renderSelectablePanel<Row>(
@@ -160,29 +161,32 @@ export function renderSelectablePanel<Row>(
   const preview = previewRaw.slice(0, previewLimit);
   while (preview.length < previewLimit) preview.push("");
 
-  const availableRows = Math.max(1, terminalRows - preview.length - 6);
-  const visibleCount = Math.min(maxRows, availableRows, rows.length);
+  const visibleCount = Math.min(maxRows, rows.length);
   const start = Math.max(0, Math.min(rowScrollOffset, Math.max(0, rows.length - visibleCount)));
   const end = start + visibleCount;
   const visibleRows = rows.slice(start, end);
-  const titleSuffix = rows.length > visibleCount && visibleCount > 0 ? ` [${start + 1}-${end}/${rows.length}]` : "";
+  const headerSuffix = rows.length > visibleCount && visibleCount > 0 ? theme.fg("dim", ` [${start + 1}-${end}/${rows.length}]`) : "";
 
-  const lines: string[] = [];
-  lines.push(titleLine(`${options.title}${titleSuffix}`, width, theme));
-  for (const line of preview) lines.push(padLine(line, width, theme));
-  lines.push(borderLine(width, "├", "─", "┤", theme));
-  lines.push(renderTableLine(null, options.columns, width, theme, false));
+  const topLines: string[] = [titleLine(options.title, width, theme), padLine("", width, theme)];
+  for (const line of preview) topLines.push(padLine(line, width, theme));
+
+  const tableLines: string[] = [borderLine(width, "├", "─", "┤", theme)];
+  tableLines.push(renderTableLine(null, options.columns, width, theme, false, headerSuffix));
+  tableLines.push(borderLine(width, "├", "─", "┤", theme));
   if (rows.length === 0) {
-    lines.push(padLine(theme.fg("dim", options.emptyMessage ?? "No rows"), width, theme));
+    tableLines.push(padLine(theme.fg("dim", options.emptyMessage ?? "No rows"), width, theme));
   } else {
     for (let idx = 0; idx < visibleRows.length; idx += 1) {
-      lines.push(renderTableLine(visibleRows[idx]!, options.columns, width, theme, start + idx === selectedIndex));
+      tableLines.push(renderTableLine(visibleRows[idx]!, options.columns, width, theme, start + idx === selectedIndex));
     }
   }
-  lines.push(borderLine(width, "├", "─", "┤", theme));
-  lines.push(padLine(theme.fg("dim", footer), width, theme));
-  lines.push(borderLine(width, "╰", "─", "╯", theme));
-  return lines;
+
+  const footerLines = [borderLine(width, "├", "─", "┤", theme), padLine(theme.fg("dim", footer), width, theme)];
+  const targetRows = Math.max(16, terminalRows - 1);
+  const spacerCount = Math.max(0, targetRows - topLines.length - tableLines.length - footerLines.length);
+  const spacerLines = Array.from({ length: spacerCount }, () => padLine("", width, theme));
+
+  return [...topLines, ...spacerLines, ...tableLines, ...footerLines];
 }
 
 export class SelectablePanelComponent<Row> implements Component {
