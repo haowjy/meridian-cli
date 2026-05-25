@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, watch, type FSWatcher } from "node:
 import path from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
 
 import { readJsonFile, writeJsonAtomic } from "../../shared/json_file";
 import { runMeridianCommand } from "../../shared/meridian_cli";
@@ -192,20 +193,35 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
     description: "List Meridian spawns correlated to this Pi session.",
     handler: async (_args, ctx) => {
       const rows = await runtime.rows();
-      const lines = rows.length
-        ? renderTable(
-            [
-              { header: "ID", width: 10, render: (row) => row.id },
-              { header: "STATUS", width: 12, render: (row) => String(row.status ?? "") },
-              { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
-              { header: "MODEL", width: 24, render: (row) => String(row.model ?? "") },
-              { header: "← BASH", width: 10, render: (row) => String(row.originating_bash_id ?? "") },
-            ],
-            rows,
-            100,
-          )
-        : ["No correlated Meridian spawns."];
-      ctx.ui.notify(lines.join("\n"), "info");
+      const columns = [
+        { header: "ID", width: 10, render: (row: SpawnStateFile) => row.id },
+        { header: "STATUS", width: 12, render: (row: SpawnStateFile) => String(row.status ?? "") },
+        { header: "AGENT", width: 16, render: (row: SpawnStateFile) => String(row.agent ?? "") },
+        { header: "MODEL", width: 24, render: (row: SpawnStateFile) => String(row.model ?? "") },
+        { header: "← BASH", width: 10, render: (row: SpawnStateFile) => String(row.originating_bash_id ?? "") },
+      ];
+      await ctx.ui.custom(
+        (_tui, theme, _keybindings, done) => ({
+          render(width: number): string[] {
+            const title = theme.fg("accent", theme.bold(" Meridian /mspawn — correlated spawns "));
+            const body = rows.length ? renderTable(columns, rows, Math.max(20, width - 4)) : ["No correlated Meridian spawns."];
+            return [
+              theme.fg("border", "╭" + "─".repeat(Math.max(0, width - 2)) + "╮"),
+              theme.fg("border", "│ ") + title,
+              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
+              ...body.map((line) => theme.fg("border", "│ ") + line),
+              theme.fg("border", "├" + "─".repeat(Math.max(0, width - 2)) + "┤"),
+              theme.fg("dim", "│ q/esc close • /mspawn:show <id> • /mspawn:log <id>"),
+              theme.fg("border", "╰" + "─".repeat(Math.max(0, width - 2)) + "╯"),
+            ];
+          },
+          handleInput(data: string): void {
+            if (matchesKey(data, Key.escape) || data === "q") done(undefined);
+          },
+          invalidate(): void {},
+        }),
+        { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%" } },
+      );
     },
   });
 
