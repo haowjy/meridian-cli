@@ -17,6 +17,9 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.launch_policy_snapshot import (
+    LaunchPolicySnapshot as LaunchPolicySnapshot,
+)
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES as _ACTIVE_SPAWN_STATUSES,
 )
@@ -30,9 +33,6 @@ from meridian.lib.state.event_store import lock_file
 from meridian.lib.state.paths import RuntimePaths
 from meridian.lib.state.spawn.model import (
     LaunchMode as LaunchMode,
-)
-from meridian.lib.state.spawn.model import (
-    LaunchPolicySnapshot as LaunchPolicySnapshot,
 )
 from meridian.lib.state.spawn.model import (
     SpawnOrigin as SpawnOrigin,

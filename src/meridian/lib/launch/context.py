@@ -23,7 +23,6 @@ from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
-from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -85,6 +84,7 @@ from .policies import (
     SurfacePolicyInput,
     resolve_launch_policy,
 )
+from .policy_snapshot import build_launch_policy_snapshot
 from .prompt import (
     build_goal_instruction,
     build_launch_context_documents,
@@ -104,7 +104,6 @@ from .reference import (
 from .request import (
     LaunchArgvIntent,
     LaunchCompositionSurface,
-    LaunchPolicySnapshot,
     LaunchRuntime,
     RequestPromptPayload,
     SpawnRequest,
@@ -519,53 +518,6 @@ def _request_prompt_payload(prompt_payload: PreparedPromptPayload) -> RequestPro
         adhoc_agent_payload=prompt_payload.adhoc_agent_payload,
         appended_system_prompt=prompt_payload.appended_system_prompt,
         user_turn_content=prompt_payload.user_turn_content,
-    )
-
-
-def build_launch_policy_snapshot(
-    request: SpawnRequest,
-    *,
-    model_selection: ModelSelectionContext | None = None,
-    loaded_skills: tuple[SkillContent, ...] = (),
-) -> LaunchPolicySnapshot:
-    """Build a durable launch-policy snapshot from a resolved request."""
-
-    model = (request.model or "").strip()
-    harness = (request.harness or "").strip()
-    if not harness:
-        raise ValueError("Resolved request is missing harness for launch policy snapshot.")
-    resolved_skill_names = tuple(skill.name for skill in loaded_skills) or request.skills
-    resolved_skill_paths = tuple(skill.path for skill in loaded_skills) or request.skill_paths
-    return LaunchPolicySnapshot(
-        model=model,
-        harness=harness,
-        agent=(request.agent or "").strip() or None,
-        agent_path=(request.agent_metadata.get("session_agent_path") or "").strip() or None,
-        agent_description=(
-            request.agent_metadata.get("session_agent_description") or ""
-        ).strip(),
-        agent_profile_body=request.agent_metadata.get("session_agent_profile_body") or "",
-        skills=resolved_skill_names,
-        skill_paths=resolved_skill_paths,
-        loaded_skills=loaded_skills,
-        execution_policy=request.execution_policy,
-        tools=request.tools,
-        mcp_tools=request.mcp_tools,
-        extra_args=request.extra_args,
-        model_selection_requested_token=request.model_selection_requested_token,
-        model_selection_selected_token=(
-            model_selection.selected_model_token
-            if model_selection is not None
-            else request.model_selection_requested_token or (request.model or "").strip() or None
-        ),
-        model_selection_canonical_id=request.model_selection_canonical_id,
-        model_selection_harness_provenance=request.model_selection_harness_provenance,
-        model_selection_harness_model_id=(
-            model_selection.harness_model_id if model_selection is not None else None
-        ),
-        matched_policy_rule=request.matched_policy_rule,
-        fallback_chain=request.fallback_chain,
-        terminal_surface_mode=request.terminal_surface_mode,
     )
 
 

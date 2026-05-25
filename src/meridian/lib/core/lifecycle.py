@@ -16,9 +16,10 @@ Design decisions in effect:
 
 Import note
 -----------
-Shared spawn domain models live in ``meridian.lib.state.spawn.model`` so this
-service imports shared types without depending on store-owned models. Store access
-stays lazy so package-level compatibility re-exports do not reintroduce cycles.
+Shared spawn record types live in ``meridian.lib.state.spawn.model`` and
+launch-policy snapshot lives in ``meridian.lib.core.launch_policy_snapshot``.
+Store access stays lazy so package-level compatibility re-exports do not
+reintroduce cycles.
 """
 
 from __future__ import annotations
@@ -54,12 +55,12 @@ if TYPE_CHECKING:
 
     from meridian.lib.core.clock import Clock
     from meridian.lib.core.domain import SpawnStatus, TokenUsage
+    from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
     from meridian.lib.hooks.dispatch import HookDispatcher
     from meridian.lib.launch.types import PrimarySessionMetadata
     from meridian.lib.platform.process_scope.base import ProcessScopeSnapshot
     from meridian.lib.state.spawn.model import (
         LaunchMode,
-        LaunchPolicySnapshot,
         SpawnOrigin,
         SpawnRecord,
     )

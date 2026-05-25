@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.spawn.model import LaunchPolicySnapshot, SpawnRecord
+from meridian.lib.state.spawn.model import SpawnRecord
 
 if TYPE_CHECKING:
     from meridian.lib.core.domain import SpawnStatus
