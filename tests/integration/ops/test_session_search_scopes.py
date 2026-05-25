@@ -111,7 +111,7 @@ def test_session_search_workspace_scope_uses_runtime_evidence_not_repo_markers(
     assert not (workspace_root / "meridian.toml").exists()
     assert not (workspace_root / ".git").exists()
     assert match.open_command.startswith("meridian session log --file ")
-    assert "--around 1 --context 5" in match.open_command
+    assert "--segment 0 --around 1 --context 5" in match.open_command
 
 
 def test_session_search_global_scope_includes_runtime_root(tmp_path: Path, monkeypatch) -> None:

@@ -34,6 +34,16 @@ def _session_log(
             ),
         ),
     ] = None,
+    global_scope: Annotated[
+        bool,
+        Parameter(
+            name="--global",
+            help=(
+                "Use global interaction-entry ordinals for --from/--before/--around. "
+                "Conflicts with --segment."
+            ),
+        ),
+    ] = False,
     full: Annotated[
         bool,
         Parameter(
@@ -63,21 +73,21 @@ def _session_log(
         int | None,
         Parameter(
             name="--from",
-            help="Window start (segment-local when --segment is set, otherwise global).",
+            help="Window start (segment-local by default; use --global for global ordinals).",
         ),
     ] = None,
     before_ordinal: Annotated[
         int | None,
         Parameter(
             name="--before",
-            help="Window ends before this ordinal (segment-local when --segment is set).",
+            help="Window ends before this ordinal (segment-local by default).",
         ),
     ] = None,
     around_ordinal: Annotated[
         int | None,
         Parameter(
             name="--around",
-            help="Window centered on this ordinal (segment-local when --segment is set).",
+            help="Window centered on this ordinal (segment-local by default).",
         ),
     ] = None,
     limit: Annotated[
@@ -106,6 +116,7 @@ def _session_log(
             SessionLogInput(
                 ref=ref,
                 segment=segment,
+                global_scope=global_scope,
                 full=full,
                 truncate=not no_truncate,
                 tail=resolved_tail,
@@ -247,6 +258,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session log c123 --full --no-truncate\n\n"
                 "  meridian session log c123 --from 120 --limit 30\n\n"
                 "  meridian session log c123 --around 240 --context 8\n\n"
+                "  meridian session log c123 --global --around 240 --context 8\n\n"
                 "  meridian session log c123 --segment previous\n\n"
                 "  meridian session log c123 --segment current --from 0 --limit 1\n\n"
                 "  meridian session log c123 --before 240 --limit 30\n"

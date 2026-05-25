@@ -150,7 +150,8 @@ def _matches_for_transcript(
                 content_preview=_build_preview(normalized_content, query=query),
                 open_command=build_session_log_command(
                     transcript.route,
-                    around_ordinal=entry_ordinal,
+                    segment_index=entry.segment_index,
+                    around_ordinal=entry.ordinal,
                     context=_OPEN_CONTEXT,
                 ),
             )

@@ -5,18 +5,20 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- `meridian session log` absolute window navigation: `--from N --limit M`, `--before N --limit M`, `--around N --context M`.
+- `meridian session log` segment-local window navigation: `--from N --limit M`, `--before N --limit M`, `--around N --context M`.
+- `meridian session log --global` for explicit global interaction-entry windows with `--from/--before/--around`.
 - `meridian session log --segment current|previous|N` with numeric segment indexes absolute from transcript start.
 - `meridian session log --full` for explicit full selected-segment output.
 - `meridian session log --no-truncate` to opt into full message/entry content rendering.
 - `meridian session search` scope flags: `--work WORK_ID`, `--workspace`, `--global`.
-- Deterministic session-search `Open:` commands with absolute entry anchors (`--around ... --context ...`).
+- Deterministic session-search `Open:` commands with explicit segment-local anchors (`--segment N --around ... --context ...`).
 
 ### Changed
 - `meridian session log REF` now defaults to a safe recent window: last 5 transcript entries/chunks from the selected segment, shown oldest→newest.
 - `meridian session log` now reserves segment-local entry `0` as a prologue slot for every segment: segment `0` uses extractable system prompt content when available; later segments use extractable compaction handoff content when available; otherwise slot `0` renders a reserved placeholder.
 - Segment-local interaction entries now start at `1`; `--full` includes slot `0`, while default/tail views keep their recent interaction windows without consuming one slot on entry `0`.
-- `meridian session log --segment ... --from/--before/--around` now applies segment-local ordinals (`0..N`) for deterministic local navigation, including `--from 0 --limit 1` for explicit prologue/handoff reads.
+- `meridian session log --from/--before/--around` now applies segment-local ordinals (`0..N`) by default on the selected segment, including `--from 0 --limit 1` for explicit prologue/handoff reads.
+- `meridian session log` window output now emits explicit cross-segment boundary hints (`Previous segment:` / `Next segment:`) when a selected segment window touches segment start/end.
 - Session-log output now preview-truncates oversized entry/message content by default and emits deterministic reopen guidance.
 - Session-log navigation/counting now runs on interaction entries (tool-result-closed chunks) instead of raw parsed message rows.
 - Bare `meridian session log REF --tail` still defaults to 5, now in entry/chunk units.

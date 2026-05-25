@@ -83,6 +83,25 @@ def _write_compacted_session_file(path: Path, *, include_handoff: bool) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_three_segment_session_file(path: Path) -> None:
+    lines = [
+        _system_event("initial system prompt"),
+        _event("user", "s0-u1"),
+        _event("assistant", "s0-a1"),
+        json.dumps(
+            {"type": "system", "subtype": "compact_boundary", "summary": "handoff to segment 1"}
+        ),
+        _event("user", "s1-u1"),
+        _event("assistant", "s1-a1"),
+        json.dumps(
+            {"type": "system", "subtype": "compact_boundary", "summary": "handoff to segment 2"}
+        ),
+        _event("user", "s2-u1"),
+        _event("assistant", "s2-a1"),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def test_session_log_default_shows_recent_five_entries_in_current_segment(tmp_path: Path) -> None:
     session_file = tmp_path / "session.jsonl"
     _write_session_file(session_file)
@@ -161,7 +180,7 @@ def test_session_log_header_preserves_requested_ref_when_resolved_id_differs() -
     )
 
 
-def test_session_log_tail_and_absolute_window_are_deterministic(tmp_path: Path) -> None:
+def test_session_log_tail_and_segment_window_are_deterministic(tmp_path: Path) -> None:
     session_file = tmp_path / "session.jsonl"
     _write_session_file(session_file)
 
@@ -173,7 +192,7 @@ def test_session_log_tail_and_absolute_window_are_deterministic(tmp_path: Path) 
     )
     assert [entry.index for entry in around_output.entries] == [2, 3, 4]
     assert around_output.next_command is not None
-    assert "--from 5 --limit 3" in around_output.next_command
+    assert "--segment 0 --from 5 --limit 3" in around_output.next_command
 
 
 def test_session_log_segment_local_from_zero_reads_prologue_slot(tmp_path: Path) -> None:
@@ -256,6 +275,7 @@ def test_session_log_global_absolute_window_uses_global_ordinals_across_segments
     output = session_log_sync(
         SessionLogInput(
             file_path=session_file.as_posix(),
+            global_scope=True,
             around_ordinal=3,
             context=0,
         )
@@ -267,9 +287,64 @@ def test_session_log_global_absolute_window_uses_global_ordinals_across_segments
     assert output.entries[0].segment == 1
     assert output.entries[0].content == "u2"
     assert output.previous_command is not None
-    assert "--from 2 --limit 1" in output.previous_command
+    assert "--global --from 2 --limit 1" in output.previous_command
     assert output.next_command is not None
-    assert "--from 4 --limit 1" in output.next_command
+    assert "--global --from 4 --limit 1" in output.next_command
+
+
+def test_session_log_bare_selectors_default_to_current_segment_local(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            around_ordinal=1,
+            context=0,
+        )
+    )
+
+    assert output.segment_index == 1
+    assert output.showing == "1-1"
+    assert [entry.index for entry in output.entries] == [1]
+    assert output.entries[0].content == "u2"
+    assert output.previous_command is not None
+    assert "--segment 1 --from 0 --limit 1" in output.previous_command
+
+
+def test_session_log_global_from_uses_global_interaction_ordinals(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            global_scope=True,
+            from_ordinal=2,
+            limit=1,
+        )
+    )
+
+    assert output.segment_index is None
+    assert output.showing == "2-2"
+    assert [entry.index for entry in output.entries] == [2]
+    assert output.entries[0].content == "a1"
+
+
+def test_session_log_rejects_global_with_segment(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        session_log_sync(
+            SessionLogInput(
+                file_path=session_file.as_posix(),
+                global_scope=True,
+                segment="current",
+                from_ordinal=1,
+                limit=1,
+            )
+        )
 
 
 def test_session_log_rejects_conflicting_selectors(tmp_path: Path) -> None:
@@ -294,6 +369,61 @@ def test_session_log_rejects_conflicting_selectors(tmp_path: Path) -> None:
                 tail=1,
             )
         )
+
+
+def test_session_log_rejects_global_without_window_selector(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+    _write_session_file(session_file)
+
+    with pytest.raises(ValueError, match="requires --from, --before, or --around"):
+        session_log_sync(
+            SessionLogInput(
+                file_path=session_file.as_posix(),
+                global_scope=True,
+            )
+        )
+
+
+def test_session_log_boundary_hints_include_previous_segment_at_top(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-three-segments.jsonl"
+    _write_three_segment_session_file(session_file)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            segment="1",
+            from_ordinal=0,
+            limit=2,
+        )
+    )
+
+    assert output.previous_command is None
+    assert output.next_command is not None
+    assert "--segment 1 --from 2 --limit 2" in output.next_command
+    assert output.previous_segment_command is not None
+    assert "--segment 0 --from 1 --limit 2" in output.previous_segment_command
+    assert output.next_segment_command is None
+
+
+def test_session_log_boundary_hints_include_next_segment_at_bottom(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-three-segments.jsonl"
+    _write_three_segment_session_file(session_file)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            segment="1",
+            from_ordinal=1,
+            limit=2,
+        )
+    )
+
+    assert output.previous_command is not None
+    assert "--segment 1 --from 0 --limit 2" in output.previous_command
+    assert output.next_command is None
+    assert output.previous_segment_command is None
+    assert output.next_segment_command is not None
+    assert "--segment 2 --from 0 --limit 2" in output.next_segment_command
 
 
 def test_session_log_truncates_oversized_content_by_default(tmp_path: Path) -> None:

@@ -38,7 +38,47 @@ def test_session_search_file_mode_emits_deterministic_open_command(tmp_path: Pat
 
     assert len(output.matches) == 1
     assert output.matches[0].entry_ordinal == 1
-    assert output.matches[0].open_command.endswith("--around 1 --context 5")
+    assert output.matches[0].open_command.endswith("--segment 0 --around 1 --context 5")
+
+
+def test_session_search_open_command_is_explicit_for_non_current_segment(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    session_file.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "system", "content": "initial system prompt"}),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {"content": [{"type": "text", "text": "segment0"}]},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "system",
+                        "subtype": "compact_boundary",
+                        "summary": "handoff summary",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {"content": [{"type": "text", "text": "needle in segment1"}]},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    output = session_search_sync(
+        SessionSearchInput(query="needle", file_path=session_file.as_posix())
+    )
+
+    assert len(output.matches) == 1
+    assert output.matches[0].segment == 1
+    assert output.matches[0].open_command.endswith("--segment 1 --around 1 --context 5")
 
 
 def test_session_search_single_target_parses_transcript_once(

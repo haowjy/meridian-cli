@@ -45,3 +45,22 @@ def test_session_log_no_truncate_maps_to_truncate_false(monkeypatch) -> None:
     session_cmd._session_log(lambda _output: None, ref="c1", no_truncate=True)
 
     assert captured[0].truncate is False
+
+
+def test_session_log_global_maps_to_payload(monkeypatch) -> None:
+    captured: list[SessionLogInput] = []
+
+    def _fake_session_log_sync(payload: SessionLogInput) -> SessionLogInput:
+        captured.append(payload)
+        return payload
+
+    monkeypatch.setattr(session_cmd, "session_log_sync", _fake_session_log_sync)
+    session_cmd._session_log(
+        lambda _output: None,
+        ref="c1",
+        global_scope=True,
+        around_ordinal=10,
+        context=2,
+    )
+
+    assert captured[0].global_scope is True

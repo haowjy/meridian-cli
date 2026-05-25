@@ -281,6 +281,7 @@ def build_session_log_command(
     route: SessionLogRoute,
     *,
     segment_index: int | None = None,
+    global_scope: bool = False,
     from_ordinal: int | None = None,
     before_ordinal: int | None = None,
     limit: int | None = None,
@@ -291,6 +292,10 @@ def build_session_log_command(
         base = f"meridian session log --file {shlex.quote(route.value)}"
     else:
         base = f"meridian session log {shlex.quote(route.value)}"
+    if global_scope:
+        if segment_index is not None:
+            raise ValueError("--global cannot be combined with --segment.")
+        base = f"{base} --global"
     if segment_index is not None:
         base = f"{base} --segment {segment_index}"
 

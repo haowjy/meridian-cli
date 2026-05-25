@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Literal, NamedTuple
+
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_render import (
+    SessionWindow,
     showing_window,
     window_from_around_context,
     window_from_before_limit,
@@ -17,6 +20,7 @@ from meridian.lib.ops.session_render import (
 from meridian.lib.ops.session_transcript import (
     AbsoluteTranscriptEntry,
     AbsoluteTranscriptMessage,
+    SessionLogRoute,
     build_session_log_command,
     read_session_transcript,
 )
@@ -30,6 +34,7 @@ class SessionLogInput(BaseModel):
 
     ref: str = ""
     segment: str | None = None
+    global_scope: bool = False
     full: bool = False
     truncate: bool = True
     tail: int | None = None
@@ -77,6 +82,8 @@ class SessionLogOutput(BaseModel):
     entries: tuple[SessionLogEntry, ...]
     previous_command: str | None = None
     next_command: str | None = None
+    previous_segment_command: str | None = None
+    next_segment_command: str | None = None
     hints: tuple[str, ...] = ()
 
     @property
@@ -135,6 +142,10 @@ class SessionLogOutput(BaseModel):
             nav_lines.append(f"Previous: {self.previous_command}")
         if self.next_command is not None:
             nav_lines.append(f"Next: {self.next_command}")
+        if self.previous_segment_command is not None:
+            nav_lines.append(f"Previous segment: {self.previous_segment_command}")
+        if self.next_segment_command is not None:
+            nav_lines.append(f"Next segment: {self.next_segment_command}")
         if nav_lines:
             lines.append("")
             lines.extend(nav_lines)
@@ -260,6 +271,69 @@ def _entries_with_absolute_ordinals(
     )
 
 
+class _NavigationAddressSpace(NamedTuple):
+    mode: Literal["segment", "global"]
+    entries: tuple[AbsoluteTranscriptEntry, ...]
+    first_ordinal: int
+    segment_index: int | None
+    segment_label: str | None
+    segment_entries: int | None
+
+
+def _window_navigation_size(payload: SessionLogInput) -> int:
+    if payload.limit is not None:
+        return payload.limit
+    if payload.context is not None:
+        return payload.context * 2 + 1
+    if payload.tail is not None:
+        return payload.tail
+    return 5
+
+
+def _segment_boundary_commands(
+    *,
+    parsed_route: SessionLogRoute,
+    payload: SessionLogInput,
+    page: SessionWindow,
+    address_space: _NavigationAddressSpace,
+    total_segments: int,
+    segment_entries_by_index: tuple[tuple[AbsoluteTranscriptEntry, ...], ...],
+) -> tuple[str | None, str | None]:
+    if address_space.mode != "segment" or address_space.segment_index is None:
+        return (None, None)
+    if not page.messages:
+        return (None, None)
+
+    segment_index = address_space.segment_index
+    max_ordinal = address_space.first_ordinal + len(address_space.entries) - 1
+    touches_top = page.start_ordinal == address_space.first_ordinal
+    touches_bottom = page.end_ordinal == max_ordinal
+    window_size = _window_navigation_size(payload)
+
+    previous_segment_command: str | None = None
+    if touches_top and segment_index > 0:
+        previous_segment_index = segment_index - 1
+        previous_segment_total = len(segment_entries_by_index[previous_segment_index])
+        previous_start = max(previous_segment_total - window_size, 0)
+        previous_segment_command = build_session_log_command(
+            parsed_route,
+            segment_index=previous_segment_index,
+            from_ordinal=previous_start,
+            limit=window_size,
+        )
+
+    next_segment_command: str | None = None
+    if touches_bottom and segment_index < total_segments - 1:
+        next_segment_command = build_session_log_command(
+            parsed_route,
+            segment_index=segment_index + 1,
+            from_ordinal=0,
+            limit=window_size,
+        )
+
+    return (previous_segment_command, next_segment_command)
+
+
 def session_log_sync(
     payload: SessionLogInput,
     ctx: RuntimeContext | None = None,
@@ -277,14 +351,10 @@ def session_log_sync(
         raise ValueError("Use only one of --from, --before, or --around.")
 
     uses_window_selectors = any(absolute_selectors)
-    selector_requests_segment_zero = (
-        payload.from_ordinal == 0
-        or payload.before_ordinal == 0
-        or payload.around_ordinal == 0
-    )
-    uses_segment_local_selectors = uses_window_selectors and (
-        payload.segment is not None or selector_requests_segment_zero
-    )
+    if payload.global_scope and payload.segment is not None:
+        raise ValueError("--global cannot be combined with --segment.")
+    if payload.global_scope and not uses_window_selectors:
+        raise ValueError("--global requires --from, --before, or --around.")
     if uses_window_selectors:
         if payload.tail is not None:
             raise ValueError("--tail cannot be combined with --from/--before/--around.")
@@ -312,11 +382,18 @@ def session_log_sync(
         project_root=payload.project_root,
     )
 
-    selected_segment_index: int | None = None
-    selected_segment_label: str | None = None
-    selected_segment_entries: int | None = None
+    address_space: _NavigationAddressSpace
 
-    if not uses_window_selectors or uses_segment_local_selectors:
+    if payload.global_scope:
+        address_space = _NavigationAddressSpace(
+            mode="global",
+            entries=_entries_with_absolute_ordinals(parsed.entries),
+            first_ordinal=1,
+            segment_index=None,
+            segment_label=None,
+            segment_entries=None,
+        )
+    else:
         selected_segment_index = _resolve_segment_index(
             total_segments=len(parsed.segments),
             segment=payload.segment,
@@ -325,70 +402,54 @@ def session_log_sync(
             selected_index=selected_segment_index,
             total_segments=len(parsed.segments),
         )
-        segment_entries = list(parsed.segment_entries[selected_segment_index])
-        selected_segment_entries = len(segment_entries)
+        selected_segment_entries = len(parsed.segment_entries[selected_segment_index])
+        address_space = _NavigationAddressSpace(
+            mode="segment",
+            entries=parsed.segment_entries[selected_segment_index],
+            first_ordinal=0,
+            segment_index=selected_segment_index,
+            segment_label=selected_segment_label,
+            segment_entries=selected_segment_entries,
+        )
 
-        if not uses_window_selectors:
-            interaction_entries = [
-                entry for entry in segment_entries if entry.kind == "interaction"
-            ]
-            resolved_tail = (
-                None if payload.full else (payload.tail if payload.tail is not None else 5)
-            )
-            page = window_from_tail(
-                segment_entries if payload.full else interaction_entries,
-                tail=resolved_tail,
-                first_ordinal=0 if payload.full else 1,
-            )
-        elif payload.from_ordinal is not None:
-            limit = payload.limit if payload.limit is not None else 0
-            page = window_from_from_limit(
-                segment_entries,
-                start_ordinal=payload.from_ordinal,
-                limit=limit,
-                first_ordinal=0,
-            )
-        elif payload.before_ordinal is not None:
-            limit = payload.limit if payload.limit is not None else 0
-            page = window_from_before_limit(
-                segment_entries,
-                before_ordinal=payload.before_ordinal,
-                limit=limit,
-                first_ordinal=0,
-            )
-        else:
-            around_ordinal = payload.around_ordinal if payload.around_ordinal is not None else 0
-            context = payload.context if payload.context is not None else 0
-            page = window_from_around_context(
-                segment_entries,
-                around_ordinal=around_ordinal,
-                context=context,
-                first_ordinal=0,
-            )
+    if not uses_window_selectors:
+        interaction_entries = [
+            entry for entry in address_space.entries if entry.kind == "interaction"
+        ]
+        resolved_tail = None if payload.full else (payload.tail if payload.tail is not None else 5)
+        page = window_from_tail(
+            address_space.entries if payload.full else interaction_entries,
+            tail=resolved_tail,
+            first_ordinal=address_space.first_ordinal if payload.full else 1,
+        )
     elif payload.from_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
-        absolute_entries = _entries_with_absolute_ordinals(parsed.entries)
         page = window_from_from_limit(
-            absolute_entries,
+            address_space.entries,
             start_ordinal=payload.from_ordinal,
             limit=limit,
+            first_ordinal=address_space.first_ordinal,
         )
     elif payload.before_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
-        absolute_entries = _entries_with_absolute_ordinals(parsed.entries)
         page = window_from_before_limit(
-            absolute_entries,
+            address_space.entries,
             before_ordinal=payload.before_ordinal,
             limit=limit,
+            first_ordinal=address_space.first_ordinal,
         )
     else:
-        around_ordinal = payload.around_ordinal if payload.around_ordinal is not None else 1
+        around_ordinal = (
+            payload.around_ordinal
+            if payload.around_ordinal is not None
+            else address_space.first_ordinal
+        )
         context = payload.context if payload.context is not None else 0
-        absolute_entries = _entries_with_absolute_ordinals(parsed.entries)
         page = window_from_around_context(
-            absolute_entries,
+            address_space.entries,
             around_ordinal=around_ordinal,
             context=context,
+            first_ordinal=address_space.first_ordinal,
         )
 
     previous_command: str | None = None
@@ -402,19 +463,30 @@ def session_log_sync(
         if page.previous_from is not None:
             previous_command = build_session_log_command(
                 parsed.route,
-                segment_index=selected_segment_index if uses_segment_local_selectors else None,
+                segment_index=address_space.segment_index,
+                global_scope=payload.global_scope,
                 from_ordinal=page.previous_from,
                 limit=nav_limit,
             )
         if page.next_from is not None:
             next_command = build_session_log_command(
                 parsed.route,
-                segment_index=selected_segment_index if uses_segment_local_selectors else None,
+                segment_index=address_space.segment_index,
+                global_scope=payload.global_scope,
                 from_ordinal=page.next_from,
                 limit=nav_limit,
             )
 
-    use_global_display_index = uses_window_selectors and not uses_segment_local_selectors
+    previous_segment_command, next_segment_command = _segment_boundary_commands(
+        parsed_route=parsed.route,
+        payload=payload,
+        page=page,
+        address_space=address_space,
+        total_segments=len(parsed.segments),
+        segment_entries_by_index=parsed.segment_entries,
+    )
+
+    use_global_display_index = payload.global_scope
     output_entries = tuple(
         _entry_row_with_index(
             item,
@@ -429,8 +501,8 @@ def session_log_sync(
     )
 
     total_entries = (
-        selected_segment_entries
-        if selected_segment_entries is not None
+        address_space.segment_entries
+        if address_space.segment_entries is not None
         else len(parsed.entries)
     )
 
@@ -440,13 +512,15 @@ def session_log_sync(
         source=parsed.target.source,
         total_entries=total_entries,
         total_segments=len(parsed.segments),
-        segment_index=selected_segment_index,
-        segment_entries=selected_segment_entries,
-        segment_label=selected_segment_label,
+        segment_index=address_space.segment_index,
+        segment_entries=address_space.segment_entries,
+        segment_label=address_space.segment_label,
         showing=showing_window(page.start_ordinal, page.end_ordinal),
         entries=output_entries,
         previous_command=previous_command,
         next_command=next_command,
+        previous_segment_command=previous_segment_command,
+        next_segment_command=next_segment_command,
         hints=_window_hints(payload, uses_absolute_window=uses_window_selectors),
     )
 
