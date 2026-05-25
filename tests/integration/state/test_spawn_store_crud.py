@@ -169,6 +169,39 @@ def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
     assert row.launch_policy_snapshot == snapshot
 
 
+def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path) -> None:
+    runtime_root = _state_root(tmp_path)
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness="claude",
+        execution_policy=ResolvedExecutionPolicy(approval="auto", sandbox="workspace-write"),
+        extra_args=("--permission-mode", "acceptEdits"),
+    )
+
+    spawn_id = str(
+        start_spawn(
+            runtime_root,
+            chat_id="c1",
+            model="claude-sonnet-4-6",
+            agent="coder",
+            harness="claude",
+            prompt="hello",
+            launch_policy_snapshot=snapshot,
+        )
+    )
+
+    spawn_dir = runtime_root / "spawns" / spawn_id
+    state_path = spawn_dir / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert payload["launch_policy_snapshot"] == snapshot.model_dump(mode="json")
+    assert not any(
+        "launch_policy_snapshot" in path.name
+        for path in spawn_dir.iterdir()
+        if path.name != "state.json"
+    )
+
+
 def test_spawn_state_without_launch_policy_snapshot_remains_readable(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = str(

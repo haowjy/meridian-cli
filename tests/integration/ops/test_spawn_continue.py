@@ -15,6 +15,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
+from tests.support.fixtures import write_skill
 
 
 def _state_root(project_root: Path) -> Path:
@@ -209,6 +210,7 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
     project_root = tmp_path / "repo"
     project_root.mkdir()
     runtime_root = _state_root(project_root)
+    write_skill(project_root, "testing-principles")
     snapshot = LaunchPolicySnapshot(
         model="claude-sonnet-4-6",
         harness="claude",
@@ -225,22 +227,33 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
         harness_session_id="session-28",
         launch_policy_snapshot=snapshot,
     )
-    captured: dict[str, SpawnCreateInput] = {}
+    monkeypatch.setenv("MERIDIAN_MODEL", "gpt-5.4")
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+    monkeypatch.setenv("MERIDIAN_SANDBOX", "read-only")
 
-    def fake_spawn_create_sync(
-        create_input: SpawnCreateInput,
-        *args: object,
-        **kwargs: object,
+    def fail_bundle_resolution(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("snapshot replay should not re-resolve live policy")
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.bundle_adapter.request_and_resolve",
+        fail_bundle_resolution,
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_execute_spawn_blocking(
+        *,
+        payload: SpawnCreateInput,
+        request: object,
+        runtime: object,
+        ctx: object = None,
     ) -> SpawnActionOutput:
-        captured["create_input"] = create_input
+        _ = (runtime, ctx)
+        captured["payload"] = payload
+        captured["request"] = request
         return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p29")
 
-    monkeypatch.setattr(spawn_api, "spawn_create_sync", fake_spawn_create_sync)
-    monkeypatch.setattr(
-        spawn_api,
-        "_resolve_effective_fork_target_harness",
-        lambda _create_input, *, resolved_project_root=None: "codex",
-    )
+    monkeypatch.setattr(spawn_api, "execute_spawn_blocking", fake_execute_spawn_blocking)
 
     result = spawn_api.spawn_continue_sync(
         SpawnContinueInput(
@@ -251,12 +264,75 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
     )
 
     assert result.command == "spawn.continue"
-    create_input = captured["create_input"]
+    create_input = captured["request"]
+    continue_input = captured["payload"]
+    assert isinstance(continue_input, SpawnCreateInput)
+    assert continue_input.launch_policy_snapshot == snapshot
     assert create_input.launch_policy_snapshot == snapshot
     assert create_input.model == snapshot.model
     assert create_input.harness == snapshot.harness
     assert create_input.agent == snapshot.agent
     assert create_input.skills == snapshot.skills
-    assert create_input.approval == snapshot.execution_policy.approval
-    assert create_input.sandbox == snapshot.execution_policy.sandbox
-    assert create_input.passthrough_args == snapshot.extra_args
+    assert create_input.execution_policy.approval == snapshot.execution_policy.approval
+    assert create_input.execution_policy.sandbox == snapshot.execution_policy.sandbox
+    assert create_input.execution_policy.effort == snapshot.execution_policy.effort
+    assert create_input.extra_args == snapshot.extra_args
+
+
+def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    _seed_spawn(runtime_root, spawn_id="p30", harness_session_id="session-30")
+
+    monkeypatch.setenv("MERIDIAN_MODEL", "claude-sonnet-4-6")
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+
+    def fail_live_harness_resolution(
+        _create_input: SpawnCreateInput,
+        *,
+        resolved_project_root: Path | None = None,
+    ) -> str:
+        _ = resolved_project_root
+        raise AssertionError("legacy continue should use the persisted source harness")
+
+    monkeypatch.setattr(
+        spawn_api,
+        "_resolve_effective_fork_target_harness",
+        fail_live_harness_resolution,
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_execute_spawn_blocking(
+        *,
+        payload: SpawnCreateInput,
+        request: object,
+        runtime: object,
+        ctx: object = None,
+    ) -> SpawnActionOutput:
+        _ = (runtime, ctx)
+        captured["payload"] = payload
+        captured["request"] = request
+        return SpawnActionOutput(command="spawn.create", status="running", spawn_id="p31")
+
+    monkeypatch.setattr(spawn_api, "execute_spawn_blocking", fake_execute_spawn_blocking)
+
+    result = spawn_api.spawn_continue_sync(
+        SpawnContinueInput(
+            spawn_id="p30",
+            prompt="follow-up prompt",
+            project_root=project_root.as_posix(),
+        )
+    )
+
+    assert result.command == "spawn.continue"
+    create_input = captured["request"]
+    continue_input = captured["payload"]
+    assert isinstance(continue_input, SpawnCreateInput)
+    assert continue_input.launch_policy_snapshot is None
+    assert create_input.harness == "codex"
+    assert create_input.model == "gpt-5.3-codex"

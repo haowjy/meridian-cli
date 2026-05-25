@@ -1841,7 +1841,7 @@ def spawn_continue_sync(
             }
         )
     else:
-        launch_options["harness"] = requested_harness
+        launch_options["harness"] = source_harness
     create_input = SpawnCreateInput(
         prompt=derived_prompt,
         model=(
@@ -1877,7 +1877,8 @@ def spawn_continue_sync(
     target_harness = (
         source_snapshot.harness
         if source_snapshot is not None
-        else _resolve_effective_fork_target_harness(
+        else source_harness
+        or _resolve_effective_fork_target_harness(
             create_input,
             resolved_project_root=project_root,
         )
