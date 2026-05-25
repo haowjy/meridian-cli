@@ -39,7 +39,7 @@ type PanelUi = {
       keybindings: unknown,
       done: (value: T) => void,
     ) => Component,
-    options: Record<string, unknown>,
+    options?: Record<string, unknown>,
   ) => Promise<T>;
 };
 
@@ -48,7 +48,7 @@ export type PanelCommandContext = {
   ui?: PanelUi;
 };
 
-export const DEFAULT_SELECTABLE_PANEL_OVERLAY_OPTIONS = {
+export const TEXT_OVERLAY_OPTIONS = {
   overlay: true,
   overlayOptions: {
     width: "100%",
@@ -303,10 +303,8 @@ export async function openSelectablePanel<Row>(
   if (!ctx.ui?.custom || ctx.hasUI === false) {
     return;
   }
-  await ctx.ui.custom<void>(
-    (tui, theme, _keybindings, done) =>
-      new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
-    DEFAULT_SELECTABLE_PANEL_OVERLAY_OPTIONS,
+  await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
+    new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
   );
 }
 
@@ -371,6 +369,6 @@ export async function openTextOverlay(
   await ctx.ui.custom<void>(
     (tui, theme, _keybindings, done) =>
       new TextOverlayComponent(tui, theme, options, () => done(undefined)),
-    DEFAULT_SELECTABLE_PANEL_OVERLAY_OPTIONS,
+    TEXT_OVERLAY_OPTIONS,
   );
 }
