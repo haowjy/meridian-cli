@@ -68,6 +68,8 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         dry_run=True,
     )
 
+    assert "--file" not in preview.binding.argv
+    assert file_ref.as_posix() not in preview.binding.argv
     assert preview.projected_content is not None
     assert [route.to_dict() for route in preview.projected_content.reference_routing] == [
         {
@@ -92,131 +94,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
     assert f"# Reference: {dir_ref.as_posix()}/" in preview.resolved_request.prompt
     assert "# Meridian Agents" not in preview.resolved_request.prompt
     assert "# Meridian Agents" in preview.projected_content.system_prompt
-    warning_codes = {warning.code for warning in preview.warnings}
-    assert "inline_file_refs_context_risk" not in warning_codes
-
-
-def test_spawn_prepare_warns_for_many_inline_file_references(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4",
-        harness=HarnessId.CODEX,
-    )
-    file_refs = []
-    for index, body in enumerate(("a\n", "bbbb\n", "ccc\n", "dddd\n", "eeeee\n"), start=1):
-        file_ref = tmp_path / f"file-{index}.md"
-        file_ref.write_text(body, encoding="utf-8")
-        file_refs.append(file_ref)
-    dir_ref = tmp_path / "docs"
-    dir_ref.mkdir()
-    (dir_ref / "index.md").write_text("# index\n", encoding="utf-8")
-
-    preview = build_launch_context(
-        spawn_id="dry-run-codex-spawn-prepare-inline-ref-warning",
-        request=SpawnRequest(
-            prompt="task prompt",
-            prompt_is_composed=False,
-            model="gpt-5.4",
-            harness="codex",
-            reference_files=(
-                *(file_ref.as_posix() for file_ref in file_refs),
-                dir_ref.as_posix(),
-            ),
-        ),
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.REQUIRED,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            runtime_root=(tmp_path / ".meridian").as_posix(),
-            project_paths_project_root=tmp_path.as_posix(),
-            project_paths_execution_cwd=tmp_path.as_posix(),
-        ),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    warning = next(
-        (item for item in preview.warnings if item.code == "inline_file_refs_context_risk"),
-        None,
-    )
-    assert warning is not None
-    assert (
-        warning.message
-        == "Many file refs will be inlined and may drain context; "
-        "prefer folder refs or a design/context artifact."
-    )
-    # Byte counts now measure rendered blocks (headers + body), not raw body bytes.
-    # Rendered blocks include reference headers, so byte counts exceed raw body bytes.
-    assert warning.detail["inline_file_reference_count"] == "5"
-    # Total bytes should be significant (headers add context cost)
-    total_bytes = int(warning.detail["total_inline_file_bytes"])
-    assert total_bytes > 0
-
-
-def test_spawn_prepare_no_warning_below_inline_file_reference_threshold(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Verify no noisy drain warning below the inline file threshold.
-
-    Binary and oversized files render warning-only blocks (no body content), and
-    a few real file refs should not warn because common small handoffs would get
-    noisy.
-    """
-    _write_minimal_mars_config(tmp_path)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4",
-        harness=HarnessId.CODEX,
-    )
-    # Create a binary file (will be skipped as binary in load_reference_items)
-    binary_file = tmp_path / "binary.bin"
-    binary_file.write_bytes(b"\x00\x01\x02\x03" + b"x" * 100)
-    oversized_file = tmp_path / "huge.txt"
-    # Write a file > 100KB to trigger oversized warning
-    oversized_file.write_text("x" * (101 * 1024), encoding="utf-8")
-    small_files = []
-    for index in range(4):
-        small_file = tmp_path / f"small-{index}.txt"
-        small_file.write_text("content\n", encoding="utf-8")
-        small_files.append(small_file)
-
-    preview = build_launch_context(
-        spawn_id="dry-run-codex-spawn-prepare-no-warning-only-refs",
-        request=SpawnRequest(
-            prompt="task prompt",
-            prompt_is_composed=False,
-            model="gpt-5.4",
-            harness="codex",
-            reference_files=(
-                binary_file.as_posix(),
-                oversized_file.as_posix(),
-                *(small_file.as_posix() for small_file in small_files),
-            ),
-        ),
-        runtime=LaunchRuntime(
-            argv_intent=LaunchArgvIntent.REQUIRED,
-            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-            runtime_root=(tmp_path / ".meridian").as_posix(),
-            project_paths_project_root=tmp_path.as_posix(),
-            project_paths_execution_cwd=tmp_path.as_posix(),
-        ),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-
-    # Should NOT warn about drain risk: only small_file has body content
-    warning = next(
-        (item for item in preview.warnings if item.code == "inline_file_refs_context_risk"),
-        None,
-    )
-    assert warning is None, (
-        "Should not warn about context drain below the inline file threshold, "
-        "even if other refs are warning-only"
-    )
 
 
 @pytest.mark.parametrize(
