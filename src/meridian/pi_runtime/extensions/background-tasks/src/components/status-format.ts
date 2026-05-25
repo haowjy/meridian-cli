@@ -1,7 +1,10 @@
 import type { PanelEntry, PanelStatus } from "../panel/types";
 
 export function statusLabel(entry: PanelEntry): string {
-  if (entry.kind === "meridian_spawn") {
+  if (entry.kind === "meridian_spawn" || entry.spawnId) {
+    if (entry.spawnId && entry.spawnStatus) {
+      return entry.spawnStatus;
+    }
     return entry.status;
   }
   switch (entry.status) {
@@ -49,10 +52,8 @@ function entryKindIcon(status: string): string {
 }
 
 export function kindBadge(entry: PanelEntry): string {
-  switch (entry.kind) {
-    case "meridian_spawn":
-      return "spawn";
-    default:
-      return "task";
+  if (entry.kind === "meridian_spawn" || entry.spawnId) {
+    return "spawn";
   }
+  return "task";
 }

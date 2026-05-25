@@ -32,9 +32,9 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 | Discover ids | Task log tails + `meridian --json spawn children $MERIDIAN_SPAWN_ID` (never global `spawn list`) on task end / periodic refresh |
 | Log fallback | Parse `pNNNN` from task combined log, then still confirm |
 | Confirm + status | `meridian --json spawn show` per id |
-| `/ps` row | `meridian:spawn:*` bus → `meridian_spawn` kind in `unified_rows.ts` |
+| `/ps` row | Launcher bash task gets **`meridian_spawn`** metadata on the same `process` row; orphan **`meridian_spawn`** row only when no `t-*` task to attach (e.g. `spawn children`) |
 
-Shell wrappers (`meridian spawn …`) stay **`process`** rows until a confirmed spawn id exists. Active statuses polled: `queued`, `running`, `finalizing`.
+**Launcher detection:** `uv run meridian spawn …` / env-prefixed `meridian spawn` (not `meridian spawn wait`). **Attach:** first `Spawn id: pNNNN` in that task's log. Active statuses polled: `queued`, `running`, `finalizing`.
 
 **Wait:** use **`meridian spawn wait`** in the terminal or **`/mspawn:wait <p-id>`** in Pi (30m subprocess cap). **`/ps` has no wait** subcommand. Wave notifications and `/spawns*` are removed.
 

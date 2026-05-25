@@ -33,8 +33,8 @@ export function registerPsKillCommand(
         }
         return;
       }
-      const result = await killPsRow(registry, target);
-      if (result.ok && target.kind !== "meridian_spawn") {
+      const result = await killPsRow(registry, target, args.trim());
+      if (result.ok && target.kind === "process") {
         const id = target.task_id;
         if (dockActions.getFocusedProcessId() === id) {
           dockActions.setFocus(null);

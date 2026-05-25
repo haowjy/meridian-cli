@@ -28,10 +28,19 @@ export type BackgroundTaskRecord = {
   next_ping_at_ms?: number | null;
 };
 
+export type MeridianSpawnAttachment = {
+  spawn_id: string;
+  status: string;
+  summary?: string;
+};
+
 export type PsRowKind = "process" | "meridian_spawn";
 
 export type PsRow =
-  | ({ kind: "process" } & BackgroundTaskRecord)
+  | ({ kind: "process" } & BackgroundTaskRecord & {
+      /** Confirmed spawn launched from this bash task (`Spawn id:` in log). */
+      meridian_spawn?: MeridianSpawnAttachment;
+    })
   | {
       kind: "meridian_spawn";
       spawn_id: string;

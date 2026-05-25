@@ -4,6 +4,7 @@ import type { TaskRegistry } from "../task_registry";
 import {
   findPsRow,
   formatPsTable,
+  isLiveSpawnAttachment,
   isLiveSpawnRow,
   isLiveTaskRow,
   rowKey,
@@ -19,20 +20,40 @@ export async function listUnifiedRows(
   return mergeRows(tasks);
 }
 
+const LIVE_TASK_STATUS = new Set(["running"]);
+
+function shouldCancelSpawn(row: PsRow, targetId?: string): boolean {
+  if (row.kind === "meridian_spawn") {
+    return true;
+  }
+  const spawn = row.meridian_spawn;
+  if (!spawn) {
+    return false;
+  }
+  const trimmed = targetId?.trim();
+  if (trimmed === spawn.spawn_id) {
+    return true;
+  }
+  return isLiveSpawnAttachment(spawn) && !LIVE_TASK_STATUS.has(row.status);
+}
+
 export async function killPsRow(
   registry: TaskRegistry,
   row: PsRow,
+  targetId?: string,
 ): Promise<{ ok: boolean; message: string }> {
-  if (row.kind === "meridian_spawn") {
+  if (shouldCancelSpawn(row, targetId)) {
+    const spawnId =
+      row.kind === "meridian_spawn" ? row.spawn_id : row.meridian_spawn!.spawn_id;
     if (!isLiveSpawnRow(row)) {
-      return { ok: false, message: `Spawn ${row.spawn_id} is not running.` };
+      return { ok: false, message: `Spawn ${spawnId} is not running.` };
     }
-    const result = await runMeridianCommand(["spawn", "cancel", row.spawn_id]);
-    const text = (result.stdout || result.stderr).trim() || `cancelled ${row.spawn_id}`;
+    const result = await runMeridianCommand(["spawn", "cancel", spawnId]);
+    const text = (result.stdout || result.stderr).trim() || `cancelled ${spawnId}`;
     return { ok: result.exitCode === 0, message: text };
   }
-  if (!isLiveTaskRow(row)) {
-    return { ok: false, message: `Task ${row.task_id} is not running.` };
+  if (!isLiveTaskRow(row) || row.kind !== "process") {
+    return { ok: false, message: `Task ${row.kind === "process" ? row.task_id : "?"} is not running.` };
   }
   const record = await registry.killJob(row.task_id);
   if (!record) {
@@ -46,6 +67,13 @@ export async function readPsRowLogs(
   row: PsRow,
   maxBytes = DEFAULT_BG_READ_BYTES,
 ): Promise<{ ok: boolean; message: string }> {
+  if (row.kind === "process" && row.combined_log_path) {
+    const log = await registry.readLog(row.task_id, maxBytes);
+    if (log) {
+      const header = `--- ${row.combined_log_path} ---\n`;
+      return { ok: true, message: header + (log.data || "(empty log)") };
+    }
+  }
   if (row.kind === "meridian_spawn") {
     if (row.task_id) {
       const log = await registry.readLog(row.task_id, maxBytes);
@@ -57,12 +85,7 @@ export async function readPsRowLogs(
     const text = (result.stdout || result.stderr).trim() || `No output for spawn ${row.spawn_id}`;
     return { ok: result.exitCode === 0, message: text };
   }
-  const log = await registry.readLog(row.task_id, maxBytes);
-  if (!log) {
-    return { ok: false, message: `Task ${row.task_id} not found.` };
-  }
-  const header = `--- ${row.combined_log_path} ---\n`;
-  return { ok: true, message: header + (log.data || "(empty log)") };
+  return { ok: false, message: `Task ${row.kind === "process" ? row.task_id : "?"} not found.` };
 }
 
 export function resolveTargetRow(rows: PsRow[], arg: string): PsRow | null {

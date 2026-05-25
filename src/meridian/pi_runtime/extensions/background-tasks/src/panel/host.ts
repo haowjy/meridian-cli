@@ -8,6 +8,7 @@ import {
 } from "../commands/actions";
 import {
   findPsRow,
+  isLiveSpawnAttachment,
   isLiveSpawnRow,
   isLiveTaskRow,
   rowKey,
@@ -138,17 +139,22 @@ export class TaskPanelHost {
       this.spawnPingDefaults.pingIntervalMs,
     );
 
+    const spawn = row.meridian_spawn;
+    const spawnLive = isLiveSpawnAttachment(spawn);
+    const taskLive = row.status === "running";
+
     return {
       id: row.task_id,
       rowKey: rowKey(row),
       kind: row.kind,
-      name: row.label || row.task_id,
+      name: spawn ? `${row.label || row.task_id} ${spawn.spawn_id}` : row.label || row.task_id,
       command: row.command,
       cwd: row.cwd,
       pid: row.pid ?? -1,
       startTime: row.started_at_ms,
       endTime: row.ended_at_ms,
-      status: mapTaskStatus(row.status),
+      status:
+        spawn && spawnLive && !taskLive ? spawn.status : mapTaskStatus(row.status),
       exitCode: row.exit_code,
       success: row.success,
       combinedLogPath: row.combined_log_path,
@@ -157,8 +163,10 @@ export class TaskPanelHost {
       pingIntervalMs,
       nextPingAtMs: row.next_ping_at_ms ?? null,
       lastActivityAtMs: row.last_activity_at_ms ?? null,
-      isLive: isLiveTaskRow(row),
+      isLive: taskLive || spawnLive,
       ingress: row.ingress,
+      spawnId: spawn?.spawn_id,
+      spawnStatus: spawn?.status,
     };
   }
 
@@ -266,7 +274,7 @@ export class TaskPanelHost {
     if (!target) {
       return { ok: false, reason: "not_found" };
     }
-    const result = await killPsRow(registry, target);
+    const result = await killPsRow(registry, target, id);
     if (result.ok) {
       this.emitter.emit("change");
     }

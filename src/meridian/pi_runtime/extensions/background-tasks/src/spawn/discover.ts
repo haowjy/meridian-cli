@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 
 import type { MeridianEventBus } from "../../../shared/meridian_event_bus";
-import { extractMeridianSpawnIdsFromText, isMeridianSpawnId } from "../../../shared/meridian_spawn";
+import {
+  extractSpawnIdFromLauncherLog,
+  isMeridianSpawnId,
+  isSpawnLauncherCommand,
+} from "../../../shared/meridian_spawn";
 import type { TaskRegistry } from "../task_registry";
 import {
   confirmSpawnRecord,
@@ -18,6 +22,10 @@ type DiscoverOptions = {
   getRegistry: () => TaskRegistry | null;
   /** Host spawn for this Pi session (`MERIDIAN_SPAWN_ID`); scopes CLI discovery. */
   getOwnerSpawnId?: () => string | null;
+};
+
+export type SpawnCandidateMeta = {
+  task_id?: string;
 };
 
 function readLogTail(path: string, maxBytes = 32_768): string {
@@ -55,42 +63,59 @@ async function confirmAndEmit(
   bus: MeridianEventBus,
   known: Map<string, ConfirmedSpawnRecord>,
   spawnId: string,
+  taskIdHint?: string,
 ): Promise<void> {
   const record = await confirmSpawnRecord(spawnId);
   if (!record) {
     return;
   }
   const prior = known.get(spawnId);
+  if (taskIdHint) {
+    record.task_id = taskIdHint;
+  } else if (prior?.task_id) {
+    record.task_id = prior.task_id;
+  }
   const channel =
     prior == null ? "meridian:spawn:discovered" : "meridian:spawn:updated";
   await emitConfirmedSpawn(bus, known, record, channel);
 }
 
-export async function collectSpawnCandidateIds(
+export async function collectSpawnCandidates(
   registry: TaskRegistry | null,
   ownerSpawnId: string | null,
-): Promise<Set<string>> {
-  const candidateIds = new Set<string>();
+): Promise<Map<string, SpawnCandidateMeta>> {
+  const candidates = new Map<string, SpawnCandidateMeta>();
 
   if (ownerSpawnId && isMeridianSpawnId(ownerSpawnId)) {
     for (const id of await fetchSpawnChildrenIds(ownerSpawnId)) {
-      candidateIds.add(id);
+      if (!candidates.has(id)) {
+        candidates.set(id, {});
+      }
     }
   }
 
   if (registry) {
     for (const task of await registry.list(true)) {
-      if (!task.combined_log_path) {
+      if (!task.combined_log_path || !isSpawnLauncherCommand(task.command)) {
         continue;
       }
-      const tail = readLogTail(task.combined_log_path);
-      for (const id of extractMeridianSpawnIdsFromText(tail)) {
-        candidateIds.add(id);
+      const spawnId = extractSpawnIdFromLauncherLog(readLogTail(task.combined_log_path));
+      if (!spawnId) {
+        continue;
       }
+      candidates.set(spawnId, { task_id: task.task_id });
     }
   }
 
-  return candidateIds;
+  return candidates;
+}
+
+/** @deprecated Use collectSpawnCandidates; returns id set only. */
+export async function collectSpawnCandidateIds(
+  registry: TaskRegistry | null,
+  ownerSpawnId: string | null,
+): Promise<Set<string>> {
+  return new Set((await collectSpawnCandidates(registry, ownerSpawnId)).keys());
 }
 
 async function discoverFromRegistry(
@@ -99,13 +124,13 @@ async function discoverFromRegistry(
   registry: TaskRegistry | null,
   ownerSpawnId: string | null,
 ): Promise<void> {
-  const candidateIds = await collectSpawnCandidateIds(registry, ownerSpawnId);
+  const candidates = await collectSpawnCandidates(registry, ownerSpawnId);
 
-  for (const spawnId of candidateIds) {
+  for (const [spawnId, meta] of candidates) {
     if (!isMeridianSpawnId(spawnId)) {
       continue;
     }
-    await confirmAndEmit(bus, known, spawnId);
+    await confirmAndEmit(bus, known, spawnId, meta.task_id);
   }
 }
 
@@ -117,7 +142,8 @@ async function refreshActiveSpawns(
     .filter((row) => isActiveSpawnStatus(row.status))
     .map((row) => row.spawn_id);
   for (const spawnId of activeIds) {
-    await confirmAndEmit(bus, known, spawnId);
+    const prior = known.get(spawnId);
+    await confirmAndEmit(bus, known, spawnId, prior?.task_id);
   }
 }
 

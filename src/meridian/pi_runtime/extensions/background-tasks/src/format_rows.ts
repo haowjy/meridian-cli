@@ -1,6 +1,24 @@
-import type { PsRow } from "./types";
+import type { MeridianSpawnAttachment, PsRow } from "./types";
 
 const LIVE_TASK = new Set(["running"]);
+
+const TERMINAL_SPAWN = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "canceled",
+  "done",
+  "exited",
+]);
+
+export function isLiveSpawnAttachment(
+  attachment: MeridianSpawnAttachment | undefined,
+): boolean {
+  if (!attachment) {
+    return false;
+  }
+  return !TERMINAL_SPAWN.has(attachment.status.toLowerCase());
+}
 
 export function formatPsRow(row: PsRow): string {
   if (row.kind === "meridian_spawn") {
@@ -8,9 +26,11 @@ export function formatPsRow(row: PsRow): string {
     const task = row.task_id ? ` task=${row.task_id}` : "";
     return `[spawn] ${row.spawn_id} ${row.status}${task}${summary}`;
   }
-  const badge = "task";
+  const spawn = row.meridian_spawn;
+  const badge = spawn ? "task+spawn" : "task";
   const pid = row.pid != null ? ` pid=${row.pid}` : "";
-  return `[${badge}] ${row.task_id} ${row.status} ${row.label}${pid}`;
+  const spawnPart = spawn ? ` ${spawn.spawn_id} ${spawn.status}` : "";
+  return `[${badge}] ${row.task_id}${spawnPart} ${row.status} ${row.label}${pid}`;
 }
 
 export function formatPsTable(rows: PsRow[]): string {
@@ -32,17 +52,29 @@ export function findPsRow(rows: PsRow[], id: string): PsRow | undefined {
   if (!trimmed) {
     return undefined;
   }
-  return rows.find((row) => rowKey(row) === trimmed);
+  const direct = rows.find((row) => rowKey(row) === trimmed);
+  if (direct) {
+    return direct;
+  }
+  return rows.find(
+    (row) => row.kind === "process" && row.meridian_spawn?.spawn_id === trimmed,
+  );
 }
 
 export function isLiveTaskRow(row: PsRow): boolean {
-  return row.kind !== "meridian_spawn" && LIVE_TASK.has(row.status);
+  if (row.kind === "meridian_spawn") {
+    return false;
+  }
+  if (LIVE_TASK.has(row.status)) {
+    return true;
+  }
+  return isLiveSpawnAttachment(row.meridian_spawn);
 }
 
 export function isLiveSpawnRow(row: PsRow): boolean {
-  if (row.kind !== "meridian_spawn") {
-    return false;
+  if (row.kind === "meridian_spawn") {
+    const status = row.status.toLowerCase();
+    return !TERMINAL_SPAWN.has(status);
   }
-  const status = row.status.toLowerCase();
-  return !["succeeded", "failed", "cancelled", "canceled", "done", "exited"].includes(status);
+  return isLiveSpawnAttachment(row.meridian_spawn);
 }

@@ -30,18 +30,38 @@ describe("format_rows", () => {
     expect(formatPsRow({ kind: "process", ...baseTask })).toContain("[task] t1");
   });
 
-  it("finds rows by id", () => {
-    const rows: PsRow[] = [
-      { kind: "process", ...baseTask },
-      { kind: "meridian_spawn", spawn_id: "p9", status: "queued" },
-    ];
-    expect(findPsRow(rows, "p9")?.kind).toBe("meridian_spawn");
+  it("formats merged task+spawn row", () => {
+    const merged: PsRow = {
+      kind: "process",
+      ...baseTask,
+      meridian_spawn: { spawn_id: "p9", status: "running" },
+    };
+    expect(formatPsRow(merged)).toContain("[task+spawn]");
+    expect(formatPsRow(merged)).toContain("p9");
+  });
+
+  it("finds rows by task or spawn id", () => {
+    const merged: PsRow = {
+      kind: "process",
+      ...baseTask,
+      meridian_spawn: { spawn_id: "p9", status: "queued" },
+    };
+    const rows: PsRow[] = [merged];
+    expect(findPsRow(rows, "p9")?.kind).toBe("process");
     expect(findPsRow(rows, "t1")?.kind).toBe("process");
   });
 
   it("detects live rows", () => {
     expect(isLiveTaskRow({ kind: "process", ...baseTask })).toBe(true);
     expect(isLiveTaskRow({ kind: "process", ...baseTask, status: "exited" })).toBe(false);
+    expect(
+      isLiveTaskRow({
+        kind: "process",
+        ...baseTask,
+        status: "exited",
+        meridian_spawn: { spawn_id: "p1", status: "running" },
+      }),
+    ).toBe(true);
     expect(isLiveSpawnRow({ kind: "meridian_spawn", spawn_id: "p1", status: "running" })).toBe(true);
     expect(isLiveSpawnRow({ kind: "meridian_spawn", spawn_id: "p1", status: "succeeded" })).toBe(false);
   });

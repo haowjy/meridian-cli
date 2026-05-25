@@ -202,6 +202,10 @@ async function listAction(
             if (row.kind === "meridian_spawn") {
               return `${row.spawn_id} spawn ${row.status}`;
             }
+            const spawn = row.meridian_spawn;
+            if (spawn) {
+              return `${row.task_id} spawn ${spawn.spawn_id} ${spawn.status} ${row.label}`;
+            }
             return `${row.task_id} ${row.kind} ${row.status} ${row.label}`;
           })
           .join("\n");

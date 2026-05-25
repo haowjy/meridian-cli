@@ -39,4 +39,7 @@ export type PanelEntry = {
   ingress?: TaskIngress;
   /** Blocks Pi's interactive `$` prompt until released or the process exits. */
   isForeground?: boolean;
+  /** Attached Meridian spawn when this row is a launcher bash task. */
+  spawnId?: string;
+  spawnStatus?: string;
 };

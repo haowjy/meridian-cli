@@ -26,20 +26,39 @@ function task(partial: Partial<BackgroundTaskRecord> & { task_id: string; comman
 }
 
 describe("createUnifiedRowFeed", () => {
-  it("merges spawn bus rows with task rows", () => {
+  it("attaches spawn to launcher task row instead of duplicating", () => {
     const bus = createLocalBus();
     const feed = createUnifiedRowFeed(bus);
     bus.emit("meridian:spawn:discovered", {
       spawn_id: "pabc",
       status: "running",
+      task_id: "t2",
     });
     const rows = feed.mergeRows([
       task({ task_id: "t1", command: "sleep 1", label: "sleep" }),
-      task({ task_id: "t2", command: "meridian spawn foo", label: "spawn" }),
+      task({
+        task_id: "t2",
+        command: "uv run meridian spawn -m x",
+        label: "spawn",
+      }),
     ]);
-    expect(rows).toHaveLength(3);
-    expect(rows.find((r) => r.kind === "meridian_spawn")?.spawn_id).toBe("pabc");
-    expect(rows.filter((r) => r.kind === "process")).toHaveLength(2);
+    expect(rows).toHaveLength(2);
+    const launcher = rows.find((r) => r.kind === "process" && r.task_id === "t2");
+    expect(launcher?.meridian_spawn?.spawn_id).toBe("pabc");
+    expect(rows.some((r) => r.kind === "meridian_spawn")).toBe(false);
+    feed.dispose();
+  });
+
+  it("keeps orphan spawn row when no task_id attachment", () => {
+    const bus = createLocalBus();
+    const feed = createUnifiedRowFeed(bus);
+    bus.emit("meridian:spawn:discovered", {
+      spawn_id: "p1",
+      status: "running",
+    });
+    const rows = feed.mergeRows([]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe("meridian_spawn");
     feed.dispose();
   });
 

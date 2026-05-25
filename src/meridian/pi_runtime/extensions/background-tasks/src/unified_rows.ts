@@ -1,5 +1,5 @@
 import type { MeridianEventBus } from "../../shared/meridian_event_bus";
-import type { BackgroundTaskRecord, PsRow } from "./types";
+import type { BackgroundTaskRecord, MeridianSpawnAttachment, PsRow } from "./types";
 
 const SPAWN_CHANNELS = [
   "meridian:spawn:discovered",
@@ -13,6 +13,14 @@ export type SpawnRowProjection = {
   status: string;
   summary?: string;
 };
+
+function toAttachment(row: SpawnRowProjection): MeridianSpawnAttachment {
+  return {
+    spawn_id: row.spawn_id,
+    status: row.status,
+    summary: row.summary,
+  };
+}
 
 export function createUnifiedRowFeed(bus: MeridianEventBus): {
   getSpawnRows: () => SpawnRowProjection[];
@@ -43,18 +51,51 @@ export function createUnifiedRowFeed(bus: MeridianEventBus): {
   return {
     getSpawnRows: () => [...spawnRows.values()],
     mergeRows(tasks) {
-      const processRows: PsRow[] = tasks.map((task) => ({
-        kind: "process" as const,
-        ...task,
-      }));
-      const spawnPsRows: PsRow[] = [...spawnRows.values()].map((row) => ({
+      const byTaskId = new Map<string, SpawnRowProjection>();
+      const unattached: SpawnRowProjection[] = [];
+
+      for (const spawn of spawnRows.values()) {
+        if (spawn.task_id) {
+          byTaskId.set(spawn.task_id, spawn);
+        } else {
+          unattached.push(spawn);
+        }
+      }
+
+      const taskIds = new Set(tasks.map((task) => task.task_id));
+      const attachedSpawnIds = new Set<string>();
+
+      const processRows: PsRow[] = tasks.map((task) => {
+        const spawn = byTaskId.get(task.task_id);
+        if (spawn) {
+          attachedSpawnIds.add(spawn.spawn_id);
+        }
+        return {
+          kind: "process" as const,
+          ...task,
+          meridian_spawn: spawn ? toAttachment(spawn) : undefined,
+        };
+      });
+
+      const orphanSpawns = [
+        ...unattached,
+        ...[...spawnRows.values()].filter(
+          (spawn) =>
+            spawn.task_id != null &&
+            !taskIds.has(spawn.task_id) &&
+            !attachedSpawnIds.has(spawn.spawn_id),
+        ),
+      ];
+
+      const orphanPsRows: PsRow[] = orphanSpawns.map((row) => ({
         kind: "meridian_spawn",
         spawn_id: row.spawn_id,
         task_id: row.task_id,
         status: row.status,
         summary: row.summary,
       }));
-      return [...processRows, ...spawnPsRows];
+
+      return [...processRows, ...orphanPsRows];
     },
     dispose() {
       for (const unsub of unsubs) {
