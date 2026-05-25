@@ -36,6 +36,7 @@ type NotificationItem = {
 const TERMINAL_NOTIFIED = new Set<string>();
 const DEBOUNCE_MS = 200;
 const MAX_WAVE_WAIT_MS = 2_000;
+const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
 
 class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
@@ -53,6 +54,7 @@ class SpawnWatchRuntime {
   private debounce: NodeJS.Timeout | null = null;
   private maxWave: NodeJS.Timeout | null = null;
   private scanScheduled: NodeJS.Timeout | null = null;
+  private readonly bashGraceTimers = new Map<string, NodeJS.Timeout>();
   private scanRunning = false;
   private scanAgain = false;
 
@@ -78,6 +80,8 @@ class SpawnWatchRuntime {
     if (this.debounce) clearTimeout(this.debounce);
     if (this.maxWave) clearTimeout(this.maxWave);
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
+    for (const timer of this.bashGraceTimers.values()) clearTimeout(timer);
+    this.bashGraceTimers.clear();
   }
 
   async rows(discover = false): Promise<SpawnStateFile[]> {
@@ -187,6 +191,15 @@ class SpawnWatchRuntime {
       if (!record.is_tracked || !record.is_background || !isTerminalBashStatus(record.status)) {
         continue;
       }
+      if (await this.hasChildSpawnForBash(record.bash_id)) {
+        TERMINAL_NOTIFIED.add(record.bash_id);
+        this.pending.delete(record.bash_id);
+        continue;
+      }
+      if (this.withinBashCorrelationGrace(record)) {
+        this.scheduleBashGraceScan(record.bash_id);
+        continue;
+      }
       if (TERMINAL_NOTIFIED.has(record.bash_id) || this.pending.has(record.bash_id)) continue;
       this.pending.set(record.bash_id, {
         id: record.bash_id,
@@ -197,6 +210,28 @@ class SpawnWatchRuntime {
       });
     }
     this.scheduleFlush();
+  }
+
+  private withinBashCorrelationGrace(record: { ended_at_ms?: number | null }): boolean {
+    const endedAt = typeof record.ended_at_ms === "number" ? record.ended_at_ms : null;
+    return endedAt !== null && Date.now() - endedAt < BASH_SPAWN_CORRELATION_GRACE_MS;
+  }
+
+  private scheduleBashGraceScan(bashId: string): void {
+    if (this.bashGraceTimers.has(bashId)) return;
+    const timer = setTimeout(() => {
+      this.bashGraceTimers.delete(bashId);
+      this.requestScan();
+    }, BASH_SPAWN_CORRELATION_GRACE_MS);
+    timer.unref();
+    this.bashGraceTimers.set(bashId, timer);
+  }
+
+  private async hasChildSpawnForBash(bashId: string): Promise<boolean> {
+    for (const state of await this.readChildSpawnStates()) {
+      if (state.originating_bash_id === bashId) return true;
+    }
+    return false;
   }
 
   private scheduleFlush(): void {
