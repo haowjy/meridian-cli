@@ -6,6 +6,32 @@ import { Key, matchesKey } from "@earendil-works/pi-tui";
 import { renderTable } from "../../shared/ui";
 import { BashRuntime, type BashManageParams, type BashParams } from "./bash_runtime";
 
+function formatToolResult(result: unknown): string {
+  if (!result || typeof result !== "object") return String(result ?? "");
+  const obj = result as Record<string, unknown>;
+
+  if (typeof obj.error === "string") return `Error: ${obj.error}`;
+
+  if ("stdout" in obj || "stderr" in obj || "exit_code" in obj) {
+    const stdout = typeof obj.stdout === "string" ? obj.stdout : "";
+    const stderr = typeof obj.stderr === "string" ? obj.stderr : "";
+    const exitCode = typeof obj.exit_code === "number" ? obj.exit_code : null;
+    const parts = [stdout, stderr].filter((part) => part.length > 0);
+    if (exitCode !== null && exitCode !== 0) parts.push(`[exit_code: ${exitCode}]`);
+    if (parts.length > 0) return parts.join("\n").trimEnd();
+    return exitCode === null ? "" : `[exit_code: ${exitCode}]`;
+  }
+
+  if (typeof obj.output === "string") return obj.output.trimEnd();
+  if (typeof obj.message === "string") return obj.message;
+
+  if (typeof obj.bash_id === "string" && typeof obj.status === "string") {
+    return `${obj.bash_id}: ${obj.status}`;
+  }
+
+  return JSON.stringify(result, null, 2);
+}
+
 export default function managedBashExtension(pi: ExtensionAPI): void {
   const runtime = new BashRuntime();
 
@@ -26,7 +52,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     async execute(_toolCallId, params: BashParams, signal) {
       const result = await runtime.execute(params, signal);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text", text: formatToolResult(result) }],
         details: result,
       };
     },
@@ -52,7 +78,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     async execute(_toolCallId, params: BashManageParams) {
       const result = await runtime.manage(params);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text", text: formatToolResult(result) }],
         details: result,
       };
     },
