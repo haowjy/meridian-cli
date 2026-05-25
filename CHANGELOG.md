@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-05-25
+
 ### Added
 - Launch projection artifacts now write `inline-file-reference-bytes.json` with total bytes for inline-routed file refs plus largest file contributors.
 
