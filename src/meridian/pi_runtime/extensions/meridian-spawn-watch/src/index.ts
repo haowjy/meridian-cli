@@ -74,7 +74,9 @@ class SpawnWatchRuntime {
 
   private watchDirectory(dir: string): FSWatcher {
     mkdirSync(dir, { recursive: true });
-    return watch(dir, { recursive: true }, () => void this.scan());
+    const watcher = watch(dir, { recursive: true }, () => void this.scan());
+    watcher.unref();
+    return watcher;
   }
 
   private async scan(): Promise<void> {
@@ -119,7 +121,11 @@ class SpawnWatchRuntime {
     if (this.pending.size === 0) return;
     if (this.debounce) clearTimeout(this.debounce);
     this.debounce = setTimeout(() => void this.flush(), DEBOUNCE_MS);
-    this.maxWave ??= setTimeout(() => void this.flush(), MAX_WAVE_WAIT_MS);
+    this.debounce.unref();
+    if (!this.maxWave) {
+      this.maxWave = setTimeout(() => void this.flush(), MAX_WAVE_WAIT_MS);
+      this.maxWave.unref();
+    }
   }
 
   private async flush(): Promise<void> {
