@@ -16,7 +16,10 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from meridian.lib.launch.reference import ReferenceItem
 
-from meridian.lib.launch.reference import render_reference_blocks
+from meridian.lib.launch.reference import (
+    measure_rendered_reference_block_bytes,
+    render_reference_blocks,
+)
 
 # Named canonical orders for SYSTEM_INSTRUCTION composition.
 SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
@@ -69,6 +72,21 @@ class ReferenceRouting:
             "type": self.type,
             "routing": self.routing,
             "native_flag": self.native_flag,
+        }
+
+
+@dataclass(frozen=True)
+class InlineFileReferenceContribution:
+    """Byte contribution for one inline-routed file reference."""
+
+    path: str
+    byte_count: int
+
+    def to_dict(self) -> dict[str, str | int]:
+        """Serialize contribution for artifact output."""
+        return {
+            "path": self.path,
+            "byte_count": self.byte_count,
         }
 
 
@@ -187,6 +205,55 @@ def build_reference_routing(
     )
 
 
+def build_inline_file_contributions(
+    reference_items: tuple[ReferenceItem, ...],
+    reference_routing: tuple[ReferenceRouting, ...],
+    *,
+    exclude_warning_only: bool = False,
+) -> tuple[InlineFileReferenceContribution, ...]:
+    """Return inline file references with actual rendered prompt byte contribution.
+
+    Includes only file items routed ``inline`` that render content.
+    Directory references are excluded.
+
+    Args:
+        reference_items: Items to build contributions for.
+        reference_routing: Corresponding routing decisions.
+        exclude_warning_only: If True, exclude warning-only refs (no body content)
+            from contributions. Used for context-drain warnings to avoid false
+            positives on metadata-only refs (binary, oversized, etc.).
+
+    Returns:
+        Tuple of contributions, sorted descending by byte count.
+
+    Note:
+        Byte counts measure the actual rendered block bytes (including headers and
+        formatting) exactly as they appear in the final prompt context.
+    """
+
+    contributions = tuple(
+        InlineFileReferenceContribution(
+            path=item.path.as_posix(),
+            byte_count=measure_rendered_reference_block_bytes(
+                item, include_warning_only=not exclude_warning_only
+            ),
+        )
+        for item, route in zip(reference_items, reference_routing, strict=True)
+        if item.kind == "file"
+        and route.routing == "inline"
+        and measure_rendered_reference_block_bytes(
+            item, include_warning_only=not exclude_warning_only
+        )
+        > 0
+    )
+    return tuple(
+        sorted(
+            contributions,
+            key=lambda contribution: (-contribution.byte_count, contribution.path),
+        )
+    )
+
+
 def join_content_blocks(*blocks: str) -> str:
     """Join non-empty content blocks with double newlines."""
     return "\n\n".join(block.strip() for block in blocks if block.strip())
@@ -284,10 +351,12 @@ __all__ = [
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
     "ComposedLaunchContent",
+    "InlineFileReferenceContribution",
     "ProjectedContent",
     "ProjectionChannels",
     "PromptDocument",
     "ReferenceRouting",
+    "build_inline_file_contributions",
     "build_reference_routing",
     "join_content_blocks",
     "project_inline_content",

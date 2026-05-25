@@ -24,6 +24,10 @@ from meridian.lib.core.overrides import (
 from meridian.lib.tools import ToolsField
 
 
+def _empty_policy_overrides() -> Mapping[str, object]:
+    return {}
+
+
 @dataclass(frozen=True)
 class ModelPolicyRule:
     """One model-policy override rule from launch policy inputs."""
@@ -31,7 +35,7 @@ class ModelPolicyRule:
     match_type: Literal["model", "alias", "model-glob"]
     match_value: str
     no_fallback: bool = False
-    overrides: Mapping[str, object] = field(default_factory=dict)
+    overrides: Mapping[str, object] = field(default_factory=_empty_policy_overrides)
 
 
 class ProvenanceLevel(Enum):

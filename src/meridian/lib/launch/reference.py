@@ -554,6 +554,49 @@ def validate_reference_paths(
 # -----------------------------------------------------------------------------
 
 
+def measure_rendered_reference_block_bytes(
+    reference: ReferenceItem, *, include_warning_only: bool = True
+) -> int:
+    """Measure UTF-8 bytes of a reference's rendered block for content accounting.
+
+    Accounts for headers and formatting exactly as it appears in the final prompt.
+
+    Args:
+        reference: The reference item to measure.
+        include_warning_only: If False, warning-only refs (no body content) return 0.
+            Used for context-drain warnings: warning-only refs are metadata, not content.
+
+    Returns:
+        UTF-8 byte count of the rendered block (content contribution), or 0 if no
+        content is rendered or include_warning_only=False and ref is warning-only.
+    """
+    body = reference.body.strip()
+
+    # Build path display - add trailing slash for directories
+    path_str = reference.path.as_posix()
+    if reference.kind == "directory" and not path_str.endswith("/"):
+        path_str = f"{path_str}/"
+
+    # Handle warning case
+    if reference.warning:
+        if body:
+            # Warning + content: count the actual content block
+            block = f"# Reference: {path_str}\n\n[{reference.warning}]\n\n{body}"
+            return len(block.encode("utf-8"))
+        else:
+            # Warning-only: exclude from context-drain accounting if not included
+            if not include_warning_only:
+                return 0
+            block = f"# Reference: {path_str}\n\n[{reference.warning}]"
+            return len(block.encode("utf-8"))
+
+    # Normal content - no block if no body
+    if not body:
+        return 0
+    block = f"# Reference: {path_str}\n\n{body}"
+    return len(block.encode("utf-8"))
+
+
 def render_reference_blocks(references: Sequence[ReferenceItem]) -> tuple[str, ...]:
     """Render loaded references as isolated prompt sections.
 
@@ -597,6 +640,7 @@ __all__ = [
     "generate_directory_tree",
     "is_binary_file",
     "load_reference_items",
+    "measure_rendered_reference_block_bytes",
     "parse_template_assignments",
     "render_reference_blocks",
     "resolve_template_variables",
