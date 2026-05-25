@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from meridian.lib.launch.reference import validate_reference_paths
+from meridian.lib.launch.composition import build_inline_file_contributions, build_reference_routing
+from meridian.lib.launch.reference import (
+    ReferenceItem,
+    measure_rendered_reference_block_bytes,
+    validate_reference_paths,
+)
 
 
 def test_validate_reference_paths_resolves_relative_from_reference_anchor(tmp_path: Path) -> None:
@@ -150,3 +155,70 @@ def test_validate_reference_paths_missing_relative_reports_anchor_and_resolved_p
     assert "Given: missing.md" in message
     assert f"Reference anchor: {anchor.resolve()}" in message
     assert f"Resolved path: {(anchor / 'missing.md').resolve()}" in message
+
+
+def test_measure_rendered_reference_block_bytes_counts_rendered_header_and_body() -> None:
+    reference = ReferenceItem(
+        kind="file",
+        path=Path("docs/reference.md"),
+        body="alpha\n",
+    )
+
+    assert measure_rendered_reference_block_bytes(reference) == len(
+        b"# Reference: docs/reference.md\n\nalpha"
+    )
+
+
+def test_measure_rendered_reference_block_bytes_can_exclude_warning_only_refs() -> None:
+    reference = ReferenceItem(
+        kind="file",
+        path=Path("binary.bin"),
+        body="",
+        warning="binary file skipped",
+    )
+
+    assert measure_rendered_reference_block_bytes(reference) == len(
+        b"# Reference: binary.bin\n\n[binary file skipped]"
+    )
+    assert measure_rendered_reference_block_bytes(
+        reference, include_warning_only=False
+    ) == 0
+
+
+def test_build_inline_file_contributions_excludes_warning_only_and_omitted_refs() -> None:
+    content_ref = ReferenceItem(
+        kind="file",
+        path=Path("notes/long.md"),
+        body="This is a longer body.\n",
+    )
+    warning_ref = ReferenceItem(
+        kind="file",
+        path=Path("docs/binary.bin"),
+        body="",
+        warning="binary file skipped",
+    )
+    directory_ref = ReferenceItem(
+        kind="directory",
+        path=Path("docs"),
+        body="tree output",
+    )
+    omitted_ref = ReferenceItem(kind="file", path=Path("empty.txt"), body="")
+
+    reference_items = (
+        content_ref,
+        warning_ref,
+        directory_ref,
+        omitted_ref,
+    )
+    reference_routing = build_reference_routing(reference_items)
+
+    contributions = build_inline_file_contributions(
+        reference_items,
+        reference_routing,
+        exclude_warning_only=True,
+    )
+
+    assert [contribution.path for contribution in contributions] == ["notes/long.md"]
+    assert contributions[0].byte_count == len(
+        b"# Reference: notes/long.md\n\nThis is a longer body."
+    )

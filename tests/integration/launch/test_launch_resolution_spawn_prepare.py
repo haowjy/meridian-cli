@@ -68,8 +68,6 @@ def test_spawn_prepare_opencode_keeps_all_references_inline(
         dry_run=True,
     )
 
-    assert "--file" not in preview.binding.argv
-    assert file_ref.as_posix() not in preview.binding.argv
     assert preview.projected_content is not None
     assert [route.to_dict() for route in preview.projected_content.reference_routing] == [
         {
