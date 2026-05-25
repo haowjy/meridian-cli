@@ -7,7 +7,6 @@ url = "https://github.com/meridian-flow/meridian-prompter"
 [settings]
 targets = [
     ".claude",
-    ".pi",
     ".cursor",
     ".codex",
     ".opencode",
