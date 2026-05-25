@@ -7,7 +7,7 @@ export function formatTaskDetailLines(entry: PanelEntry): string[] {
     lines.push("persistent");
   }
   if (entry.isForeground) {
-    lines.push("Foreground $ — ctrl+b or b to background");
+    lines.push("Foreground $ — /ps b or b in panel to background");
   }
   return lines;
 }

@@ -9,9 +9,9 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 - Pi **`!`** is a run shortcut — not background.
 - Trailing **`&`** on **`$`** (`splitUserBashBackground`): immediate `{ result }`, detached task in registry/`/ps`, no `waitForCompletion`.
 - Foreground **`$`**: `operations.exec` blocks until exit or background; foreground row pinned with **`● fg`**.
-- **`ctrl+b`** (single press, only while foreground `$` runs): same as `/ps` background via `onTerminalInput` — Claude Code parity.
-- **In-chat hint** (`meridian:foreground-bash-hint`): once per foreground **`$`** task — `/ps to manage tasks · ctrl+b to run in background`. User-only (`details.hintText`, empty `content`, `triggerTurn: false`). Not for trailing **`&`** (already detached).
-- **`/ps`**: **`b`** on foreground row → `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`. Footer shows **`b` background** and **`ctrl+b`** when applicable.
+- **`/ps b`** or **`/ps background`** (space args on `ps`, like `json`): backgrounds the blocking foreground **`$`** without opening the overlay — `backgroundForegroundBash` → `releaseWait` + clear foreground slot; exec exits `0` with `Sent to background — /ps`.
+- **In-chat hint** (`meridian:foreground-bash-hint`): once per foreground **`$`** task — `/ps to manage tasks · /ps b to run in background`. User-only (`details.hintText`, empty `content`, `triggerTurn: false`). Not for trailing **`&`** (already detached).
+- **`/ps` overlay**: **`b`** on foreground row → same background path. Footer shows **`b` background** and **`/ps b`** when applicable.
 - Agent **`bash`**: lifecycle via `tool_result` only (no `&` auto-background).
 - **Status widget** (below editor): live tasks only — `tasks: <name> running | +N more`. Hidden while `/ps` is open.
 - **`/ps`**: `TasksPanelComponent` returned directly from `ui.custom` overlay — **never** call `tui.setFocus` (Pi `showOverlay` owns `preFocus`). Layout in `panel/ps-view.ts` (preview top, list + footer bottom). **1 row per task** (max 8); **4-line** preview. **Enter** → log stream overlay; **q** back. **1s** timer + **`meridian:task:output`** for live preview.

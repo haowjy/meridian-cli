@@ -5,7 +5,6 @@ import { isBackgroundTasksExtensionEnabled } from "../../shared/pi_harness_profi
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
 import { getForegroundUserBashTaskId, setupBashBridge } from "./bash_bridge";
 import { setupPsCommands } from "./commands";
-import { setupForegroundBackgroundShortcut } from "./hooks/foreground-background-shortcut";
 import { setupForegroundBashHint } from "./hooks/foreground-bash-hint";
 import { setupTaskWidget } from "./hooks/widget";
 import { TaskPanelHost } from "./panel/host";
@@ -102,7 +101,6 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
   );
 
   const { dockActions } = setupTaskWidget(pi, state.panelHost);
-  setupForegroundBackgroundShortcut(pi, () => state.panelHost);
   setupForegroundBashHint(pi);
 
   setupBackgroundTaskTool(pi, {
