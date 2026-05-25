@@ -33,7 +33,6 @@ from meridian.lib.harness.bundle import (
     HarnessProjectionPorts,
     register_harness_bundle,
 )
-from meridian.lib.harness.connections.pi_lifecycle_file import prepare_pi_lifecycle_event_file
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.extractors.pi import (
     PI_EXTRACTOR,
@@ -74,7 +73,6 @@ from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, PRIMARY_BA
 from meridian.lib.launch.env import scope_pi_session_dir_for_spawn
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec, TerminalSurfaceMode
 from meridian.lib.safety.permissions import PermissionConfig
-from meridian.lib.state.paths import spawn_log_subpath
 
 
 def _project_pi_subprocess_cli_args(
@@ -274,11 +272,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         )
         if scoped_session_dir is not None:
             session_dir = scoped_session_dir
-        spawn_dir = runtime_root / spawn_log_subpath(spawn_id)
-        prepare_pi_lifecycle_event_file(
-            spawn_dir=spawn_dir,
-            env=child_env,
-        )
         agent_dir_overrides = pi_agent_dir_env_override()
         child_env.update(agent_dir_overrides)
         state_dir_overrides = pi_meridian_state_dir_env_override(env=child_env)

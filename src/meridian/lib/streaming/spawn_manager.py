@@ -34,6 +34,7 @@ from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.control_socket import ControlSocketServer
+from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainAction,
@@ -806,15 +807,29 @@ class SpawnManager:
         is_pi_connection = receiver.harness_id == HarnessId.PI
         normalized_pi_session_role = (pi_session_role or "").strip().lower()
         pi_parent_idle = False
+        pi_parent_idle_epoch: float | None = None
+        pi_disk_watcher = (
+            PiDiskWatcher(self._runtime_root, spawn_id)
+            if is_pi_connection and normalized_pi_session_role == "spawned"
+            else None
+        )
+        if pi_disk_watcher is not None:
+            await pi_disk_watcher.start()
+
+        def _no_pending_pi_disk_notifications() -> bool:
+            if pi_disk_watcher is None or pi_parent_idle_epoch is None:
+                return True
+            last_notification_ts = pi_disk_watcher.last_notification_ts()
+            return last_notification_ts is None or pi_parent_idle_epoch > last_notification_ts
 
         def _is_pi_quiescent() -> bool:
             return (
                 is_pi_connection
                 and normalized_pi_session_role == "spawned"
                 and pi_parent_idle
-                and not pi_subspawn_tracker.has_pending()
-                and not pi_subspawn_tracker.has_pending_notifications()
-                and not pi_child_wave_timed_out
+                and (pi_disk_watcher is None or not pi_disk_watcher.has_pending_child_spawns())
+                and (pi_disk_watcher is None or not pi_disk_watcher.has_tracked_bash_bg())
+                and _no_pending_pi_disk_notifications()
             )
 
         def _clear_child_wave_timer() -> None:
@@ -978,8 +993,7 @@ class SpawnManager:
                             if pi_child_wave_started_monotonic is not None:
                                 elapsed_seconds = max(
                                     0.0,
-                                    now_monotonic
-                                    - cast("float", pi_child_wave_started_monotonic),
+                                    now_monotonic - pi_child_wave_started_monotonic,
                                 )
                             timeout_seconds = 0.0
                             if (
@@ -988,8 +1002,7 @@ class SpawnManager:
                             ):
                                 timeout_seconds = max(
                                     0.0,
-                                    child_wave_deadline_monotonic
-                                    - cast("float", pi_child_wave_started_monotonic),
+                                    child_wave_deadline_monotonic - pi_child_wave_started_monotonic,
                                 )
                             self._emit_pi_phase_event(
                                 spawn_id,
@@ -1078,9 +1091,13 @@ class SpawnManager:
                     transition = activity_transition(event)
                     if transition == "turn_active":
                         pi_parent_idle = False
+                        pi_parent_idle_epoch = None
                         _clear_child_wave_timer()
                     elif transition == "idle":
                         pi_parent_idle = True
+                        pi_parent_idle_epoch = time.time()
+                        if pi_disk_watcher is not None:
+                            await pi_disk_watcher.force_rescan()
                         if (
                             child_wave_timeout_seconds is not None
                             and child_wave_timeout_seconds > 0
@@ -1289,6 +1306,8 @@ class SpawnManager:
             drain_error = exc
             raise
         finally:
+            if pi_disk_watcher is not None:
+                await pi_disk_watcher.stop()
             if (
                 is_pi_connection
                 and pi_subspawn_tracker.has_pending()

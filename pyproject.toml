@@ -34,6 +34,7 @@ dependencies = [
   "structlog>=25.0",
   "tomlkit>=0.14.0",
   "uvicorn[standard]>=0.34",
+  "watchfiles>=1.1.1",
   "websockets>=14.0",
 ]
 

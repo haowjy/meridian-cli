@@ -10,7 +10,7 @@ from typing import NamedTuple, cast
 from meridian.lib.core.depth import is_root_side_effect_process
 from meridian.lib.core.spawn_lifecycle import is_active_spawn_status
 from meridian.lib.harness.pi_lifecycle_events import PI_PHASE_EVENT_TYPE as _PI_PHASE_EVENT_TYPE
-from meridian.lib.launch.constants import OUTPUT_FILENAME, PI_LIFECYCLE_EVENTS_FILENAME
+from meridian.lib.launch.constants import OUTPUT_FILENAME
 from meridian.lib.ops.reference import resolve_spawn_ref
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 from meridian.lib.state import spawn_store
@@ -36,7 +36,7 @@ _NESTED_READ_ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     "history.jsonl",
     OUTPUT_FILENAME,
-    PI_LIFECYCLE_EVENTS_FILENAME,
+    "bash-records.json",
     "stderr.log",
     "report.md",
 )

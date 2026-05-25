@@ -11,7 +11,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -31,13 +31,11 @@ from meridian.lib.harness.adapter import StreamEvent
 from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.common import parse_json_stream_event, unwrap_event_payload
 from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConnection
-from meridian.lib.harness.connections.pi_lifecycle_file import prepare_pi_lifecycle_event_file
 from meridian.lib.harness.extractor import StreamingExtractor
 from meridian.lib.harness.semantics import TerminalEventOutcome, terminal_outcome
 from meridian.lib.launch.constants import (
     DEFAULT_INFRA_EXIT_CODE,
     HISTORY_FILENAME,
-    PI_LIFECYCLE_EVENTS_FILENAME,
     REPORT_FILENAME,
     REPORT_WATCHDOG_GRACE_SECONDS,
     REPORT_WATCHDOG_POLL_SECONDS,
@@ -245,7 +243,6 @@ def _persist_attempt_artifacts(
 ) -> None:
     for name in (
         HISTORY_FILENAME,
-        PI_LIFECYCLE_EVENTS_FILENAME,
         STDERR_FILENAME,
         TOKENS_FILENAME,
     ):
@@ -253,32 +250,35 @@ def _persist_attempt_artifacts(
         if not source.exists():
             continue
         payload = source.read_bytes()
-        if name in {HISTORY_FILENAME, PI_LIFECYCLE_EVENTS_FILENAME, STDERR_FILENAME}:
+        if name in {HISTORY_FILENAME, STDERR_FILENAME}:
             payload = redact_secret_bytes(payload, secrets)
         artifacts.put(make_artifact_key(spawn_id, name), payload)
 
 
-def _pi_sidecar_has_subspawn_start(log_dir: Path) -> bool:
-    sidecar_path = log_dir / PI_LIFECYCLE_EVENTS_FILENAME
-    if not sidecar_path.exists():
+def _retry_blocked_after_pi_child_started(
+    *, harness_id: HarnessId, runtime_root: Path, current_spawn_id: SpawnId
+) -> bool:
+    """Return whether retrying would orphan already-started Pi child spawn work."""
+
+    if harness_id is not HarnessId.PI:
         return False
-    try:
-        sidecar_text = sidecar_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    spawns_dir = runtime_root / "spawns"
+    if not spawns_dir.is_dir():
         return False
-    return any(
-        marker in sidecar_text
-        for marker in (
-            "meridian.subspawn.start",
-            "meridian_subspawn_start",
-        )
-    )
-
-
-def _retry_blocked_after_pi_subspawn_start(*, harness_id: HarnessId, log_dir: Path) -> bool:
-    """Return whether retrying would orphan already-started Pi subspawn work."""
-
-    return harness_id is HarnessId.PI and _pi_sidecar_has_subspawn_start(log_dir)
+    for child in spawns_dir.iterdir():
+        state_path = child / "state.json"
+        if not state_path.is_file():
+            continue
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        state = cast("dict[str, object]", data)
+        if state.get("parent_id") == str(current_spawn_id):
+            return True
+    return False
 
 
 def _line_from_harness_event(event: HarnessEvent) -> str:
@@ -811,16 +811,11 @@ async def execute_with_streaming(
             if resolved_harness_id is HarnessId.PI
             else None
         )
-        if resolved_harness_id is HarnessId.PI:
-            prepare_pi_lifecycle_event_file(
-                spawn_dir=log_dir,
-                env=child_env,
+        if resolved_harness_id is HarnessId.PI and pi_session_role == "spawned":
+            _scope_pi_session_dir_for_spawn(
+                child_env=child_env,
+                spawn_id=run.spawn_id,
             )
-            if pi_session_role == "spawned":
-                _scope_pi_session_dir_for_spawn(
-                    child_env=child_env,
-                    spawn_id=run.spawn_id,
-                )
 
         spawn_store.update_spawn(
             runtime_root,
@@ -1149,9 +1144,10 @@ async def execute_with_streaming(
                         secrets=secrets,
                     )
 
-                    if _retry_blocked_after_pi_subspawn_start(
+                    if _retry_blocked_after_pi_child_started(
                         harness_id=resolved_harness_id,
-                        log_dir=log_dir,
+                        runtime_root=runtime_root,
+                        current_spawn_id=run.spawn_id,
                     ):
                         conclusion.exit_code = 1
                         break
@@ -1195,9 +1191,10 @@ async def execute_with_streaming(
 
                 # Retrying after Pi already launched lifecycle-managed subspawn work is unsafe:
                 # children cannot be re-adopted by a new parent retry attempt.
-                if _retry_blocked_after_pi_subspawn_start(
+                if _retry_blocked_after_pi_child_started(
                     harness_id=resolved_harness_id,
-                    log_dir=log_dir,
+                    runtime_root=runtime_root,
+                    current_spawn_id=run.spawn_id,
                 ):
                     break
 
