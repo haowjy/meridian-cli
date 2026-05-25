@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.composition import PromptDocument
@@ -227,3 +229,81 @@ def test_build_launch_context_spawn_prepare_injects_goal_completion_contract(
     )
     assert "# Spawn Goal" in projected_goal_contract
     assert "<goal>\nfinish launch composition wiring\n</goal>" in projected_goal_contract
+
+
+def test_primary_bundle_auto_approval_projects_claude_accept_edits(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE,
+        execution_policy=ResolvedExecutionPolicy(approval="auto"),
+    )
+    request = SpawnRequest(
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE.value,
+        prompt="# Meridian Session",
+    )
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.PRIMARY,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-primary-auto-approval",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.resolved_request.execution_policy.approval == "auto"
+    assert "--permission-mode" in runtime_ctx.binding.argv
+    assert "acceptEdits" in runtime_ctx.binding.argv
+
+
+def test_spawn_prepare_reuses_policy_snapshot_over_live_env(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    snapshot = LaunchPolicySnapshot(
+        model="claude-sonnet-4-6",
+        harness=HarnessId.CLAUDE.value,
+        execution_policy=ResolvedExecutionPolicy(approval="auto", sandbox="workspace-write"),
+    )
+    monkeypatch.setenv("MERIDIAN_MODEL", "gpt-5.4")
+    monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+
+    def fail_bundle(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("snapshot replay should not call launch-bundle")
+
+    monkeypatch.setattr("meridian.lib.launch.bundle_adapter.request_and_resolve", fail_bundle)
+    request = SpawnRequest(
+        model="gpt-5.4",
+        harness=HarnessId.CODEX.value,
+        prompt="snapshot replay prompt",
+        prompt_is_composed=False,
+        launch_policy_snapshot=snapshot,
+    )
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-snapshot-replay",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert runtime_ctx.resolved_request.model == snapshot.model
+    assert runtime_ctx.resolved_request.harness == snapshot.harness
+    assert runtime_ctx.resolved_request.execution_policy.approval == "auto"
+    assert "--permission-mode" in runtime_ctx.binding.argv
+    assert "acceptEdits" in runtime_ctx.binding.argv
