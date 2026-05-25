@@ -6,6 +6,7 @@ runtime spawns directory.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -97,6 +98,14 @@ def _prompt_path(spawns_dir: Path, spawn_id: str) -> Path:
 
 def _lock_path(spawns_dir: Path, spawn_id: str) -> Path:
     return _spawn_dir(spawns_dir, spawn_id) / "state.lock"
+
+
+def _children_index_path(spawns_dir: Path, parent_id: str) -> Path:
+    return _spawn_dir(spawns_dir, parent_id) / "children.json"
+
+
+def _children_index_lock_path(spawns_dir: Path, parent_id: str) -> Path:
+    return _spawn_dir(spawns_dir, parent_id) / "children.lock"
 
 
 def record_to_stored_state(
@@ -266,6 +275,7 @@ def write_state(
         _state_path(spawns_dir, record.id),
         stored.model_dump_json(indent=2) + "\n",
     )
+    _update_parent_children_index(spawns_dir, stored)
     return next_revision
 
 
@@ -294,6 +304,36 @@ def write_state_locked(
         if committed is None:
             raise FileNotFoundError(_state_path(spawns_dir, spawn_id))
         return committed
+
+
+def _update_parent_children_index(spawns_dir: Path, stored: StoredSpawnState) -> None:
+    if not stored.parent_id:
+        return
+
+    parent_dir = _spawn_dir(spawns_dir, stored.parent_id)
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    index_path = _children_index_path(spawns_dir, stored.parent_id)
+    with lock_file(_children_index_lock_path(spawns_dir, stored.parent_id)):
+        try:
+            existing = json.loads(index_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            existing = {}
+        existing_obj = cast("dict[str, object]", existing) if isinstance(existing, dict) else {}
+        children_raw = existing_obj.get("children")
+        children = cast("dict[str, object]", children_raw) if isinstance(children_raw, dict) else {}
+        children[stored.id] = stored.model_dump(mode="json")
+        atomic_write_text(
+            index_path,
+            json.dumps(
+                {
+                    "v": 1,
+                    "parent_id": stored.parent_id,
+                    "children": children,
+                },
+                indent=2,
+            )
+            + "\n",
+        )
 
 
 def scan_spawn_ids(spawns_dir: Path) -> list[str]:

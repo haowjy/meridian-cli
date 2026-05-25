@@ -36,16 +36,21 @@ const TERMINAL_NOTIFIED = new Set<string>();
 const DEBOUNCE_MS = 200;
 const MAX_WAVE_WAIT_MS = 2_000;
 
+type ChildrenIndexFile = {
+  v: 1;
+  parent_id: string;
+  children: Record<string, SpawnStateFile>;
+};
+
 class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
   private readonly spawnsDir = resolveSpawnsDir();
   private readonly ownSpawnDir = path.join(this.spawnsDir, this.currentSpawnId);
+  private readonly childrenIndexPath = path.join(this.ownSpawnDir, "children.json");
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
   private readonly markerPath = resolveLastNotificationPath(this.currentSpawnId);
   private readonly pending = new Map<string, NotificationItem>();
-  private readonly childSpawnIds = new Set<string>();
-  private readonly childWatchers = new Map<string, FSWatcher>();
   private watchers: FSWatcher[] = [];
   private debounce: NodeJS.Timeout | null = null;
   private maxWave: NodeJS.Timeout | null = null;
@@ -56,60 +61,37 @@ class SpawnWatchRuntime {
   constructor(private readonly pi: PiWithMessages) {}
 
   start(): void {
-    mkdirSync(this.spawnsDir, { recursive: true });
     mkdirSync(this.ownSpawnDir, { recursive: true });
     mkdirSync(this.bashDir, { recursive: true });
-    this.watchers.push(this.watchTopLevelSpawnsDir());
-    this.watchers.push(this.watchDirectory(this.ownSpawnDir, () => this.requestScan()));
-    this.watchers.push(this.watchDirectory(this.bashDir, () => this.requestScan()));
-    void this.discoverExistingChildren().then(() => this.scan());
+    this.watchers.push(this.watchDirectory(this.ownSpawnDir, (_eventType, filename) => {
+      const name = filename?.toString() ?? "";
+      if (!name || name === "children.json") this.requestScan();
+    }));
+    this.watchers.push(this.watchDirectory(this.bashDir, (_eventType, filename) => {
+      const name = filename?.toString() ?? "";
+      if (!name || name === "bash-records.json" || name === "last-notification.json") this.requestScan();
+    }));
+    void this.scan();
   }
 
   stop(): void {
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
-    for (const watcher of this.childWatchers.values()) watcher.close();
-    this.childWatchers.clear();
     if (this.debounce) clearTimeout(this.debounce);
     if (this.maxWave) clearTimeout(this.maxWave);
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
   }
 
-  async rows(discover = false): Promise<SpawnStateFile[]> {
-    if (discover) await this.discoverExistingChildren();
+  async rows(): Promise<SpawnStateFile[]> {
     const bashIds = await this.sessionBashIds();
-    const rows: SpawnStateFile[] = [];
-    for (const state of await this.readChildSpawnStates()) {
-      if (state.parent_id !== this.currentSpawnId) continue;
-      if (state.originating_bash_id && bashIds.has(state.originating_bash_id)) {
-        rows.push(state);
-      }
-    }
-    return rows;
-  }
-
-  private watchTopLevelSpawnsDir(): FSWatcher {
-    return this.watchDirectory(this.spawnsDir, (_eventType, filename) => {
-      const name = filename ? path.basename(filename.toString()) : "";
-      if (name.startsWith("p")) {
-        void this.discoverChild(name).then(() => this.requestScan());
-        const retry = setTimeout(() => void this.discoverChild(name).then(() => this.requestScan()), 250);
-        retry.unref();
-        return;
-      }
-      this.requestScan();
-    });
-  }
-
-  private watchChildSpawnDir(spawnId: string): void {
-    if (this.childWatchers.has(spawnId)) return;
-    const dir = path.join(this.spawnsDir, spawnId);
-    if (!existsSync(dir)) return;
-    const watcher = this.watchDirectory(dir, (_eventType, filename) => {
-      const name = filename?.toString() ?? "";
-      if (!name || name === "state.json") this.requestScan();
-    });
-    this.childWatchers.set(spawnId, watcher);
+    const index = await readJsonFile<ChildrenIndexFile | null>(this.childrenIndexPath, null);
+    const states = Object.values(index?.children ?? {});
+    return states.filter(
+      (state) =>
+        state.parent_id === this.currentSpawnId &&
+        typeof state.originating_bash_id === "string" &&
+        bashIds.has(state.originating_bash_id),
+    );
   }
 
   private watchDirectory(
@@ -221,38 +203,6 @@ class SpawnWatchRuntime {
   private async sessionBashIds(): Promise<Set<string>> {
     const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
     return new Set(Object.keys(file?.records ?? {}));
-  }
-
-  private async discoverExistingChildren(): Promise<void> {
-    if (!existsSync(this.spawnsDir)) return;
-    for (const name of readdirSync(this.spawnsDir)) {
-      if (name.startsWith("p")) await this.discoverChild(name);
-    }
-  }
-
-  private async discoverChild(spawnId: string): Promise<void> {
-    if (this.childSpawnIds.has(spawnId)) {
-      this.watchChildSpawnDir(spawnId);
-      return;
-    }
-    const state = await this.readSpawnState(spawnId);
-    if (state?.parent_id !== this.currentSpawnId) return;
-    this.childSpawnIds.add(spawnId);
-    this.watchChildSpawnDir(spawnId);
-  }
-
-  private async readChildSpawnStates(): Promise<SpawnStateFile[]> {
-    const states: SpawnStateFile[] = [];
-    for (const spawnId of this.childSpawnIds) {
-      const state = await this.readSpawnState(spawnId);
-      if (state) states.push(state);
-    }
-    return states;
-  }
-
-  private async readSpawnState(spawnId: string): Promise<SpawnStateFile | null> {
-    const statePath = path.join(this.spawnsDir, spawnId, "state.json");
-    return await readJsonFile<SpawnStateFile | null>(statePath, null);
   }
 }
 
