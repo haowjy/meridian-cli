@@ -26,6 +26,7 @@ def _fake_launch_context(
             harness="codex",
             agent="coder",
             prompt=prompt,
+            launch_policy_snapshot=None,
             skills=(),
             skill_paths=(),
             session=SimpleNamespace(requested_harness_session_id=None),
