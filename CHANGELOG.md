@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-25
+
 ### Added
 - `meridian session log` segment-local window navigation: `--from N --limit M`, `--before N --limit M`, `--around N --context M`.
 - `meridian session log --global` for explicit global interaction-entry windows with `--from/--before/--around`.
