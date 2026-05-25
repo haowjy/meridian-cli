@@ -395,13 +395,25 @@ function formatBashNotification(items: NotificationItem[]): string {
   ].join("\n");
 }
 
+function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {
+  const status = String(row.status ?? "unknown").toLowerCase();
+  const dim = (value: string) => theme.fg("dim", value);
+  const success = (value: string) => theme.fg("success", value);
+  const error = (value: string) => theme.fg("error", value);
+  const warning = (value: string) => theme.fg("warning", value);
+
+  if (status === "succeeded") return dim("✓ succeeded");
+  if (status === "failed") return error("✗ failed");
+  if (status === "cancelled" || status === "canceled") return warning(`✗ ${status}`);
+  if (status === "timed_out") return error("✗ timed_out");
+  if (!isTerminalSpawnStatus(status)) return success(`● ${status}`);
+  return dim(status);
+}
+
 function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
-  const status = isTerminalSpawnStatus(String(row.status ?? ""))
-    ? dim(String(row.status ?? "unknown"))
-    : theme.fg("success", String(row.status ?? "unknown"));
   const lines = [
-    `${theme.fg("accent", row.id)} ${status} ${dim(formatDurationSecs(row.duration_secs))}`,
+    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
     dim(`${row.agent ?? "spawn"}${row.model ? ` · ${row.model}` : ""}`),
   ];
   if (row.originating_bash_id) lines.push(dim(`launched by ${row.originating_bash_id}`));
@@ -411,12 +423,12 @@ function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
 }
 
 const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
-  { header: "ID", width: 10, render: (row) => row.id },
-  { header: "STATUS", width: 12, render: (row) => String(row.status ?? "") },
-  { header: "DUR", width: 8, render: (row) => formatDurationSecs(row.duration_secs), align: "right" },
+  { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.id) : theme.fg("dim", row.id)) : row.id) },
+  { header: "STATUS", width: 14, render: (row, theme) => (theme ? formatSpawnStatus(row, theme) : String(row.status ?? "")) },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
   { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
-  { header: "MODEL", width: 24, render: (row) => String(row.model ?? "") },
-  { header: "← BASH", width: 10, render: (row) => String(row.originating_bash_id ?? "") },
+  { header: "MODEL", width: 24, render: (row, theme) => (theme ? theme.fg("dim", String(row.model ?? "")) : String(row.model ?? "")) },
+  { header: "← BASH", width: 10, render: (row, theme) => (theme ? theme.fg("dim", String(row.originating_bash_id ?? "")) : String(row.originating_bash_id ?? "")) },
 ];
 
 export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {

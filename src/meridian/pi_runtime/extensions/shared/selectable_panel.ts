@@ -5,7 +5,7 @@ export type SelectablePanelColumn<Row> = {
   header: string;
   width: number;
   align?: "left" | "right";
-  render: (row: Row) => string;
+  render: (row: Row, theme?: Theme, selected?: boolean) => string;
 };
 
 export type SelectablePanelOptions<Row> = {
@@ -137,7 +137,7 @@ function renderTableLine<Row>(
   const innerWidth = Math.max(0, width - 2);
   const prefix = row == null ? "  " : selected ? theme.fg("accent", "> ") : "  ";
   const cells = columns.map((column) => {
-    const value = row == null ? column.header : column.render(row);
+    const value = row == null ? column.header : column.render(row, theme, selected);
     const rendered = row == null ? theme.fg("dim", value) : value;
     return fitCell(rendered, column.width, column.align);
   });

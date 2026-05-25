@@ -81,24 +81,37 @@ function tailFile(filePath: string, maxBytes = 4096): string {
   }
 }
 
+function formatBashStatus(row: BashPanelRow, theme: Theme): string {
+  const dim = (value: string) => theme.fg("dim", value);
+  const success = (value: string) => theme.fg("success", value);
+  const error = (value: string) => theme.fg("error", value);
+  const warning = (value: string) => theme.fg("warning", value);
+
+  if (row.status === "running") return success("● running");
+  if (row.status === "exited") {
+    return row.exit_code === 0 ? dim("✓ exit(0)") : error(`✗ exit(${row.exit_code ?? "?"})`);
+  }
+  if (row.status === "killed") return warning("✗ killed");
+  return error(`✗ ${row.status}`);
+}
+
 function renderBashPreview(row: BashPanelRow, theme: Theme): string[] {
   const dim = (value: string) => theme.fg("dim", value);
-  const status = row.status === "running" ? theme.fg("success", row.status) : dim(row.status);
   const output = tailFile(row.log_path, 2048).trimEnd();
   const lines = output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
   return [
-    `${theme.fg("accent", row.bash_id)} ${status} ${dim(formatDurationSecs(row.duration_secs))}`,
+    `${theme.fg("accent", row.bash_id)} ${formatBashStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
     dim(row.command),
     ...lines,
   ];
 }
 
 const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
-  { header: "ID", width: 10, render: (row) => row.bash_id },
-  { header: "STATE", width: 10, render: (row) => row.status },
-  { header: "BG", width: 3, render: (row) => (row.is_background ? "yes" : "no") },
-  { header: "DUR", width: 8, render: (row) => formatDurationSecs(row.duration_secs), align: "right" },
-  { header: "SIZE", width: 8, render: (row) => `${row.log_bytes}B`, align: "right" },
+  { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.bash_id) : theme.fg("dim", row.bash_id)) : row.bash_id) },
+  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status) },
+  { header: "BG", width: 3, render: (row, theme) => (theme ? (row.is_background ? theme.fg("accent", "yes") : theme.fg("dim", "no")) : row.is_background ? "yes" : "no") },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
+  { header: "SIZE", width: 8, render: (row, theme) => (theme ? theme.fg("dim", `${row.log_bytes}B`) : `${row.log_bytes}B`), align: "right" },
   { header: "COMMAND", width: 56, render: (row) => row.command },
 ];
 
