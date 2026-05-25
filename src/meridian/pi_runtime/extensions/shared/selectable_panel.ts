@@ -51,9 +51,8 @@ export type PanelCommandContext = {
 export const DEFAULT_SELECTABLE_PANEL_OVERLAY_OPTIONS = {
   overlay: true,
   overlayOptions: {
-    width: "90%",
-    maxHeight: "80%",
-    anchor: "center",
+    width: "100%",
+    maxHeight: "100%",
   },
 };
 
