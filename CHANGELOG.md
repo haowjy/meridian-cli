@@ -16,6 +16,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `meridian session log REF` now defaults to a safe recent window: last 5 transcript entries/chunks from the selected segment, shown oldest→newest.
 - `meridian session log` now reserves segment-local entry `0` as a prologue slot for every segment: segment `0` uses extractable system prompt content when available; later segments use extractable compaction handoff content when available; otherwise slot `0` renders a reserved placeholder.
+- Segment boundaries now come only from explicit harness/provider compaction markers, so boundary-without-summary still creates a new segment with a reserved entry `0` setup slot.
+- Session transcript parsing now consumes explicitly marked post-boundary summary messages into segment entry `0` and no longer duplicates those summaries as normal interaction entries.
+- Prologue/handoff extraction is now parser-aware and conservative; broad generic key scraping was removed from segment-setup extraction.
 - Segment-local interaction entries now start at `1`; `--full` includes slot `0`, while default/tail views keep their recent interaction windows without consuming one slot on entry `0`.
 - `meridian session log --from/--before/--around` now applies segment-local ordinals (`0..N`) by default on the selected segment, including `--from 0 --limit 1` for explicit prologue/handoff reads.
 - `meridian session log --global` now uses one unique-index stream across all segment entries (including each segment's reserved entry `0` slot), so `--global --from 0 --limit 1` opens the first global item and later segment handoff slots are directly addressable.
@@ -24,6 +27,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Session-log navigation/counting now runs on interaction entries (tool-result-closed chunks) instead of raw parsed message rows.
 - Bare `meridian session log REF --tail` still defaults to 5, now in entry/chunk units.
 - Session-search corpus now defaults to current project when REF is omitted.
+- Session-search now indexes real segment entry-`0` setup content (prologue/handoff) but excludes reserved placeholder slot text, and emits deterministic setup-open commands (`--segment N --from 0 --limit 1`).
 - Work-session association logic is now shared through `ops/work_sessions.py` instead of being duplicated in dashboard/search paths.
 - Session transcript loading now flows through one canonical parsed-transcript boundary shared by `session log`, `session search`, and `session export`.
 - Workspace search scope now includes roots based on runtime/session evidence, not ad-hoc repo marker checks.

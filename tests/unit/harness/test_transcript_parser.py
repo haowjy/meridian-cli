@@ -78,6 +78,98 @@ def test_parse_session_file_extracts_segment_prologues(tmp_path: Path) -> None:
     assert parsed.segment_prologues == ("initial prompt", "handoff")
 
 
+def test_parse_session_file_boundary_without_summary_still_allocates_next_setup_slot(
+    tmp_path: Path,
+) -> None:
+    session_file = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "before boundary"}]},
+            }
+        ),
+        json.dumps({"type": "system", "subtype": "compact_boundary"}),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "after boundary"}]},
+            }
+        ),
+    ]
+    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    parsed = parse_transcript_file_with_prologues(session_file)
+
+    assert parsed.total_compactions == 1
+    assert len(parsed.segments) == 2
+    assert parsed.segment_setups == (None, None)
+
+
+def test_parse_session_file_consumes_synthetic_follow_on_handoff(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps({"type": "system", "content": "initial prompt"}),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "before boundary"}]},
+            }
+        ),
+        json.dumps({"type": "system", "subtype": "compact_boundary"}),
+        json.dumps(
+            {
+                "type": "user",
+                "isSynthetic": True,
+                "message": {"content": [{"type": "text", "text": "synthetic handoff"}]},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "after boundary"}]},
+            }
+        ),
+    ]
+    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    parsed = parse_transcript_file_with_prologues(session_file)
+
+    assert parsed.segment_setups == ("initial prompt", "synthetic handoff")
+    assert parsed.consumed_setup_event_indexes == (3,)
+    assert [(message.role, message.content) for message in parsed.segments[1]] == [
+        ("assistant", "after boundary")
+    ]
+
+
+def test_parse_session_file_consumes_opencode_follow_on_handoff(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps({"role": "assistant", "content": "segment0"}),
+        json.dumps({"part": {"type": "compaction"}}),
+        json.dumps(
+            {
+                "role": "assistant",
+                "mode": "compaction",
+                "agent": "compaction",
+                "parts": [{"type": "text", "text": "opencode handoff"}],
+                "content": "opencode handoff",
+            }
+        ),
+        json.dumps({"role": "assistant", "content": "segment1"}),
+    ]
+    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    parsed = parse_transcript_file_with_prologues(session_file)
+
+    assert parsed.total_compactions == 1
+    assert parsed.segment_setups == (None, "opencode handoff")
+    assert parsed.consumed_setup_event_indexes == (2,)
+    assert [(message.role, message.content) for message in parsed.segments[1]] == [
+        ("assistant", "segment1")
+    ]
+
+
 def test_parse_session_file_supports_json_array_lines(tmp_path: Path) -> None:
     session_file = tmp_path / "session.json"
     session_file.write_text(

@@ -266,6 +266,38 @@ def test_session_log_segment_handoff_slot_uses_extractable_content(tmp_path: Pat
     assert output.entries[0].content == "handoff summary"
 
 
+def test_session_log_consumes_synthetic_handoff_without_duplicate_interaction(
+    tmp_path: Path,
+) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    lines = [
+        _event("assistant", "segment0"),
+        json.dumps({"type": "system", "subtype": "compact_boundary"}),
+        json.dumps(
+            {
+                "type": "user",
+                "isSynthetic": True,
+                "message": {"content": [{"type": "text", "text": "synthetic handoff"}]},
+            }
+        ),
+        _event("assistant", "segment1"),
+    ]
+    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            segment="current",
+            full=True,
+        )
+    )
+
+    assert output.segment_index == 1
+    assert [entry.index for entry in output.entries] == [0, 1]
+    assert output.entries[0].content == "synthetic handoff"
+    assert output.entries[1].content == "segment1"
+
+
 def test_session_log_global_absolute_window_uses_global_ordinals_across_segments(
     tmp_path: Path,
 ) -> None:

@@ -24,14 +24,15 @@ class AbsoluteTranscriptMessage(NamedTuple):
 
 class AbsoluteTranscriptEntry(NamedTuple):
     ordinal: int
-    absolute_ordinal: int | None
+    global_ordinal: int
     segment_index: int
     start_segment_message_index: int
     end_segment_message_index: int
     role: str
     content: str
     messages: tuple[AbsoluteTranscriptMessage, ...]
-    kind: Literal["prologue", "interaction"]
+    kind: Literal["setup", "interaction"]
+    is_placeholder: bool = False
 
 
 class SessionLogRoute(NamedTuple):
@@ -46,9 +47,10 @@ class ParsedSessionTranscript(NamedTuple):
     route: SessionLogRoute
     segments: list[list[TranscriptMessage]]
     total_compactions: int
-    segment_prologues: tuple[str | None, ...]
+    segment_setups: tuple[str | None, ...]
     messages: tuple[AbsoluteTranscriptMessage, ...]
     entries: tuple[AbsoluteTranscriptEntry, ...]
+    all_entries: tuple[AbsoluteTranscriptEntry, ...]
     segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...]
 
 
@@ -140,7 +142,6 @@ def group_transcript_entries(
 
     entries: list[AbsoluteTranscriptEntry] = []
     local_ordinals: dict[int, int] = {}
-    absolute_ordinal = 1
     for chunk in chunks:
         first = chunk[0]
         last = chunk[-1]
@@ -150,7 +151,7 @@ def group_transcript_entries(
         entries.append(
             AbsoluteTranscriptEntry(
                 ordinal=segment_local_ordinal,
-                absolute_ordinal=absolute_ordinal,
+                global_ordinal=-1,
                 segment_index=first.segment_index,
                 start_segment_message_index=first.segment_message_index,
                 end_segment_message_index=last.segment_message_index,
@@ -160,27 +161,29 @@ def group_transcript_entries(
                 kind="interaction",
             )
         )
-        absolute_ordinal += 1
 
     return tuple(entries)
 
 
-def _prologue_content_for_segment(
+def _setup_content_for_segment(
     *,
     segment_index: int,
-    segment_prologues: tuple[str | None, ...],
-) -> str:
-    if segment_index < len(segment_prologues):
-        extracted = (segment_prologues[segment_index] or "").strip()
+    segment_setups: tuple[str | None, ...],
+) -> tuple[str, bool]:
+    if segment_index < len(segment_setups):
+        extracted = (segment_setups[segment_index] or "").strip()
         if extracted:
-            return extracted
-    return _PROLOGUE_PLACEHOLDER if segment_index == 0 else _HANDOFF_PLACEHOLDER
+            return (extracted, False)
+    return (
+        (_PROLOGUE_PLACEHOLDER if segment_index == 0 else _HANDOFF_PLACEHOLDER),
+        True,
+    )
 
 
 def build_segment_entries(
     *,
     segments: list[list[TranscriptMessage]],
-    segment_prologues: tuple[str | None, ...],
+    segment_setups: tuple[str | None, ...],
     interaction_entries: tuple[AbsoluteTranscriptEntry, ...],
 ) -> tuple[tuple[AbsoluteTranscriptEntry, ...], ...]:
     entries_by_segment: dict[int, list[AbsoluteTranscriptEntry]] = {}
@@ -188,23 +191,44 @@ def build_segment_entries(
         entries_by_segment.setdefault(entry.segment_index, []).append(entry)
 
     segment_entries: list[tuple[AbsoluteTranscriptEntry, ...]] = []
+    global_ordinal = 0
     for segment_index, _segment_messages in enumerate(segments):
-        prologue = AbsoluteTranscriptEntry(
+        setup_content, is_placeholder = _setup_content_for_segment(
+            segment_index=segment_index,
+            segment_setups=segment_setups,
+        )
+        setup_entry = AbsoluteTranscriptEntry(
             ordinal=0,
-            absolute_ordinal=None,
+            global_ordinal=global_ordinal,
             segment_index=segment_index,
             start_segment_message_index=0,
             end_segment_message_index=0,
             role="system",
-            content=_prologue_content_for_segment(
-                segment_index=segment_index,
-                segment_prologues=segment_prologues,
-            ),
+            content=setup_content,
             messages=(),
-            kind="prologue",
+            kind="setup",
+            is_placeholder=is_placeholder,
         )
-        interaction = tuple(entries_by_segment.get(segment_index, []))
-        segment_entries.append((prologue, *interaction))
+        global_ordinal += 1
+
+        interaction_entries_for_segment: list[AbsoluteTranscriptEntry] = []
+        for interaction in entries_by_segment.get(segment_index, []):
+            interaction_entries_for_segment.append(
+                AbsoluteTranscriptEntry(
+                    ordinal=interaction.ordinal,
+                    global_ordinal=global_ordinal,
+                    segment_index=interaction.segment_index,
+                    start_segment_message_index=interaction.start_segment_message_index,
+                    end_segment_message_index=interaction.end_segment_message_index,
+                    role=interaction.role,
+                    content=interaction.content,
+                    messages=interaction.messages,
+                    kind=interaction.kind,
+                    is_placeholder=False,
+                )
+            )
+            global_ordinal += 1
+        segment_entries.append((setup_entry, *tuple(interaction_entries_for_segment)))
 
     return tuple(segment_entries)
 
@@ -236,6 +260,15 @@ def parse_session_target(
     parsed = parse_transcript_file_with_prologues(target.file_path)
     flattened = flatten_transcript_segments(parsed.segments)
     interaction_entries = group_transcript_entries(flattened)
+    segment_entries = build_segment_entries(
+        segments=parsed.segments,
+        segment_setups=parsed.segment_setups,
+        interaction_entries=interaction_entries,
+    )
+    all_entries = tuple(entry for segment in segment_entries for entry in segment)
+    resolved_interaction_entries = tuple(
+        entry for entry in all_entries if entry.kind == "interaction"
+    )
     return ParsedSessionTranscript(
         project_root=project_root,
         runtime_root=runtime_root,
@@ -243,14 +276,11 @@ def parse_session_target(
         route=route,
         segments=parsed.segments,
         total_compactions=parsed.total_compactions,
-        segment_prologues=parsed.segment_prologues,
+        segment_setups=parsed.segment_setups,
         messages=flattened,
-        entries=interaction_entries,
-        segment_entries=build_segment_entries(
-            segments=parsed.segments,
-            segment_prologues=parsed.segment_prologues,
-            interaction_entries=interaction_entries,
-        ),
+        entries=resolved_interaction_entries,
+        all_entries=all_entries,
+        segment_entries=segment_entries,
     )
 
 

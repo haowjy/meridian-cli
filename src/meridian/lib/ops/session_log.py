@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
@@ -261,28 +262,22 @@ def _entry_row_with_index(
     )
 
 
-def _global_entries_with_unique_ordinals(
-    segment_entries: tuple[tuple[AbsoluteTranscriptEntry, ...], ...],
-) -> tuple[AbsoluteTranscriptEntry, ...]:
-    flattened: list[AbsoluteTranscriptEntry] = []
-    for entries in segment_entries:
-        for entry in entries:
-            flattened.append(
-                entry._replace(
-                    ordinal=len(flattened),
-                    absolute_ordinal=len(flattened),
-                )
-            )
-    return tuple(flattened)
-
-
 class _NavigationAddressSpace(NamedTuple):
     mode: Literal["segment", "global"]
     entries: tuple[AbsoluteTranscriptEntry, ...]
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int]
     first_ordinal: int
     segment_index: int | None
     segment_label: str | None
     segment_entries: int | None
+
+
+def _entry_local_ordinal(entry: AbsoluteTranscriptEntry) -> int:
+    return entry.ordinal
+
+
+def _entry_global_ordinal(entry: AbsoluteTranscriptEntry) -> int:
+    return entry.global_ordinal
 
 
 def _window_navigation_size(payload: SessionLogInput) -> int:
@@ -306,11 +301,15 @@ def _segment_boundary_commands(
 ) -> tuple[str | None, str | None]:
     if address_space.mode != "segment" or address_space.segment_index is None:
         return (None, None)
-    if not page.messages:
+    if not page.entries:
         return (None, None)
 
     segment_index = address_space.segment_index
-    max_ordinal = address_space.first_ordinal + len(address_space.entries) - 1
+    max_ordinal = (
+        address_space.ordinal_getter(address_space.entries[-1])
+        if address_space.entries
+        else address_space.first_ordinal
+    )
     touches_top = page.start_ordinal == address_space.first_ordinal
     touches_bottom = page.end_ordinal == max_ordinal
     window_size = _window_navigation_size(payload)
@@ -392,7 +391,8 @@ def session_log_sync(
     if payload.global_scope:
         address_space = _NavigationAddressSpace(
             mode="global",
-            entries=_global_entries_with_unique_ordinals(parsed.segment_entries),
+            entries=parsed.all_entries,
+            ordinal_getter=_entry_global_ordinal,
             first_ordinal=0,
             segment_index=None,
             segment_label=None,
@@ -411,6 +411,7 @@ def session_log_sync(
         address_space = _NavigationAddressSpace(
             mode="segment",
             entries=parsed.segment_entries[selected_segment_index],
+            ordinal_getter=_entry_local_ordinal,
             first_ordinal=0,
             segment_index=selected_segment_index,
             segment_label=selected_segment_label,
@@ -426,6 +427,7 @@ def session_log_sync(
             address_space.entries if payload.full else interaction_entries,
             tail=resolved_tail,
             first_ordinal=address_space.first_ordinal if payload.full else 1,
+            ordinal_getter=address_space.ordinal_getter,
         )
     elif payload.from_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
@@ -434,6 +436,7 @@ def session_log_sync(
             start_ordinal=payload.from_ordinal,
             limit=limit,
             first_ordinal=address_space.first_ordinal,
+            ordinal_getter=address_space.ordinal_getter,
         )
     elif payload.before_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
@@ -442,6 +445,7 @@ def session_log_sync(
             before_ordinal=payload.before_ordinal,
             limit=limit,
             first_ordinal=address_space.first_ordinal,
+            ordinal_getter=address_space.ordinal_getter,
         )
     else:
         around_ordinal = (
@@ -455,6 +459,7 @@ def session_log_sync(
             around_ordinal=around_ordinal,
             context=context,
             first_ordinal=address_space.first_ordinal,
+            ordinal_getter=address_space.ordinal_getter,
         )
 
     previous_command: str | None = None
@@ -494,16 +499,16 @@ def session_log_sync(
     output_entries = tuple(
         _entry_row_with_index(
             item,
-            index=item.ordinal,
+            index=address_space.ordinal_getter(item),
             truncate_content=payload.truncate,
         )
-        for item in page.messages
+        for item in page.entries
     )
 
     total_entries = (
         address_space.segment_entries
         if address_space.segment_entries is not None
-        else len(parsed.entries)
+        else len(parsed.all_entries)
     )
 
     return SessionLogOutput(

@@ -30,7 +30,13 @@ class TranscriptMessage(NamedTuple):
 class TranscriptParseResult(NamedTuple):
     segments: list[list[TranscriptMessage]]
     total_compactions: int
-    segment_prologues: tuple[str | None, ...]
+    segment_setups: tuple[str | None, ...]
+    consumed_setup_event_indexes: tuple[int, ...] = ()
+
+    @property
+    def segment_prologues(self) -> tuple[str | None, ...]:
+        """Backward-compatible alias for session setup slots."""
+        return self.segment_setups
 
 
 class TranscriptEventParser(Protocol):
@@ -361,44 +367,91 @@ def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
     return event
 
 
-def _extract_event_text(event: dict[str, object], keys: tuple[str, ...]) -> str | None:
-    for key in keys:
-        if key not in event:
-            continue
-        text = text_from_value(event.get(key))
-        if text:
-            return text
-
-    data = event.get("data")
-    if isinstance(data, dict):
-        nested = _extract_event_text(cast("dict[str, object]", data), keys)
-        if nested:
-            return nested
-    return None
+def _join_message_content(messages: list[TranscriptMessage]) -> str | None:
+    parts = [message.content.strip() for message in messages if message.content.strip()]
+    if not parts:
+        return None
+    return "\n\n".join(parts).strip()
 
 
-def _extract_system_prologue(event: dict[str, object]) -> str | None:
+def _is_claude_compaction_boundary(event: dict[str, object]) -> bool:
+    event_type = normalize_harness_event_type(event)
+    subtype = str(event.get("subtype", "")).strip().lower()
+    return event_type == "system" and subtype == "compact_boundary"
+
+
+def _is_opencode_compaction_boundary(event: dict[str, object]) -> bool:
+    part = event.get("part")
+    if not isinstance(part, dict):
+        return False
+    part_payload = cast("dict[str, object]", part)
+    return str(part_payload.get("type", "")).strip().lower() == "compaction"
+
+
+def _extract_claude_system_prologue(event: dict[str, object]) -> str | None:
     event_type = normalize_harness_event_type(event)
     if event_type != "system":
         return None
-    subtype = str(event.get("subtype", "")).strip().lower()
-    if subtype == "compact_boundary":
+    if _is_claude_compaction_boundary(event):
         return None
-    return _extract_event_text(
-        event,
-        keys=("prologue", "system_prompt", "prompt", "summary", "content", "message", "text"),
+    return text_from_value(event.get("content")) or text_from_value(event.get("text")) or None
+
+
+def _extract_claude_boundary_handoff(event: dict[str, object]) -> str | None:
+    if not _is_claude_compaction_boundary(event):
+        return None
+    return (
+        text_from_value(event.get("summary"))
+        or text_from_value(event.get("handoff"))
+        or text_from_value(event.get("content"))
+        or None
     )
 
 
-def _extract_compaction_handoff(event: dict[str, object]) -> str | None:
-    event_type = normalize_harness_event_type(event)
-    subtype = str(event.get("subtype", "")).strip().lower()
-    if event_type != "system" or subtype != "compact_boundary":
+def _extract_claude_follow_on_handoff(
+    event: dict[str, object],
+    extracted_messages: list[TranscriptMessage],
+) -> str | None:
+    if normalize_harness_event_type(event) != "user":
         return None
-    return _extract_event_text(
-        event,
-        keys=("handoff", "summary", "content", "message", "text"),
-    )
+    if not bool(event.get("isSynthetic")):
+        return None
+    return _join_message_content(extracted_messages)
+
+
+def _extract_opencode_follow_on_handoff(
+    event: dict[str, object],
+    extracted_messages: list[TranscriptMessage],
+) -> str | None:
+    role = str(event.get("role", "")).strip().lower()
+    mode = str(event.get("mode", "")).strip().lower()
+    agent = str(event.get("agent", "")).strip().lower()
+    if role != "assistant" or mode != "compaction" or agent != "compaction":
+        return None
+
+    part_texts: list[str] = []
+    for key in ("part", "parts"):
+        value = event.get(key)
+        if isinstance(value, dict):
+            part_payload = cast("dict[str, object]", value)
+            if str(part_payload.get("type", "")).strip().lower() == "text":
+                text = text_from_value(part_payload.get("text"))
+                if text:
+                    part_texts.append(text)
+        elif isinstance(value, list):
+            for item in cast("list[object]", value):
+                if not isinstance(item, dict):
+                    continue
+                part_payload = cast("dict[str, object]", item)
+                if str(part_payload.get("type", "")).strip().lower() != "text":
+                    continue
+                text = text_from_value(part_payload.get("text"))
+                if text:
+                    part_texts.append(text)
+
+    if part_texts:
+        return "\n".join(part_texts).strip()
+    return _join_message_content(extracted_messages)
 
 
 def _parse_events_with_prologues(
@@ -407,31 +460,70 @@ def _parse_events_with_prologues(
     parser: TranscriptEventParser,
 ) -> TranscriptParseResult:
     segments: list[list[TranscriptMessage]] = [[]]
-    segment_prologues: list[str | None] = [None]
+    segment_setups: list[str | None] = [None]
     total_compactions = 0
+    consumed_setup_event_indexes: list[int] = []
+    pending_follow_on_summary: tuple[int, str] | None = None
 
-    for event in events:
+    for event_index, event in enumerate(events):
         normalized_event = _unwrap_seq_envelope(event)
-        extracted, boundary = parser.parse(event)
+        extracted_messages, parser_boundary = parser.parse(event)
 
-        if segment_prologues[-1] is None:
-            prologue = _extract_system_prologue(normalized_event)
-            if prologue:
-                segment_prologues[-1] = prologue
+        is_opencode_boundary = _is_opencode_compaction_boundary(normalized_event)
+        is_claude_boundary = _is_claude_compaction_boundary(normalized_event)
+        boundary = parser_boundary or is_opencode_boundary
 
         if boundary:
             total_compactions += 1
             segments.append([])
-            segment_prologues.append(_extract_compaction_handoff(normalized_event))
+            handoff = (
+                _extract_claude_boundary_handoff(normalized_event)
+                if is_claude_boundary
+                else None
+            )
+            segment_setups.append(handoff)
+            next_segment_index = len(segments) - 1
+            if handoff is None:
+                if is_claude_boundary:
+                    pending_follow_on_summary = (next_segment_index, "claude")
+                elif is_opencode_boundary:
+                    pending_follow_on_summary = (next_segment_index, "opencode")
+                else:
+                    pending_follow_on_summary = None
+            else:
+                pending_follow_on_summary = None
             continue
 
-        if extracted:
-            segments[-1].extend(extracted)
+        if pending_follow_on_summary is not None:
+            segment_index, source = pending_follow_on_summary
+            setup_text: str | None = None
+            if source == "claude":
+                setup_text = _extract_claude_follow_on_handoff(
+                    normalized_event, extracted_messages
+                )
+            elif source == "opencode":
+                setup_text = _extract_opencode_follow_on_handoff(
+                    normalized_event, extracted_messages
+                )
+            pending_follow_on_summary = None
+            if setup_text:
+                segment_setups[segment_index] = setup_text
+                consumed_setup_event_indexes.append(event_index)
+                continue
+
+        if segment_setups[-1] is None:
+            prologue = _extract_claude_system_prologue(normalized_event)
+            if prologue:
+                segment_setups[-1] = prologue
+
+        if extracted_messages:
+            segments[-1].extend(extracted_messages)
 
     return TranscriptParseResult(
         segments=segments,
         total_compactions=total_compactions,
-        segment_prologues=tuple(segment_prologues),
+        segment_setups=tuple(segment_setups),
+        consumed_setup_event_indexes=tuple(consumed_setup_event_indexes),
     )
 
 

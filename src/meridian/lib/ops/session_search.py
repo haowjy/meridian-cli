@@ -10,6 +10,7 @@ from meridian.lib.ops.runtime import async_from_sync, resolve_roots_for_read
 from meridian.lib.ops.session_corpus import resolve_session_search_corpus
 from meridian.lib.ops.session_target import resolve_session_log_target
 from meridian.lib.ops.session_transcript import (
+    AbsoluteTranscriptEntry,
     ParsedSessionTranscript,
     build_session_log_command,
     parse_session_target,
@@ -127,15 +128,14 @@ def _matches_for_transcript(
     chat_id: str,
 ) -> list[SessionSearchMatch]:
     matches: list[SessionSearchMatch] = []
-    for entry in transcript.entries:
+    for entry in transcript.all_entries:
+        if entry.kind == "setup" and entry.is_placeholder:
+            continue
         normalized_content = _normalize_content(entry.content)
         if not normalized_content:
             continue
         if query_lower not in normalized_content.lower():
             continue
-        entry_ordinal = (
-            entry.absolute_ordinal if entry.absolute_ordinal is not None else entry.ordinal
-        )
         matches.append(
             SessionSearchMatch(
                 corpus=corpus,
@@ -145,18 +145,33 @@ def _matches_for_transcript(
                 segment=entry.segment_index,
                 segment_start_message=entry.start_segment_message_index,
                 segment_end_message=entry.end_segment_message_index,
-                entry_ordinal=entry_ordinal,
+                entry_ordinal=entry.ordinal,
                 role=entry.role,
                 content_preview=_build_preview(normalized_content, query=query),
-                open_command=build_session_log_command(
-                    transcript.route,
-                    segment_index=entry.segment_index,
-                    around_ordinal=entry.ordinal,
-                    context=_OPEN_CONTEXT,
-                ),
+                open_command=_build_open_command_for_match(entry=entry, transcript=transcript),
             )
         )
     return matches
+
+
+def _build_open_command_for_match(
+    *,
+    entry: AbsoluteTranscriptEntry,
+    transcript: ParsedSessionTranscript,
+) -> str:
+    if entry.kind == "setup":
+        return build_session_log_command(
+            transcript.route,
+            segment_index=entry.segment_index,
+            from_ordinal=0,
+            limit=1,
+        )
+    return build_session_log_command(
+        transcript.route,
+        segment_index=entry.segment_index,
+        around_ordinal=entry.ordinal,
+        context=_OPEN_CONTEXT,
+    )
 
 
 def _search_single_target(payload: SessionSearchInput, *, query: str) -> SessionSearchOutput:
@@ -221,7 +236,15 @@ def _search_corpus(payload: SessionSearchInput, *, query: str) -> SessionSearchO
                 )
             )
 
-    matches.sort(key=lambda match: (match.corpus, match.chat_id, match.entry_ordinal))
+    matches.sort(
+        key=lambda match: (
+            match.corpus,
+            match.chat_id,
+            match.segment,
+            match.entry_ordinal,
+            match.segment_start_message,
+        )
+    )
     return SessionSearchOutput(matches=tuple(matches))
 
 

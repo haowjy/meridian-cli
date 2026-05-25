@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
 from meridian.lib.ops.session_transcript import AbsoluteTranscriptEntry
 
 
 class SessionWindow(NamedTuple):
-    messages: list[AbsoluteTranscriptEntry]
-    total_messages: int
+    entries: list[AbsoluteTranscriptEntry]
+    total_entries: int
     start_ordinal: int
     end_ordinal: int
     has_previous: bool
@@ -18,23 +18,38 @@ class SessionWindow(NamedTuple):
     previous_from: int | None
     next_from: int | None
 
+    @property
+    def messages(self) -> list[AbsoluteTranscriptEntry]:
+        """Backward-compatible alias while call sites migrate to entry naming."""
+        return self.entries
 
-def _window_bounds(messages: list[AbsoluteTranscriptEntry]) -> tuple[int, int]:
-    if not messages:
+    @property
+    def total_messages(self) -> int:
+        """Backward-compatible alias while call sites migrate to entry naming."""
+        return self.total_entries
+
+
+def _window_bounds(
+    entries: list[AbsoluteTranscriptEntry],
+    *,
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int],
+) -> tuple[int, int]:
+    if not entries:
         return (0, 0)
-    return (messages[0].ordinal, messages[-1].ordinal)
+    return (ordinal_getter(entries[0]), ordinal_getter(entries[-1]))
 
 
 def _window_with_navigation(
     *,
-    all_messages: Sequence[AbsoluteTranscriptEntry],
+    all_entries: Sequence[AbsoluteTranscriptEntry],
     selected: list[AbsoluteTranscriptEntry],
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int],
     first_ordinal: int = 1,
     nav_limit: int | None = None,
 ) -> SessionWindow:
-    total_messages = len(all_messages)
-    start_ordinal, end_ordinal = _window_bounds(selected)
-    max_ordinal = first_ordinal + max(total_messages - 1, 0)
+    total_entries = len(all_entries)
+    start_ordinal, end_ordinal = _window_bounds(selected, ordinal_getter=ordinal_getter)
+    max_ordinal = first_ordinal + max(total_entries - 1, 0)
     has_previous = bool(selected) and start_ordinal > first_ordinal
     has_next = bool(selected) and end_ordinal < max_ordinal
 
@@ -51,8 +66,8 @@ def _window_with_navigation(
         next_from = end_ordinal + 1
 
     return SessionWindow(
-        messages=selected,
-        total_messages=total_messages,
+        entries=selected,
+        total_entries=total_entries,
         start_ordinal=start_ordinal,
         end_ordinal=end_ordinal,
         has_previous=has_previous,
@@ -63,49 +78,54 @@ def _window_with_navigation(
 
 
 def window_from_tail(
-    messages: Sequence[AbsoluteTranscriptEntry],
+    entries: Sequence[AbsoluteTranscriptEntry],
     *,
     tail: int | None,
     first_ordinal: int = 1,
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int] = lambda entry: entry.ordinal,
 ) -> SessionWindow:
     if tail is not None and tail < 0:
         raise ValueError("--tail must be >= 0.")
 
-    selected = list(messages) if tail is None else (list(messages[-tail:]) if tail > 0 else [])
+    selected = list(entries) if tail is None else (list(entries[-tail:]) if tail > 0 else [])
     return _window_with_navigation(
-        all_messages=messages,
+        all_entries=entries,
         selected=selected,
+        ordinal_getter=ordinal_getter,
         first_ordinal=first_ordinal,
     )
 
 
 def window_from_from_limit(
-    messages: Sequence[AbsoluteTranscriptEntry],
+    entries: Sequence[AbsoluteTranscriptEntry],
     *,
     start_ordinal: int,
     limit: int,
     first_ordinal: int = 1,
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int] = lambda entry: entry.ordinal,
 ) -> SessionWindow:
     if start_ordinal < first_ordinal:
         raise ValueError(f"--from expects an entry ordinal >= {first_ordinal}.")
     if limit < 0:
         raise ValueError("--limit must be >= 0.")
     start_index = start_ordinal - first_ordinal
-    selected = list(messages[start_index : start_index + limit])
+    selected = list(entries[start_index : start_index + limit])
     return _window_with_navigation(
-        all_messages=messages,
+        all_entries=entries,
         selected=selected,
+        ordinal_getter=ordinal_getter,
         first_ordinal=first_ordinal,
         nav_limit=limit,
     )
 
 
 def window_from_before_limit(
-    messages: Sequence[AbsoluteTranscriptEntry],
+    entries: Sequence[AbsoluteTranscriptEntry],
     *,
     before_ordinal: int,
     limit: int,
     first_ordinal: int = 1,
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int] = lambda entry: entry.ordinal,
 ) -> SessionWindow:
     if before_ordinal < first_ordinal:
         raise ValueError(f"--before expects an entry ordinal >= {first_ordinal}.")
@@ -113,29 +133,31 @@ def window_from_before_limit(
         raise ValueError("--limit must be >= 0.")
     end_index = max(before_ordinal - first_ordinal, 0)
     start_index = max(end_index - limit, 0)
-    selected = list(messages[start_index:end_index])
+    selected = list(entries[start_index:end_index])
     return _window_with_navigation(
-        all_messages=messages,
+        all_entries=entries,
         selected=selected,
+        ordinal_getter=ordinal_getter,
         first_ordinal=first_ordinal,
         nav_limit=limit,
     )
 
 
 def window_from_around_context(
-    messages: Sequence[AbsoluteTranscriptEntry],
+    entries: Sequence[AbsoluteTranscriptEntry],
     *,
     around_ordinal: int,
     context: int,
     first_ordinal: int = 1,
+    ordinal_getter: Callable[[AbsoluteTranscriptEntry], int] = lambda entry: entry.ordinal,
 ) -> SessionWindow:
     if context < 0:
         raise ValueError("--context must be >= 0.")
     if around_ordinal < first_ordinal:
         raise ValueError(f"--around expects an entry ordinal >= {first_ordinal}.")
-    if not messages:
+    if not entries:
         raise ValueError("--around is out of range (transcript has no entries).")
-    max_ordinal = first_ordinal + len(messages) - 1
+    max_ordinal = first_ordinal + len(entries) - 1
     if around_ordinal > max_ordinal:
         raise ValueError(
             f"--around {around_ordinal} out of range "
@@ -143,12 +165,13 @@ def window_from_around_context(
         )
     center_index = around_ordinal - first_ordinal
     start_index = max(center_index - context, 0)
-    end_index = min(center_index + context + 1, len(messages))
-    selected = list(messages[start_index:end_index])
+    end_index = min(center_index + context + 1, len(entries))
+    selected = list(entries[start_index:end_index])
     window_size = context * 2 + 1
     return _window_with_navigation(
-        all_messages=messages,
+        all_entries=entries,
         selected=selected,
+        ordinal_getter=ordinal_getter,
         first_ordinal=first_ordinal,
         nav_limit=window_size,
     )
