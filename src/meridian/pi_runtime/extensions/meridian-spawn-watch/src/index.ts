@@ -209,7 +209,7 @@ class SpawnWatchRuntime {
     this.pending.clear();
     if (items.length === 0) return;
 
-    const content = formatNotification(items);
+    const content = await formatNotification(items);
     await this.pi.sendMessage?.(
       {
         customType: "meridian-spawn-watch",
@@ -268,15 +268,51 @@ class SpawnWatchRuntime {
   }
 }
 
-function formatNotification(items: NotificationItem[]): string {
-  if (items.length === 1) {
-    const item = items[0]!;
-    return `${item.kind === "spawn" ? "Spawn" : "Background bash"} ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`${item.kind === "spawn" ? `meridian spawn show ${item.id}` : `bash_manage({action: "output", bash_id: "${item.id}"})`}\` for details.`;
+async function formatNotification(items: NotificationItem[]): Promise<string> {
+  const spawnIds = items.filter((item) => item.kind === "spawn").map((item) => item.id);
+  const bashItems = items.filter((item) => item.kind === "bash");
+  const sections: string[] = [];
+
+  if (spawnIds.length > 0) {
+    sections.push(await formatSpawnWaitNotification(spawnIds, items));
+  }
+
+  if (bashItems.length > 0) {
+    sections.push(formatBashNotification(bashItems));
+  }
+
+  return sections.filter((section) => section.trim().length > 0).join("\n\n");
+}
+
+async function formatSpawnWaitNotification(
+  spawnIds: string[],
+  fallbackItems: NotificationItem[],
+): Promise<string> {
+  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds], 30_000);
+  const output = (result.stdout || result.stderr).trimEnd();
+  if (result.exitCode === 0 && output.length > 0) return output;
+
+  const fallbackSpawnItems = fallbackItems.filter((item) => item.kind === "spawn");
+  if (fallbackSpawnItems.length === 1) {
+    const item = fallbackSpawnItems[0]!;
+    return `Spawn ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`meridian spawn wait ${item.id}\` for details.`;
   }
   return [
-    "Background work completed:",
+    "Meridian spawns completed:",
+    ...fallbackSpawnItems.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
+    `Use \`meridian spawn wait ${spawnIds.join(" ")}\` for details.`,
+  ].join("\n");
+}
+
+function formatBashNotification(items: NotificationItem[]): string {
+  if (items.length === 1) {
+    const item = items[0]!;
+    return `Background bash ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`bash_manage({action: "output", bash_id: "${item.id}"})\` for details.`;
+  }
+  return [
+    "Background bash tasks completed:",
     ...items.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
-    "Use `meridian spawn show <id>` or `bash_manage(action='output')` for details.",
+    "Use `bash_manage(action='output')` for details.",
   ].join("\n");
 }
 
