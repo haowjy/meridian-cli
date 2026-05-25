@@ -116,7 +116,11 @@ export class BashRuntime {
     cwd: string,
     options: UserBashExecOptions = {},
   ): Promise<{ exitCode: number | null }> {
-    const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, options.onData);
+    let forwardForegroundOutput = true;
+    const forwardOutput = (data: Buffer): void => {
+      if (forwardForegroundOutput) safeOnData(options.onData, data);
+    };
+    const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, { ...process.env, ...(options.env ?? {}) }, forwardOutput);
     this.hooks.onForegroundStart?.(record.bash_id);
 
     return await new Promise<{ exitCode: number | null }>((resolve) => {
@@ -124,16 +128,18 @@ export class BashRuntime {
       const finish = (exitCode: number | null): void => {
         if (settled) return;
         settled = true;
+        forwardForegroundOutput = false;
         record.foregroundFinish = null;
         options.signal?.removeEventListener("abort", abort);
         this.hooks.onForegroundStop?.(record.bash_id);
         resolve({ exitCode });
       };
       const abort = (): void => {
+        forwardForegroundOutput = false;
         void this.killBash(record.bash_id, "aborted").finally(() => finish(-1));
       };
       record.foregroundFinish = () => {
-        options.onData?.(Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"));
+        safeOnData(options.onData, Buffer.from(`${USER_BASH_PANEL_BACKGROUND_MSG}\n`, "utf-8"));
         finish(0);
       };
 
@@ -458,6 +464,17 @@ function normalizeTimeoutMin(value: number | undefined, fallback: number): numbe
     throw new Error(`timeout_min must be between 1 and ${MAX_TIMEOUT_MIN}`);
   }
   return Math.floor(value);
+}
+
+function safeOnData(onData: ((data: Buffer) => void) | undefined, data: Buffer): void {
+  try {
+    onData?.(data);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ERR_STREAM_WRITE_AFTER_END") {
+      return;
+    }
+    throw error;
+  }
 }
 
 function compareBashRecordsForPanel(a: BashRecord, b: BashRecord): number {
