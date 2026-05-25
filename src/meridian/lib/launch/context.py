@@ -23,6 +23,7 @@ from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.config.workspace import get_projectable_roots
 from meridian.lib.context.resolver import resolve_context_paths
 from meridian.lib.core.child_env import validate_child_env_keys
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.types import HarnessId, ModelId, SpawnId
@@ -525,6 +526,7 @@ def build_launch_policy_snapshot(
     request: SpawnRequest,
     *,
     model_selection: ModelSelectionContext | None = None,
+    loaded_skills: tuple[SkillContent, ...] = (),
 ) -> LaunchPolicySnapshot:
     """Build a durable launch-policy snapshot from a resolved request."""
 
@@ -532,6 +534,8 @@ def build_launch_policy_snapshot(
     harness = (request.harness or "").strip()
     if not harness:
         raise ValueError("Resolved request is missing harness for launch policy snapshot.")
+    resolved_skill_names = tuple(skill.name for skill in loaded_skills) or request.skills
+    resolved_skill_paths = tuple(skill.path for skill in loaded_skills) or request.skill_paths
     return LaunchPolicySnapshot(
         model=model,
         harness=harness,
@@ -541,8 +545,9 @@ def build_launch_policy_snapshot(
             request.agent_metadata.get("session_agent_description") or ""
         ).strip(),
         agent_profile_body=request.agent_metadata.get("session_agent_profile_body") or "",
-        skills=request.skills,
-        skill_paths=request.skill_paths,
+        skills=resolved_skill_names,
+        skill_paths=resolved_skill_paths,
+        loaded_skills=loaded_skills,
         execution_policy=request.execution_policy,
         tools=request.tools,
         mcp_tools=request.mcp_tools,
@@ -1411,6 +1416,7 @@ def prepare_launch_surface(
             or build_launch_policy_snapshot(
                 resolved_request,
                 model_selection=model_selection,
+                loaded_skills=resolved_skills.loaded_skills,
             )
         }
     )

@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.domain import SkillContent, SpawnStatus
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.launch.launch_types import TerminalSurfaceMode
 from meridian.lib.tools import ToolsField
@@ -50,6 +50,7 @@ class LaunchPolicySnapshot(BaseModel):
     agent_profile_body: str = ""
     skills: tuple[str, ...] = ()
     skill_paths: tuple[str, ...] = ()
+    loaded_skills: tuple[SkillContent, ...] = ()
     extra_args: tuple[str, ...] = ()
     execution_policy: ResolvedExecutionPolicy = Field(default_factory=ResolvedExecutionPolicy)
     tools: ToolsField | None = None

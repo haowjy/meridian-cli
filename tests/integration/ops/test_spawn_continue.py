@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
@@ -216,6 +217,15 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
         harness="claude",
         agent="coder",
         skills=("testing-principles",),
+        loaded_skills=(
+            SkillContent(
+                name="testing-principles",
+                description="testing-principles skill",
+                path="/skills/testing-principles/SKILL.md",
+                content="# testing-principles\n\nBe consistent.\n",
+                skill_type="reference",
+            ),
+        ),
         execution_policy=ResolvedExecutionPolicy(approval="auto", sandbox="workspace-write"),
         tools={"write": "allow"},
         mcp_tools=("github",),
@@ -273,6 +283,7 @@ def test_spawn_continue_replays_source_launch_policy_snapshot(
     assert create_input.harness == snapshot.harness
     assert create_input.agent == snapshot.agent
     assert create_input.skills == snapshot.skills
+    assert create_input.launch_policy_snapshot.loaded_skills == snapshot.loaded_skills
     assert create_input.execution_policy.approval == snapshot.execution_policy.approval
     assert create_input.execution_policy.sandbox == snapshot.execution_policy.sandbox
     assert create_input.execution_policy.effort == snapshot.execution_policy.effort

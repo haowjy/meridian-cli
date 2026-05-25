@@ -545,6 +545,11 @@ def _resolve_policy_from_snapshot(
 
     snapshot_agent = (snapshot.agent or "").strip() or None
     profile = None
+    snapshot_skill_names = (
+        tuple(skill.name for skill in snapshot.loaded_skills)
+        if snapshot.loaded_skills
+        else dedupe_skill_names(snapshot.skills)
+    )
     if snapshot_agent is not None:
         profile_path = (
             Path(snapshot.agent_path).expanduser().resolve()
@@ -554,20 +559,27 @@ def _resolve_policy_from_snapshot(
         profile = AgentProfile(
             name=snapshot_agent,
             description=snapshot.agent_description,
-            skills=dedupe_skill_names(snapshot.skills),
+            skills=snapshot_skill_names,
             body=snapshot.agent_profile_body,
             path=profile_path,
             raw_content=snapshot.agent_profile_body,
         )
 
-    resolved_skills = resolve_skills_from_profile(
-        profile_skills=dedupe_skill_names(snapshot.skills),
-        project_root=project_root,
-        readonly=surface.skills_readonly,
-        harness_id=harness_id.value,
-        selected_model_token=snapshot.model_selection_requested_token or snapshot_model,
-        canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
-    )
+    if snapshot.loaded_skills:
+        resolved_skills = ResolvedSkills(
+            skill_names=snapshot_skill_names,
+            loaded_skills=snapshot.loaded_skills,
+            missing_skills=(),
+        )
+    else:
+        resolved_skills = resolve_skills_from_profile(
+            profile_skills=dedupe_skill_names(snapshot.skills),
+            project_root=project_root,
+            readonly=surface.skills_readonly,
+            harness_id=harness_id.value,
+            selected_model_token=snapshot.model_selection_requested_token or snapshot_model,
+            canonical_model_id=snapshot.model_selection_canonical_id or snapshot_model,
+        )
     model_selection = ModelSelectionContext(
         requested_token=snapshot.model_selection_requested_token or snapshot_model,
         selected_model_token=snapshot.model_selection_selected_token

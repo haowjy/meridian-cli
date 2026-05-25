@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_start import SpawnStartMetadata
@@ -76,6 +77,8 @@ def test_start_and_update_project_fields_round_trip(tmp_path: Path) -> None:
     assert row is not None
     assert row.launch_mode == "foreground"
     assert row.runner_pid == 2222
+
+
 def test_start_spawn_persists_control_root_and_task_cwd(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     control_root = (tmp_path / "control-root").resolve()
@@ -136,6 +139,15 @@ def test_start_spawn_persists_launch_policy_snapshot(tmp_path: Path) -> None:
         harness="claude",
         agent="coder",
         skills=("testing-principles",),
+        loaded_skills=(
+            SkillContent(
+                name="testing-principles",
+                description="testing-principles skill",
+                path="/skills/testing-principles/SKILL.md",
+                content="# testing-principles\n\nBe consistent.\n",
+                skill_type="reference",
+            ),
+        ),
         execution_policy=ResolvedExecutionPolicy(
             approval="auto",
             sandbox="workspace-write",
@@ -174,6 +186,15 @@ def test_start_spawn_embeds_launch_policy_snapshot_in_state_json(tmp_path: Path)
     snapshot = LaunchPolicySnapshot(
         model="claude-sonnet-4-6",
         harness="claude",
+        loaded_skills=(
+            SkillContent(
+                name="testing-principles",
+                description="testing-principles skill",
+                path="/skills/testing-principles/SKILL.md",
+                content="# testing-principles\n\nBe consistent.\n",
+                skill_type="reference",
+            ),
+        ),
         execution_policy=ResolvedExecutionPolicy(approval="auto", sandbox="workspace-write"),
         extra_args=("--permission-mode", "acceptEdits"),
     )
@@ -240,6 +261,8 @@ def test_start_spawn_rejects_empty_goal(tmp_path: Path) -> None:
         )
 
     assert list_spawns(runtime_root) == []
+
+
 def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     p1 = _start_test_spawn(runtime_root)
@@ -261,6 +284,8 @@ def test_list_spawns_filters_v2_rows_and_keeps_listings_promptless(tmp_path: Pat
     assert [spawn.id for spawn in filtered] == [p2]
     assert filtered[0].prompt is None
     assert filtered[0].desc == "desc-2"
+
+
 def test_spawn_queries_read_v2_state_and_prompt(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     p1 = _start_test_spawn(runtime_root)
@@ -308,6 +333,8 @@ def test_next_and_reserved_spawn_ids_ignore_opaque_dirs_and_honor_highest_seed(
     assert reserve_spawn_id(runtime_root) == "p21"
     assert next_spawn_id(runtime_root) == "p22"
     assert (runtime_root / "spawn-id-counter").read_text(encoding="utf-8").strip() == "21"
+
+
 def test_exited_event_is_non_terminal_and_projects_last_attempt_exit(tmp_path: Path) -> None:
     runtime_root = _state_root(tmp_path)
     spawn_id = _start_test_spawn(runtime_root)

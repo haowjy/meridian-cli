@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
@@ -20,6 +21,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
+from tests.support.fixtures import write_agent, write_skill
 from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
@@ -268,6 +270,63 @@ def test_primary_bundle_auto_approval_projects_claude_accept_edits(
     )
     assert "--permission-mode" in runtime_ctx.binding.argv
     assert "acceptEdits" in runtime_ctx.binding.argv
+
+
+def test_primary_launch_policy_snapshot_persists_loaded_skills(
+    monkeypatch: MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    skill_path = write_skill(
+        tmp_path,
+        "testing-principles",
+        body="# testing-principles\n\nBe consistent.\n",
+        description="testing-principles skill",
+    )
+    write_agent(
+        tmp_path,
+        name="coder",
+        model="gpt-5.4",
+        skills=("testing-principles",),
+        harness=HarnessId.CODEX.value,
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+    request = SpawnRequest(
+        model="gpt-5.4",
+        harness=HarnessId.CODEX.value,
+        agent="coder",
+        prompt="# Meridian Session",
+    )
+    runtime = _build_launch_runtime(
+        tmp_path=tmp_path,
+        composition_surface=LaunchCompositionSurface.PRIMARY,
+    )
+
+    runtime_ctx = build_launch_context(
+        spawn_id="p-primary-snapshot-skills",
+        request=request,
+        runtime=runtime,
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    snapshot = runtime_ctx.resolved_request.launch_policy_snapshot
+    assert snapshot is not None
+    assert snapshot.skills == ("testing-principles",)
+    assert snapshot.skill_paths == (skill_path.resolve().as_posix(),)
+    assert snapshot.loaded_skills == (
+        SkillContent(
+            name="testing-principles",
+            description="testing-principles skill",
+            path=skill_path.resolve().as_posix(),
+            content=skill_path.read_text(encoding="utf-8"),
+            skill_type="reference",
+        ),
+    )
 
 
 def test_direct_launch_context_synthesizes_policy_snapshot(tmp_path: Path) -> None:
