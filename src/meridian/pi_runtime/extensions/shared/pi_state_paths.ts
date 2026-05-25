@@ -41,6 +41,10 @@ export function resolveLastNotificationPath(spawnId = currentSpawnIdFromEnv()): 
   return path.join(resolvePiBashDir(spawnId), "last-notification.json");
 }
 
+export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "observed-spawns.json");
+}
+
 export function resolveBashLogsDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "logs");
 }

@@ -10,10 +10,11 @@ import {
   currentSpawnIdFromEnv,
   resolveBashRecordsPath,
   resolveLastNotificationPath,
+  resolveObservedSpawnsPath,
   resolvePiBashDir,
   resolveSpawnsDir,
 } from "../../shared/pi_state_paths";
-import type { BashRecordsFile, SpawnStateFile } from "../../shared/schemas";
+import type { BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
 import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
 
@@ -42,6 +43,7 @@ class SpawnWatchRuntime {
   private readonly ownSpawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
+  private readonly observedPath = resolveObservedSpawnsPath(this.currentSpawnId);
   private readonly markerPath = resolveLastNotificationPath(this.currentSpawnId);
   private readonly pending = new Map<string, NotificationItem>();
   private readonly childSpawnIds = new Set<string>();
@@ -142,9 +144,15 @@ class SpawnWatchRuntime {
   }
 
   private async scanSpawns(): Promise<void> {
+    const suppressed = await this.readSuppressedSpawnIds();
     for (const state of await this.rows()) {
       if (!isTerminalSpawnStatus(state.status)) continue;
       const id = state.id;
+      if (suppressed.has(id)) {
+        TERMINAL_NOTIFIED.add(id);
+        this.pending.delete(id);
+        continue;
+      }
       if (TERMINAL_NOTIFIED.has(id) || this.pending.has(id)) continue;
       this.pending.set(id, {
         id,
@@ -191,7 +199,13 @@ class SpawnWatchRuntime {
     if (this.maxWave) clearTimeout(this.maxWave);
     this.debounce = null;
     this.maxWave = null;
-    const items = [...this.pending.values()];
+    const suppressed = await this.readSuppressedSpawnIds();
+    const items = [...this.pending.values()].filter(
+      (item) => item.kind !== "spawn" || !suppressed.has(item.id),
+    );
+    for (const item of this.pending.values()) {
+      if (item.kind === "spawn" && suppressed.has(item.id)) TERMINAL_NOTIFIED.add(item.id);
+    }
     this.pending.clear();
     if (items.length === 0) return;
 
@@ -210,6 +224,15 @@ class SpawnWatchRuntime {
       ts_epoch_secs: Date.now() / 1000,
       notified_spawn_ids: items.filter((item) => item.kind === "spawn").map((item) => item.id),
     });
+  }
+
+  private async readSuppressedSpawnIds(): Promise<Set<string>> {
+    const file = await readJsonFile<ObservedSpawnsFile | null>(this.observedPath, null);
+    return new Set(
+      [...(file?.observed_spawn_ids ?? []), ...(file?.waiting_spawn_ids ?? [])].filter(
+        (id): id is string => typeof id === "string",
+      ),
+    );
   }
 
   private async discoverExistingChildren(): Promise<void> {

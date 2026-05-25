@@ -30,6 +30,14 @@ export type LastNotificationFile = {
   notified_spawn_ids: string[];
 };
 
+export type ObservedSpawnsFile = {
+  v: 1;
+  spawn_id: string;
+  updated_at_ms: number;
+  observed_spawn_ids: string[];
+  waiting_spawn_ids?: string[];
+};
+
 export type SpawnStateFile = {
   id: string;
   parent_id?: string | null;
