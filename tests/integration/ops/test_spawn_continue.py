@@ -13,10 +13,12 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
+from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnContinueInput, SpawnCreateInput
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root
 from tests.support.fixtures import write_skill
+from tests.support.launch import stub_bundle_request_and_resolve
 
 
 def _state_root(project_root: Path) -> Path:
@@ -301,6 +303,13 @@ def test_spawn_continue_uses_legacy_source_launch_policy_without_snapshot(
 
     monkeypatch.setenv("MERIDIAN_MODEL", "claude-sonnet-4-6")
     monkeypatch.setenv("MERIDIAN_APPROVAL", "confirm")
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.3-codex",
+        model_token="gpt-5.3-codex",
+        harness=HarnessId.CODEX,
+        harness_model="openai/gpt-5.3-codex",
+    )
 
     def fail_live_harness_resolution(
         _create_input: SpawnCreateInput,
