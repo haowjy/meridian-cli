@@ -16,6 +16,10 @@ def _event(role: str, text: str) -> str:
     )
 
 
+def _system_event(text: str) -> str:
+    return json.dumps({"type": "system", "content": text})
+
+
 def _tool_use(name: str, command: str) -> str:
     return json.dumps(
         {
@@ -64,6 +68,21 @@ def _write_large_session_file(path: Path) -> str:
     return large_text
 
 
+def _write_compacted_session_file(path: Path, *, include_handoff: bool) -> None:
+    boundary: dict[str, object] = {"type": "system", "subtype": "compact_boundary"}
+    if include_handoff:
+        boundary["summary"] = "handoff summary"
+    lines = [
+        _system_event("initial system prompt"),
+        _event("user", "u1"),
+        _event("assistant", "a1"),
+        json.dumps(boundary),
+        _event("user", "u2"),
+        _event("assistant", "a2"),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def test_session_log_default_shows_recent_five_entries_in_current_segment(tmp_path: Path) -> None:
     session_file = tmp_path / "session.jsonl"
     _write_session_file(session_file)
@@ -72,7 +91,7 @@ def test_session_log_default_shows_recent_five_entries_in_current_segment(tmp_pa
 
     assert output.showing == "4-8"
     assert output.segment_index == 0
-    assert output.segment_entries == 8
+    assert output.segment_entries == 9
     assert [entry.index for entry in output.entries] == [4, 5, 6, 7, 8]
     assert output.hints == ("Use --full to show the entire selected segment.",)
 
@@ -83,8 +102,9 @@ def test_session_log_full_shows_entire_selected_segment(tmp_path: Path) -> None:
 
     output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
 
-    assert output.showing == "1-8"
-    assert [entry.index for entry in output.entries] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert output.showing == "0-8"
+    assert [entry.index for entry in output.entries] == [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    assert output.entries[0].content.startswith("[prologue slot reserved:")
     assert output.hints == ()
 
 
@@ -94,7 +114,7 @@ def test_session_log_entry_grouping_closes_on_tool_result(tmp_path: Path) -> Non
 
     output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
 
-    tool_entry = output.entries[2]
+    tool_entry = output.entries[3]
     assert tool_entry.index == 3
     assert tool_entry.role == "mixed"
     assert [message.role for message in tool_entry.messages] == ["user", "assistant", "user"]
@@ -156,6 +176,102 @@ def test_session_log_tail_and_absolute_window_are_deterministic(tmp_path: Path) 
     assert "--from 5 --limit 3" in around_output.next_command
 
 
+def test_session_log_segment_local_from_zero_reads_prologue_slot(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=False)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            segment="previous",
+            from_ordinal=0,
+            limit=1,
+        )
+    )
+
+    assert output.segment_index == 0
+    assert [entry.index for entry in output.entries] == [0]
+    assert output.entries[0].content == "initial system prompt"
+
+
+def test_session_log_from_zero_defaults_to_current_segment_prologue(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            from_ordinal=0,
+            limit=1,
+        )
+    )
+
+    assert output.segment_index == 1
+    assert [entry.index for entry in output.entries] == [0]
+    assert output.entries[0].content == "handoff summary"
+
+
+def test_session_log_segment_handoff_slot_reserved_when_missing(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=False)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            segment="current",
+            from_ordinal=0,
+            limit=1,
+        )
+    )
+
+    assert output.segment_index == 1
+    assert [entry.index for entry in output.entries] == [0]
+    assert output.entries[0].content.startswith("[compaction handoff slot reserved:")
+
+
+def test_session_log_segment_handoff_slot_uses_extractable_content(tmp_path: Path) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            segment="current",
+            full=True,
+        )
+    )
+
+    assert output.segment_index == 1
+    assert output.showing == "0-2"
+    assert [entry.index for entry in output.entries] == [0, 1, 2]
+    assert output.entries[0].content == "handoff summary"
+
+
+def test_session_log_global_absolute_window_uses_global_ordinals_across_segments(
+    tmp_path: Path,
+) -> None:
+    session_file = tmp_path / "session-compacted.jsonl"
+    _write_compacted_session_file(session_file, include_handoff=True)
+
+    output = session_log_sync(
+        SessionLogInput(
+            file_path=session_file.as_posix(),
+            around_ordinal=3,
+            context=0,
+        )
+    )
+
+    assert output.segment_index is None
+    assert output.showing == "3-3"
+    assert [entry.index for entry in output.entries] == [3]
+    assert output.entries[0].segment == 1
+    assert output.entries[0].content == "u2"
+    assert output.previous_command is not None
+    assert "--from 2 --limit 1" in output.previous_command
+    assert output.next_command is not None
+    assert "--from 4 --limit 1" in output.next_command
+
+
 def test_session_log_rejects_conflicting_selectors(tmp_path: Path) -> None:
     session_file = tmp_path / "session.jsonl"
     _write_session_file(session_file)
@@ -186,10 +302,10 @@ def test_session_log_truncates_oversized_content_by_default(tmp_path: Path) -> N
 
     output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
 
-    assistant_content = output.entries[1].messages[0].content
+    assistant_content = output.entries[2].messages[0].content
     assert "truncated: omitted 40 lines" in assistant_content
     assert "rerun with --no-truncate" in assistant_content
-    assert output.entries[1].content == assistant_content
+    assert output.entries[2].content == assistant_content
 
 
 def test_session_log_no_truncate_preserves_full_content(tmp_path: Path) -> None:
@@ -200,5 +316,5 @@ def test_session_log_no_truncate_preserves_full_content(tmp_path: Path) -> None:
         SessionLogInput(file_path=session_file.as_posix(), full=True, truncate=False)
     )
 
-    assert output.entries[1].messages[0].content == large_text
-    assert output.entries[1].content == large_text
+    assert output.entries[2].messages[0].content == large_text
+    assert output.entries[2].content == large_text

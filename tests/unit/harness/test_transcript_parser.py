@@ -14,7 +14,11 @@ import json
 import sqlite3
 from pathlib import Path
 
-from meridian.lib.harness.transcript import DefaultTranscriptEventParser, parse_transcript_file
+from meridian.lib.harness.transcript import (
+    DefaultTranscriptEventParser,
+    parse_transcript_file,
+    parse_transcript_file_with_prologues,
+)
 
 
 def test_parse_session_file_splits_segments_on_compaction_boundary(tmp_path: Path) -> None:
@@ -46,6 +50,32 @@ def test_parse_session_file_splits_segments_on_compaction_boundary(tmp_path: Pat
     assert [(message.role, message.content) for message in segments[1]] == [
         ("assistant", "after boundary")
     ]
+
+
+def test_parse_session_file_extracts_segment_prologues(tmp_path: Path) -> None:
+    session_file = tmp_path / "session.jsonl"
+    lines = [
+        json.dumps({"type": "system", "content": "initial prompt"}),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "before boundary"}]},
+            }
+        ),
+        json.dumps({"type": "system", "subtype": "compact_boundary", "summary": "handoff"}),
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "after boundary"}]},
+            }
+        ),
+    ]
+    session_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    parsed = parse_transcript_file_with_prologues(session_file)
+
+    assert parsed.total_compactions == 1
+    assert parsed.segment_prologues == ("initial prompt", "handoff")
 
 
 def test_parse_session_file_supports_json_array_lines(tmp_path: Path) -> None:

@@ -38,6 +38,8 @@ uv run meridian session log --help
 - [ ] `--tail` appears in output
 - [ ] `--full` appears in output
 - [ ] `--no-truncate` appears in output
+- [ ] `--segment` appears in output
+- [ ] `--from` appears in output
 - [ ] `--around` appears in output
 - [ ] `--last` does not appear in output
 - [ ] `--offset` does not appear in output

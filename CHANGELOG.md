@@ -14,6 +14,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - `meridian session log REF` now defaults to a safe recent window: last 5 transcript entries/chunks from the selected segment, shown oldest→newest.
+- `meridian session log` now reserves segment-local entry `0` as a prologue slot for every segment: segment `0` uses extractable system prompt content when available; later segments use extractable compaction handoff content when available; otherwise slot `0` renders a reserved placeholder.
+- Segment-local interaction entries now start at `1`; `--full` includes slot `0`, while default/tail views keep their recent interaction windows without consuming one slot on entry `0`.
+- `meridian session log --segment ... --from/--before/--around` now applies segment-local ordinals (`0..N`) for deterministic local navigation, including `--from 0 --limit 1` for explicit prologue/handoff reads.
 - Session-log output now preview-truncates oversized entry/message content by default and emits deterministic reopen guidance.
 - Session-log navigation/counting now runs on interaction entries (tool-result-closed chunks) instead of raw parsed message rows.
 - Bare `meridian session log REF --tail` still defaults to 5, now in entry/chunk units.

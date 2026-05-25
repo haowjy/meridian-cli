@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from typing import NamedTuple, Protocol, cast
 
@@ -25,6 +25,12 @@ _MAX_PREVIEW = 120
 class TranscriptMessage(NamedTuple):
     role: str
     content: str
+
+
+class TranscriptParseResult(NamedTuple):
+    segments: list[list[TranscriptMessage]]
+    total_compactions: int
+    segment_prologues: tuple[str | None, ...]
 
 
 class TranscriptEventParser(Protocol):
@@ -347,23 +353,104 @@ def _provider_for_path(path: Path) -> TranscriptProvider:
     return JsonlTranscriptProvider()
 
 
+def _unwrap_seq_envelope(event: dict[str, object]) -> dict[str, object]:
+    if "event_type" in event and isinstance(event.get("payload"), dict):
+        nested = dict(cast("dict[str, object]", event["payload"]))
+        nested.setdefault("event_type", event["event_type"])
+        return _unwrap_seq_envelope(nested)
+    return event
+
+
+def _extract_event_text(event: dict[str, object], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        if key not in event:
+            continue
+        text = text_from_value(event.get(key))
+        if text:
+            return text
+
+    data = event.get("data")
+    if isinstance(data, dict):
+        nested = _extract_event_text(cast("dict[str, object]", data), keys)
+        if nested:
+            return nested
+    return None
+
+
+def _extract_system_prologue(event: dict[str, object]) -> str | None:
+    event_type = normalize_harness_event_type(event)
+    if event_type != "system":
+        return None
+    subtype = str(event.get("subtype", "")).strip().lower()
+    if subtype == "compact_boundary":
+        return None
+    return _extract_event_text(
+        event,
+        keys=("prologue", "system_prompt", "prompt", "summary", "content", "message", "text"),
+    )
+
+
+def _extract_compaction_handoff(event: dict[str, object]) -> str | None:
+    event_type = normalize_harness_event_type(event)
+    subtype = str(event.get("subtype", "")).strip().lower()
+    if event_type != "system" or subtype != "compact_boundary":
+        return None
+    return _extract_event_text(
+        event,
+        keys=("handoff", "summary", "content", "message", "text"),
+    )
+
+
+def _parse_events_with_prologues(
+    events: Iterable[dict[str, object]],
+    *,
+    parser: TranscriptEventParser,
+) -> TranscriptParseResult:
+    segments: list[list[TranscriptMessage]] = [[]]
+    segment_prologues: list[str | None] = [None]
+    total_compactions = 0
+
+    for event in events:
+        normalized_event = _unwrap_seq_envelope(event)
+        extracted, boundary = parser.parse(event)
+
+        if segment_prologues[-1] is None:
+            prologue = _extract_system_prologue(normalized_event)
+            if prologue:
+                segment_prologues[-1] = prologue
+
+        if boundary:
+            total_compactions += 1
+            segments.append([])
+            segment_prologues.append(_extract_compaction_handoff(normalized_event))
+            continue
+
+        if extracted:
+            segments[-1].extend(extracted)
+
+    return TranscriptParseResult(
+        segments=segments,
+        total_compactions=total_compactions,
+        segment_prologues=tuple(segment_prologues),
+    )
+
+
 def parse_transcript_events(
     events: Sequence[dict[str, object]],
     *,
     parser: TranscriptEventParser | None = None,
 ) -> tuple[list[list[TranscriptMessage]], int]:
+    parsed = parse_transcript_events_with_prologues(events, parser=parser)
+    return parsed.segments, parsed.total_compactions
+
+
+def parse_transcript_events_with_prologues(
+    events: Sequence[dict[str, object]],
+    *,
+    parser: TranscriptEventParser | None = None,
+) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
-    segments: list[list[TranscriptMessage]] = [[]]
-    total_compactions = 0
-    for event in events:
-        extracted, boundary = resolved_parser.parse(event)
-        if boundary:
-            total_compactions += 1
-            segments.append([])
-            continue
-        if extracted:
-            segments[-1].extend(extracted)
-    return segments, total_compactions
+    return _parse_events_with_prologues(events, parser=resolved_parser)
 
 
 def iter_transcript_events(path: Path) -> Iterator[dict[str, object]]:
@@ -376,18 +463,17 @@ def parse_transcript_file(
     *,
     parser: TranscriptEventParser | None = None,
 ) -> tuple[list[list[TranscriptMessage]], int]:
+    parsed = parse_transcript_file_with_prologues(path, parser=parser)
+    return parsed.segments, parsed.total_compactions
+
+
+def parse_transcript_file_with_prologues(
+    path: Path,
+    *,
+    parser: TranscriptEventParser | None = None,
+) -> TranscriptParseResult:
     resolved_parser = parser or DefaultTranscriptEventParser()
-    segments: list[list[TranscriptMessage]] = [[]]
-    total_compactions = 0
-    for event in iter_transcript_events(path):
-        extracted, boundary = resolved_parser.parse(event)
-        if boundary:
-            total_compactions += 1
-            segments.append([])
-            continue
-        if extracted:
-            segments[-1].extend(extracted)
-    return segments, total_compactions
+    return _parse_events_with_prologues(iter_transcript_events(path), parser=resolved_parser)
 
 
 __all__ = [
@@ -397,10 +483,13 @@ __all__ = [
     "OpenCodeStorageTranscriptProvider",
     "TranscriptEventParser",
     "TranscriptMessage",
+    "TranscriptParseResult",
     "TranscriptProvider",
     "_text_from_value",
     "iter_transcript_events",
     "parse_transcript_events",
+    "parse_transcript_events_with_prologues",
     "parse_transcript_file",
+    "parse_transcript_file_with_prologues",
     "text_from_value",
 ]

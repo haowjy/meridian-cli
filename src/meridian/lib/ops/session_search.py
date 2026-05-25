@@ -133,6 +133,9 @@ def _matches_for_transcript(
             continue
         if query_lower not in normalized_content.lower():
             continue
+        entry_ordinal = (
+            entry.absolute_ordinal if entry.absolute_ordinal is not None else entry.ordinal
+        )
         matches.append(
             SessionSearchMatch(
                 corpus=corpus,
@@ -142,12 +145,12 @@ def _matches_for_transcript(
                 segment=entry.segment_index,
                 segment_start_message=entry.start_segment_message_index,
                 segment_end_message=entry.end_segment_message_index,
-                entry_ordinal=entry.ordinal,
+                entry_ordinal=entry_ordinal,
                 role=entry.role,
                 content_preview=_build_preview(normalized_content, query=query),
                 open_command=build_session_log_command(
                     transcript.route,
-                    around_ordinal=entry.ordinal,
+                    around_ordinal=entry_ordinal,
                     context=_OPEN_CONTEXT,
                 ),
             )

@@ -68,13 +68,13 @@ def test_session_search_single_target_parses_transcript_once(
     )
 
     calls = {"count": 0}
-    original_parse = session_transcript.parse_transcript_file
+    original_parse = session_transcript.parse_transcript_file_with_prologues
 
     def counting_parse(path: Path):
         calls["count"] += 1
         return original_parse(path)
 
-    monkeypatch.setattr(session_transcript, "parse_transcript_file", counting_parse)
+    monkeypatch.setattr(session_transcript, "parse_transcript_file_with_prologues", counting_parse)
 
     output = session_search_sync(
         SessionSearchInput(query="needle", file_path=session_file.as_posix())

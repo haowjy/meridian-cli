@@ -119,6 +119,9 @@ class SessionLogOutput(BaseModel):
                 f"messages {entry.segment_start_message}-{entry.segment_end_message}] "
                 f"[{entry.role}] ---"
             )
+            if not entry.messages:
+                lines.append(entry.content)
+                continue
             if len(entry.messages) == 1:
                 lines.append(entry.messages[0].content)
                 continue
@@ -226,10 +229,15 @@ def _entry_message_row(
     )
 
 
-def _entry_row(entry: AbsoluteTranscriptEntry, *, truncate_content: bool) -> SessionLogEntry:
+def _entry_row_with_index(
+    entry: AbsoluteTranscriptEntry,
+    *,
+    index: int,
+    truncate_content: bool,
+) -> SessionLogEntry:
     content = _truncate_preview(entry.content) if truncate_content else entry.content
     return SessionLogEntry(
-        index=entry.ordinal,
+        index=index,
         segment=entry.segment_index,
         segment_start_message=entry.start_segment_message_index,
         segment_end_message=entry.end_segment_message_index,
@@ -239,6 +247,16 @@ def _entry_row(entry: AbsoluteTranscriptEntry, *, truncate_content: bool) -> Ses
             _entry_message_row(message, truncate_content=truncate_content)
             for message in entry.messages
         ),
+    )
+
+
+def _entries_with_absolute_ordinals(
+    entries: tuple[AbsoluteTranscriptEntry, ...],
+) -> tuple[AbsoluteTranscriptEntry, ...]:
+    return tuple(
+        entry._replace(ordinal=entry.absolute_ordinal)
+        for entry in entries
+        if entry.absolute_ordinal is not None
     )
 
 
@@ -258,12 +276,18 @@ def session_log_sync(
     if sum(absolute_selectors) > 1:
         raise ValueError("Use only one of --from, --before, or --around.")
 
-    uses_absolute_window = any(absolute_selectors)
-    if uses_absolute_window:
+    uses_window_selectors = any(absolute_selectors)
+    selector_requests_segment_zero = (
+        payload.from_ordinal == 0
+        or payload.before_ordinal == 0
+        or payload.around_ordinal == 0
+    )
+    uses_segment_local_selectors = uses_window_selectors and (
+        payload.segment is not None or selector_requests_segment_zero
+    )
+    if uses_window_selectors:
         if payload.tail is not None:
             raise ValueError("--tail cannot be combined with --from/--before/--around.")
-        if payload.segment is not None:
-            raise ValueError("--segment cannot be combined with absolute windows.")
         if payload.full:
             raise ValueError("--full cannot be combined with --from/--before/--around.")
     elif payload.full and payload.tail is not None:
@@ -271,7 +295,9 @@ def session_log_sync(
 
     if payload.context is not None and payload.around_ordinal is None:
         raise ValueError("--context requires --around.")
-    if payload.limit is not None and not (payload.from_ordinal or payload.before_ordinal):
+    if payload.limit is not None and (
+        payload.from_ordinal is None and payload.before_ordinal is None
+    ):
         raise ValueError("--limit requires --from or --before.")
     if payload.from_ordinal is not None and payload.limit is None:
         raise ValueError("--from requires --limit.")
@@ -290,7 +316,7 @@ def session_log_sync(
     selected_segment_label: str | None = None
     selected_segment_entries: int | None = None
 
-    if not uses_absolute_window:
+    if not uses_window_selectors or uses_segment_local_selectors:
         selected_segment_index = _resolve_segment_index(
             total_segments=len(parsed.segments),
             segment=payload.segment,
@@ -299,39 +325,75 @@ def session_log_sync(
             selected_index=selected_segment_index,
             total_segments=len(parsed.segments),
         )
-
-        segment_entries = [
-            entry for entry in parsed.entries if entry.segment_index == selected_segment_index
-        ]
+        segment_entries = list(parsed.segment_entries[selected_segment_index])
         selected_segment_entries = len(segment_entries)
-        resolved_tail = None if payload.full else (payload.tail if payload.tail is not None else 5)
-        page = window_from_tail(segment_entries, tail=resolved_tail)
+
+        if not uses_window_selectors:
+            interaction_entries = [
+                entry for entry in segment_entries if entry.kind == "interaction"
+            ]
+            resolved_tail = (
+                None if payload.full else (payload.tail if payload.tail is not None else 5)
+            )
+            page = window_from_tail(
+                segment_entries if payload.full else interaction_entries,
+                tail=resolved_tail,
+                first_ordinal=0 if payload.full else 1,
+            )
+        elif payload.from_ordinal is not None:
+            limit = payload.limit if payload.limit is not None else 0
+            page = window_from_from_limit(
+                segment_entries,
+                start_ordinal=payload.from_ordinal,
+                limit=limit,
+                first_ordinal=0,
+            )
+        elif payload.before_ordinal is not None:
+            limit = payload.limit if payload.limit is not None else 0
+            page = window_from_before_limit(
+                segment_entries,
+                before_ordinal=payload.before_ordinal,
+                limit=limit,
+                first_ordinal=0,
+            )
+        else:
+            around_ordinal = payload.around_ordinal if payload.around_ordinal is not None else 0
+            context = payload.context if payload.context is not None else 0
+            page = window_from_around_context(
+                segment_entries,
+                around_ordinal=around_ordinal,
+                context=context,
+                first_ordinal=0,
+            )
     elif payload.from_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
+        absolute_entries = _entries_with_absolute_ordinals(parsed.entries)
         page = window_from_from_limit(
-            parsed.entries,
+            absolute_entries,
             start_ordinal=payload.from_ordinal,
             limit=limit,
         )
     elif payload.before_ordinal is not None:
         limit = payload.limit if payload.limit is not None else 0
+        absolute_entries = _entries_with_absolute_ordinals(parsed.entries)
         page = window_from_before_limit(
-            parsed.entries,
+            absolute_entries,
             before_ordinal=payload.before_ordinal,
             limit=limit,
         )
     else:
         around_ordinal = payload.around_ordinal if payload.around_ordinal is not None else 1
         context = payload.context if payload.context is not None else 0
+        absolute_entries = _entries_with_absolute_ordinals(parsed.entries)
         page = window_from_around_context(
-            parsed.entries,
+            absolute_entries,
             around_ordinal=around_ordinal,
             context=context,
         )
 
     previous_command: str | None = None
     next_command: str | None = None
-    if uses_absolute_window:
+    if uses_window_selectors:
         nav_limit = (
             payload.limit
             if payload.limit is not None
@@ -340,25 +402,43 @@ def session_log_sync(
         if page.previous_from is not None:
             previous_command = build_session_log_command(
                 parsed.route,
+                segment_index=selected_segment_index if uses_segment_local_selectors else None,
                 from_ordinal=page.previous_from,
                 limit=nav_limit,
             )
         if page.next_from is not None:
             next_command = build_session_log_command(
                 parsed.route,
+                segment_index=selected_segment_index if uses_segment_local_selectors else None,
                 from_ordinal=page.next_from,
                 limit=nav_limit,
             )
 
+    use_global_display_index = uses_window_selectors and not uses_segment_local_selectors
     output_entries = tuple(
-        _entry_row(item, truncate_content=payload.truncate) for item in page.messages
+        _entry_row_with_index(
+            item,
+            index=(
+                item.absolute_ordinal
+                if use_global_display_index and item.absolute_ordinal
+                else item.ordinal
+            ),
+            truncate_content=payload.truncate,
+        )
+        for item in page.messages
+    )
+
+    total_entries = (
+        selected_segment_entries
+        if selected_segment_entries is not None
+        else len(parsed.entries)
     )
 
     return SessionLogOutput(
         session_id=parsed.target.session_id,
         requested_ref=payload.ref.strip() or None,
         source=parsed.target.source,
-        total_entries=len(parsed.entries),
+        total_entries=total_entries,
         total_segments=len(parsed.segments),
         segment_index=selected_segment_index,
         segment_entries=selected_segment_entries,
@@ -367,7 +447,7 @@ def session_log_sync(
         entries=output_entries,
         previous_command=previous_command,
         next_command=next_command,
-        hints=_window_hints(payload, uses_absolute_window=uses_absolute_window),
+        hints=_window_hints(payload, uses_absolute_window=uses_window_selectors),
     )
 
 

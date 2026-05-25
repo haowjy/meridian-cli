@@ -61,15 +61,24 @@ def _session_log(
     ] = None,
     from_ordinal: Annotated[
         int | None,
-        Parameter(name="--from", help="Window start (absolute entry ordinal)."),
+        Parameter(
+            name="--from",
+            help="Window start (segment-local when --segment is set, otherwise global).",
+        ),
     ] = None,
     before_ordinal: Annotated[
         int | None,
-        Parameter(name="--before", help="Window ends before this absolute entry ordinal."),
+        Parameter(
+            name="--before",
+            help="Window ends before this ordinal (segment-local when --segment is set).",
+        ),
     ] = None,
     around_ordinal: Annotated[
         int | None,
-        Parameter(name="--around", help="Window centered on this absolute entry ordinal."),
+        Parameter(
+            name="--around",
+            help="Window centered on this ordinal (segment-local when --segment is set).",
+        ),
     ] = None,
     limit: Annotated[
         int | None,
@@ -239,6 +248,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session log c123 --from 120 --limit 30\n\n"
                 "  meridian session log c123 --around 240 --context 8\n\n"
                 "  meridian session log c123 --segment previous\n\n"
+                "  meridian session log c123 --segment current --from 0 --limit 1\n\n"
                 "  meridian session log c123 --before 240 --limit 30\n"
             ),
             "meridian.session.export": (
