@@ -3,12 +3,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-pytestmark = pytest.mark.skip(
-    reason="meridian-spawn-watch lifecycle bundle removed; spawn discovery lives in background-tasks",
-)
-
 import json
 import os
 import shutil
@@ -17,6 +11,10 @@ import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="spawn-watch removed; spawn discovery in background-tasks",
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 LIFECYCLE_DIST = (
