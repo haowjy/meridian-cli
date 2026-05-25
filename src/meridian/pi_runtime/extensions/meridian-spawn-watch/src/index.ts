@@ -181,7 +181,6 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   const runtime = new SpawnWatchRuntime(pi as PiWithMessages);
   pi.on?.("session_start", () => runtime.start());
   pi.on?.("session_shutdown", () => runtime.stop());
-  runtime.start();
 
   pi.registerCommand("mspawn", {
     description: "List Meridian spawns correlated to this Pi session.",
