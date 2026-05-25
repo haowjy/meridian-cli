@@ -35,6 +35,7 @@ class PiDiskWatcher:
         self._tasks: list[asyncio.Task[None]] = []
         self._child_spawn_ids: set[str] = set()
         self._child_tasks: dict[str, asyncio.Task[None]] = {}
+        self._candidate_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
         self._spawns_dir.mkdir(parents=True, exist_ok=True)
@@ -46,13 +47,15 @@ class PiDiskWatcher:
         ]
 
     async def stop(self) -> None:
-        for task in [*self._tasks, *self._child_tasks.values()]:
+        tasks = [*self._tasks, *self._child_tasks.values(), *self._candidate_tasks.values()]
+        for task in tasks:
             task.cancel()
-        for task in [*self._tasks, *self._child_tasks.values()]:
+        for task in tasks:
             with suppress(asyncio.CancelledError):
                 await task
         self._tasks = []
         self._child_tasks = {}
+        self._candidate_tasks = {}
 
     async def force_rescan(self) -> None:
         self._refresh_cached_state(discover=True)
@@ -74,8 +77,11 @@ class PiDiskWatcher:
         return self._last_notification_ts
 
     async def _watch_spawns_dir(self) -> None:
-        async for _changes in awatch(self._spawns_dir, recursive=False):
-            self._discover_child_spawns()
+        async for changes in awatch(self._spawns_dir, recursive=False):
+            for _change, raw_path in changes:
+                path = Path(str(raw_path))
+                if path.parent == self._spawns_dir and path.name.startswith("p"):
+                    self._watch_candidate_spawn_dir(path.name, path)
             self._refresh_cached_state()
 
     async def _watch_bash_dir(self) -> None:
@@ -89,6 +95,35 @@ class PiDiskWatcher:
                 self._child_spawn_ids.discard(spawn_id)
                 return
             self._refresh_cached_state()
+
+    def _watch_candidate_spawn_dir(self, spawn_id: str, directory: Path) -> None:
+        if spawn_id in self._child_spawn_ids or spawn_id in self._candidate_tasks:
+            return
+        if not directory.is_dir():
+            return
+        task = asyncio.create_task(self._watch_candidate_until_resolved(spawn_id, directory))
+        self._candidate_tasks[spawn_id] = task
+        task.add_done_callback(lambda _task: self._candidate_tasks.pop(spawn_id, None))
+
+    async def _watch_candidate_until_resolved(self, spawn_id: str, directory: Path) -> None:
+        if self._try_adopt_candidate(spawn_id, directory):
+            return
+        async for _changes in awatch(directory, recursive=False):
+            if self._try_adopt_candidate(spawn_id, directory):
+                return
+
+    def _try_adopt_candidate(self, spawn_id: str, directory: Path) -> bool:
+        data = _read_json_object(directory / "state.json")
+        parent_id = data.get("parent_id")
+        if parent_id == self._current_spawn_id:
+            self._child_spawn_ids.add(spawn_id)
+            if spawn_id not in self._child_tasks:
+                self._child_tasks[spawn_id] = asyncio.create_task(
+                    self._watch_child_spawn_dir(spawn_id, directory)
+                )
+            self._refresh_cached_state()
+            return True
+        return bool(isinstance(parent_id, str) and parent_id)
 
     def _discover_child_spawns(self) -> None:
         if not self._spawns_dir.is_dir():

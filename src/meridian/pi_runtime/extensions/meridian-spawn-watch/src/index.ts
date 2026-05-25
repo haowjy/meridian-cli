@@ -48,6 +48,7 @@ class SpawnWatchRuntime {
   private readonly pending = new Map<string, NotificationItem>();
   private readonly childSpawnIds = new Set<string>();
   private readonly childWatchers = new Map<string, FSWatcher>();
+  private readonly candidateWatchers = new Map<string, FSWatcher>();
   private watchers: FSWatcher[] = [];
   private debounce: NodeJS.Timeout | null = null;
   private maxWave: NodeJS.Timeout | null = null;
@@ -72,6 +73,8 @@ class SpawnWatchRuntime {
     this.watchers = [];
     for (const watcher of this.childWatchers.values()) watcher.close();
     this.childWatchers.clear();
+    for (const watcher of this.candidateWatchers.values()) watcher.close();
+    this.candidateWatchers.clear();
     if (this.debounce) clearTimeout(this.debounce);
     if (this.maxWave) clearTimeout(this.maxWave);
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
@@ -88,9 +91,10 @@ class SpawnWatchRuntime {
     return this.watchDirectory(this.spawnsDir, (_eventType, filename) => {
       const name = filename ? path.basename(filename.toString()) : "";
       if (name.startsWith("p")) {
-        void this.discoverChild(name).then(() => this.requestScan());
-        const retry = setTimeout(() => void this.discoverChild(name).then(() => this.requestScan()), 250);
-        retry.unref();
+        void this.discoverChild(name).then((adopted) => {
+          if (!adopted) this.watchCandidateSpawnDir(name);
+          this.requestScan();
+        });
         return;
       }
       this.requestScan();
@@ -106,6 +110,18 @@ class SpawnWatchRuntime {
       if (!name || name === "state.json") this.requestScan();
     });
     this.childWatchers.set(spawnId, watcher);
+  }
+
+  private watchCandidateSpawnDir(spawnId: string): void {
+    if (this.childSpawnIds.has(spawnId) || this.candidateWatchers.has(spawnId)) return;
+    const dir = path.join(this.spawnsDir, spawnId);
+    if (!existsSync(dir)) return;
+    const watcher = this.watchDirectory(dir, (_eventType, filename) => {
+      const name = filename?.toString() ?? "";
+      if (!name || name === "state.json") void this.resolveCandidate(spawnId);
+    });
+    this.candidateWatchers.set(spawnId, watcher);
+    void this.resolveCandidate(spawnId);
   }
 
   private watchDirectory(
@@ -242,15 +258,38 @@ class SpawnWatchRuntime {
     }
   }
 
-  private async discoverChild(spawnId: string): Promise<void> {
+  private async discoverChild(spawnId: string): Promise<boolean> {
     if (this.childSpawnIds.has(spawnId)) {
       this.watchChildSpawnDir(spawnId);
-      return;
+      return true;
     }
     const state = await this.readSpawnState(spawnId);
-    if (state?.parent_id !== this.currentSpawnId) return;
+    if (state?.parent_id !== this.currentSpawnId) return false;
+    this.adoptChild(spawnId);
+    return true;
+  }
+
+  private async resolveCandidate(spawnId: string): Promise<void> {
+    const state = await this.readSpawnState(spawnId);
+    if (state?.parent_id === this.currentSpawnId) {
+      this.adoptChild(spawnId);
+      this.closeCandidate(spawnId);
+      this.requestScan();
+      return;
+    }
+    if (typeof state?.parent_id === "string" && state.parent_id.length > 0) {
+      this.closeCandidate(spawnId);
+    }
+  }
+
+  private adoptChild(spawnId: string): void {
     this.childSpawnIds.add(spawnId);
     this.watchChildSpawnDir(spawnId);
+  }
+
+  private closeCandidate(spawnId: string): void {
+    this.candidateWatchers.get(spawnId)?.close();
+    this.candidateWatchers.delete(spawnId);
   }
 
   private async readChildSpawnStates(): Promise<SpawnStateFile[]> {
