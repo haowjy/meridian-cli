@@ -19,12 +19,18 @@ def _make_spawn_detail(
     exit_code: int | None = None,
     failure_reason: str | None = None,
     report_body: str | None = "done report",
+    work_id: str | None = None,
+    authority_root: str | None = None,
+    task_cwd: str | None = None,
 ) -> SpawnDetailOutput:
     return SpawnDetailOutput(
         spawn_id=spawn_id,
         status=status,
         model="gpt-5.4",
         harness="codex",
+        work_id=work_id,
+        authority_root=authority_root,
+        task_cwd=task_cwd,
         started_at="2026-05-15T00:00:00Z",
         finished_at="2026-05-15T00:00:04Z",
         duration_secs=duration_secs,
@@ -218,13 +224,12 @@ def test_spawn_action_dry_run_exposes_task_cwd_fields() -> None:
     wire = output.to_wire()
     text = output.format_text()
 
-    assert wire["authority_root"] == "/repo/main"
     assert wire["task_cwd"] == "/repo.worktrees/feature-x"
     assert wire["reference_anchor"] == "/repo.worktrees/feature-x"
     assert wire["task_cwd_source"] == "explicit-work-worktree"
     assert wire["task_cwd_work_item"] == "feature-x"
-    assert "Authority: /repo/main" in text
-    assert "Task CWD:  /repo.worktrees/feature-x" in text
+    assert "Authority: /repo/main" not in text
+    assert "Spawn is instructed to implement in this task dir: /repo.worktrees/feature-x" in text
 
 
 def test_spawn_action_runtime_text_includes_distinct_task_cwd() -> None:
@@ -241,7 +246,26 @@ def test_spawn_action_runtime_text_includes_distinct_task_cwd() -> None:
     )
 
     text = output.format_text()
-    assert "Authority: /repo/main" in text
-    assert "Task CWD:  /repo.worktrees/feature-x" in text
+    assert "Authority: /repo/main" not in text
+    assert "Spawn is instructed to implement in this task dir: /repo.worktrees/feature-x" in text
     assert "work: feature-x" in text
     assert "Reference anchor: /repo.worktrees/feature-x" in text
+
+
+def test_spawn_detail_wait_includes_distinct_task_dir() -> None:
+    detail = _make_spawn_detail(
+        work_id="feature-x",
+        authority_root="/repo/main",
+        task_cwd="/repo.worktrees/feature-x",
+    )
+
+    text = detail.format_wait_text()
+    wire = detail.to_cli_wire()
+
+    assert "Authority: /repo/main" not in text
+    assert (
+        "Spawn is instructed to implement in this task dir: "
+        "/repo.worktrees/feature-x  (work: feature-x)"
+    ) in text
+    assert wire["task_cwd"] == "/repo.worktrees/feature-x"
+    assert "authority_root" not in wire

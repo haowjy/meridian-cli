@@ -345,3 +345,38 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
     assert "Goal: ship the migration" in rendered
     wire = detail.to_cli_wire()
     assert wire["goal"] == "ship the migration"
+
+
+def test_spawn_show_includes_distinct_task_dir_without_authority_noise(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+    task_cwd = tmp_path / "repo.worktrees" / "feature-x"
+    task_cwd.mkdir(parents=True)
+
+    spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-task-dir",
+        chat_id="c-task-dir",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+        work_id="feature-x",
+        control_root=project_root.as_posix(),
+        task_cwd=task_cwd.as_posix(),
+    )
+
+    detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
+    )
+
+    rendered = detail.format_text()
+    assert (
+        f"Spawn is instructed to implement in this task dir: {task_cwd.as_posix()}"
+        in rendered
+    )
+    assert "Authority:" not in rendered
+    wire = detail.to_cli_wire()
+    assert wire["task_cwd"] == task_cwd.as_posix()
+    assert "authority_root" not in wire

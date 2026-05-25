@@ -219,8 +219,6 @@ class SpawnActionOutput(BaseModel):
             wire["context_from_resolved"] = list(self.context_from_resolved)
         include_task_context = self.status == "dry-run" or self._has_distinct_task_cwd()
         if include_task_context:
-            if self.authority_root is not None:
-                wire["authority_root"] = self.authority_root
             if self.task_cwd is not None:
                 wire["task_cwd"] = self.task_cwd
             if self.task_cwd_source is not None:
@@ -297,11 +295,8 @@ class SpawnActionOutput(BaseModel):
             wire["wait_command"] = "meridian spawn wait"
         if self.warning is not None:
             wire["warning"] = self.warning
-        if self._has_distinct_task_cwd():
-            if self.authority_root is not None:
-                wire["authority_root"] = self.authority_root
-            if self.task_cwd is not None:
-                wire["task_cwd"] = self.task_cwd
+        if self._has_distinct_task_cwd() and self.task_cwd is not None:
+            wire["task_cwd"] = self.task_cwd
             if self.task_cwd_source is not None:
                 wire["task_cwd_source"] = self.task_cwd_source
             if self.task_cwd_work_item is not None:
@@ -348,8 +343,7 @@ class SpawnActionOutput(BaseModel):
         if self.error:
             lines.append(f"Error: {self.error}")
         if self._has_distinct_task_cwd():
-            lines.append(f"Authority: {self.authority_root}")
-            task_line = f"Task CWD:  {self.task_cwd}"
+            task_line = f"Spawn is instructed to implement in this task dir: {self.task_cwd}"
             attribution: list[str] = []
             if self.task_cwd_work_item:
                 attribution.append(f"work: {self.task_cwd_work_item}")
@@ -406,8 +400,7 @@ class SpawnActionOutput(BaseModel):
             if self.runtime_root_source:
                 lines.append(f"Write root source: {self.runtime_root_source}")
         if self.authority_root and self.task_cwd and self.task_cwd != self.authority_root:
-            lines.append(f"Authority: {self.authority_root}")
-            task_line = f"Task CWD:  {self.task_cwd}"
+            task_line = f"Spawn is instructed to implement in this task dir: {self.task_cwd}"
             attribution: list[str] = []
             if self.task_cwd_work_item:
                 attribution.append(f"work: {self.task_cwd_work_item}")
@@ -739,6 +732,8 @@ class SpawnDetailOutput(BaseModel):
     backend_port: int | None = None
     parent_id: str | None = None
     work_id: str | None = None
+    authority_root: str | None = None
+    task_cwd: str | None = None
     goal: str | None = None
     desc: str | None = None
     started_at: str
@@ -792,6 +787,18 @@ class SpawnDetailOutput(BaseModel):
     def transcript_command(self) -> str:
         return f"meridian session log {self.spawn_id}"
 
+    def _has_distinct_task_cwd(self) -> bool:
+        if self.authority_root is None or self.task_cwd is None:
+            return False
+        return self.task_cwd != self.authority_root
+
+    def _task_dir_line(self) -> str:
+        task_line = f"Spawn is instructed to implement in this task dir: {self.task_cwd}"
+        work_value = (self.work_id or "").strip()
+        if work_value:
+            task_line += f"  (work: {work_value})"
+        return task_line
+
     def to_cli_wire(self) -> dict[str, object]:
         """Project slim JSON shape for wire serialization. Omits internal fields."""
         wire: dict[str, object] = {
@@ -828,6 +835,8 @@ class SpawnDetailOutput(BaseModel):
             wire["parent_id"] = self.parent_id
         if self.work_id is not None:
             wire["work_id"] = self.work_id
+        if self._has_distinct_task_cwd() and self.task_cwd is not None:
+            wire["task_cwd"] = self.task_cwd
         if self.desc is not None:
             wire["desc"] = self.desc
         if self.goal is not None:
@@ -905,6 +914,8 @@ class SpawnDetailOutput(BaseModel):
                     "report.md may still contain useful content)"
                 )
             lines.append(f"Failure: {failure_value}")
+        if self._has_distinct_task_cwd():
+            lines.append(self._task_dir_line())
 
         report_text = self._normalized_report_body()
         if report_text is not None:
@@ -983,6 +994,10 @@ class SpawnDetailOutput(BaseModel):
             ("Duration", duration_value),
             ("Parent", parent_value),
             ("Work", work_value),
+            (
+                "Spawn is instructed to implement in this task dir",
+                self.task_cwd if self._has_distinct_task_cwd() else None,
+            ),
             ("Goal", self.goal),
             ("Desc", desc_value),
             (failure_label or "Failure", failure_value),

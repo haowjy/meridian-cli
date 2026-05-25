@@ -561,6 +561,8 @@ def detail_from_row(
         harness=row.harness or "",
         parent_id=row.parent_id,
         work_id=row.work_id,
+        authority_root=row.control_root,
+        task_cwd=row.task_cwd,
         goal=row.goal,
         desc=row.desc,
         started_at=row.started_at or "",

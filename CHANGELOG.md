@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Spawn output now reports distinct task directories as implementation targets without authority-root noise.
+
 ## [0.2.4] - 2026-05-24
 
 ### Fixed
