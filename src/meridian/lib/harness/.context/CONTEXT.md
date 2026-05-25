@@ -50,8 +50,8 @@ subprocess. Two Meridian-owned extensions run inside the Pi process:
 
 - **background-tasks** — task registry, `background_task` tool, bash bridge, `/ps*` UI.
   See `src/meridian/pi_runtime/extensions/background-tasks/`.
-- **meridian-spawn-watch** — spawn detection, wave timeout, quiescence, `/spawns*`, lifecycle
-  sidecar. See `src/meridian/pi_runtime/extensions/meridian-spawn-watch/`.
+- **background-tasks spawn module** — `spawn list` / `spawn show` discovery, `/mspawn:wait`,
+  `/ps` spawn rows (no separate bundle). See `src/meridian/pi_runtime/extensions/background-tasks/src/spawn/`.
 
 Extensions are TypeScript, built with `pnpm run build:extensions`, and loaded via stable
 `-e` paths from `pi_paths.resolve_meridian_pi_extension_root()` (`~/.meridian/pi/extensions/`

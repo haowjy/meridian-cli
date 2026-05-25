@@ -195,7 +195,7 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
                 background_tasks_enabled=pi_profile.background_tasks_enabled(),
                 spawn_watch_enabled=pi_profile.spawn_watch.enabled,
                 interactive=run.interactive,
-            )
+            ),
         )
         extra_entrypoints: tuple[str, ...] = ()
         if pi_profile.load_all_pi_extensions:

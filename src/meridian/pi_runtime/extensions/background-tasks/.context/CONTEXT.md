@@ -1,6 +1,6 @@
 # extensions/background-tasks/
 
-Generic OS background task registry, `background_task` tool, unified `/ps*` UI.
+Generic OS background task registry, `background_task` tool, unified `/ps*` UI, and in-session Meridian spawn rows.
 
 State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 
@@ -8,6 +8,7 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 
 - **`/ps`** — task overlay (interactive), or table output when headless. **`/ps json`** is the only space-arg mode on the parent command (structured dump).
 - **`/ps:<verb>`** — task actions (Pi colon namespace, same family as skills): `ps:b`, `ps:background`, `ps:kill`, `ps:logs`, `ps:clear`, `ps:pin`, `ps:dock`, `ps:settings`.
+- **`/mspawn:wait <p-id>`** — runs `meridian spawn wait <id>` (not part of `/ps`; replaces removed `/spawns:wait`).
 - **Overlay keys** — Meridian UI when `/ps` is open (`b`, `j/k`, `x`, `c`, …); not Pi core.
 
 ## Interactive `$` and /ps
@@ -22,7 +23,22 @@ State: `{MERIDIAN_PI_STATE_DIR}/background-tasks/{sessionId}/tasks/{task_id}/`.
 - **Status widget** (below editor): live tasks only — `tasks: <name> running | +N more`. Hidden while `/ps` is open.
 - **`/ps`**: `TasksPanelComponent` returned directly from `ui.custom` overlay — **never** call `tui.setFocus` (Pi `showOverlay` owns `preFocus`). Layout in `panel/ps-view.ts` (preview top, list + footer bottom). **1 row per task** (max 8); **4-line** preview. **Enter** → log stream overlay; **q** back. **1s** timer + **`meridian:task:output`** for live preview.
 
-Consumes `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`) for unified `/ps` rows.
+## Meridian spawn rows (`src/spawn/`)
+
+**Source of truth:** persisted spawn records on disk — what `meridian spawn wait` polls. Pi does not classify spawns from the shell command string.
+
+| Step | Mechanism |
+|------|-----------|
+| Discover ids | `meridian --json spawn list` (chat-scoped) on task end / periodic refresh |
+| Log fallback | Parse `pNNNN` from task combined log, then still confirm |
+| Confirm + status | `meridian --json spawn show` per id |
+| `/ps` row | `meridian:spawn:*` bus → `meridian_spawn` kind in `unified_rows.ts` |
+
+Shell wrappers (`meridian spawn …`) stay **`process`** rows until a confirmed spawn id exists. Active statuses polled: `queued`, `running`, `finalizing`.
+
+**Wait:** use **`meridian spawn wait`** in the terminal or **`/mspawn:wait <p-id>`** in Pi (30m subprocess cap). **`/ps` has no wait** subcommand. Wave notifications and `/spawns*` are removed.
+
+Consumes and emits `meridian:spawn:*` on Pi's shared `pi.events` bus (via `resolveExtensionBus`).
 
 ## Verify after each implementation pass
 

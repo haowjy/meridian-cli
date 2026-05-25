@@ -110,8 +110,8 @@ Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.
   (default `~/.pi/agent/extensions`) for additional `-e` lines
 
 Entrypoint helpers:
-- `resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` — honors
-  `background_tasks.enabled` and `spawn_watch.enabled` from the launch snapshot
+- `resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` — loads
+  `background-tasks` when `background_tasks.enabled` or legacy `spawn_watch.enabled`
 - `resolve_extra_pi_extension_entrypoints()` — user extensions when `load_all` is true
 
 Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` from
@@ -119,7 +119,8 @@ Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` fro
 does not reload config from ambient CWD in the hot path.
 
 Legacy: `disable_managed_bash` / `MERIDIAN_PI_DISABLE_MANAGED_BASH` disable background-tasks.
-Spawned non-interactive RPC keeps spawn-watch only unless toggles say otherwise.
+Spawned non-interactive RPC loads the same `background-tasks` bundle when toggles are on
+(extension UI no-ops when not interactive).
 
 Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
 the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.

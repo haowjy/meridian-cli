@@ -4,7 +4,10 @@ import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 import { isBackgroundTasksExtensionEnabled } from "../../shared/pi_harness_profile";
 import { resolveExtensionBus } from "../../shared/meridian_event_bus";
 import { getForegroundUserBashTaskId, setupBashBridge } from "./bash_bridge";
+import { setupMspawnCommands } from "./commands/mspawn";
 import { setupPsCommands } from "./commands";
+import { startSpawnCollector } from "./spawn/collector";
+import { startSpawnDiscovery } from "./spawn/discover";
 import { setupForegroundBashHint } from "./hooks/foreground-bash-hint";
 import { setupTaskWidget } from "./hooks/widget";
 import { TaskPanelHost } from "./panel/host";
@@ -30,12 +33,16 @@ const state: {
   createRegistry: ((sessionId: string) => TaskRegistry) | null;
   sidecar: ReturnType<typeof createLifecycleSidecarWriter> | null;
   panelHost: TaskPanelHost | null;
+  stopSpawnCollector: (() => void) | null;
+  stopSpawnDiscovery: (() => void) | null;
 } = {
   registry: null,
   sessionId: makeId("session"),
   createRegistry: null,
   sidecar: null,
   panelHost: null,
+  stopSpawnCollector: null,
+  stopSpawnDiscovery: null,
 };
 
 async function buildRegistry(
@@ -118,8 +125,18 @@ export default async function backgroundTasksExtension(pi: ExtensionAPI): Promis
     getRegistry: () => state.registry,
     mergeRows: rowFeed.mergeRows,
   });
+  setupMspawnCommands(pi);
+
+  state.stopSpawnCollector = startSpawnCollector(bus);
+  state.stopSpawnDiscovery = startSpawnDiscovery(bus, {
+    getRegistry: () => state.registry,
+  });
 
   piExt.on?.("session_shutdown", async () => {
+    state.stopSpawnCollector?.();
+    state.stopSpawnCollector = null;
+    state.stopSpawnDiscovery?.();
+    state.stopSpawnDiscovery = null;
     rowFeed.dispose();
     state.panelHost?.dispose();
     state.panelHost = null;

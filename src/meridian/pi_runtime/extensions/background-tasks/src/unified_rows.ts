@@ -1,5 +1,4 @@
 import type { MeridianEventBus } from "../../shared/meridian_event_bus";
-import { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import type { BackgroundTaskRecord, PsRow } from "./types";
 
 const SPAWN_CHANNELS = [
@@ -45,7 +44,7 @@ export function createUnifiedRowFeed(bus: MeridianEventBus): {
     getSpawnRows: () => [...spawnRows.values()],
     mergeRows(tasks) {
       const processRows: PsRow[] = tasks.map((task) => ({
-        kind: isMeridianSpawnCommand(task.command) ? "meridian_spawn_wrapper" : "process",
+        kind: "process" as const,
         ...task,
       }));
       const spawnPsRows: PsRow[] = [...spawnRows.values()].map((row) => ({

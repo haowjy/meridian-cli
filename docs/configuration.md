@@ -123,7 +123,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `harness.pi.load_all_pi_extensions` | bool | When `true`, Pi also loads extensions from `extra_extension_paths` (default `false` = Meridian bundles only) |
 | `harness.pi.extra_extension_paths` | array[str] | Extra extension roots scanned only when `load_all_pi_extensions = true` (default: Pi user extension dir) |
 | `harness.pi.background_tasks.enabled` | bool | Meridian `background-tasks` bundle (default `true`; spawned RPC keeps spawn-watch only) |
-| `harness.pi.spawn_watch.enabled` | bool | Meridian `meridian-spawn-watch` bundle (default `true`) |
+| `harness.pi.spawn_watch.enabled` | bool | Legacy alias for background-tasks bundle (default `true`) |
 | `harness.pi.disable_managed_bash` | bool | **Legacy** — same as `background_tasks.enabled = false` |
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |

@@ -74,6 +74,8 @@ export function isBackgroundTasksExtensionEnabled(interactive = true): boolean {
   return launch.interactive && launch.background_tasks_enabled;
 }
 
+/** @deprecated Spawn-watch merged into background-tasks; alias for bundle gate. */
 export function isSpawnWatchExtensionEnabled(): boolean {
-  return resolvePiHarnessProfile().spawn_watch_enabled;
+  const profile = resolvePiHarnessProfile();
+  return profile.background_tasks_enabled || profile.spawn_watch_enabled;
 }

@@ -1,4 +1,3 @@
-import { isMeridianSpawnCommand } from "../../shared/meridian_spawn";
 import type { LifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 import type { MeridianEventBus } from "../../shared/meridian_event_bus";
 import {
@@ -35,9 +34,6 @@ export class TaskEvents {
   }
 
   subspawnKind(record: StoredTaskRecord): string {
-    if (isMeridianSpawnCommand(record.command)) {
-      return "meridian_spawn_wrapper";
-    }
     return record.ingress === "bash" ? "bash" : "process";
   }
 
@@ -51,7 +47,6 @@ export class TaskEvents {
 
   emitTaskStart(record: StoredTaskRecord): void {
     const command = truncateCommand(record.command);
-    const isSpawn = isMeridianSpawnCommand(record.command);
     const kind = this.subspawnKind(record);
     const envelope = this.buildSubspawnEnvelope(kind, record.task_id);
     const payload = {
@@ -61,7 +56,6 @@ export class TaskEvents {
       subspawn_id: record.task_id,
       wait_policy: record.wait_policy,
       command,
-      command_is_meridian_spawn: isSpawn,
       pid: record.pid,
       started_at_ms: record.started_at_ms,
       log_path: record.combined_log_path,
@@ -78,7 +72,6 @@ export class TaskEvents {
       subspawn_id: record.task_id,
       wait_policy: record.wait_policy,
       command,
-      command_is_meridian_spawn: isSpawn,
       pid: record.pid,
       started_at_ms: record.started_at_ms,
       log_path: record.combined_log_path,
@@ -88,7 +81,6 @@ export class TaskEvents {
 
   emitTaskEnd(record: StoredTaskRecord): void {
     const command = truncateCommand(record.command);
-    const isSpawn = isMeridianSpawnCommand(record.command);
     const kind = this.subspawnKind(record);
     const envelope = this.buildSubspawnEnvelope(kind, record.task_id);
     const payload = {
@@ -98,7 +90,6 @@ export class TaskEvents {
       subspawn_id: record.task_id,
       wait_policy: record.wait_policy,
       command,
-      command_is_meridian_spawn: isSpawn,
       status: record.status,
       exit_code: record.exit_code,
       success: record.success,
@@ -117,7 +108,6 @@ export class TaskEvents {
       subspawn_id: record.task_id,
       wait_policy: record.wait_policy,
       command,
-      command_is_meridian_spawn: isSpawn,
       status: record.status,
       exit_code: record.exit_code,
       success: record.success,

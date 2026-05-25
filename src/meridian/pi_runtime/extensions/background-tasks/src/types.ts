@@ -28,10 +28,10 @@ export type BackgroundTaskRecord = {
   next_ping_at_ms?: number | null;
 };
 
-export type PsRowKind = "process" | "meridian_spawn_wrapper" | "meridian_spawn";
+export type PsRowKind = "process" | "meridian_spawn";
 
 export type PsRow =
-  | ({ kind: "process" | "meridian_spawn_wrapper" } & BackgroundTaskRecord)
+  | ({ kind: "process" } & BackgroundTaskRecord)
   | {
       kind: "meridian_spawn";
       spawn_id: string;

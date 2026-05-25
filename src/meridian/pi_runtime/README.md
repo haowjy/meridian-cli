@@ -11,12 +11,11 @@ cd src/meridian/pi_runtime
 npm run build:extensions
 ```
 
-This writes stable entrypoints under `dist/extensions/`:
+This writes a stable entrypoint under `dist/extensions/`:
 
-- `dist/extensions/background-tasks/index.js`
-- `dist/extensions/meridian-spawn-watch/index.js`
+- `dist/extensions/background-tasks/index.js` — shell task registry, `/ps`, spawn discovery, `/mspawn:wait`
 
-Launch projection copies those extension entrypoints into Meridian-owned state for each spawned run.
+Launch projection copies that extension entrypoint into Meridian-owned state for each spawned run.
 
 ## Verify (every implementation pass)
 
@@ -28,3 +27,9 @@ npm run verify:extensions:loop     # repeat on interval (local)
 Then delegate **smoke-tester** for runtime verification (`meridian pi`, spawn flows). UX reference: `~/gitrepos/ref/pi-processes`. Work-item map: `pi-generic-background-tasks/pi-processes-parity-map.md` in the meridian-cli work dir.
 
 **Pi extension imports:** only package-root `@earendil-works/pi-tui` / `pi-coding-agent` — subpaths break under Pi's extension loader.
+
+## Spawn rows and wait
+
+- **Meridian spawns in `/ps`** — ids confirmed via `meridian spawn list` / `spawn show` (same store as `meridian spawn wait`), not shell-command regex.
+- **Blocking wait** — `meridian spawn wait` in the terminal, or **`/mspawn:wait <p-id>`** in Pi (30m subprocess cap; CLI may checkpoint earlier).
+- **`/ps`** — observability only (`ps:kill`, `ps:logs`); no wait subcommand. `/spawns*` removed.

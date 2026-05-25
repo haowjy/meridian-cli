@@ -8,7 +8,7 @@ export function formatPsRow(row: PsRow): string {
     const task = row.task_id ? ` task=${row.task_id}` : "";
     return `[spawn] ${row.spawn_id} ${row.status}${task}${summary}`;
   }
-  const badge = row.kind === "meridian_spawn_wrapper" ? "wrapper" : "task";
+  const badge = "task";
   const pid = row.pid != null ? ` pid=${row.pid}` : "";
   return `[${badge}] ${row.task_id} ${row.status} ${row.label}${pid}`;
 }

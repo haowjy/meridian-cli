@@ -39,7 +39,7 @@ describe("createUnifiedRowFeed", () => {
     ]);
     expect(rows).toHaveLength(3);
     expect(rows.find((r) => r.kind === "meridian_spawn")?.spawn_id).toBe("pabc");
-    expect(rows.find((r) => r.kind === "meridian_spawn_wrapper")?.task_id).toBe("t2");
+    expect(rows.filter((r) => r.kind === "process")).toHaveLength(2);
     feed.dispose();
   });
 

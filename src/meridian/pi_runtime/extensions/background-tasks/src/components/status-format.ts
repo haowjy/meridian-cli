@@ -52,8 +52,6 @@ export function kindBadge(entry: PanelEntry): string {
   switch (entry.kind) {
     case "meridian_spawn":
       return "spawn";
-    case "meridian_spawn_wrapper":
-      return "wrap";
     default:
       return "task";
   }
