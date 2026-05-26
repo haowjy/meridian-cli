@@ -236,11 +236,13 @@ class LogOverlayComponent implements Component {
   }
 
   private renderStatus(start: number, end: number, total: number): string {
-    const stream = this.hasMultipleStreams() ? `${this.currentStream().label}  ` : "";
-    if (this.follow) return `${this.theme.fg("dim", stream)}${this.theme.fg("accent", "following")}`;
-    if (total <= 0) return `${this.theme.fg("dim", stream)}${this.theme.fg("dim", "empty")}`;
+    const stream = this.hasMultipleStreams()
+      ? `${this.theme.fg("accent", this.currentStream().label)}${this.theme.fg("dim", "  ")}`
+      : "";
+    if (this.follow) return `${stream}${this.theme.fg("accent", "following")}`;
+    if (total <= 0) return `${stream}${this.theme.fg("dim", "empty")}`;
     const percent = Math.round((end / total) * 100);
-    return this.theme.fg("dim", `${stream}${percent}%  L${Math.min(start + 1, total)}-${end}/${total}`);
+    return `${stream}${this.theme.fg("dim", `${percent}%  L${Math.min(start + 1, total)}-${end}/${total}`)}`;
   }
 
   private defaultFooter(): string {
