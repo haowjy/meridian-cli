@@ -20,17 +20,6 @@ export type SelectablePanelOptions<Row> = {
   maxRows?: number;
 };
 
-export type TextStreamFilter = "combined" | "stdout" | "stderr";
-
-export type TextOverlayOptions = {
-  title: string;
-  loadText: (streamFilter?: TextStreamFilter) => Promise<string>;
-  footer?: string;
-  initialFollow?: boolean;
-  refreshIntervalMs?: number;
-  showStreamFilter?: boolean;
-};
-
 type PanelTui = {
   requestRender: () => void;
   terminal?: { rows?: number };
@@ -59,15 +48,6 @@ export const FULLSCREEN_OVERLAY_OPTIONS = {
     width: "100%",
     maxHeight: "100%",
     anchor: "top-left",
-  },
-};
-
-export const TEXT_OVERLAY_OPTIONS = {
-  overlay: true,
-  overlayOptions: {
-    width: "90%",
-    maxHeight: "80%",
-    anchor: "center",
   },
 };
 
@@ -112,37 +92,19 @@ function isDown(data: string): boolean {
   return data === "\x1b[B" || ch === "j" || ch === "J";
 }
 
-function isTop(data: string): boolean {
-  return printableChar(data) === "g";
-}
-
-function isBottom(data: string): boolean {
-  return printableChar(data) === "G";
-}
-
-function isFollowToggle(data: string): boolean {
-  const ch = printableChar(data);
-  return ch === "f" || ch === "F";
-}
-
-function isStreamToggle(data: string): boolean {
-  const ch = printableChar(data);
-  return ch === "s" || ch === "S";
-}
-
 function fitCell(value: string, width: number, align: "left" | "right" = "left"): string {
   const truncated = truncateToWidth(value, Math.max(0, width), "", true);
   const pad = Math.max(0, width - visibleWidth(truncated));
   return align === "right" ? " ".repeat(pad) + truncated : truncated + " ".repeat(pad);
 }
 
-function borderLine(width: number, left: string, fill: string, right: string, theme: Theme): string {
+export function borderLine(width: number, left: string, fill: string, right: string, theme: Theme): string {
   if (width <= 0) return "";
   if (width === 1) return theme.fg("dim", fill);
   return theme.fg("dim", `${left}${fill.repeat(Math.max(0, width - 2))}${right}`);
 }
 
-function titleLine(title: string, width: number, theme: Theme): string {
+export function titleLine(title: string, width: number, theme: Theme): string {
   if (width <= 0) return "";
   if (width === 1) return theme.fg("dim", "─");
   const innerWidth = Math.max(0, width - 2);
@@ -152,14 +114,14 @@ function titleLine(title: string, width: number, theme: Theme): string {
   return theme.fg("dim", `┌${truncated}${"─".repeat(remaining)}┐`);
 }
 
-function padLine(content: string, width: number, theme: Theme): string {
+export function padLine(content: string, width: number, theme: Theme): string {
   const innerWidth = Math.max(0, width - 2);
   const truncated = truncateToWidth(content, innerWidth, "", true);
   const pad = Math.max(0, innerWidth - visibleWidth(truncated));
   return `${theme.fg("dim", "│")}${truncated}${" ".repeat(pad)}${theme.fg("dim", "│")}`;
 }
 
-function renderFooter(footer: string, theme: Theme): string {
+export function renderFooter(footer: string, theme: Theme): string {
   return footer
     .split(" · ")
     .map((segment) => {
@@ -358,186 +320,5 @@ export async function openSelectablePanel<Row>(
     (tui, theme, _keybindings, done) =>
       new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
     customOptions,
-  );
-}
-
-class TextOverlayComponent implements Component {
-  private text = "Loading…";
-  private closed = false;
-  private follow: boolean;
-  private anchorEnd: number | null;
-  private refreshTimer: NodeJS.Timeout | null = null;
-  private refreshInFlight = false;
-  private streamFilter: TextStreamFilter = "combined";
-
-  constructor(
-    private readonly tui: PanelTui,
-    private readonly theme: Theme,
-    private readonly options: TextOverlayOptions,
-    private readonly done: () => void,
-  ) {
-    this.follow = options.initialFollow === true;
-    this.anchorEnd = null;
-    void this.refresh();
-    this.refreshTimer = setInterval(() => {
-      if (this.follow) void this.refresh();
-    }, options.refreshIntervalMs ?? 1000);
-  }
-
-  handleInput(data: string): void {
-    if (this.closed) return;
-    if (isQuit(data)) {
-      this.close();
-      return;
-    }
-    if (isRefresh(data)) {
-      void this.refresh();
-      return;
-    }
-    if (isTop(data)) {
-      this.follow = false;
-      this.anchorEnd = Math.min(this.visibleTextLines(), this.textLines().length);
-      this.tui.requestRender();
-      return;
-    }
-    if (isBottom(data)) {
-      this.follow = false;
-      this.anchorEnd = this.textLines().length;
-      this.tui.requestRender();
-      return;
-    }
-    if (isFollowToggle(data)) {
-      this.follow = !this.follow;
-      this.anchorEnd = this.follow ? null : this.textLines().length;
-      this.tui.requestRender();
-      return;
-    }
-    if (this.options.showStreamFilter === true && isStreamToggle(data)) {
-      this.cycleStreamFilter();
-      return;
-    }
-    if (isUp(data)) {
-      this.scrollBy(-1);
-      return;
-    }
-    if (isDown(data)) {
-      this.scrollBy(1);
-    }
-  }
-
-  invalidate(): void {
-    // No cached render state to clear.
-  }
-
-  dispose(): void {
-    this.clearTimer();
-  }
-
-  render(width: number): string[] {
-    const textLines = this.textLines();
-    const maxTextLines = this.visibleTextLines();
-    const end = this.resolveEnd(textLines.length, maxTextLines);
-    const start = Math.max(0, end - maxTextLines);
-    const visible = textLines.slice(start, end);
-    while (visible.length < maxTextLines) visible.push("");
-
-    const lines = [titleLine(this.options.title, width, this.theme)];
-    for (const line of visible) lines.push(padLine(line, width, this.theme));
-    lines.push(borderLine(width, "├", "─", "┤", this.theme));
-    lines.push(padLine(this.renderStatus(start, end, textLines.length), width, this.theme));
-    lines.push(padLine(renderFooter(this.options.footer ?? this.defaultFooter(), this.theme), width, this.theme));
-    lines.push(borderLine(width, "╰", "─", "╯", this.theme));
-    return lines;
-  }
-
-  private close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.clearTimer();
-    this.done();
-  }
-
-  private clearTimer(): void {
-    if (this.refreshTimer) clearInterval(this.refreshTimer);
-    this.refreshTimer = null;
-  }
-
-  private scrollBy(delta: number): void {
-    const total = this.textLines().length;
-    const visible = this.visibleTextLines();
-    const currentEnd = this.anchorEnd ?? total;
-    const minEnd = Math.min(visible, total);
-    this.follow = false;
-    this.anchorEnd = Math.max(minEnd, Math.min(total, currentEnd + delta));
-    this.tui.requestRender();
-  }
-
-  private cycleStreamFilter(): void {
-    const order: TextStreamFilter[] = ["combined", "stdout", "stderr"];
-    this.streamFilter = order[(order.indexOf(this.streamFilter) + 1) % order.length] ?? "combined";
-    this.anchorEnd = null;
-    void this.refresh();
-  }
-
-  private textLines(): string[] {
-    const lines = this.text.split(/\r?\n/);
-    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
-    return lines.length > 0 ? lines : [""];
-  }
-
-  private visibleTextLines(): number {
-    const terminalRows = this.tui.terminal?.rows ?? 24;
-    return Math.max(1, Math.floor(terminalRows * 0.8) - 5);
-  }
-
-  private resolveEnd(total: number, visible: number): number {
-    if (this.follow) return total;
-    const minEnd = Math.min(visible, total);
-    return Math.max(minEnd, Math.min(total, this.anchorEnd ?? total));
-  }
-
-  private renderStatus(start: number, end: number, total: number): string {
-    const stream = this.options.showStreamFilter === true ? `${this.streamFilter}  ` : "";
-    if (this.follow) return `${this.theme.fg("dim", stream)}${this.theme.fg("accent", "following")}`;
-    if (total <= 0) return `${this.theme.fg("dim", stream)}${this.theme.fg("dim", "empty")}`;
-    const percent = Math.round((end / total) * 100);
-    return this.theme.fg("dim", `${stream}${percent}%  L${Math.min(start + 1, total)}-${end}/${total}`);
-  }
-
-  private defaultFooter(): string {
-    const stream = this.options.showStreamFilter === true ? "s stream · " : "";
-    return `j/k scroll · g/G top/bot · ${stream}f follow · r refresh · q close`;
-  }
-
-  private async refresh(): Promise<void> {
-    if (this.refreshInFlight) return;
-    this.refreshInFlight = true;
-    try {
-      this.text = await this.options.loadText(this.streamFilter);
-      if (!this.follow) {
-        const total = this.textLines().length;
-        const visible = this.visibleTextLines();
-        this.anchorEnd = Math.max(Math.min(visible, total), Math.min(total, this.anchorEnd ?? total));
-      }
-    } catch (error) {
-      this.text = `Failed to load text: ${error instanceof Error ? error.message : String(error)}`;
-    } finally {
-      this.refreshInFlight = false;
-    }
-    if (!this.closed) this.tui.requestRender();
-  }
-}
-
-export async function openTextOverlay(
-  ctx: PanelCommandContext,
-  options: TextOverlayOptions,
-): Promise<void> {
-  if (!ctx.ui?.custom || ctx.hasUI === false) {
-    return;
-  }
-  await ctx.ui.custom<void>(
-    (tui, theme, _keybindings, done) =>
-      new TextOverlayComponent(tui, theme, options, () => done(undefined)),
-    TEXT_OVERLAY_OPTIONS,
   );
 }

@@ -1,7 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 import { classifyWorkId } from "../../shared/ids";
 import { writeJsonAtomic } from "../../shared/json_file";
@@ -12,6 +10,7 @@ import {
   resolveBashRecordsPath,
 } from "../../shared/pi_state_paths";
 import type { BashRecord, BashRecordsFile, BashStatus } from "../../shared/schemas";
+import { BashLogStore, type BashLogPaths } from "./bash_log_store";
 
 export type BashParams = {
   command: string;
@@ -43,6 +42,46 @@ export type BashRuntimeHooks = {
   onForegroundStop?: (bashId: string) => void;
 };
 
+export type BashListRow = BashRecord & {
+  type: "bash";
+  duration_secs: number;
+};
+
+export type BashOutputResult = {
+  bash_id: string;
+  output: string;
+  truncated: boolean;
+};
+
+export type BashKillResult = {
+  bash_id: string;
+  killed: boolean;
+  message: string;
+};
+
+export type BashWaitResult = {
+  bash_id: string;
+  status: string;
+  exit_code?: number | null;
+  duration_secs?: number;
+  output?: string;
+  message?: string;
+};
+
+export type BashDetachResult = {
+  bash_id: string;
+  detached: boolean;
+  message: string;
+};
+
+export type BashManageResult =
+  | { rows: BashListRow[] }
+  | BashOutputResult
+  | BashKillResult
+  | BashWaitResult
+  | BashDetachResult
+  | { error: string };
+
 type ExecResult = {
   stdout: string;
   stderr: string;
@@ -57,6 +96,7 @@ export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
 export class BashRuntime {
   private readonly spawnId = currentSpawnIdFromEnv();
+  private readonly logStore = new BashLogStore(resolveBashLogsDir(this.spawnId));
   private readonly records = new Map<string, RuntimeRecord>();
 
   constructor(private readonly hooks: BashRuntimeHooks = {}) {}
@@ -183,10 +223,36 @@ export class BashRuntime {
     return { ok: true, bash_id: foreground.bash_id };
   }
 
-  async manage(params: BashManageParams): Promise<unknown> {
+  list(includeCompleted: boolean): BashListRow[] {
+    return [...this.records.values()]
+      .filter((record) => includeCompleted || record.status === "running")
+      .sort(compareBashRecordsForPanel)
+      .map((record) => ({
+        type: "bash" as const,
+        bash_id: record.bash_id,
+        command: record.command,
+        cwd: record.cwd,
+        pid: record.pid,
+        status: record.status,
+        is_background: record.is_background,
+        is_tracked: record.is_tracked,
+        started_at_ms: record.started_at_ms,
+        ended_at_ms: record.ended_at_ms,
+        exit_code: record.exit_code,
+        duration_secs: durationSecs(record),
+        log_path: record.log_path,
+        stdout_log_path: record.stdout_log_path,
+        stderr_log_path: record.stderr_log_path,
+        log_bytes: record.log_bytes,
+        timeout_min: record.timeout_min,
+        originating_bash_id: record.originating_bash_id,
+      }));
+  }
+
+  async manage(params: BashManageParams): Promise<BashManageResult> {
     const action = params.action;
     if (action === "list") {
-      return { rows: this.listRows(params.include_completed === true) };
+      return { rows: this.list(params.include_completed === true) };
     }
 
     const id = params.bash_id?.trim();
@@ -244,16 +310,7 @@ export class BashRuntime {
     onData?: (data: Buffer) => void,
   ): Promise<RuntimeRecord> {
     const bashId = makeBashId();
-    const logsDir = resolveBashLogsDir(this.spawnId);
-    await mkdir(logsDir, { recursive: true });
-    const logPath = path.join(logsDir, `${bashId}.log`);
-    const stdoutLogPath = path.join(logsDir, `${bashId}.stdout.log`);
-    const stderrLogPath = path.join(logsDir, `${bashId}.stderr.log`);
-    await Promise.all([
-      writeFile(logPath, "", "utf-8"),
-      writeFile(stdoutLogPath, "", "utf-8"),
-      writeFile(stderrLogPath, "", "utf-8"),
-    ]);
+    const logPaths = await this.logStore.create(bashId);
 
     const record: RuntimeRecord = {
       bash_id: bashId,
@@ -266,9 +323,9 @@ export class BashRuntime {
       exit_code: null,
       started_at_ms: Date.now(),
       ended_at_ms: null,
-      log_path: logPath,
-      stdout_log_path: stdoutLogPath,
-      stderr_log_path: stderrLogPath,
+      log_path: logPaths.combined,
+      stdout_log_path: logPaths.stdout,
+      stderr_log_path: logPaths.stderr,
       log_bytes: 0,
       timeout_min: timeoutMin,
       originating_bash_id: process.env.MERIDIAN_PI_BASH_ID || null,
@@ -315,15 +372,8 @@ export class BashRuntime {
   }
 
   private async appendLog(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
-    await Promise.all([
-      writeFile(record.log_path, chunk, { encoding: "utf-8", flag: "a" }),
-      writeFile(stream === "stdout" ? record.stdout_log_path : record.stderr_log_path, chunk, { encoding: "utf-8", flag: "a" }),
-    ]);
-    try {
-      record.log_bytes = (await stat(record.log_path)).size;
-    } catch {
-      record.log_bytes += Buffer.byteLength(chunk, "utf-8");
-    }
+    const size = await this.logStore.append(logPathsFromRecord(record), stream, chunk);
+    record.log_bytes = size ?? record.log_bytes + Buffer.byteLength(chunk, "utf-8");
     await this.persist();
   }
 
@@ -392,33 +442,7 @@ export class BashRuntime {
     record.waiters.push(() => void fn());
   }
 
-  private listRows(includeCompleted: boolean): Array<Record<string, unknown>> {
-    return [...this.records.values()]
-      .filter((record) => includeCompleted || record.status === "running")
-      .sort(compareBashRecordsForPanel)
-      .map((record) => ({
-        type: "bash",
-        bash_id: record.bash_id,
-        command: record.command,
-        cwd: record.cwd,
-        pid: record.pid,
-        status: record.status,
-        is_background: record.is_background,
-        is_tracked: record.is_tracked,
-        started_at_ms: record.started_at_ms,
-        ended_at_ms: record.ended_at_ms,
-        exit_code: record.exit_code,
-        duration_secs: durationSecs(record),
-        log_path: record.log_path,
-        stdout_log_path: record.stdout_log_path,
-        stderr_log_path: record.stderr_log_path,
-        log_bytes: record.log_bytes,
-        timeout_min: record.timeout_min,
-        originating_bash_id: record.originating_bash_id,
-      }));
-  }
-
-  private async manageSpawn(spawnId: string, params: BashManageParams): Promise<unknown> {
+  private async manageSpawn(spawnId: string, params: BashManageParams): Promise<BashManageResult> {
     switch (params.action) {
       case "output": {
         const result = await runMeridianCommand(["session", "log", spawnId, "-n", "20"], 15_000);
@@ -442,16 +466,15 @@ export class BashRuntime {
 
   private async readSplitLog(record: RuntimeRecord): Promise<ExecResult> {
     return {
-      stdout: await this.readLog(record, LOG_TAIL_BYTES),
-      stderr: "",
+      stdout: await this.readLog(record, LOG_TAIL_BYTES, "stdout"),
+      stderr: await this.readLog(record, LOG_TAIL_BYTES, "stderr"),
       exit_code: record.exit_code ?? -1,
     };
   }
 
-  private async readLog(record: RuntimeRecord, maxBytes: number): Promise<string> {
+  private async readLog(record: RuntimeRecord, maxBytes: number, stream: "combined" | "stdout" | "stderr" = "combined"): Promise<string> {
     try {
-      const content = await readFile(record.log_path, "utf-8");
-      return content.slice(Math.max(0, content.length - maxBytes));
+      return await this.logStore.read(logPathsFromRecord(record), stream, maxBytes);
     } catch {
       return "";
     }
@@ -505,4 +528,12 @@ function compareBashRecordsForPanel(a: BashRecord, b: BashRecord): number {
 
 function durationSecs(record: BashRecord): number {
   return Math.max(0, ((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000);
+}
+
+function logPathsFromRecord(record: BashRecord): BashLogPaths {
+  return {
+    combined: record.log_path,
+    stdout: record.stdout_log_path,
+    stderr: record.stderr_log_path,
+  };
 }

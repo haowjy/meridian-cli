@@ -4,18 +4,22 @@ import type { ExtensionAPI, MessageRenderOptions, Theme } from "@earendil-works/
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
+import { openLogOverlay } from "../../shared/log_overlay";
 import {
   FULLSCREEN_OVERLAY_OPTIONS,
   openSelectablePanel,
-  openTextOverlay,
   type PanelCommandContext,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
-import { BashRuntime, type BashManageParams, type BashParams } from "./bash_runtime";
+import { BashRuntime, type BashListRow, type BashManageParams, type BashParams } from "./bash_runtime";
 
 const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
 const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in background";
+
+function isBashListRow(value: unknown): value is BashListRow {
+  return Boolean(value) && typeof value === "object" && typeof (value as { bash_id?: unknown }).bash_id === "string";
+}
 
 function formatToolResult(result: unknown): string {
   if (!result || typeof result !== "object") return String(result ?? "");
@@ -32,7 +36,7 @@ function formatToolResult(result: unknown): string {
   if (typeof obj.output === "string") return obj.output;
   if (typeof obj.message === "string") return obj.message;
 
-  if (Array.isArray(obj.rows)) return formatRows(obj.rows);
+  if (Array.isArray(obj.rows)) return formatRows(obj.rows.filter(isBashListRow));
 
   if (typeof obj.bash_id === "string" && typeof obj.status === "string") {
     return `${obj.bash_id}: ${obj.status}`;
@@ -41,43 +45,21 @@ function formatToolResult(result: unknown): string {
   return String(result);
 }
 
-function formatRows(rows: unknown[]): string {
-  const objects = rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object");
-  if (objects.length === 0) return "No managed bash tasks.";
+function formatRows(rows: BashListRow[]): string {
+  if (rows.length === 0) return "No managed bash tasks.";
   return renderTable(
     [
-      { header: "ID", width: 10, render: (row: Record<string, unknown>) => String(row.bash_id ?? "") },
-      { header: "STATE", width: 12, render: (row: Record<string, unknown>) => String(row.status ?? "") },
-      { header: "DUR", width: 8, render: (row: Record<string, unknown>) => formatDurationSecs(Number(row.duration_secs ?? 0)) },
-      { header: "COMMAND", width: 60, render: (row: Record<string, unknown>) => String(row.command ?? "") },
+      { header: "ID", width: 10, render: (row: BashListRow) => row.bash_id },
+      { header: "STATE", width: 12, render: (row: BashListRow) => row.status },
+      { header: "DUR", width: 8, render: (row: BashListRow) => formatDurationSecs(row.duration_secs) },
+      { header: "COMMAND", width: 60, render: (row: BashListRow) => row.command },
     ],
-    objects,
+    rows,
     100,
   ).join("\n");
 }
 
-type BashPanelRow = {
-  bash_id: string;
-  command: string;
-  cwd: string;
-  status: string;
-  is_background: boolean;
-  is_tracked: boolean;
-  exit_code: number | null;
-  duration_secs: number;
-  log_path: string;
-  stdout_log_path: string;
-  stderr_log_path: string;
-  log_bytes: number;
-};
-
-function toBashPanelRows(result: unknown): BashPanelRow[] {
-  const rows = (result as { rows?: unknown[] } | null)?.rows ?? [];
-  return rows.filter((row): row is BashPanelRow => {
-    const obj = row as Partial<BashPanelRow> | null;
-    return Boolean(obj) && typeof obj === "object" && typeof obj.bash_id === "string";
-  });
-}
+type BashPanelRow = BashListRow;
 
 function tailFile(filePath: string, maxBytes = 4096): string {
   try {
@@ -93,6 +75,14 @@ type BashLogStream = "combined" | "stdout" | "stderr";
 function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): string {
   const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
   return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
+}
+
+function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
+  return [
+    { id: "combined", label: "combined", loadText: async () => readInspectableLog(row, "combined") },
+    { id: "stdout", label: "stdout", loadText: async () => readInspectableLog(row, "stdout") },
+    { id: "stderr", label: "stderr", loadText: async () => readInspectableLog(row, "stderr") },
+  ];
 }
 
 function formatBashStatus(row: BashPanelRow, theme: Theme): string {
@@ -315,8 +305,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ps", {
     description: "List Meridian-managed bash tasks for this Pi session.",
     handler: async (_args, ctx) => {
-      const loadRows = async (): Promise<BashPanelRow[]> =>
-        toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
+      const loadRows = async (): Promise<BashPanelRow[]> => runtime.list(true);
 
       if (ctx.hasUI === false || !ctx.ui?.custom) {
         process.stdout.write(`${formatRows(await loadRows())}\n`);
@@ -334,11 +323,10 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
           emptyMessage: "No Meridian-managed bash tasks.",
           footer: "enter logs · j/k select · r refresh · q close",
           onEnter: async (row) => {
-            await openTextOverlay(ctx as PanelCommandContext, {
+            await openLogOverlay(ctx as PanelCommandContext, {
               title: `Bash log ${row.bash_id}`,
               initialFollow: row.status === "running",
-              showStreamFilter: true,
-              loadText: async (stream) => readInspectableLog(row, stream),
+              streams: bashLogStreams(row),
             });
           },
         },
@@ -360,23 +348,17 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const bashId = args.trim();
       const loadText = async (): Promise<string> => {
-        const rows = toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
-        const row = rows.find((candidate) => candidate.bash_id === bashId);
+        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
         if (row) return readInspectableLog(row);
         const result = await runtime.manage({ action: "output", bash_id: bashId });
-        return String((result as { output?: unknown }).output ?? formatToolResult(result));
+        return "output" in result ? result.output : formatToolResult(result);
       };
       if (ctx.hasUI !== false && ctx.ui?.custom) {
-        const rows = toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
-        const row = rows.find((candidate) => candidate.bash_id === bashId);
-        await openTextOverlay(ctx as PanelCommandContext, {
+        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
+        await openLogOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
           initialFollow: row?.status === "running",
-          showStreamFilter: true,
-          loadText: async (stream) => {
-            if (row) return readInspectableLog(row, stream);
-            return await loadText();
-          },
+          streams: row ? bashLogStreams(row) : [{ id: "combined", label: "combined", loadText }],
         });
         return;
       }

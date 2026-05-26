@@ -15,9 +15,9 @@ import {
 } from "../../shared/pi_state_paths";
 import type { BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
 import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
+import { openLogOverlay } from "../../shared/log_overlay";
 import {
   openSelectablePanel,
-  openTextOverlay,
   type PanelCommandContext,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
@@ -457,17 +457,23 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
         emptyMessage: "No correlated Meridian spawns.",
         footer: "enter logs · j/k select · r refresh · q close",
         onEnter: async (row) => {
-          await openTextOverlay(ctx as PanelCommandContext, {
+          await openLogOverlay(ctx as PanelCommandContext, {
             title: `Spawn log ${row.id}`,
             initialFollow: !isTerminalSpawnStatus(String(row.status ?? "")),
             refreshIntervalMs: 2000,
-            loadText: async () => {
-              const result = await runMeridianCommand(["session", "log", row.id], 15_000);
-              const text = (result.stdout || result.stderr).trimEnd();
-              if (text) return text;
-              const showResult = await runMeridianCommand(["spawn", "show", row.id], 15_000);
-              return (showResult.stdout || showResult.stderr).trimEnd() || `No output for ${row.id}`;
-            },
+            streams: [
+              {
+                id: "log",
+                label: "log",
+                loadText: async () => {
+                  const result = await runMeridianCommand(["session", "log", row.id], 15_000);
+                  const text = (result.stdout || result.stderr).trimEnd();
+                  if (text) return text;
+                  const showResult = await runMeridianCommand(["spawn", "show", row.id], 15_000);
+                  return (showResult.stdout || showResult.stderr).trimEnd() || `No output for ${row.id}`;
+                },
+              },
+            ],
           });
         },
       });

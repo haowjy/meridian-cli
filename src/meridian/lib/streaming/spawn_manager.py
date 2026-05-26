@@ -34,7 +34,6 @@ from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.control_socket import ControlSocketServer
-from meridian.lib.streaming.disk_watcher import PiDiskWatcher
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainAction,
@@ -49,6 +48,7 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
+from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
 from meridian.lib.streaming.types import InjectResult
 
 if TYPE_CHECKING:
@@ -806,31 +806,13 @@ class SpawnManager:
         pi_child_wave_timeout_followup_deadline: float | None = None
         is_pi_connection = receiver.harness_id == HarnessId.PI
         normalized_pi_session_role = (pi_session_role or "").strip().lower()
-        pi_parent_idle = False
-        pi_parent_idle_epoch: float | None = None
-        pi_disk_watcher = (
-            PiDiskWatcher(self._runtime_root, spawn_id)
-            if is_pi_connection and normalized_pi_session_role == "spawned"
-            else None
+        pi_quiescence_tracker = PiQuiescenceTracker.for_connection(
+            runtime_root=self._runtime_root,
+            spawn_id=spawn_id,
+            is_pi_connection=is_pi_connection,
+            session_role=normalized_pi_session_role,
         )
-        if pi_disk_watcher is not None:
-            await pi_disk_watcher.start()
-
-        def _no_pending_pi_disk_notifications() -> bool:
-            if pi_disk_watcher is None or pi_parent_idle_epoch is None:
-                return True
-            last_notification_ts = pi_disk_watcher.last_notification_ts()
-            return last_notification_ts is None or pi_parent_idle_epoch > last_notification_ts
-
-        def _is_pi_quiescent() -> bool:
-            return (
-                is_pi_connection
-                and normalized_pi_session_role == "spawned"
-                and pi_parent_idle
-                and (pi_disk_watcher is None or not pi_disk_watcher.has_pending_child_spawns())
-                and (pi_disk_watcher is None or not pi_disk_watcher.has_tracked_bash_bg())
-                and _no_pending_pi_disk_notifications()
-            )
+        await pi_quiescence_tracker.start()
 
         def _clear_child_wave_timer() -> None:
             nonlocal pi_child_wave_deadline_monotonic, pi_child_wave_started_monotonic
@@ -881,7 +863,9 @@ class SpawnManager:
         policy = drain_policy
         if policy is None:
             if is_pi_connection:
-                policy = PiRpcQuiescenceDrainPolicy(quiescence_check=_is_pi_quiescent)
+                policy = PiRpcQuiescenceDrainPolicy(
+                    quiescence_check=pi_quiescence_tracker.is_quiescent,
+                )
             else:
                 policy = SingleTurnDrainPolicy()
         pi_quiescence_enabled = is_pi_connection and isinstance(policy, PiRpcQuiescenceDrainPolicy)
@@ -919,7 +903,7 @@ class SpawnManager:
                             )
                             if (
                                 child_wave_deadline_monotonic is not None
-                                and pi_parent_idle
+                                and pi_quiescence_tracker.parent_idle
                                 and pi_subspawn_tracker.has_pending()
                             ):
                                 child_wave_remaining = child_wave_deadline_monotonic - now_monotonic
@@ -970,7 +954,7 @@ class SpawnManager:
                     if expired_notification is None:
                         wave_timed_out = (
                             pi_child_wave_deadline_monotonic is not None
-                            and pi_parent_idle
+                            and pi_quiescence_tracker.parent_idle
                             and pi_subspawn_tracker.has_pending()
                             and now_monotonic >= pi_child_wave_deadline_monotonic
                         )
@@ -1090,14 +1074,10 @@ class SpawnManager:
                                 pi_session_seen = True
                     transition = activity_transition(event)
                     if transition == "turn_active":
-                        pi_parent_idle = False
-                        pi_parent_idle_epoch = None
+                        pi_quiescence_tracker.mark_turn_active()
                         _clear_child_wave_timer()
                     elif transition == "idle":
-                        pi_parent_idle = True
-                        pi_parent_idle_epoch = time.time()
-                        if pi_disk_watcher is not None:
-                            await pi_disk_watcher.force_rescan()
+                        await pi_quiescence_tracker.mark_idle()
                         if (
                             child_wave_timeout_seconds is not None
                             and child_wave_timeout_seconds > 0
@@ -1224,7 +1204,7 @@ class SpawnManager:
                         _emit_pi_waiting_phases_if_needed()
                     if action.terminate:
                         if pi_quiescence_enabled and event_outcome.status == "succeeded":
-                            if _is_pi_quiescent():
+                            if pi_quiescence_tracker.is_quiescent():
                                 pi_quiescence_candidate = event_outcome
                                 pi_micro_drain_event_count = 0
                                 self._emit_pi_phase_event(
@@ -1252,7 +1232,7 @@ class SpawnManager:
                 if (
                     is_pi_connection
                     and pi_subspawn_tracker.notification_failure_error is not None
-                    and pi_parent_idle
+                    and pi_quiescence_tracker.parent_idle
                     and not pi_subspawn_tracker.has_pending()
                 ):
                     recorded_terminal_outcome = TerminalEventOutcome(
@@ -1289,7 +1269,7 @@ class SpawnManager:
                     and pi_quiescence_candidate is None
                     and recorded_terminal_outcome is None
                     and last_successful_pi_terminal is not None
-                    and _is_pi_quiescent()
+                    and pi_quiescence_tracker.is_quiescent()
                 ):
                     pi_quiescence_candidate = last_successful_pi_terminal
                     pi_micro_drain_event_count = 0
@@ -1306,8 +1286,7 @@ class SpawnManager:
             drain_error = exc
             raise
         finally:
-            if pi_disk_watcher is not None:
-                await pi_disk_watcher.stop()
+            await pi_quiescence_tracker.stop()
             if (
                 is_pi_connection
                 and pi_subspawn_tracker.has_pending()
