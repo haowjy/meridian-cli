@@ -159,6 +159,12 @@ export class BashRuntime {
     return { bash_id: record.bash_id };
   }
 
+  hasForegroundBash(): boolean {
+    return [...this.records.values()].some(
+      (record) => record.status === "running" && !record.is_background && record.foregroundFinish != null,
+    );
+  }
+
   async backgroundForeground(): Promise<{ ok: boolean; reason?: string; bash_id?: string }> {
     const foreground = [...this.records.values()]
       .filter((record) => record.status === "running" && !record.is_background && record.foregroundFinish != null)

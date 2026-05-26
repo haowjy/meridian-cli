@@ -48,13 +48,16 @@ export type PanelCommandContext = {
   ui?: PanelUi;
 };
 
-export const TEXT_OVERLAY_OPTIONS = {
+export const FULLSCREEN_OVERLAY_OPTIONS = {
   overlay: true,
   overlayOptions: {
     width: "100%",
     maxHeight: "100%",
+    anchor: "top-left",
   },
 };
+
+export const TEXT_OVERLAY_OPTIONS = FULLSCREEN_OVERLAY_OPTIONS;
 
 function decodeKittyPrintable(data: string): string | undefined {
   const csiU = data.match(/^\x1b\[(\d{1,8})u$/);
@@ -316,12 +319,15 @@ export class SelectablePanelComponent<Row> implements Component {
 export async function openSelectablePanel<Row>(
   ctx: PanelCommandContext,
   options: SelectablePanelOptions<Row>,
+  customOptions?: Record<string, unknown>,
 ): Promise<void> {
   if (!ctx.ui?.custom || ctx.hasUI === false) {
     return;
   }
-  await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
-    new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
+  await ctx.ui.custom<void>(
+    (tui, theme, _keybindings, done) =>
+      new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
+    customOptions,
   );
 }
 

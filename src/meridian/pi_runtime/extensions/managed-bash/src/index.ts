@@ -5,6 +5,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import {
+  FULLSCREEN_OVERLAY_OPTIONS,
   openSelectablePanel,
   openTextOverlay,
   type PanelCommandContext,
@@ -313,25 +314,29 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      await openSelectablePanel(ctx as PanelCommandContext, {
-        title: "Meridian /ps — managed bash",
-        columns: BASH_PANEL_COLUMNS,
-        loadRows,
-        getRowId: (row) => row.bash_id,
-        renderPreview: renderBashPreview,
-        emptyMessage: "No Meridian-managed bash tasks.",
-        footer: "enter logs · j/k select · r refresh · q close",
-        onEnter: async (row) => {
-          await openTextOverlay(ctx as PanelCommandContext, {
-            title: `Bash log ${row.bash_id}`,
-            footer: "r refresh · q close",
-            loadText: async () => {
-              const result = await runtime.manage({ action: "output", bash_id: row.bash_id });
-              return String((result as { output?: unknown }).output ?? formatToolResult(result));
-            },
-          });
+      await openSelectablePanel(
+        ctx as PanelCommandContext,
+        {
+          title: "Meridian /ps — managed bash",
+          columns: BASH_PANEL_COLUMNS,
+          loadRows,
+          getRowId: (row) => row.bash_id,
+          renderPreview: renderBashPreview,
+          emptyMessage: "No Meridian-managed bash tasks.",
+          footer: "enter logs · j/k select · r refresh · q close",
+          onEnter: async (row) => {
+            await openTextOverlay(ctx as PanelCommandContext, {
+              title: `Bash log ${row.bash_id}`,
+              footer: "r refresh · q close",
+              loadText: async () => {
+                const result = await runtime.manage({ action: "output", bash_id: row.bash_id });
+                return String((result as { output?: unknown }).output ?? formatToolResult(result));
+              },
+            });
+          },
         },
-      });
+        runtime.hasForegroundBash() ? FULLSCREEN_OVERLAY_OPTIONS : undefined,
+      );
     },
   });
 

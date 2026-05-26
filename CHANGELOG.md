@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `timeouts.pi_child_wave_timeout_seconds` and `timeouts.pi_task_ping_interval_seconds` in `meridian.toml` / env (`MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS`, `MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS`).
 
 ### Fixed
+- Pi `/ps` uses a full-screen covering overlay while a foreground `$` bash is still running, hiding Pi's underlying spinner redraw and reducing foreground-panel flicker.
 - Pi full-screen task panels no longer request a render from `invalidate()`, avoiding self-sustaining `/ps` flicker.
 - Pi `$` foreground bash no longer writes to Pi's closed foreground output stream after `/ps:b` backgrounds a still-chatty command.
 - Pi `$` foreground bash again shows the `/ps` / `/ps:b` hint and supports `/ps:b` / `/ps:background` promotion into managed background tracking.
