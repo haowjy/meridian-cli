@@ -13,6 +13,8 @@ export type BashRecord = {
   started_at_ms: number;
   ended_at_ms: number | null;
   log_path: string;
+  stdout_log_path: string;
+  stderr_log_path: string;
   log_bytes: number;
   timeout_min: number;
   originating_bash_id: string | null;

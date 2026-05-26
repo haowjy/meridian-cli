@@ -20,12 +20,15 @@ export type SelectablePanelOptions<Row> = {
   maxRows?: number;
 };
 
+export type TextStreamFilter = "combined" | "stdout" | "stderr";
+
 export type TextOverlayOptions = {
   title: string;
-  loadText: () => Promise<string>;
+  loadText: (streamFilter?: TextStreamFilter) => Promise<string>;
   footer?: string;
   initialFollow?: boolean;
   refreshIntervalMs?: number;
+  showStreamFilter?: boolean;
 };
 
 type PanelTui = {
@@ -120,6 +123,11 @@ function isBottom(data: string): boolean {
 function isFollowToggle(data: string): boolean {
   const ch = printableChar(data);
   return ch === "f" || ch === "F";
+}
+
+function isStreamToggle(data: string): boolean {
+  const ch = printableChar(data);
+  return ch === "s" || ch === "S";
 }
 
 function fitCell(value: string, width: number, align: "left" | "right" = "left"): string {
@@ -360,6 +368,7 @@ class TextOverlayComponent implements Component {
   private anchorEnd: number | null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private refreshInFlight = false;
+  private streamFilter: TextStreamFilter = "combined";
 
   constructor(
     private readonly tui: PanelTui,
@@ -403,6 +412,10 @@ class TextOverlayComponent implements Component {
       this.tui.requestRender();
       return;
     }
+    if (this.options.showStreamFilter === true && isStreamToggle(data)) {
+      this.cycleStreamFilter();
+      return;
+    }
     if (isUp(data)) {
       this.scrollBy(-1);
       return;
@@ -432,7 +445,7 @@ class TextOverlayComponent implements Component {
     for (const line of visible) lines.push(padLine(line, width, this.theme));
     lines.push(borderLine(width, "├", "─", "┤", this.theme));
     lines.push(padLine(this.renderStatus(start, end, textLines.length), width, this.theme));
-    lines.push(padLine(renderFooter(this.options.footer ?? "j/k scroll · g/G top/bot · f follow · r refresh · q close", this.theme), width, this.theme));
+    lines.push(padLine(renderFooter(this.options.footer ?? this.defaultFooter(), this.theme), width, this.theme));
     lines.push(borderLine(width, "╰", "─", "╯", this.theme));
     return lines;
   }
@@ -459,6 +472,13 @@ class TextOverlayComponent implements Component {
     this.tui.requestRender();
   }
 
+  private cycleStreamFilter(): void {
+    const order: TextStreamFilter[] = ["combined", "stdout", "stderr"];
+    this.streamFilter = order[(order.indexOf(this.streamFilter) + 1) % order.length] ?? "combined";
+    this.anchorEnd = null;
+    void this.refresh();
+  }
+
   private textLines(): string[] {
     const lines = this.text.split(/\r?\n/);
     if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
@@ -477,17 +497,23 @@ class TextOverlayComponent implements Component {
   }
 
   private renderStatus(start: number, end: number, total: number): string {
-    if (this.follow) return this.theme.fg("accent", "following");
-    if (total <= 0) return this.theme.fg("dim", "empty");
+    const stream = this.options.showStreamFilter === true ? `${this.streamFilter}  ` : "";
+    if (this.follow) return `${this.theme.fg("dim", stream)}${this.theme.fg("accent", "following")}`;
+    if (total <= 0) return `${this.theme.fg("dim", stream)}${this.theme.fg("dim", "empty")}`;
     const percent = Math.round((end / total) * 100);
-    return this.theme.fg("dim", `${percent}%  L${Math.min(start + 1, total)}-${end}/${total}`);
+    return this.theme.fg("dim", `${stream}${percent}%  L${Math.min(start + 1, total)}-${end}/${total}`);
+  }
+
+  private defaultFooter(): string {
+    const stream = this.options.showStreamFilter === true ? "s stream · " : "";
+    return `j/k scroll · g/G top/bot · ${stream}f follow · r refresh · q close`;
   }
 
   private async refresh(): Promise<void> {
     if (this.refreshInFlight) return;
     this.refreshInFlight = true;
     try {
-      this.text = await this.options.loadText();
+      this.text = await this.options.loadText(this.streamFilter);
       if (!this.follow) {
         const total = this.textLines().length;
         const visible = this.visibleTextLines();

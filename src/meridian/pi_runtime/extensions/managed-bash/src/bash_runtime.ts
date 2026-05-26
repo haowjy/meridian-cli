@@ -247,7 +247,13 @@ export class BashRuntime {
     const logsDir = resolveBashLogsDir(this.spawnId);
     await mkdir(logsDir, { recursive: true });
     const logPath = path.join(logsDir, `${bashId}.log`);
-    await writeFile(logPath, "", "utf-8");
+    const stdoutLogPath = path.join(logsDir, `${bashId}.stdout.log`);
+    const stderrLogPath = path.join(logsDir, `${bashId}.stderr.log`);
+    await Promise.all([
+      writeFile(logPath, "", "utf-8"),
+      writeFile(stdoutLogPath, "", "utf-8"),
+      writeFile(stderrLogPath, "", "utf-8"),
+    ]);
 
     const record: RuntimeRecord = {
       bash_id: bashId,
@@ -261,6 +267,8 @@ export class BashRuntime {
       started_at_ms: Date.now(),
       ended_at_ms: null,
       log_path: logPath,
+      stdout_log_path: stdoutLogPath,
+      stderr_log_path: stderrLogPath,
       log_bytes: 0,
       timeout_min: timeoutMin,
       originating_bash_id: process.env.MERIDIAN_PI_BASH_ID || null,
@@ -281,7 +289,7 @@ export class BashRuntime {
     this.attachOutput(record, child, onData);
 
     child.once("error", async (error) => {
-      await this.appendLog(record, `\n[failed to start command: ${error.message}]\n`);
+      await this.appendLog(record, `\n[failed to start command: ${error.message}]\n`, "stderr");
       await this.markTerminal(record, "killed", -1);
     });
     child.once("close", async (code) => {
@@ -297,17 +305,20 @@ export class BashRuntime {
     child.stdout?.on("data", (chunk: string | Buffer) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
       onData?.(buffer);
-      void this.appendLog(record, buffer.toString("utf-8"));
+      void this.appendLog(record, buffer.toString("utf-8"), "stdout");
     });
     child.stderr?.on("data", (chunk: string | Buffer) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf-8");
       onData?.(buffer);
-      void this.appendLog(record, buffer.toString("utf-8"));
+      void this.appendLog(record, buffer.toString("utf-8"), "stderr");
     });
   }
 
-  private async appendLog(record: RuntimeRecord, chunk: string): Promise<void> {
-    await writeFile(record.log_path, chunk, { encoding: "utf-8", flag: "a" });
+  private async appendLog(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
+    await Promise.all([
+      writeFile(record.log_path, chunk, { encoding: "utf-8", flag: "a" }),
+      writeFile(stream === "stdout" ? record.stdout_log_path : record.stderr_log_path, chunk, { encoding: "utf-8", flag: "a" }),
+    ]);
     try {
       record.log_bytes = (await stat(record.log_path)).size;
     } catch {
@@ -399,6 +410,8 @@ export class BashRuntime {
         exit_code: record.exit_code,
         duration_secs: durationSecs(record),
         log_path: record.log_path,
+        stdout_log_path: record.stdout_log_path,
+        stderr_log_path: record.stderr_log_path,
         log_bytes: record.log_bytes,
         timeout_min: record.timeout_min,
         originating_bash_id: record.originating_bash_id,

@@ -66,6 +66,8 @@ type BashPanelRow = {
   exit_code: number | null;
   duration_secs: number;
   log_path: string;
+  stdout_log_path: string;
+  stderr_log_path: string;
   log_bytes: number;
 };
 
@@ -86,7 +88,10 @@ function tailFile(filePath: string, maxBytes = 4096): string {
   }
 }
 
-function readInspectableLog(filePath: string): string {
+type BashLogStream = "combined" | "stdout" | "stderr";
+
+function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): string {
+  const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
   return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
 }
 
@@ -332,7 +337,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
             await openTextOverlay(ctx as PanelCommandContext, {
               title: `Bash log ${row.bash_id}`,
               initialFollow: row.status === "running",
-              loadText: async () => readInspectableLog(row.log_path),
+              showStreamFilter: true,
+              loadText: async (stream) => readInspectableLog(row, stream),
             });
           },
         },
@@ -356,7 +362,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
       const loadText = async (): Promise<string> => {
         const rows = toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
         const row = rows.find((candidate) => candidate.bash_id === bashId);
-        if (row) return readInspectableLog(row.log_path);
+        if (row) return readInspectableLog(row);
         const result = await runtime.manage({ action: "output", bash_id: bashId });
         return String((result as { output?: unknown }).output ?? formatToolResult(result));
       };
@@ -366,7 +372,11 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         await openTextOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
           initialFollow: row?.status === "running",
-          loadText,
+          showStreamFilter: true,
+          loadText: async (stream) => {
+            if (row) return readInspectableLog(row, stream);
+            return await loadText();
+          },
         });
         return;
       }
