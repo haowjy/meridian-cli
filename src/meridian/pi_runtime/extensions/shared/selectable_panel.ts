@@ -24,6 +24,8 @@ export type TextOverlayOptions = {
   title: string;
   loadText: () => Promise<string>;
   footer?: string;
+  initialFollow?: boolean;
+  refreshIntervalMs?: number;
 };
 
 type PanelTui = {
@@ -57,7 +59,14 @@ export const FULLSCREEN_OVERLAY_OPTIONS = {
   },
 };
 
-export const TEXT_OVERLAY_OPTIONS = FULLSCREEN_OVERLAY_OPTIONS;
+export const TEXT_OVERLAY_OPTIONS = {
+  overlay: true,
+  overlayOptions: {
+    width: "90%",
+    maxHeight: "80%",
+    anchor: "center",
+  },
+};
 
 function decodeKittyPrintable(data: string): string | undefined {
   const csiU = data.match(/^\x1b\[(\d{1,8})u$/);
@@ -98,6 +107,19 @@ function isUp(data: string): boolean {
 function isDown(data: string): boolean {
   const ch = printableChar(data);
   return data === "\x1b[B" || ch === "j" || ch === "J";
+}
+
+function isTop(data: string): boolean {
+  return printableChar(data) === "g";
+}
+
+function isBottom(data: string): boolean {
+  return printableChar(data) === "G";
+}
+
+function isFollowToggle(data: string): boolean {
+  const ch = printableChar(data);
+  return ch === "f" || ch === "F";
 }
 
 function fitCell(value: string, width: number, align: "left" | "right" = "left"): string {
@@ -334,6 +356,10 @@ export async function openSelectablePanel<Row>(
 class TextOverlayComponent implements Component {
   private text = "Loading…";
   private closed = false;
+  private follow: boolean;
+  private anchorEnd: number | null;
+  private refreshTimer: NodeJS.Timeout | null = null;
+  private refreshInFlight = false;
 
   constructor(
     private readonly tui: PanelTui,
@@ -341,42 +367,136 @@ class TextOverlayComponent implements Component {
     private readonly options: TextOverlayOptions,
     private readonly done: () => void,
   ) {
+    this.follow = options.initialFollow === true;
+    this.anchorEnd = null;
     void this.refresh();
+    this.refreshTimer = setInterval(() => {
+      if (this.follow) void this.refresh();
+    }, options.refreshIntervalMs ?? 1000);
   }
 
   handleInput(data: string): void {
     if (this.closed) return;
     if (isQuit(data)) {
-      this.closed = true;
-      this.done();
+      this.close();
       return;
     }
-    if (isRefresh(data)) void this.refresh();
+    if (isRefresh(data)) {
+      void this.refresh();
+      return;
+    }
+    if (isTop(data)) {
+      this.follow = false;
+      this.anchorEnd = Math.min(this.visibleTextLines(), this.textLines().length);
+      this.tui.requestRender();
+      return;
+    }
+    if (isBottom(data)) {
+      this.follow = false;
+      this.anchorEnd = this.textLines().length;
+      this.tui.requestRender();
+      return;
+    }
+    if (isFollowToggle(data)) {
+      this.follow = !this.follow;
+      this.anchorEnd = this.follow ? null : this.textLines().length;
+      this.tui.requestRender();
+      return;
+    }
+    if (isUp(data)) {
+      this.scrollBy(-1);
+      return;
+    }
+    if (isDown(data)) {
+      this.scrollBy(1);
+    }
   }
 
   invalidate(): void {
     // No cached render state to clear.
   }
 
+  dispose(): void {
+    this.clearTimer();
+  }
+
   render(width: number): string[] {
-    const terminalRows = this.tui.terminal?.rows ?? 24;
-    const maxTextLines = Math.max(1, terminalRows - 4);
-    const rawLines = this.text.split(/\r?\n/);
+    const textLines = this.textLines();
+    const maxTextLines = this.visibleTextLines();
+    const end = this.resolveEnd(textLines.length, maxTextLines);
+    const start = Math.max(0, end - maxTextLines);
+    const visible = textLines.slice(start, end);
+    while (visible.length < maxTextLines) visible.push("");
+
     const lines = [titleLine(this.options.title, width, this.theme)];
-    for (const line of rawLines.slice(-maxTextLines)) {
-      lines.push(padLine(line, width, this.theme));
-    }
+    for (const line of visible) lines.push(padLine(line, width, this.theme));
     lines.push(borderLine(width, "├", "─", "┤", this.theme));
-    lines.push(padLine(this.theme.fg("dim", this.options.footer ?? "r refresh · q close"), width, this.theme));
+    lines.push(padLine(this.renderStatus(start, end, textLines.length), width, this.theme));
+    lines.push(padLine(renderFooter(this.options.footer ?? "j/k scroll · g/G top/bot · f follow · r refresh · q close", this.theme), width, this.theme));
     lines.push(borderLine(width, "╰", "─", "╯", this.theme));
     return lines;
   }
 
+  private close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.clearTimer();
+    this.done();
+  }
+
+  private clearTimer(): void {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
+  }
+
+  private scrollBy(delta: number): void {
+    const total = this.textLines().length;
+    const visible = this.visibleTextLines();
+    const currentEnd = this.anchorEnd ?? total;
+    const minEnd = Math.min(visible, total);
+    this.follow = false;
+    this.anchorEnd = Math.max(minEnd, Math.min(total, currentEnd + delta));
+    this.tui.requestRender();
+  }
+
+  private textLines(): string[] {
+    const lines = this.text.split(/\r?\n/);
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    return lines.length > 0 ? lines : [""];
+  }
+
+  private visibleTextLines(): number {
+    const terminalRows = this.tui.terminal?.rows ?? 24;
+    return Math.max(1, Math.floor(terminalRows * 0.8) - 5);
+  }
+
+  private resolveEnd(total: number, visible: number): number {
+    if (this.follow) return total;
+    const minEnd = Math.min(visible, total);
+    return Math.max(minEnd, Math.min(total, this.anchorEnd ?? total));
+  }
+
+  private renderStatus(start: number, end: number, total: number): string {
+    if (this.follow) return this.theme.fg("accent", "following");
+    if (total <= 0) return this.theme.fg("dim", "empty");
+    const percent = Math.round((end / total) * 100);
+    return this.theme.fg("dim", `${percent}%  L${Math.min(start + 1, total)}-${end}/${total}`);
+  }
+
   private async refresh(): Promise<void> {
+    if (this.refreshInFlight) return;
+    this.refreshInFlight = true;
     try {
       this.text = await this.options.loadText();
+      if (!this.follow) {
+        const total = this.textLines().length;
+        const visible = this.visibleTextLines();
+        this.anchorEnd = Math.max(Math.min(visible, total), Math.min(total, this.anchorEnd ?? total));
+      }
     } catch (error) {
       this.text = `Failed to load text: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      this.refreshInFlight = false;
     }
     if (!this.closed) this.tui.requestRender();
   }

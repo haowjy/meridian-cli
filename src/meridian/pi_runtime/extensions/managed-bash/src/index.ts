@@ -86,6 +86,10 @@ function tailFile(filePath: string, maxBytes = 4096): string {
   }
 }
 
+function readInspectableLog(filePath: string): string {
+  return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
+}
+
 function formatBashStatus(row: BashPanelRow, theme: Theme): string {
   const dim = (value: string) => theme.fg("dim", value);
   const success = (value: string) => theme.fg("success", value);
@@ -327,11 +331,8 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
           onEnter: async (row) => {
             await openTextOverlay(ctx as PanelCommandContext, {
               title: `Bash log ${row.bash_id}`,
-              footer: "r refresh · q close",
-              loadText: async () => {
-                const result = await runtime.manage({ action: "output", bash_id: row.bash_id });
-                return String((result as { output?: unknown }).output ?? formatToolResult(result));
-              },
+              initialFollow: row.status === "running",
+              loadText: async () => readInspectableLog(row.log_path),
             });
           },
         },
@@ -353,12 +354,18 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const bashId = args.trim();
       const loadText = async (): Promise<string> => {
+        const rows = toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
+        const row = rows.find((candidate) => candidate.bash_id === bashId);
+        if (row) return readInspectableLog(row.log_path);
         const result = await runtime.manage({ action: "output", bash_id: bashId });
         return String((result as { output?: unknown }).output ?? formatToolResult(result));
       };
       if (ctx.hasUI !== false && ctx.ui?.custom) {
+        const rows = toBashPanelRows(await runtime.manage({ action: "list", include_completed: true }));
+        const row = rows.find((candidate) => candidate.bash_id === bashId);
         await openTextOverlay(ctx as PanelCommandContext, {
           title: `Bash log ${bashId}`,
+          initialFollow: row?.status === "running",
           loadText,
         });
         return;

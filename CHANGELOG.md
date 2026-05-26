@@ -5,6 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- Pi `/ps` and `/mspawn` row inspection now opens a centered log overlay with follow, scroll, top/bottom, and refresh controls instead of replacing the whole panel.
 - Pi `/ps` and `/mspawn` now share a full-screen selectable UI with row preview, colored key hints, `j/k` navigation, `enter` action, and `r` refresh.
 - Pi `/ps` now sorts running bash tasks before completed tasks.
 

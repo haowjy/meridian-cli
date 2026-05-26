@@ -455,14 +455,18 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
         getRowId: (row) => row.id,
         renderPreview: renderSpawnPreview,
         emptyMessage: "No correlated Meridian spawns.",
-        footer: "enter show · j/k select · r refresh · q close",
+        footer: "enter logs · j/k select · r refresh · q close",
         onEnter: async (row) => {
           await openTextOverlay(ctx as PanelCommandContext, {
-            title: `Spawn ${row.id}`,
-            footer: "r refresh · q close",
+            title: `Spawn log ${row.id}`,
+            initialFollow: !isTerminalSpawnStatus(String(row.status ?? "")),
+            refreshIntervalMs: 2000,
             loadText: async () => {
-              const result = await runMeridianCommand(["spawn", "show", row.id], 15_000);
-              return (result.stdout || result.stderr).trimEnd() || `No output for ${row.id}`;
+              const result = await runMeridianCommand(["session", "log", row.id], 15_000);
+              const text = (result.stdout || result.stderr).trimEnd();
+              if (text) return text;
+              const showResult = await runMeridianCommand(["spawn", "show", row.id], 15_000);
+              return (showResult.stdout || showResult.stderr).trimEnd() || `No output for ${row.id}`;
             },
           });
         },
