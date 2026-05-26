@@ -247,7 +247,7 @@ class LogOverlayComponent implements Component {
 
   private defaultFooter(): string {
     const stream = this.hasMultipleStreams() ? "s stream · " : "";
-    return `j/k scroll · g/G top/bot · ${stream}f follow · r refresh · q close`;
+    return `${stream}j/k scroll · g/G top/bot · f follow · r refresh · q close`;
   }
 
   private async refresh(): Promise<void> {
