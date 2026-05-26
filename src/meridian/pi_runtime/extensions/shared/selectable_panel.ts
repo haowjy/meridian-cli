@@ -254,7 +254,9 @@ export class SelectablePanelComponent<Row> implements Component {
   }
 
   invalidate(): void {
-    this.tui.requestRender();
+    // Pi calls invalidate to let a component drop cached render state.
+    // Requesting another render from here creates a self-sustaining render loop
+    // in full-screen custom views, visible as panel flicker.
   }
 
   render(width: number): string[] {
@@ -347,7 +349,7 @@ class TextOverlayComponent implements Component {
   }
 
   invalidate(): void {
-    this.tui.requestRender();
+    // No cached render state to clear.
   }
 
   render(width: number): string[] {
