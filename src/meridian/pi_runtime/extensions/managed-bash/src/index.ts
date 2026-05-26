@@ -330,7 +330,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
             });
           },
         },
-        runtime.hasForegroundBash() ? FULLSCREEN_OVERLAY_OPTIONS : undefined,
+        FULLSCREEN_OVERLAY_OPTIONS,
       );
     },
   });
