@@ -13,7 +13,7 @@ Meridian is a coordination layer — it needs at least one harness installed to 
 
 **Claude Code** is the most mature primary-session harness. Codex also supports managed primary TUI passthrough, including hidden instruction routing and managed session tracking. See [codex-tui-passthrough.md](codex-tui-passthrough.md).
 
-**Cursor** runs as a subprocess harness via `cursor agent`. Models are checked at spawn time — run `meridian mars models list` to confirm which cursor models show as available on your installation.
+**Cursor** runs as a subprocess harness via `cursor agent`. Models are checked at spawn time — run `meridian mars models list --live` to confirm which cursor models are runnable on your installation.
 
 **Platform**: macOS, Linux, Windows, WSL.
 
@@ -114,7 +114,8 @@ This links the mars-compiled output into the target harness directory so skills 
 
 ```bash
 meridian config show   # confirm resolved config
-meridian mars models list   # confirm available models
+meridian mars models list   # confirm model catalog inventory
+meridian mars models list --live   # confirm runnable models
 meridian doctor        # check harness connectivity
 ```
 

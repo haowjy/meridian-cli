@@ -469,9 +469,16 @@ When `source = "git"`, Meridian clones the remote into a local cache and resolve
 
 ## Model Catalog
 
-`meridian mars models list` shows resolved model aliases. Use `--all` to include
-all alias candidates, `--unavailable` to include unavailable routes, or
-`--catalog` for the raw models.dev cache.
+`meridian mars models list` shows the static alias/catalog inventory for the
+current project. Use `--all` to include all alias candidates or `--catalog` for
+the raw models.dev cache.
+
+Use `meridian mars models list --live` when you need routed availability,
+selected harnesses, and runnable paths. In live mode, `--unavailable` includes
+unavailable routes.
+
+Use `meridian mars models resolve ALIAS --json` for the authoritative mapping a
+spawn will use in the current project and local config.
 
 Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) auto-resolve to the latest model per family. The default list filters aggressively:
 
@@ -482,7 +489,10 @@ Builtin aliases (`opus`, `sonnet`, `haiku`, `codex`, `gpt`, `gemini`) auto-resol
 
 Use `meridian mars models refresh` to force a cache refresh from the models.dev catalog.
 
-Cursor models appear as `runnable` when the `cursor` binary is installed and the harness probe succeeds. If `cursor` is not on `PATH`, cursor models show as `unavailable`. Run `meridian doctor` to check harness status.
+In `models list --live` output, Cursor models appear as `runnable` when the
+`cursor` binary is installed and the harness probe succeeds. If `cursor` is not
+on `PATH`, Cursor routes show as `unavailable`. Run `meridian doctor` to check
+harness status.
 
 ## Cursor Harness
 

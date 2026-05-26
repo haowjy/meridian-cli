@@ -39,11 +39,13 @@ Then confirm with `meridian doctor`.
 
 ## Model routes to wrong harness
 
-Harness routing is determined by model prefix patterns. Check what's resolved:
+Harness routing is determined by model aliases, effective config, and runtime
+harness evidence. Check what resolves:
 
 ```bash
-meridian mars models list # see available models and their harnesses
-meridian config show      # see harness defaults and overrides
+meridian mars models resolve MODEL --json # inspect model/harness resolution
+meridian mars models list --live          # see runnable models and harnesses
+meridian config show                      # see harness defaults and overrides
 ```
 
 To force a specific harness for a spawn, use `--harness`:

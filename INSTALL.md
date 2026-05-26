@@ -107,9 +107,11 @@ Run:
 meridian doctor
 meridian mars sync
 meridian mars models list
+meridian mars models list --live
 ```
 
 Notes:
-- `meridian mars models list` may require provider API keys.
+- `meridian mars models list` is a lightweight static catalog check.
+- `meridian mars models list --live` checks runnable harness routes and may require provider credentials or installed harness CLIs.
 - `meridian mars sync` should complete without package resolution errors.
 - Report any failed checks and propose next concrete fix steps.
