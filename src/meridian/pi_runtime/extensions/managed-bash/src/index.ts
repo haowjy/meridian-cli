@@ -6,8 +6,7 @@ import { Type } from "typebox";
 
 import { openLogOverlay } from "../../shared/log_overlay";
 import {
-  FULLSCREEN_OVERLAY_OPTIONS,
-  openSelectablePanel,
+  openTaskPanel,
   type PanelCommandContext,
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
@@ -312,26 +311,22 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      await openSelectablePanel(
-        ctx as PanelCommandContext,
-        {
-          title: "Meridian /ps — managed bash",
-          columns: BASH_PANEL_COLUMNS,
-          loadRows,
-          getRowId: (row) => row.bash_id,
-          renderPreview: renderBashPreview,
-          emptyMessage: "No Meridian-managed bash tasks.",
-          footer: "enter logs · j/k select · r refresh · q close",
-          onEnter: async (row) => {
-            await openLogOverlay(ctx as PanelCommandContext, {
-              title: `Bash log ${row.bash_id}`,
-              initialFollow: row.status === "running",
-              streams: bashLogStreams(row),
-            });
-          },
+      await openTaskPanel(ctx as PanelCommandContext, {
+        title: "Meridian /ps — managed bash",
+        columns: BASH_PANEL_COLUMNS,
+        loadRows,
+        getRowId: (row) => row.bash_id,
+        renderPreview: renderBashPreview,
+        emptyMessage: "No Meridian-managed bash tasks.",
+        footer: "enter logs · j/k select · r refresh · q close",
+        onEnter: async (row) => {
+          await openLogOverlay(ctx as PanelCommandContext, {
+            title: `Bash log ${row.bash_id}`,
+            initialFollow: row.status === "running",
+            streams: bashLogStreams(row),
+          });
         },
-        FULLSCREEN_OVERLAY_OPTIONS,
-      );
+      });
     },
   });
 

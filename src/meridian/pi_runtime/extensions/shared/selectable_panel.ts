@@ -42,7 +42,7 @@ export type PanelCommandContext = {
   ui?: PanelUi;
 };
 
-export const FULLSCREEN_OVERLAY_OPTIONS = {
+const TASK_PANEL_CUSTOM_OPTIONS = {
   overlay: true,
   overlayOptions: {
     width: "100%",
@@ -321,4 +321,11 @@ export async function openSelectablePanel<Row>(
       new SelectablePanelComponent(tui, theme, options, () => done(undefined)),
     customOptions,
   );
+}
+
+export async function openTaskPanel<Row>(
+  ctx: PanelCommandContext,
+  options: SelectablePanelOptions<Row>,
+): Promise<void> {
+  await openSelectablePanel(ctx, options, TASK_PANEL_CUSTOM_OPTIONS);
 }

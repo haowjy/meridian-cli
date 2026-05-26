@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
-import { renderSelectablePanel, type SelectablePanelOptions } from "./selectable_panel";
+import { openTaskPanel, renderSelectablePanel, type PanelCommandContext, type SelectablePanelOptions } from "./selectable_panel";
 
 type Row = { id: string; status: string; command: string };
 
@@ -27,6 +27,31 @@ const options: SelectablePanelOptions<Row> = {
   renderPreview: (row) => [`preview ${row.id}`],
   footer: "enter logs · j/k select · r refresh · q close",
 };
+
+describe("openTaskPanel", () => {
+  it("opens task panels as full-screen covering overlays", async () => {
+    let receivedOptions: Record<string, unknown> | undefined;
+    const ctx: PanelCommandContext = {
+      ui: {
+        custom: async (_factory, options) => {
+          receivedOptions = options;
+          return undefined;
+        },
+      },
+    };
+
+    await openTaskPanel(ctx, options);
+
+    expect(receivedOptions).toEqual({
+      overlay: true,
+      overlayOptions: {
+        width: "100%",
+        maxHeight: "100%",
+        anchor: "top-left",
+      },
+    });
+  });
+});
 
 describe("renderSelectablePanel", () => {
   it("renders shared title, selected row, preview, and footer", () => {
