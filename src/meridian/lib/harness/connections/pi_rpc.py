@@ -609,7 +609,8 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
         normalized_type = event_type.strip()
         if normalized_type.startswith(PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES):
             logger.warning(
-                "Ignoring Pi lifecycle event on stdout; lifecycle sidecar is authoritative: %s",
+                "Ignoring Pi lifecycle event on stdout; "
+                "disk-backed task state is authoritative: %s",
                 normalized_type,
             )
             return None

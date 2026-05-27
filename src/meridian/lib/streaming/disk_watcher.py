@@ -30,6 +30,7 @@ class PiDiskWatcher:
         self._bash_records_path = self._bash_dir / "bash-records.json"
         self._notification_marker_path = self._bash_dir / "last-notification.json"
         self._pending_child_spawns = False
+        self._pending_child_spawn_count = 0
         self._tracked_bash_bg = False
         self._last_notification_ts: float | None = None
         self._tasks: list[asyncio.Task[None]] = []
@@ -63,12 +64,16 @@ class PiDiskWatcher:
     def _refresh_cached_state(self, *, discover: bool = False) -> None:
         if discover:
             self._discover_child_spawns()
-        self._pending_child_spawns = self._scan_pending_child_spawns()
+        self._pending_child_spawn_count = self._scan_pending_child_spawn_count()
+        self._pending_child_spawns = self._pending_child_spawn_count > 0
         self._tracked_bash_bg = self._scan_tracked_bash_bg()
         self._last_notification_ts = self._read_last_notification_ts()
 
     def has_pending_child_spawns(self) -> bool:
         return self._pending_child_spawns
+
+    def pending_child_spawn_count(self) -> int:
+        return self._pending_child_spawn_count
 
     def has_tracked_bash_bg(self) -> bool:
         return self._tracked_bash_bg
@@ -141,7 +146,8 @@ class PiDiskWatcher:
                     self._watch_child_spawn_dir(spawn_id, child)
                 )
 
-    def _scan_pending_child_spawns(self) -> bool:
+    def _scan_pending_child_spawn_count(self) -> int:
+        count = 0
         for spawn_id in list(self._child_spawn_ids):
             state_path = self._spawns_dir / spawn_id / "state.json"
             data = _read_json_object(state_path)
@@ -150,8 +156,8 @@ class PiDiskWatcher:
                 continue
             status = data.get("status")
             if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
-                return True
-        return False
+                count += 1
+        return count
 
     def _scan_tracked_bash_bg(self) -> bool:
         data = _read_json_object(self._bash_records_path)

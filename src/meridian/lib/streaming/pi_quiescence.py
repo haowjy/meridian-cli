@@ -62,6 +62,14 @@ class PiQuiescenceTracker:
         if self._disk_watcher is not None:
             await self._disk_watcher.force_rescan()
 
+    def has_pending_child_spawns(self) -> bool:
+        return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())
+
+    def pending_child_spawn_count(self) -> int:
+        if self._disk_watcher is None:
+            return 0
+        return self._disk_watcher.pending_child_spawn_count()
+
     def is_quiescent(self) -> bool:
         if not self.enabled or not self._parent_idle:
             return False

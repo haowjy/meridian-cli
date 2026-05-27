@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.pi import PiAdapter
-from meridian.lib.launch.constants import PI_LIFECYCLE_EVENTS_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.process import runner as runner_module
 from meridian.lib.launch.process.ports import (
@@ -95,12 +94,7 @@ def test_execute_primary_process_for_pi_uses_native_blackbox_path(
     assert on_running_pids == [4242]
     expected_env = {"MERIDIAN_PI_SESSION_ROLE": "primary"}
     expected_env[PRIMARY_STDERR_LOG_PATH_ENV] = str((tmp_path / "logs") / "stderr.log")
-    expected_env["MERIDIAN_PI_LIFECYCLE_EVENT_FILE"] = str(
-        (tmp_path / "logs") / PI_LIFECYCLE_EVENTS_FILENAME
-    )
-    assert capture_calls == [
-        (("pi",), tmp_path, expected_env, None)
-    ]
+    assert capture_calls == [(("pi",), tmp_path, expected_env, None)]
 
 
 def test_write_native_primary_metadata_redacts_secret_argv(tmp_path: Path) -> None:

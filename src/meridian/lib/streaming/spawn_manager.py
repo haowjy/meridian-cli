@@ -819,12 +819,29 @@ class SpawnManager:
             pi_child_wave_deadline_monotonic = None
             pi_child_wave_started_monotonic = None
 
+        def _has_pending_pi_children() -> bool:
+            return (
+                pi_subspawn_tracker.has_pending()
+                or pi_quiescence_tracker.has_pending_child_spawns()
+            )
+
+        def _pending_pi_child_count() -> int:
+            lifecycle_count = pi_subspawn_tracker.active_tracked_count()
+            return lifecycle_count or pi_quiescence_tracker.pending_child_spawn_count()
+
+        def _is_pi_quiescent() -> bool:
+            return (
+                pi_quiescence_tracker.is_quiescent()
+                and not pi_subspawn_tracker.has_pending()
+                and not pi_subspawn_tracker.has_pending_notifications()
+            )
+
         def _emit_pi_waiting_phases_if_needed() -> None:
             nonlocal pi_waiting_child_count, pi_waiting_notification_count
             if not pi_quiescence_enabled:
                 return
-            waiting_for_children = pi_subspawn_tracker.has_pending()
-            child_count = pi_subspawn_tracker.active_tracked_count()
+            waiting_for_children = _has_pending_pi_children()
+            child_count = _pending_pi_child_count()
             if waiting_for_children:
                 if child_count != pi_waiting_child_count:
                     self._emit_pi_phase_event(
@@ -870,6 +887,7 @@ class SpawnManager:
                 policy = SingleTurnDrainPolicy()
         pi_quiescence_enabled = is_pi_connection and isinstance(policy, PiRpcQuiescenceDrainPolicy)
         events_iter = receiver.events().__aiter__()
+        pending_event_task: asyncio.Future[HarnessEvent] | None = None
         if is_pi_connection:
             self._emit_pi_phase_event(
                 spawn_id,
@@ -904,7 +922,7 @@ class SpawnManager:
                             if (
                                 child_wave_deadline_monotonic is not None
                                 and pi_quiescence_tracker.parent_idle
-                                and pi_subspawn_tracker.has_pending()
+                                and _has_pending_pi_children()
                             ):
                                 child_wave_remaining = child_wave_deadline_monotonic - now_monotonic
                             if child_wave_remaining is not None:
@@ -933,11 +951,21 @@ class SpawnManager:
                                     next_timeout = bounded_followup_remaining
                                 else:
                                     next_timeout = min(next_timeout, bounded_followup_remaining)
+                    if pending_event_task is None:
+                        pending_event_task = asyncio.ensure_future(anext(events_iter))
+                        # Give already-buffered/in-memory event iterators one loop tick before
+                        # applying tiny policy timeouts such as Pi micro-drain.
+                        await asyncio.sleep(0)
                     if next_timeout is not None:
-                        event = await asyncio.wait_for(anext(events_iter), timeout=next_timeout)
+                        event = await asyncio.wait_for(
+                            asyncio.shield(pending_event_task),
+                            timeout=next_timeout,
+                        )
                     else:
-                        event = await anext(events_iter)
+                        event = await pending_event_task
+                    pending_event_task = None
                 except StopAsyncIteration:
+                    pending_event_task = None
                     if pi_quiescence_enabled and pi_quiescence_candidate is not None:
                         recorded_terminal_outcome = pi_quiescence_candidate
                     break
@@ -955,7 +983,7 @@ class SpawnManager:
                         wave_timed_out = (
                             pi_child_wave_deadline_monotonic is not None
                             and pi_quiescence_tracker.parent_idle
-                            and pi_subspawn_tracker.has_pending()
+                            and _has_pending_pi_children()
                             and now_monotonic >= pi_child_wave_deadline_monotonic
                         )
                         if wave_timed_out:
@@ -967,6 +995,7 @@ class SpawnManager:
                                 )
                             tracked_count = (
                                 pi_subspawn_tracker.clear_tracked_children_after_wave_timeout()
+                                or pi_quiescence_tracker.pending_child_spawn_count()
                             )
                             pi_waiting_child_count = None
                             pi_tracked_cleanup_reason = "pi_child_wave_timeout"
@@ -1081,7 +1110,7 @@ class SpawnManager:
                         if (
                             child_wave_timeout_seconds is not None
                             and child_wave_timeout_seconds > 0
-                            and pi_subspawn_tracker.has_pending()
+                            and _has_pending_pi_children()
                         ):
                             wave_start = time.monotonic()
                             pi_child_wave_started_monotonic = wave_start
@@ -1106,7 +1135,7 @@ class SpawnManager:
                         pi_child_wave_timed_out = False
                         pi_child_wave_timeout_error = None
                         pi_child_wave_timeout_followup_deadline = None
-                if not pi_subspawn_tracker.has_pending():
+                if not _has_pending_pi_children():
                     _clear_child_wave_timer()
                 _emit_pi_waiting_phases_if_needed()
                 if tracer is not None:
@@ -1204,7 +1233,7 @@ class SpawnManager:
                         _emit_pi_waiting_phases_if_needed()
                     if action.terminate:
                         if pi_quiescence_enabled and event_outcome.status == "succeeded":
-                            if pi_quiescence_tracker.is_quiescent():
+                            if _is_pi_quiescent():
                                 pi_quiescence_candidate = event_outcome
                                 pi_micro_drain_event_count = 0
                                 self._emit_pi_phase_event(
@@ -1219,7 +1248,7 @@ class SpawnManager:
                                     receiver,
                                     phase="quiescence_deferred",
                                     session_role=normalized_pi_session_role or None,
-                                    active_tracked_count=pi_subspawn_tracker.active_tracked_count(),
+                                    active_tracked_count=_pending_pi_child_count(),
                                     pending_notification_count=(
                                         pi_subspawn_tracker.pending_notification_count()
                                     ),
@@ -1233,7 +1262,7 @@ class SpawnManager:
                     is_pi_connection
                     and pi_subspawn_tracker.notification_failure_error is not None
                     and pi_quiescence_tracker.parent_idle
-                    and not pi_subspawn_tracker.has_pending()
+                    and not _has_pending_pi_children()
                 ):
                     recorded_terminal_outcome = TerminalEventOutcome(
                         status="failed",
@@ -1269,7 +1298,7 @@ class SpawnManager:
                     and pi_quiescence_candidate is None
                     and recorded_terminal_outcome is None
                     and last_successful_pi_terminal is not None
-                    and pi_quiescence_tracker.is_quiescent()
+                    and _is_pi_quiescent()
                 ):
                     pi_quiescence_candidate = last_successful_pi_terminal
                     pi_micro_drain_event_count = 0
@@ -1286,6 +1315,13 @@ class SpawnManager:
             drain_error = exc
             raise
         finally:
+            pending_pi_children_at_exit = (
+                _has_pending_pi_children() if pi_quiescence_enabled else False
+            )
+            if pending_event_task is not None and not pending_event_task.done():
+                pending_event_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending_event_task
             await pi_quiescence_tracker.stop()
             if (
                 is_pi_connection
@@ -1323,7 +1359,7 @@ class SpawnManager:
                 elif (
                     is_pi_connection
                     and recorded_terminal_outcome is None
-                    and pi_subspawn_tracker.has_pending()
+                    and pending_pi_children_at_exit
                 ):
                     outcome = DrainOutcome(
                         status="failed",

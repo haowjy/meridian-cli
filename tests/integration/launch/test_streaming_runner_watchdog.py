@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 from pathlib import Path
 
 import pytest
@@ -306,7 +307,7 @@ class _EndMonotonicFailsClock(FakeClock):
         return super().monotonic()
 
 
-def test_truncate_attempt_logs_preserves_pi_lifecycle_sidecar(tmp_path: Path) -> None:
+def test_truncate_attempt_logs_removes_only_attempt_scoped_outputs(tmp_path: Path) -> None:
     log_dir = tmp_path / "spawns" / "r-truncate"
     log_dir.mkdir(parents=True, exist_ok=True)
     attempt_files = (
@@ -317,30 +318,31 @@ def test_truncate_attempt_logs_preserves_pi_lifecycle_sidecar(tmp_path: Path) ->
     )
     for name in attempt_files:
         (log_dir / name).write_text("attempt data\n", encoding="utf-8")
-    lifecycle_path = log_dir / launch_constants.PI_LIFECYCLE_EVENTS_FILENAME
-    lifecycle_path.write_text('{"type":"meridian.subspawn.start"}\n', encoding="utf-8")
+    durable_path = log_dir / "durable.json"
+    durable_path.write_text("durable data\n", encoding="utf-8")
 
     streaming_runner_module._truncate_attempt_logs(log_dir)
 
     for name in attempt_files:
         assert not (log_dir / name).exists()
-    assert lifecycle_path.exists()
-    assert "meridian.subspawn.start" in lifecycle_path.read_text(encoding="utf-8")
+    assert durable_path.exists()
 
 
-def test_retry_blocked_after_pi_subspawn_start_detects_legacy_sidecar_marker(
+def test_retry_blocked_after_pi_child_started_detects_disk_child_state(
     tmp_path: Path,
 ) -> None:
-    log_dir = tmp_path / "spawns" / "r-legacy-sidecar"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    (log_dir / launch_constants.PI_LIFECYCLE_EVENTS_FILENAME).write_text(
-        '{"type":"meridian_subspawn_start"}\n',
+    runtime_root = tmp_path / "runtime"
+    state_path = runtime_root / "spawns" / "p-child" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({"id": "p-child", "parent_id": "p-parent", "status": "running"}),
         encoding="utf-8",
     )
 
-    assert streaming_runner_module._retry_blocked_after_pi_subspawn_start(
+    assert streaming_runner_module._retry_blocked_after_pi_child_started(
         harness_id=HarnessId.PI,
-        log_dir=log_dir,
+        runtime_root=runtime_root,
+        current_spawn_id=SpawnId("p-parent"),
     )
 
 
