@@ -663,26 +663,19 @@ Each harness needs:
 2. A `TranscriptEventParser` that extracts `TranscriptMessage(role, content)`
    from harness-specific event schemas
 
-**Pi current status**: Pi has generic `history.jsonl` persistence working, but
-**full `meridian session log` parity is not yet implemented**. The session file
-resolution/translation for Pi session files is incomplete. Spawns are tracked,
-but `meridian session log <pi-spawn-id>` does not yet produce a readable
-transcript from Pi's native session JSONL format.
-
-Users who need readable transcripts from Pi spawns must currently read the raw
-`history.jsonl` or Pi's native session files directly.
+**Pi current status**: Spawned Pi RPC runs persist canonical `history.jsonl`, and
+`meridian session log <pi-spawn-id>` renders readable transcript entries from Pi
+`message_end` events: user prompts, assistant text, tool calls/results, and custom
+follow-up pings. Native Pi session-file lookup remains best-effort metadata; the
+spawn history is the session-log authority for Meridian-managed Pi RPC spawns.
 
 ### 3.4 Export/Search Implications
 
-When session log parity is incomplete:
-- `meridian session log` shows raw events or falls back to generic rendering
-- Session search (`meridian session search`) may miss content stored only in
-  native session files
-- Export formats that depend on transcript parsing will be incomplete
-
-**Lesson**: Session log parity should be treated as a Phase 2 requirement, not
-deferred indefinitely. Without it, the harness is a second-class citizen in
-Meridian's observability surface.
+Session-log parity means the same transcript parser feeds log, export, and search
+surfaces. For Pi RPC, keep `history.jsonl` event persistence and `message_end`
+translation in sync; if Pi changes its event schema, update
+`src/meridian/lib/harness/transcript.py` and the Pi transcript parser tests before
+trusting search/export output.
 
 ## Phase 4: Model, Catalog, and Mars Integration
 
@@ -793,8 +786,9 @@ expensive models for reasoning-heavy tasks.
 - [ ] Native session files are discoverable from spawn metadata
 - [ ] Export formats include Pi session content
 
-**Pi status**: This is a known gap. Generic `history.jsonl` works but native
-transcript translation is incomplete.
+**Pi status**: Spawned Pi RPC history renders readable transcript entries from
+`message_end` events. Native session files may still exist, but Meridian-managed
+spawn history is the authority for `session log`.
 
 ### Packaging / Wheel Smoke
 
@@ -839,7 +833,7 @@ All must pass. The pre-push hook enforces this automatically.
 
 | Gap | Severity | What's needed |
 |---|---|---|
-| **Full `meridian session log` parity** | Medium | Pi's native JSONL session files are not translated to readable transcripts. A `TranscriptProvider` for Pi session files and a `TranscriptEventParser` for Pi's event schema are needed. Until then, `meridian session log <pi-spawn-id>` falls back to generic rendering. |
+| **Native Pi session-file transcript provider** | Low | Spawned Pi RPC `history.jsonl` now renders readable `session log` output from `message_end` events. A native Pi session-file provider may still be useful for non-Meridian Pi sessions, but it is no longer required for Meridian-managed spawn observability. |
 | **Mars model aliases/catalog** | Medium | Mars does not yet include Pi-compatible model paths in its alias resolution. Users must pass explicit `provider/model-id` strings. Need: `harness_candidates` / `runnable_paths` entries in Mars model definitions, provider discovery, and agent profile resolution for `harness: pi`. |
 | **Web extensions/tools** | Deferred | Built-in `web_search` and `web_fetch` extensions. These are Pi-native extensions that need authoring and bundling. |
 | **Notifications** | Deferred | Meridian spawn completion notifications surfaced through Pi's UI. |
@@ -847,10 +841,7 @@ All must pass. The pre-push hook enforces this automatically.
 
 ### Quickest Next Fixes
 
-1. **Session log**: Implement `PiTranscriptProvider` (reads Pi session JSONL
-   files) and `PiTranscriptParser` (extracts `TranscriptMessage` from Pi event
-   schema), then register in `transcript.py`.
-2. **Model aliases**: Add `harness_candidates` with Pi runnable paths to Mars
+1. **Model aliases**: Add `harness_candidates` with Pi runnable paths to Mars
    model definitions for commonly used models.
 
 ## Reference: Pi Integration Files

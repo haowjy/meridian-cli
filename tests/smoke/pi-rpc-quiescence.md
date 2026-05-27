@@ -101,7 +101,7 @@ Start `sleep 3 && echo child-done` as tracked background work. When it completes
 Expect:
 - Parent turn idles while child runs
 - Lifecycle emits `meridian.notification.queued` + `delivered`
-- Internal extension bus receives `meridian:task:start` / `meridian:task:end` from managed-bash (and `meridian:subspawn:*` for spawn wrappers)
+- Disk-backed bash records under `runtime_root/pi-bash/<spawn-id>/bash-records.json` show the tracked task start/end state
 - Follow-up turn starts automatically
 - After follow-up `agent_end`, quiescence is reached and spawn completes
 
