@@ -18,6 +18,7 @@ from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.execute_runner import _prepare_execution_handoff
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
 
 
@@ -91,6 +92,7 @@ def test_bind_spawn_launch_context_does_not_call_mars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = _seed_project(tmp_path)
+    prepend_fake_executables(monkeypatch, tmp_path, "cursor")
     captured = stub_bundle_request_and_resolve(
         monkeypatch,
         model="opus47",

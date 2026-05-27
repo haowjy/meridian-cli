@@ -15,6 +15,7 @@ from meridian.lib.launch.request import LaunchArgvIntent, LaunchCompositionSurfa
 from meridian.lib.ops.runtime import build_runtime
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
+from tests.support.executables import prepend_fake_executables
 from tests.support.launch import stub_bundle_request_and_resolve
 
 _HARNESS_CASES: tuple[tuple[str, str, str, HarnessId], ...] = (
@@ -43,6 +44,7 @@ def test_spawn_execute_uses_harness_model_from_mars(
     harness_id: HarnessId,
 ) -> None:
     project_root = _seed_project(tmp_path)
+    prepend_fake_executables(monkeypatch, tmp_path, harness)
     stub_bundle_request_and_resolve(
         monkeypatch,
         model=cli_model,
@@ -99,6 +101,7 @@ def test_spawn_prepare_then_execute_binding_spec_model(
     harness_id: HarnessId,
 ) -> None:
     project_root = _seed_project(tmp_path)
+    prepend_fake_executables(monkeypatch, tmp_path, harness)
     captured = stub_bundle_request_and_resolve(
         monkeypatch,
         model=cli_model,

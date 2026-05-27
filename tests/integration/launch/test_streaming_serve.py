@@ -7,9 +7,21 @@ from types import SimpleNamespace
 import pytest
 
 from meridian.cli import streaming_serve as streaming_serve_module
+from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
 from meridian.lib.streaming.spawn_manager import DrainOutcome
+from tests.support.launch import stub_bundle_request_and_resolve
+
+
+@pytest.fixture(autouse=True)
+def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.4",
+    )
 
 
 def _fake_launch_context(
