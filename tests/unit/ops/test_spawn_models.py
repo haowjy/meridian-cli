@@ -6,7 +6,6 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnDetailOutput,
-    SpawnStatusInput,
     SpawnWaitMultiOutput,
 )
 
@@ -170,11 +169,6 @@ def test_spawn_wait_multi_json_single_and_multi_projection() -> None:
     assert multi_wire["spawns"][1]["report_body"] == "second report"
 
 
-def test_spawn_status_input_defaults_report_body_off() -> None:
-    parsed = SpawnStatusInput(spawn_id="p123")
-    assert parsed.include_report_body is False
-
-
 def test_spawn_action_wire_background_does_not_add_transcript_command() -> None:
     output = SpawnActionOutput(
         command="spawn.create",
@@ -289,6 +283,13 @@ def test_spawn_detail_default_text_uses_moderate_tier() -> None:
         authority_root="/repo/main",
         task_cwd="/repo.worktrees/feature-x",
         report_body="done report",
+    ).model_copy(
+        update={
+            "input_tokens": 123,
+            "cost_usd": 0.25,
+            "harness_session_id": "hs-10",
+            "pi_lifecycle_phase": "cleanup_stop_escalated",
+        }
     )
 
     text = detail.format_text()
@@ -302,6 +303,9 @@ def test_spawn_detail_default_text_uses_moderate_tier() -> None:
     assert "Failure: runner_failed" in text
     assert "done report" in text
     assert "Transcript: meridian session log p10" in text
+    assert "Input tokens:" not in text
+    assert "Cost:" not in text
+    assert "Harness session:" not in text
     assert "Pi phase:" not in text
 
 

@@ -228,15 +228,19 @@ def test_spawn_show_and_status_report_defaults(
 
     with pytest.raises(SystemExit) as show_exit:
         cli_main.main(["spawn", "show", "p-show"])
+    with pytest.raises(SystemExit) as show_no_report_exit:
+        cli_main.main(["spawn", "show", "--no-report", "p-show-no-report"])
     with pytest.raises(SystemExit) as status_exit:
         cli_main.main(["spawn", "status", "p-status"])
     with pytest.raises(SystemExit) as status_report_exit:
         cli_main.main(["spawn", "status", "--report", "p-status-report"])
 
     assert show_exit.value.code == 0
+    assert show_no_report_exit.value.code == 0
     assert status_exit.value.code == 0
     assert status_report_exit.value.code == 0
     assert show_include_report["p-show"] is True
+    assert show_include_report["p-show-no-report"] is False
     assert "p-status" not in show_include_report
     assert "p-status-report" not in show_include_report
     assert status_include_report["p-status"] is False

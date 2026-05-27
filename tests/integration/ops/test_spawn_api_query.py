@@ -22,6 +22,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnListInput,
     SpawnShowInput,
     SpawnStatsInput,
+    SpawnStatusInput,
 )
 from meridian.lib.state import spawn_store
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
@@ -219,6 +220,51 @@ def test_spawn_list_filters_by_profile_name(tmp_path: Path) -> None:
     )
 
     assert [entry.spawn_id for entry in output.spawns] == [str(reviewer_spawn_id)]
+
+
+def test_spawn_status_omits_report_body_until_requested(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    runtime_root = _state_root(project_root)
+
+    spawn_id = spawn_store.start_spawn(
+        runtime_root,
+        spawn_id="p-report-toggle",
+        chat_id="c-report-toggle",
+        model="gpt-5.4",
+        agent="coder",
+        harness="codex",
+        prompt="hello",
+    )
+    report_path = runtime_root / "spawns" / str(spawn_id) / "report.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("report body\n", encoding="utf-8")
+    spawn_store.finalize_spawn(
+        runtime_root,
+        spawn_id,
+        "succeeded",
+        0,
+        origin="runner",
+    )
+
+    status_detail = spawn_api.spawn_status_sync(
+        SpawnStatusInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
+    )
+    reported_status_detail = spawn_api.spawn_status_sync(
+        SpawnStatusInput(
+            project_root=project_root.as_posix(),
+            spawn_id=str(spawn_id),
+            include_report_body=True,
+        )
+    )
+    show_detail = spawn_api.spawn_show_sync(
+        SpawnShowInput(project_root=project_root.as_posix(), spawn_id=str(spawn_id))
+    )
+
+    assert status_detail.report_path == report_path.as_posix()
+    assert status_detail.report_body is None
+    assert reported_status_detail.report_body == "report body"
+    assert show_detail.report_body == "report body"
 
 
 def test_spawn_show_and_list_render_primary_and_pi_diagnostics(tmp_path: Path) -> None:
