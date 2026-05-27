@@ -5,8 +5,9 @@ The async backbone between a live harness connection and the rest of the system.
 core mechanism that moves events from the harness outward to persistence, observers,
 and the subscriber queue.
 
-Pure mechanism — no spawn policy lives here. Whether to terminate on a given event
-is a `DrainPolicy` concern; what spawn to start is a caller concern.
+Mostly mechanism. Generic terminal behavior lives in `DrainPolicy`; Pi spawned-session
+quiescence is the explicit exception, isolated in `pi_drain.py` so Pi child-wave,
+notification, and disk-state policy does not sprawl through `SpawnManager`.
 
 ## Mental Model
 
@@ -68,7 +69,9 @@ means the manager died or the spawn is orphaned.
 
 ## Entry Points
 
-- `spawn_manager.py` — `SpawnManager`: start here for any live-spawn work
+- `spawn_manager.py` — `SpawnManager`: generic live-spawn lifecycle and event drain
+- `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
+- `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
 - `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`

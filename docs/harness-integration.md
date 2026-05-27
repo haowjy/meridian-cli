@@ -621,8 +621,8 @@ The runtime launch path must only need:
 - extension JS files already present in the Meridian package.
 
 Extension source lives under `src/meridian/pi_runtime/extensions/`:
-- `managed-bash/` — managed bash extension
-- `meridian-lifecycle/` — lifecycle extension
+- `managed-bash/` — managed bash, `/ps`, background bash records and task pings
+- `meridian-spawn-watch/` — correlated spawn discovery, `/spawn`, wait/cancel/log actions
 
 The compiled output is shipped as package data; the directory name
 (`pi_extensions/` or `harness/pi/extensions/`) no longer implies a bundled
@@ -855,7 +855,7 @@ src/meridian/lib/harness/projections/project_pi_native_tui.py           # Primar
 src/meridian/lib/harness/extractors/pi.py                               # Artifact extraction
 src/meridian/lib/harness/connections/pi_rpc.py                          # JSONL event drain
 src/meridian/pi_runtime/extensions/managed-bash/                        # Managed bash extension source
-src/meridian/pi_runtime/extensions/meridian-lifecycle/                  # Lifecycle extension source
+src/meridian/pi_runtime/extensions/meridian-spawn-watch/                # Spawn watch extension source
 tests/unit/harness/test_pi_projection.py                                # Projection tests
 tests/unit/harness/test_pi_extractor.py                                 # Extractor tests
 tests/unit/harness/test_pi_integration.py                               # Integration tests

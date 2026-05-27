@@ -72,11 +72,11 @@ and spawned roles) and returns a `PiRuntimeResolution`.
 Pi spawned sessions do not exit on task completion — they stay alive to track child
 spawns and deliver wave notifications. Completion is gated on **quiescence**: the
 parent agent is idle, all tracked children have finished, and all pending notifications
-have been delivered and acknowledged. The Python drain loop now reads the disk-backed
-coordination state through `PiQuiescenceTracker` and `PiDiskWatcher`, and terminates the
-Pi process only when `meridian.quiescence.ready` is reached or the wave deadline expires.
-See `lib/streaming/spawn_manager.py:_drain_loop()`
-and `PiRpcQuiescenceDrainPolicy`.
+have been delivered and acknowledged. The Python drain loop delegates Pi-specific completion policy to
+`lib/streaming/pi_drain.py:PiDrainCoordinator`, which reads disk-backed coordination
+state through `PiQuiescenceTracker` and `PiDiskWatcher`. `SpawnManager` remains the
+generic persistence/observer/fan-out loop; Pi child-wave, notification, micro-drain,
+and cleanup decisions stay behind the coordinator boundary.
 
 ### Pi: Disk-Backed Coordination State
 
@@ -170,9 +170,9 @@ Key mappings:
 - OpenCode: `session.idle` → succeeded; `session.error` → failed
 - Cursor: `error/connectionClosed` → failed; no explicit success event — stdout EOF
   + process exit code 0 is the success boundary (see `CursorSubprocessConnection.events()`).
-- Pi: `agent_end` → succeeded with quiescence check; `cancelled`/`error` → failed.
-  The `agent_end` → success mapping is conditional: the drain loop only breaks when
-  quiescence is also confirmed (no pending children/notifications). See `PiRpcQuiescenceDrainPolicy`.
+- Pi: `agent_end` → succeeded candidate; `cancelled`/`error` → failed.
+  The succeeded candidate is finalized only when `PiDrainCoordinator` confirms
+  quiescence (parent idle, no pending children/bash, no pending notifications).
 
 ## Rationale
 
@@ -246,10 +246,10 @@ MVP scope exclusions (enforced by `_assert_supported_for_mvp()`): per-spawn
 
 Pi spawned sessions don't exit when a task completes — they stay alive to track
 child spawn completion and deliver wave notifications. This means process exit is
-not a valid completion signal. Instead, Meridian reads the disk-backed coordination
-state for `meridian.quiescence.ready` — emitted when all children are done and all
-notifications delivered. The drain loop uses `PiRpcQuiescenceDrainPolicy`, which
-classifies `agent_end` as terminal only when the quiescence check passes.
+not a valid completion signal. Instead, Meridian reads disk-backed coordination
+state (child spawn rows, bash records, notification markers). The drain loop delegates
+this policy to `PiDrainCoordinator`, which only lets an `agent_end` success candidate
+finalize after the quiescence check passes.
 
 This is the first harness where "done" is not synonymous with "process exited."
 All other harnesses (Claude, Codex, OpenCode) use process exit or an explicit
@@ -273,6 +273,14 @@ Pi's stdout is the JSON-RPC transport channel. Coordination state does not live 
 the extensions write disk files, and the Python side watches them. If a lifecycle-like
 message appears on stdout (e.g., from a misconfigured extension), it is treated as
 diagnostic noise and does not become the source of truth.
+
+### Pi: Session Log Reads Spawn History
+
+For Meridian-managed spawned Pi RPC sessions, `meridian session log <pi-spawn-id>`
+reads the spawn `history.jsonl` and translates Pi `message_end` events into readable
+transcript entries. It renders user prompts, assistant text, Pi tool calls/results,
+and custom follow-up pings. Native Pi session-file lookup may exist as metadata, but
+spawn history is the authoritative session-log source for Meridian-owned Pi spawns.
 
 ## Session Read Path
 
@@ -338,7 +346,7 @@ them in the message stream.
 
 ### Adding a Harness
 
-The full end-to-end guide is at [`docs/harness-integration.md`](../../../../docs/harness-integration.md).
+The full end-to-end guide is at [`docs/harness-integration.md`](../../../../../docs/harness-integration.md).
 It covers probing, adapter implementation, projection, extraction, connection/semantics,
 wrapper/runtime packaging, session parity, model/catalog/Mars integration, and a
 verification checklist — using Pi as the worked example.
