@@ -10,11 +10,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from meridian.lib.harness.connections.pi_lifecycle_file import PiLifecycleEventTailer
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections import pi_rpc as pi_rpc_module
 from meridian.lib.harness.connections.base import ConnectionConfig, ConnectionNotReady, HarnessEvent
-from meridian.lib.harness.connections.pi_lifecycle_file import PiLifecycleEventTailer
 from meridian.lib.harness.connections.pi_rpc import PiRpcConnection
 from meridian.lib.harness.semantics import activity_transition, clears_signal, terminal_outcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
