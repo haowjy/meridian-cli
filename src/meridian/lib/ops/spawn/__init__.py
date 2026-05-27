@@ -13,6 +13,7 @@ from .api import (
     SpawnShowInput,
     SpawnStatsInput,
     SpawnStatsOutput,
+    SpawnStatusInput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
     spawn_cancel,
@@ -29,6 +30,8 @@ from .api import (
     spawn_show_sync,
     spawn_stats,
     spawn_stats_sync,
+    spawn_status,
+    spawn_status_sync,
     spawn_wait,
     spawn_wait_sync,
 )
@@ -46,6 +49,7 @@ __all__ = [
     "SpawnShowInput",
     "SpawnStatsInput",
     "SpawnStatsOutput",
+    "SpawnStatusInput",
     "SpawnWaitInput",
     "SpawnWaitMultiOutput",
     "spawn_cancel",
@@ -62,6 +66,8 @@ __all__ = [
     "spawn_show_sync",
     "spawn_stats",
     "spawn_stats_sync",
+    "spawn_status",
+    "spawn_status_sync",
     "spawn_wait",
     "spawn_wait_sync",
 ]
