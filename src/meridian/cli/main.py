@@ -68,6 +68,7 @@ from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
 from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_effect_process
 from meridian.lib.core.sink import OutputSink
+from meridian.lib.core.util import FormatContext
 from meridian.lib.telemetry import emit_telemetry
 
 if TYPE_CHECKING:
@@ -120,7 +121,7 @@ def current_output_sink() -> OutputSink:
     return sink
 
 
-def emit(payload: object) -> None:
+def emit(payload: object, *, format_ctx: FormatContext | None = None) -> None:
     """Write command output using current output format settings."""
 
     options = get_global_options()
@@ -133,9 +134,10 @@ def emit(payload: object) -> None:
                 agent_mode=agent_mode_enabled(),
             ),
             sink=sink,
+            format_ctx=format_ctx,
         )
     else:
-        emit_output(payload, sink=sink)
+        emit_output(payload, sink=sink, format_ctx=format_ctx)
     if flush_after:
         flush_sink(sink)
 

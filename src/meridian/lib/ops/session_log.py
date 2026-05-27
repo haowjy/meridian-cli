@@ -9,7 +9,9 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.transcript import ToolCall
 from meridian.lib.ops.runtime import async_from_sync
+from meridian.lib.ops.session_log_render import render_session_log
 from meridian.lib.ops.session_render import (
     SessionWindow,
     showing_window,
@@ -25,9 +27,6 @@ from meridian.lib.ops.session_transcript import (
     build_session_log_command,
     read_session_transcript,
 )
-
-_CONTENT_PREVIEW_MAX_LINES = 80
-_CONTENT_PREVIEW_MAX_CHARS = 8000
 
 
 class SessionLogInput(BaseModel):
@@ -54,6 +53,8 @@ class SessionLogEntryMessage(BaseModel):
     segment_message: int
     role: str
     content: str
+    tool_call: ToolCall | None = None
+    is_tool_result: bool = False
 
 
 class SessionLogEntry(BaseModel):
@@ -86,66 +87,31 @@ class SessionLogOutput(BaseModel):
     previous_segment_command: str | None = None
     next_segment_command: str | None = None
     hints: tuple[str, ...] = ()
+    truncate: bool = True
 
     @property
     def messages(self) -> tuple[SessionLogEntryMessage, ...]:
         return tuple(message for entry in self.entries for message in entry.messages)
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
-        _ = ctx
-        source = self.source or ""
-        normalized_requested_ref = (self.requested_ref or "").strip()
-        if normalized_requested_ref and normalized_requested_ref != self.session_id:
-            session_label = (
-                f"{normalized_requested_ref} ({source}: {self.session_id})"
-                if source
-                else f"{normalized_requested_ref} ({self.session_id})"
-            )
-        else:
-            session_label = f"{self.session_id} ({source})" if source else self.session_id
-        entry_label = "entry" if self.total_entries == 1 else "entries"
-        lines = [
-            (
-                f"Session {session_label} — showing "
-                f"{self.showing} of {self.total_entries} {entry_label}"
-            )
-        ]
-        if self.segment_label is not None and self.segment_entries is not None:
-            lines.append(f"{self.segment_label}; {self.segment_entries} entries in segment")
-        for entry in self.entries:
-            lines.append("")
-            lines.append(
-                f"--- {entry.index} [segment {entry.segment} · "
-                f"messages {entry.segment_start_message}-{entry.segment_end_message}] "
-                f"[{entry.role}] ---"
-            )
-            if not entry.messages:
-                lines.append(entry.content)
-                continue
-            if len(entry.messages) == 1:
-                lines.append(entry.messages[0].content)
-                continue
-
-            for message in entry.messages:
-                lines.append("")
-                lines.append(f"[message {message.segment_message} · {message.role}]")
-                lines.append(message.content)
-        nav_lines: list[str] = []
-        if self.previous_command is not None:
-            nav_lines.append(f"Previous: {self.previous_command}")
-        if self.next_command is not None:
-            nav_lines.append(f"Next: {self.next_command}")
-        if self.previous_segment_command is not None:
-            nav_lines.append(f"Previous segment: {self.previous_segment_command}")
-        if self.next_segment_command is not None:
-            nav_lines.append(f"Next segment: {self.next_segment_command}")
-        if nav_lines:
-            lines.append("")
-            lines.extend(nav_lines)
-        if self.hints:
-            lines.append("")
-            lines.extend(self.hints)
-        return "\n".join(lines)
+        resolved_ctx = ctx or FormatContext()
+        return render_session_log(
+            session_id=self.session_id,
+            requested_ref=self.requested_ref,
+            source=self.source,
+            total_entries=self.total_entries,
+            segment_entries=self.segment_entries,
+            segment_label=self.segment_label,
+            showing=self.showing,
+            entries=self.entries,
+            previous_command=self.previous_command,
+            next_command=self.next_command,
+            previous_segment_command=self.previous_segment_command,
+            next_segment_command=self.next_segment_command,
+            hints=self.hints,
+            truncate=self.truncate,
+            verbosity=resolved_ctx.verbosity,
+        )
 
 
 def _window_hints(payload: SessionLogInput, *, uses_absolute_window: bool) -> tuple[str, ...]:
@@ -189,47 +155,13 @@ def _segment_label(*, selected_index: int, total_segments: int) -> str:
     return f"segment {selected_index}"
 
 
-def _truncate_preview(content: str) -> str:
-    if not content:
-        return content
-
-    line_parts = content.splitlines(keepends=True)
-    limited_by_lines = len(line_parts) > _CONTENT_PREVIEW_MAX_LINES
-    preview = (
-        "".join(line_parts[:_CONTENT_PREVIEW_MAX_LINES]) if limited_by_lines else content
-    )
-    if len(preview) > _CONTENT_PREVIEW_MAX_CHARS:
-        preview = preview[:_CONTENT_PREVIEW_MAX_CHARS]
-
-    omitted_chars = len(content) - len(preview)
-    if omitted_chars <= 0:
-        return content
-
-    omitted_lines = (
-        len(line_parts) - _CONTENT_PREVIEW_MAX_LINES if limited_by_lines else 0
-    )
-    line_label = "line" if omitted_lines == 1 else "lines"
-    char_label = "char" if omitted_chars == 1 else "chars"
-    marker = (
-        f"...[truncated: omitted {omitted_lines} {line_label}, "
-        f"{omitted_chars} {char_label}; rerun with --no-truncate]"
-    )
-    if not preview:
-        return marker
-    separator = "" if preview.endswith("\n") else "\n"
-    return f"{preview}{separator}{marker}"
-
-
-def _entry_message_row(
-    message: AbsoluteTranscriptMessage,
-    *,
-    truncate_content: bool,
-) -> SessionLogEntryMessage:
-    content = _truncate_preview(message.content) if truncate_content else message.content
+def _entry_message_row(message: AbsoluteTranscriptMessage) -> SessionLogEntryMessage:
     return SessionLogEntryMessage(
         segment_message=message.segment_message_index,
         role=message.role,
-        content=content,
+        content=message.content,
+        tool_call=message.tool_call,
+        is_tool_result=message.is_tool_result,
     )
 
 
@@ -237,19 +169,16 @@ def _entry_row_with_index(
     entry: AbsoluteTranscriptEntry,
     *,
     index: int,
-    truncate_content: bool,
 ) -> SessionLogEntry:
-    content = _truncate_preview(entry.content) if truncate_content else entry.content
     return SessionLogEntry(
         index=index,
         segment=entry.segment_index,
         segment_start_message=entry.start_segment_message_index,
         segment_end_message=entry.end_segment_message_index,
         role=entry.role,
-        content=content,
+        content=entry.content,
         messages=tuple(
-            _entry_message_row(message, truncate_content=truncate_content)
-            for message in entry.messages
+            _entry_message_row(message) for message in entry.messages
         ),
     )
 
@@ -410,6 +339,7 @@ def session_log_sync(
             segment_entries=selected_segment_entries,
         )
 
+    resolved_tail: int | None = None
     if not uses_window_selectors:
         interaction_entries = [
             entry for entry in address_space.entries if entry.kind == "interaction"
@@ -478,6 +408,15 @@ def session_log_sync(
                 from_ordinal=page.next_from,
                 limit=nav_limit,
             )
+    elif page.has_previous:
+        nav_limit = resolved_tail if resolved_tail is not None else 5
+        if page.previous_from is not None:
+            previous_command = build_session_log_command(
+                parsed.route,
+                segment_index=address_space.segment_index,
+                from_ordinal=page.previous_from,
+                limit=nav_limit,
+            )
 
     previous_segment_command, next_segment_command = _segment_boundary_commands(
         parsed_route=parsed.route,
@@ -492,7 +431,6 @@ def session_log_sync(
         _entry_row_with_index(
             item,
             index=address_space.ordinal_getter(item),
-            truncate_content=payload.truncate,
         )
         for item in page.entries
     )
@@ -519,6 +457,7 @@ def session_log_sync(
         previous_segment_command=previous_segment_command,
         next_segment_command=next_segment_command,
         hints=_window_hints(payload, uses_absolute_window=uses_window_selectors),
+        truncate=payload.truncate,
     )
 
 

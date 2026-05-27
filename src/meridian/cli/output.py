@@ -84,11 +84,11 @@ def resolve_effective_format(
     return "text"
 
 
-def _render_text(value: Any) -> str:
+def _render_text(value: Any, format_ctx: FormatContext | None = None) -> str:
     # "text" mode: prefer format_text() if available, fall back to indented JSON
     # for types that have not yet implemented the protocol.
     if isinstance(value, TextFormattable):
-        return value.format_text(_DEFAULT_FORMAT_CTX)
+        return value.format_text(format_ctx or _DEFAULT_FORMAT_CTX)
     return json.dumps(_to_json_value(value), sort_keys=True, indent=2)
 
 
@@ -107,12 +107,18 @@ class TextSink:
         self._emit_events = emit_events
 
     def result(self, payload: Any) -> None:
+        self._render_result(payload, format_ctx=None)
+
+    def result_with_context(self, payload: Any, *, format_ctx: FormatContext) -> None:
+        self._render_result(payload, format_ctx=format_ctx)
+
+    def _render_result(self, payload: Any, *, format_ctx: FormatContext | None) -> None:
         if isinstance(payload, str):
             if payload == "":
                 return
             print(payload, file=self._stdout)
             return
-        rendered = _render_text(payload)
+        rendered = _render_text(payload, format_ctx)
         if rendered == "":
             return
         print(rendered, file=self._stdout)
@@ -215,7 +221,10 @@ def flush_sink(sink: OutputSink) -> None:
             return
 
 
-def emit(value: Any, *, sink: OutputSink) -> None:
+def emit(value: Any, *, sink: OutputSink, format_ctx: FormatContext | None = None) -> None:
     """Emit one payload via an explicit output sink."""
 
+    if format_ctx is not None and isinstance(sink, TextSink):
+        sink.result_with_context(value, format_ctx=format_ctx)
+        return
     sink.result(value)

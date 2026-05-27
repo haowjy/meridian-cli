@@ -12,6 +12,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `spawn show`/`spawn status` text output now defaults to a moderate status tier, with full internal diagnostics behind `--verbose`.
 - Auto-extracted spawn reports now persist with `# Report` heading instead of `# Auto-extracted Report`.
+- `session log` now defaults to a clean markdown-like transcript view (clean role headers, XML/tool chrome stripped, tool actions collapsed) with raw debug formatting behind `--raw`.
+- `session log` now keeps full raw entry/message content in model output and applies truncation only at render time (`--no-truncate` expands cleaned tool output inline).
+- Default `session log --tail` windows now emit `Previous:` navigation when earlier entries exist.
 
 ## [0.2.8] - 2026-05-27
 

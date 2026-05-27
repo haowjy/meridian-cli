@@ -82,6 +82,13 @@ unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode 
 - `semantics.py` — `terminal_outcome()`, `activity_transition()`, `clears_signal()`.
   Cross-harness event classification.
 - `common.py` — shared extraction helpers used by adapters.
+- `transcript.py` — cross-harness session read path. `TranscriptMessage` (with
+  `tool_call: ToolCall | None` and `is_tool_result: bool`), `ToolCall` (canonical
+  harness-agnostic tool representation), and three providers
+  (`JsonlTranscriptProvider`, `HistoryJsonlTranscriptProvider`,
+  `OpenCodeStorageTranscriptProvider`). Independent of the spawn/write paths — reads
+  only. See [.context/CONTEXT.md](.context/CONTEXT.md#session-read-path) for the
+  normalization table and provider selection rules.
 
 ## Subpackages
 

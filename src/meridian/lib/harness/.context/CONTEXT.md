@@ -271,6 +271,66 @@ a sidecar JSONL file via `PI_LIFECYCLE_EVENT_FILE_ENV`. The Python connection la
 tails this file incrementally during the drain loop. If a lifecycle event does appear
 on stdout (e.g., from a misconfigured extension), it is silently dropped.
 
+## Session Read Path
+
+`transcript.py` is the cross-harness read path for session data. It is entirely
+independent of the spawn/write paths — it only reads JSONL event files that harnesses
+have already written.
+
+### ToolCall and _normalize_tool()
+
+`ToolCall` is the canonical harness-agnostic representation of a tool invocation:
+
+```python
+class ToolCall(NamedTuple):
+    name: str   # Canonical lowercase: bash, read, write, edit, grep, stdin, tool
+    body: str   # Meaningful payload: command string, file path, pattern, etc.
+```
+
+`_normalize_tool(name, body) → ToolCall` maps raw harness-specific tool names onto
+this canonical form. Downstream consumers (session log rendering) work from
+`ToolCall.name` and `ToolCall.body` without knowing which harness produced the event.
+
+Normalization table:
+
+| Raw harness name(s) | Canonical `name` | `body` |
+|---|---|---|
+| `bash` | `bash` | command string |
+| `exec_command`, `shell`, `terminal`, `run_command` | `bash` | extracts `cmd` field from Codex JSON body, falls back to raw body |
+| `write_stdin` | `stdin` | `""` (stdin interaction marker — no meaningful body) |
+| `read`, `write`, `edit`, `grep` | same (lowercase) | path / pattern / description |
+| anything else | lowercased name, or `"tool"` if empty | raw body |
+
+### TranscriptMessage
+
+`TranscriptMessage` carries a tool invocation when `tool_call` is set, and marks
+tool results with `is_tool_result=True`. Text-only messages leave both at their
+defaults (`None` / `False`). These fields are the typed surface callers use to
+distinguish conversation content from tool use — do not re-parse `content` to
+recover tool information when `tool_call` is available.
+
+### Providers
+
+Three providers handle different on-disk layouts. `transcript.py` selects the
+correct one based on path:
+
+| Provider | When selected | What it reads |
+|---|---|---|
+| `HistoryJsonlTranscriptProvider` | `path.name == HISTORY_FILENAME` | Crash-tolerant history via `iter_history_events()` |
+| `OpenCodeStorageTranscriptProvider` | OpenCode storage paths | OpenCode SQLite/JSONL layout |
+| `JsonlTranscriptProvider` | everything else | Raw JSONL, one event per line |
+
+Callers use `iter_transcript_events(path)` or `parse_transcript_file(path)` — they
+never select a provider directly.
+
+### TranscriptParseResult
+
+`segment_setups` holds the setup/handoff text for each compaction segment (one slot
+per segment, `None` if absent). `consumed_setup_event_indexes` identifies which raw
+event indexes were consumed by setup extraction — callers that iterate the raw event
+list alongside parsed segments use this to skip those events and avoid double-counting
+them in the message stream.
+
 ## Patterns
 
 ### Adding a Harness

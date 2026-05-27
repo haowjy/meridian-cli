@@ -2,18 +2,21 @@
 
 from collections.abc import Callable
 from functools import partial
-from typing import Annotated, Any
+from typing import Annotated, Any, Protocol
 
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
 
-Emitter = Callable[[Any], None]
+
+class Emitter(Protocol):
+    def __call__(self, payload: Any, *, format_ctx: FormatContext | None = None) -> None: ...
 
 
 def _session_log(
@@ -57,6 +60,13 @@ def _session_log(
         Parameter(
             name="--no-truncate",
             help="Show full entry/message content (default output truncates oversized content).",
+        ),
+    ] = False,
+    raw: Annotated[
+        bool,
+        Parameter(
+            name="--raw",
+            help="Render raw transcript content with metadata (no readability cleanup).",
         ),
     ] = False,
     tail: Annotated[
@@ -112,24 +122,26 @@ def _session_log(
         if len(tail) > 1:
             raise ValueError("--tail accepts at most one value.")
         resolved_tail = 5 if len(tail) == 0 else tail[0]
-    emit(
-        session_log_sync(
-            SessionLogInput(
-                ref=ref,
-                segment=segment,
-                global_scope=global_scope,
-                full=full,
-                truncate=not no_truncate,
-                tail=resolved_tail,
-                from_ordinal=from_ordinal,
-                before_ordinal=before_ordinal,
-                around_ordinal=around_ordinal,
-                limit=limit,
-                context=context,
-                file_path=file_path,
-            )
+    output = session_log_sync(
+        SessionLogInput(
+            ref=ref,
+            segment=segment,
+            global_scope=global_scope,
+            full=full,
+            truncate=not no_truncate,
+            tail=resolved_tail,
+            from_ordinal=from_ordinal,
+            before_ordinal=before_ordinal,
+            around_ordinal=around_ordinal,
+            limit=limit,
+            context=context,
+            file_path=file_path,
         )
     )
+    if raw:
+        emit(output, format_ctx=FormatContext(verbosity=1))
+        return
+    emit(output)
 
 
 def _session_export(
@@ -257,6 +269,7 @@ def register_session_commands(app: App, emit: Emitter) -> tuple[set[str], dict[s
                 "  meridian session log c123 --tail 20\n\n"
                 "  meridian session log c123 --full\n\n"
                 "  meridian session log c123 --full --no-truncate\n\n"
+                "  meridian session log c123 --raw\n\n"
                 "  meridian session log c123 --from 120 --limit 30\n\n"
                 "  meridian session log c123 --around 240 --context 8\n\n"
                 "  meridian session log c123 --global --around 240 --context 8\n\n"

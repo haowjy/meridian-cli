@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from meridian.cli import session_cmd
+from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.session_log import SessionLogInput
 
 
@@ -64,3 +65,21 @@ def test_session_log_global_maps_to_payload(monkeypatch) -> None:
     )
 
     assert captured[0].global_scope is True
+
+
+def test_session_log_raw_sets_verbose_format_context(monkeypatch) -> None:
+    captured: list[SessionLogInput] = []
+    captured_ctx: list[FormatContext | None] = []
+
+    def _fake_session_log_sync(payload: SessionLogInput) -> SessionLogInput:
+        captured.append(payload)
+        return payload
+
+    def _emit(_payload: object, *, format_ctx: FormatContext | None = None) -> None:
+        captured_ctx.append(format_ctx)
+
+    monkeypatch.setattr(session_cmd, "session_log_sync", _fake_session_log_sync)
+    session_cmd._session_log(_emit, ref="c1", raw=True)
+
+    assert captured[0].ref == "c1"
+    assert captured_ctx[0] == FormatContext(verbosity=1)

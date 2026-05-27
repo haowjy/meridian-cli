@@ -172,6 +172,72 @@ if present, else delegates to `ensure_temporary_worktree()`. When `ensure=False`
 returns status-only response (no-op) if path already exists. When work_id is empty
 and no active work item, uses temporary worktree path.
 
+### session_log_render.py — Session Log Rendering
+
+Pure rendering module with no IO. Sits at the end of the session-read pipeline:
+
+```
+session_transcript.py  ← parses raw JSONL transcript
+      │
+session_log.py         ← windows entries, structures SessionLogOutput
+      │
+session_log_render.py  ← renders to string (clean/raw modes, tool collapsing)
+```
+
+Structured data flows through in full; truncation and collapsing happen at
+render time inside `render_session_log`, not before.
+
+**Content pipeline** within the module:
+
+`clean_content(text)` strips harness XML wrappers while preserving unknown tags.
+Handled tags: `<command-name/args/message>` blocks → `/command args`,
+`<bash-input>` → `$ cmd`, `<bash-stdout/stderr>` blocks → raw output (stderr
+prefixed with `stderr:`), `<local-command-stdout>` → ANSI-stripped text,
+`<system-reminder>` / `<usage>` / `<local-command-caveat>` → removed,
+`<system_notification>` → `[notification: status — summary]`,
+`<user_query>` / `<persisted-output>` → unwrapped content,
+`<tool_use_error>` → `[error: ...]`. ANSI escape sequences are stripped from
+`local-command-stdout` only — other content is passed through unchanged.
+
+`_truncate_preview(content)` limits to 80 lines / 8000 chars and appends
+`...[truncated: omitted N lines, M chars; rerun with --no-truncate]`.
+
+`render_entry(entry, *, clean, truncate) → (lines, collapsed)` formats one entry:
+- `clean=False` (raw / verbosity > 0): emits `--- N [segment S · messages M-M] [role] ---` header with raw content.
+- `clean=True` (default, verbosity ≤ 0): emits `---` separator and `**Role** [N]` markdown header. In truncate mode delegates to `_render_collapsed_tools()`; otherwise to `_render_expanded_tools()`.
+
+`render_session_log(...)` assembles the full output: header, per-entry blocks,
+navigation commands (`Previous:`, `Next:`), and hints. Appends
+`"Use --no-truncate to expand tool outputs"` when any entry collapsed tool output.
+
+**Tool collapsing** (`_render_collapsed_tools`): when `truncate=True`, tool
+invocations collapse to one-liners using the typed `ToolCall` from
+`SessionLogEntryMessage`:
+- Bash: `  $ cmd`
+- File tools (`read`, `write`, `edit`, `grep`): `  Read path`, `  Write path`, etc.
+- stdin: `  (stdin)`
+- Other: `  name: detail`
+
+Exit failures for bash are shown inline: `  (failed: exit N)`. Tool results are
+suppressed in collapsed mode — only failures surface. `_render_expanded_tools`
+shows full tool output indented with 2 spaces.
+
+**`ToolCall` threading**: `SessionLogEntryMessage.tool_call` and `.is_tool_result`
+are sourced from `AbsoluteTranscriptMessage` (threaded in `_entry_message_row()`
+in `session_log.py`), which in turn gets them from `harness/transcript.py`. The
+render layer works from these typed fields — it never re-parses content strings
+to detect tool boundaries.
+
+**Render mode selection**: `SessionLogOutput.format_text(ctx)` passes
+`ctx.verbosity` to `render_session_log`, which derives `clean = verbosity <= 0`.
+The verbosity level is the single control point — callers don't set `clean`
+directly.
+
+**Protocols**: `SessionLogRenderableMessage` and `SessionLogRenderableEntry` are
+structural `Protocol` types. `SessionLogEntryMessage` and `SessionLogEntry`
+satisfy them. The render functions accept the protocols, not the concrete models,
+keeping the render layer decoupled from the data layer.
+
 ## Contracts
 
 ### OperationRuntime
