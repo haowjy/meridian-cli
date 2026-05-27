@@ -95,8 +95,6 @@ def resolve_task_cwd(
     explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
     ambient_work_id: str | None = None,
-    force_worktree: bool = False,
-    force_no_worktree: bool = False,
 ) -> TaskCwdResolution:
     """Resolve task directory used for references and task instructions.
 
@@ -119,40 +117,8 @@ def resolve_task_cwd(
             work_item=selected_work_id,
         )
 
-    if force_no_worktree:
-        return TaskCwdResolution(
-            task_cwd=resolved_authority_root,
-            source="forced-no-worktree",
-            work_item=None,
-        )
-
     selected_work_id = (explicit_work_id or "").strip() or None
     ambient_selected_work_id = (ambient_work_id or "").strip() or None
-    force_worktree_work_id = selected_work_id or ambient_selected_work_id
-
-    if force_worktree:
-        if force_worktree_work_id is None:
-            raise ValueError(
-                "--worktree requires a selected work item. "
-                "Pass --work <item> or attach an active work item first."
-            )
-        configured_path = _active_task_dir_for_item(
-            project_state_dir=project_state_dir,
-            work_id=force_worktree_work_id,
-        )
-        if configured_path is None:
-            raise ValueError(
-                f"--worktree requested, but work item '{force_worktree_work_id}' "
-                "has no configured task_dir."
-            )
-        return TaskCwdResolution(
-            task_cwd=_validated_task_dir(
-                task_dir=configured_path,
-                work_id=force_worktree_work_id,
-            ),
-            source="forced-worktree",
-            work_item=force_worktree_work_id,
-        )
 
     if selected_work_id is not None:
         explicit_path = _active_task_dir_for_item(
@@ -199,16 +165,3 @@ def resolve_task_cwd(
         source="authority-root",
         work_item=None,
     )
-
-
-def resolve_child_execution_cwd(
-    project_root: Path,
-    *,
-    project_state_dir: Path | None = None,
-    work_id: str | None = None,
-    worktree_path: Path | None = None,
-) -> Path:
-    """Legacy wrapper used by older call sites."""
-
-    _ = (project_state_dir, work_id, worktree_path)
-    return project_root.resolve()

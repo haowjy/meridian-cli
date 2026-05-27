@@ -155,7 +155,7 @@ def _check_worktree_health(
                     code="worktree.pending",
                     message=(
                         f"Work item '{item.name}' has worktree_pending=True. "
-                        f"Run `meridian work start {item.name} --worktree` to retry."
+                        f"Set a valid task dir with `meridian work task-dir <path>`."
                     ),
                     payload={"work_id": item.name},
                 )

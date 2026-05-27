@@ -21,25 +21,6 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_dashboard import work_dir_display
-from meridian.lib.ops.work_worktree import (
-    WorkWorktreeInput,
-    WorkWorktreeOutput,
-    work_worktree,
-    work_worktree_sync,
-)
-from meridian.lib.ops.worktree_ensure import ensure_work_item_worktree
-from meridian.lib.ops.worktree_format import (
-    format_cleanup_notice,
-    format_rename_notice,
-    format_restore_notice,
-)
-from meridian.lib.ops.worktree_lifecycle import (
-    cleanup_for_delete,
-    cleanup_for_done,
-    recover_pending,
-    rename_worktree,
-    restore_for_reopen,
-)
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.telemetry import emit_telemetry
 
@@ -85,21 +66,6 @@ def _active_work_attachment_warning(runtime_root: Path, work_id: str) -> str | N
     if not warnings:
         return None
     return "Work item marked done while still referenced by " + "; ".join(warnings) + "."
-
-
-def _shared_worktree_references(
-    project_state_dir: Path,
-    item: work_store.WorkItem,
-) -> tuple[str, ...]:
-    if item.worktree_path is None or not item.worktree_managed:
-        return ()
-    references = work_store.list_work_item_references_for_path(
-        project_state_dir,
-        item.worktree_path,
-        exclude_work_id=item.name,
-        include_archived=False,
-    )
-    return tuple(sorted({reference.name for reference in references}))
 
 
 def _dispatch_work_hook_event(
@@ -159,8 +125,7 @@ class WorkStartInput(BaseModel):
     goal: str | None = None
     chat_id: str = ""
     project_root: str | None = None
-    worktree: bool | None = None  # None = use config default
-    repo: str | None = None
+    task_dir: str | None = None
 
 
 class WorkStartOutput(BaseModel):
@@ -174,7 +139,7 @@ class WorkStartOutput(BaseModel):
     work_dir: str
     created: bool = True
     warning: str | None = None
-    worktree_path: str | None = None
+    task_dir: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
@@ -209,7 +174,6 @@ class WorkDoneInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     work_id: str
-    force: bool = False  # override unpushed-commits check on worktree removal
     project_root: str | None = None
 
 
@@ -256,26 +220,11 @@ class WorkSwitchOutput(BaseModel):
 
     work_id: str
     message: str
-    worktree_path: str | None = None
-    worktree_branch: str | None = None
-    worktree_exists: bool | None = None
-    worktree_pending: bool = False
     warning: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        headline = f"Active work item: {self.work_id}"
-        warning_text = self.warning or ""
-        if "Worktree creation was interrupted; no worktree available." in warning_text:
-            return f"{headline}\nWorktree: (creation interrupted, not available)"
-        if self.worktree_path is None:
-            return headline
-        if self.worktree_exists is False:
-            return f"{headline}\n🌳 {self.worktree_path} (missing)"
-
-        branch = self.worktree_branch or "unknown-branch"
-        suffix = " (recovered)" if "Recovered worktree at " in warning_text else ""
-        return f"{headline}\n🌳 {self.worktree_path} ({branch}){suffix}"
+        return f"Active work item: {self.work_id}"
 
 
 class WorkReopenInput(BaseModel):
@@ -304,7 +253,6 @@ class WorkRenameInput(BaseModel):
 
     work_id: str
     new_name: str
-    rename_worktree: bool = False
     chat_id: str = ""
     project_root: str | None = None
 
@@ -315,9 +263,6 @@ class WorkRenameOutput(BaseModel):
     old_name: str
     new_name: str
     changed: bool = True
-    worktree_moved: bool = False
-    worktree_path: str | None = None
-    worktree_branch: str | None = None
     warning: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
@@ -343,69 +288,24 @@ class WorkClearOutput(BaseModel):
         return ""
 
 
-class WorkSetWorktreeInput(BaseModel):
+class WorkTaskDirInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    work_id: str
-    path: str
+    task_dir: str | None = None
+    clear: bool = False
+    chat_id: str = ""
     project_root: str | None = None
 
 
-class WorkSetWorktreeOutput(BaseModel):
+class WorkTaskDirOutput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    work_id: str
-    worktree_path: str
+    task_dir: str
     warning: str | None = None
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
-        lines = [f"Set worktree for '{self.work_id}' to: {self.worktree_path}"]
-        if self.warning:
-            lines.append(self.warning)
-        return "\n".join(lines)
-
-
-class WorkClearWorktreeInput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    work_id: str
-    project_root: str | None = None
-
-
-class WorkClearWorktreeOutput(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    work_id: str
-    warning: str | None = None
-
-    def format_text(self, ctx: FormatContext | None = None) -> str:
-        _ = ctx
-        lines = [f"Cleared worktree assignment for '{self.work_id}'."]
-        if self.warning:
-            lines.append(self.warning)
-        return "\n".join(lines)
-
-
-def _resolve_worktree_intent(
-    *,
-    explicit_worktree: bool | None,
-    project_root: Path,
-) -> bool:
-    """Resolve whether to provision a worktree.
-
-    - ``True``:  always create (caller must handle failure)
-    - ``False``: never create
-    - ``None``:  defer to ``[work] default_worktree`` in project config
-    """
-    if explicit_worktree is True:
-        return True
-    if explicit_worktree is False:
-        return False
-    from meridian.lib.config.settings import load_config  # local to avoid circular import
-
-    config = load_config(project_root)
-    return config.work.default_worktree
+        return self.task_dir
 
 
 def work_start_sync(
@@ -428,35 +328,18 @@ def work_start_sync(
 
     existing = work_store.get_work_item(project_state_dir, normalized_work_id)
     created = False
-    was_reopened = False
     reattach_warning: str | None = None
     if existing is not None:
         if existing.status == "done":
             # Treat `work start <name>` on an archived item as an implicit reopen —
             # the user's intent is "I want to work on this" regardless of prior state.
             item = work_store.reopen_work_item(project_state_dir, existing.name)
-            was_reopened = True
             reattach_warning = f"Work item '{item.name}' was archived; reopened automatically."
         else:
             item = existing
             reattach_warning = (
                 f"Work item '{item.name}' already exists; attaching to existing item."
             )
-            # WT-65: interrupted-create recovery — a previous `work start` was killed
-            # between `git worktree add` and the metadata write.  Heal before continuing.
-            if item.worktree_pending:
-                recovered = recover_pending(project_root, item)
-                work_store.update_work_item_worktree(
-                    project_state_dir,
-                    item.name,
-                    path=recovered.metadata.path,
-                    branch=recovered.metadata.branch,
-                    repo_path=recovered.metadata.repo_path,
-                    name=recovered.metadata.name,
-                    pending=recovered.metadata.pending,
-                    managed=recovered.metadata.managed,
-                )
-                item = work_store.get_work_item(project_state_dir, item.name) or item
     else:
         item = work_store.create_work_item(
             project_state_dir,
@@ -465,49 +348,20 @@ def work_start_sync(
             payload.goal,
         )
         created = True
-
-    # Worktree provisioning before session attachment so that WT-03 rollback
-    # (new item deleted on git failure) leaves the session unaffected.
-    worktree_warning: str | None = None
-    worktree_requested = _resolve_worktree_intent(
-        explicit_worktree=payload.worktree,
-        project_root=project_root,
-    )
-    if was_reopened and not worktree_requested:
-        restored = restore_for_reopen(project_root, item)
-        work_store.update_work_item_worktree(
+    task_dir_warning: str | None = None
+    normalized_task_dir = (payload.task_dir or "").strip() or None
+    if normalized_task_dir is not None:
+        resolved_task_dir = Path(normalized_task_dir).expanduser().resolve()
+        if not resolved_task_dir.exists():
+            raise ValueError(f"task_dir does not exist: {resolved_task_dir}")
+        if not resolved_task_dir.is_dir():
+            raise ValueError(f"task_dir is not a directory: {resolved_task_dir}")
+        item = work_store.update_work_item_task_dir(
             project_state_dir,
             item.name,
-            path=restored.metadata.path,
-            branch=restored.metadata.branch,
-            repo_path=restored.metadata.repo_path,
-            name=restored.metadata.name,
-            pending=restored.metadata.pending,
-            managed=restored.metadata.managed,
+            task_dir=resolved_task_dir.as_posix(),
         )
-        worktree_warning = format_restore_notice(restored)
-        item = work_store.get_work_item(project_state_dir, item.name) or item
-    if worktree_requested:
-        try:
-            ensured = ensure_work_item_worktree(
-                project_root=project_root,
-                project_state_dir=project_state_dir,
-                work_id=item.name,
-                target_repo=payload.repo,
-                execution_cwd=roots.execution_cwd,
-                dry_run=False,
-            )
-        except Exception:
-            if created:
-                work_store.delete_work_item(project_state_dir, item.name, force=True)
-            raise
-        item = work_store.get_work_item(project_state_dir, item.name) or item
-        ensured_status = getattr(ensured, "status", None)
-        if ensured_status in {"provisioned", "recovered"} or getattr(ensured, "ensured", False):
-            ensured_path = getattr(getattr(ensured, "metadata", None), "path", None) or getattr(
-                ensured, "worktree_path", None
-            )
-            worktree_warning = ensured.warning or f"Ensured worktree at {ensured_path}"
+        task_dir_warning = f"Set task_dir to {resolved_task_dir.as_posix()}."
 
     set_session_work_attachment(runtime_state_root, chat_id=chat_id, work_id=item.name)
     _dispatch_work_hook_event(
@@ -530,8 +384,8 @@ def work_start_sync(
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
         created=created,
-        warning=_merge_warnings(warning, slug_warning, reattach_warning, worktree_warning),
-        worktree_path=item.worktree_path,
+        warning=_merge_warnings(warning, slug_warning, reattach_warning, task_dir_warning),
+        task_dir=item.task_dir,
     )
 
 
@@ -548,14 +402,6 @@ def work_update_sync(
     current = _require_work_item(project_state_dir, payload.work_id)
     if payload.status == "done":
         attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-        shared_with = _shared_worktree_references(project_state_dir, current)
-        cleanup_for_done(
-            roots.project_root,
-            current,
-            force=False,
-            remove=False,
-            shared_with=shared_with,
-        )
         item = work_store.archive_work_item(
             project_state_dir,
             payload.work_id,
@@ -573,24 +419,10 @@ def work_update_sync(
             work_id=item.name,
             data={"status": item.status},
         )
-        try:
-            worktree_message = format_cleanup_notice(
-                cleanup_for_done(
-                    roots.project_root,
-                    item,
-                    force=False,
-                    shared_with=shared_with,
-                )
-            )
-        except Exception as exc:
-            worktree_message = (
-                f"Warning: work item archived but worktree removal failed: {exc}\n"
-                f"Remove manually with: git worktree remove {item.worktree_path}"
-            )
         return WorkUpdateOutput(
             name=item.name,
             status=item.status,
-            warning=_merge_warnings(warning, attachment_warning, worktree_message),
+            warning=_merge_warnings(warning, attachment_warning),
         )
     if current.status == "done" and payload.status is not None:
         raise ValueError(
@@ -621,16 +453,7 @@ def work_done_sync(
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     attachment_warning = _active_work_attachment_warning(runtime_state_root, payload.work_id)
-
-    pre_item = _require_work_item(project_state_dir, payload.work_id)
-    shared_with = _shared_worktree_references(project_state_dir, pre_item)
-    cleanup_for_done(
-        roots.project_root,
-        pre_item,
-        force=payload.force,
-        remove=False,
-        shared_with=shared_with,
-    )
+    _require_work_item(project_state_dir, payload.work_id)
 
     item = work_store.archive_work_item(project_state_dir, payload.work_id)
     _dispatch_work_hook_event(
@@ -645,27 +468,10 @@ def work_done_sync(
         work_id=item.name,
         data={"status": item.status},
     )
-    # Remove the worktree now that the item is archived.  The push check already
-    # passed; if removal fails (e.g., dirty working tree), surface a warning
-    # rather than rolling back the archive.
-    try:
-        worktree_message = format_cleanup_notice(
-            cleanup_for_done(
-                roots.project_root,
-                item,
-                force=payload.force,
-                shared_with=shared_with,
-            )
-        )
-    except Exception as exc:
-        worktree_message = (
-            f"Warning: work item archived but worktree removal failed: {exc}\n"
-            f"Remove manually with: git worktree remove {item.worktree_path}"
-        )
     return WorkUpdateOutput(
         name=item.name,
         status=item.status,
-        warning=_merge_warnings(nested_warning, attachment_warning, worktree_message),
+        warning=_merge_warnings(nested_warning, attachment_warning),
     )
 
 
@@ -674,10 +480,7 @@ def work_delete_sync(
     ctx: RuntimeContext | None = None,
 ) -> WorkDeleteOutput:
     nested_warning = _work_warning(ctx)
-    roots = resolve_roots(payload.project_root)
-    project_state_dir = roots.project_state_dir
-    pre_item = _require_work_item(project_state_dir, payload.work_id)
-    shared_with = _shared_worktree_references(project_state_dir, pre_item)
+    project_state_dir = resolve_roots(payload.project_root).project_state_dir
     item, had_artifacts = work_store.delete_work_item(
         project_state_dir,
         payload.work_id,
@@ -688,17 +491,11 @@ def work_delete_sync(
         work_id=item.name,
         data={"status": item.status, "had_artifacts": had_artifacts},
     )
-    # Remove the worktree unconditionally — delete is already a destructive operation.
-    # Uses --force so dirty state doesn't block cleanup.  Failure is non-fatal.
-    worktree_message = format_cleanup_notice(
-        cleanup_for_delete(roots.project_root, item, shared_with=shared_with)
-    )
-    combined_warning = _merge_warnings(nested_warning, worktree_message)
     return WorkDeleteOutput(
         name=item.name,
         had_artifacts=had_artifacts,
         deleted=True,
-        warning=combined_warning or "",
+        warning=nested_warning or "",
     )
 
 
@@ -709,29 +506,16 @@ def work_reopen_sync(
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
     project_state_dir = roots.project_state_dir
-    project_root = roots.project_root
     item = work_store.reopen_work_item(project_state_dir, payload.work_id)
     _emit_work_transition(
         "work.reopened",
         work_id=item.name,
         data={"status": item.status},
     )
-    restored = restore_for_reopen(project_root, item)
-    work_store.update_work_item_worktree(
-        project_state_dir,
-        item.name,
-        path=restored.metadata.path,
-        branch=restored.metadata.branch,
-        repo_path=restored.metadata.repo_path,
-        name=restored.metadata.name,
-        pending=restored.metadata.pending,
-        managed=restored.metadata.managed,
-    )
-    reopen_message = format_restore_notice(restored)
     return WorkReopenOutput(
         name=item.name,
         status=item.status,
-        warning=_merge_warnings(warning, reopen_message),
+        warning=warning,
     )
 
 
@@ -741,7 +525,6 @@ def work_switch_sync(
 ) -> WorkSwitchOutput:
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
-    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     item = _require_work_item(project_state_dir, payload.work_id)
@@ -752,48 +535,10 @@ def work_switch_sync(
         if updated
         else f"Work item ready: {item.name} (no active session to update)"
     )
-
-    worktree_path: str | None = item.worktree_path
-    worktree_branch: str | None = item.worktree_branch
-    worktree_exists: bool | None = None
-    worktree_pending = item.worktree_pending
-    recovered_message: str | None = None
-    worktree_warning: str | None = None
-
-    if worktree_pending:
-        recovered = recover_pending(project_root, item)
-        work_store.update_work_item_worktree(
-            project_state_dir,
-            item.name,
-            path=recovered.metadata.path,
-            branch=recovered.metadata.branch,
-            repo_path=recovered.metadata.repo_path,
-            name=recovered.metadata.name,
-            pending=recovered.metadata.pending,
-            managed=recovered.metadata.managed,
-        )
-        item = work_store.get_work_item(project_state_dir, item.name) or item
-        worktree_path = item.worktree_path
-        worktree_branch = item.worktree_branch
-        worktree_pending = item.worktree_pending
-        worktree_exists = Path(worktree_path).is_dir() if worktree_path is not None else None
-        if recovered.status == "healed":
-            recovered_message = f"Recovered worktree at {recovered.metadata.path}"
-        elif item.worktree_managed:
-            worktree_warning = "Worktree creation was interrupted; no worktree available."
-    elif worktree_path is not None:
-        worktree_exists = Path(worktree_path).is_dir()
-        if worktree_exists is False:
-            worktree_warning = f"Worktree path recorded but directory missing: {worktree_path}"
-
     return WorkSwitchOutput(
         work_id=item.name,
         message=message,
-        worktree_path=worktree_path,
-        worktree_branch=worktree_branch,
-        worktree_exists=worktree_exists,
-        worktree_pending=worktree_pending,
-        warning=_merge_warnings(warning, recovered_message, worktree_warning),
+        warning=warning,
     )
 
 
@@ -803,11 +548,10 @@ def work_rename_sync(
 ) -> WorkRenameOutput:
     warning = _work_warning(ctx)
     roots = resolve_roots(payload.project_root)
-    project_root = roots.project_root
     project_state_dir = roots.project_state_dir
     runtime_state_root = roots.runtime_root
     old_name = payload.work_id
-    item = _require_work_item(project_state_dir, old_name)
+    _require_work_item(project_state_dir, old_name)
 
     new_slug = work_store.slugify(payload.new_name)
     if not new_slug or new_slug != payload.new_name:
@@ -816,55 +560,7 @@ def work_rename_sync(
             f"Use a slug (lowercase, hyphens, no spaces) — e.g. '{new_slug or 'my-feature'}'."
         )
 
-    rename_notice: str | None = None
-    worktree_moved = False
-    worktree_path: str | None = item.worktree_path
-    worktree_branch: str | None = item.worktree_branch
-    worktree_repo_path: str | None = item.worktree_repo_path
-    worktree_name: str | None = item.worktree_name
-    if payload.rename_worktree and new_slug != old_name:
-        shared_with = _shared_worktree_references(project_state_dir, item)
-        wt_result = rename_worktree(
-            project_root,
-            item,
-            new_slug,
-            shared_with=shared_with,
-        )
-        rename_notice = format_rename_notice(wt_result)
-        if wt_result.status == "failed":
-            return WorkRenameOutput(
-                old_name=old_name,
-                new_name=old_name,
-                changed=False,
-                warning=_merge_warnings(warning, rename_notice),
-                worktree_moved=False,
-                worktree_path=item.worktree_path,
-                worktree_branch=item.worktree_branch,
-            )
-
-        worktree_moved = wt_result.status == "renamed"
-        worktree_path = wt_result.metadata.path
-        worktree_branch = wt_result.metadata.branch
-        worktree_repo_path = wt_result.metadata.repo_path
-        worktree_name = wt_result.metadata.name
-
     item = work_store.rename_work_item(project_state_dir, old_name, new_slug)
-    if (
-        payload.rename_worktree
-        and new_slug != old_name
-        and worktree_moved
-        and worktree_path is not None
-    ):
-        item = work_store.update_work_item_worktree(
-            project_state_dir,
-            item.name,
-            path=worktree_path,
-            branch=worktree_branch,
-            repo_path=worktree_repo_path,
-            name=worktree_name,
-            pending=False,
-            managed=True,
-        )
 
     for spawn in spawn_store.list_spawns(runtime_state_root, filters={"work_id": old_name}):
         if spawn.kind == "child":
@@ -884,10 +580,7 @@ def work_rename_sync(
         old_name=old_name,
         new_name=item.name,
         changed=old_name != item.name,
-        worktree_moved=worktree_moved,
-        worktree_path=item.worktree_path,
-        worktree_branch=item.worktree_branch,
-        warning=_merge_warnings(warning, rename_notice),
+        warning=warning,
     )
 
 
@@ -907,67 +600,60 @@ def work_clear_sync(
     return WorkClearOutput(message=message, warning=warning)
 
 
-def work_set_worktree_sync(
-    payload: WorkSetWorktreeInput,
+def work_task_dir_sync(
+    payload: WorkTaskDirInput,
     ctx: RuntimeContext | None = None,
-) -> WorkSetWorktreeOutput:
+) -> WorkTaskDirOutput:
     warning = _work_warning(ctx)
+    if payload.clear and payload.task_dir is not None:
+        raise ValueError("Cannot pass both --clear and <path>.")
     roots = resolve_roots(payload.project_root)
+    project_root = roots.project_root
+    runtime_root = roots.runtime_root
     project_state_dir = roots.project_state_dir
-    _require_work_item(project_state_dir, payload.work_id)
-    resolved_path = Path(payload.path).expanduser().resolve()
-    if not resolved_path.exists():
-        raise ValueError(
-            f"Worktree path does not exist: {resolved_path}\n"
-            "Create it first, then run `meridian work set-worktree`."
+    chat_id = resolve_chat_id(payload_chat_id=payload.chat_id, ctx=runtime_context(ctx))
+    active_work_id = session_store.get_session_active_work_id(runtime_root, chat_id)
+
+    if payload.task_dir is None and not payload.clear:
+        if not active_work_id:
+            return WorkTaskDirOutput(task_dir=project_root.as_posix(), warning=warning)
+        item = work_store.get_active_work_item(project_state_dir, active_work_id)
+        if item is None or item.task_dir is None:
+            return WorkTaskDirOutput(task_dir=project_root.as_posix(), warning=warning)
+        return WorkTaskDirOutput(task_dir=item.task_dir, warning=warning)
+
+    if not active_work_id:
+        raise ValueError("No active work item. Start or switch to a work item first.")
+    item = _require_work_item(project_state_dir, active_work_id)
+
+    if payload.clear:
+        updated = work_store.update_work_item_task_dir(
+            project_state_dir,
+            item.name,
+            task_dir=None,
         )
-    if not resolved_path.is_dir():
-        raise ValueError(f"Worktree path is not a directory: {resolved_path}")
-    updated = work_store.update_work_item_worktree(
-        project_state_dir,
-        payload.work_id,
-        path=resolved_path.as_posix(),
-        branch=None,
-        repo_path=None,
-        name=None,
-        pending=False,
-        managed=False,
-    )
-    _emit_work_transition(
-        "work.worktree_set",
-        work_id=updated.name,
-        data={"path": updated.worktree_path},
-    )
-    return WorkSetWorktreeOutput(
-        work_id=updated.name,
-        worktree_path=resolved_path.as_posix(),
-        warning=warning,
-    )
+    else:
+        requested_task_dir = (payload.task_dir or "").strip()
+        if not requested_task_dir:
+            raise ValueError("task_dir path is empty")
+        resolved_task_dir = Path(requested_task_dir).expanduser().resolve()
+        if not resolved_task_dir.exists():
+            raise ValueError(f"task_dir does not exist: {resolved_task_dir}")
+        if not resolved_task_dir.is_dir():
+            raise ValueError(f"task_dir is not a directory: {resolved_task_dir}")
+        updated = work_store.update_work_item_task_dir(
+            project_state_dir,
+            item.name,
+            task_dir=resolved_task_dir.as_posix(),
+        )
 
-
-def work_clear_worktree_sync(
-    payload: WorkClearWorktreeInput,
-    ctx: RuntimeContext | None = None,
-) -> WorkClearWorktreeOutput:
-    warning = _work_warning(ctx)
-    roots = resolve_roots(payload.project_root)
-    project_state_dir = roots.project_state_dir
-    _require_work_item(project_state_dir, payload.work_id)
-    updated = work_store.update_work_item_worktree(
-        project_state_dir,
-        payload.work_id,
-        path=None,
-        branch=None,
-        repo_path=None,
-        name=None,
-        pending=False,
-        managed=False,
-    )
+    resolved_task_dir = updated.task_dir or project_root.as_posix()
     _emit_work_transition(
-        "work.worktree_cleared",
+        "work.task_dir_updated",
         work_id=updated.name,
+        data={"task_dir": resolved_task_dir},
     )
-    return WorkClearWorktreeOutput(work_id=updated.name, warning=warning)
+    return WorkTaskDirOutput(task_dir=resolved_task_dir, warning=warning)
 
 
 work_start = async_from_sync(work_start_sync)
@@ -978,15 +664,12 @@ work_reopen = async_from_sync(work_reopen_sync)
 work_switch = async_from_sync(work_switch_sync)
 work_rename = async_from_sync(work_rename_sync)
 work_clear = async_from_sync(work_clear_sync)
-work_set_worktree = async_from_sync(work_set_worktree_sync)
-work_clear_worktree = async_from_sync(work_clear_worktree_sync)
+work_task_dir = async_from_sync(work_task_dir_sync)
 
 
 __all__ = [
     "WorkClearInput",
     "WorkClearOutput",
-    "WorkClearWorktreeInput",
-    "WorkClearWorktreeOutput",
     "WorkDeleteInput",
     "WorkDeleteOutput",
     "WorkDoneInput",
@@ -994,20 +677,16 @@ __all__ = [
     "WorkRenameOutput",
     "WorkReopenInput",
     "WorkReopenOutput",
-    "WorkSetWorktreeInput",
-    "WorkSetWorktreeOutput",
     "WorkStartInput",
     "WorkStartOutput",
     "WorkSwitchInput",
     "WorkSwitchOutput",
+    "WorkTaskDirInput",
+    "WorkTaskDirOutput",
     "WorkUpdateInput",
     "WorkUpdateOutput",
-    "WorkWorktreeInput",
-    "WorkWorktreeOutput",
     "work_clear",
     "work_clear_sync",
-    "work_clear_worktree",
-    "work_clear_worktree_sync",
     "work_delete",
     "work_delete_sync",
     "work_done",
@@ -1016,14 +695,12 @@ __all__ = [
     "work_rename_sync",
     "work_reopen",
     "work_reopen_sync",
-    "work_set_worktree",
-    "work_set_worktree_sync",
     "work_start",
     "work_start_sync",
     "work_switch",
     "work_switch_sync",
+    "work_task_dir",
+    "work_task_dir_sync",
     "work_update",
     "work_update_sync",
-    "work_worktree",
-    "work_worktree_sync",
 ]

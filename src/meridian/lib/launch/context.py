@@ -1512,9 +1512,9 @@ def bind_launch_context(
     task_cwd = (
         directory_context.logical_task_cwd if directory_context.has_distinct_task_cwd else None
     )
-    child_cwd = directory_context.logical_task_cwd
-    if harness.id == HarnessId.CLAUDE and directory_context.has_distinct_task_cwd:
-        child_cwd = resolved_control_root
+    # Invariant: harness subprocess cwd always stays at control_root.
+    # Distinct task directories are exposed via task_cwd/env/instructions only.
+    child_cwd = resolved_control_root
     try:
         preflight = harness.preflight(
             execution_cwd=resolved_control_root,
@@ -1600,12 +1600,6 @@ def bind_launch_context(
             update={"warning": summarize_composition_warnings(composition_warnings)}
         )
 
-    if (
-        task_cwd is not None
-        and task_cwd_projection_missing
-        and workspace_projection.applicability != "active"
-    ):
-        child_cwd = resolved_control_root
     directory_context = directory_context.with_actual_process_cwd(child_cwd)
 
     model = (resolved_request.model or "").strip()

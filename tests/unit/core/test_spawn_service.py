@@ -57,7 +57,15 @@ def _start_spawn(
     )
 
 
-def _fake_launch_context_builder(child_cwd: Path) -> Any:
+def _fake_launch_context_builder(
+    child_cwd: Path,
+    *,
+    control_root: Path | None = None,
+    task_cwd: Path | None = None,
+) -> Any:
+    resolved_control_root = control_root or child_cwd.parent
+    resolved_task_cwd = task_cwd or child_cwd
+
     def _bind_spawn_launch_context(**kwargs: object) -> SimpleNamespace:
         prepared = cast("Any", kwargs["prepared"])
         bindings = cast("Any", kwargs["bindings"])
@@ -66,9 +74,9 @@ def _fake_launch_context_builder(child_cwd: Path) -> Any:
         runtime = cast("LaunchRuntime", kwargs["runtime"])
         return SimpleNamespace(
             resolved_request=request,
-            project_root=child_cwd.parent,
-            control_root=child_cwd.parent,
-            task_cwd=child_cwd,
+            project_root=resolved_control_root,
+            control_root=resolved_control_root,
+            task_cwd=resolved_task_cwd,
             runtime=runtime,
             work_id=None,
             binding=SimpleNamespace(
@@ -307,3 +315,48 @@ async def test_prepare_sets_pi_notification_timeout_from_wait_timeout_config(
     assert prepared.connection_config.timeout_seconds is None
     assert prepared.connection_config.pi_notification_timeout_seconds == 1800.0
     assert prepared.connection_config.pi_child_wave_timeout_seconds == 45.0
+
+
+@pytest.mark.asyncio
+async def test_prepare_connection_config_keeps_control_root_cwd_when_task_dir_differs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = _runtime_root(tmp_path)
+    control_root = tmp_path / "control-root"
+    control_root.mkdir()
+    task_dir = tmp_path / "task-dir"
+    task_dir.mkdir()
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.compose_spawn_launch_surface",
+        lambda **kwargs: SimpleNamespace(request=kwargs["request"]),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.bind_spawn_launch_context",
+        _fake_launch_context_builder(
+            control_root,
+            control_root=control_root,
+            task_cwd=task_dir,
+        ),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.spawn_store.reserve_spawn_id",
+        lambda _root: "p1",
+    )
+
+    service = _service(runtime_root)
+    prepared = await service.prepare(
+        PrepareSpawnRequest(
+            request=SpawnRequest(
+                prompt="run it",
+                model="gpt-5.4",
+                harness="codex",
+            ),
+            runtime=_runtime_request(tmp_path, runtime_root),
+            harness_registry=cast("Any", SimpleNamespace()),
+            chat_id="c1",
+        )
+    )
+
+    assert prepared.connection_config.control_root == control_root
+    assert prepared.connection_config.task_cwd is None

@@ -277,30 +277,14 @@ def _spawn_create(
         str,
         Parameter(name="--work", help="Associate the spawn with a work item id."),
     ] = "",
-    worktree: Annotated[
-        bool | None,
-        Parameter(
-            name="--worktree",
-            help=(
-                "Ensure and use the selected work item's Meridian-managed canonical "
-                "worktree as task cwd."
-            ),
-        ),
-    ] = None,
-    no_worktree: Annotated[
-        bool,
-        Parameter(
-            name="--no-worktree",
-            help="Force authority root as task cwd, ignoring any configured worktree path.",
-        ),
-    ] = False,
-    repo: Annotated[
+    task_dir: Annotated[
         str | None,
         Parameter(
-            name="--repo",
+            name="--task-dir",
             help=(
-                "Target implementation repository path or workspace alias for first "
-                "managed worktree ensure."
+                "Override the source-code edit directory for this spawn only. "
+                "Does not modify the work item's task_dir setting. "
+                "Relative -f paths resolve against this directory."
             ),
         ),
     ] = None,
@@ -490,17 +474,17 @@ def _spawn_create(
         task_ping_reset_on_activity=task_ping_reset_on_activity,
         debug=debug,
     )
-    worktree_intent: bool | None = None
-    if no_worktree:
-        worktree_intent = False
-    elif worktree is not None:
-        worktree_intent = worktree
     resolved_prompt = _resolve_spawn_prompt(
         prompt,
         prompt_file,
         has_files=bool(references),
         is_continue=resolved_continue_from is not None,
     )
+    normalized_task_dir = (task_dir or "").strip() or None
+    if resolved_continue_from is not None and normalized_task_dir is not None:
+        raise ValueError(
+            "--continue does not accept --task-dir. Use --fork --task-dir to diverge."
+        )
 
     fork_source_ref = fork_resolution.fork_ref or fork_resolution.fork_fresh_ref
     if fork_source_ref is not None:
@@ -518,8 +502,7 @@ def _spawn_create(
                 inherit_source_skills=True if not fork_is_fresh else skills is None,
                 desc=desc,
                 work=work,
-                worktree=worktree_intent,
-                repo=repo,
+                task_dir=normalized_task_dir,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -538,8 +521,7 @@ def _spawn_create(
                 goal=resolved_goal,
                 desc=desc,
                 work=work,
-                worktree=worktree_intent,
-                repo=repo,
+                task_dir=normalized_task_dir,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),
@@ -558,8 +540,7 @@ def _spawn_create(
                 desc=desc,
                 goal=resolved_goal,
                 work=work,
-                worktree=worktree_intent,
-                repo=repo,
+                task_dir=normalized_task_dir,
                 **shared_launch_kwargs,
             ),
             sink=_current_output_sink(),

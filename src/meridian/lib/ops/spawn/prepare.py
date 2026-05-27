@@ -13,7 +13,7 @@ from meridian.lib.launch.composition_spawn import (
     compose_spawn_launch_surface,
 )
 from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
-from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
+from meridian.lib.launch.cwd import LaunchDirectoryContext, resolve_task_cwd
 from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
 from meridian.lib.launch.request import (
@@ -63,7 +63,6 @@ def build_create_payload(
     runtime: OperationRuntime | None = None,
     preflight_warning: str | None = None,
     ctx: RuntimeContext | None = None,
-    forced_task_cwd_resolution: TaskCwdResolution | None = None,
 ) -> SpawnCreateArtifacts:
     """Build a spawn request and prepared launch surface for create/execute handoff."""
 
@@ -101,18 +100,13 @@ def build_create_payload(
             except Exception:
                 ambient_work_id = None
         project_state_dir = resolve_project_paths(project_root).root_dir
-        if forced_task_cwd_resolution is not None:
-            task_cwd_resolution = forced_task_cwd_resolution
-        else:
-            task_cwd_resolution = resolve_task_cwd(
-                project_root,
-                project_state_dir=project_state_dir,
-                explicit_task_dir=payload.task_dir,
-                explicit_work_id=explicit_work_id,
-                ambient_work_id=ambient_work_id,
-                force_worktree=payload.worktree is True,
-                force_no_worktree=payload.worktree is False,
-            )
+        task_cwd_resolution = resolve_task_cwd(
+            project_root,
+            project_state_dir=project_state_dir,
+            explicit_task_dir=payload.task_dir,
+            explicit_work_id=explicit_work_id,
+            ambient_work_id=ambient_work_id,
+        )
         directory_context = LaunchDirectoryContext.from_task_cwd_resolution(
             authority_root=project_root,
             task_cwd_resolution=task_cwd_resolution,

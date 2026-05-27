@@ -278,6 +278,7 @@ def test_build_launch_context_split_root_task_cwd_contract(
     assert final_env["MERIDIAN_TASK_DIR"] == execution_cwd.as_posix()
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
+    assert runtime_ctx.binding.child_cwd == tmp_path
     if expect_task_cwd:
         assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
         assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
@@ -494,6 +495,7 @@ def test_build_launch_context_claude_preflight_uses_control_root_when_task_cwd_d
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
     assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
     assert runtime_ctx.binding.run_params.extra_args == ("--user-tail", "1")
+    assert runtime_ctx.binding.child_cwd == tmp_path
 
 
 def test_build_launch_context_emits_child_spawn_id(

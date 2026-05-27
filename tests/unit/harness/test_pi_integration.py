@@ -878,7 +878,7 @@ async def test_pi_spawn_manager_first_event_timeout_fails_and_records_timeout_ph
         await manager.shutdown()
 @pytest.mark.asyncio
 @pytest.mark.skipif(sys.platform == "win32", reason="uses POSIX executable shim")
-async def test_pi_connection_launches_in_task_cwd_when_provided(
+async def test_pi_connection_launches_in_control_root_when_task_cwd_provided(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -929,7 +929,7 @@ async def test_pi_connection_launches_in_task_cwd_when_provided(
     await connection.stop(reason="test")
     _ = [event async for event in event_iter]
 
-    assert observed_cwd.read_text(encoding="utf-8").strip() == str(task_cwd)
+    assert observed_cwd.read_text(encoding="utf-8").strip() == str(control_root)
 
 
 @pytest.mark.asyncio

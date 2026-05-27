@@ -22,7 +22,6 @@ from meridian.lib.core.spawn_lifecycle import ACTIVE_SPAWN_STATUSES, is_active_s
 from meridian.lib.core.spawn_service import CancelOutcome
 from meridian.lib.core.telemetry import register_debug_trace_observer
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.cwd import TaskCwdResolution
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import ResolvedSessionReference, resolve_session_reference
 from meridian.lib.ops.runtime import (
@@ -37,8 +36,6 @@ from meridian.lib.ops.runtime import (
     resolve_runtime_root_for_read,
     runtime_context,
 )
-from meridian.lib.ops.work_attachment import ensure_explicit_work_item
-from meridian.lib.ops.worktree_ensure import ensure_work_item_worktree
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_store
 from meridian.lib.state.atomic import atomic_write_text
@@ -258,30 +255,6 @@ def _merge_warnings(*warnings: str | None) -> str | None:
     return " ".join(merged)
 
 
-def _resolve_selected_work_item(
-    *,
-    payload_work: str,
-    context: RuntimeContext,
-    runtime_root: Path,
-) -> str | None:
-    explicit_work_id = payload_work.strip() or None
-    if explicit_work_id is not None:
-        return explicit_work_id
-
-    ambient_work_id = (context.work_id or "").strip() or None
-    if ambient_work_id is not None:
-        return ambient_work_id
-
-    chat_id = (context.chat_id or "").strip()
-    if not chat_id:
-        return None
-    try:
-        active_work_id = session_store.get_session_active_work_id(runtime_root, chat_id) or ""
-        return active_work_id.strip() or None
-    except Exception:
-        return None
-
-
 def spawn_create_sync(
     payload: SpawnCreateInput,
     ctx: RuntimeContext | None = None,
@@ -325,57 +298,11 @@ def spawn_create_sync(
             work_id=payload.work,
         )
         payload = payload.model_copy(update={"work": resolved_work_id})
-        if not work_exists and payload.worktree is not True:
+        if not work_exists:
             dry_run_work_warning = (
                 f"Work item '{resolved_work_id}' does not exist. "
                 "Dry-run leaves state unchanged; it would be created on launch."
             )
-    ensure_warning: str | None = None
-    forced_task_cwd_resolution: TaskCwdResolution | None = None
-    if payload.worktree is True:
-        resolved_runtime_root = (
-            _runtime_root_from_prepared_for_read(
-                prepared_context,
-                project_root=resolved_root,
-            )
-            if prepared_context is not None
-            else (
-                authority.runtime_root
-                if authority.runtime_root is not None
-                else resolve_runtime_root_for_read(resolved_root)
-            )
-        )
-        selected_work_id = _resolve_selected_work_item(
-            payload_work=payload.work,
-            context=resolved_context,
-            runtime_root=resolved_runtime_root,
-        )
-        if selected_work_id is not None:
-            project_state_dir = resolve_project_paths(resolved_root).root_dir
-            explicit_work_requested = bool(payload.work.strip())
-            if explicit_work_requested and not payload.dry_run:
-                selected_work_id = ensure_explicit_work_item(
-                    project_state_dir,
-                    selected_work_id,
-                )
-                payload = payload.model_copy(update={"work": selected_work_id})
-            ensured = ensure_work_item_worktree(
-                project_root=resolved_root,
-                project_state_dir=project_state_dir,
-                work_id=selected_work_id,
-                target_repo=payload.repo,
-                execution_cwd=authority.execution_cwd,
-                dry_run=payload.dry_run,
-                allow_missing_dry_run=explicit_work_requested,
-            )
-            ensure_warning = ensured.warning
-            if payload.dry_run:
-                forced_task_cwd_resolution = TaskCwdResolution(
-                    task_cwd=ensured.worktree_path,
-                    source="forced-worktree",
-                    work_item=selected_work_id,
-                )
-    preflight_warning = _merge_warnings(preflight_warning, ensure_warning)
 
     runtime = None
     if not payload.dry_run:
@@ -403,7 +330,6 @@ def spawn_create_sync(
         runtime=runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
-        forced_task_cwd_resolution=forced_task_cwd_resolution,
     )
     prepared_request = artifacts.request
     prepared_surface = artifacts.prepared
@@ -1741,12 +1667,15 @@ def _reject_continue_policy_overrides(payload: SpawnContinueInput) -> None:
         rejected.append("--")
     if payload.work.strip():
         rejected.append("--work")
-    if payload.worktree is not None:
-        rejected.append("--worktree/--no-worktree")
-    if payload.repo is not None and payload.repo.strip():
-        rejected.append("--repo")
+    if payload.task_dir is not None and payload.task_dir.strip():
+        rejected.append("--task-dir")
     if rejected:
         flags = ", ".join(rejected)
+        if "--task-dir" in rejected:
+            raise ValueError(
+                "Cannot use --task-dir with spawn --continue. "
+                "Use --fork --task-dir to diverge work location."
+            )
         raise ValueError(
             f"Cannot use policy-changing option(s) with spawn --continue: {flags}. "
             "Use --fork-fresh to change launch identity or policy."
@@ -1808,8 +1737,7 @@ def _build_continue_create_input(
         goal=resolved_goal,
         desc=payload.desc,
         work=source_spawn.work_id or "",
-        worktree=None,
-        repo=None,
+        task_dir=None,
         launch_policy_snapshot=source_snapshot,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
@@ -1858,8 +1786,7 @@ def _build_fork_create_input(
     requested_agent: str | None,
     inherited_skills: tuple[str, ...],
     requested_work: str,
-    requested_worktree: bool | None,
-    requested_repo: str | None,
+    requested_task_dir: str | None,
     requested_goal: str | None,
     harness: str | None,
 ) -> SpawnCreateInput:
@@ -1874,8 +1801,7 @@ def _build_fork_create_input(
         skills=inherited_skills,
         desc=payload.desc,
         work=requested_work or (resolved_reference.source_work_id or ""),
-        worktree=requested_worktree,
-        repo=requested_repo,
+        task_dir=requested_task_dir,
         goal=requested_goal,
         session=SessionRequest(
             requested_harness_session_id=resolved_reference.harness_session_id,
@@ -1941,8 +1867,7 @@ def spawn_fork_sync(
     requested_model = payload.model.strip()
     requested_agent = (payload.agent or "").strip() or None
     requested_work = payload.work.strip()
-    requested_worktree = payload.worktree
-    requested_repo = payload.repo
+    requested_task_dir = (payload.task_dir or "").strip() or None
     requested_goal = payload.goal
     if requested_goal is None and _looks_like_spawn_ref(normalized_source_ref):
         source_row = read_spawn_row(
@@ -1969,8 +1894,7 @@ def spawn_fork_sync(
         requested_agent=requested_agent,
         inherited_skills=inherited_skills,
         requested_work=requested_work,
-        requested_worktree=requested_worktree,
-        requested_repo=requested_repo,
+        requested_task_dir=requested_task_dir,
         requested_goal=requested_goal,
         harness=requested_harness,
     )
