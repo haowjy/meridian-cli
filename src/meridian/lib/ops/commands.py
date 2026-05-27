@@ -588,8 +588,8 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         extension_id="meridian.work",
         command_id="task-dir",
         summary=(
-            "Print or set the active work item's source-code edit directory. "
-            "Without arguments, prints the resolved path."
+            "Print resolved task_dir. Set/clear requires an active work item attached to "
+            "the current session."
         ),
         handler=work_task_dir,
         sync_handler=work_task_dir_sync,

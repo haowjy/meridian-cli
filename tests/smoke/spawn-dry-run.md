@@ -140,10 +140,9 @@ uv run meridian spawn -a reviewer -p "Use kb ref" -f kb:domain/page.md --dry-run
 ## --work uses work-item task_dir for relative refs
 
 ```bash
-uv run meridian work start smoke-task-dir
 TASK_DIR=$(mktemp -d)
 echo "relative ref" > "$TASK_DIR/notes.md"
-uv run meridian work task-dir "$TASK_DIR"
+uv run meridian work start smoke-task-dir --task-dir "$TASK_DIR"
 uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-task-dir -f notes.md --dry-run --json
 ```
 - [ ] Exit 0

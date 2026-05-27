@@ -294,6 +294,7 @@ class WorkShowOutput(BaseModel):
     description: str
     created_at: str
     work_dir: str
+    task_dir: str | None = None
     spawns: tuple[WorkDashboardSpawn, ...] = ()
     sessions: tuple[WorkSessionItem, ...] = ()
     worktree_path: str | None = None  # full absolute path; None = no worktree
@@ -550,6 +551,7 @@ def work_show_sync(
         description=item.description,
         created_at=item.created_at,
         work_dir=work_dir_display(project_root, project_state_dir, item.name),
+        task_dir=item.task_dir,
         spawns=tuple(associated_spawns),
         sessions=_work_sessions_for_work_id(
             project_root,

@@ -76,23 +76,30 @@ uv run meridian work rename original-name new-name
 ```
 - [ ] No `Traceback` in stderr (may exit 0 or non-zero depending on feature state)
 
-## work task-dir set / clear
+## work start --task-dir sets metadata (non-session safe)
 
 ```bash
-uv run meridian work start with-task-dir
 mkdir -p "$SCRATCH/task-dir-target"
-uv run meridian work task-dir "$SCRATCH/task-dir-target"
+uv run meridian work start with-task-dir --task-dir "$SCRATCH/task-dir-target"
 uv run meridian work show with-task-dir --json
 ```
 - [ ] Exit 0
 - [ ] JSON shows `task_dir` set to `$SCRATCH/task-dir-target`
 
+## work task-dir set / clear requires session-attached active work
+
+```bash
+mkdir -p "$SCRATCH/task-dir-target-2"
+uv run meridian work task-dir "$SCRATCH/task-dir-target-2"
+```
+- [ ] Exits non-zero
+- [ ] Error mentions no active work item
+
 ```bash
 uv run meridian work task-dir --clear
-uv run meridian work show with-task-dir --json
 ```
-- [ ] Exit 0
-- [ ] JSON shows `task_dir` is null/empty
+- [ ] Exits non-zero
+- [ ] Error mentions no active work item
 
 ## work task-dir print behavior
 
@@ -103,25 +110,14 @@ uv run meridian work task-dir
 - [ ] Exit 0
 - [ ] Prints project root when no active work item is attached
 
-```bash
-uv run meridian work start show-task-dir
-mkdir -p "$SCRATCH/show-task-dir"
-uv run meridian work task-dir "$SCRATCH/show-task-dir"
-uv run meridian work task-dir
-```
-- [ ] Exit 0
-- [ ] Prints `$SCRATCH/show-task-dir`
+- [ ] (Set/clear form needs a session-attached active work item; use `work start --task-dir` in non-session shells.)
 
 ## task_dir lifecycle is metadata-only (filesystem untouched)
 
 ```bash
-uv run meridian work start manual-a
-uv run meridian work start manual-b
 mkdir -p "$SCRATCH/shared-task-dir"
-uv run meridian work switch manual-a
-uv run meridian work task-dir "$SCRATCH/shared-task-dir"
-uv run meridian work switch manual-b
-uv run meridian work task-dir "$SCRATCH/shared-task-dir"
+uv run meridian work start manual-a --task-dir "$SCRATCH/shared-task-dir"
+uv run meridian work start manual-b --task-dir "$SCRATCH/shared-task-dir"
 uv run meridian work done manual-a
 test -d "$SCRATCH/shared-task-dir"
 uv run meridian work delete manual-b

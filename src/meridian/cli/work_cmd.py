@@ -261,14 +261,20 @@ def _work_task_dir(
     task_dir: Annotated[
         str | None,
         Parameter(
-            help="Directory to set as task_dir. Omit to print resolved task_dir for active work."
+            help=(
+                "Directory to set as task_dir. Omit to print resolved task_dir. "
+                "Set requires an active work item attached to this session."
+            )
         ),
     ] = None,
     clear: Annotated[
         bool,
         Parameter(
             name="--clear",
-            help="Unset task_dir for the active work item (reverts to project root).",
+            help=(
+                "Unset task_dir for the active work item (reverts to project root). "
+                "Requires a session-attached active work item."
+            ),
         ),
     ] = False,
 ) -> None:
