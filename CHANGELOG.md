@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-05-27
+
 ### Added
 - Spawn rows now persist `launch_policy_snapshot`; older `state.json` files without the field still read cleanly.
 - Launch preparation now snapshots resolved agent description/body, skill paths, and policy provenance fields into the persisted launch-policy snapshot.
