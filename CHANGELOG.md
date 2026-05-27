@@ -4,6 +4,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Added `meridian spawn status` as a `spawn show` companion with shared flags and report-body-off default.
+
+### Changed
+- `spawn show`/`spawn status` text output now defaults to a moderate status tier, with full internal diagnostics behind `--verbose`.
+- Auto-extracted spawn reports now persist with `# Report` heading instead of `# Auto-extracted Report`.
+
 ## [0.2.8] - 2026-05-27
 
 ### Added

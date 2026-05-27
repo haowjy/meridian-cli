@@ -538,6 +538,22 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",
+        command_id="status",
+        summary=(
+            "Show spawn status, duration, model, and report path. "
+            "Use --report to include report text."
+        ),
+        handler=spawn_show,
+        sync_handler=spawn_show_sync,
+        input_type=SpawnShowInput,
+        output_type=SpawnDetailOutput,
+        cli_group="spawn",
+        cli_name="status",
+        agent_default_format="text",
+        surfaces=frozenset({ExtensionSurface.CLI}),
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.spawn",
         command_id="stats",
         summary="Show total runs, success/fail counts, cost, and duration.",
         handler=spawn_stats,

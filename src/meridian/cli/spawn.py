@@ -667,6 +667,10 @@ def _spawn_show(
         tuple[str, ...],
         Parameter(name="spawn_id", help="One or more spawn IDs to show."),
     ],
+    verbose: Annotated[
+        bool,
+        Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
+    ] = False,
     report: Annotated[
         bool,
         Parameter(
@@ -677,6 +681,47 @@ def _spawn_show(
             ),
         ),
     ] = True,
+) -> None:
+    _spawn_show_like(
+        emit,
+        spawn_ids=spawn_ids,
+        report=report,
+        verbose=verbose,
+    )
+
+
+def _spawn_status(
+    emit: Any,
+    spawn_ids: Annotated[
+        tuple[str, ...],
+        Parameter(name="spawn_id", help="One or more spawn IDs to show."),
+    ],
+    verbose: Annotated[
+        bool,
+        Parameter(name="--verbose", help="Include internal spawn diagnostics.", show=True),
+    ] = False,
+    report: Annotated[
+        bool,
+        Parameter(
+            name="--report",
+            help="Include report body in output (default: disabled).",
+        ),
+    ] = False,
+) -> None:
+    _spawn_show_like(
+        emit,
+        spawn_ids=spawn_ids,
+        report=report,
+        verbose=verbose,
+    )
+
+
+def _spawn_show_like(
+    emit: Any,
+    *,
+    spawn_ids: tuple[str, ...],
+    report: bool,
+    verbose: bool,
 ) -> None:
     sink = _current_output_sink()
     results = tuple(
@@ -691,15 +736,20 @@ def _spawn_show(
         for spawn_id in spawn_ids
     )
 
+    output_format = _get_global_options().output.format
     if len(results) == 1:
-        emit(results[0])
+        if output_format != "json" and verbose:
+            emit(results[0].format_text(FormatContext(verbosity=1)))
+        else:
+            emit(results[0])
         return
 
-    if _get_global_options().output.format == "json":
+    if output_format == "json":
         emit(list(results))
         return
 
-    emit("\n\n".join(result.format_text() for result in results))
+    fmt_ctx = FormatContext(verbosity=1) if verbose else None
+    emit("\n\n".join(result.format_text(fmt_ctx) for result in results))
 
 
 def _spawn_stats(
@@ -929,6 +979,7 @@ def register_spawn_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str
         "meridian.spawn.list": lambda: partial(_spawn_list, emit),
         "meridian.spawn.stats": lambda: partial(_spawn_stats, emit),
         "meridian.spawn.show": lambda: partial(_spawn_show, emit),
+        "meridian.spawn.status": lambda: partial(_spawn_status, emit),
         "meridian.spawn.cancel": lambda: partial(_spawn_cancel, emit),
         "meridian.spawn.cancelAll": lambda: partial(_spawn_cancel_all, emit),
         "meridian.spawn.wait": lambda: partial(_spawn_wait, emit),

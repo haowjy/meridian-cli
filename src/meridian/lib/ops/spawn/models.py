@@ -889,7 +889,9 @@ class SpawnDetailOutput(BaseModel):
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
-        return self._format_verbose_text(always_show_transcript=effective_ctx.verbosity > 0)
+        if effective_ctx.verbosity > 0:
+            return self._format_verbose_text(always_show_transcript=True)
+        return self._format_moderate_text()
 
     def format_wait_text(self, ctx: FormatContext | None = None) -> str:
         effective_ctx = ctx or FormatContext()
@@ -928,6 +930,33 @@ class SpawnDetailOutput(BaseModel):
             lines.append("")
         lines.append(f"Transcript: {self.transcript_command()}")
 
+        return "\n".join(lines)
+
+    def _format_moderate_text(self) -> str:
+        status_str = self.status
+        if self.exit_code is not None and self.status == "failed":
+            status_str += f" (exit {self.exit_code})"
+
+        lines = [f"Spawn: {self.spawn_id}"]
+        lines.append(f"Status: {status_str}")
+        lines.append(f"Model: {self.model} ({self.harness})")
+        if self.duration_secs is not None:
+            lines.append(f"Duration: {self.duration_secs:.1f}s")
+        work_value = (self.work_id or "").strip()
+        if work_value:
+            lines.append(f"Work: {work_value}")
+        if self._has_distinct_task_cwd():
+            lines.append(self._task_dir_line())
+        if self.report_path is not None:
+            lines.append(f"Report: {self.report_path}")
+
+        report_text = self._normalized_report_body()
+        if report_text is not None:
+            lines.append("")
+            lines.append(report_text)
+
+        lines.append("")
+        lines.append(f"Transcript: {self.transcript_command()}")
         return "\n".join(lines)
 
     def _format_verbose_text(self, *, always_show_transcript: bool = False) -> str:

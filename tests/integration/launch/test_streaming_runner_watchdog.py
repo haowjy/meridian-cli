@@ -201,7 +201,7 @@ class _PiTimeoutThenTerminalConnection:
         assert project_root is not None
         spawn_dir = resolve_spawn_log_dir(project_root, self._spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)
-        (spawn_dir / "report.md").write_text("# Auto-extracted Report\n\nOK\n", encoding="utf-8")
+        (spawn_dir / "report.md").write_text("# Report\n\nOK\n", encoding="utf-8")
         yield HarnessEvent(
             event_type="session",
             harness_id="pi",

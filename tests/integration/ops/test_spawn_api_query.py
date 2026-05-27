@@ -13,6 +13,7 @@ import pytest
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
+from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.constants import PRIMARY_META_FILENAME
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
@@ -309,9 +310,11 @@ def test_spawn_show_and_list_render_primary_and_pi_diagnostics(tmp_path: Path) -
     assert pi_detail.pi_cleanup_reason == "abort_grace_expired"
 
     rendered = pi_detail.format_text()
-    assert "Pi phase: cleanup_stop_escalated" in rendered
-    assert "Pi cleanup status: escalated" in rendered
-    assert "Pi cleanup reason: abort_grace_expired" in rendered
+    assert "Pi phase: cleanup_stop_escalated" not in rendered
+    verbose_rendered = pi_detail.format_text(FormatContext(verbosity=1))
+    assert "Pi phase: cleanup_stop_escalated" in verbose_rendered
+    assert "Pi cleanup status: escalated" in verbose_rendered
+    assert "Pi cleanup reason: abort_grace_expired" in verbose_rendered
 
     wire = pi_detail.to_cli_wire()
     assert wire["pi_lifecycle_phase"] == "cleanup_stop_escalated"
@@ -342,7 +345,9 @@ def test_spawn_show_includes_persisted_goal_text_and_json(tmp_path: Path) -> Non
 
     assert detail.goal == "ship the migration"
     rendered = detail.format_text()
-    assert "Goal: ship the migration" in rendered
+    assert "Goal: ship the migration" not in rendered
+    verbose_rendered = detail.format_text(FormatContext(verbosity=1))
+    assert "Goal: ship the migration" in verbose_rendered
     wire = detail.to_cli_wire()
     assert wire["goal"] == "ship the migration"
 
