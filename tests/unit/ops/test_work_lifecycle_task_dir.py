@@ -7,12 +7,16 @@ import pytest
 from meridian.lib.ops.runtime import resolve_roots
 from meridian.lib.ops.work_attachment import set_session_work_attachment
 from meridian.lib.ops.work_lifecycle import (
+    WorkDeleteInput,
     WorkDoneInput,
     WorkRenameInput,
+    WorkReopenInput,
     WorkStartInput,
     WorkTaskDirInput,
+    work_delete_sync,
     work_done_sync,
     work_rename_sync,
+    work_reopen_sync,
     work_start_sync,
     work_task_dir_sync,
 )
@@ -132,7 +136,7 @@ def test_work_task_dir_set_requires_active_work(tmp_path: Path) -> None:
         )
 
 
-def test_done_and_rename_do_not_mutate_task_dir_filesystem(tmp_path: Path) -> None:
+def test_lifecycle_commands_do_not_mutate_task_dir_filesystem(tmp_path: Path) -> None:
     project_root, project_state_dir, _runtime_root = _setup_project(tmp_path)
     task_dir = tmp_path / "external-dir"
     task_dir.mkdir(parents=True, exist_ok=True)
@@ -157,4 +161,22 @@ def test_done_and_rename_do_not_mutate_task_dir_filesystem(tmp_path: Path) -> No
         )
     )
     assert done_output.status == "done"
+    assert task_dir.is_dir()
+
+    reopen_output = work_reopen_sync(
+        WorkReopenInput(
+            work_id="renamed-work",
+            project_root=project_root.as_posix(),
+        )
+    )
+    assert reopen_output.status == "open"
+    assert task_dir.is_dir()
+
+    delete_output = work_delete_sync(
+        WorkDeleteInput(
+            work_id="renamed-work",
+            project_root=project_root.as_posix(),
+        )
+    )
+    assert delete_output.deleted is True
     assert task_dir.is_dir()
