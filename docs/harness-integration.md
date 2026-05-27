@@ -782,7 +782,7 @@ trivial `agent_end` event to stdout.
 - [ ] `meridian pi -m <cheap-model> "Reply with exactly OK"` exits 0
 - [ ] `meridian spawn --harness pi -m <cheap-model> "Reply with exactly OK"`
   exits 0 and reports status `succeeded`
-- [ ] `meridian spawn show <spawn-id>` shows report, usage, session ID
+- [ ] `meridian spawn show <spawn-id> --verbose` shows report, usage, session ID
 - [ ] Resume works: `meridian pi --continue <session-id> "continue"`
 - [ ] Fork works: `meridian pi --fork <session-id> "fork"`
 

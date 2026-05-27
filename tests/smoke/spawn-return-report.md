@@ -72,3 +72,19 @@ meridian init
    ```
    Expect table plus `Report for <id>` sections; not the single-spawn compact
    status format.
+
+10. Show/status progressive detail:
+    ```bash
+    meridian spawn show pNNN
+    meridian spawn show pNNN --no-report
+    meridian spawn status pNNN
+    meridian spawn status pNNN --report
+    meridian spawn status pNNN --verbose
+    ```
+    Expect `show` default text to include the moderate status/model/duration
+    summary, report path, report body, and transcript command. Expect
+    `show --no-report` and `status` to keep the summary/report path/transcript
+    while omitting the report body. Expect `status --report` to add the report
+    body. Expect `--verbose` to add internal diagnostics such as token/cost
+    fields or harness/session metadata when available; those internals should
+    not appear in the non-verbose `show`/`status` output.

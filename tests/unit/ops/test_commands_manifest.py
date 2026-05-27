@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from meridian.lib.extensions.types import ExtensionCommandSpec, ExtensionSurface
 from meridian.lib.ops.commands import get_all_op_specs
+from meridian.lib.ops.spawn.models import SpawnDetailOutput, SpawnStatusInput
 from meridian.lib.ops.work_lifecycle import (
     WorkClearWorktreeInput,
     WorkClearWorktreeOutput,
@@ -41,3 +42,16 @@ def test_work_set_and_clear_worktree_commands_are_registered() -> None:
     assert ensure_spec.surfaces == frozenset({ExtensionSurface.CLI, ExtensionSurface.HTTP})
     assert ensure_spec.args_schema is WorkWorktreeInput
     assert ensure_spec.result_schema is WorkWorktreeOutput
+
+
+def test_spawn_status_command_is_registered_for_cli() -> None:
+    specs = _spec_by_fqid()
+
+    status_spec = specs["meridian.spawn.status"]
+    assert status_spec.cli_group == "spawn"
+    assert status_spec.cli_name == "status"
+    assert status_spec.surfaces == frozenset({ExtensionSurface.CLI})
+    assert status_spec.args_schema is SpawnStatusInput
+    assert status_spec.result_schema is SpawnDetailOutput
+    parsed = status_spec.args_schema(spawn_id="p123")
+    assert parsed.include_report_body is False

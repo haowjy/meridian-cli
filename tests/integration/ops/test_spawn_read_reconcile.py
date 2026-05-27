@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import meridian.lib.ops.spawn.api as spawn_api
+from meridian.lib.core.util import FormatContext
 from meridian.lib.launch.constants import PI_LIFECYCLE_EVENTS_FILENAME
 from meridian.lib.ops.spawn import query as spawn_query
 from meridian.lib.ops.spawn.models import (
@@ -67,10 +68,12 @@ def test_spawn_show_sync_renders_finalizing_status_and_orphan_finalization_hint(
     assert output.last_attempt_exited_at == "2026-04-12T14:00:00Z"
     assert output.last_attempt_exit_code == 143
     rendered = output.format_text()
-    assert "Status: finalizing (cleanup in progress)" in rendered
-    assert "orphan_finalization" in rendered
-    assert "report.md may still contain useful content" in rendered
-    assert "awaiting finalization" not in rendered
+    assert "Status: finalizing" in rendered
+    verbose_rendered = output.format_text(FormatContext(verbosity=1))
+    assert "Status: finalizing (cleanup in progress)" in verbose_rendered
+    assert "orphan_finalization" in verbose_rendered
+    assert "report.md may still contain useful content" in verbose_rendered
+    assert "awaiting finalization" not in verbose_rendered
 
 
 def test_read_spawn_row_nested_stale_dead_runner_returns_synthetic_failed(

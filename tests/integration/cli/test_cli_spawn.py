@@ -8,8 +8,11 @@ import pytest
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnCreateInput,
+    SpawnDetailOutput,
     SpawnListEntry,
     SpawnListOutput,
+    SpawnShowInput,
+    SpawnStatusInput,
 )
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -172,3 +175,107 @@ def test_spawn_children_agent_mode_uses_children_text_view(
     rendered = capsys.readouterr().out
     assert "reviewer" in rendered
     assert "review child" in rendered
+
+
+def _spawn_detail_output(report_body: str | None = "report body") -> SpawnDetailOutput:
+    return SpawnDetailOutput(
+        spawn_id="p500",
+        status="succeeded",
+        model="gpt-5.4",
+        harness="codex",
+        started_at="2026-05-15T00:00:00Z",
+        finished_at="2026-05-15T00:00:01Z",
+        duration_secs=1.0,
+        exit_code=0,
+        failure_reason=None,
+        input_tokens=None,
+        output_tokens=None,
+        cost_usd=None,
+        report_path="/tmp/report.md",
+        report_summary=report_body,
+        report_body=report_body,
+    )
+
+
+def test_spawn_show_and_status_report_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    show_include_report: dict[str, bool] = {}
+    status_include_report: dict[str, bool] = {}
+
+    def _fake_spawn_show_sync(
+        payload: SpawnShowInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnDetailOutput:
+        _ = (sink, prepared)
+        show_include_report[payload.spawn_id] = payload.include_report_body
+        return _spawn_detail_output("report body" if payload.include_report_body else None)
+
+    def _fake_spawn_status_sync(
+        payload: SpawnStatusInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnDetailOutput:
+        _ = (sink, prepared)
+        status_include_report[payload.spawn_id] = payload.include_report_body
+        return _spawn_detail_output("report body" if payload.include_report_body else None)
+
+    monkeypatch.setattr(spawn_cli, "spawn_show_sync", _fake_spawn_show_sync)
+    monkeypatch.setattr(spawn_cli, "spawn_status_sync", _fake_spawn_status_sync)
+
+    with pytest.raises(SystemExit) as show_exit:
+        cli_main.main(["spawn", "show", "p-show"])
+    with pytest.raises(SystemExit) as show_no_report_exit:
+        cli_main.main(["spawn", "show", "--no-report", "p-show-no-report"])
+    with pytest.raises(SystemExit) as status_exit:
+        cli_main.main(["spawn", "status", "p-status"])
+    with pytest.raises(SystemExit) as status_report_exit:
+        cli_main.main(["spawn", "status", "--report", "p-status-report"])
+
+    assert show_exit.value.code == 0
+    assert show_no_report_exit.value.code == 0
+    assert status_exit.value.code == 0
+    assert status_report_exit.value.code == 0
+    assert show_include_report["p-show"] is True
+    assert show_include_report["p-show-no-report"] is False
+    assert "p-status" not in show_include_report
+    assert "p-status-report" not in show_include_report
+    assert status_include_report["p-status"] is False
+    assert status_include_report["p-status-report"] is True
+
+
+def test_spawn_status_verbose_renders_internal_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        spawn_cli,
+        "spawn_status_sync",
+        lambda *_args, **_kwargs: SpawnDetailOutput(
+            spawn_id="p501",
+            status="succeeded",
+            model="gpt-5.4",
+            harness="codex",
+            started_at="2026-05-15T00:00:00Z",
+            finished_at="2026-05-15T00:00:01Z",
+            duration_secs=1.0,
+            exit_code=0,
+            failure_reason=None,
+            input_tokens=123,
+            output_tokens=456,
+            cost_usd=0.1,
+            report_path="/tmp/report.md",
+            report_summary=None,
+            report_body=None,
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["--human", "spawn", "status", "p501", "--verbose"])
+
+    assert exc_info.value.code == 0
+    rendered = capsys.readouterr().out
+    assert "Input tokens: 123" in rendered

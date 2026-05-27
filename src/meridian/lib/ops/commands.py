@@ -109,6 +109,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnShowInput,
     SpawnStatsInput,
     SpawnStatsOutput,
+    SpawnStatusInput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
     SpawnWrittenFilesInput,
@@ -129,6 +130,8 @@ from meridian.lib.ops.spawn.api import (
     spawn_show_sync,
     spawn_stats,
     spawn_stats_sync,
+    spawn_status,
+    spawn_status_sync,
     spawn_wait,
     spawn_wait_sync,
 )
@@ -535,6 +538,22 @@ _OP_SPECS: tuple[ExtensionCommandSpec, ...] = (
         cli_group="spawn",
         cli_name="show",
         agent_default_format="text",
+    ),
+    ExtensionCommandSpec.from_op(
+        extension_id="meridian.spawn",
+        command_id="status",
+        summary=(
+            "Show spawn status, duration, model, and report path. "
+            "Use --report to include report text."
+        ),
+        handler=spawn_status,
+        sync_handler=spawn_status_sync,
+        input_type=SpawnStatusInput,
+        output_type=SpawnDetailOutput,
+        cli_group="spawn",
+        cli_name="status",
+        agent_default_format="text",
+        surfaces=frozenset({ExtensionSurface.CLI}),
     ),
     ExtensionCommandSpec.from_op(
         extension_id="meridian.spawn",

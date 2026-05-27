@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnDetailOutput,
@@ -269,3 +270,107 @@ def test_spawn_detail_wait_includes_distinct_task_dir() -> None:
     ) in text
     assert wire["task_cwd"] == "/repo.worktrees/feature-x"
     assert "authority_root" not in wire
+
+
+def test_spawn_detail_default_text_uses_moderate_tier() -> None:
+    detail = _make_spawn_detail(
+        spawn_id="p10",
+        status="failed",
+        duration_secs=2.5,
+        exit_code=17,
+        failure_reason="runner_failed",
+        work_id="feature-x",
+        authority_root="/repo/main",
+        task_cwd="/repo.worktrees/feature-x",
+        report_body="done report",
+    ).model_copy(
+        update={
+            "input_tokens": 123,
+            "cost_usd": 0.25,
+            "harness_session_id": "hs-10",
+            "pi_lifecycle_phase": "cleanup_stop_escalated",
+        }
+    )
+
+    text = detail.format_text()
+    assert "Spawn: p10" in text
+    assert "Status: failed (exit 17)" in text
+    assert "Model: gpt-5.4 (codex)" in text
+    assert "Duration: 2.5s" in text
+    assert "Work: feature-x" in text
+    assert "Spawn is instructed to implement in this task dir: /repo.worktrees/feature-x" in text
+    assert "Report: /tmp/report.md" in text
+    assert "Failure: runner_failed" in text
+    assert "done report" in text
+    assert "Transcript: meridian session log p10" in text
+    assert "Input tokens:" not in text
+    assert "Cost:" not in text
+    assert "Harness session:" not in text
+    assert "Pi phase:" not in text
+
+
+def test_spawn_detail_moderate_text_keeps_finalizing_and_orphan_context() -> None:
+    detail = _make_spawn_detail(
+        spawn_id="p12",
+        status="finalizing",
+        failure_reason="orphan_finalization",
+        report_body=None,
+    )
+
+    text = detail.format_text()
+    assert "Status: finalizing (cleanup in progress)" in text
+    assert "Failure: orphan_finalization (harness likely completed; " in text
+    assert "report.md may still contain useful content)" in text
+
+
+def test_spawn_detail_verbose_text_retains_internal_fields() -> None:
+    detail = SpawnDetailOutput(
+        spawn_id="p11",
+        status="failed",
+        model="gpt-5.4",
+        harness="codex",
+        kind="primary",
+        parent_id="p1",
+        work_id="feature-y",
+        authority_root="/repo/main",
+        task_cwd="/repo.worktrees/feature-y",
+        goal="ship it",
+        desc="desc",
+        started_at="2026-05-15T00:00:00Z",
+        finished_at="2026-05-15T00:00:04Z",
+        duration_secs=4.0,
+        exit_code=2,
+        failure_reason="runner_failed",
+        input_tokens=11,
+        output_tokens=12,
+        cache_read_input_tokens=13,
+        cache_creation_input_tokens=14,
+        reasoning_tokens=15,
+        cost_usd=0.1234,
+        cost_is_estimate=True,
+        report_path="/tmp/report.md",
+        report_summary="summary",
+        report_body="report body",
+        harness_session_id="hs-1",
+        pi_lifecycle_phase="cleanup_stop_escalated",
+        pi_cleanup_status="escalated",
+        pi_cleanup_phase="cleanup_stop_escalated",
+        pi_cleanup_reason="abort_grace_expired",
+        pi_cleanup_error="error",
+        last_message="last",
+        log_path="/tmp/log",
+        last_attempt_exited_at="2026-05-15T00:00:03Z",
+        last_attempt_exit_code=17,
+    )
+
+    text = detail.format_text(FormatContext(verbosity=1))
+    assert "Status: failed (exit 2)" in text
+    assert "Kind: primary" in text
+    assert "Parent: p1" in text
+    assert "Harness session: hs-1" in text
+    assert "Input tokens: 11" in text
+    assert "Cache read tokens: 13" in text
+    assert "Cost: ~$0.1234" in text
+    assert "Pi phase: cleanup_stop_escalated" in text
+    assert "Last attempt exited at: 2026-05-15T00:00:03Z" in text
+    assert "Transcript: meridian session log p11" in text

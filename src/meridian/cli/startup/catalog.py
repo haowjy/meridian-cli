@@ -315,6 +315,12 @@ _COMMAND_DESCRIPTORS: tuple[CommandDescriptor, ...] = (
         extension_ref="meridian.spawn.show",
     ),
     _read_runtime(
+        ("spawn", "status"),
+        "Show spawn status details without report body by default.",
+        default_output_mode="json",
+        extension_ref="meridian.spawn.status",
+    ),
+    _read_runtime(
         ("spawn", "wait"),
         "Wait for spawns.",
         default_output_mode="text",

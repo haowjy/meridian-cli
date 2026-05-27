@@ -130,11 +130,17 @@ receive `to_agent_wire()` instead.
 ## SpawnDetailOutput format_text / format_wait_text
 
 `format_text()` now accepts `FormatContext`:
-- `verbosity == 0` → `_format_compact_text()`: `{spawn_id} {status} ({meta})\n\n{report body}`
-- `verbosity > 0` → `_format_verbose_text()`: full kv_block (unchanged).
+- `verbosity == 0` → `_format_moderate_text()`: labeled fields (`Spawn`, `Status`, `Model`,
+  `Duration`, `Work`, `Report`) plus report body when included.
+- `verbosity > 0` → `_format_verbose_text()`: full kv_block with internal status diagnostics
+  (for example primary activity/backend metadata and Pi cleanup fields).
 
 `SpawnWaitMultiOutput.format_text()` delegates to `format_wait_text()` for single-spawn waits,
 which uses verbosity-gated compact vs verbose.
+
+`meridian.spawn.status` now has a manifest-level default of `include_report_body=False`
+(`SpawnStatusInput`), while `meridian.spawn.show` keeps `include_report_body=True`
+(`SpawnShowInput`). CLI defaults were already aligned (`status` report-off, `show` report-on).
 
 ## Foreground Path Populates report
 
