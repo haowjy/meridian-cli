@@ -29,8 +29,8 @@ from meridian.lib.launch.context import (
     LaunchContext,
     PreparedLaunchSurface,
     RuntimeBindings,
+    resolve_report_output_path,
 )
-from meridian.lib.launch.context import _resolve_report_output_path as resolve_report_output_path
 from meridian.lib.launch.fork import materialize_fork
 from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
 from meridian.lib.launch.streaming_runner import execute_with_streaming

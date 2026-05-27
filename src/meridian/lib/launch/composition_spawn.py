@@ -15,9 +15,9 @@ from meridian.lib.launch.context import (
     RuntimeBindings,
     bind_launch_context,
     compile_prepared_policy_surface,
+    normalize_explicit_work_id,
     prepare_launch_surface,
 )
-from meridian.lib.launch.context import _normalize_explicit_work_id as normalize_explicit_work_id
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 
 

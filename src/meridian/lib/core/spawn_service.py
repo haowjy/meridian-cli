@@ -36,8 +36,7 @@ from meridian.lib.launch.composition_spawn import (
     bind_spawn_launch_context,
     compose_spawn_launch_surface,
 )
-from meridian.lib.launch.context import LaunchContext, RuntimeBindings
-from meridian.lib.launch.context import _resolve_report_output_path as resolve_report_output_path
+from meridian.lib.launch.context import LaunchContext, RuntimeBindings, resolve_report_output_path
 from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (

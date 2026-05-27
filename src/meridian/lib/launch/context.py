@@ -768,7 +768,7 @@ def normalize_usage_model_family(model: str | None) -> str:
     return "other"
 
 
-def _resolve_report_output_path(
+def resolve_report_output_path(
     *,
     runtime: LaunchRuntime,
     project_paths: ProjectConfigPaths,
@@ -780,7 +780,7 @@ def _resolve_report_output_path(
     return resolve_spawn_log_dir(project_paths.project_root, spawn_id) / "report.md"
 
 
-def _normalize_explicit_work_id(
+def normalize_explicit_work_id(
     *,
     request_work_id_hint: str | None = None,
     runtime_work_id: str | None = None,
@@ -1695,7 +1695,7 @@ def bind_launch_context(
         )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
-    requested_work_id = _normalize_explicit_work_id(
+    requested_work_id = normalize_explicit_work_id(
         request_work_id_hint=resolved_request.work_id_hint,
         runtime_work_id=bindings.runtime_work_id,
     )
@@ -1801,7 +1801,7 @@ def _build_launch_context_impl(
     )
     if runtime.composition_surface != LaunchCompositionSurface.DIRECT:
         catalog = CatalogSession(project_paths.project_root, cache=cache)
-        explicit_work_id = _normalize_explicit_work_id(
+        explicit_work_id = normalize_explicit_work_id(
             request_work_id_hint=request.work_id_hint,
             runtime_work_id=runtime_work_id,
         )
@@ -1829,7 +1829,7 @@ def _build_launch_context_impl(
 
     bindings = RuntimeBindings(
         spawn_id=spawn_id,
-        report_output_path=_resolve_report_output_path(
+        report_output_path=resolve_report_output_path(
             runtime=runtime,
             project_paths=project_paths,
             spawn_id=spawn_id,
