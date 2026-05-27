@@ -11,6 +11,7 @@ import {
   type SelectablePanelColumn,
 } from "../../shared/selectable_panel";
 import { formatDurationSecs, renderTable } from "../../shared/ui";
+import type { BashRecord } from "../../shared/schemas";
 import { BashRuntime, type BashListRow, type BashManageParams, type BashParams } from "./bash_runtime";
 
 const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
@@ -74,6 +75,18 @@ type BashLogStream = "combined" | "stdout" | "stderr";
 function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): string {
   const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
   return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
+}
+
+async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord): Promise<void> {
+  await pi.sendMessage?.(
+    {
+      customType: "meridian-bash-ping",
+      content: `Background bash task still running: ${record.bash_id}\nCommand: ${record.command}\nUse bash_manage wait/output/kill/detach when ready.`,
+      display: true,
+      details: { bash_id: record.bash_id },
+    },
+    { triggerTurn: true, deliverAs: "followUp" },
+  );
 }
 
 function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
@@ -219,6 +232,7 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
   setupForegroundBashHint(hintPi);
   const runtime = new BashRuntime({
     onForegroundStart: (bashId) => postForegroundBashHint(hintPi, bashId),
+    onBackgroundPing: (record) => sendBackgroundPing(pi, record),
   });
 
   pi.on?.("session_shutdown", async () => {

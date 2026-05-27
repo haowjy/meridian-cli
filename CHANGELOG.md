@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi `/ps` now sorts running bash tasks before completed tasks.
 
 ### Added
+- Pi tracked background bash sends a one-shot follow-up ping after the configured task-ping interval, so stale long-running work can be killed, waited, or detached instead of silently blocking quiescence.
 - Pi `/ps:clear` and `/spawn:clear` hide finished task rows from the current Pi session panels.
 - Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.
 - `timeouts.pi_child_wave_timeout_seconds` and `timeouts.pi_task_ping_interval_seconds` in `meridian.toml` / env (`MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS`, `MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS`).

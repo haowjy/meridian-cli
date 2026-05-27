@@ -35,11 +35,13 @@ type RuntimeRecord = BashRecord & {
   child: ChildProcess | null;
   waiters: Array<() => void>;
   foregroundFinish: ((result: unknown) => void) | null;
+  pingTimer: NodeJS.Timeout | null;
 };
 
 export type BashRuntimeHooks = {
   onForegroundStart?: (bashId: string) => void;
   onForegroundStop?: (bashId: string) => void;
+  onBackgroundPing?: (record: BashRecord) => void | Promise<void>;
 };
 
 export type BashListRow = BashRecord & {
@@ -92,6 +94,9 @@ const DEFAULT_TIMEOUT_MIN = 55;
 const DEFAULT_WAIT_TIMEOUT_MIN = 10;
 const MAX_TIMEOUT_MIN = 59;
 const LOG_TAIL_BYTES = 4 * 1024;
+const DEFAULT_TASK_PING_INTERVAL_MS = 55 * 60_000;
+const TASK_PING_INTERVAL_ENV = "MERIDIAN_PI_TASK_PING_INTERVAL_MS";
+const TASK_PING_RESET_ON_ACTIVITY_ENV = "MERIDIAN_PI_TASK_PING_RESET_ON_ACTIVITY";
 export const USER_BASH_PANEL_BACKGROUND_MSG = "Sent to background — /ps";
 
 export class BashRuntime {
@@ -108,6 +113,7 @@ export class BashRuntime {
     if (params.background === true) {
       record.is_background = true;
       await this.persist();
+      this.schedulePing(record);
       return { bash_id: record.bash_id, status: "started" };
     }
 
@@ -131,6 +137,7 @@ export class BashRuntime {
       const timeout = setTimeout(async () => {
         record.is_background = true;
         await this.persist();
+        this.schedulePing(record);
         finish({
           bash_id: record.bash_id,
           status: "backgrounded",
@@ -196,6 +203,7 @@ export class BashRuntime {
     const record = await this.startRecord(command, DEFAULT_TIMEOUT_MIN, cwd, env);
     record.is_background = true;
     await this.persist();
+    this.schedulePing(record);
     return { bash_id: record.bash_id };
   }
 
@@ -209,6 +217,7 @@ export class BashRuntime {
 
     foreground.is_background = true;
     await this.persist();
+    this.schedulePing(foreground);
     foreground.foregroundFinish?.({
       bash_id: foreground.bash_id,
       status: "backgrounded",
@@ -283,6 +292,7 @@ export class BashRuntime {
         return await this.waitBash(record, normalizeTimeoutMin(params.timeout_min, DEFAULT_WAIT_TIMEOUT_MIN));
       case "detach":
         record.is_tracked = false;
+        this.clearPing(record);
         await this.persist();
         return { bash_id: id, detached: true, message: `${id} detached from quiescence tracking.` };
       default:
@@ -330,9 +340,11 @@ export class BashRuntime {
       log_bytes: 0,
       timeout_min: timeoutMin,
       originating_bash_id: process.env.MERIDIAN_PI_BASH_ID || null,
+      ping_sent_at_ms: null,
       child: null,
       waiters: [],
       foregroundFinish: null,
+      pingTimer: null,
     };
     this.records.set(bashId, record);
 
@@ -375,6 +387,7 @@ export class BashRuntime {
   private async appendLog(record: RuntimeRecord, chunk: string, stream: "stdout" | "stderr"): Promise<void> {
     const size = await this.logStore.append(logPathsFromRecord(record), stream, chunk);
     record.log_bytes = size ?? record.log_bytes + Buffer.byteLength(chunk, "utf-8");
+    if (shouldResetPingOnActivity()) this.schedulePing(record);
     await this.persist();
   }
 
@@ -387,6 +400,7 @@ export class BashRuntime {
     record.exit_code = exitCode;
     record.ended_at_ms = Date.now();
     record.child = null;
+    this.clearPing(record);
     const waiters = record.waiters.splice(0);
     for (const waiter of waiters) waiter();
     await this.persist();
@@ -433,6 +447,41 @@ export class BashRuntime {
       duration_secs: durationSecs(record),
       output: await this.readLog(record, 2 * 1024),
     };
+  }
+
+  private schedulePing(record: RuntimeRecord): void {
+    this.clearPing(record);
+    if (
+      record.status !== "running" ||
+      !record.is_background ||
+      !record.is_tracked ||
+      record.ping_sent_at_ms != null
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => void this.firePing(record), taskPingIntervalMs());
+    timer.unref();
+    record.pingTimer = timer;
+  }
+
+  private clearPing(record: RuntimeRecord): void {
+    if (record.pingTimer) clearTimeout(record.pingTimer);
+    record.pingTimer = null;
+  }
+
+  private async firePing(record: RuntimeRecord): Promise<void> {
+    record.pingTimer = null;
+    if (
+      record.status !== "running" ||
+      !record.is_background ||
+      !record.is_tracked ||
+      record.ping_sent_at_ms != null
+    ) {
+      return;
+    }
+    record.ping_sent_at_ms = Date.now();
+    await this.persist();
+    await this.hooks.onBackgroundPing?.(toPlainRecord(record));
   }
 
   private onTerminal(record: RuntimeRecord, fn: () => void | Promise<void>): void {
@@ -484,7 +533,7 @@ export class BashRuntime {
   private async persist(): Promise<void> {
     const records: Record<string, BashRecord> = {};
     for (const [id, record] of this.records.entries()) {
-      const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, ...plain } = record;
+      const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;
       records[id] = plain;
     }
     const file: BashRecordsFile = {
@@ -495,6 +544,20 @@ export class BashRuntime {
     };
     await writeJsonAtomic(resolveBashRecordsPath(this.spawnId), file);
   }
+}
+
+function taskPingIntervalMs(): number {
+  const raw = Number.parseInt(process.env[TASK_PING_INTERVAL_ENV] ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TASK_PING_INTERVAL_MS;
+}
+
+function shouldResetPingOnActivity(): boolean {
+  return (process.env[TASK_PING_RESET_ON_ACTIVITY_ENV] ?? "true").toLowerCase() !== "false";
+}
+
+function toPlainRecord(record: RuntimeRecord): BashRecord {
+  const { child: _child, waiters: _waiters, foregroundFinish: _foregroundFinish, pingTimer: _pingTimer, ...plain } = record;
+  return plain;
 }
 
 function makeBashId(): string {
