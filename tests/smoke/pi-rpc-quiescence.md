@@ -101,7 +101,7 @@ Start `sleep 3 && echo child-done` as tracked background work. When it completes
 Expect:
 - Parent turn idles while child runs
 - Lifecycle emits `meridian.notification.queued` + `delivered`
-- Internal extension bus receives `meridian:task:start` / `meridian:task:end` from background-tasks (and `meridian:subspawn:*` for spawn wrappers)
+- Internal extension bus receives `meridian:task:start` / `meridian:task:end` from managed-bash (and `meridian:subspawn:*` for spawn wrappers)
 - Follow-up turn starts automatically
 - After follow-up `agent_end`, quiescence is reached and spawn completes
 
@@ -199,9 +199,9 @@ Expect:
 ## S11: Malformed lifecycle event fails closed
 
 **Automated coverage:** `tests/unit/harness/test_pi_integration.py` and
-`tests/unit/streaming/test_pi_quiescence.py` (malformed sidecar lifecycle lines).
+`tests/unit/streaming/test_pi_quiescence.py` (malformed disk-backed coordination state).
 
-Manual smoke does not inject malformed JSON into the lifecycle sidecar.
+Manual smoke does not inject malformed JSON into the disk-backed coordination files.
 
 ## S12: Hard-kill deadline
 
@@ -295,17 +295,20 @@ Expect:
 - Auth/config remains Pi-owned; `PI_CODING_AGENT_DIR` remains the standard agent tree and Meridian does not set a fake auth root
 - Spawned `spawn show --verbose` exposes a useful Pi phase during startup and cleanup
 
-## S20-S22: Sidecar lifecycle ingestion and stderr isolation
+## S20-S22: Disk-backed coordination ingestion and stderr isolation
 
 Run a normal spawned RPC scenario (e.g. S6) with real `pi` and Meridian extensions.
 
-Inspect `<runtime-root>/spawns/<spawn-id>/pi-lifecycle-events.jsonl` (Meridian sets
-`MERIDIAN_PI_LIFECYCLE_EVENT_FILE` for the child process).
+Inspect the disk coordination files under the runtime root:
+
+- `<runtime-root>/spawns/<spawn-id>/state.json`
+- `<runtime-root>/pi-bash/<parent-spawn-id>/bash-records.json`
+- `<runtime-root>/pi-bash/<parent-spawn-id>/last-notification.json`
 
 Expect:
-- Spawned RPC ingests canonical lifecycle lines from the sidecar file
+- Spawned RPC ingests the disk-backed coordination state
 - Incidental Pi stderr stays in spawn stderr logs and does not drive quiescence by itself
-- Duplicate lifecycle lines are deduped in history (see spawn history / unit tests for
+- Duplicate state transitions are deduped in history (see spawn history / unit tests for
   edge cases)
 
 ## S23-S28: Child-wave batching and timeout behavior
@@ -328,10 +331,10 @@ uv run meridian --harness pi -m <pi-model>
 From the native TUI, start `meridian spawn` child work and wait for completion.
 
 Expect:
-- Primary argv loads meridian-spawn-watch only (not background-tasks), `--mode rpc`, or `--no-extensions`
+- Primary argv loads `meridian-spawn-watch` only (not `managed-bash`), `--mode rpc`, or `--no-extensions`
 - Child completion can trigger a native Pi follow-up/notification
 - Primary does not auto-finalize or exit at quiescence; user remains in the TUI
-- Lifecycle events are written to `pi-lifecycle-events.jsonl` sidecar, not stdio
+- Coordination state is written to disk-backed Pi files, not stdio
 - Raw lifecycle JSON (`parent_spawn_id`, `correlation_id`, `emitted_at_ms`,
   `meridian.notification.*`, etc.) does **not** appear in the visible TUI
 - Primary lifecycle diagnostics, if captured, are diagnostic-only and do not drive spawned quiescence

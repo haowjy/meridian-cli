@@ -25,7 +25,7 @@ Prerequisites:
   default launches use `--no-extensions` plus explicit `-e` to those bundles only
 
 Optional: `. tests/smoke/scripts/pi-setup.sh --isolated-state` sets
-`MERIDIAN_PI_STATE_DIR` to a temp dir for extension background-task state only.
+`MERIDIAN_PI_STATE_DIR` to a temp dir for extension disk state only.
 
 Use a cheap model (e.g. `openai-codex/gpt-5.4-mini`) for plumbing checks.
 
@@ -59,7 +59,7 @@ meridian spawn --harness pi -m openai-codex/no-such-model -p 'hi'
 Expect:
 
 - `state.json` status `failed` with a readable `error` / reason
-- `report.md` (or spawn show) explains the provider/auth/model failure
+- `report.md` (or spawn show) explains the provider/auth/model failure with a readable `# Spawn failed` report
 - Report body does **not** consist only of `cleanup_completed` lifecycle JSON
 
 ---
