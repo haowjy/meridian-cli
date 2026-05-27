@@ -558,11 +558,10 @@ def materialize_launch_artifacts(
     task_cwd_instruction = ""
     if task_cwd and inject_task_cwd_instruction:
         task_cwd_instruction = (
-            "\n\n# Task Working Directory\n"
-            f"Your task working directory is: {task_cwd}\n\n"
-            "**Immediately `cd` into this directory before any filesystem operations.**\n\n"
-            f"```bash\ncd {task_cwd}\n```\n\n"
-            "The `MERIDIAN_TASK_CWD` environment variable contains this path.\n"
+            "\n\n# Source-edit directory\n"
+            "Use `MERIDIAN_PROJECT_ROOT` for project coordination files and harness context.\n"
+            f"Use `MERIDIAN_TASK_DIR` ({task_cwd}) for source-code operations "
+            "including git, edits, and builds.\n"
         )
     effective_appended_system = prompt_payload.appended_system_prompt or ""
     if task_cwd_instruction:

@@ -47,6 +47,21 @@ def test_work_start_task_dir_sets_metadata(tmp_path: Path) -> None:
     assert item.task_dir == task_dir.resolve().as_posix()
 
 
+def test_work_start_invalid_task_dir_fails_without_creating_work_item(tmp_path: Path) -> None:
+    project_root, project_state_dir, _runtime_root = _setup_project(tmp_path)
+
+    with pytest.raises(ValueError, match="task_dir does not exist"):
+        work_start_sync(
+            WorkStartInput(
+                label="feature-invalid",
+                task_dir=(tmp_path / "missing-task-dir").as_posix(),
+                project_root=project_root.as_posix(),
+            )
+        )
+
+    assert work_store.get_work_item(project_state_dir, "feature-invalid") is None
+
+
 def test_work_task_dir_print_without_active_work_returns_project_root(tmp_path: Path) -> None:
     project_root, _project_state_dir, _runtime_root = _setup_project(tmp_path)
 

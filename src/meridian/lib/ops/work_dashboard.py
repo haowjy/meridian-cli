@@ -169,6 +169,7 @@ class WorkDashboardItem(BaseModel):
     name: str
     status: str
     goal: str | None = None
+    task_dir: str | None = None
     spawns: tuple[WorkDashboardSpawn, ...] = ()
     worktree_display: str | None = None  # display-friendly path, pre-computed; None = no worktree
     worktree_exists: bool | None = None  # None = no worktree; True/False = exists/missing
@@ -207,11 +208,8 @@ class WorkDashboardOutput(BaseModel):
             if goal:
                 row = f"{row}  {goal}"
             lines.append(row)
-            if item.worktree_pending:
-                lines.append("    \U0001f333 (creation interrupted)")
-            elif item.worktree_display is not None:
-                suffix = "" if item.worktree_exists else " (missing)"
-                lines.append(f"    \U0001f333 {item.worktree_display}{suffix}")
+            if item.task_dir is not None:
+                lines.append(f"    Task dir: {item.task_dir}")
             lines.extend(_format_spawn_rows(item.spawns, indent="    "))
             if item.spawns:
                 has_spawns = True
@@ -314,11 +312,7 @@ class WorkShowOutput(BaseModel):
             ("Created", self.created_at),
             ("Dir", self.work_dir),
         ]
-        if self.worktree_pending:
-            kv_rows.append(("Worktree", "(creation interrupted)"))
-        elif self.worktree_path is not None:
-            suffix = "" if self.worktree_exists else " (missing)"
-            kv_rows.append(("Worktree", f"{self.worktree_path}{suffix}"))
+        kv_rows.append(("Task dir", self.task_dir or "(project root)"))
 
         lines = [kv_block(kv_rows)]
         if self.spawns:
@@ -462,6 +456,7 @@ def work_dashboard_sync(
                 name=work_id,
                 status=item.status if item is not None else "missing",
                 goal=item.goal if item is not None else None,
+                task_dir=item.task_dir if item is not None else None,
                 spawns=tuple(
                     sorted(grouped[work_id], key=lambda spawn: _spawn_id_sort_key(spawn.id))
                 ),

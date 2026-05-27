@@ -59,8 +59,8 @@ class LaunchDirectoryContext:
 
     def should_inject_task_cwd_instruction(self, surface: LaunchCompositionSurface) -> bool:
         """Whether launch composition should tell the agent to cd into task cwd."""
-
-        return self.has_distinct_task_cwd and surface != LaunchCompositionSurface.PRIMARY
+        _ = surface
+        return self.has_distinct_task_cwd
 
 
 def _active_task_dir_for_item(
@@ -88,6 +88,14 @@ def _validated_task_dir(
     )
 
 
+def _validated_explicit_task_dir(task_dir: Path) -> Path:
+    if task_dir.exists() and task_dir.is_dir():
+        return task_dir
+    if not task_dir.exists():
+        raise ValueError(f"task_dir does not exist: {task_dir}")
+    raise ValueError(f"task_dir is not a directory: {task_dir}")
+
+
 def resolve_task_cwd(
     authority_root: Path,
     *,
@@ -111,8 +119,11 @@ def resolve_task_cwd(
         selected_work_id = (
             (explicit_work_id or "").strip() or (ambient_work_id or "").strip() or None
         )
+        explicit_task_dir_path = _validated_explicit_task_dir(
+            Path(explicit_override).expanduser().resolve()
+        )
         return TaskCwdResolution(
-            task_cwd=Path(explicit_override).expanduser().resolve(),
+            task_cwd=explicit_task_dir_path,
             source="explicit-task-dir",
             work_item=selected_work_id,
         )

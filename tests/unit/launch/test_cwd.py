@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
 from meridian.lib.state import work_store
 
@@ -35,6 +37,17 @@ def test_resolve_task_cwd_uses_explicit_task_dir_override_first(tmp_path: Path) 
 
     assert resolved.task_cwd == explicit.resolve()
     assert resolved.source == "explicit-task-dir"
+
+
+def test_resolve_task_cwd_rejects_missing_explicit_task_dir(tmp_path: Path) -> None:
+    authority_root, state_dir = _roots(tmp_path)
+
+    with pytest.raises(ValueError, match="task_dir does not exist"):
+        resolve_task_cwd(
+            authority_root,
+            project_state_dir=state_dir,
+            explicit_task_dir=(tmp_path / "missing-task-dir").as_posix(),
+        )
 
 
 def test_resolve_task_cwd_explicit_work_uses_work_item_task_dir(tmp_path: Path) -> None:

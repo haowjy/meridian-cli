@@ -31,6 +31,15 @@ _NESTED_WORK_WARNING = (
 logger = structlog.get_logger(__name__)
 
 
+def _validate_task_dir_path(task_dir: str) -> Path:
+    resolved_task_dir = Path(task_dir).expanduser().resolve()
+    if not resolved_task_dir.exists():
+        raise ValueError(f"task_dir does not exist: {resolved_task_dir}")
+    if not resolved_task_dir.is_dir():
+        raise ValueError(f"task_dir is not a directory: {resolved_task_dir}")
+    return resolved_task_dir
+
+
 def _require_work_item(project_state_dir: Path, work_id: str) -> work_store.WorkItem:
     item = work_store.get_work_item(project_state_dir, work_id)
     if item is None:
@@ -326,6 +335,11 @@ def work_start_sync(
     if normalized_work_id != payload.label.strip():
         slug_warning = f"Normalized '{payload.label.strip()}' to '{normalized_work_id}'."
 
+    normalized_task_dir = (payload.task_dir or "").strip() or None
+    resolved_task_dir: Path | None = None
+    if normalized_task_dir is not None:
+        resolved_task_dir = _validate_task_dir_path(normalized_task_dir)
+
     existing = work_store.get_work_item(project_state_dir, normalized_work_id)
     created = False
     reattach_warning: str | None = None
@@ -349,13 +363,7 @@ def work_start_sync(
         )
         created = True
     task_dir_warning: str | None = None
-    normalized_task_dir = (payload.task_dir or "").strip() or None
-    if normalized_task_dir is not None:
-        resolved_task_dir = Path(normalized_task_dir).expanduser().resolve()
-        if not resolved_task_dir.exists():
-            raise ValueError(f"task_dir does not exist: {resolved_task_dir}")
-        if not resolved_task_dir.is_dir():
-            raise ValueError(f"task_dir is not a directory: {resolved_task_dir}")
+    if resolved_task_dir is not None:
         item = work_store.update_work_item_task_dir(
             project_state_dir,
             item.name,
@@ -636,11 +644,7 @@ def work_task_dir_sync(
         requested_task_dir = (payload.task_dir or "").strip()
         if not requested_task_dir:
             raise ValueError("task_dir path is empty")
-        resolved_task_dir = Path(requested_task_dir).expanduser().resolve()
-        if not resolved_task_dir.exists():
-            raise ValueError(f"task_dir does not exist: {resolved_task_dir}")
-        if not resolved_task_dir.is_dir():
-            raise ValueError(f"task_dir is not a directory: {resolved_task_dir}")
+        resolved_task_dir = _validate_task_dir_path(requested_task_dir)
         updated = work_store.update_work_item_task_dir(
             project_state_dir,
             item.name,

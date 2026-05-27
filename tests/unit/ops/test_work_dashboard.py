@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from meridian.lib.ops.runtime import resolve_roots
-from meridian.lib.ops.work_dashboard import WorkShowInput, work_show_sync
+from meridian.lib.ops.work_dashboard import (
+    WorkDashboardItem,
+    WorkDashboardOutput,
+    WorkShowInput,
+    work_show_sync,
+)
 from meridian.lib.state import work_store
 
 
@@ -25,6 +30,9 @@ def test_work_show_includes_stored_task_dir(tmp_path: Path) -> None:
     output = work_show_sync(WorkShowInput(work_id=item.name, project_root=project_root.as_posix()))
 
     assert output.task_dir == task_dir.resolve().as_posix()
+    formatted = output.format_text()
+    assert f"Task dir: {task_dir.resolve().as_posix()}" in formatted
+    assert "Worktree" not in formatted
 
 
 def test_work_show_includes_cleared_task_dir_as_null(tmp_path: Path) -> None:
@@ -38,3 +46,18 @@ def test_work_show_includes_cleared_task_dir_as_null(tmp_path: Path) -> None:
     output = work_show_sync(WorkShowInput(work_id=item.name, project_root=project_root.as_posix()))
 
     assert output.task_dir is None
+
+
+def test_work_dashboard_text_includes_task_dir(tmp_path: Path) -> None:
+    task_dir = (tmp_path / "feature-c-task").resolve().as_posix()
+    output = WorkDashboardOutput(
+        items=(
+            WorkDashboardItem(
+                name="feature-c",
+                status="open",
+                task_dir=task_dir,
+            ),
+        )
+    )
+    formatted = output.format_text()
+    assert f"Task dir: {task_dir}" in formatted
