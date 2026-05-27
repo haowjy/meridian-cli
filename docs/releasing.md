@@ -5,7 +5,7 @@ has a `release:*` label.
 
 ## What you do
 
-1. Work in a worktree branch: `meridian work start "my-feature" --worktree`
+1. Create/select your code directory (for example `git worktree add ../meridian-cli.worktrees/my-feature -b my-feature`), then start the work item with `meridian work start "my-feature" --task-dir ../meridian-cli.worktrees/my-feature` (or run `meridian work task-dir ../meridian-cli.worktrees/my-feature` after `work start`)
 2. Add changelog entries under `CHANGELOG.md` `[Unreleased]` as you commit
 3. Open a PR using the PR template
 4. Set one release label:

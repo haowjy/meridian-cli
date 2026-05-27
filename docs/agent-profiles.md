@@ -180,7 +180,7 @@ skills:
   - shared-workspace
 ```
 
-`shared-workspace` guidance should use Meridian-managed isolation (`meridian work worktree --ensure`, optionally `--repo <path-or-alias>`) instead of manual `git worktree add`.
+`shared-workspace` guidance should set the work item's source-edit directory with `meridian work start ... --task-dir <path>` or `meridian work task-dir <path>` (for example, pointing at a `git worktree add` directory).
 
 **Variant selection.** Skills can ship harness- or model-specific body overrides in a `variants/` subdirectory. Meridian selects the best matching variant at launch time using a 4-step specificity ladder:
 
