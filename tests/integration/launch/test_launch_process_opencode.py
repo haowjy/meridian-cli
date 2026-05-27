@@ -185,7 +185,7 @@ def test_run_harness_process_managed_failure_falls_back_to_black_box(
     assert captured_spawn_dir is not None
     assert not (captured_spawn_dir / PRIMARY_META_FILENAME).exists()
     assert not (captured_spawn_dir / OUTPUT_FILENAME).exists()
-    assert captured_black_box_cwd == task_cwd
+    assert captured_black_box_cwd == project_root
     assert list(launch_context.runtime_root.rglob("tui.log")) == []
     assert outcome.exit_code == 0
 
