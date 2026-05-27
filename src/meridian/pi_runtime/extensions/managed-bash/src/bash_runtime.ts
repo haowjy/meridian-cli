@@ -243,6 +243,13 @@ export class BashRuntime {
       }));
   }
 
+  async clearFinished(): Promise<number> {
+    const finished = [...this.records.values()].filter((record) => record.status !== "running");
+    for (const record of finished) this.records.delete(record.bash_id);
+    if (finished.length > 0) await this.persist();
+    return finished.length;
+  }
+
   async manage(params: BashManageParams): Promise<BashManageResult> {
     const action = params.action;
     if (action === "list") {

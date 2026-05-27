@@ -8,6 +8,7 @@ import { runMeridianCommand } from "../../shared/meridian_cli";
 import {
   currentSpawnIdFromEnv,
   resolveBashRecordsPath,
+  resolveClearedSpawnsPath,
   resolveLastNotificationPath,
   resolveObservedSpawnsPath,
   resolvePiBashDir,
@@ -30,6 +31,13 @@ type PiWithMessages = ExtensionAPI & {
   ) => void | Promise<void>;
 };
 
+type ClearedSpawnsFile = {
+  v: 1;
+  spawn_id: string;
+  updated_at_ms: number;
+  cleared_spawn_ids: string[];
+};
+
 type NotificationItem = {
   id: string;
   kind: "spawn" | "bash";
@@ -49,9 +57,12 @@ class SpawnWatchRuntime {
   private readonly ownSpawnDir = path.join(this.spawnsDir, this.currentSpawnId);
   private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
   private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
+  private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
   private readonly observedPath = resolveObservedSpawnsPath(this.currentSpawnId);
   private readonly markerPath = resolveLastNotificationPath(this.currentSpawnId);
   private readonly pending = new Map<string, NotificationItem>();
+  private readonly clearedSpawnIds = new Set<string>();
+  private clearedLoaded = false;
   private readonly childSpawnIds = new Set<string>();
   private readonly childWatchers = new Map<string, FSWatcher>();
   private readonly candidateWatchers = new Map<string, FSWatcher>();
@@ -90,10 +101,29 @@ class SpawnWatchRuntime {
   }
 
   async rows(discover = false): Promise<SpawnStateFile[]> {
+    await this.loadClearedSpawnIds();
     if (discover) await this.discoverExistingChildren();
     return (await this.readChildSpawnStates()).filter(
-      (state) => state.parent_id === this.currentSpawnId,
+      (state) => state.parent_id === this.currentSpawnId && !this.isClearedTerminalSpawn(state),
     );
+  }
+
+  async clearFinished(): Promise<number> {
+    await this.loadClearedSpawnIds();
+    await this.discoverExistingChildren();
+    const terminalStates = (await this.readChildSpawnStates()).filter(
+      (state) =>
+        state.parent_id === this.currentSpawnId &&
+        isTerminalSpawnStatus(String(state.status ?? "")) &&
+        !this.clearedSpawnIds.has(state.id),
+    );
+    for (const state of terminalStates) {
+      this.clearedSpawnIds.add(state.id);
+      this.pending.delete(state.id);
+      TERMINAL_NOTIFIED.add(state.id);
+    }
+    if (terminalStates.length > 0) await this.persistClearedSpawnIds();
+    return terminalStates.length;
   }
 
   private watchTopLevelSpawnsDir(): FSWatcher {
@@ -282,6 +312,28 @@ class SpawnWatchRuntime {
     });
   }
 
+  private isClearedTerminalSpawn(state: SpawnStateFile): boolean {
+    return this.clearedSpawnIds.has(state.id) && isTerminalSpawnStatus(String(state.status ?? ""));
+  }
+
+  private async loadClearedSpawnIds(): Promise<void> {
+    if (this.clearedLoaded) return;
+    const file = await readJsonFile<ClearedSpawnsFile | null>(this.clearedPath, null);
+    for (const id of file?.cleared_spawn_ids ?? []) {
+      if (typeof id === "string") this.clearedSpawnIds.add(id);
+    }
+    this.clearedLoaded = true;
+  }
+
+  private async persistClearedSpawnIds(): Promise<void> {
+    await writeJsonAtomic(this.clearedPath, {
+      v: 1,
+      spawn_id: this.currentSpawnId,
+      updated_at_ms: Date.now(),
+      cleared_spawn_ids: [...this.clearedSpawnIds].sort(),
+    });
+  }
+
   private async readSuppressedSpawnIds(): Promise<Set<string>> {
     const file = await readJsonFile<ObservedSpawnsFile | null>(this.observedPath, null);
     return new Set(
@@ -436,7 +488,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
   pi.on?.("session_start", () => runtime.start());
   pi.on?.("session_shutdown", () => runtime.stop());
 
-  pi.registerCommand("mspawn", {
+  pi.registerCommand("spawn", {
     description: "List Meridian spawns correlated to this Pi session.",
     handler: async (_args, ctx) => {
       const loadRows = async (): Promise<SpawnStateFile[]> => runtime.rows(true);
@@ -449,13 +501,17 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
       }
 
       await openTaskPanel(ctx as PanelCommandContext, {
-        title: "Meridian /mspawn — correlated spawns",
+        title: "Meridian /spawn — correlated spawns",
         columns: SPAWN_PANEL_COLUMNS,
         loadRows,
         getRowId: (row) => row.id,
         renderPreview: renderSpawnPreview,
         emptyMessage: "No correlated Meridian spawns.",
-        footer: "enter logs · j/k select · r refresh · q close",
+        footer: "enter logs · c clear · j/k select · r refresh · q close",
+        onClear: async () => {
+          const cleared = await runtime.clearFinished();
+          ctx.ui?.notify?.(`cleared ${cleared} finished spawn(s)`, "info");
+        },
         onEnter: async (row) => {
           await openLogOverlay(ctx as PanelCommandContext, {
             title: `Spawn log ${row.id}`,
@@ -480,7 +536,15 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("mspawn:show", {
+  pi.registerCommand("spawn:clear", {
+    description: "Clear finished correlated Meridian spawns from /spawn.",
+    handler: async (_args, ctx) => {
+      const cleared = await runtime.clearFinished();
+      ctx.ui.notify(`cleared ${cleared} finished spawn(s)`, "info");
+    },
+  });
+
+  pi.registerCommand("spawn:show", {
     description: "Show a correlated Meridian spawn.",
     handler: async (args, ctx) => {
       const result = await runMeridianCommand(["spawn", "show", args.trim()], 15_000);
@@ -488,7 +552,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("mspawn:wait", {
+  pi.registerCommand("spawn:wait", {
     description: "Wait for a correlated Meridian spawn.",
     handler: async (args, ctx) => {
       const result = await runMeridianCommand(["spawn", "wait", args.trim()], 60_000);
@@ -496,7 +560,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("mspawn:cancel", {
+  pi.registerCommand("spawn:cancel", {
     description: "Cancel a correlated Meridian spawn.",
     handler: async (args, ctx) => {
       const result = await runMeridianCommand(["spawn", "cancel", args.trim()], 15_000);
@@ -504,7 +568,7 @@ export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("mspawn:log", {
+  pi.registerCommand("spawn:log", {
     description: "Show recent log for a correlated Meridian spawn.",
     handler: async (args, ctx) => {
       const result = await runMeridianCommand(["session", "log", args.trim()], 15_000);

@@ -12,9 +12,11 @@ const bundlePath = join(
 const bundleExists = existsSync(bundlePath);
 
 describe.skipIf(!bundleExists)("meridian-spawn-watch bundle smoke", () => {
-  it("registers mspawn commands without tools", () => {
+  it("registers spawn commands without tools", () => {
     const src = readFileSync(bundlePath, "utf8");
-    expect(src).toContain('registerCommand("mspawn"');
+    expect(src).toContain('registerCommand("spawn"');
+    expect(src).toContain('registerCommand("spawn:clear"');
+    expect(src).not.toContain('registerCommand("mspawn"');
     expect(src).not.toContain("registerTool");
   });
 

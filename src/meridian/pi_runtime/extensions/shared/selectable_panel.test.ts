@@ -1,7 +1,13 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
-import { openTaskPanel, renderSelectablePanel, type PanelCommandContext, type SelectablePanelOptions } from "./selectable_panel";
+import {
+  openTaskPanel,
+  renderSelectablePanel,
+  SelectablePanelComponent,
+  type PanelCommandContext,
+  type SelectablePanelOptions,
+} from "./selectable_panel";
 
 type Row = { id: string; status: string; command: string };
 
@@ -50,6 +56,23 @@ describe("openTaskPanel", () => {
         anchor: "top-left",
       },
     });
+  });
+});
+
+describe("SelectablePanelComponent", () => {
+  it("runs the clear action from c", async () => {
+    let cleared = 0;
+    const component = new SelectablePanelComponent(
+      { requestRender: () => undefined, terminal: { rows: 24 } },
+      mockTheme(),
+      { ...options, onClear: async () => { cleared += 1; } },
+      () => undefined,
+    );
+
+    component.handleInput("c");
+    await Promise.resolve();
+
+    expect(cleared).toBe(1);
   });
 });
 

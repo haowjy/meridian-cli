@@ -15,6 +15,7 @@ export type SelectablePanelOptions<Row> = {
   getRowId: (row: Row) => string;
   renderPreview: (row: Row, theme: Theme) => string[];
   onEnter?: (row: Row) => void | Promise<void>;
+  onClear?: () => void | Promise<void>;
   emptyMessage?: string;
   footer?: string;
   maxRows?: number;
@@ -26,6 +27,7 @@ type PanelTui = {
 };
 
 type PanelUi = {
+  notify?: (message: string, level?: "info" | "warning" | "error" | string) => void;
   custom: <T>(
     factory: (
       tui: PanelTui,
@@ -80,6 +82,11 @@ function isRefresh(data: string): boolean {
 
 function isConfirm(data: string): boolean {
   return data === "\n" || data === "\r";
+}
+
+function isClear(data: string): boolean {
+  const ch = printableChar(data);
+  return ch === "c" || ch === "C";
 }
 
 function isUp(data: string): boolean {
@@ -233,6 +240,15 @@ export class SelectablePanelComponent<Row> implements Component {
       this.selectedIndex = Math.min(Math.max(0, this.rows.length - 1), this.selectedIndex + 1);
       this.ensureSelectedVisible();
       this.tui.requestRender();
+      return;
+    }
+    if (isClear(data) && this.options.onClear) {
+      void Promise.resolve(this.options.onClear())
+        .then(() => this.refresh())
+        .catch((error: unknown) => {
+          this.errorMessage = `Action failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.tui.requestRender();
+        });
       return;
     }
     if (isConfirm(data)) {

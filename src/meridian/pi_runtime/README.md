@@ -13,7 +13,8 @@ npm run build:extensions
 
 This writes a stable entrypoint under `dist/extensions/`:
 
-- `dist/extensions/background-tasks/index.js` — shell task registry, `/ps`, spawn discovery, `/mspawn:wait`
+- `dist/extensions/managed-bash/index.js` — managed shell tasks, `/ps`
+- `dist/extensions/meridian-spawn-watch/index.js` — correlated spawn discovery, `/spawn`, `/spawn:wait`
 
 Launch projection copies that extension entrypoint into Meridian-owned state for each spawned run.
 
@@ -30,6 +31,6 @@ Then delegate **smoke-tester** for runtime verification (`meridian pi`, spawn fl
 
 ## Spawn rows and wait
 
-- **Meridian spawns in `/ps`** — ids confirmed via `meridian spawn list` / `spawn show` (same store as `meridian spawn wait`), not shell-command regex.
-- **Blocking wait** — `meridian spawn wait` in the terminal, or **`/mspawn:wait <p-id>`** in Pi (30m subprocess cap; CLI may checkpoint earlier).
+- **Meridian spawns in `/spawn`** — ids confirmed via `meridian spawn list` / `spawn show` (same store as `meridian spawn wait`), not shell-command regex.
+- **Blocking wait** — `meridian spawn wait` in the terminal, or **`/spawn:wait <p-id>`** in Pi (30m subprocess cap; CLI may checkpoint earlier).
 - **`/ps`** — observability only (`ps:kill`, `ps:logs`); no wait subcommand. `/spawns*` removed.

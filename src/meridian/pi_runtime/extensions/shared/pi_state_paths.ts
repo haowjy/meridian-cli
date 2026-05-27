@@ -45,6 +45,10 @@ export function resolveObservedSpawnsPath(spawnId = currentSpawnIdFromEnv()): st
   return path.join(resolvePiBashDir(spawnId), "observed-spawns.json");
 }
 
+export function resolveClearedSpawnsPath(spawnId = currentSpawnIdFromEnv()): string {
+  return path.join(resolvePiBashDir(spawnId), "cleared-spawns.json");
+}
+
 export function resolveBashLogsDir(spawnId = currentSpawnIdFromEnv()): string {
   return path.join(resolvePiBashDir(spawnId), "logs");
 }

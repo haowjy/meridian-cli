@@ -318,7 +318,11 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
         getRowId: (row) => row.bash_id,
         renderPreview: renderBashPreview,
         emptyMessage: "No Meridian-managed bash tasks.",
-        footer: "enter logs · j/k select · r refresh · q close",
+        footer: "enter logs · c clear · j/k select · r refresh · q close",
+        onClear: async () => {
+          const cleared = await runtime.clearFinished();
+          ctx.ui?.notify?.(`cleared ${cleared} finished bash task(s)`, "info");
+        },
         onEnter: async (row) => {
           await openLogOverlay(ctx as PanelCommandContext, {
             title: `Bash log ${row.bash_id}`,
@@ -335,6 +339,14 @@ export default function managedBashExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const result = await runtime.manage({ action: "kill", bash_id: args.trim() });
       ctx.ui.notify(JSON.stringify(result, null, 2), "info");
+    },
+  });
+
+  pi.registerCommand("ps:clear", {
+    description: "Clear finished Meridian-managed bash tasks from /ps.",
+    handler: async (_args, ctx) => {
+      const cleared = await runtime.clearFinished();
+      ctx.ui.notify(`cleared ${cleared} finished bash task(s)`, "info");
     },
   });
 

@@ -16,6 +16,7 @@ describe.skipIf(!bundleExists)("managed-bash bundle smoke", () => {
     const src = readFileSync(bundlePath, "utf8");
     expect(src).toContain('name: "bash"');
     expect(src).toContain('name: "bash_manage"');
+    expect(src).toContain('registerCommand("ps:clear"');
   });
 
   it("does not import pi-tui subpaths that break Pi extension aliasing", () => {

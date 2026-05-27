@@ -5,14 +5,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
-- Pi `/ps` and `/mspawn` selectable task panels now use a full-screen covering overlay, avoiding redraw bleed-through from underlying Pi spinners/status while preserving whole-viewport UX.
+- Pi `/ps` and `/spawn` selectable task panels now use a full-screen covering overlay, avoiding redraw bleed-through from underlying Pi spinners/status while preserving whole-viewport UX.
 - Pi managed bash now keeps separate stdout/stderr log files behind the combined log, so `/ps` stream filters and tool details use the same source-of-truth logs.
 - Pi `/ps` bash row inspection now supports `s` to switch combined/stdout/stderr log streams.
-- Pi `/ps` and `/mspawn` row inspection now opens a centered log overlay with follow, scroll, top/bottom, and refresh controls instead of replacing the whole panel.
-- Pi `/ps` and `/mspawn` now share a full-screen selectable UI with row preview, colored key hints, `j/k` navigation, `enter` action, and `r` refresh.
+- Pi `/ps` and `/spawn` row inspection now opens a centered log overlay with follow, scroll, top/bottom, and refresh controls instead of replacing the whole panel.
+- Pi `/ps` and `/spawn` now share a full-screen selectable UI with row preview, colored key hints, `j/k` navigation, `enter` action, `c` clear, and `r` refresh.
 - Pi `/ps` now sorts running bash tasks before completed tasks.
 
 ### Added
+- Pi `/ps:clear` and `/spawn:clear` hide finished task rows from the current Pi session panels.
 - Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.
 - `timeouts.pi_child_wave_timeout_seconds` and `timeouts.pi_task_ping_interval_seconds` in `meridian.toml` / env (`MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS`, `MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS`).
 
