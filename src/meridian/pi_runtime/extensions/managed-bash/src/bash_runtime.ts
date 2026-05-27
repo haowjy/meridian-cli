@@ -495,7 +495,7 @@ export class BashRuntime {
   private async manageSpawn(spawnId: string, params: BashManageParams): Promise<BashManageResult> {
     switch (params.action) {
       case "output": {
-        const result = await runMeridianCommand(["session", "log", spawnId, "-n", "20"], 15_000);
+        const result = await runMeridianCommand(["session", "log", spawnId, "--tail", "20"], 15_000);
         return { bash_id: spawnId, output: result.stdout || result.stderr, truncated: false };
       }
       case "kill": {
