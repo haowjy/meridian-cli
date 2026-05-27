@@ -964,7 +964,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             json_mode = fmt_val.lower() == "json"
         except (IndexError, ValueError):
             pass
-    verbose_count = args.count("--verbose") + args.count("-v")
+    verbose_count = args.count("--verbose")
     configure_logging(json_mode=json_mode, verbosity=verbose_count)
 
     cleaned_args, options = _extract_global_options(args)

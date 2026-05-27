@@ -1,9 +1,11 @@
 """Spawn operations used by CLI and MCP surfaces."""
 
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
+from typing import cast
 
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
@@ -37,7 +39,9 @@ from meridian.lib.ops.runtime import (
 )
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
 from meridian.lib.ops.worktree_ensure import ensure_work_item_worktree
+from meridian.lib.platform.locking import lock_file
 from meridian.lib.state import session_store, spawn_store, work_store
+from meridian.lib.state.atomic import atomic_write_text
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.primary_meta import (
     read_primary_surface_metadata,
@@ -89,6 +93,7 @@ from .query import (
 )
 
 _WAIT_PROGRESS_INTERVAL_SECS = 5.0
+
 
 
 def _looks_like_spawn_ref(ref: str) -> bool:
@@ -393,13 +398,15 @@ def spawn_create_sync(
             sink=sink,
         )
 
-    prepared_request = build_create_payload(
+    artifacts = build_create_payload(
         payload,
         runtime=runtime,
         preflight_warning=preflight_warning,
         ctx=resolved_context,
         forced_task_cwd_resolution=forced_task_cwd_resolution,
     )
+    prepared_request = artifacts.request
+    prepared_surface = artifacts.prepared
     forked_from = _forked_from_output(payload)
     if payload.dry_run:
         prepared_goal = getattr(prepared_request, "goal", payload.goal)
@@ -464,6 +471,7 @@ def spawn_create_sync(
             request=prepared_request,
             runtime=runtime,
             ctx=resolved_context,
+            prepared=prepared_surface,
         )
     _emit_usage_spawn_launched(
         harness=result.harness_id or prepared_request.harness,
@@ -1407,6 +1415,60 @@ def _resolve_wait_checkpoint_seconds(
     return float(config.wait_yield_seconds_for_harness(parent_harness))
 
 
+def _update_pi_wait_observation(
+    *,
+    runtime_root: Path,
+    parent_spawn_id: str | None,
+    waiting_add: tuple[str, ...] = (),
+    waiting_remove: tuple[str, ...] = (),
+    observed_add: tuple[str, ...] = (),
+) -> None:
+    """Record spawn IDs the parent session is explicitly waiting for or saw.
+
+    The Pi spawn watcher uses this as a suppression marker for implicit
+    completion notifications. ``state.json`` remains authority for spawn state;
+    this file is UI policy state under the parent Pi session's coordination dir.
+    """
+
+    if not parent_spawn_id or not (waiting_add or waiting_remove or observed_add):
+        return
+
+    observed_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.json"
+    lock_path = runtime_root / "pi-bash" / parent_spawn_id / "observed-spawns.lock"
+    with lock_file(lock_path):
+        try:
+            existing = json.loads(observed_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            existing = {}
+        existing_obj = cast("dict[str, object]", existing) if isinstance(existing, dict) else {}
+        observed_ids = _string_set(existing_obj.get("observed_spawn_ids"))
+        waiting_ids = _string_set(existing_obj.get("waiting_spawn_ids"))
+        waiting_ids.update(waiting_add)
+        waiting_ids.difference_update(waiting_remove)
+        observed_ids.update(observed_add)
+        observed_ids.difference_update(waiting_ids)
+        atomic_write_text(
+            observed_path,
+            json.dumps(
+                {
+                    "v": 1,
+                    "spawn_id": parent_spawn_id,
+                    "updated_at_ms": int(time.time() * 1000),
+                    "observed_spawn_ids": sorted(observed_ids),
+                    "waiting_spawn_ids": sorted(waiting_ids),
+                },
+                indent=2,
+            )
+            + "\n",
+        )
+
+
+def _string_set(raw: object) -> set[str]:
+    if not isinstance(raw, list):
+        return set()
+    return {item for item in cast("list[object]", raw) if isinstance(item, str)}
+
+
 def spawn_wait_sync(
     payload: SpawnWaitInput,
     ctx: RuntimeContext | None = None,
@@ -1490,86 +1552,117 @@ def spawn_wait_sync(
     progress_interval = max(_WAIT_PROGRESS_INTERVAL_SECS, poll)
     next_progress = started + progress_interval
 
-    while True:
-        for spawn_id in tuple(pending):
-            row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-            if row is None:
-                if has_explicit_ids:
-                    raise ValueError(f"Spawn '{spawn_id}' not found")
-                # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
-                # waiting, treat it as resolved instead of failing unrelated waits.
-                pending.discard(spawn_id)
-                continue
-
-            if _spawn_is_terminal(row.status):
-                completed_rows[spawn_id] = row
-                pending.remove(spawn_id)
-
-        if not pending:
-            details = tuple(
-                detail_from_row(
-                    project_root=project_root,
-                    row=completed_rows[spawn_id],
-                    include_report_body=payload.include_report_body,
-                    runtime_root=runtime_root,
-                )
-                for spawn_id in spawn_ids
-                if spawn_id in completed_rows
-            )
-            return _build_wait_multi_output(details)
-
-        now = time.monotonic()
-        if checkpoint_deadline is not None and now >= checkpoint_deadline:
-            pending_ids = tuple(sorted(pending))
-            checkpoint_rows: list[SpawnRecord] = []
-            for spawn_id in spawn_ids:
-                if spawn_id in completed_rows:
-                    checkpoint_rows.append(completed_rows[spawn_id])
-                    continue
+    parent_wait_observer_id = str(resolved_context.spawn_id) if resolved_context.spawn_id else None
+    _update_pi_wait_observation(
+        runtime_root=runtime_root,
+        parent_spawn_id=parent_wait_observer_id,
+        waiting_add=spawn_ids,
+    )
+    try:
+        while True:
+            for spawn_id in tuple(pending):
                 row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
-                if row is not None:
-                    checkpoint_rows.append(row)
-            checkpoint_details = tuple(
-                detail_from_row(
-                    project_root=project_root,
-                    row=row,
-                    include_report_body=payload.include_report_body,
-                    runtime_root=runtime_root,
-                )
-                for row in checkpoint_rows
-            )
-            return SpawnWaitMultiOutput(
-                spawns=checkpoint_details,
-                total_runs=len(spawn_ids),
-                succeeded_runs=sum(
-                    1 for detail in checkpoint_details if detail.status == "succeeded"
-                ),
-                failed_runs=sum(1 for detail in checkpoint_details if detail.status == "failed"),
-                cancelled_runs=sum(
-                    1 for detail in checkpoint_details if detail.status == "cancelled"
-                ),
-                any_failed=any(
-                    detail.status in {"failed", "cancelled"} for detail in checkpoint_details
-                ),
-                checkpoint=True,
-                checkpoint_pending_ids=pending_ids,
-                checkpoint_chat_id=wait_chat_id,
-                checkpoint_elapsed_secs=now - started,
-            )
+                if row is None:
+                    if has_explicit_ids:
+                        raise ValueError(f"Spawn '{spawn_id}' not found")
+                    # No-arg discovery is chat-scoped: if a discovered spawn vanishes while
+                    # waiting, treat it as resolved instead of failing unrelated waits.
+                    pending.discard(spawn_id)
+                    continue
 
-        if hard_deadline is not None and now >= hard_deadline:
-            elapsed = now - started
-            raise TimeoutError(_build_wait_timeout_message(pending, elapsed))
-        if now >= next_progress:
-            progress = _render_wait_progress(
-                pending,
-                elapsed_secs=max(now - started, 0.0),
-                mode=progress_mode,
-            )
-            if progress is not None:
-                _emit_wait_progress(progress, sink=active_sink)
-            next_progress = now + progress_interval
-        time.sleep(poll)
+                if _spawn_is_terminal(row.status):
+                    completed_rows[spawn_id] = row
+                    pending.remove(spawn_id)
+
+            if not pending:
+                details = tuple(
+                    detail_from_row(
+                        project_root=project_root,
+                        row=completed_rows[spawn_id],
+                        include_report_body=payload.include_report_body,
+                        runtime_root=runtime_root,
+                    )
+                    for spawn_id in spawn_ids
+                    if spawn_id in completed_rows
+                )
+                _update_pi_wait_observation(
+                    runtime_root=runtime_root,
+                    parent_spawn_id=parent_wait_observer_id,
+                    waiting_remove=spawn_ids,
+                    observed_add=tuple(detail.spawn_id for detail in details),
+                )
+                return _build_wait_multi_output(details)
+
+            now = time.monotonic()
+            if checkpoint_deadline is not None and now >= checkpoint_deadline:
+                pending_ids = tuple(sorted(pending))
+                checkpoint_rows: list[SpawnRecord] = []
+                for spawn_id in spawn_ids:
+                    if spawn_id in completed_rows:
+                        checkpoint_rows.append(completed_rows[spawn_id])
+                        continue
+                    row = read_spawn_row(project_root, spawn_id, runtime_root=runtime_root)
+                    if row is not None:
+                        checkpoint_rows.append(row)
+                checkpoint_details = tuple(
+                    detail_from_row(
+                        project_root=project_root,
+                        row=row,
+                        include_report_body=payload.include_report_body,
+                        runtime_root=runtime_root,
+                    )
+                    for row in checkpoint_rows
+                )
+                _update_pi_wait_observation(
+                    runtime_root=runtime_root,
+                    parent_spawn_id=parent_wait_observer_id,
+                    waiting_remove=spawn_ids,
+                    observed_add=tuple(
+                        detail.spawn_id
+                        for detail in checkpoint_details
+                        if _spawn_is_terminal(detail.status)
+                    ),
+                )
+                return SpawnWaitMultiOutput(
+                    spawns=checkpoint_details,
+                    total_runs=len(spawn_ids),
+                    succeeded_runs=sum(
+                        1 for detail in checkpoint_details if detail.status == "succeeded"
+                    ),
+                    failed_runs=sum(
+                        1 for detail in checkpoint_details if detail.status == "failed"
+                    ),
+                    cancelled_runs=sum(
+                        1 for detail in checkpoint_details if detail.status == "cancelled"
+                    ),
+                    any_failed=any(
+                        detail.status in {"failed", "cancelled"} for detail in checkpoint_details
+                    ),
+                    checkpoint=True,
+                    checkpoint_pending_ids=pending_ids,
+                    checkpoint_chat_id=wait_chat_id,
+                    checkpoint_elapsed_secs=now - started,
+                )
+
+            if hard_deadline is not None and now >= hard_deadline:
+                elapsed = now - started
+                raise TimeoutError(_build_wait_timeout_message(pending, elapsed))
+            if now >= next_progress:
+                progress = _render_wait_progress(
+                    pending,
+                    elapsed_secs=max(now - started, 0.0),
+                    mode=progress_mode,
+                )
+                if progress is not None:
+                    _emit_wait_progress(progress, sink=active_sink)
+                next_progress = now + progress_interval
+            time.sleep(poll)
+    finally:
+        _update_pi_wait_observation(
+            runtime_root=runtime_root,
+            parent_spawn_id=parent_wait_observer_id,
+            waiting_remove=spawn_ids,
+        )
 
 
 async def spawn_wait(
@@ -1815,7 +1908,7 @@ def _resolve_effective_fork_target_harness(
     preview_request = build_create_payload(
         validated_payload,
         preflight_warning=preflight_warning,
-    )
+    ).request
     resolved_harness = (preview_request.harness or "").strip()
     if not resolved_harness:
         raise ValueError("Fork target harness could not be resolved.")

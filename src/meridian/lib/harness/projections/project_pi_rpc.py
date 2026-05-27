@@ -6,12 +6,12 @@ import logging
 from collections.abc import Sequence
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.projections._guards import (
     check_projection_drift as _check_projection_drift,
 )
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
-from meridian.lib.state.user_paths import get_user_home
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "projected_roots",
         "appended_system_prompt",
         "pi_extension_entrypoints",
+        "load_all_pi_extensions",
     }
 )
 
@@ -147,7 +148,7 @@ def _project_model_arg(spec: ResolvedLaunchSpec) -> str | None:
 
 
 def _default_pi_session_dir() -> str:
-    return str(get_user_home() / "meridian-pi" / "sessions")
+    return str(resolve_pi_spawn_session_root())
 
 
 def project_pi_spec_to_cli_args(
@@ -197,7 +198,7 @@ def project_pi_spec_to_cli_args(
     )
     _log_collision_if_needed(
         managed_flag="--no-extensions",
-        has_managed_value=True,
+        has_managed_value=not spec.load_all_pi_extensions,
         passthrough_tail=passthrough_tail,
     )
     _log_collision_if_needed(
@@ -234,9 +235,11 @@ def project_pi_spec_to_cli_args(
 
     command.extend(("--session-dir", _default_pi_session_dir()))
 
+    if not spec.load_all_pi_extensions:
+        command.append("--no-extensions")
+
     command.extend(
         (
-            "--no-extensions",
             "--no-skills",
             "--no-context-files",
             "--no-prompt-templates",

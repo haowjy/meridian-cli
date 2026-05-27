@@ -4,6 +4,29 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Pi `/ps` and `/spawn` selectable task panels now use a full-screen covering overlay, avoiding redraw bleed-through from underlying Pi spinners/status while preserving whole-viewport UX.
+- Pi managed bash now keeps separate stdout/stderr log files behind the combined log, so `/ps` stream filters and tool details use the same source-of-truth logs.
+- Pi `/ps` bash row inspection now supports `s` to switch combined/stdout/stderr log streams.
+- Pi `/ps` and `/spawn` row inspection now opens a centered log overlay with follow, scroll, top/bottom, and refresh controls instead of replacing the whole panel.
+- Pi `/ps` and `/spawn` now share a full-screen selectable UI with row preview, colored key hints, `j/k` navigation, `enter` action, `c` clear, and `r` refresh.
+- Pi `/ps` now sorts running bash tasks before completed tasks.
+
+### Added
+- Pi tracked background bash sends a one-shot follow-up ping after the configured task-ping interval, so stale long-running work can be killed, waited, or detached instead of silently blocking quiescence.
+- Pi `/ps:clear` and `/spawn:clear` hide finished task rows from the current Pi session panels.
+- Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.
+- `timeouts.pi_child_wave_timeout_seconds` and `timeouts.pi_task_ping_interval_seconds` in `meridian.toml` / env (`MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS`, `MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS`).
+
+### Fixed
+- `meridian session log <pi-spawn>` now renders Pi RPC `message_end` transcript events, including prompt text, assistant text, tool calls/results, and custom follow-up pings.
+- Pi full-screen task panels no longer request a render from `invalidate()`, avoiding self-sustaining `/ps` flicker.
+- Pi `$` foreground bash no longer writes to Pi's closed foreground output stream after `/ps:b` backgrounds a still-chatty command.
+- Pi `$` foreground bash again shows the `/ps` / `/ps:b` hint and supports `/ps:b` / `/ps:background` promotion into managed background tracking.
+- OpenCode report extraction no longer returns raw `session.idle` envelopes when assistant text arrives via `message.part.updated` or `opencode.db` session storage.
+- Pi auth/prompt failures now persist `report.md` with `# Spawn failed` (`source=pi_failure`) instead of `# Auto-extracted Report`.
+- Streaming Pi launches scope `PI_CODING_AGENT_SESSION_DIR` per spawn only for **spawned** RPC sessions; primary sessions keep the configured session root.
+
 ## [0.2.10] - 2026-05-27
 
 ## [0.2.9] - 2026-05-27

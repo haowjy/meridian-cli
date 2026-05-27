@@ -1,0 +1,578 @@
+import { existsSync, mkdirSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import path from "node:path";
+
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+
+import { readJsonFile, writeJsonAtomic } from "../../shared/json_file";
+import { runMeridianCommand } from "../../shared/meridian_cli";
+import {
+  currentSpawnIdFromEnv,
+  resolveBashRecordsPath,
+  resolveClearedSpawnsPath,
+  resolveLastNotificationPath,
+  resolveObservedSpawnsPath,
+  resolvePiBashDir,
+  resolveSpawnsDir,
+} from "../../shared/pi_state_paths";
+import type { BashRecordsFile, ObservedSpawnsFile, SpawnStateFile } from "../../shared/schemas";
+import { isTerminalBashStatus, isTerminalSpawnStatus } from "../../shared/schemas";
+import { openLogOverlay } from "../../shared/log_overlay";
+import {
+  openTaskPanel,
+  type PanelCommandContext,
+  type SelectablePanelColumn,
+} from "../../shared/selectable_panel";
+import { formatDurationSecs, renderTable } from "../../shared/ui";
+
+type PiWithMessages = ExtensionAPI & {
+  sendMessage?: (
+    message: { customType?: string; content: string; display?: boolean; details?: Record<string, unknown> },
+    options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+  ) => void | Promise<void>;
+};
+
+type ClearedSpawnsFile = {
+  v: 1;
+  spawn_id: string;
+  updated_at_ms: number;
+  cleared_spawn_ids: string[];
+};
+
+type NotificationItem = {
+  id: string;
+  kind: "spawn" | "bash";
+  status: string;
+  label: string;
+  duration: string;
+};
+
+const TERMINAL_NOTIFIED = new Set<string>();
+const DEBOUNCE_MS = 200;
+const MAX_WAVE_WAIT_MS = 2_000;
+const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
+
+class SpawnWatchRuntime {
+  private readonly currentSpawnId = currentSpawnIdFromEnv();
+  private readonly spawnsDir = resolveSpawnsDir();
+  private readonly ownSpawnDir = path.join(this.spawnsDir, this.currentSpawnId);
+  private readonly bashDir = resolvePiBashDir(this.currentSpawnId);
+  private readonly bashRecordsPath = resolveBashRecordsPath(this.currentSpawnId);
+  private readonly clearedPath = resolveClearedSpawnsPath(this.currentSpawnId);
+  private readonly observedPath = resolveObservedSpawnsPath(this.currentSpawnId);
+  private readonly markerPath = resolveLastNotificationPath(this.currentSpawnId);
+  private readonly pending = new Map<string, NotificationItem>();
+  private readonly clearedSpawnIds = new Set<string>();
+  private clearedLoaded = false;
+  private readonly childSpawnIds = new Set<string>();
+  private readonly childWatchers = new Map<string, FSWatcher>();
+  private readonly candidateWatchers = new Map<string, FSWatcher>();
+  private watchers: FSWatcher[] = [];
+  private debounce: NodeJS.Timeout | null = null;
+  private maxWave: NodeJS.Timeout | null = null;
+  private scanScheduled: NodeJS.Timeout | null = null;
+  private readonly bashGraceTimers = new Map<string, NodeJS.Timeout>();
+  private scanRunning = false;
+  private scanAgain = false;
+
+  constructor(private readonly pi: PiWithMessages) {}
+
+  start(): void {
+    mkdirSync(this.spawnsDir, { recursive: true });
+    mkdirSync(this.ownSpawnDir, { recursive: true });
+    mkdirSync(this.bashDir, { recursive: true });
+    this.watchers.push(this.watchTopLevelSpawnsDir());
+    this.watchers.push(this.watchDirectory(this.ownSpawnDir, () => this.requestScan()));
+    this.watchers.push(this.watchDirectory(this.bashDir, () => this.requestScan()));
+    void this.discoverExistingChildren().then(() => this.scan());
+  }
+
+  stop(): void {
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers = [];
+    for (const watcher of this.childWatchers.values()) watcher.close();
+    this.childWatchers.clear();
+    for (const watcher of this.candidateWatchers.values()) watcher.close();
+    this.candidateWatchers.clear();
+    if (this.debounce) clearTimeout(this.debounce);
+    if (this.maxWave) clearTimeout(this.maxWave);
+    if (this.scanScheduled) clearTimeout(this.scanScheduled);
+    for (const timer of this.bashGraceTimers.values()) clearTimeout(timer);
+    this.bashGraceTimers.clear();
+  }
+
+  async rows(discover = false): Promise<SpawnStateFile[]> {
+    await this.loadClearedSpawnIds();
+    if (discover) await this.discoverExistingChildren();
+    return (await this.readChildSpawnStates()).filter(
+      (state) => state.parent_id === this.currentSpawnId && !this.isClearedTerminalSpawn(state),
+    );
+  }
+
+  async clearFinished(): Promise<number> {
+    await this.loadClearedSpawnIds();
+    await this.discoverExistingChildren();
+    const terminalStates = (await this.readChildSpawnStates()).filter(
+      (state) =>
+        state.parent_id === this.currentSpawnId &&
+        isTerminalSpawnStatus(String(state.status ?? "")) &&
+        !this.clearedSpawnIds.has(state.id),
+    );
+    for (const state of terminalStates) {
+      this.clearedSpawnIds.add(state.id);
+      this.pending.delete(state.id);
+      TERMINAL_NOTIFIED.add(state.id);
+    }
+    if (terminalStates.length > 0) await this.persistClearedSpawnIds();
+    return terminalStates.length;
+  }
+
+  private watchTopLevelSpawnsDir(): FSWatcher {
+    return this.watchDirectory(this.spawnsDir, (_eventType, filename) => {
+      const name = filename ? path.basename(filename.toString()) : "";
+      if (name.startsWith("p")) {
+        void this.discoverChild(name).then((adopted) => {
+          if (!adopted) this.watchCandidateSpawnDir(name);
+          this.requestScan();
+        });
+        return;
+      }
+      this.requestScan();
+    });
+  }
+
+  private watchChildSpawnDir(spawnId: string): void {
+    if (this.childWatchers.has(spawnId)) return;
+    const dir = path.join(this.spawnsDir, spawnId);
+    if (!existsSync(dir)) return;
+    const watcher = this.watchDirectory(dir, (_eventType, filename) => {
+      const name = filename?.toString() ?? "";
+      if (!name || name === "state.json") this.requestScan();
+    });
+    this.childWatchers.set(spawnId, watcher);
+  }
+
+  private watchCandidateSpawnDir(spawnId: string): void {
+    if (this.childSpawnIds.has(spawnId) || this.candidateWatchers.has(spawnId)) return;
+    const dir = path.join(this.spawnsDir, spawnId);
+    if (!existsSync(dir)) return;
+    const watcher = this.watchDirectory(dir, (_eventType, filename) => {
+      const name = filename?.toString() ?? "";
+      if (!name || name === "state.json") void this.resolveCandidate(spawnId);
+    });
+    this.candidateWatchers.set(spawnId, watcher);
+    void this.resolveCandidate(spawnId);
+  }
+
+  private watchDirectory(
+    dir: string,
+    onChange: (eventType: string, filename: string | Buffer | null) => void,
+  ): FSWatcher {
+    mkdirSync(dir, { recursive: true });
+    const watcher = watch(dir, { recursive: false }, onChange);
+    watcher.unref();
+    return watcher;
+  }
+
+  private requestScan(): void {
+    if (this.scanScheduled) clearTimeout(this.scanScheduled);
+    this.scanScheduled = setTimeout(() => {
+      this.scanScheduled = null;
+      void this.scan();
+    }, DEBOUNCE_MS);
+    this.scanScheduled.unref();
+  }
+
+  private async scan(): Promise<void> {
+    if (this.scanRunning) {
+      this.scanAgain = true;
+      return;
+    }
+    this.scanRunning = true;
+    try {
+      do {
+        this.scanAgain = false;
+        await Promise.all([this.scanSpawns(), this.scanBashRecords()]);
+      } while (this.scanAgain);
+    } finally {
+      this.scanRunning = false;
+    }
+  }
+
+  private async scanSpawns(): Promise<void> {
+    const suppressed = await this.readSuppressedSpawnIds();
+    for (const state of await this.rows()) {
+      if (!isTerminalSpawnStatus(state.status)) continue;
+      const id = state.id;
+      if (suppressed.has(id)) {
+        TERMINAL_NOTIFIED.add(id);
+        this.pending.delete(id);
+        continue;
+      }
+      if (TERMINAL_NOTIFIED.has(id) || this.pending.has(id)) continue;
+      this.pending.set(id, {
+        id,
+        kind: "spawn",
+        status: String(state.status),
+        label: `${state.agent ?? "spawn"}${state.model ? ` (${state.model})` : ""}`,
+        duration: formatDurationSecs(state.duration_secs),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  private async scanBashRecords(): Promise<void> {
+    const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
+    for (const record of Object.values(file?.records ?? {})) {
+      if (!record.is_tracked || !record.is_background || !isTerminalBashStatus(record.status)) {
+        continue;
+      }
+      if (await this.hasChildSpawnForBash(record.bash_id)) {
+        TERMINAL_NOTIFIED.add(record.bash_id);
+        this.pending.delete(record.bash_id);
+        continue;
+      }
+      if (this.withinBashCorrelationGrace(record)) {
+        this.scheduleBashGraceScan(record.bash_id);
+        continue;
+      }
+      if (TERMINAL_NOTIFIED.has(record.bash_id) || this.pending.has(record.bash_id)) continue;
+      this.pending.set(record.bash_id, {
+        id: record.bash_id,
+        kind: "bash",
+        status: record.status,
+        label: record.command,
+        duration: formatDurationSecs(((record.ended_at_ms ?? Date.now()) - record.started_at_ms) / 1000),
+      });
+    }
+    this.scheduleFlush();
+  }
+
+  private withinBashCorrelationGrace(record: { ended_at_ms?: number | null }): boolean {
+    const endedAt = typeof record.ended_at_ms === "number" ? record.ended_at_ms : null;
+    return endedAt !== null && Date.now() - endedAt < BASH_SPAWN_CORRELATION_GRACE_MS;
+  }
+
+  private scheduleBashGraceScan(bashId: string): void {
+    if (this.bashGraceTimers.has(bashId)) return;
+    const timer = setTimeout(() => {
+      this.bashGraceTimers.delete(bashId);
+      this.requestScan();
+    }, BASH_SPAWN_CORRELATION_GRACE_MS);
+    timer.unref();
+    this.bashGraceTimers.set(bashId, timer);
+  }
+
+  private async hasChildSpawnForBash(bashId: string): Promise<boolean> {
+    for (const state of await this.readChildSpawnStates()) {
+      if (state.originating_bash_id === bashId) return true;
+    }
+    return false;
+  }
+
+  private scheduleFlush(): void {
+    if (this.pending.size === 0) return;
+    if (this.debounce) clearTimeout(this.debounce);
+    this.debounce = setTimeout(() => void this.flush(), DEBOUNCE_MS);
+    this.debounce.unref();
+    if (!this.maxWave) {
+      this.maxWave = setTimeout(() => void this.flush(), MAX_WAVE_WAIT_MS);
+      this.maxWave.unref();
+    }
+  }
+
+  private async flush(): Promise<void> {
+    if (this.debounce) clearTimeout(this.debounce);
+    if (this.maxWave) clearTimeout(this.maxWave);
+    this.debounce = null;
+    this.maxWave = null;
+    const suppressed = await this.readSuppressedSpawnIds();
+    const items = [...this.pending.values()].filter(
+      (item) => item.kind !== "spawn" || !suppressed.has(item.id),
+    );
+    for (const item of this.pending.values()) {
+      if (item.kind === "spawn" && suppressed.has(item.id)) TERMINAL_NOTIFIED.add(item.id);
+    }
+    this.pending.clear();
+    if (items.length === 0) return;
+
+    const content = await formatNotification(items);
+    await this.pi.sendMessage?.(
+      {
+        customType: "meridian-spawn-watch",
+        content,
+        display: true,
+        details: { ids: items.map((item) => item.id) },
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+    for (const item of items) TERMINAL_NOTIFIED.add(item.id);
+    await writeJsonAtomic(this.markerPath, {
+      ts_epoch_secs: Date.now() / 1000,
+      notified_spawn_ids: items.filter((item) => item.kind === "spawn").map((item) => item.id),
+    });
+  }
+
+  private isClearedTerminalSpawn(state: SpawnStateFile): boolean {
+    return this.clearedSpawnIds.has(state.id) && isTerminalSpawnStatus(String(state.status ?? ""));
+  }
+
+  private async loadClearedSpawnIds(): Promise<void> {
+    if (this.clearedLoaded) return;
+    const file = await readJsonFile<ClearedSpawnsFile | null>(this.clearedPath, null);
+    for (const id of file?.cleared_spawn_ids ?? []) {
+      if (typeof id === "string") this.clearedSpawnIds.add(id);
+    }
+    this.clearedLoaded = true;
+  }
+
+  private async persistClearedSpawnIds(): Promise<void> {
+    await writeJsonAtomic(this.clearedPath, {
+      v: 1,
+      spawn_id: this.currentSpawnId,
+      updated_at_ms: Date.now(),
+      cleared_spawn_ids: [...this.clearedSpawnIds].sort(),
+    });
+  }
+
+  private async readSuppressedSpawnIds(): Promise<Set<string>> {
+    const file = await readJsonFile<ObservedSpawnsFile | null>(this.observedPath, null);
+    return new Set(
+      [...(file?.observed_spawn_ids ?? []), ...(file?.waiting_spawn_ids ?? [])].filter(
+        (id): id is string => typeof id === "string",
+      ),
+    );
+  }
+
+  private async discoverExistingChildren(): Promise<void> {
+    if (!existsSync(this.spawnsDir)) return;
+    for (const name of readdirSync(this.spawnsDir)) {
+      if (name.startsWith("p")) await this.discoverChild(name);
+    }
+  }
+
+  private async discoverChild(spawnId: string): Promise<boolean> {
+    if (this.childSpawnIds.has(spawnId)) {
+      this.watchChildSpawnDir(spawnId);
+      return true;
+    }
+    const state = await this.readSpawnState(spawnId);
+    if (state?.parent_id !== this.currentSpawnId) return false;
+    this.adoptChild(spawnId);
+    return true;
+  }
+
+  private async resolveCandidate(spawnId: string): Promise<void> {
+    const state = await this.readSpawnState(spawnId);
+    if (state?.parent_id === this.currentSpawnId) {
+      this.adoptChild(spawnId);
+      this.closeCandidate(spawnId);
+      this.requestScan();
+      return;
+    }
+    if (typeof state?.parent_id === "string" && state.parent_id.length > 0) {
+      this.closeCandidate(spawnId);
+    }
+  }
+
+  private adoptChild(spawnId: string): void {
+    this.childSpawnIds.add(spawnId);
+    this.watchChildSpawnDir(spawnId);
+  }
+
+  private closeCandidate(spawnId: string): void {
+    this.candidateWatchers.get(spawnId)?.close();
+    this.candidateWatchers.delete(spawnId);
+  }
+
+  private async readChildSpawnStates(): Promise<SpawnStateFile[]> {
+    const states: SpawnStateFile[] = [];
+    for (const spawnId of this.childSpawnIds) {
+      const state = await this.readSpawnState(spawnId);
+      if (state) states.push(state);
+    }
+    return states;
+  }
+
+  private async readSpawnState(spawnId: string): Promise<SpawnStateFile | null> {
+    const statePath = path.join(this.spawnsDir, spawnId, "state.json");
+    return await readJsonFile<SpawnStateFile | null>(statePath, null);
+  }
+}
+
+async function formatNotification(items: NotificationItem[]): Promise<string> {
+  const spawnIds = items.filter((item) => item.kind === "spawn").map((item) => item.id);
+  const bashItems = items.filter((item) => item.kind === "bash");
+  const sections: string[] = [];
+
+  if (spawnIds.length > 0) {
+    sections.push(await formatSpawnWaitNotification(spawnIds, items));
+  }
+
+  if (bashItems.length > 0) {
+    sections.push(formatBashNotification(bashItems));
+  }
+
+  return sections.filter((section) => section.trim().length > 0).join("\n\n");
+}
+
+async function formatSpawnWaitNotification(
+  spawnIds: string[],
+  fallbackItems: NotificationItem[],
+): Promise<string> {
+  const result = await runMeridianCommand(["spawn", "wait", ...spawnIds], 30_000);
+  const output = (result.stdout || result.stderr).trimEnd();
+  if (result.exitCode === 0 && output.length > 0) return output;
+
+  const fallbackSpawnItems = fallbackItems.filter((item) => item.kind === "spawn");
+  if (fallbackSpawnItems.length === 1) {
+    const item = fallbackSpawnItems[0]!;
+    return `Spawn ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`meridian spawn wait ${item.id}\` for details.`;
+  }
+  return [
+    "Meridian spawns completed:",
+    ...fallbackSpawnItems.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
+    `Use \`meridian spawn wait ${spawnIds.join(" ")}\` for details.`,
+  ].join("\n");
+}
+
+function formatBashNotification(items: NotificationItem[]): string {
+  if (items.length === 1) {
+    const item = items[0]!;
+    return `Background bash ${item.id} completed (${item.label}, ${item.duration}): ${item.status}\nUse \`bash_manage({action: "output", bash_id: "${item.id}"})\` for details.`;
+  }
+  return [
+    "Background bash tasks completed:",
+    ...items.map((item) => `- ${item.id} (${item.label}, ${item.duration}) ${item.status}`),
+    "Use `bash_manage(action='output')` for details.",
+  ].join("\n");
+}
+
+function formatSpawnStatus(row: SpawnStateFile, theme: Theme): string {
+  const status = String(row.status ?? "unknown").toLowerCase();
+  const dim = (value: string) => theme.fg("dim", value);
+  const success = (value: string) => theme.fg("success", value);
+  const error = (value: string) => theme.fg("error", value);
+  const warning = (value: string) => theme.fg("warning", value);
+
+  if (status === "succeeded") return dim("✓ succeeded");
+  if (status === "failed") return error("✗ failed");
+  if (status === "cancelled" || status === "canceled") return warning(`✗ ${status}`);
+  if (status === "timed_out") return error("✗ timed_out");
+  if (!isTerminalSpawnStatus(status)) return success(`● ${status}`);
+  return dim(status);
+}
+
+function renderSpawnPreview(row: SpawnStateFile, theme: Theme): string[] {
+  const dim = (value: string) => theme.fg("dim", value);
+  const lines = [
+    `${theme.fg("accent", row.id)} ${formatSpawnStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
+    dim(`${row.agent ?? "spawn"}${row.model ? ` · ${row.model}` : ""}`),
+  ];
+  if (row.originating_bash_id) lines.push(dim(`launched by ${row.originating_bash_id}`));
+  if (row.started_at) lines.push(dim(`started ${row.started_at}`));
+  if (row.finished_at) lines.push(dim(`finished ${row.finished_at}`));
+  return lines;
+}
+
+const SPAWN_PANEL_COLUMNS: SelectablePanelColumn<SpawnStateFile>[] = [
+  { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.id) : theme.fg("dim", row.id)) : row.id) },
+  { header: "STATUS", width: 14, render: (row, theme) => (theme ? formatSpawnStatus(row, theme) : String(row.status ?? "")) },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
+  { header: "AGENT", width: 16, render: (row) => String(row.agent ?? "") },
+  { header: "MODEL", width: 24, render: (row, theme) => (theme ? theme.fg("dim", String(row.model ?? "")) : String(row.model ?? "")) },
+  { header: "← BASH", width: 10, render: (row, theme) => (theme ? theme.fg("dim", String(row.originating_bash_id ?? "")) : String(row.originating_bash_id ?? "")) },
+];
+
+export default function meridianSpawnWatchExtension(pi: ExtensionAPI): void {
+  const runtime = new SpawnWatchRuntime(pi as PiWithMessages);
+  pi.on?.("session_start", () => runtime.start());
+  pi.on?.("session_shutdown", () => runtime.stop());
+
+  pi.registerCommand("spawn", {
+    description: "List Meridian spawns correlated to this Pi session.",
+    handler: async (_args, ctx) => {
+      const loadRows = async (): Promise<SpawnStateFile[]> => runtime.rows(true);
+
+      if (ctx.hasUI === false || !ctx.ui?.custom) {
+        const rows = await loadRows();
+        const text = rows.length ? renderTable(SPAWN_PANEL_COLUMNS, rows, 100).join("\n") : "No correlated Meridian spawns.";
+        process.stdout.write(`${text}\n`);
+        return;
+      }
+
+      await openTaskPanel(ctx as PanelCommandContext, {
+        title: "Meridian /spawn — correlated spawns",
+        columns: SPAWN_PANEL_COLUMNS,
+        loadRows,
+        getRowId: (row) => row.id,
+        renderPreview: renderSpawnPreview,
+        emptyMessage: "No correlated Meridian spawns.",
+        footer: "enter logs · c clear · j/k select · r refresh · q close",
+        onClear: async () => {
+          const cleared = await runtime.clearFinished();
+          ctx.ui?.notify?.(`cleared ${cleared} finished spawn(s)`, "info");
+        },
+        onEnter: async (row) => {
+          await openLogOverlay(ctx as PanelCommandContext, {
+            title: `Spawn log ${row.id}`,
+            initialFollow: !isTerminalSpawnStatus(String(row.status ?? "")),
+            refreshIntervalMs: 2000,
+            streams: [
+              {
+                id: "log",
+                label: "log",
+                loadText: async () => {
+                  const result = await runMeridianCommand(["session", "log", row.id], 15_000);
+                  const text = (result.stdout || result.stderr).trimEnd();
+                  if (text) return text;
+                  const showResult = await runMeridianCommand(["spawn", "show", row.id], 15_000);
+                  return (showResult.stdout || showResult.stderr).trimEnd() || `No output for ${row.id}`;
+                },
+              },
+            ],
+          });
+        },
+      });
+    },
+  });
+
+  pi.registerCommand("spawn:clear", {
+    description: "Clear finished correlated Meridian spawns from /spawn.",
+    handler: async (_args, ctx) => {
+      const cleared = await runtime.clearFinished();
+      ctx.ui.notify(`cleared ${cleared} finished spawn(s)`, "info");
+    },
+  });
+
+  pi.registerCommand("spawn:show", {
+    description: "Show a correlated Meridian spawn.",
+    handler: async (args, ctx) => {
+      const result = await runMeridianCommand(["spawn", "show", args.trim()], 15_000);
+      ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
+    },
+  });
+
+  pi.registerCommand("spawn:wait", {
+    description: "Wait for a correlated Meridian spawn.",
+    handler: async (args, ctx) => {
+      const result = await runMeridianCommand(["spawn", "wait", args.trim()], 60_000);
+      ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
+    },
+  });
+
+  pi.registerCommand("spawn:cancel", {
+    description: "Cancel a correlated Meridian spawn.",
+    handler: async (args, ctx) => {
+      const result = await runMeridianCommand(["spawn", "cancel", args.trim()], 15_000);
+      ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
+    },
+  });
+
+  pi.registerCommand("spawn:log", {
+    description: "Show recent log for a correlated Meridian spawn.",
+    handler: async (args, ctx) => {
+      const result = await runMeridianCommand(["session", "log", args.trim()], 15_000);
+      ctx.ui.notify(result.stdout || result.stderr, result.exitCode === 0 ? "info" : "error");
+    },
+  });
+}

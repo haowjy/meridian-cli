@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from meridian.lib.core.domain import TokenUsage
-from meridian.lib.core.types import SpawnId
+from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.adapter import ArtifactStore
 from meridian.lib.harness.common import (
     OUTPUT_FILENAME,
@@ -17,9 +17,11 @@ from meridian.lib.harness.common import (
     _iter_json_lines_artifact,  # pyright: ignore[reportPrivateUsage]
 )
 from meridian.lib.harness.connections.base import HarnessEvent
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
+from meridian.lib.launch.constants import HISTORY_FILENAME
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
+from meridian.lib.launch.report import compact_pi_failure_output, extract_pi_failure_from_history
 from meridian.lib.platform import IS_WINDOWS
-from meridian.lib.state.user_paths import get_user_home
 
 from .base import HarnessExtractor
 
@@ -45,7 +47,7 @@ def _pi_session_root(launch_env: Mapping[str, str]) -> Path:
     if agent_dir:
         return Path(agent_dir).expanduser() / "sessions"
 
-    return get_user_home() / "meridian-pi" / "sessions"
+    return resolve_pi_spawn_session_root(env=launch_env)
 
 
 def _iter_session_id_candidates_from_artifacts(
@@ -307,6 +309,13 @@ def _assistant_message_text(message: Mapping[str, object]) -> str | None:
     return "\n".join(texts)
 
 
+def _read_artifact_text(artifacts: ArtifactStore, spawn_id: SpawnId, name: str) -> str:
+    key = ArtifactKey(f"{spawn_id}/{name}")
+    if not artifacts.exists(key):
+        return ""
+    return artifacts.get(key).decode("utf-8", errors="ignore")
+
+
 class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
     """Extractor implementation for Pi artifacts and events."""
 
@@ -350,9 +359,23 @@ class PiHarnessExtractor(HarnessExtractor[ResolvedLaunchSpec]):
         return candidates[0]
 
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
+        history_text = _read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME)
+        if history_text.strip():
+            pi_failure = extract_pi_failure_from_history(history_text)
+            if pi_failure:
+                return pi_failure
+
         payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
         for payload in reversed(payloads):
-            if str(payload.get("type", "")).strip().lower() != "agent_end":
+            event_type = str(payload.get("type", "")).strip().lower()
+            if event_type == "response":
+                command = str(payload.get("command", "")).strip().lower()
+                if command == "prompt" and payload.get("success") is False:
+                    error = payload.get("error")
+                    if isinstance(error, str) and error.strip():
+                        return compact_pi_failure_output(error.strip())
+                    return "pi_prompt_rejected"
+            if event_type != "agent_end":
                 continue
             messages_obj = payload.get("messages")
             if not isinstance(messages_obj, list):

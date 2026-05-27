@@ -101,20 +101,27 @@ through workspace env injection (see parent `.context/`).
 
 ### Pi Extension Projection (`pi_extension_projection.py`)
 
-Resolves and materializes Meridian-owned Pi extension entrypoints for each launch:
+Resolves Meridian-owned Pi extension entrypoints for each launch (see `pi_paths.py`):
 
-- **Source**: `pi_runtime/dist/extensions/<name>/index.js` — TypeScript extensions built
-  with `pnpm run build:extensions`
-- **Target**: `~/.meridian/meridian-pi/agent/extensions/<uuid4>/<name>/index.js` —
-  per-launch directory to prevent stale cached extensions
-- **Atomic copy**: uses `tempfile.mkstemp` + `shutil.copy2` + `os.replace` to avoid
-  partial writes
-- **Override env vars**: `MERIDIAN_PI_EXTENSION_SOURCE_ROOT` and
-  `MERIDIAN_PI_EXTENSION_TARGET_ROOT` for testing
+- **Bundle root**: `resolve_meridian_pi_extension_root()` → `~/.meridian/pi/extensions/` or
+  packaged `dist/extensions` (`MERIDIAN_PI_EXTENSION_SOURCE_ROOT` for tests)
+- **Default RPC**: `--no-extensions` plus explicit `-e` for enabled Meridian bundles only
+- **`load_all_pi_extensions = true`**: omit `--no-extensions` and scan `extra_extension_paths`
+  (default `~/.pi/agent/extensions`) for additional `-e` lines
 
-Two functions provide entrypoints:
-- `resolve_pi_lifecycle_extension_entrypoint()` — lifecycle extension only (primary mode)
-- `resolve_pi_all_extension_entrypoints()` — both managed-bash and lifecycle (spawned mode)
+Entrypoint helpers:
+- `resolve_pi_extension_entrypoints(PiExtensionLaunchProfile)` — loads
+  `managed-bash` when `background_tasks.enabled` and `meridian-spawn-watch` when
+  the spawn-watch path is enabled
+- `resolve_extra_pi_extension_entrypoints()` — user extensions when `load_all` is true
+
+Launch wiring: `bind_launch_context()` sets `SpawnParams.pi_harness_profile` from
+`resolve_pi_harness_profile_for_launch(config_snapshot, project_root)`; `PiAdapter`
+does not reload config from ambient CWD in the hot path.
+
+Legacy: `disable_managed_bash` / `MERIDIAN_PI_DISABLE_MANAGED_BASH` disable `managed-bash`.
+Spawned non-interactive RPC loads the same `managed-bash` bundle when toggles are on;
+the extension UI no-ops when not interactive.
 
 Raises `PiExtensionProjectionError` if a required built artifact is missing — directs
 the user to run `cd src/meridian/pi_runtime && npm run build:extensions`.

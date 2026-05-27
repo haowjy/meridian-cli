@@ -29,6 +29,10 @@
 # Default model for OpenCode harness (str model id).
 opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 
+# [harness.pi]
+# Disable Meridian's Pi managed bash/background-tasks extension (bool).
+# disable_managed_bash = false
+
 # -- Primary agent defaults -------------------------------------------------
 [primary]
 # Context compaction threshold for the primary agent (int 1-100).
@@ -39,14 +43,6 @@ opencode = "opencode-go/kimi-k2.6"  # default for OpenCode harness
 # harness = ""
 # Agent profile name for the primary session (str; unset = no profile).
 agent = "product-lead"
-
-# [agents.tech-lead]
-# model = "gpt55"
-# effort = "medium"
-
-# [agents.design-lead]
-# model = "gpt55"
-# effort = "high"
 
 # -- Output streaming -------------------------------------------------------
 [output]

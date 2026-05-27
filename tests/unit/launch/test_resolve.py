@@ -5,8 +5,10 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import HarnessRegistry, get_default_harness_registry
 from meridian.lib.launch.resolve import (
     dedupe_skill_names,
+    parse_duration_seconds,
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
+    resolve_pi_task_ping_interval_seconds,
     validate_harness_compatibility,
 )
 
@@ -135,4 +137,63 @@ def test_resolve_pi_child_wave_timeout_uses_config_override() -> None:
             config_snapshot={"timeouts": {"pi_child_wave_timeout_seconds": 12.5}},
         )
         == 12.5
+    )
+
+
+def test_parse_duration_seconds() -> None:
+    assert parse_duration_seconds("90m") == 5400.0
+    assert parse_duration_seconds("1h") == 3600.0
+    assert parse_duration_seconds("12500") == 12500.0
+    assert parse_duration_seconds("") is None
+
+
+def test_resolve_pi_task_ping_interval_prefers_explicit() -> None:
+    assert (
+        resolve_pi_task_ping_interval_seconds(
+            explicit_interval_seconds=120.0,
+            config_snapshot={"pi_task_ping_interval_seconds": 60.0},
+        )
+        == 120.0
+    )
+
+
+def test_resolve_pi_task_ping_interval_from_config() -> None:
+    assert (
+        resolve_pi_task_ping_interval_seconds(
+            explicit_interval_seconds=None,
+            config_snapshot={"timeouts": {"pi_task_ping_interval_seconds": 3300.0}},
+        )
+        == 3300.0
+    )
+
+
+def test_resolve_pi_child_wave_timeout_from_meridian_config_field() -> None:
+    from meridian.lib.config.settings import MeridianConfig
+
+    snapshot = MeridianConfig(pi_child_wave_timeout_seconds=99.0).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+    assert (
+        resolve_pi_child_wave_timeout_seconds(
+            explicit_timeout_seconds=None,
+            config_snapshot=snapshot,
+        )
+        == 99.0
+    )
+
+
+def test_resolve_pi_task_ping_interval_from_meridian_config_field() -> None:
+    from meridian.lib.config.settings import MeridianConfig
+
+    snapshot = MeridianConfig(pi_task_ping_interval_seconds=1800.0).model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+    assert (
+        resolve_pi_task_ping_interval_seconds(
+            explicit_interval_seconds=None,
+            config_snapshot=snapshot,
+        )
+        == 1800.0
     )

@@ -37,6 +37,7 @@ _PRIMARY_AUTOCOMPACT_PCT_MAX = 100
 _PRIMARY_AUTOCOMPACT_TOKEN_MIN = 1000
 _LOCAL_CONFIG_FILENAME = "meridian.local.toml"
 _LEGACY_AGENTS_SECTION = "agents"
+_HARNESS_TABLE_KEYS = frozenset({"claude", "codex", "opencode", "pi"})
 
 
 class _SettingsLoadContext(BaseModel):
@@ -309,7 +310,7 @@ def _normalize_harness_table(
     if not isinstance(raw_value, dict):
         raise ValueError(f"Invalid value for '{source}': expected table.")
 
-    allowed = frozenset({"claude", "codex", "opencode"})
+    allowed = _HARNESS_TABLE_KEYS
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
         if key not in allowed:
@@ -343,6 +344,56 @@ def _normalize_harness_table(
                             f"{type(harness_value).__name__} ({harness_value!r})."
                         )
                     harness_values["wait_yield_seconds"] = float(harness_value)
+                    continue
+                if key == "pi" and harness_key == "disable_managed_bash":
+                    if not isinstance(harness_value, bool):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.disable_managed_bash': "
+                            f"expected bool, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["disable_managed_bash"] = harness_value
+                    continue
+                if key == "pi" and harness_key == "load_all_pi_extensions":
+                    if not isinstance(harness_value, bool):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.load_all_pi_extensions': "
+                            f"expected bool, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["load_all_pi_extensions"] = harness_value
+                    continue
+                if key == "pi" and harness_key == "extra_extension_paths":
+                    if not isinstance(harness_value, list):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.extra_extension_paths': "
+                            f"expected array, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["extra_extension_paths"] = [
+                        str(item).strip()
+                        for item in harness_value
+                        if str(item).strip()
+                    ]
+                    continue
+                if key == "pi" and harness_key in {"background_tasks", "spawn_watch"}:
+                    if not isinstance(harness_value, dict):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.{harness_key}': "
+                            f"expected table, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    nested: dict[str, object] = {}
+                    enabled = harness_value.get("enabled")
+                    if enabled is not None:
+                        if not isinstance(enabled, bool):
+                            raise ValueError(
+                                f"Invalid value for '{source}.{key}.{harness_key}.enabled': "
+                                f"expected bool, got "
+                                f"{type(enabled).__name__} ({enabled!r})."
+                            )
+                        nested["enabled"] = enabled
+                    harness_values[harness_key] = nested
                     continue
                 logger.warning(
                     "Ignoring unknown Meridian config key '%s.%s.%s'.",
@@ -1145,6 +1196,27 @@ class OpenCodeHarnessProfileConfig(HarnessProfileConfig):
     ] = "opencode-go/kimi-k2.6"
 
 
+class PiBundleToggleConfig(BaseModel):
+    """Per-bundle enable switch under ``[harness.pi]``."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: bool = True
+
+
+class PiHarnessProfileConfig(HarnessProfileConfig):
+    load_all_pi_extensions: bool = False
+    extra_extension_paths: tuple[str, ...] = ()
+    background_tasks: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
+    spawn_watch: PiBundleToggleConfig = Field(default_factory=PiBundleToggleConfig)
+    disable_managed_bash: bool = False
+
+    def background_tasks_enabled(self) -> bool:
+        if self.disable_managed_bash:
+            return False
+        return self.background_tasks.enabled
+
+
 class HarnessConfig(BaseModel):
     """Default model and wait-yield configuration for each harness adapter."""
 
@@ -1157,6 +1229,7 @@ class HarnessConfig(BaseModel):
         default_factory=lambda: CodexHarnessProfileConfig(wait_yield_seconds=3000.0)
     )
     opencode: OpenCodeHarnessProfileConfig = Field(default_factory=OpenCodeHarnessProfileConfig)
+    pi: PiHarnessProfileConfig = Field(default_factory=PiHarnessProfileConfig)
 
 
 class MeridianConfig(BaseSettings):
@@ -1237,6 +1310,30 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_WAIT_TIMEOUT_MINUTES",),
         ),
     ] = 30.0
+    pi_child_wave_timeout_seconds: Annotated[
+        float | None,
+        config_field(
+            "timeouts.pi_child_wave_timeout_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "pi_child_wave_timeout_seconds"),
+                file_alias(None, "pi_child_wave_timeout_seconds"),
+            ),
+            env_vars=("MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS",),
+        ),
+    ] = None
+    pi_task_ping_interval_seconds: Annotated[
+        float | None,
+        config_field(
+            "timeouts.pi_task_ping_interval_seconds",
+            value_kind="float",
+            file_aliases=(
+                file_alias("timeouts", "pi_task_ping_interval_seconds"),
+                file_alias(None, "pi_task_ping_interval_seconds"),
+            ),
+            env_vars=("MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS",),
+        ),
+    ] = None
     default_wait_yield_seconds: Annotated[
         float,
         config_field(
@@ -1271,31 +1368,28 @@ class MeridianConfig(BaseSettings):
     def default_model_for_harness(self, harness_id: str) -> str | None:
         """Return configured default model for one harness ID."""
 
-        normalized = harness_id.strip().lower()
-        mapping: dict[str, HarnessProfileConfig] = {
-            "claude": self.harness.claude,
-            "codex": self.harness.codex,
-            "opencode": self.harness.opencode,
-        }
-        profile = mapping.get(normalized)
+        profile = self._harness_profile_for_id(harness_id)
         return None if profile is None else profile.model
 
     def wait_yield_seconds_for_harness(self, harness_id: str | None) -> float:
         """Return clamped wait-yield seconds for a harness or the unknown default."""
 
-        normalized = (harness_id or "").strip().lower()
-        mapping: dict[str, HarnessProfileConfig] = {
-            "claude": self.harness.claude,
-            "codex": self.harness.codex,
-            "opencode": self.harness.opencode,
-        }
-        configured = mapping.get(normalized)
+        configured = self._harness_profile_for_id(harness_id)
         raw_value = (
             configured.wait_yield_seconds
             if configured is not None and configured.wait_yield_seconds is not None
             else self.default_wait_yield_seconds
         )
         return max(float(raw_value), float(self.min_wait_yield_seconds))
+
+    def _harness_profile_for_id(self, harness_id: str | None) -> HarnessProfileConfig | None:
+        normalized = (harness_id or "").strip().lower()
+        if normalized not in _HARNESS_TABLE_KEYS:
+            return None
+        profile = getattr(self.harness, normalized, None)
+        if not isinstance(profile, HarnessProfileConfig):
+            return None
+        return profile
 
     @classmethod
     def settings_customise_sources(
@@ -1406,3 +1500,65 @@ def load_config(
         return MeridianConfig()
     finally:
         _SETTINGS_CONTEXT.reset(token)
+
+
+def _truthy_env_value(raw_value: str) -> bool:
+    return raw_value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def resolve_pi_harness_profile(
+    *,
+    base_profile: PiHarnessProfileConfig | None = None,
+    project_root: Path | None = None,
+) -> PiHarnessProfileConfig:
+    """Resolve ``[harness.pi]`` with optional launch snapshot and env overrides."""
+
+    if base_profile is not None:
+        profile = base_profile
+    elif project_root is not None:
+        profile = load_config(project_root).harness.pi
+    else:
+        from meridian.lib.config.project_root import resolve_project_root_resolution
+
+        profile = load_config(resolve_project_root_resolution().project_root).harness.pi
+
+    raw_load_all = os.getenv("MERIDIAN_PI_LOAD_ALL_EXTENSIONS")
+    if raw_load_all is not None:
+        return profile.model_copy(
+            update={"load_all_pi_extensions": _truthy_env_value(raw_load_all)}
+        )
+
+    raw_disable = os.getenv("MERIDIAN_PI_DISABLE_MANAGED_BASH")
+    if raw_disable is not None and _truthy_env_value(raw_disable):
+        return profile.model_copy(update={"disable_managed_bash": True})
+
+    raw_managed = os.getenv("MERIDIAN_PI_MANAGED_BASH")
+    if raw_managed is not None and raw_managed.strip() == "0":
+        return profile.model_copy(update={"disable_managed_bash": True})
+
+    return profile
+
+
+def resolve_pi_harness_profile_for_launch(
+    *,
+    config_snapshot: dict[str, object] | None,
+    project_root: Path,
+) -> PiHarnessProfileConfig:
+    """Resolve ``[harness.pi]`` from a launch config snapshot (not ambient CWD)."""
+
+    base_profile: PiHarnessProfileConfig | None = None
+    if config_snapshot:
+        try:
+            base_profile = MeridianConfig.model_validate(config_snapshot).harness.pi
+        except Exception:
+            base_profile = None
+    return resolve_pi_harness_profile(
+        base_profile=base_profile,
+        project_root=project_root if base_profile is None else None,
+    )
+
+
+def resolve_pi_disable_managed_bash() -> bool:
+    """Resolve whether Meridian should skip Pi's managed bash extension."""
+
+    return resolve_pi_harness_profile().disable_managed_bash

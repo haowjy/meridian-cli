@@ -11,6 +11,7 @@ from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections import pi_extension_projection
+from meridian.lib.harness.projections.pi_extension_projection import PiExtensionLaunchProfile
 from meridian.lib.harness.projections.project_pi_native_tui import (
     project_pi_native_tui_spec_to_cli_args,
 )
@@ -22,13 +23,13 @@ from meridian.lib.state.user_paths import get_user_home
 
 
 def _write_extension_fixture(root: Path) -> None:
-    (root / "managed-bash").mkdir(parents=True, exist_ok=True)
-    (root / "managed-bash" / "index.js").write_text("export default {}\n", encoding="utf-8")
-    (root / "meridian-lifecycle").mkdir(parents=True, exist_ok=True)
-    (root / "meridian-lifecycle" / "index.js").write_text(
-        "export default {}\n",
-        encoding="utf-8",
-    )
+    for extension_name in ("managed-bash", "meridian-spawn-watch"):
+        (root / extension_name).mkdir(parents=True, exist_ok=True)
+        (root / extension_name / "index.js").write_text("export default {}\n", encoding="utf-8")
+
+
+def _bundle_path(root: Path, name: str) -> str:
+    return str((root / name / "index.js").resolve())
 
 
 def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
@@ -36,11 +37,10 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
-    extension_target_root = tmp_path / "agent" / "extensions"
     _write_extension_fixture(extension_source_root)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
 
+    meridian_entrypoints = pi_extension_projection.resolve_pi_all_extension_entrypoints()
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
         model="anthropic/claude-sonnet-4",
@@ -50,7 +50,8 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
         continue_fork=True,
         appended_system_prompt="You are meridian worker",
         extra_args=("--provider", "anthropic"),
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
+        pi_extension_entrypoints=meridian_entrypoints,
+        load_all_pi_extensions=False,
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -73,11 +74,50 @@ def test_pi_rpc_projection_includes_rpc_resume_and_meridian_extensions(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
-        str(extension_target_root / "managed-bash" / "index.js"),
-        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     ]
     assert command[-2:] == ["--provider", "anthropic"]
     assert "solve this" not in command
+
+
+def test_pi_rpc_projection_omits_no_extensions_when_load_all_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    user_extensions = tmp_path / "user" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    (user_extensions / "custom-ext").mkdir(parents=True)
+    (user_extensions / "custom-ext" / "index.js").write_text("export default {}\n")
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+
+    meridian_entrypoints = pi_extension_projection.resolve_pi_extension_entrypoints(
+        PiExtensionLaunchProfile(
+            background_tasks_enabled=False,
+            spawn_watch_enabled=True,
+            interactive=False,
+        )
+    )
+    extra_entrypoints = pi_extension_projection.resolve_extra_pi_extension_entrypoints(
+        (user_extensions,)
+    )
+    spec = ResolvedLaunchSpec(
+        harness=HarnessId.PI,
+        prompt="hello",
+        pi_extension_entrypoints=meridian_entrypoints + extra_entrypoints,
+        load_all_pi_extensions=True,
+        permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    command = project_pi_spec_to_cli_args(spec, base_command=BASE_COMMAND_PI_SUBPROCESS)
+
+    assert "--no-extensions" not in command
+    extension_values = [
+        command[index + 1] for index, token in enumerate(command) if token == "-e"
+    ]
+    assert _bundle_path(extension_source_root, "meridian-spawn-watch") in extension_values
+    assert str((user_extensions / "custom-ext" / "index.js").resolve()) in extension_values
 
 
 def test_pi_rpc_projection_uses_session_without_fork_when_continue_fork_false(
@@ -85,17 +125,21 @@ def test_pi_rpc_projection_uses_session_without_fork_when_continue_fork_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
-    extension_target_root = tmp_path / "agent" / "extensions"
     _write_extension_fixture(extension_source_root)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
 
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
         prompt="hello",
         continue_session_id="abc1234",
         continue_fork=False,
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_extension_entrypoints(
+            PiExtensionLaunchProfile(
+                background_tasks_enabled=False,
+                spawn_watch_enabled=True,
+                interactive=False,
+            )
+        ),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -119,15 +163,13 @@ def test_pi_rpc_projection_never_embeds_initial_prompt_in_cli_tail() -> None:
     assert "hello over stdin" not in command
 
 
-def test_pi_native_projection_loads_lifecycle_extension_only(
+def test_pi_native_projection_loads_all_extensions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
-    extension_target_root = tmp_path / "agent" / "extensions"
     _write_extension_fixture(extension_source_root)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
 
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
@@ -139,7 +181,7 @@ def test_pi_native_projection_loads_lifecycle_extension_only(
         appended_system_prompt="native primary",
         extra_args=("--provider", "openai"),
         interactive=True,
-        pi_extension_entrypoints=pi_extension_projection.resolve_pi_lifecycle_extension_entrypoint(),
+        pi_extension_entrypoints=pi_extension_projection.resolve_pi_all_extension_entrypoints(),
         permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
     )
 
@@ -152,13 +194,70 @@ def test_pi_native_projection_loads_lifecycle_extension_only(
         command[index + 1] for index, token in enumerate(command) if token == "-e"
     ]
     assert extension_values == [
-        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     ]
-    assert str(extension_target_root / "managed-bash" / "index.js") not in extension_values
     assert command[command.index("--model") + 1] == "openai-codex/gpt-5.4-mini:high"
     assert command[command.index("--append-system-prompt") + 1] == "native primary"
     assert command[command.index("--fork") + 1] == "019e3113-edc8-7751-bb29-9648304465d5"
     assert command[-2:] == ["--provider", "openai"]
+
+
+def test_pi_extension_projection_non_interactive_loads_background_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+
+    entrypoints = pi_extension_projection.resolve_pi_extension_entrypoints(
+        PiExtensionLaunchProfile(
+            background_tasks_enabled=True,
+            spawn_watch_enabled=True,
+            interactive=False,
+        )
+    )
+
+    assert entrypoints == (
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
+    )
+
+
+def test_pi_extension_projection_spawn_watch_alias_loads_background_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+
+    entrypoints = pi_extension_projection.resolve_pi_extension_entrypoints(
+        PiExtensionLaunchProfile(
+            background_tasks_enabled=False,
+            spawn_watch_enabled=True,
+            interactive=True,
+        )
+    )
+
+    assert entrypoints == (_bundle_path(extension_source_root, "meridian-spawn-watch"),)
+
+
+def test_pi_all_extension_entrypoints_keeps_interactive_managed_bash_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+
+    entrypoints = pi_extension_projection.resolve_pi_all_extension_entrypoints()
+
+    assert entrypoints == (
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
+    )
 
 
 def test_pi_native_projection_uses_session_without_fork_when_continue_fork_false() -> None:
@@ -208,15 +307,15 @@ def test_pi_native_projection_rejects_owned_cli_surface(
         project_pi_native_tui_spec_to_cli_args(spec, base_command=PRIMARY_BASE_COMMAND_PI)
 
 
-def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primary(
+def test_pi_adapter_resolve_launch_spec_uses_all_extensions_for_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
-    extension_target_root = tmp_path / "agent" / "extensions"
     _write_extension_fixture(extension_source_root)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+    monkeypatch.delenv("MERIDIAN_PI_DISABLE_MANAGED_BASH", raising=False)
+    monkeypatch.delenv("MERIDIAN_PI_MANAGED_BASH", raising=False)
 
     adapter = PiAdapter()
 
@@ -226,7 +325,32 @@ def test_pi_adapter_resolve_launch_spec_uses_lifecycle_extension_only_for_primar
     )
 
     assert spec.pi_extension_entrypoints == (
-        str(extension_target_root / "meridian-lifecycle" / "index.js"),
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
+    )
+    assert spec.load_all_pi_extensions is False
+
+
+def test_pi_adapter_resolve_launch_spec_uses_background_tasks_for_spawned_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extension_source_root = tmp_path / "dist" / "extensions"
+    _write_extension_fixture(extension_source_root)
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
+    monkeypatch.delenv("MERIDIAN_PI_DISABLE_MANAGED_BASH", raising=False)
+    monkeypatch.delenv("MERIDIAN_PI_MANAGED_BASH", raising=False)
+
+    adapter = PiAdapter()
+
+    spec = adapter.resolve_launch_spec(
+        SpawnParams(prompt="spawned should run", interactive=False),
+        UnsafeNoOpPermissionResolver(_suppress_warning=True),
+    )
+
+    assert spec.pi_extension_entrypoints == (
+        _bundle_path(extension_source_root, "managed-bash"),
+        _bundle_path(extension_source_root, "meridian-spawn-watch"),
     )
 
 
@@ -247,10 +371,8 @@ def test_pi_rpc_projection_rejects_owned_cli_surface(
     message: str,
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
-    extension_target_root = tmp_path / "agent" / "extensions"
     _write_extension_fixture(extension_source_root)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
 
     spec = ResolvedLaunchSpec(
         harness=HarnessId.PI,
@@ -269,18 +391,13 @@ def test_pi_extension_projection_fails_when_required_entrypoint_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension_source_root = tmp_path / "dist" / "extensions"
-    extension_target_root = tmp_path / "agent" / "extensions"
-    (extension_source_root / "managed-bash").mkdir(parents=True, exist_ok=True)
-    (extension_source_root / "managed-bash" / "index.js").write_text(
-        "export default {}\n",
-        encoding="utf-8",
-    )
+    extension_source_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("MERIDIAN_PI_EXTENSION_SOURCE_ROOT", str(extension_source_root))
-    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_TARGET_ROOT", str(extension_target_root))
+    monkeypatch.setenv("MERIDIAN_PI_EXTENSION_INSTALL_ROOT", str(tmp_path / "empty-install"))
 
     with pytest.raises(pi_extension_projection.PiExtensionProjectionError) as exc_info:
         pi_extension_projection.resolve_pi_all_extension_entrypoints()
 
     message = str(exc_info.value)
-    assert "meridian-lifecycle" in message and "index.js" in message
+    assert "managed-bash" in message and "index.js" in message
     assert "Build Pi extensions first" in message

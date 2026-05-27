@@ -19,11 +19,7 @@ from meridian.lib.core.spawn_lifecycle import (
     resolve_reconciled_terminal_state,
 )
 from meridian.lib.core.types import SpawnId
-from meridian.lib.launch.constants import (
-    HISTORY_FILENAME,
-    OUTPUT_FILENAME,
-    PI_LIFECYCLE_EVENTS_FILENAME,
-)
+from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
 from meridian.lib.state.launch_boundary import LaunchBoundarySummary, read_launch_boundary_summary
 from meridian.lib.state.liveness import is_process_alive
 from meridian.lib.state.managed_primary import (
@@ -44,7 +40,7 @@ _ACTIVITY_ARTIFACTS: tuple[str, ...] = (
     "heartbeat",
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
-    PI_LIFECYCLE_EVENTS_FILENAME,
+    "bash-records.json",
     "stderr.log",
     "report.md",
 )

@@ -1,0 +1,5 @@
+{"seq":1,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"process_spawned","schema_version":1}}
+{"seq":2,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"initial_prompt_sent","schema_version":1}}
+{"seq":3,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"waiting_for_first_pi_event_after_prompt","schema_version":1}}
+{"seq":4,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"first_pi_event_eof_before_response","schema_version":1}}
+{"seq":5,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"cleanup_completed","cleanup_status":"completed","schema_version":1}}

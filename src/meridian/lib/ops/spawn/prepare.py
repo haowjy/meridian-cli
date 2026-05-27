@@ -1,25 +1,29 @@
 """Spawn create-input validation and payload preparation helpers."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from meridian.lib.config.settings import load_config
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
-from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.diagnostics import capture_library_diagnostics
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.composition_spawn import (
+    bind_spawn_launch_context,
+    compose_spawn_launch_surface,
+)
+from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
 from meridian.lib.launch.cwd import LaunchDirectoryContext, TaskCwdResolution, resolve_task_cwd
+from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
 from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
-    LaunchCompositionSurface,
-    LaunchRuntime,
     RetryPolicy,
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.utils.time import minutes_to_seconds
@@ -27,12 +31,21 @@ from meridian.lib.utils.time import minutes_to_seconds
 from ..runtime import (
     OperationRuntime,
     build_runtime,
+    build_runtime_from_root_and_config,
     resolve_runtime_authority_for_read,
     runtime_context,
 )
 from .models import SpawnCreateInput
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
+
+
+@dataclass(frozen=True)
+class SpawnCreateArtifacts:
+    """Resolved spawn request plus expensive prepared surface for bind-only execute."""
+
+    request: SpawnRequest
+    prepared: PreparedLaunchSurface
 
 
 def validate_create_input(payload: SpawnCreateInput) -> tuple[SpawnCreateInput, str | None]:
@@ -51,8 +64,8 @@ def build_create_payload(
     preflight_warning: str | None = None,
     ctx: RuntimeContext | None = None,
     forced_task_cwd_resolution: TaskCwdResolution | None = None,
-) -> SpawnRequest:
-    """Build a spawn request without leaking library warnings to stderr."""
+) -> SpawnCreateArtifacts:
+    """Build a spawn request and prepared launch surface for create/execute handoff."""
 
     with capture_library_diagnostics():
         if runtime is not None:
@@ -65,8 +78,8 @@ def build_create_payload(
         elif payload.dry_run:
             authority = resolve_runtime_authority_for_read(payload.project_root)
             project_root = authority.project_root
-            config = load_config(project_root, authority=authority)
             runtime_root = authority.runtime_root or authority.project_state_dir
+            config = load_config(project_root, authority=authority)
             harness_registry = get_default_harness_registry()
         else:
             runtime_bundle = build_runtime(payload.project_root)
@@ -173,36 +186,55 @@ def build_create_payload(
             task_cwd_source=directory_context.task_cwd_source,
             task_cwd_work_item=directory_context.work_item,
             launch_policy_snapshot=payload.launch_policy_snapshot,
+            pi_task_ping_interval_seconds=parse_duration_seconds(payload.task_ping_interval),
+            pi_task_ping_reset_on_activity=payload.task_ping_reset_on_activity,
         )
 
-        preview_context = build_launch_context(
-            spawn_id="dry-run",
-            request=raw_request,
-            runtime=LaunchRuntime(
-                argv_intent=LaunchArgvIntent.REQUIRED,
-                composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
-                config_snapshot=config.model_dump(mode="json", exclude_none=True),
-                runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
-                    mode="json",
-                    exclude_none=True,
+        mars_runtime_source = runtime or build_runtime_from_root_and_config(
+            project_root,
+            config,
+        )
+        composition_dry_run = payload.dry_run
+        preview_runtime = build_spawn_mars_runtime(
+            runtime=mars_runtime_source,
+            runtime_root=runtime_root,
+            control_root=project_root,
+            execution_cwd=directory_context.logical_task_cwd.as_posix(),
+            argv_intent=(
+                LaunchArgvIntent.REQUIRED
+                if composition_dry_run
+                else LaunchArgvIntent.SPEC_ONLY
             ),
             report_output_path=_DRY_RUN_REPORT_PATH,
-            runtime_root=runtime_root.as_posix(),
-            config_root=project_root.as_posix(),
-            control_root=project_root.as_posix(),
-            requested_task_cwd=directory_context.logical_task_cwd.as_posix(),
-            # Legacy aliases.
-            project_paths_project_root=project_root.as_posix(),
-            project_paths_execution_cwd=directory_context.logical_task_cwd.as_posix(),
-        ),
+        )
+        prepared_surface = compose_spawn_launch_surface(
+            request=raw_request,
+            runtime=preview_runtime,
             harness_registry=harness_registry,
-            dry_run=True,
+            dry_run=composition_dry_run,
         )
-        return preview_context.resolved_request.model_copy(
-            update={
-                "cli_command": preview_context.binding.argv,
-            }
-        )
+        if composition_dry_run:
+            preview_context = bind_spawn_launch_context(
+                prepared=prepared_surface,
+                bindings=RuntimeBindings(
+                    spawn_id="dry-run",
+                    report_output_path=Path(_DRY_RUN_REPORT_PATH),
+                    dry_run=True,
+                ),
+                runtime=preview_runtime,
+                harness_registry=harness_registry,
+            )
+            resolved_request = preview_context.resolved_request.model_copy(
+                update={"cli_command": preview_context.binding.argv}
+            )
+        else:
+            resolved_request = prepared_surface.request
+
+        return SpawnCreateArtifacts(request=resolved_request, prepared=prepared_surface)
 
 
-__all__ = ["build_create_payload", "validate_create_input"]
+__all__ = [
+    "SpawnCreateArtifacts",
+    "build_create_payload",
+    "validate_create_input",
+]

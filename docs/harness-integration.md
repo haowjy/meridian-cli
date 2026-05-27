@@ -759,23 +759,21 @@ uv run pytest tests/unit/harness/test_pi_integration.py
 uv run pytest tests/unit/cli/test_bootstrap_pi_shortcut.py
 ```
 
-### Fake Harness Smoke
+### Manual Pi smoke (real runtime)
 
-- [ ] `meridian spawn --harness pi -m <model> "Reply with exactly OK"` succeeds
-  with a fake `pi` binary that emits minimal JSONL and exits 0
-- [ ] Report text extracted correctly
-- [ ] Usage (tokens) extracted correctly
-- [ ] Session ID captured
+Follow `tests/smoke/pi-manual.md` and `tests/smoke/pi-rpc-quiescence.md`. Requires real
+`pi` on `PATH`, Node 24+ for extension builds, and auth under `~/.pi/agent`
+(`PI_CODING_AGENT_DIR`).
 
-Use a shell script as a fake `pi` that writes a session header and a
-trivial `agent_end` event to stdout.
+- [ ] Happy spawn succeeds; `report.md` is a normal reply, not lifecycle JSON only
+- [ ] Auth/model failures surface readable errors (#262), not `cleanup_completed` bodies
+- [ ] `pi_paths`: Meridian bundles under `~/.meridian/pi/extensions/` (`-e` targets); `MERIDIAN_PI_STATE_DIR` for extension runtime state
 
 ### Runtime Resolution Smoke
 
-- [ ] `MERIDIAN_PI_BINARY=/path/to/fake-pi` overrides the runtime binary
 - [ ] Missing `pi` on `PATH` fails fast with install instructions
-- [ ] Incompatible `pi` (missing `--mode rpc` in `--help`) fails with update
-  instructions
+- [ ] Incompatible `pi` (missing `--mode rpc` in `--help`) fails with update instructions
+- [ ] `MERIDIAN_PI_BINARY` may point at a **real** non-PATH `pi` install (not a stub script)
 
 ### Real Harness Spawn Smoke
 

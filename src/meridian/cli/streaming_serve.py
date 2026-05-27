@@ -14,8 +14,10 @@ from meridian.lib.bootstrap.services import (
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.request import LaunchArgvIntent, LaunchRuntime, SpawnRequest
+from meridian.lib.launch.request import LaunchArgvIntent, SpawnRequest
 from meridian.lib.launch.streaming_runner import run_streaming_spawn, signal_coordinator
+from meridian.lib.ops.runtime import build_runtime
+from meridian.lib.ops.spawn.execute_init import build_spawn_mars_runtime
 from meridian.lib.state.paths import spawn_output_path
 
 
@@ -60,15 +62,14 @@ async def streaming_serve(
         harness=harness_id.value,
         agent=normalized_agent,
     )
-    launch_runtime = LaunchRuntime(
+    operation_runtime = build_runtime(project_root.as_posix())
+    launch_runtime = build_spawn_mars_runtime(
+        runtime=operation_runtime,
+        runtime_root=runtime_root,
+        control_root=project_root,
+        execution_cwd=project_root.as_posix(),
         argv_intent=LaunchArgvIntent.SPEC_ONLY,
-        runtime_root=runtime_root.as_posix(),
-        config_root=project_root.as_posix(),
-        control_root=project_root.as_posix(),
-        requested_task_cwd=project_root.as_posix(),
-        # Legacy aliases.
-        project_paths_project_root=project_root.as_posix(),
-        project_paths_execution_cwd=project_root.as_posix(),
+        debug=debug,
     )
 
     # Resolve-before-persist: prepare_spawn builds launch context first,

@@ -14,7 +14,7 @@ from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.policy import StateRequirement
 
 # Keep these startup parse tables in sync with `@app.default root(...)` in
-# `main.py` plus startup-only flags parsed before cyclopts (`--verbose` / `-v`).
+# `main.py` plus startup-only flags parsed before cyclopts (`--verbose` at root).
 _TOP_LEVEL_VALUE_FLAGS = frozenset(
     {
         "--format",
@@ -40,8 +40,8 @@ _TOP_LEVEL_BOOL_FLAGS = frozenset(
         "--help",
         "-h",
         "--version",
-        "--verbose",
         "-v",
+        "--verbose",
         "--json",
         "--no-json",
         "--yes",
@@ -277,7 +277,7 @@ def extract_global_options(
             force_human = True
             index += 1
             continue
-        if arg in {"--verbose", "-v"} and _first_positional_token(cleaned) is None:
+        if arg == "--verbose" and _first_positional_token(cleaned) is None:
             index += 1
             continue
 

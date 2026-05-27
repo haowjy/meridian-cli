@@ -153,6 +153,27 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
+def test_load_config_reads_pi_disable_managed_bash(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[harness.pi]",
+                "disable_managed_bash = true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root, resolve_models=False)
+
+    assert config.harness.pi.disable_managed_bash is True
+    assert config.default_model_for_harness("pi") == ""
+    assert config.wait_yield_seconds_for_harness("pi") == config.default_wait_yield_seconds
+
+
 def test_load_config_rejects_legacy_agents_table_with_migration_error(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()

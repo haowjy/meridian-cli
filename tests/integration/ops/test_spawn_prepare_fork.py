@@ -122,7 +122,7 @@ def test_build_create_payload_does_not_forward_meridian_primary_or_legacy_defaul
             dry_run=True,
         ),
         runtime=runtime,
-    )
+    ).request
 
     assert len(captured_requests) == 1
     request = captured_requests[0]
@@ -162,7 +162,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
             dry_run=False,
         ),
         runtime=runtime,
-    )
+    ).request
     dry_run_prepared = build_create_payload(
         SpawnCreateInput(
             prompt="fork prompt",
@@ -176,7 +176,7 @@ def test_fork_prepare_preserves_continue_fork_and_defers_materialization(
             dry_run=True,
         ),
         runtime=runtime,
-    )
+    ).request
 
     # I-10: fork_session must NOT be called in prepare — fork happens after the row exists.
     assert calls == []
@@ -232,7 +232,7 @@ def test_build_create_payload_kb_reference_uses_authority_kb_dir_with_external_t
             dry_run=True,
         ),
         runtime=runtime,
-    )
+    ).request
 
     assert prepared.task_cwd == external_task_cwd.as_posix()
     assert prepared.reference_anchor == external_task_cwd.as_posix()
@@ -274,7 +274,7 @@ def test_build_create_payload_relative_reference_resolves_from_selected_worktree
             dry_run=True,
         ),
         runtime=runtime,
-    )
+    ).request
 
     assert prepared.task_cwd == external_task_cwd.as_posix()
     assert prepared.reference_anchor == external_task_cwd.as_posix()

@@ -7,6 +7,7 @@ from meridian.lib.config.settings import MeridianConfig, load_config
 from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.ops.runtime import OperationRuntime
 from meridian.lib.state.paths import resolve_project_runtime_root_for_write
 
 from .request import (
@@ -121,7 +122,41 @@ def build_primary_launch_runtime(
     )
 
 
+def build_spawn_mars_runtime(
+    *,
+    runtime: OperationRuntime,
+    runtime_root: Path,
+    control_root: Path,
+    execution_cwd: str,
+    argv_intent: LaunchArgvIntent,
+    report_output_path: str | None = None,
+    debug: bool = False,
+) -> LaunchRuntime:
+    """Launch runtime for spawn paths that need Mars harness_model routing."""
+
+    control_root_str = control_root.as_posix()
+    return LaunchRuntime(
+        argv_intent=argv_intent,
+        composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+        config_snapshot=runtime.config.model_dump(mode="json", exclude_none=True),
+        debug=debug,
+        runtime_override_snapshot=RuntimeOverrides.from_env().model_dump(
+            mode="json",
+            exclude_none=True,
+        ),
+        report_output_path=report_output_path,
+        runtime_root=runtime_root.as_posix(),
+        config_root=control_root_str,
+        control_root=control_root_str,
+        requested_task_cwd=execution_cwd,
+        # Legacy aliases.
+        project_paths_project_root=control_root_str,
+        project_paths_execution_cwd=execution_cwd,
+    )
+
+
 __all__ = [
     "build_primary_launch_runtime",
     "build_primary_spawn_request",
+    "build_spawn_mars_runtime",
 ]

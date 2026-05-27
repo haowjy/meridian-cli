@@ -8,11 +8,9 @@ OUTPUT_FILENAME: Final[str] = "output.jsonl"
 HISTORY_FILENAME: Final[str] = "history.jsonl"
 PRIMARY_META_FILENAME: Final[str] = "primary_meta.json"
 PI_RUNTIME_META_FILENAME: Final[str] = "pi_runtime_meta.json"
-PI_LIFECYCLE_EVENTS_FILENAME: Final[str] = "pi-lifecycle-events.jsonl"
 STDERR_FILENAME: Final[str] = "stderr.log"
 TOKENS_FILENAME: Final[str] = "tokens.json"
 REPORT_FILENAME: Final[str] = "report.md"
-PI_LIFECYCLE_EVENT_FILE_ENV: Final[str] = "MERIDIAN_PI_LIFECYCLE_EVENT_FILE"
 
 DEFAULT_INFRA_EXIT_CODE: Final[int] = 2
 POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS: Final[float] = 1.0
@@ -78,8 +76,6 @@ __all__ = [
     "DEFAULT_INFRA_EXIT_CODE",
     "HISTORY_FILENAME",
     "OUTPUT_FILENAME",
-    "PI_LIFECYCLE_EVENTS_FILENAME",
-    "PI_LIFECYCLE_EVENT_FILE_ENV",
     "PI_RUNTIME_META_FILENAME",
     "POST_EXIT_PIPE_DRAIN_TIMEOUT_SECONDS",
     "PRIMARY_BASE_COMMAND_CLAUDE",

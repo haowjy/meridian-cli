@@ -1,0 +1,4 @@
+{"seq":1,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"initial_prompt_sent","schema_version":1}}
+{"seq":2,"event_type":"response","harness_id":"pi","payload":{"type":"response","command":"prompt","success":false,"error":"No API key configured"}}
+{"seq":3,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"cleanup_running","schema_version":1}}
+{"seq":4,"event_type":"meridian.pi.lifecycle.phase","harness_id":"pi","payload":{"type":"meridian.pi.lifecycle.phase","phase":"cleanup_completed","cleanup_status":"completed","schema_version":1}}

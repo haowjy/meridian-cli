@@ -731,6 +731,7 @@ dependencies = [
     { name = "structlog" },
     { name = "tomlkit" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "watchfiles" },
     { name = "websockets" },
 ]
 
@@ -778,6 +779,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.0" },
     { name = "tomlkit", specifier = ">=0.14.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
+    { name = "watchfiles", specifier = ">=1.1.1" },
     { name = "websockets", specifier = ">=14.0" },
 ]
 provides-extras = ["app", "dev", "templates"]

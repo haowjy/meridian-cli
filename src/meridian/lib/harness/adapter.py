@@ -10,6 +10,7 @@ from typing import Any, Generic, Literal, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from meridian.lib.config.settings import PiHarnessProfileConfig
 from meridian.lib.core.domain import TokenUsage
 from meridian.lib.core.types import ArtifactKey, HarnessId, ModelId, SpawnId, TransportId
 from meridian.lib.harness.connections.base import (
@@ -235,6 +236,7 @@ class SpawnParams(BaseModel):
     user_turn_content: str | None = None
     context_from_payload: tuple[str, ...] = ()
     reference_items: tuple[Any, ...] = ()
+    pi_harness_profile: PiHarnessProfileConfig | None = None
 
 
 class McpConfig(BaseModel):

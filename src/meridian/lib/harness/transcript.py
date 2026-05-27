@@ -212,6 +212,12 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
                 role=role, content=marker, tool_call=tool_call,
             ))
             continue
+        if role == "assistant" and block_type in {"toolcall", "function_call", "functioncall"}:
+            marker, tool_call = _pi_tool_call_summary(block)
+            messages.append(TranscriptMessage(
+                role=role, content=marker, tool_call=tool_call,
+            ))
+            continue
         if role == "user" and block_type == "tool_result":
             messages.append(TranscriptMessage(
                 role=role, content=_tool_result_summary(block), is_tool_result=True,
@@ -223,6 +229,45 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
             messages.append(TranscriptMessage(role=role, content=text))
 
     return messages
+
+
+def _json_preview_payload(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except TypeError:
+        return text_from_value(value)
+
+
+def _pi_tool_call_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
+    name = str(block.get("name", "tool")).strip() or "tool"
+    body = _json_preview_payload(block.get("arguments"))
+    rendered = f"[tool: {name}]"
+    if body:
+        rendered = f"[tool: {name} {_preview(body)}]"
+    return rendered, _normalize_tool(name, body)
+
+
+def _extract_pi_message_event(payload: dict[str, object]) -> list[TranscriptMessage]:
+    raw_message = payload.get("message")
+    if not isinstance(raw_message, dict):
+        return []
+
+    message = cast("dict[str, object]", raw_message)
+    role = str(message.get("role", "")).strip().lower()
+    if role in {"assistant", "user", "system"}:
+        return _extract_claude_content(role, message.get("content"))
+    if role == "custom":
+        return _extract_claude_content("user", message.get("content"))
+    if role in {"toolresult", "tool_result"}:
+        content = text_from_value(message.get("content"))
+        if content:
+            return [TranscriptMessage(
+                role="user", content=f"[tool_result] {content}", is_tool_result=True,
+            )]
+        return [TranscriptMessage(role="user", content="[tool_result]", is_tool_result=True)]
+    return []
 
 
 def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptMessage]:
@@ -375,6 +420,9 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             if isinstance(item, dict):
                 return (_extract_codex_exec_item(cast("dict[str, object]", item)), is_boundary)
             return ([], is_boundary)
+
+        if event_type == "message_end":
+            return (_extract_pi_message_event(event), is_boundary)
 
         role = str(event.get("role", "")).strip().lower()
         if role in {"assistant", "user", "system"}:

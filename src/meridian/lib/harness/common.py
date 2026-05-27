@@ -398,46 +398,132 @@ def extract_claude_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | 
     return result_text or assistant_text
 
 
-def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
-    last_message: str | None = None
-    for payload in _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME):
-        event_payload = payload.get("payload")
-        if isinstance(event_payload, dict):
-            message_payload = cast("dict[str, object]", event_payload)
-        else:
-            message_payload = payload
+_OPENCODE_SESSION_ID_JSON_KEYS = ("session_id", "sessionId", "sessionID", "id")
+
+
+def _opencode_event_type(payload: dict[str, object]) -> str:
+    return (
+        str(payload.get("event_type", payload.get("event", payload.get("type", ""))))
+        .strip()
+        .lower()
+    )
+
+
+def _opencode_message_payload(payload: dict[str, object]) -> dict[str, object]:
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        return cast("dict[str, object]", nested)
+    return payload
+
+
+def _extract_opencode_report_from_stream(payloads: list[dict[str, object]]) -> str | None:
+    assistant_message_ids: set[str] = set()
+    part_text_by_message: dict[str, list[str]] = {}
+    last_assistant_message_id: str | None = None
+    last_embedded_message: str | None = None
+
+    for payload in payloads:
+        event_type = _opencode_event_type(payload)
+        message_payload = _opencode_message_payload(payload)
+        inner_type = _opencode_event_type(message_payload)
+        effective_type = event_type or inner_type
+
+        if effective_type == "message.updated":
+            properties_obj = message_payload.get("properties")
+            if not isinstance(properties_obj, dict):
+                continue
+            properties = cast("dict[str, object]", properties_obj)
+
+            info_obj = properties.get("info")
+            if not isinstance(info_obj, dict):
+                continue
+            info = cast("dict[str, object]", info_obj)
+
+            role = str(info.get("role", "")).strip().lower()
+            message_id = str(info.get("id", "")).strip()
+            if role == "assistant" and message_id:
+                assistant_message_ids.add(message_id)
+                last_assistant_message_id = message_id
+
+            if role != "assistant":
+                continue
+
+            parts_obj = info.get("parts")
+            if not isinstance(parts_obj, list):
+                continue
+            parts = cast("list[object]", parts_obj)
+
+            text_chunks: list[str] = []
+            for part_obj in parts:
+                if not isinstance(part_obj, dict):
+                    continue
+                part = cast("dict[str, object]", part_obj)
+                if str(part.get("type", "")).strip().lower() != "text":
+                    continue
+                text_chunks.append(str(part.get("text", "")))
+            message = "".join(chunk for chunk in text_chunks if chunk).strip()
+            if message:
+                last_embedded_message = message
+            continue
+
+        if effective_type != "message.part.updated":
+            continue
 
         properties_obj = message_payload.get("properties")
         if not isinstance(properties_obj, dict):
             continue
         properties = cast("dict[str, object]", properties_obj)
 
-        info_obj = properties.get("info")
-        if not isinstance(info_obj, dict):
+        part_obj = properties.get("part")
+        if not isinstance(part_obj, dict):
             continue
-        info = cast("dict[str, object]", info_obj)
-
-        if str(info.get("role", "")).strip().lower() != "assistant":
+        part = cast("dict[str, object]", part_obj)
+        if str(part.get("type", "")).strip().lower() != "text":
             continue
 
-        parts_obj = info.get("parts")
-        if not isinstance(parts_obj, list):
+        message_id = str(part.get("messageID", part.get("message_id", ""))).strip()
+        if not message_id or message_id not in assistant_message_ids:
             continue
-        parts = cast("list[object]", parts_obj)
 
-        text_chunks: list[str] = []
-        for part_obj in parts:
-            if not isinstance(part_obj, dict):
-                continue
-            part = cast("dict[str, object]", part_obj)
-            if str(part.get("type", "")).strip().lower() != "text":
-                continue
-            text_chunks.append(str(part.get("text", "")))
-        message = "".join(chunk for chunk in text_chunks if chunk).strip()
-        if message:
-            last_message = message
+        text = str(part.get("text", "")).strip()
+        if not text:
+            continue
+        part_text_by_message.setdefault(message_id, []).append(text)
+        last_assistant_message_id = message_id
 
-    return last_message
+    if last_assistant_message_id:
+        chunks = part_text_by_message.get(last_assistant_message_id)
+        if chunks:
+            joined = "".join(chunks).strip()
+            if joined:
+                return joined
+
+    return last_embedded_message
+
+
+def extract_opencode_report(artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
+    payloads = _iter_json_lines_artifact(artifacts, spawn_id, OUTPUT_FILENAME)
+    report = _extract_opencode_report_from_stream(payloads)
+    if report:
+        return report
+
+    session_id = extract_session_id_from_artifacts_with_patterns(
+        artifacts,
+        spawn_id,
+        json_keys=_OPENCODE_SESSION_ID_JSON_KEYS,
+    )
+    if not session_id:
+        return None
+
+    from meridian.lib.harness.opencode_storage import resolve_opencode_session_file
+    from meridian.lib.harness.opencode_transcript import (
+        extract_last_assistant_report_from_session_path,
+    )
+
+    session_path = resolve_opencode_session_file(session_id=session_id)
+    if session_path is None:
+        return None
+    return extract_last_assistant_report_from_session_path(session_path)
 
 
 def extract_usage_from_artifacts(artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:

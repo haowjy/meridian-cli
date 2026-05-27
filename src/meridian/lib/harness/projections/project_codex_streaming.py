@@ -74,6 +74,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "appended_system_prompt",
         "harness",
         "pi_extension_entrypoints",
+        "load_all_pi_extensions",
         "prompt_file_path",
         "reference_items",
         "skills",

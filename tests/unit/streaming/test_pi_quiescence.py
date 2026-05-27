@@ -21,7 +21,8 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.spawn_manager import SpawnManager, _PiSubspawnTracker
+from meridian.lib.streaming.pi_drain import PiSubspawnTracker
+from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 class _NoopControlServer:
@@ -106,7 +107,7 @@ def _pi_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
 
 
 def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     tracker.observe(
         _pi_event(
@@ -178,7 +179,7 @@ def test_pi_subspawn_tracker_invalidates_malformed_canonical_lifecycle(
     payload: dict[str, object],
     expected_error: str,
 ) -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     tracker.observe(_pi_event(event_type, payload))
 
@@ -188,7 +189,7 @@ def test_pi_subspawn_tracker_invalidates_malformed_canonical_lifecycle(
 
 
 def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     tracker.observe(
         _pi_event(
@@ -208,7 +209,7 @@ def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
 
 
 def test_pi_subspawn_tracker_deduplicates_canonical_events() -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     start = _pi_event(
         "meridian.subspawn.start",
@@ -886,3 +887,71 @@ async def test_spawn_manager_pi_fails_on_canonical_subspawn_without_id_for_quies
     finally:
         await manager.stop_spawn(spawn_id)
 
+
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_disk_child_wave_timeout_fails_without_lifecycle_events(
+    tmp_path: Path,
+) -> None:
+    class _DiskChildConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            yield _pi_event("session", {"id": "ses-pi"})
+            state_path = tmp_path / "spawns" / "p-child" / "state.json"
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "id": "p-child",
+                        "parent_id": "p-pi-disk-child-timeout",
+                        "status": "running",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            yield _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
+            await asyncio.sleep(60)
+
+    fake_connection = _DiskChildConnection([])
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-disk-child-timeout")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+            pi_child_wave_timeout_seconds=0.02,
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "failed"
+        assert outcome.error == "pi_child_wave_timeout"
+    finally:
+        await manager.shutdown()

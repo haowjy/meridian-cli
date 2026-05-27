@@ -1,1143 +1,405 @@
-import type { ChildProcess } from "node:child_process";
-import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { readFileSync } from "node:fs";
 
+import type { ExtensionAPI, MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import type { ExtensionAPI } from "../../types";
-import { createLifecycleSidecarWriter } from "../../shared/lifecycle_sidecar";
 
-type WaitPolicy = "tracked" | "detached";
-type JobStatus = "running" | "exited" | "killed";
-type InternalEventEmitter = (channel: string, payload: Record<string, unknown>) => void;
+import { openLogOverlay } from "../../shared/log_overlay";
+import {
+  openTaskPanel,
+  type PanelCommandContext,
+  type SelectablePanelColumn,
+} from "../../shared/selectable_panel";
+import { formatDurationSecs, renderTable } from "../../shared/ui";
+import type { BashRecord } from "../../shared/schemas";
+import { BashRuntime, type BashListRow, type BashManageParams, type BashParams } from "./bash_runtime";
 
-type ToolContext = {
-  cwd?: string;
-  sessionManager?: {
-    getSessionId?: () => string;
-  };
+const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
+const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in background";
+
+function isBashListRow(value: unknown): value is BashListRow {
+  return Boolean(value) && typeof value === "object" && typeof (value as { bash_id?: unknown }).bash_id === "string";
+}
+
+function formatToolResult(result: unknown): string {
+  if (!result || typeof result !== "object") return String(result ?? "");
+  const obj = result as Record<string, unknown>;
+
+  if (typeof obj.error === "string") return `Error: ${obj.error}`;
+
+  if ("stdout" in obj || "stderr" in obj) {
+    const stdout = typeof obj.stdout === "string" ? obj.stdout : "";
+    const stderr = typeof obj.stderr === "string" ? obj.stderr : "";
+    return stdout + stderr;
+  }
+
+  if (typeof obj.output === "string") return obj.output;
+  if (typeof obj.message === "string") return obj.message;
+
+  if (Array.isArray(obj.rows)) return formatRows(obj.rows.filter(isBashListRow));
+
+  if (typeof obj.bash_id === "string" && typeof obj.status === "string") {
+    return `${obj.bash_id}: ${obj.status}`;
+  }
+
+  return String(result);
+}
+
+function formatRows(rows: BashListRow[]): string {
+  if (rows.length === 0) return "No managed bash tasks.";
+  return renderTable(
+    [
+      { header: "ID", width: 10, render: (row: BashListRow) => row.bash_id },
+      { header: "STATE", width: 12, render: (row: BashListRow) => row.status },
+      { header: "DUR", width: 8, render: (row: BashListRow) => formatDurationSecs(row.duration_secs) },
+      { header: "COMMAND", width: 60, render: (row: BashListRow) => row.command },
+    ],
+    rows,
+    100,
+  ).join("\n");
+}
+
+type BashPanelRow = BashListRow;
+
+function tailFile(filePath: string, maxBytes = 4096): string {
+  try {
+    const text = readFileSync(filePath, "utf-8");
+    return text.slice(Math.max(0, text.length - maxBytes));
+  } catch {
+    return "";
+  }
+}
+
+type BashLogStream = "combined" | "stdout" | "stderr";
+
+function readInspectableLog(row: BashPanelRow, stream: BashLogStream = "combined"): string {
+  const filePath = stream === "stdout" ? row.stdout_log_path : stream === "stderr" ? row.stderr_log_path : row.log_path;
+  return tailFile(filePath, 1024 * 1024).trimEnd() || "(no output yet)";
+}
+
+async function sendBackgroundPing(pi: ExtensionAPI, record: BashRecord): Promise<void> {
+  await pi.sendMessage?.(
+    {
+      customType: "meridian-bash-ping",
+      content: `Background bash task still running: ${record.bash_id}\nCommand: ${record.command}\nUse bash_manage wait/output/kill/detach when ready.`,
+      display: true,
+      details: { bash_id: record.bash_id },
+    },
+    { triggerTurn: true, deliverAs: "followUp" },
+  );
+}
+
+function bashLogStreams(row: BashPanelRow): Array<{ id: BashLogStream; label: string; loadText: () => Promise<string> }> {
+  return [
+    { id: "combined", label: "combined", loadText: async () => readInspectableLog(row, "combined") },
+    { id: "stdout", label: "stdout", loadText: async () => readInspectableLog(row, "stdout") },
+    { id: "stderr", label: "stderr", loadText: async () => readInspectableLog(row, "stderr") },
+  ];
+}
+
+function formatBashStatus(row: BashPanelRow, theme: Theme): string {
+  const dim = (value: string) => theme.fg("dim", value);
+  const success = (value: string) => theme.fg("success", value);
+  const error = (value: string) => theme.fg("error", value);
+  const warning = (value: string) => theme.fg("warning", value);
+
+  if (row.status === "running") return success("● running");
+  if (row.status === "exited") {
+    return row.exit_code === 0 ? dim("✓ exit(0)") : error(`✗ exit(${row.exit_code ?? "?"})`);
+  }
+  if (row.status === "killed") return warning("✗ killed");
+  return error(`✗ ${row.status}`);
+}
+
+function renderBashPreview(row: BashPanelRow, theme: Theme): string[] {
+  const dim = (value: string) => theme.fg("dim", value);
+  const output = tailFile(row.log_path, 2048).trimEnd();
+  const lines = output ? output.split(/\r?\n/).slice(-3) : [dim("(no output yet)")];
+  return [
+    `${theme.fg("accent", row.bash_id)} ${formatBashStatus(row, theme)} ${dim(formatDurationSecs(row.duration_secs))}`,
+    dim(row.command),
+    ...lines,
+  ];
+}
+
+const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
+  { header: "ID", width: 10, render: (row, theme, selected) => (theme ? (selected ? theme.fg("accent", row.bash_id) : theme.fg("dim", row.bash_id)) : row.bash_id) },
+  { header: "STATE", width: 12, render: (row, theme) => (theme ? formatBashStatus(row, theme) : row.status) },
+  { header: "BG", width: 3, render: (row, theme) => (theme ? (row.is_background ? theme.fg("accent", "yes") : theme.fg("dim", "no")) : row.is_background ? "yes" : "no") },
+  { header: "DUR", width: 8, render: (row, theme) => (theme ? theme.fg("dim", formatDurationSecs(row.duration_secs)) : formatDurationSecs(row.duration_secs)), align: "right" },
+  { header: "SIZE", width: 8, render: (row, theme) => (theme ? theme.fg("dim", `${row.log_bytes}B`) : `${row.log_bytes}B`), align: "right" },
+  { header: "COMMAND", width: 56, render: (row) => row.command },
+];
+
+type PiWithForegroundHint = ExtensionAPI & {
+  sendMessage?: (
+    message: { customType?: string; content: string; display?: boolean; details?: Record<string, unknown> },
+    options?: { triggerTurn?: boolean; excludeFromContext?: boolean },
+  ) => void | Promise<void>;
+  registerMessageRenderer?: <Details>(
+    customType: string,
+    renderer: (
+      message: { content: string; details?: Details },
+      options: MessageRenderOptions,
+      theme: Theme,
+    ) => Text,
+  ) => void;
 };
 
-type JobRecord = {
-  job_id: string;
-  command: string;
-  wait_policy: WaitPolicy;
-  status: JobStatus;
-  pid: number;
-  started_at_ms: number;
-  ended_at_ms: number | null;
-  duration_ms: number | null;
-  exit_code: number | null;
-  signal: string | number | null;
-  success: boolean | null;
-  log_path: string;
-  log_bytes: number;
-  log_truncated: boolean;
-  emitted_start: boolean;
-};
+const hintedForegroundBashIds = new Set<string>();
 
-type RuntimeJob = {
-  record: JobRecord;
-  child: ChildProcess | null;
-  completion: Promise<JobRecord>;
-  resolveCompletion: (value: JobRecord) => void;
-  logHandle: Awaited<ReturnType<typeof fs.open>> | null;
-  logHandleClosed: boolean;
-  logWriteChain: Promise<void>;
-};
-
-const DEFAULT_TIMEOUT_MS = 120_000;
-const MAX_COMMAND_LENGTH = 512;
-const MAX_FOREGROUND_TAIL_BYTES = 16 * 1024;
-const DEFAULT_BG_READ_BYTES = 8 * 1024;
-const MAX_BG_READ_BYTES = 64 * 1024;
-const MAX_LOG_BYTES = 10 * 1024 * 1024;
-const DEFAULT_BG_WAIT_TIMEOUT_MS = 30_000;
-const MAX_BG_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
-const INTERNAL_SUBSPAWN_START_EVENT = "meridian:subspawn:start";
-const INTERNAL_SUBSPAWN_END_EVENT = "meridian:subspawn:end";
-const MERIDIAN_SPAWN_COMMAND_PATTERN = /\bmeridian\s+spawn\b/;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+function setupForegroundBashHint(pi: PiWithForegroundHint): void {
+  pi.registerMessageRenderer?.<{ taskId: string; hintText: string }>(
+    FOREGROUND_BASH_HINT_CUSTOM_TYPE,
+    (message, _options, theme) => new Text(theme.fg("dim", message.details?.hintText ?? message.content), 0, 0),
+  );
 }
 
-function toInt(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  return fallback;
-}
-
-function truncateUtf8Tail(input: string, maxBytes: number): { text: string; truncated: boolean } {
-  const buffer = Buffer.from(input, "utf-8");
-  if (buffer.byteLength <= maxBytes) {
-    return { text: input, truncated: false };
-  }
-  return {
-    text: buffer.subarray(buffer.byteLength - maxBytes).toString("utf-8"),
-    truncated: true,
-  };
-}
-
-function trimCombinedTails(stdoutTail: string, stderrTail: string): {
-  stdoutTail: string;
-  stderrTail: string;
-  outputTruncated: boolean;
-} {
-  const stdoutBytes = Buffer.byteLength(stdoutTail, "utf-8");
-  const stderrBytes = Buffer.byteLength(stderrTail, "utf-8");
-  const total = stdoutBytes + stderrBytes;
-  if (total <= MAX_FOREGROUND_TAIL_BYTES) {
-    return {
-      stdoutTail,
-      stderrTail,
-      outputTruncated: false,
-    };
-  }
-
-  const half = Math.floor(MAX_FOREGROUND_TAIL_BYTES / 2);
-  const stdoutMax = Math.max(0, MAX_FOREGROUND_TAIL_BYTES - Math.min(stderrBytes, half));
-  const stderrMax = Math.max(0, MAX_FOREGROUND_TAIL_BYTES - Math.min(stdoutBytes, half));
-  const stdout = truncateUtf8Tail(stdoutTail, stdoutMax).text;
-  const stderr = truncateUtf8Tail(stderrTail, stderrMax).text;
-
-  return {
-    stdoutTail: stdout,
-    stderrTail: stderr,
-    outputTruncated: true,
-  };
-}
-
-function truncateCommand(command: string): string {
-  const { text } = truncateUtf8Tail(command, MAX_COMMAND_LENGTH);
-  return text;
-}
-
-function nowMs(): number {
-  return Date.now();
-}
-
-function makeId(prefix: string): string {
-  const rand = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${nowMs().toString(36)}-${rand}`;
-}
-
-function normalizeWaitPolicy(value: unknown): WaitPolicy {
-  return value === "detached" ? "detached" : "tracked";
-}
-
-function isMeridianSpawnCommand(command: string): boolean {
-  return MERIDIAN_SPAWN_COMMAND_PATTERN.test(command);
-}
-
-function isProcessAlive(pid: number): boolean {
+function postForegroundBashHint(pi: PiWithForegroundHint, bashId: string): void {
+  if (hintedForegroundBashIds.has(bashId)) return;
+  hintedForegroundBashIds.add(bashId);
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function killProcessTree(pid: number): void {
-  if (process.platform === "win32") {
-    // POSIX-first implementation. Windows process-tree kill is deferred follow-up.
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // ignore
-    }
-    return;
-  }
-
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // ignore
-    }
-  }
-}
-
-async function killProcessTreeHard(pid: number): Promise<void> {
-  if (process.platform === "win32") {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // ignore
-    }
-    return;
-  }
-
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // ignore
-    }
-  }
-}
-
-class ManagedBashRegistry {
-  private readonly stateRoot: string;
-  private readonly jobsDir: string;
-  private readonly sessionId: string;
-  private readonly parentSpawnId: string | null;
-  private readonly emitInternalEvent: InternalEventEmitter;
-  private readonly emitLifecycleEvent: (event: Record<string, unknown>) => void;
-  private readonly jobs: Map<string, RuntimeJob> = new Map();
-  private pollTimer: NodeJS.Timeout | null = null;
-
-  constructor(
-    stateRoot: string,
-    sessionId: string,
-    parentSpawnId: string | null,
-    emitLifecycleEvent: (event: Record<string, unknown>) => void,
-    emitInternalEvent?: InternalEventEmitter,
-  ) {
-    this.stateRoot = stateRoot;
-    this.jobsDir = path.join(this.stateRoot, "managed-bash", sessionId, "jobs");
-    this.sessionId = sessionId;
-    this.parentSpawnId = parentSpawnId;
-    this.emitLifecycleEvent = emitLifecycleEvent;
-    this.emitInternalEvent = emitInternalEvent ?? (() => undefined);
-  }
-
-  async initialize(): Promise<void> {
-    await fs.mkdir(this.jobsDir, { recursive: true });
-    await this.orphanScan();
-    this.startPoller();
-  }
-
-  private startPoller(): void {
-    if (this.pollTimer != null) {
-      return;
-    }
-    this.pollTimer = setInterval(() => {
-      void this.pollForOrphanCompletions();
-    }, 2_000);
-    this.pollTimer.unref?.();
-  }
-
-  private stopPoller(): void {
-    if (this.pollTimer == null) {
-      return;
-    }
-    clearInterval(this.pollTimer);
-    this.pollTimer = null;
-  }
-
-  private jobMetaPath(jobId: string): string {
-    return path.join(this.jobsDir, `${jobId}.json`);
-  }
-
-  private jobLogPath(jobId: string): string {
-    return path.join(this.jobsDir, `${jobId}.log`);
-  }
-
-  private async persistRecord(record: JobRecord): Promise<void> {
-    const finalPath = this.jobMetaPath(record.job_id);
-    const tempPath = `${finalPath}.tmp-${process.pid}-${Math.random().toString(16).slice(2)}`;
-    await fs.writeFile(tempPath, `${JSON.stringify(record)}\n`, "utf-8");
-    await fs.rename(tempPath, finalPath);
-  }
-
-  private createRuntimeJob(
-    record: JobRecord,
-    child: ChildProcess | null,
-    logHandle: Awaited<ReturnType<typeof fs.open>> | null = null,
-  ): RuntimeJob {
-    let resolveCompletion!: (value: JobRecord) => void;
-    const completion = new Promise<JobRecord>((resolve) => {
-      resolveCompletion = resolve;
-    });
-    return {
-      record,
-      child,
-      completion,
-      resolveCompletion,
-      logHandle,
-      logHandleClosed: logHandle == null,
-      logWriteChain: Promise.resolve(),
-    };
-  }
-
-  private enqueueLogWrite(runtimeJob: RuntimeJob, work: () => Promise<void>): void {
-    runtimeJob.logWriteChain = runtimeJob.logWriteChain
-      .then(work)
-      .catch(() => undefined);
-  }
-
-  private async closeLogHandle(runtimeJob: RuntimeJob): Promise<void> {
-    await runtimeJob.logWriteChain.catch(() => undefined);
-    if (runtimeJob.logHandle == null || runtimeJob.logHandleClosed) {
-      return;
-    }
-    runtimeJob.logHandleClosed = true;
-    try {
-      await runtimeJob.logHandle.close();
-    } catch {
-      // ignore close errors
-    }
-  }
-
-  private async loadRecord(filePath: string): Promise<JobRecord | null> {
-    try {
-      const raw = await fs.readFile(filePath, "utf-8");
-      const parsed = JSON.parse(raw) as JobRecord;
-      if (!parsed || typeof parsed !== "object") {
-        return null;
-      }
-      if (typeof parsed.job_id !== "string") {
-        return null;
-      }
-      if (typeof parsed.emitted_start !== "boolean") {
-        parsed.emitted_start = false;
-      }
-      return parsed;
-    } catch {
-      return null;
-    }
-  }
-
-  private buildSubspawnEnvelope(kind: string, correlationId: string): Record<string, unknown> {
-    return {
-      schema_version: 1,
-      session_id: this.sessionId,
-      parent_spawn_id: this.parentSpawnId,
-      correlation_id: correlationId,
-      kind,
-      emitted_at_ms: nowMs(),
-    };
-  }
-
-  private emitSubspawnStart(record: JobRecord): void {
-    const command = truncateCommand(record.command);
-    const payload = {
-      type: "meridian.subspawn.start",
-      ...this.buildSubspawnEnvelope("bash", record.job_id),
-      subspawn_id: record.job_id,
-      wait_policy: record.wait_policy,
-      command,
-      command_is_meridian_spawn: isMeridianSpawnCommand(record.command),
-      pid: record.pid,
-      started_at_ms: record.started_at_ms,
-      log_path: record.log_path,
-    };
-    this.emitLifecycleEvent(payload);
-    this.emitInternalEvent(INTERNAL_SUBSPAWN_START_EVENT, payload);
-  }
-
-  private emitSubspawnEnd(record: JobRecord): void {
-    const command = truncateCommand(record.command);
-    const payload = {
-      type: "meridian.subspawn.end",
-      ...this.buildSubspawnEnvelope("bash", record.job_id),
-      subspawn_id: record.job_id,
-      wait_policy: record.wait_policy,
-      command,
-      command_is_meridian_spawn: isMeridianSpawnCommand(record.command),
-      status: record.status,
-      exit_code: record.exit_code,
-      success: record.success,
-      signal: record.signal,
-      duration_ms: record.duration_ms,
-      log_path: record.log_path,
-    };
-    this.emitLifecycleEvent(payload);
-    this.emitInternalEvent(INTERNAL_SUBSPAWN_END_EVENT, payload);
-  }
-
-  private async enforceLogCap(record: JobRecord): Promise<void> {
-    try {
-      const stat = await fs.stat(record.log_path);
-      if (stat.size <= MAX_LOG_BYTES) {
-        record.log_bytes = stat.size;
-        await this.persistRecord(record);
-        return;
-      }
-
-      const fd = await fs.open(record.log_path, "r");
-      try {
-        const start = stat.size - MAX_LOG_BYTES;
-        const buffer = Buffer.allocUnsafe(MAX_LOG_BYTES);
-        await fd.read(buffer, 0, MAX_LOG_BYTES, start);
-        const tmpPath = `${record.log_path}.tmp-${process.pid}-${Math.random().toString(16).slice(2)}`;
-        await fs.writeFile(tmpPath, buffer);
-        await fs.rename(tmpPath, record.log_path);
-      } finally {
-        await fd.close();
-      }
-
-      record.log_bytes = MAX_LOG_BYTES;
-      record.log_truncated = true;
-      await this.persistRecord(record);
-    } catch {
-      // ignore cap errors
-    }
-  }
-
-  private attachChildLifecycle(runtimeJob: RuntimeJob): void {
-    const { child, record } = runtimeJob;
-    if (child == null) {
-      return;
-    }
-
-    child.on("close", (exitCode, signal) => {
-      void this.finishJob(record.job_id, {
-        exitCode: exitCode ?? null,
-        signal: signal ?? null,
-      });
-    });
-  }
-
-  private async finishJob(
-    jobId: string,
-    outcome: { exitCode: number | null; signal: string | number | null },
-  ): Promise<JobRecord | null> {
-    const runtimeJob = this.jobs.get(jobId);
-    if (!runtimeJob) {
-      return null;
-    }
-    const record = runtimeJob.record;
-    if (record.status !== "running") {
-      return record;
-    }
-
-    const endMs = nowMs();
-    record.ended_at_ms = endMs;
-    record.duration_ms = Math.max(0, endMs - record.started_at_ms);
-    record.exit_code = outcome.exitCode;
-    record.signal = outcome.signal;
-    record.success = outcome.exitCode === 0;
-    record.status = outcome.signal ? "killed" : "exited";
-
-    await this.closeLogHandle(runtimeJob);
-
-    try {
-      const stat = await fs.stat(record.log_path);
-      record.log_bytes = stat.size;
-    } catch {
-      // ignore
-    }
-
-    await this.enforceLogCap(record);
-    await this.persistRecord(record);
-    if (record.emitted_start) {
-      this.emitSubspawnEnd(record);
-    }
-    runtimeJob.resolveCompletion(record);
-    return record;
-  }
-
-  async orphanScan(): Promise<void> {
-    const entries = await fs.readdir(this.jobsDir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) {
-        continue;
-      }
-      const record = await this.loadRecord(path.join(this.jobsDir, entry.name));
-      if (record == null) {
-        continue;
-      }
-
-      if (record.status !== "running") {
-        const finished = this.createRuntimeJob(record, null);
-        finished.resolveCompletion(record);
-        this.jobs.set(record.job_id, finished);
-        continue;
-      }
-
-      const runtimeJob = this.createRuntimeJob(record, null);
-      this.jobs.set(record.job_id, runtimeJob);
-
-      if (!isProcessAlive(record.pid)) {
-        await this.finishJob(record.job_id, {
-          exitCode: record.exit_code,
-          signal: record.signal ?? "orphan-exited",
-        });
-      }
-    }
-  }
-
-  private async pollForOrphanCompletions(): Promise<void> {
-    for (const runtimeJob of this.jobs.values()) {
-      const record = runtimeJob.record;
-      if (record.status !== "running") {
-        continue;
-      }
-      if (runtimeJob.child != null) {
-        continue;
-      }
-      if (isProcessAlive(record.pid)) {
-        continue;
-      }
-      await this.finishJob(record.job_id, {
-        exitCode: record.exit_code,
-        signal: record.signal ?? "orphan-exited",
-      });
-    }
-  }
-
-  async startJob(
-    command: string,
-    waitPolicy: WaitPolicy,
-    cwd: string,
-    env: Record<string, string>,
-  ): Promise<{ runtimeJob: RuntimeJob; stdoutTail: string[]; stderrTail: string[] }> {
-    const jobId = makeId("j");
-    const startedAt = nowMs();
-    const logPath = this.jobLogPath(jobId);
-    const logHandle = await fs.open(logPath, "a");
-
-    const child = spawn("bash", ["-lc", command], {
-      cwd,
-      env,
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (child.pid == null) {
-      await logHandle.close();
-      throw new Error("managed-bash: failed to start child process");
-    }
-
-    const record: JobRecord = {
-      job_id: jobId,
-      command,
-      wait_policy: waitPolicy,
-      status: "running",
-      pid: child.pid,
-      started_at_ms: startedAt,
-      ended_at_ms: null,
-      duration_ms: null,
-      exit_code: null,
-      signal: null,
-      success: null,
-      log_path: logPath,
-      log_bytes: 0,
-      log_truncated: false,
-      emitted_start: false,
-    };
-
-    const runtimeJob = this.createRuntimeJob(record, child, logHandle);
-    this.jobs.set(jobId, runtimeJob);
-    await this.persistRecord(record);
-
-    const stdoutTail: string[] = [];
-    const stderrTail: string[] = [];
-
-    const appendChunk = (chunk: Buffer, target: string[]): void => {
-      const text = chunk.toString("utf-8");
-      target.push(text);
-      while (target.length > 32) {
-        target.shift();
-      }
-
-      this.enqueueLogWrite(runtimeJob, async () => {
-        if (runtimeJob.logHandle == null || runtimeJob.logHandleClosed) {
-          return;
-        }
-        try {
-          await runtimeJob.logHandle.appendFile(chunk);
-          const stat = await runtimeJob.logHandle.stat();
-          record.log_bytes = stat.size;
-        } catch {
-          // ignore logging errors
-        }
-
-        if (record.log_bytes > MAX_LOG_BYTES + 64 * 1024) {
-          await this.enforceLogCap(record);
-        }
-      });
-    };
-
-    child.stdout?.on("data", (chunk) => {
-      appendChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)), stdoutTail);
-    });
-    child.stderr?.on("data", (chunk) => {
-      appendChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)), stderrTail);
-    });
-
-    this.attachChildLifecycle(runtimeJob);
-
-    return {
-      runtimeJob,
-      stdoutTail,
-      stderrTail,
-    };
-  }
-
-  async detachJob(jobId: string): Promise<JobRecord | null> {
-    const runtimeJob = this.jobs.get(jobId);
-    if (!runtimeJob) {
-      return null;
-    }
-    if (runtimeJob.record.emitted_start) {
-      return runtimeJob.record;
-    }
-
-    runtimeJob.record.emitted_start = true;
-    this.emitSubspawnStart(runtimeJob.record);
-
-    if (runtimeJob.record.status !== "running") {
-      this.emitSubspawnEnd(runtimeJob.record);
-    }
-
-    await this.persistRecord(runtimeJob.record);
-    return runtimeJob.record;
-  }
-
-  async waitForCompletion(jobId: string, timeoutMs: number): Promise<JobRecord | null> {
-    const runtimeJob = this.jobs.get(jobId);
-    if (!runtimeJob) {
-      return null;
-    }
-    if (runtimeJob.record.status !== "running") {
-      return runtimeJob.record;
-    }
-
-    try {
-      return await Promise.race<JobRecord>([
-        runtimeJob.completion,
-        delay(timeoutMs).then(() => {
-          throw new Error("wait-timeout");
-        }),
-      ]);
-    } catch {
-      return runtimeJob.record;
-    }
-  }
-
-  async list(includeCompleted: boolean): Promise<JobRecord[]> {
-    const values = Array.from(this.jobs.values())
-      .map((job) => job.record)
-      .filter((record) => includeCompleted || record.status === "running")
-      .sort((a, b) => b.started_at_ms - a.started_at_ms);
-    return values;
-  }
-
-  async readLog(jobId: string, maxBytes: number, offset?: number): Promise<{
-    data: string;
-    log_truncated: boolean;
-    next_offset: number;
-    eof: boolean;
-  } | null> {
-    const runtimeJob = this.jobs.get(jobId);
-    if (!runtimeJob) {
-      return null;
-    }
-
-    const record = runtimeJob.record;
-    let statSize = 0;
-    try {
-      const stat = await fs.stat(record.log_path);
-      statSize = stat.size;
-    } catch {
-      return {
-        data: "",
-        log_truncated: record.log_truncated,
-        next_offset: 0,
-        eof: true,
-      };
-    }
-
-    if (statSize <= 0) {
-      return {
-        data: "",
-        log_truncated: record.log_truncated,
-        next_offset: 0,
-        eof: true,
-      };
-    }
-
-    const capped = clamp(maxBytes, 1, MAX_BG_READ_BYTES);
-    const start = typeof offset === "number" && offset >= 0 ? offset : Math.max(0, statSize - capped);
-    const safeStart = clamp(start, 0, statSize);
-    const bytesToRead = clamp(capped, 0, statSize - safeStart);
-
-    const fd = await fs.open(record.log_path, "r");
-    try {
-      const buffer = Buffer.allocUnsafe(bytesToRead);
-      const { bytesRead } = await fd.read(buffer, 0, bytesToRead, safeStart);
-      const nextOffset = safeStart + bytesRead;
-      return {
-        data: buffer.subarray(0, bytesRead).toString("utf-8"),
-        log_truncated: record.log_truncated,
-        next_offset: nextOffset,
-        eof: nextOffset >= statSize && record.status !== "running",
-      };
-    } finally {
-      await fd.close();
-    }
-  }
-
-  async killJob(jobId: string): Promise<JobRecord | null> {
-    const runtimeJob = this.jobs.get(jobId);
-    if (!runtimeJob) {
-      return null;
-    }
-    if (runtimeJob.record.status !== "running") {
-      return runtimeJob.record;
-    }
-
-    killProcessTree(runtimeJob.record.pid);
-    await delay(500);
-    if (isProcessAlive(runtimeJob.record.pid)) {
-      await killProcessTreeHard(runtimeJob.record.pid);
-    }
-
-    return this.finishJob(jobId, {
-      exitCode: null,
-      signal: "killed",
-    });
-  }
-
-  async shutdownCleanup(): Promise<void> {
-    this.stopPoller();
-    for (const runtimeJob of this.jobs.values()) {
-      const record = runtimeJob.record;
-      if (record.status !== "running") {
-        continue;
-      }
-      if (record.wait_policy === "detached") {
-        continue;
-      }
-      await this.killJob(record.job_id);
-    }
-  }
-}
-
-function resolveStateRoot(): string {
-  const explicit = process.env.MERIDIAN_PI_STATE_DIR?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  const agentDir = process.env.PI_CODING_AGENT_DIR?.trim();
-  if (agentDir) {
-    return path.join(agentDir, ".meridian");
-  }
-  return path.join(process.cwd(), ".meridian");
-}
-
-function sessionIdFromContext(ctx: ToolContext | undefined, fallback: string): string {
-  try {
-    const sessionId = ctx?.sessionManager?.getSessionId?.();
-    if (typeof sessionId === "string" && sessionId.trim()) {
-      return sessionId;
-    }
-  } catch {
-    // ignore
-  }
-  return fallback;
-}
-
-function parentSpawnIdFromEnv(): string | null {
-  const raw =
-    process.env.MERIDIAN_PARENT_SPAWN_ID?.trim() ||
-    process.env.MERIDIAN_SPAWN_ID?.trim() ||
-    "";
-  return raw.length > 0 ? raw : null;
-}
-
-function formatExitedResult(
-  exitCode: number | null,
-  signal: string | number | null,
-  stdoutTail: string,
-  stderrTail: string,
-): Record<string, unknown> {
-  const trimmed = trimCombinedTails(stdoutTail, stderrTail);
-  return {
-    ok: exitCode === 0,
-    state: "exited",
-    exit_code: exitCode,
-    signal,
-    stdout_tail: trimmed.stdoutTail,
-    stderr_tail: trimmed.stderrTail,
-    output_truncated: trimmed.outputTruncated,
-  };
-}
-
-function formatRunningResult(record: JobRecord): Record<string, unknown> {
-  return {
-    ok: true,
-    state: "running",
-    job_id: record.job_id,
-    wait_policy: record.wait_policy,
-    pid: record.pid,
-    message: `Command still running in background. Use bash_bg_read or bash_bg_wait with job_id ${record.job_id}.`,
-  };
-}
-
-async function buildRegistry(pi: ExtensionAPI): Promise<{
-  registry: ManagedBashRegistry;
-  sessionId: string;
-  createRegistry: (sessionId: string) => ManagedBashRegistry;
-}> {
-  const lifecycleWriter = createLifecycleSidecarWriter();
-  const sessionId = makeId("session");
-  const createRegistry = (sid: string): ManagedBashRegistry =>
-    new ManagedBashRegistry(
-      resolveStateRoot(),
-      sid,
-      parentSpawnIdFromEnv(),
-      (event) => lifecycleWriter.append(event),
-      (channel, payload) => {
-        pi.events.emit(channel, payload);
+    void pi.sendMessage?.(
+      {
+        customType: FOREGROUND_BASH_HINT_CUSTOM_TYPE,
+        content: "",
+        display: true,
+        details: { taskId: bashId, hintText: FOREGROUND_BASH_HINT_TEXT },
       },
+      { triggerTurn: false, excludeFromContext: true },
     );
-  const registry = createRegistry(sessionId);
-
-  pi.on("session_start", async (_event, ctx) => {
-    const resolved = sessionIdFromContext(ctx as ToolContext, sessionId);
-    const startRegistry = createRegistry(resolved);
-    await startRegistry.initialize();
-    await state.registry?.shutdownCleanup();
-    state.registry = startRegistry;
-    state.sessionId = resolved;
-  });
-
-  pi.on("session_shutdown", async () => {
-    await state.registry?.shutdownCleanup();
-    lifecycleWriter.close();
-  });
-
-  await registry.initialize();
-  return { registry, sessionId, createRegistry };
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("stale")) throw error;
+  }
 }
 
-const state: {
-  registry: ManagedBashRegistry | null;
-  sessionId: string;
-  createRegistry: ((sessionId: string) => ManagedBashRegistry) | null;
-} = {
-  registry: null,
-  sessionId: makeId("session"),
-  createRegistry: null,
+function notify(ctx: { ui?: { notify?: (msg: string, level?: string) => void } }, message: string, level: "info" | "warning" = "info"): void {
+  if (ctx.ui?.notify) ctx.ui.notify(message, level);
+  else process.stdout.write(`${message}\n`);
+}
+
+type UserBashEvent = {
+  command?: string;
+  cwd?: string;
 };
 
-export default async function managedBashExtension(pi: ExtensionAPI): Promise<void> {
-  const setup = await buildRegistry(pi);
-  state.registry = setup.registry;
-  state.sessionId = setup.sessionId;
-  state.createRegistry = setup.createRegistry;
+type BashExecOptions = {
+  onData?: (data: Buffer) => void;
+  signal?: AbortSignal;
+  timeout?: number;
+  env?: NodeJS.ProcessEnv;
+};
+
+function splitUserBashBackground(command: string): { background: boolean; execCommand: string } {
+  const trimmed = command.trim();
+  if (!trimmed || trimmed === "&") return { background: false, execCommand: trimmed };
+
+  let inSingle = false;
+  let inDouble = false;
+  let escape = false;
+  let lastUnquotedAmpersand = -1;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const ch = trimmed[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && (inSingle || inDouble)) {
+      escape = true;
+      continue;
+    }
+    if (!inDouble && ch === "'") {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && ch === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === "&") lastUnquotedAmpersand = i;
+  }
+
+  if (lastUnquotedAmpersand < 0) return { background: false, execCommand: trimmed };
+  if (trimmed.slice(lastUnquotedAmpersand + 1).trim() !== "") return { background: false, execCommand: trimmed };
+
+  const execCommand = trimmed.slice(0, lastUnquotedAmpersand).trimEnd();
+  return execCommand ? { background: true, execCommand } : { background: false, execCommand: trimmed };
+}
+
+export default function managedBashExtension(pi: ExtensionAPI): void {
+  const hintPi = pi as PiWithForegroundHint;
+  setupForegroundBashHint(hintPi);
+  const runtime = new BashRuntime({
+    onForegroundStart: (bashId) => postForegroundBashHint(hintPi, bashId),
+    onBackgroundPing: (record) => sendBackgroundPing(pi, record),
+  });
+
+  pi.on?.("session_shutdown", async () => {
+    hintedForegroundBashIds.clear();
+    await runtime.shutdown();
+  });
+
+  pi.on?.("user_bash", async (event: unknown) => {
+    const typed = event as UserBashEvent;
+    const command = typed.command?.trim();
+    if (!command) return undefined;
+
+    const cwd = typed.cwd?.trim() || process.cwd();
+    const { background, execCommand } = splitUserBashBackground(command);
+    if (background) {
+      const { bash_id: bashId } = await runtime.startDetachedUserBash(execCommand, cwd, process.env);
+      return {
+        result: {
+          exitCode: 0,
+          output: `Detached task ${bashId} — /ps to manage\n`,
+          cancelled: false,
+        },
+      };
+    }
+
+    return {
+      operations: {
+        exec: async (
+          execCommandFromPi: string,
+          execCwd: string,
+          options: BashExecOptions,
+        ): Promise<{ exitCode: number | null }> =>
+          await runtime.executeUserBash(execCommandFromPi, execCwd, options),
+      },
+    };
+  });
 
   pi.registerTool({
     name: "bash",
-    label: "bash",
-    description:
-      "Run a bash command. Commands block until completion or timeout; long commands continue in background with a job handle.",
+    label: "Bash",
+    description: "Run a shell command. Meridian-managed bash supports background execution and bash_manage follow-up actions.",
+    promptSnippet: "Run shell commands; use background=true for long-running work and bash_manage to inspect it.",
     parameters: Type.Object({
-      command: Type.String({ description: "Command to execute via bash -lc" }),
-      timeout_ms: Type.Optional(Type.Number({ minimum: 1 })),
+      command: Type.String(),
+      timeout_min: Type.Optional(Type.Number({ minimum: 1, maximum: 59 })),
       background: Type.Optional(Type.Boolean()),
-      wait_policy: Type.Optional(Type.Union([Type.Literal("tracked"), Type.Literal("detached")])),
-      cwd: Type.Optional(Type.String()),
-      env: Type.Optional(Type.Record(Type.String(), Type.String())),
     }),
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const registry = state.registry;
-      if (registry == null) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Managed bash registry is unavailable.",
-            },
-          ],
-          details: {
-            ok: false,
-            state: "error",
-          },
-          isError: true,
-        };
-      }
-
-      const timeoutMs = clamp(
-        toInt(params.timeout_ms, DEFAULT_TIMEOUT_MS),
-        1,
-        MAX_BG_WAIT_TIMEOUT_MS,
-      );
-      const background = params.background === true;
-      const waitPolicy = normalizeWaitPolicy(params.wait_policy);
-
-      const sessionId = sessionIdFromContext(ctx as ToolContext, state.sessionId);
-      if (sessionId !== state.sessionId) {
-        // session changed after initial setup; rebuild lazily.
-        const createRegistry = state.createRegistry;
-        if (createRegistry == null) {
-          throw new Error("managed bash registry factory unavailable");
-        }
-        const startRegistry = createRegistry(sessionId);
-        await startRegistry.initialize();
-        await state.registry?.shutdownCleanup();
-        state.registry = startRegistry;
-        state.sessionId = sessionId;
-      }
-
-      const activeRegistry = state.registry;
-      if (activeRegistry == null) {
-        throw new Error("managed bash registry unavailable");
-      }
-
-      const command = String(params.command ?? "");
-      const cwd = typeof params.cwd === "string" && params.cwd.length > 0 ? params.cwd : (ctx as ToolContext).cwd ?? process.cwd();
-      const env = {
-        ...process.env,
-        ...(typeof params.env === "object" && params.env ? params.env : {}),
-      } as Record<string, string>;
-
-      const { runtimeJob, stdoutTail, stderrTail } = await activeRegistry.startJob(
-        command,
-        waitPolicy,
-        cwd,
-        env,
-      );
-
-      if (background) {
-        await activeRegistry.detachJob(runtimeJob.record.job_id);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Started background job ${runtimeJob.record.job_id}.`,
-            },
-          ],
-          details: formatRunningResult(runtimeJob.record),
-        };
-      }
-
-      type ForegroundWaitOutcome =
-        | { kind: "completed"; record: JobRecord }
-        | { kind: "timeout" }
-        | { kind: "aborted" };
-      const completion = await Promise.race<ForegroundWaitOutcome>([
-        runtimeJob.completion.then((record) => ({ kind: "completed", record })),
-        delay(timeoutMs, null, { signal })
-          .then(() => ({ kind: "timeout" as const }))
-          .catch((error: unknown) => {
-            if (signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-              return { kind: "aborted" as const };
-            }
-            return { kind: "timeout" as const };
-          }),
-      ]);
-
-      if (completion.kind === "completed" && completion.record.status !== "running") {
-        const stdout = stdoutTail.join("");
-        const stderr = stderrTail.join("");
-        const details = formatExitedResult(
-          completion.record.exit_code,
-          completion.record.signal,
-          stdout,
-          stderr,
-        );
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Command finished with exit code ${completion.record.exit_code ?? "null"}.`,
-            },
-          ],
-          details,
-          isError: completion.record.exit_code !== 0,
-        };
-      }
-
-      if (completion.kind === "aborted") {
-        const record = await activeRegistry.killJob(runtimeJob.record.job_id);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Command cancelled. Terminated job ${runtimeJob.record.job_id}.`,
-            },
-          ],
-          details: {
-            ok: false,
-            state: "cancelled",
-            job_id: runtimeJob.record.job_id,
-            job: record,
-          },
-          isError: true,
-        };
-      }
-
-      await activeRegistry.detachJob(runtimeJob.record.job_id);
+    async execute(_toolCallId, params: BashParams, signal) {
+      const result = await runtime.execute(params, signal);
       return {
-        content: [
-          {
-            type: "text",
-            text: `Command exceeded timeout and continues in background as ${runtimeJob.record.job_id}.`,
-          },
-        ],
-        details: formatRunningResult(runtimeJob.record),
+        content: [{ type: "text", text: formatToolResult(result) }],
+        details: result,
       };
     },
   });
 
   pi.registerTool({
-    name: "bash_bg_list",
-    label: "bash_bg_list",
-    description: "List managed background bash jobs for this Pi session.",
+    name: "bash_manage",
+    label: "Bash Manage",
+    description: "List, inspect, wait for, kill, or detach Meridian-managed background bash tasks.",
+    promptSnippet: "Manage background bash tasks with actions list, output, kill, wait, and detach.",
     parameters: Type.Object({
+      action: Type.Union([
+        Type.Literal("list"),
+        Type.Literal("output"),
+        Type.Literal("kill"),
+        Type.Literal("wait"),
+        Type.Literal("detach"),
+      ]),
+      bash_id: Type.Optional(Type.String()),
       include_completed: Type.Optional(Type.Boolean()),
+      timeout_min: Type.Optional(Type.Number({ minimum: 1, maximum: 59 })),
     }),
-    async execute(_toolCallId, params) {
-      const registry = state.registry;
-      if (registry == null) {
-        return {
-          content: [{ type: "text", text: "Managed bash registry unavailable." }],
-          details: { jobs: [] },
-        };
-      }
-
-      const includeCompleted = params.include_completed === true;
-      const jobs = await registry.list(includeCompleted);
+    async execute(_toolCallId, params: BashManageParams) {
+      const result = await runtime.manage(params);
       return {
-        content: [{ type: "text", text: `Found ${jobs.length} job(s).` }],
-        details: { jobs },
+        content: [{ type: "text", text: formatToolResult(result) }],
+        details: result,
       };
     },
   });
 
-  pi.registerTool({
-    name: "bash_bg_read",
-    label: "bash_bg_read",
-    description: "Read managed background job log output.",
-    parameters: Type.Object({
-      job_id: Type.String(),
-      max_bytes: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_BG_READ_BYTES })),
-      offset: Type.Optional(Type.Number({ minimum: 0 })),
-    }),
-    async execute(_toolCallId, params) {
-      const registry = state.registry;
-      if (registry == null) {
-        return {
-          content: [{ type: "text", text: "Managed bash registry unavailable." }],
-          details: { found: false },
-        };
+  pi.registerCommand("ps", {
+    description: "List Meridian-managed bash tasks for this Pi session.",
+    handler: async (_args, ctx) => {
+      const loadRows = async (): Promise<BashPanelRow[]> => runtime.list(true);
+
+      if (ctx.hasUI === false || !ctx.ui?.custom) {
+        process.stdout.write(`${formatRows(await loadRows())}\n`);
+        return;
       }
 
-      const maxBytes = clamp(
-        toInt(params.max_bytes, DEFAULT_BG_READ_BYTES),
-        1,
-        MAX_BG_READ_BYTES,
-      );
-      const offset = typeof params.offset === "number" ? Math.max(0, Math.trunc(params.offset)) : undefined;
-      const result = await registry.readLog(params.job_id, maxBytes, offset);
-      if (result == null) {
-        return {
-          content: [{ type: "text", text: `Job ${params.job_id} not found.` }],
-          details: { found: false },
-          isError: true,
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: result.data }],
-        details: {
-          found: true,
-          ...result,
+      await openTaskPanel(ctx as PanelCommandContext, {
+        title: "Meridian /ps — managed bash",
+        columns: BASH_PANEL_COLUMNS,
+        loadRows,
+        getRowId: (row) => row.bash_id,
+        renderPreview: renderBashPreview,
+        emptyMessage: "No Meridian-managed bash tasks.",
+        footer: "enter logs · c clear · j/k select · r refresh · q close",
+        onClear: async () => {
+          const cleared = await runtime.clearFinished();
+          ctx.ui?.notify?.(`cleared ${cleared} finished bash task(s)`, "info");
         },
-      };
+        onEnter: async (row) => {
+          await openLogOverlay(ctx as PanelCommandContext, {
+            title: `Bash log ${row.bash_id}`,
+            initialFollow: row.status === "running",
+            streams: bashLogStreams(row),
+          });
+        },
+      });
     },
   });
 
-  pi.registerTool({
-    name: "bash_bg_wait",
-    label: "bash_bg_wait",
-    description: "Wait for a managed background job to finish.",
-    parameters: Type.Object({
-      job_id: Type.String(),
-      timeout_ms: Type.Optional(Type.Number({ minimum: 1, maximum: MAX_BG_WAIT_TIMEOUT_MS })),
-    }),
-    async execute(_toolCallId, params) {
-      const registry = state.registry;
-      if (registry == null) {
-        return {
-          content: [{ type: "text", text: "Managed bash registry unavailable." }],
-          details: { found: false },
-        };
-      }
-
-      const timeoutMs = clamp(
-        toInt(params.timeout_ms, DEFAULT_BG_WAIT_TIMEOUT_MS),
-        1,
-        MAX_BG_WAIT_TIMEOUT_MS,
-      );
-      const record = await registry.waitForCompletion(params.job_id, timeoutMs);
-      if (record == null) {
-        return {
-          content: [{ type: "text", text: `Job ${params.job_id} not found.` }],
-          details: { found: false },
-          isError: true,
-        };
-      }
-
-      if (record.status === "running") {
-        return {
-          content: [{ type: "text", text: `Job ${params.job_id} is still running.` }],
-          details: {
-            found: true,
-            state: "running",
-            job: record,
-          },
-        };
-      }
-
-      const log = await registry.readLog(record.job_id, DEFAULT_BG_READ_BYTES);
-      return {
-        content: [{ type: "text", text: log?.data ?? "" }],
-        details: {
-          found: true,
-          state: "exited",
-          job: record,
-          log_tail: log?.data ?? "",
-          log_truncated: log?.log_truncated ?? false,
-        },
-        isError: record.exit_code !== 0,
-      };
+  pi.registerCommand("ps:kill", {
+    description: "Kill a Meridian-managed bash task.",
+    handler: async (args, ctx) => {
+      const result = await runtime.manage({ action: "kill", bash_id: args.trim() });
+      ctx.ui.notify(JSON.stringify(result, null, 2), "info");
     },
   });
 
-  pi.registerTool({
-    name: "bash_bg_kill",
-    label: "bash_bg_kill",
-    description: "Kill a managed background job.",
-    parameters: Type.Object({
-      job_id: Type.String(),
-    }),
-    async execute(_toolCallId, params) {
-      const registry = state.registry;
-      if (registry == null) {
-        return {
-          content: [{ type: "text", text: "Managed bash registry unavailable." }],
-          details: { found: false },
-        };
-      }
-
-      const record = await registry.killJob(params.job_id);
-      if (record == null) {
-        return {
-          content: [{ type: "text", text: `Job ${params.job_id} not found.` }],
-          details: { found: false },
-          isError: true,
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: `Job ${params.job_id} terminated.` }],
-        details: {
-          found: true,
-          job: record,
-        },
-      };
+  pi.registerCommand("ps:clear", {
+    description: "Clear finished Meridian-managed bash tasks from /ps.",
+    handler: async (_args, ctx) => {
+      const cleared = await runtime.clearFinished();
+      ctx.ui.notify(`cleared ${cleared} finished bash task(s)`, "info");
     },
+  });
+
+  pi.registerCommand("ps:logs", {
+    description: "Show a Meridian-managed bash task log tail.",
+    handler: async (args, ctx) => {
+      const bashId = args.trim();
+      const loadText = async (): Promise<string> => {
+        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
+        if (row) return readInspectableLog(row);
+        const result = await runtime.manage({ action: "output", bash_id: bashId });
+        return "output" in result ? result.output : formatToolResult(result);
+      };
+      if (ctx.hasUI !== false && ctx.ui?.custom) {
+        const row = runtime.list(true).find((candidate) => candidate.bash_id === bashId);
+        await openLogOverlay(ctx as PanelCommandContext, {
+          title: `Bash log ${bashId}`,
+          initialFollow: row?.status === "running",
+          streams: row ? bashLogStreams(row) : [{ id: "combined", label: "combined", loadText }],
+        });
+        return;
+      }
+      process.stdout.write(`${await loadText()}\n`);
+    },
+  });
+
+  const backgroundForegroundHandler = async (_args: string, ctx: { ui?: { notify?: (msg: string, level?: string) => void } }): Promise<void> => {
+    const result = await runtime.backgroundForeground();
+    if (result.ok) return;
+    notify(ctx, "No foreground $ task to background", "warning");
+  };
+
+  pi.registerCommand("ps:b", {
+    description: "Background the foreground $ task.",
+    handler: backgroundForegroundHandler,
+  });
+
+  pi.registerCommand("ps:background", {
+    description: "Background the foreground $ task.",
+    handler: backgroundForegroundHandler,
   });
 }

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.core.util import FormatContext
-from meridian.lib.launch.constants import PI_LIFECYCLE_EVENTS_FILENAME
 from meridian.lib.ops.spawn import query as spawn_query
 from meridian.lib.ops.spawn.models import (
     SpawnShowInput,
@@ -110,7 +109,7 @@ def test_read_spawn_row_nested_stale_dead_runner_returns_synthetic_failed(
     assert persisted.error is None
 
 
-def test_read_spawn_row_nested_recent_heartbeat_or_lifecycle_activity_keeps_running(
+def test_read_spawn_row_nested_recent_disk_activity_keeps_running(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -121,7 +120,7 @@ def test_read_spawn_row_nested_recent_heartbeat_or_lifecycle_activity_keeps_runn
 
     for spawn_id, activity_file in [
         ("p-heartbeat", "heartbeat"),
-        ("p-pi-lifecycle", PI_LIFECYCLE_EVENTS_FILENAME),
+        ("p-history", "history.jsonl"),
     ]:
         spawn_store.start_spawn(
             runtime_root,

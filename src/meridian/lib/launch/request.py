@@ -128,6 +128,8 @@ class SpawnRequest(BaseModel):
     reference_anchor: str | None = None
     task_cwd_source: str | None = None
     task_cwd_work_item: str | None = None
+    pi_task_ping_interval_seconds: float | None = None
+    pi_task_ping_reset_on_activity: bool | None = None
 
 
 class LaunchArgvIntent(StrEnum):
@@ -151,6 +153,7 @@ class LaunchRuntime(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     argv_intent: LaunchArgvIntent = LaunchArgvIntent.REQUIRED
+    # DIRECT = pre-resolved request; spawn must use build_spawn_mars_runtime.
     composition_surface: LaunchCompositionSurface = LaunchCompositionSurface.DIRECT
     config_snapshot: dict[str, object] = Field(default_factory=_empty_config_snapshot)
     runtime_override_snapshot: dict[str, object] | None = None

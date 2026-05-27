@@ -5,6 +5,7 @@ Also includes file-backed ID generation for spawns and sessions.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -298,6 +299,7 @@ def start_spawn(
             id=str(resolved_spawn_id),
             chat_id=chat_id,
             parent_id=parent_id,
+            originating_bash_id=os.environ.get("MERIDIAN_PI_BASH_ID") or None,
             model=model,
             agent=agent,
             agent_path=agent_path,

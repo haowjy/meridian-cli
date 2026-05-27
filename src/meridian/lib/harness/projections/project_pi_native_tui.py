@@ -25,6 +25,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "interactive",
         "appended_system_prompt",
         "pi_extension_entrypoints",
+        "load_all_pi_extensions",
     }
 )
 

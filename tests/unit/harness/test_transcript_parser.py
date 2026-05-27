@@ -264,6 +264,103 @@ def test_extract_from_event_claude_assistant_and_user_messages() -> None:
     assert [(message.role, message.content) for message in user_messages] == [("user", "user text")]
 
 
+def test_extract_from_event_pi_message_end_events() -> None:
+    parser = DefaultTranscriptEventParser()
+
+    user_messages, user_boundary = parser.parse(
+        {
+            "event_type": "message_end",
+            "payload": {
+                "type": "message_end",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "start task"}],
+                },
+            },
+        }
+    )
+    assistant_messages, assistant_boundary = parser.parse(
+        {
+            "event_type": "message_end",
+            "payload": {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "hidden"},
+                        {
+                            "type": "toolCall",
+                            "name": "bash_manage",
+                            "arguments": {"action": "kill", "bash_id": "b-1"},
+                        },
+                    ],
+                },
+            },
+        }
+    )
+    custom_messages, custom_boundary = parser.parse(
+        {
+            "event_type": "message_end",
+            "payload": {
+                "type": "message_end",
+                "message": {
+                    "role": "custom",
+                    "content": "Background bash task still running: b-1",
+                },
+            },
+        }
+    )
+    tool_messages, tool_boundary = parser.parse(
+        {
+            "event_type": "message_end",
+            "payload": {
+                "type": "message_end",
+                "message": {
+                    "role": "toolResult",
+                    "content": [{"type": "text", "text": "b-1 killed"}],
+                },
+            },
+        }
+    )
+    final_messages, final_boundary = parser.parse(
+        {
+            "event_type": "message_end",
+            "payload": {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "done"}],
+                },
+            },
+        }
+    )
+
+    assert user_boundary is False
+    assert assistant_boundary is False
+    assert custom_boundary is False
+    assert tool_boundary is False
+    assert final_boundary is False
+    assert [(message.role, message.content) for message in user_messages] == [
+        ("user", "start task")
+    ]
+    assert [(message.role, message.content) for message in assistant_messages] == [
+        ("assistant", '[tool: bash_manage {"action":"kill","bash_id":"b-1"}]')
+    ]
+    assert assistant_messages[0].tool_call is not None
+    assert assistant_messages[0].tool_call.name == "bash_manage"
+    assert [(message.role, message.content) for message in custom_messages] == [
+        ("user", "Background bash task still running: b-1")
+    ]
+    tool_rows = [
+        (message.role, message.content, message.is_tool_result)
+        for message in tool_messages
+    ]
+    assert tool_rows == [("user", "[tool_result] b-1 killed", True)]
+    assert [(message.role, message.content) for message in final_messages] == [
+        ("assistant", "done")
+    ]
+
+
 def test_extract_from_event_codex_response_and_exec_events() -> None:
     response_messages, response_boundary = DefaultTranscriptEventParser().parse(
         {

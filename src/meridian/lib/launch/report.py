@@ -13,8 +13,37 @@ from meridian.lib.state.artifact_store import ArtifactStore
 
 from .artifact_io import read_artifact_text
 
-ReportSource = Literal["report_md", "assistant_message"]
+ReportSource = Literal["report_md", "assistant_message", "failure_reason", "pi_failure"]
 _LOGGER = logging.getLogger(__name__)
+_PI_LIFECYCLE_PHASE_EVENT = "meridian.pi.lifecycle.phase"
+_OPENCODE_CONTROL_EVENT_TYPES = frozenset(
+    {
+        "session.idle",
+        "session.error",
+        "session.status",
+        "sync",
+    }
+)
+_PI_LIFECYCLE_NOISE_PHASES = frozenset(
+    {
+        "cleanup_running",
+        "cleanup_completed",
+        "cleanup_escalated",
+        "cleanup_failed",
+        "process_spawned",
+        "initial_prompt_sent",
+        "waiting_for_first_pi_event_after_prompt",
+        "first_pi_event_received",
+        "first_pi_event_timeout",
+        "first_pi_event_eof_before_response",
+        "no_initial_prompt",
+        "session_event_seen",
+        "session_event_absent",
+        "quiescence_micro_drain_started",
+        "waiting_for_tracked_children",
+        "waiting_for_notification_completion",
+    }
+)
 
 
 class ExtractedReport(BaseModel):
@@ -32,6 +61,24 @@ def _event_name(payload: dict[str, object]) -> str:
     )
 
 
+def _is_opencode_control_payload(payload: dict[str, object]) -> bool:
+    event_type = _event_name(payload)
+    if event_type in _OPENCODE_CONTROL_EVENT_TYPES:
+        return True
+    if event_type.startswith("session.") and event_type not in {"session.created"}:
+        return True
+
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        nested_payload = cast("dict[str, object]", nested)
+        nested_type = _event_name(nested_payload)
+        if nested_type in _OPENCODE_CONTROL_EVENT_TYPES:
+            return True
+        if nested_type.startswith("session.") and nested_type not in {"session.created"}:
+            return True
+    return False
+
+
 def _is_terminal_control_frame(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
@@ -46,11 +93,15 @@ def _is_terminal_control_frame(text: str) -> bool:
     payload = cast("dict[str, object]", payload_obj)
     if _event_name(payload) in {"cancelled", "error"}:
         return True
+    if _is_opencode_control_payload(payload):
+        return True
 
     nested = payload.get("payload")
     if isinstance(nested, dict):
         nested_payload = cast("dict[str, object]", nested)
         if _event_name(nested_payload) in {"cancelled", "error"}:
+            return True
+        if _is_opencode_control_payload(nested_payload):
             return True
     return False
 
@@ -120,6 +171,126 @@ def _assistant_texts(payload: object) -> list[str]:
     return found
 
 
+def _history_record_payload(payload_obj: object) -> dict[str, object] | None:
+    if not isinstance(payload_obj, dict):
+        return None
+    record = cast("dict[str, object]", payload_obj)
+    if "event_type" in record or "payload" in record:
+        return record
+    return {"payload": record}
+
+
+def _unwrap_history_payload(record: dict[str, object]) -> dict[str, object]:
+    nested = record.get("payload")
+    if isinstance(nested, dict):
+        return cast("dict[str, object]", nested)
+    return record
+
+
+def _is_pi_lifecycle_noise_payload(payload: dict[str, object]) -> bool:
+    event_type = _event_name(payload)
+    if event_type != _PI_LIFECYCLE_PHASE_EVENT:
+        inner_type = str(payload.get("type", "")).strip().lower()
+        if inner_type != _PI_LIFECYCLE_PHASE_EVENT:
+            return False
+    phase = str(payload.get("phase", "")).strip().lower()
+    return phase in _PI_LIFECYCLE_NOISE_PHASES or (
+        phase == "finalized" and not payload.get("error")
+    )
+
+
+def _pi_failure_output_verbose() -> bool:
+    """Whether Pi failure text should include JS stack traces (e.g. extension errors)."""
+    return logging.getLogger().isEnabledFor(logging.INFO)
+
+
+def _is_js_stack_trace_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("at "):
+        return True
+    if stripped.startswith("(") and "file:///" in stripped:
+        return True
+    return "file:///" in stripped and ("/index.js:" in stripped or ".ts:" in stripped)
+
+
+def compact_pi_failure_output(message: str, *, verbose: bool | None = None) -> str:
+    """Collapse Pi extension/JS stack noise for user-facing spawn failure output."""
+    text = message.strip()
+    if not text:
+        return text
+    show_verbose = _pi_failure_output_verbose() if verbose is None else verbose
+    if show_verbose:
+        return text
+
+    lines = text.splitlines()
+    has_stack = any(_is_js_stack_trace_line(line) for line in lines)
+    first_line = lines[0].strip() if lines else ""
+    is_extension_error = first_line.startswith("Extension ") and " error:" in first_line
+    if not has_stack and not is_extension_error:
+        return text
+
+    compact: list[str] = []
+    for line in lines:
+        if _is_js_stack_trace_line(line):
+            break
+        stripped = line.strip()
+        if stripped:
+            compact.append(stripped)
+    if not compact:
+        return first_line or text
+    return compact[0] if is_extension_error else "\n".join(compact)
+
+
+def _pi_failure_from_payload(payload: dict[str, object]) -> str | None:
+    event_type = _event_name(payload)
+    if event_type == "response":
+        command = str(payload.get("command", "")).strip().lower()
+        if command == "prompt" and payload.get("success") is False:
+            error = _text_from_value(payload.get("error"))
+            return error or "pi_prompt_rejected"
+    if event_type == _PI_LIFECYCLE_PHASE_EVENT:
+        phase = str(payload.get("phase", "")).strip().lower()
+        if phase == "finalized":
+            error = _text_from_value(payload.get("error"))
+            if error:
+                return error
+    if event_type in {"error", "error/connectionclosed"}:
+        message = _text_from_value(payload.get("message"))
+        if message:
+            return message
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        return _pi_failure_from_payload(cast("dict[str, object]", nested))
+    return None
+
+
+def extract_pi_failure_from_history(output_lines: str) -> str | None:
+    last_failure: str | None = None
+    for line in output_lines.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload_obj: object = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        record = _history_record_payload(payload_obj)
+        if record is None:
+            continue
+        event_type = str(record.get("event_type", "")).strip().lower()
+        payload = _unwrap_history_payload(record)
+        if event_type and _event_name(payload) != event_type:
+            merged = dict(payload)
+            merged.setdefault("type", event_type)
+            payload = merged
+        failure = _pi_failure_from_payload(payload)
+        if failure:
+            last_failure = compact_pi_failure_output(failure)
+    return last_failure
+
+
 def _extract_last_assistant_message(output_lines: str) -> str | None:
     last_assistant: str | None = None
     last_text_line: str | None = None
@@ -127,14 +298,26 @@ def _extract_last_assistant_message(output_lines: str) -> str | None:
         stripped = line.strip()
         if not stripped:
             continue
-        last_text_line = stripped
         try:
             payload_obj: object = json.loads(stripped)
         except json.JSONDecodeError:
+            last_text_line = stripped
             continue
+        record = _history_record_payload(payload_obj)
+        if record is not None:
+            payload = _unwrap_history_payload(record)
+            if _is_pi_lifecycle_noise_payload(payload):
+                continue
+            if _is_opencode_control_payload(payload):
+                continue
+        elif isinstance(payload_obj, dict):
+            if _is_opencode_control_payload(cast("dict[str, object]", payload_obj)):
+                continue
         assistants = _assistant_texts(payload_obj)
         if assistants:
             last_assistant = assistants[-1].strip()
+            continue
+        last_text_line = stripped
     if last_assistant:
         return last_assistant
     return last_text_line
@@ -158,11 +341,16 @@ def _normalized_history_lines(raw_lines: str) -> str:
     return "\n".join(normalized)
 
 
+def _synthesized_failure_report(failure_reason: str) -> str:
+    return failure_reason.strip()
+
+
 def extract_or_fallback_report(
     artifacts: ArtifactStore,
     spawn_id: SpawnId,
     *,
     extractor: SpawnExtractor | None = None,
+    failure_reason: str | None = None,
 ) -> ExtractedReport:
     """Extract report text from assistant output, preferring report.md when available."""
 
@@ -182,6 +370,14 @@ def extract_or_fallback_report(
         else:
             adapted_text = adapted_report.strip() if adapted_report else ""
             if adapted_text and not _is_terminal_control_frame(adapted_text):
+                history_text = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME).strip()
+                pi_failure = (
+                    extract_pi_failure_from_history(_normalized_history_lines(history_text))
+                    if history_text
+                    else None
+                )
+                if pi_failure and pi_failure.strip() == adapted_text:
+                    return ExtractedReport(content=adapted_text, source="pi_failure")
                 return ExtractedReport(content=adapted_text, source="assistant_message")
 
     output_lines = read_artifact_text(artifacts, spawn_id, HISTORY_FILENAME).strip()
@@ -189,8 +385,19 @@ def extract_or_fallback_report(
         output_lines = read_artifact_text(artifacts, spawn_id, OUTPUT_FILENAME)
     else:
         output_lines = _normalized_history_lines(output_lines)
+
+    if output_lines.strip():
+        pi_failure = extract_pi_failure_from_history(output_lines)
+        if pi_failure and not _is_terminal_control_frame(pi_failure):
+            return ExtractedReport(content=pi_failure, source="pi_failure")
+
     assistant_message = _extract_last_assistant_message(output_lines)
     assistant_report = assistant_message.strip() if assistant_message else ""
-    if not assistant_report or _is_terminal_control_frame(assistant_report):
-        return ExtractedReport(content=None, source=None)
-    return ExtractedReport(content=assistant_report, source="assistant_message")
+    if assistant_report and not _is_terminal_control_frame(assistant_report):
+        return ExtractedReport(content=assistant_report, source="assistant_message")
+
+    if failure_reason and failure_reason.strip():
+        synthesized = _synthesized_failure_report(failure_reason)
+        return ExtractedReport(content=synthesized, source="failure_reason")
+
+    return ExtractedReport(content=None, source=None)

@@ -38,10 +38,6 @@ from meridian.lib.harness.connections.base import (
     PrimaryRuntimeEventSurface,
     PrimaryRuntimeRequestPolicy,
 )
-from meridian.lib.harness.connections.pi_lifecycle_file import (
-    prepare_pi_lifecycle_event_file,
-    read_pi_lifecycle_events_file,
-)
 from meridian.lib.harness.cost import estimate_usage_cost
 from meridian.lib.harness.extractors.pi import detect_pi_session_discovery_from_session_files
 from meridian.lib.harness.passthrough import get_passthrough
@@ -53,7 +49,6 @@ from meridian.lib.launch.artifact_io import write_projection_artifacts
 from meridian.lib.launch.constants import (
     HISTORY_FILENAME,
     OUTPUT_FILENAME,
-    PI_LIFECYCLE_EVENTS_FILENAME,
     PI_RUNTIME_META_FILENAME,
     PRIMARY_META_FILENAME,
 )
@@ -61,7 +56,6 @@ from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.artifact_store import InMemoryStore, LocalStore, make_artifact_key
 from meridian.lib.state.atomic import atomic_write_text
-from meridian.lib.state.history import HarnessHistoryWriter
 from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.state.primary_meta import (
     ActivityState,
@@ -352,7 +346,6 @@ def _cleanup_managed_primary_sidecars(spawn_dir: Path) -> None:
         PRIMARY_META_FILENAME,
         OUTPUT_FILENAME,
         "stderr.log",
-        PI_LIFECYCLE_EVENTS_FILENAME,
     ):
         with suppress(OSError):
             (spawn_dir / filename).unlink()
@@ -449,41 +442,6 @@ def _persist_blackbox_output_artifact(
         )
 
 
-def _persist_pi_primary_lifecycle_sidecar_diagnostics(
-    *,
-    spawn_id: SpawnId | None,
-    log_dir: Path,
-) -> None:
-    """Parse Pi lifecycle sidecar lines into primary history diagnostics."""
-
-    if spawn_id is None:
-        return
-    lifecycle_path = log_dir / PI_LIFECYCLE_EVENTS_FILENAME
-    if not lifecycle_path.is_file():
-        return
-
-    history_writer = HarnessHistoryWriter(log_dir / HISTORY_FILENAME)
-    try:
-        events = read_pi_lifecycle_events_file(
-            file_path=lifecycle_path,
-            expected_parent_spawn_id=spawn_id,
-            harness_id=HarnessId.PI.value,
-        )
-    except OSError:
-        logger.debug("Failed to parse Pi primary lifecycle sidecar diagnostics", exc_info=True)
-        return
-
-    for event in events:
-        write_result = history_writer.write(event)
-        if write_result.success:
-            continue
-        logger.debug(
-            "Failed to append Pi primary lifecycle sidecar diagnostic event",
-            extra={"spawn_id": str(spawn_id), "error": write_result.error},
-        )
-        return
-
-
 def _execute_primary_process(
     *,
     harness_id: HarnessId,
@@ -541,11 +499,6 @@ def _execute_primary_process(
             else None
         )
         blackbox_env = dict(child_env)
-        if harness_id is HarnessId.PI:
-            prepare_pi_lifecycle_event_file(
-                spawn_dir=log_dir,
-                env=blackbox_env,
-            )
         if (
             harness_id is HarnessId.PI
             and harness_contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
@@ -1115,12 +1068,6 @@ def run_harness_process(
                     command=command,
                     prelaunch_state=prelaunch_state,
                 )
-                if harness_id is HarnessId.PI:
-                    prepare_pi_lifecycle_event_file(
-                        spawn_dir=log_dir,
-                        env=child_env,
-                    )
-
                 is_pi_native_primary_launch = (
                     harness_id is HarnessId.PI
                     and harness_adapter.contract.bootstrap.mode is BootstrapMode.SUBPROCESS_ONLY
@@ -1198,11 +1145,6 @@ def run_harness_process(
                     spawn_id=primary_spawn_id,
                     log_dir=log_dir,
                 )
-                if harness_id is HarnessId.PI and write_native_primary_metadata:
-                    _persist_pi_primary_lifecycle_sidecar_diagnostics(
-                        spawn_id=primary_spawn_id,
-                        log_dir=log_dir,
-                    )
                 with suppress(Exception):
                     lifecycle_service.record_exited(
                         primary_spawn_id,

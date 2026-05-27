@@ -7,9 +7,21 @@ from types import SimpleNamespace
 import pytest
 
 from meridian.cli import streaming_serve as streaming_serve_module
+from meridian.lib.core.types import HarnessId
 from meridian.lib.ops.runtime import resolve_runtime_root
 from meridian.lib.state.spawn_store import get_spawn
 from meridian.lib.streaming.spawn_manager import DrainOutcome
+from tests.support.launch import stub_bundle_request_and_resolve
+
+
+@pytest.fixture(autouse=True)
+def _stub_launch_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+        harness_model="gpt-5.4",
+    )
 
 
 def _fake_launch_context(
@@ -34,6 +46,8 @@ def _fake_launch_context(
                 "appended_system_prompt": system,
                 "session_agent_path": str(child_cwd / "agent.md"),
             },
+            pi_task_ping_interval_seconds=None,
+            pi_task_ping_reset_on_activity=None,
         ),
         project_root=project_root,
         control_root=project_root,
@@ -49,7 +63,10 @@ def _fake_launch_context(
                 },
             ),
             spec=SimpleNamespace(name="fake-spec"),
-            run_params=SimpleNamespace(appended_system_prompt=system or ""),
+            run_params=SimpleNamespace(
+                appended_system_prompt=system or "",
+                interactive=False,
+            ),
         ),
     )
 
@@ -111,9 +128,10 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
     child_cwd.mkdir()
     runner_calls: list[dict[str, object]] = []
 
-    def _build_launch_context(**kwargs: object) -> SimpleNamespace:
+    def _bind_spawn_launch_context(**kwargs: object) -> SimpleNamespace:
+        bindings = kwargs["bindings"]
         return _fake_launch_context(
-            spawn_id=str(kwargs["spawn_id"]),
+            spawn_id=str(bindings.spawn_id),
             project_root=tmp_path,
             child_cwd=child_cwd,
             system="SYSTEM: projected",
@@ -124,8 +142,12 @@ async def test_streaming_serve_debug_keeps_projected_connection_config(
         return DrainOutcome(status="succeeded", exit_code=0)
 
     monkeypatch.setattr(
-        "meridian.lib.core.spawn_service.build_launch_context",
-        _build_launch_context,
+        "meridian.lib.core.spawn_service.compose_spawn_launch_surface",
+        lambda **kwargs: SimpleNamespace(request=kwargs["request"]),
+    )
+    monkeypatch.setattr(
+        "meridian.lib.core.spawn_service.bind_spawn_launch_context",
+        _bind_spawn_launch_context,
     )
     monkeypatch.setattr(streaming_serve_module, "run_streaming_spawn", _run_streaming_spawn)
 

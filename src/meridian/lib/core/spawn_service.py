@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from meridian.lib.catalog.model_aliases import MarsResultCache
+from meridian.lib.config.project_paths import ProjectConfigPaths
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
 from meridian.lib.core.lifecycle import SpawnLifecycleService
 from meridian.lib.core.spawn_lifecycle import (
@@ -30,12 +32,17 @@ from meridian.lib.core.telemetry import (
 )
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import ConnectionConfig
-from meridian.lib.launch.context import LaunchContext, build_launch_context
+from meridian.lib.launch.composition_spawn import (
+    bind_spawn_launch_context,
+    compose_spawn_launch_surface,
+)
+from meridian.lib.launch.context import LaunchContext, RuntimeBindings, resolve_report_output_path
 from meridian.lib.launch.env import resolve_pi_session_role
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.launch.resolve import (
     resolve_pi_child_wave_timeout_seconds,
     resolve_pi_notification_timeout_seconds,
+    resolve_pi_task_ping_interval_seconds,
 )
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.state import spawn_store
@@ -303,44 +310,55 @@ class SpawnApplicationService:
         Raises on resolution failure. No spawn row exists on failure.
         On success, row exists with resolved metadata.
         """
-        # Generate a placeholder spawn_id for the first launch-context build.
-        # Resolution can fail here; no spawn row or lifecycle event is emitted.
-        temp_spawn_id = f"pending-{id(payload.request)}"
-
-        # SEAM-1: Build launch context FIRST. This can fail.
-        # If it fails, no spawn row exists.
-        launch_ctx = await asyncio.to_thread(
-            build_launch_context,
-            spawn_id=temp_spawn_id,
+        mars_cache = MarsResultCache()
+        prepared_surface = await asyncio.to_thread(
+            compose_spawn_launch_surface,
             request=payload.request,
             runtime=payload.runtime,
             harness_registry=payload.harness_registry,
+            dry_run=False,
+            runtime_work_id=(payload.work_id or "").strip() or None,
+            cache=mars_cache,
         )
 
-        # Extract resolved metadata from launch context
-        resolved_request = launch_ctx.resolved_request
+        resolved_request = prepared_surface.request
         resolved_model = (resolved_request.model or "").strip()
         resolved_harness = (resolved_request.harness or "").strip()
         resolved_agent = (resolved_request.agent or "").strip() or None
 
-        # Validate we have required fields
         if not resolved_harness:
             raise ValueError("Harness resolution failed - harness is required")
 
-        # Resolve work_id
-        effective_work_id = (payload.work_id or launch_ctx.work_id or "").strip() or None
+        effective_work_id = (payload.work_id or "").strip() or None
 
-        # Reserve the final ID and rebuild launch context before lifecycle.start
-        # so MERIDIAN_SPAWN_ID and related env_overrides are final, while a
-        # second-build failure still leaves no row and emits no ghost events.
         final_spawn_id = await asyncio.to_thread(
             spawn_store.reserve_spawn_id,
             self._runtime_root,
         )
-        launch_ctx = await asyncio.to_thread(
-            build_launch_context,
+        resolved_config_root = Path(payload.runtime.resolved_config_root).expanduser().resolve()
+        resolved_requested_task_cwd = (
+            Path(payload.runtime.resolved_requested_task_cwd).expanduser().resolve()
+            if payload.runtime.resolved_requested_task_cwd is not None
+            else Path(payload.runtime.resolved_control_root).expanduser().resolve()
+        )
+        project_paths = ProjectConfigPaths(
+            project_root=resolved_config_root,
+            execution_cwd=resolved_requested_task_cwd,
+        )
+        report_output_path = resolve_report_output_path(
+            runtime=payload.runtime,
+            project_paths=project_paths,
             spawn_id=str(final_spawn_id),
-            request=payload.request,
+        )
+        launch_ctx = await asyncio.to_thread(
+            bind_spawn_launch_context,
+            prepared=prepared_surface,
+            bindings=RuntimeBindings(
+                spawn_id=str(final_spawn_id),
+                report_output_path=report_output_path,
+                runtime_work_id=effective_work_id,
+                dry_run=False,
+            ),
             runtime=payload.runtime,
             harness_registry=payload.harness_registry,
         )
@@ -427,6 +445,11 @@ class SpawnApplicationService:
                 explicit_timeout_seconds=None,
                 config_snapshot=launch_config_snapshot,
             ),
+            pi_task_ping_interval_seconds=resolve_pi_task_ping_interval_seconds(
+                explicit_interval_seconds=resolved_request.pi_task_ping_interval_seconds,
+                config_snapshot=launch_config_snapshot,
+            ),
+            pi_task_ping_reset_on_activity=resolved_request.pi_task_ping_reset_on_activity,
             pi_session_role=pi_session_role,
             debug_tracer=payload.debug_tracer,
         )

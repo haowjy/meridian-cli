@@ -126,7 +126,9 @@ def test_pi_extractor_detects_session_id_from_supported_storage_roots(
     else:
         user_home = tmp_path / "user-home"
         session_root = user_home / "meridian-pi" / "sessions"
-        monkeypatch.setattr(pi_extractor_module, "get_user_home", lambda: user_home)
+        import meridian.lib.harness.pi_paths as pi_paths_module
+
+        monkeypatch.setattr(pi_paths_module, "get_user_home", lambda: user_home)
 
     session_root.mkdir(parents=True)
     (session_root / "20260516_current.jsonl").write_text(

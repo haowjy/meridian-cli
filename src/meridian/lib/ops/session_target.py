@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from meridian.lib.core.types import HarnessId
+from meridian.lib.harness.pi_paths import resolve_pi_spawn_session_root
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.harness.session_detection import infer_harness_from_untracked_session_ref
 from meridian.lib.launch.constants import HISTORY_FILENAME, OUTPUT_FILENAME
@@ -28,7 +29,6 @@ from meridian.lib.state.primary_meta import (
     read_primary_metadata,
 )
 from meridian.lib.state.spawn.model import SpawnRecord
-from meridian.lib.state.user_paths import get_user_home
 
 _CODEX_FILENAME_RE = re.compile(
     r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(?P<session_id>[0-9a-fA-F-]{36})\.jsonl$"
@@ -379,7 +379,7 @@ def _skip_primary_default_root_detection(
     if not session_dir:
         return False
     configured_session_dir = _normalized_path_text(session_dir)
-    default_session_dir = _normalized_path_text(get_user_home() / "meridian-pi" / "sessions")
+    default_session_dir = _normalized_path_text(resolve_pi_spawn_session_root())
     if configured_session_dir is None or default_session_dir is None:
         return False
     return configured_session_dir != default_session_dir

@@ -80,14 +80,24 @@ Three concentric layers, each defined by function scope:
 
 ## Composition Surfaces
 
-`LaunchCompositionSurface` on `LaunchRuntime` controls which projection path runs:
-- `PRIMARY` — interactive session
-- `SPAWN_PREPARE` — subagent spawn; full prompt composition
-- `DIRECT` — already-resolved request; skips policy resolution
+`LaunchCompositionSurface` on `LaunchRuntime` controls whether Mars `launch-bundle` runs:
 
-Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED` is
-only for `ops/spawn/prepare.py` dry-run display (needs real argv for `cli_command`).
-**Do not set `REQUIRED` on execution paths.**
+| Surface | Mars? | Use |
+|---------|-------|-----|
+| `SPAWN_PREPARE` | Yes | Spawn prepare dry-run, spawn execute (fg/bg), streaming-serve prepare — needs `harness_model` |
+| `PRIMARY` | Yes | Interactive primary |
+| `DIRECT` | No | Tests and truly pre-resolved `SpawnRequest` only |
+
+`DIRECT` does not mean “pass model to Mars”; it means skip policy and trust the request.
+Production spawn paths that need Mars must use `build_spawn_mars_runtime` in `launch/plan.py`
+(`SPAWN_PREPARE` + config snapshot). Spawn uses **prepare-once / bind-twice**: `compose_spawn_launch_surface`
+once per operation, then `bind_spawn_launch_context` for preview (dry-run `REQUIRED` argv) and execute
+(`SPEC_ONLY`). Persisted `SpawnRequest.model` stays the canonical CLI token; `binding.spec.model` comes
+from Mars `harness_model` at bind. Re-compose only when session/fork resolution mutates the request.
+
+Use `LaunchArgvIntent.SPEC_ONLY` on execution paths. `LaunchArgvIntent.REQUIRED` is only for
+`ops/spawn/prepare.py` dry-run display (needs real argv for `cli_command`). **Do not set
+`REQUIRED` on execution paths.**
 
 ## Model-Policy Overlay Semantics
 

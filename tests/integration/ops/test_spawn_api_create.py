@@ -158,37 +158,35 @@ def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
-    monkeypatch.setattr(
-        spawn_api,
-        "build_create_payload",
-        lambda payload,
-        runtime=None,
-        preflight_warning=None,
-        ctx=None,
-        forced_task_cwd_resolution=None: type(
-            "Prepared",
-            (),
-            {
-                "harness": payload.harness or "codex",
-                "model": payload.model,
-                "warning": preflight_warning,
-                "agent": payload.agent,
-                "agent_metadata": {},
-                "skills": payload.skills,
-                "skill_paths": (),
-                "reference_files": (),
-                "template_vars": {},
-                "context_from": (),
-                "prompt": payload.prompt,
-                "goal": payload.goal,
-                "model_selection_requested_token": None,
-                "model_selection_canonical_id": None,
-                "model_selection_harness_provenance": None,
-                "terminal_surface_mode": None,
-                "cli_command": ("codex",),
-            },
-        )(),
-    )
+    def _fake_build_create_payload(
+        payload: SpawnCreateInput,
+        runtime: object | None = None,
+        preflight_warning: str | None = None,
+        ctx: object | None = None,
+        forced_task_cwd_resolution: object | None = None,
+    ) -> SimpleNamespace:
+        request = SimpleNamespace(
+            harness=payload.harness or "codex",
+            model=payload.model,
+            warning=preflight_warning,
+            agent=payload.agent,
+            agent_metadata={},
+            skills=payload.skills,
+            skill_paths=(),
+            reference_files=(),
+            template_vars={},
+            context_from=(),
+            prompt=payload.prompt,
+            goal=payload.goal,
+            model_selection_requested_token=None,
+            model_selection_canonical_id=None,
+            model_selection_harness_provenance=None,
+            terminal_surface_mode=None,
+            cli_command=("codex",),
+        )
+        return SimpleNamespace(request=request, prepared=None)
+
+    monkeypatch.setattr(spawn_api, "build_create_payload", _fake_build_create_payload)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -390,7 +388,7 @@ def test_spawn_create_real_worktree_creates_explicit_work_before_ensure(
 
     def _fake_build_create_payload(*_args: object, **_kwargs: object) -> SimpleNamespace:
         calls.append("build_payload")
-        return SimpleNamespace(harness="codex")
+        return SimpleNamespace(request=SimpleNamespace(harness="codex"), prepared=None)
 
     def _fake_execute_spawn_blocking(*_args: object, **_kwargs: object) -> SpawnActionOutput:
         calls.append("execute")

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from pathlib import Path
 
 from meridian.lib.core.types import ArtifactKey, SpawnId
 from meridian.lib.harness.common import extract_opencode_report
+from meridian.lib.harness.extractors.opencode import OPENCODE_EXTRACTOR
+from meridian.lib.harness.opencode_storage import resolve_opencode_storage_root
 from meridian.lib.launch.constants import HISTORY_FILENAME
+from meridian.lib.launch.report import extract_or_fallback_report
 
 
 class _MemoryArtifactStore:
@@ -150,3 +155,184 @@ def test_extract_opencode_report_returns_none_when_assistant_text_is_missing() -
     )
 
     assert extract_opencode_report(store, spawn_id) is None
+
+
+def test_extract_opencode_report_reads_assistant_text_from_message_part_updated() -> None:
+    """Regression for p2488: assistant text in message.part.updated, not info.parts."""
+
+    spawn_id = SpawnId("p-opencode-part-updated")
+    assistant_message_id = "msg_assistant_live"
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "byte_offset": 0,
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_user",
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": "msg_user",
+                            "role": "user",
+                            "sessionID": "ses_p2488",
+                            "parts": [{"type": "text", "text": "Reply LIVE_OK only"}],
+                        }
+                    },
+                },
+                "seq": 1,
+            },
+            {
+                "byte_offset": 50,
+                "event_type": "message.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_assistant_meta",
+                    "type": "message.updated",
+                    "properties": {
+                        "info": {
+                            "id": assistant_message_id,
+                            "role": "assistant",
+                            "sessionID": "ses_p2488",
+                        }
+                    },
+                },
+                "seq": 2,
+            },
+            {
+                "byte_offset": 100,
+                "event_type": "message.part.updated",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_assistant_part",
+                    "type": "message.part.updated",
+                    "properties": {
+                        "sessionID": "ses_p2488",
+                        "part": {
+                            "id": "prt_live",
+                            "messageID": assistant_message_id,
+                            "sessionID": "ses_p2488",
+                            "type": "text",
+                            "text": "LIVE_OK",
+                        },
+                    },
+                },
+                "seq": 3,
+            },
+            {
+                "byte_offset": 150,
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_idle",
+                    "type": "session.idle",
+                    "properties": {"sessionID": "ses_p2488"},
+                },
+                "seq": 4,
+            },
+        ],
+    )
+
+    assert extract_opencode_report(store, spawn_id) == "LIVE_OK"
+
+
+def test_extract_or_fallback_report_never_returns_session_idle_envelope() -> None:
+    spawn_id = SpawnId("p-opencode-fallback-idle")
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "byte_offset": 0,
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_idle",
+                    "type": "session.idle",
+                    "properties": {"sessionID": "ses_idle_only"},
+                },
+                "seq": 1,
+            }
+        ],
+    )
+
+    report = extract_or_fallback_report(store, spawn_id, extractor=OPENCODE_EXTRACTOR)
+
+    assert report.content is None
+    assert "session.idle" not in (report.content or "")
+
+
+def test_extract_opencode_report_falls_back_to_opencode_db_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    session_id = "ses_fixture_report_db"
+    spawn_id = SpawnId("p-opencode-db-fallback")
+    storage_root = tmp_path / "opencode" / "storage"
+    session_file = storage_root / "session_diff" / f"{session_id}.json"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("[]\n", encoding="utf-8")
+
+    db_path = tmp_path / "opencode" / "opencode.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE message (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            CREATE TABLE part (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO message "
+            "(id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("msg_1", session_id, 1, 1, json.dumps({"role": "assistant"})),
+        )
+        connection.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "prt_1",
+                "msg_1",
+                session_id,
+                1,
+                1,
+                json.dumps({"type": "text", "text": "LIVE_OK"}),
+            ),
+        )
+        connection.commit()
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert resolve_opencode_storage_root() == storage_root
+
+    store = _artifact_store_from_history_lines(
+        spawn_id,
+        [
+            {
+                "byte_offset": 0,
+                "event_type": "session.idle",
+                "harness_id": "opencode",
+                "payload": {
+                    "id": "evt_idle",
+                    "type": "session.idle",
+                    "properties": {"sessionID": session_id},
+                },
+                "seq": 1,
+            }
+        ],
+    )
+    store._payloads[f"{spawn_id}/session_id.txt"] = session_id.encode("utf-8")
+
+    assert extract_opencode_report(store, spawn_id) == "LIVE_OK"

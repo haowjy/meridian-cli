@@ -71,6 +71,8 @@ class SpawnLaunchOptionUpdates(TypedDict):
     harness: str | None
     passthrough_args: tuple[str, ...]
     debug: bool
+    task_ping_interval: str | None
+    task_ping_reset_on_activity: bool | None
 
 
 class SpawnLaunchOptions(BaseModel):
@@ -91,6 +93,8 @@ class SpawnLaunchOptions(BaseModel):
     harness: str | None = None
     passthrough_args: tuple[str, ...] = ()
     debug: bool = False
+    task_ping_interval: str | None = None
+    task_ping_reset_on_activity: bool | None = None
 
     def launch_option_updates(self) -> SpawnLaunchOptionUpdates:
         return {
@@ -109,6 +113,8 @@ class SpawnLaunchOptions(BaseModel):
             "harness": self.harness,
             "passthrough_args": self.passthrough_args,
             "debug": self.debug,
+            "task_ping_interval": self.task_ping_interval,
+            "task_ping_reset_on_activity": self.task_ping_reset_on_activity,
         }
 
 

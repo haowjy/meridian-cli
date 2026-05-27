@@ -66,8 +66,13 @@ def _persist_report(
     redacted_content = redact_secrets(extracted.content, secrets)
     target = log_dir / REPORT_FILENAME
     report_key = ArtifactKey(f"{spawn_id}/{REPORT_FILENAME}")
-    if extracted.source == "assistant_message":
-        wrapped = f"# Report\n\n{redacted_content.strip()}\n"
+    if extracted.source in {"assistant_message", "failure_reason", "pi_failure"}:
+        heading = (
+            "# Spawn failed"
+            if extracted.source in {"failure_reason", "pi_failure"}
+            else "# Report"
+        )
+        wrapped = f"{heading}\n\n{redacted_content.strip()}\n"
         atomic_write_text(target, wrapped)
         artifacts.put(report_key, wrapped.encode("utf-8"))
         return target
@@ -105,6 +110,7 @@ def enrich_finalize(
     harness_id: HarnessId | str | None = None,
     project_root: Path | None = None,
     secrets: tuple[SecretSpec, ...] = (),
+    failure_reason: str | None = None,
 ) -> FinalizeExtraction:
     """Spawn all extraction steps and return one enriched finalization payload."""
 
@@ -115,7 +121,12 @@ def enrich_finalize(
         harness_id=str(harness_id) if harness_id is not None else None,
     )
     harness_session_id = extractor.extract_session_id(artifacts, spawn_id)
-    report = extract_or_fallback_report(artifacts, spawn_id, extractor=extractor)
+    report = extract_or_fallback_report(
+        artifacts,
+        spawn_id,
+        extractor=extractor,
+        failure_reason=failure_reason,
+    )
     report_path = _persist_report(
         artifacts=artifacts,
         spawn_id=spawn_id,

@@ -1,20 +1,23 @@
 # Smoke test helper scripts
 
-Shell helpers for smoke testing meridian. Source them at the top of a
-terminal session before working through any `tests/smoke/*.md` guide.
+Setup-only shell helpers for manual smoke guides in `tests/smoke/*.md`. Source them
+before working through a guide; they do **not** run or assert test scenarios.
 
 ## Quick start
 
 ```bash
-# Plain isolated environment
+# Plain isolated Meridian scratch env
 . tests/smoke/scripts/setup.sh
 
 # With a git repo in SCRATCH
 . tests/smoke/scripts/setup.sh --git
 
-# Add assertion helpers too
-. tests/smoke/scripts/assert.sh
+# Pi harness: PATH/node check + optional extension build
+. tests/smoke/scripts/pi-setup.sh --build-extensions
 ```
+
+Pi-specific manual gate: `tests/smoke/pi-manual.md`. Deep RPC scenarios:
+`tests/smoke/pi-rpc-quiescence.md`.
 
 ---
 
@@ -50,67 +53,16 @@ smoke_add_agent test
 
 ---
 
-## assert.sh
+## pi-setup.sh
 
-Assertion helpers for scripted verification. Each function prints `PASS` or
-`FAIL` and accumulates counts. Call `smoke_summary` at the end to print totals
-and exit non-zero if any check failed.
+Prepares a **real** Pi install for manual smoke (no fake binaries, no test runners).
 
-### assert_exit EXPECTED ACTUAL [label]
+| What it does | Notes |
+|---|---|
+| Verifies `pi` on `PATH` | Fails fast if missing or `pi --version` errors |
+| Warns if Node is below 24 | Extension builds expect Node 24+ |
+| Sets `PI_CODING_AGENT_DIR` | Defaults to `~/.pi/agent` if unset |
+| `--build-extensions` | Runs `npm run build:extensions` in `src/meridian/pi_runtime` |
+| `--isolated-state` | Sets `MERIDIAN_PI_STATE_DIR` to a temp dir (extension task state only) |
 
-```bash
-output=$(uv run meridian config show --json); rc=$?
-assert_exit 0 $rc "config show exits 0"
-```
-
-### assert_contains HAYSTACK NEEDLE [label]
-
-```bash
-assert_contains "$output" '"status": "dry-run"' "dry-run status present"
-```
-
-### assert_not_contains HAYSTACK NEEDLE [label]
-
-```bash
-assert_not_contains "$output" "Traceback" "no traceback"
-```
-
-### assert_json FIELD EXPECTED JSON [label]
-
-Dot-separated key path into a JSON string. Uses `python3` — no `jq` needed.
-
-```bash
-assert_json "status" "dry-run" "$output"
-assert_json "model_selection.requested_token" "gpt-5.5" "$output"
-```
-
-### assert_file_exists PATH [label]
-
-```bash
-assert_file_exists "$SCRATCH/meridian.toml" "config file created"
-```
-
-### smoke_summary
-
-Print totals and return 1 if any check failed:
-
-```bash
-smoke_summary
-```
-
----
-
-## Example session
-
-```bash
-. tests/smoke/scripts/setup.sh
-. tests/smoke/scripts/assert.sh
-smoke_add_agent reviewer
-
-out=$(uv run meridian spawn -a reviewer -p "hello" --dry-run --json); rc=$?
-assert_exit 0 $rc
-assert_contains "$out" '"status": "dry-run"'
-assert_json "status" "dry-run" "$out"
-
-smoke_summary
-```
+Does not invoke `meridian spawn`, assert outcomes, or patch `pi`.

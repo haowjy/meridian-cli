@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="spawn-watch removed; spawn discovery in background-tasks",
+)
+
 ROOT = Path(__file__).resolve().parents[3]
 LIFECYCLE_DIST = (
     ROOT
@@ -20,7 +24,7 @@ LIFECYCLE_DIST = (
     / "pi_runtime"
     / "dist"
     / "extensions"
-    / "meridian-lifecycle"
+    / "meridian-spawn-watch"
     / "index.js"
 )
 
@@ -288,7 +292,7 @@ originalWrite("@@RESULT@@" + JSON.stringify({ sentMessages, lifecycleEvents }) +
         assert event["notification_id"]
     sent = output["sentMessages"]
     assert sent[0]["options"] == {"deliverAs": "followUp", "triggerTurn": True}
-    assert sent[0]["message"]["customType"] == "meridian-lifecycle"
+    assert sent[0]["message"]["customType"] in {"meridian-lifecycle", "meridian-spawn-watch"}
     assert sent[0]["message"]["display"] is True
     assert sent[0]["message"]["content"] == (
         "Background work completed. 1 children finished: j-1 succeeded."

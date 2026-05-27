@@ -113,9 +113,18 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `timeouts.kill_grace_minutes` | float | Grace before force-kill (minutes) |
 | `timeouts.guardrail_minutes` | float | Guardrail timeout (minutes) |
 | `timeouts.wait_minutes` | float | Default `spawn wait` timeout (minutes) |
+| `timeouts.pi_child_wave_timeout_seconds` | float | Pi spawn-watch tracked-child wave timeout (seconds; default 300 when unset) |
+| `timeouts.pi_task_ping_interval_seconds` | float | Pi background-task ping interval (seconds; extension default when unset) |
+| `timeouts.pi_child_wave_timeout_seconds` | float\|null | Pi spawn-watch child wave timeout (seconds); unset uses 5 minutes |
+| `timeouts.pi_task_ping_interval_seconds` | float\|null | Default Pi background-task ping interval (seconds); unset uses extension default |
 | `harness.claude` | str | Default model for Claude harness |
 | `harness.codex` | str | Default model for Codex harness |
 | `harness.opencode` | str | Default model for OpenCode harness |
+| `harness.pi.load_all_pi_extensions` | bool | When `true`, Pi also loads extensions from `extra_extension_paths` (default `false` = Meridian bundles only) |
+| `harness.pi.extra_extension_paths` | array[str] | Extra extension roots scanned only when `load_all_pi_extensions = true` (default: Pi user extension dir) |
+| `harness.pi.background_tasks.enabled` | bool | Meridian `background-tasks` bundle (default `true`; spawned RPC keeps spawn-watch only) |
+| `harness.pi.spawn_watch.enabled` | bool | Legacy alias for background-tasks bundle (default `true`) |
+| `harness.pi.disable_managed_bash` | bool | **Legacy** — same as `background_tasks.enabled = false` |
 | `output.show` | array[str] | Stream categories shown |
 | `output.verbosity` | str\|null | `quiet\|normal\|verbose\|debug` |
 | `state.retention_days` | int | TTL for stale state pruning (`-1` = never, `0` = immediate, default `30`) |
@@ -123,7 +132,7 @@ Canonical keys accepted by `meridian config set/get/reset`:
 | `spawn.min_wait_yield_seconds` | float | Minimum yield interval for `spawn wait` (seconds) |
 | `primary.autocompact` | int | Context compaction threshold for primary session (1–100) |
 
-Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile.
+Agent profiles are opt-in. When `--agent/-a` is omitted and `primary.agent` is unset, Meridian runs without a predefined profile. Agent definitions live in `mars.toml`, not `meridian.toml`; run `meridian mars sync` after changing them.
 
 Project-level routing defaults (`default_model`, `default_harness`) live in
 `mars.toml` under `[settings]`, not in Meridian config.
@@ -248,6 +257,12 @@ max_depth = 4
 claude = "claude-opus-4-6"
 codex = "gpt-5.3-codex"
 opencode = "gemini-3.1-pro"
+
+[harness.pi]
+load_all_pi_extensions = false
+background_tasks.enabled = true
+spawn_watch.enabled = true
+# disable_managed_bash = false  # legacy alias for background_tasks.enabled
 
 [output]
 show = ["lifecycle", "error"]

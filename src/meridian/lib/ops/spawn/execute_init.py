@@ -17,6 +17,7 @@ from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.resolved_context import ResolvedContext
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.types import ModelId, SpawnId
+from meridian.lib.launch.plan import build_spawn_mars_runtime
 from meridian.lib.launch.request import SpawnRequest
 from meridian.lib.launch.types import PrimarySessionMetadata
 from meridian.lib.ops.work_attachment import ensure_explicit_work_item
@@ -279,6 +280,7 @@ __all__ = [
     "_spawn_background_worker_env",
     "_spawn_child_env",
     "_write_params_json",
+    "build_spawn_mars_runtime",
     "depth_exceeded_output",
     "depth_limits",
 ]
