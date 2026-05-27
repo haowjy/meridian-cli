@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.domain import SpawnStatus
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 
 LaunchMode = Literal["background", "foreground", "app"]
 BACKGROUND_LAUNCH_MODE: LaunchMode = "background"
@@ -82,6 +83,7 @@ class SpawnRecord(BaseModel):
     error: str | None
     terminal_origin: SpawnOrigin | None
     process_scopes: tuple[dict[str, object], ...] | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
 
 __all__ = [
@@ -92,6 +94,7 @@ __all__ = [
     "_AUTHORITATIVE_ORIGIN_VALUES",
     "_LAUNCH_MODE_VALUES",
     "LaunchMode",
+    "LaunchPolicySnapshot",
     "SpawnOrigin",
     "SpawnRecord",
     "TerminalSpawnStatus",

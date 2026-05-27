@@ -4,6 +4,17 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Spawn rows now persist `launch_policy_snapshot`; older `state.json` files without the field still read cleanly.
+- Launch preparation now snapshots resolved agent description/body, skill paths, and policy provenance fields into the persisted launch-policy snapshot.
+- Launch preparation now snapshots resolved loaded skill payloads into the persisted launch-policy snapshot so replay keeps skill content/name/path stable.
+
+### Changed
+- Bump bundled `mars-agents` to 0.7.3 and document static `models list` vs live `models list --live` semantics.
+- `spawn --continue` now replays the source launch policy snapshot and rejects policy-changing overrides.
+- Spawn launch-policy compilation now reuses persisted snapshots when present instead of re-running live launch-bundle/config/profile/skill resolution.
+- Primary Claude launches now project profile-resolved `approval:auto` to `--permission-mode acceptEdits` without requiring a CLI `--approval` override.
+
 ## [0.2.7] - 2026-05-25
 
 ### Added

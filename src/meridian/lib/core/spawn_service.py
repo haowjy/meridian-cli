@@ -355,6 +355,7 @@ class SpawnApplicationService:
             desc=payload.desc,
             work_id=effective_work_id,
             goal=getattr(resolved_request, "goal", None),
+            launch_policy_snapshot=resolved_request.launch_policy_snapshot,
         )
 
         # SEAM-ID.1: Persist the already-reserved ID via lifecycle service only
@@ -386,6 +387,7 @@ class SpawnApplicationService:
                 execution_cwd=launch_ctx.binding.child_cwd.as_posix(),
                 launch_mode=payload.launch_mode,
                 runner_pid=payload.runner_pid,
+                launch_policy_snapshot=resolved_request.launch_policy_snapshot,
                 status=payload.initial_status,
             )
         )

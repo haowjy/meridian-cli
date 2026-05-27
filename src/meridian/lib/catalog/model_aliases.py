@@ -595,8 +595,9 @@ def _mars_merged_to_entries(merged: dict[str, object]) -> list[AliasEntry]:
                     default_autocompact_pct=_coerce_optional_int(default_autocompact_pct),
                 )
             )
-        # Auto-resolve aliases without the cache can't be resolved here
-        # — they need mars models list which runs auto-resolve against the cache
+        # Auto-resolve aliases without the cache cannot be resolved from the merged file.
+        # Use `mars models resolve <alias> --json` for authoritative per-alias routing
+        # or `mars models list --live` for bulk live availability/runnable data.
 
     return entries
 
@@ -608,11 +609,13 @@ def load_mars_aliases(
 ) -> list[AliasEntry]:
     """Load model aliases from mars.
 
-    Prefers ``mars models list --json`` for the full resolved view
-    (includes consumer overrides + auto-resolution).  Falls back to
-    reading ``.mars/models-merged.json`` if the mars binary isn't available.
+    Prefers ``mars models list --json`` for the static project alias inventory.
+    Falls back to reading ``.mars/models-merged.json`` if the mars binary isn't
+    available. Use ``mars models resolve <alias> --json`` for authoritative
+    per-alias routing and ``mars models list --live`` for availability/runnable
+    data.
     """
-    # Try mars CLI first — it returns fully resolved aliases
+    # Try mars CLI first — it returns the static project alias inventory.
     mars_list = cached_mars_models_list(project_root, cache=cache)
     if mars_list is not None:
         entries = _mars_list_to_entries(mars_list)

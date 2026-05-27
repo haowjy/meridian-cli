@@ -84,6 +84,7 @@ from .policies import (
     SurfacePolicyInput,
     resolve_launch_policy,
 )
+from .policy_snapshot import build_launch_policy_snapshot
 from .prompt import (
     build_goal_instruction,
     build_launch_context_documents,
@@ -913,6 +914,7 @@ def compile_prepared_policy_surface(
             harness_registry=harness_registry,
             skills_readonly=dry_run,
             requested_skills=request.skills,
+            policy_snapshot=request.launch_policy_snapshot,
         )
     )
 
@@ -1222,6 +1224,7 @@ def prepare_launch_surface(
     active_work_dir = prepared_policy.active_work_dir
     policies = prepared_policy.resolved_policy
     profile = policies.profile
+    using_policy_snapshot = request.launch_policy_snapshot is not None
     has_profile = profile is not None
     execution_policy = policies.execution_policy
     model_selection = policies.model_selection
@@ -1292,6 +1295,10 @@ def prepare_launch_surface(
     session_agent_path = resolve_profile_path(profile)
     if resolved_agent_name is not None:
         agent_metadata["session_agent"] = resolved_agent_name
+    if profile is not None and profile.description.strip():
+        agent_metadata["session_agent_description"] = profile.description.strip()
+    if profile is not None and profile.body.strip():
+        agent_metadata["session_agent_profile_body"] = profile.body
     if session_agent_path:
         agent_metadata["session_agent_path"] = session_agent_path
     adhoc_agent_payload = ""
@@ -1314,7 +1321,9 @@ def prepare_launch_surface(
         agent_inventory_prompt=content.agent_inventory_prompt,
         context_prompt=content.context_prompt,
     )
-    profile_tools_for_nested_deny = policies.resolved_tools if profile is not None else None
+    profile_tools_for_nested_deny = (
+        policies.resolved_tools if (profile is not None or using_policy_snapshot) else None
+    )
 
     resolved_request = request.model_copy(
         update={
@@ -1326,10 +1335,16 @@ def prepare_launch_surface(
             "skills": resolved_skills.skill_names,
             "extra_args": final_passthrough_args,
             "mcp_tools": (
-                policies.resolved_mcp_tools if profile is not None else request.mcp_tools
+                policies.resolved_mcp_tools
+                if (profile is not None or using_policy_snapshot)
+                else request.mcp_tools
             ),
             "execution_policy": execution_policy,
-            "tools": policies.resolved_tools if profile is not None else request.tools,
+            "tools": (
+                policies.resolved_tools
+                if (profile is not None or using_policy_snapshot)
+                else request.tools
+            ),
             "session": request.session.model_copy(
                 update={
                     "requested_harness_session_id": continuation.harness_session_id,
@@ -1347,6 +1362,16 @@ def prepare_launch_surface(
             **model_selection_update,
         }
     )
+    resolved_request = resolved_request.model_copy(
+        update={
+            "launch_policy_snapshot": request.launch_policy_snapshot
+            or build_launch_policy_snapshot(
+                resolved_request,
+                model_selection=model_selection,
+                loaded_skills=resolved_skills.loaded_skills,
+            )
+        }
+    )
     return PreparedLaunchSurface(
         request=resolved_request,
         harness=harness,
@@ -1357,7 +1382,7 @@ def prepare_launch_surface(
             seed_session_args=seed_session_args,
         ),
         profile_tools_for_nested_deny=profile_tools_for_nested_deny,
-        has_profile_for_nested_deny=has_profile,
+        has_profile_for_nested_deny=has_profile or using_policy_snapshot,
         model_selection=model_selection,
         alias_catalog=policies.alias_catalog,
         launch_request=request,
@@ -1388,9 +1413,16 @@ def _build_direct_surface(
         reference_anchor=reference_anchor.expanduser().resolve(),
         kb_dir=resolve_kb_dir(resolved_project_root),
     )
+    resolved_request = (
+        request
+        if request.launch_policy_snapshot is not None
+        else request.model_copy(
+            update={"launch_policy_snapshot": build_launch_policy_snapshot(request)}
+        )
+    )
 
     return PreparedLaunchSurface(
-        request=request,
+        request=resolved_request,
         harness=harness,
         composition_warnings=composition_warnings,
         content=PreparedLaunchContent(
@@ -1413,7 +1445,7 @@ def _build_direct_surface(
         has_profile_for_nested_deny=False,
         model_selection=None,
         alias_catalog=None,
-        launch_request=request,
+        launch_request=resolved_request,
     )
 
 
@@ -1839,6 +1871,7 @@ __all__ = [
     "bind_launch_context",
     "build_child_runtime_env_overrides",
     "build_launch_context",
+    "build_launch_policy_snapshot",
     "compile_prepared_policy_surface",
     "materialize_launch_artifacts",
     "merge_env_overrides",

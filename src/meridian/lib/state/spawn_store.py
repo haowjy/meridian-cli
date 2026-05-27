@@ -17,6 +17,9 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.clock import Clock, RealClock
 from meridian.lib.core.domain import SpawnStatus, TokenUsage
+from meridian.lib.core.launch_policy_snapshot import (
+    LaunchPolicySnapshot as LaunchPolicySnapshot,
+)
 from meridian.lib.core.spawn_lifecycle import (
     ACTIVE_SPAWN_STATUSES as _ACTIVE_SPAWN_STATUSES,
 )
@@ -135,13 +138,24 @@ def _resolve_start_metadata(
     desc: str | None,
     work_id: str | None,
     goal: str | None,
+    launch_policy_snapshot: LaunchPolicySnapshot | None,
 ) -> SpawnStartMetadata:
     if metadata is None:
-        return SpawnStartMetadata(desc=desc, work_id=work_id, goal=goal)
+        return SpawnStartMetadata(
+            desc=desc,
+            work_id=work_id,
+            goal=goal,
+            launch_policy_snapshot=launch_policy_snapshot,
+        )
     return SpawnStartMetadata(
         desc=metadata.desc if metadata.desc is not None else desc,
         work_id=metadata.work_id if metadata.work_id is not None else work_id,
         goal=metadata.goal if metadata.goal is not None else goal,
+        launch_policy_snapshot=(
+            metadata.launch_policy_snapshot
+            if metadata.launch_policy_snapshot is not None
+            else launch_policy_snapshot
+        ),
     )
 
 
@@ -239,6 +253,7 @@ def start_spawn(
     worker_pid: int | None = None,
     runner_pid: int | None = None,
     runner_created_at_epoch: float | None = None,
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None,
     status: SpawnStatus = "running",
     started_at: str | None = None,
     clock: Clock | None = None,
@@ -253,6 +268,7 @@ def start_spawn(
         desc=desc,
         work_id=work_id,
         goal=goal,
+        launch_policy_snapshot=launch_policy_snapshot,
     )
     normalized_goal: str | None = None
     if start_metadata.goal is not None:
@@ -263,6 +279,10 @@ def start_spawn(
     resolved_runner_created_at_epoch = runner_created_at_epoch
     if resolved_runner_created_at_epoch is None:
         resolved_runner_created_at_epoch = _runner_created_at_epoch_for_pid(runner_pid)
+
+    resolved_launch_policy_snapshot = (
+        launch_policy_snapshot or start_metadata.launch_policy_snapshot
+    )
 
     with lock_file(paths.spawns_flock):
         if spawn_id is not None:
@@ -322,6 +342,7 @@ def start_spawn(
             cost_is_estimate=False,
             error=None,
             terminal_origin=None,
+            launch_policy_snapshot=resolved_launch_policy_snapshot,
         )
         spawn_dir = paths.spawns_dir / str(resolved_spawn_id)
         spawn_dir.mkdir(parents=True, exist_ok=True)

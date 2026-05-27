@@ -166,6 +166,7 @@ def execute_spawn_background(
         control_root=execution_contract.control_root.as_posix(),
         task_cwd=initial_task_cwd,
         execution_cwd=initial_execution_cwd,
+        launch_policy_snapshot=request.launch_policy_snapshot,
         ctx=resolved_context,
     )
     spawn_id_text = str(context.spawn.spawn_id)
@@ -424,6 +425,7 @@ def execute_spawn_blocking(
         control_root=execution_contract.control_root.as_posix(),
         task_cwd=initial_task_cwd,
         execution_cwd=initial_execution_cwd,
+        launch_policy_snapshot=request.launch_policy_snapshot,
         ctx=resolved_context,
     )
     spawn = context.spawn

@@ -11,6 +11,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
+from meridian.lib.launch.context import build_launch_policy_snapshot
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
     SurfacePolicyInput,
@@ -18,7 +19,8 @@ from meridian.lib.launch.policies import (
     resolve_launch_policy,
     resolve_policy_fields,
 )
-from meridian.lib.launch.request import LaunchCompositionSurface
+from meridian.lib.launch.request import LaunchCompositionSurface, SpawnRequest
+from tests.support.fixtures import write_agent, write_skill
 from tests.support.launch import FakeBundleResult
 
 
@@ -593,3 +595,97 @@ def test_spawn_prepare_passes_profile_and_requested_skills_to_bundle(
     )
 
     assert captured["skills"] == ("alpha", "beta", "gamma")
+
+
+def test_snapshot_replay_uses_persisted_loaded_skills_after_live_catalog_changes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    skill_path = write_skill(
+        tmp_path,
+        "testing-principles",
+        body="# testing-principles\n\nBe consistent.\n",
+        description="testing-principles skill",
+    )
+    write_agent(
+        tmp_path,
+        name="coder",
+        model="gpt-5.4",
+        skills=("testing-principles",),
+        harness=HarnessId.CODEX.value,
+    )
+
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda request, *, harness_registry: FakeBundleResult(
+            model="gpt-5.4",
+            model_token="gpt5.4",
+            harness=HarnessId.CODEX,
+            harness_model="gpt-5.4",
+            execution_policy=ResolvedExecutionPolicy(approval="auto"),
+            provenance={"harness_source": "provider"},
+        ),
+    )
+    monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
+
+    initial_policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(agent="coder"), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_spawn_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+        )
+    )
+
+    original_skills = initial_policy.resolved_skills.loaded_skills
+    assert original_skills
+    snapshot = build_launch_policy_snapshot(
+        SpawnRequest(
+            model=initial_policy.model,
+            harness=initial_policy.harness.value,
+            agent=initial_policy.profile.name if initial_policy.profile is not None else None,
+            skills=initial_policy.resolved_skills.skill_names,
+            execution_policy=initial_policy.execution_policy,
+            prompt="snapshot replay prompt",
+            extra_args=(),
+        ),
+        model_selection=initial_policy.model_selection,
+        loaded_skills=original_skills,
+    )
+
+    skill_path.unlink()
+
+    monkeypatch.setattr(
+        "meridian.lib.launch.policies.resolve_skills_from_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("snapshot replay should not re-resolve live skill catalog")
+        ),
+    )
+    monkeypatch.setattr(
+        bundle_adapter,
+        "request_and_resolve",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("snapshot replay should not call launch-bundle")
+        ),
+    )
+
+    replayed_policy = resolve_launch_policy(
+        SurfacePolicyInput(
+            surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            catalog=CatalogSession(tmp_path),
+            layers=(RuntimeOverrides(), RuntimeOverrides()),
+            config_overrides=RuntimeOverrides.from_spawn_config(MeridianConfig()),
+            config=MeridianConfig(),
+            harness_registry=get_default_harness_registry(),
+            policy_snapshot=snapshot,
+        )
+    )
+
+    assert replayed_policy.resolved_skills.skill_names == ("testing-principles",)
+    assert replayed_policy.resolved_skills.loaded_skills == original_skills
+    assert replayed_policy.resolved_skills.loaded_skills[0].name == "testing-principles"
+    assert replayed_policy.resolved_skills.loaded_skills[0].path == str(skill_path)
+    assert replayed_policy.resolved_skills.loaded_skills[0].content == original_skills[0].content

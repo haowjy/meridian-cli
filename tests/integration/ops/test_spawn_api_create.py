@@ -41,6 +41,11 @@ def test_spawn_create_dry_run_resolves_project_root_from_nested_cwd(
     reference_file = project_root / "guide.md"
     reference_file.write_text("# Guide\n", encoding="utf-8")
     monkeypatch.chdir(nested)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
@@ -210,6 +215,11 @@ def test_spawn_create_dry_run_with_work_is_non_mutating(
     project_root.mkdir()
     (project_root / "mars.toml").write_text("", encoding="utf-8")
     monkeypatch.chdir(project_root)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
     project_state_dir = resolve_project_paths(project_root).root_dir
 
     assert work_store.get_work_item(project_state_dir, "new-work-item") is None

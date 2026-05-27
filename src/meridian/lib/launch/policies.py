@@ -32,7 +32,11 @@ from .launch_types import (
     ResolvedLaunchRouting,
     TerminalSurfaceMode,
 )
-from .request import LaunchCompositionSurface
+from .policy_snapshot import (
+    ReplayedModelSelection,
+    replay_launch_policy_snapshot,
+)
+from .request import LaunchCompositionSurface, LaunchPolicySnapshot
 from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
@@ -70,6 +74,7 @@ class SurfacePolicyInput:
     harness_registry: HarnessRegistry
     skills_readonly: bool = True
     requested_skills: tuple[str, ...] = ()
+    policy_snapshot: LaunchPolicySnapshot | None = None
     supported_execution_policy_fields: frozenset[ExecutionPolicyField] = (
         _DEFAULT_EXECUTION_POLICY_FIELDS
     )
@@ -524,12 +529,64 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
     )
 
 
+def _resolve_policy_from_snapshot(
+    *,
+    surface: SurfacePolicyInput,
+    snapshot: LaunchPolicySnapshot,
+) -> ResolvedLaunchPolicy:
+    """Resolve launch policy from a persisted launch-policy snapshot."""
+
+    replayed = replay_launch_policy_snapshot(
+        snapshot=snapshot,
+        project_root=surface.catalog.project_root,
+        harness_registry=surface.harness_registry,
+        skills_readonly=surface.skills_readonly,
+        alias_catalog=surface.catalog.alias_map(),
+        resolve_terminal_surface_mode=_resolve_terminal_surface_mode,
+        logger=_LOGGER,
+    )
+    return ResolvedLaunchPolicy(
+        profile=replayed.profile,
+        model=replayed.model,
+        harness=replayed.harness,
+        adapter=replayed.adapter,
+        resolved_skills=replayed.resolved_skills,
+        routing=replayed.routing,
+        execution_policy=replayed.execution_policy,
+        resolved_tools=replayed.resolved_tools,
+        resolved_mcp_tools=replayed.resolved_mcp_tools,
+        terminal_surface_mode=replayed.terminal_surface_mode,
+        matched_policy_rule=replayed.matched_policy_rule,
+        model_selection=_model_selection_from_replayed_snapshot(replayed.model_selection),
+        fallback_chain=replayed.fallback_chain,
+        warnings=(),
+        alias_catalog=replayed.alias_catalog,
+    )
+
+
+def _model_selection_from_replayed_snapshot(
+    replayed: ReplayedModelSelection | None,
+) -> ModelSelectionContext | None:
+    if replayed is None:
+        return None
+    return ModelSelectionContext(
+        requested_token=replayed.requested_token,
+        selected_model_token=replayed.selected_model_token,
+        canonical_model_id=replayed.canonical_model_id,
+        harness_provenance=replayed.harness_provenance,
+        harness_model_id=replayed.harness_model_id,
+    )
+
+
 def resolve_launch_policy(surface: SurfacePolicyInput) -> ResolvedLaunchPolicy:
     """Resolve the shared launch policy boundary for one launch-like surface.
 
     PRIMARY and SPAWN_PREPARE both use the mars launch-bundle path.  DIRECT is
     handled separately (no policy resolution needed — already-resolved inputs).
     """
+
+    if surface.policy_snapshot is not None:
+        return _resolve_policy_from_snapshot(surface=surface, snapshot=surface.policy_snapshot)
 
     if surface.surface in {
         LaunchCompositionSurface.PRIMARY,

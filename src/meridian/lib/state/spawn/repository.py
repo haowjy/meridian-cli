@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.platform.locking import lock_file
 from meridian.lib.state.atomic import atomic_write_text
@@ -78,6 +79,7 @@ class StoredSpawnState(BaseModel):
     error: str | None = None
     terminal_origin: str | None = None
     prompt_length: int | None = None
+    launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
 
 def _spawn_dir(spawns_dir: Path, spawn_id: str) -> Path:
@@ -148,6 +150,7 @@ def record_to_stored_state(
         error=record.error,
         terminal_origin=record.terminal_origin,
         prompt_length=len(record.prompt) if record.prompt is not None else None,
+        launch_policy_snapshot=record.launch_policy_snapshot,
     )
 
 
@@ -201,6 +204,7 @@ def stored_state_to_record(
         cost_is_estimate=stored.cost_is_estimate,
         error=stored.error,
         terminal_origin=cast("SpawnOrigin | None", stored.terminal_origin),
+        launch_policy_snapshot=stored.launch_policy_snapshot,
     )
 
 

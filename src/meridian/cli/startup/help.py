@@ -36,7 +36,7 @@ Primary launch/resume:
 Quick start:
   meridian spawn -m MODEL --prompt-file /tmp/task.md --bg   Launch a subagent
   meridian spawn wait                        Wait for all pending spawns
-  meridian mars models list                  See available models
+  meridian mars models list                  See model catalog inventory
 
 Commands:
   spawn    Create and manage subagent runs
