@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-05-27
+
 ### Added
 - Added `meridian spawn status` as a `spawn show` companion with shared flags and report-body-off default.
 
