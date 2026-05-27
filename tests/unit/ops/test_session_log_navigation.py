@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 
 
@@ -113,6 +114,10 @@ def test_session_log_default_shows_recent_five_entries_in_current_segment(tmp_pa
     assert output.segment_entries == 9
     assert [entry.index for entry in output.entries] == [4, 5, 6, 7, 8]
     assert output.hints == ("Use --full to show the entire selected segment.",)
+    assert output.previous_command is not None
+    assert "--segment 0" in output.previous_command
+    assert "--from 1" in output.previous_command
+    assert "--limit 5" in output.previous_command
 
 
 def test_session_log_full_shows_entire_selected_segment(tmp_path: Path) -> None:
@@ -174,7 +179,7 @@ def test_session_log_header_preserves_requested_ref_when_resolved_id_differs() -
         ),
     )
 
-    assert output.format_text().splitlines()[0] == (
+    assert output.format_text(FormatContext(verbosity=1)).splitlines()[0] == (
         "Session p2490 (codex transcript: harness-session-123) — "
         "showing 1-1 of 1 entry"
     )
@@ -500,14 +505,14 @@ def test_session_log_boundary_hints_include_next_segment_at_bottom(tmp_path: Pat
 
 def test_session_log_truncates_oversized_content_by_default(tmp_path: Path) -> None:
     session_file = tmp_path / "session-large.jsonl"
-    _write_large_session_file(session_file)
+    large_text = _write_large_session_file(session_file)
 
     output = session_log_sync(SessionLogInput(file_path=session_file.as_posix(), full=True))
 
-    assistant_content = output.entries[2].messages[0].content
-    assert "truncated: omitted 40 lines" in assistant_content
-    assert "rerun with --no-truncate" in assistant_content
-    assert output.entries[2].content == assistant_content
+    assert output.entries[2].messages[0].content == large_text
+    rendered = output.format_text()
+    assert "truncated:" in rendered
+    assert "rerun with --no-truncate" in rendered
 
 
 def test_session_log_no_truncate_preserves_full_content(tmp_path: Path) -> None:
@@ -520,3 +525,4 @@ def test_session_log_no_truncate_preserves_full_content(tmp_path: Path) -> None:
 
     assert output.entries[2].messages[0].content == large_text
     assert output.entries[2].content == large_text
+    assert "truncated:" not in output.format_text()
