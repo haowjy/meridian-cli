@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from meridian.lib.core.command_strings import format_command_for_display
-from meridian.lib.harness.transcript import TranscriptMessage, parse_transcript_file_with_prologues
+from meridian.lib.harness.transcript import (
+    ToolCall,
+    TranscriptMessage,
+    parse_transcript_file_with_prologues,
+)
 from meridian.lib.ops.runtime import resolve_runtime_authority_for_read
 from meridian.lib.ops.session_target import SessionLogTarget, resolve_session_log_target
 
@@ -20,6 +24,8 @@ class AbsoluteTranscriptMessage(NamedTuple):
     segment_message_index: int
     role: str
     content: str
+    tool_call: ToolCall | None = None
+    is_tool_result: bool = False
 
 
 class AbsoluteTranscriptEntry(NamedTuple):
@@ -68,6 +74,8 @@ def flatten_transcript_segments(
                     segment_message_index=segment_message_index,
                     role=message.role,
                     content=message.content,
+                    tool_call=message.tool_call,
+                    is_tool_result=message.is_tool_result,
                 )
             )
             ordinal += 1

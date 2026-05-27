@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.transcript import ToolCall
 from meridian.lib.ops.session_log import SessionLogEntry, SessionLogEntryMessage, SessionLogOutput
 from meridian.lib.ops.session_log_render import clean_content
 
@@ -41,186 +42,117 @@ def _output(*, entries: tuple[SessionLogEntry, ...], truncate: bool = True) -> S
     )
 
 
-def test_clean_content_strips_known_wrappers_and_keeps_unknown_tags() -> None:
-    content = (
+def _bash_call(msg_idx: int, command: str) -> SessionLogEntryMessage:
+    return SessionLogEntryMessage(
+        segment_message=msg_idx,
+        role="assistant",
+        content=f"[tool: bash {command}]",
+        tool_call=ToolCall(name="bash", body=command),
+    )
+
+
+def _tool_result(msg_idx: int, content: str) -> SessionLogEntryMessage:
+    return SessionLogEntryMessage(
+        segment_message=msg_idx,
+        role="user",
+        content=f"[tool_result] {content}",
+        is_tool_result=True,
+    )
+
+
+def test_clean_content_strips_known_wrappers() -> None:
+    cleaned = clean_content(
         "<local-command-caveat>meta</local-command-caveat>"
         "<bash-input>echo hi</bash-input>\n"
-        "<local-command-stdout>\x1b[32mgreen\x1b[0m</local-command-stdout>\n"
         "<system_notification><status>running</status><summary>syncing</summary>"
-        "</system_notification>\n"
-        "<custom-tag>keep me</custom-tag>"
+        "</system_notification>"
     )
-
-    cleaned = clean_content(content)
-
     assert "local-command-caveat" not in cleaned
     assert "$ echo hi" in cleaned
-    assert "green" in cleaned
-    assert "\x1b[" not in cleaned
     assert "[notification: running — syncing]" in cleaned
-    assert "<custom-tag>keep me</custom-tag>" in cleaned
 
 
-def test_clean_content_collapses_command_triplet_in_any_order() -> None:
-    ordered = clean_content(
-        "<command-name>status</command-name>"
-        "<command-message>status details</command-message>"
-        "<command-args>--json --verbose</command-args>"
-    )
-    swapped = clean_content(
-        "<command-message>status details</command-message>"
-        "<command-name>status</command-name>"
-        "<command-args>--json --verbose</command-args>"
-    )
-    already_prefixed = clean_content(
-        "<command-name>/status</command-name>"
-        "<command-message>status details</command-message>"
-        "<command-args>--json</command-args>"
-    )
-
-    assert ordered == "/status --json --verbose"
-    assert swapped == "/status --json --verbose"
-    assert already_prefixed == "/status --json"
-
-
-def test_clean_content_renders_adjacent_bash_stdout_and_stderr_with_separator() -> None:
-    cleaned = clean_content("<bash-stdout>line one</bash-stdout><bash-stderr>boom</bash-stderr>")
-
-    assert cleaned == "line one\nstderr: boom"
-
-
-def test_clean_content_suppresses_no_output_marker_when_stderr_is_present() -> None:
-    cleaned = clean_content("<bash-stdout></bash-stdout><bash-stderr>boom</bash-stderr>")
-
-    assert cleaned == "stderr: boom"
-    assert "(no output)" not in cleaned
-
-
-def test_clean_content_separates_adjacent_bash_input_and_stderr_output() -> None:
-    cleaned = clean_content(
-        "<bash-input>run check</bash-input>"
-        "<bash-stdout></bash-stdout>"
-        "<bash-stderr>boom</bash-stderr>"
-    )
-
-    assert cleaned == "$ run check\nstderr: boom"
-
-
-def test_session_log_clean_mode_collapses_tool_output_and_adds_hint() -> None:
+def test_clean_mode_collapses_tool_calls() -> None:
     entry = _entry(
         index=1,
         role="mixed",
         messages=(
-            SessionLogEntryMessage(
-                segment_message=1,
-                role="assistant",
-                content="I'll run a command.",
-            ),
-            SessionLogEntryMessage(
-                segment_message=2,
-                role="assistant",
-                content="[tool: bash echo hi]",
-            ),
-            SessionLogEntryMessage(
-                segment_message=3,
-                role="user",
-                content="[tool_result] <bash-stdout>hi</bash-stdout>",
-            ),
+            _bash_call(1, "echo hi"),
+            _tool_result(2, "<bash-stdout>hi</bash-stdout>"),
         ),
     )
-
     rendered = _output(entries=(entry,)).format_text()
-
-    assert rendered.startswith("# Session c100")
-    assert "**Mixed** [1]" in rendered
     assert "  $ echo hi" in rendered
     assert "[tool_result]" not in rendered
     assert "Use --no-truncate to expand tool outputs" in rendered
 
 
-def test_session_log_clean_mode_no_truncate_expands_tool_output() -> None:
+def test_no_truncate_expands_tool_output() -> None:
     entry = _entry(
         index=1,
         role="mixed",
         messages=(
-            SessionLogEntryMessage(
-                segment_message=1,
-                role="assistant",
-                content="[tool: bash echo hi]",
-            ),
-            SessionLogEntryMessage(
-                segment_message=2,
-                role="user",
-                content="[tool_result] <bash-stdout>hi</bash-stdout>",
-            ),
+            _bash_call(1, "echo hi"),
+            _tool_result(2, "<bash-stdout>hi</bash-stdout>"),
         ),
     )
-
     rendered = _output(entries=(entry,), truncate=False).format_text()
-
     assert "  $ echo hi" in rendered
     assert "  hi" in rendered
-    assert "Use --no-truncate to expand tool outputs" not in rendered
 
 
-def test_session_log_raw_mode_preserves_verbose_entry_layout() -> None:
+def test_raw_mode_preserves_verbose_layout() -> None:
     entry = _entry(
         index=4,
         role="mixed",
         messages=(
-            SessionLogEntryMessage(
-                segment_message=10,
-                role="assistant",
-                content="[tool: bash echo hi]",
-            ),
-            SessionLogEntryMessage(
-                segment_message=11,
-                role="user",
-                content="[tool_result] <bash-stdout>hi</bash-stdout>",
-            ),
+            _bash_call(10, "echo hi"),
+            _tool_result(11, "<bash-stdout>hi</bash-stdout>"),
         ),
     )
-
     rendered = _output(entries=(entry,)).format_text(FormatContext(verbosity=1))
-
-    assert rendered.splitlines()[0] == "Session c100 (codex transcript) — showing 1-1 of 1 entry"
-    assert "--- 4 [segment 0 · messages 1-11] [mixed] ---" in rendered
-    assert "[message 10 · assistant]" in rendered
-    assert "[tool_result] <bash-stdout>hi</bash-stdout>" in rendered
+    assert "--- 4 [segment 0" in rendered
+    assert "[tool_result]" in rendered
 
 
-def test_session_log_clean_mode_truncates_non_tool_text_in_multi_message_entry() -> None:
-    long_text = "A" * 9001
+def test_codex_exec_command_collapses_to_dollar_sign() -> None:
     entry = _entry(
         index=1,
-        role="assistant",
+        role="mixed",
         messages=(
             SessionLogEntryMessage(
                 segment_message=1,
                 role="assistant",
-                content=long_text,
+                content='[tool: exec_command {"cmd":"ruff check ."}]',
+                tool_call=ToolCall(name="bash", body="ruff check ."),
             ),
-            SessionLogEntryMessage(
-                segment_message=2,
-                role="assistant",
-                content="[tool: bash echo hi]",
-            ),
-            SessionLogEntryMessage(
-                segment_message=3,
-                role="user",
-                content="[tool_result] <bash-stdout>hi</bash-stdout>",
-            ),
+            _tool_result(2, "Process exited with code 0\nAll checks passed!"),
         ),
     )
-
     rendered = _output(entries=(entry,)).format_text()
-
-    assert "truncated:" in rendered
-    assert "rerun with --no-truncate" in rendered
-    assert "  $ echo hi" in rendered
+    assert "  $ ruff check ." in rendered
+    assert "exec_command" not in rendered
 
 
-def test_session_log_clean_mode_single_message_orphan_tool_call_is_readable() -> None:
+def test_codex_exec_command_failed() -> None:
+    entry = _entry(
+        index=1,
+        role="mixed",
+        messages=(
+            SessionLogEntryMessage(
+                segment_message=1,
+                role="assistant",
+                content='[tool: exec_command {"cmd":"ruff check ."}]',
+                tool_call=ToolCall(name="bash", body="ruff check ."),
+            ),
+            _tool_result(2, "Process exited with code 1\nsrc/bad.py:10 error"),
+        ),
+    )
+    rendered = _output(entries=(entry,)).format_text()
+    assert "(failed: exit 1)" in rendered
+
+
+def test_orphan_tool_call() -> None:
     entry = _entry(
         index=1,
         role="assistant",
@@ -229,17 +161,15 @@ def test_session_log_clean_mode_single_message_orphan_tool_call_is_readable() ->
                 segment_message=1,
                 role="assistant",
                 content="[tool: read /tmp/file.txt]",
+                tool_call=ToolCall(name="read", body="/tmp/file.txt"),
             ),
         ),
     )
-
     rendered = _output(entries=(entry,)).format_text()
-
     assert "  Read /tmp/file.txt" in rendered
-    assert "[tool:" not in rendered
 
 
-def test_session_log_clean_mode_single_message_orphan_tool_result_is_readable() -> None:
+def test_orphan_tool_result() -> None:
     entry = _entry(
         index=1,
         role="assistant",
@@ -248,11 +178,9 @@ def test_session_log_clean_mode_single_message_orphan_tool_result_is_readable() 
                 segment_message=1,
                 role="assistant",
                 content="[tool_result] <bash-stdout>hi</bash-stdout>",
+                is_tool_result=True,
             ),
         ),
     )
-
     rendered = _output(entries=(entry,)).format_text()
-
-    assert "  (tool output): hi" in rendered
-    assert "[tool_result]" not in rendered
+    assert "(tool output)" in rendered

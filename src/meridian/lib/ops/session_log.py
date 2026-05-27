@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.util import FormatContext
+from meridian.lib.harness.transcript import ToolCall
 from meridian.lib.ops.runtime import async_from_sync
 from meridian.lib.ops.session_log_render import render_session_log
 from meridian.lib.ops.session_render import (
@@ -52,6 +53,8 @@ class SessionLogEntryMessage(BaseModel):
     segment_message: int
     role: str
     content: str
+    tool_call: ToolCall | None = None
+    is_tool_result: bool = False
 
 
 class SessionLogEntry(BaseModel):
@@ -157,6 +160,8 @@ def _entry_message_row(message: AbsoluteTranscriptMessage) -> SessionLogEntryMes
         segment_message=message.segment_message_index,
         role=message.role,
         content=message.content,
+        tool_call=message.tool_call,
+        is_tool_result=message.is_tool_result,
     )
 
 

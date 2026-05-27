@@ -22,9 +22,18 @@ _TRANSCRIPT_TEXT_KEYS: tuple[str, ...] = (
 _MAX_PREVIEW = 120
 
 
+class ToolCall(NamedTuple):
+    """Normalized tool invocation — harness-agnostic."""
+
+    name: str  # Canonical lowercase name: bash, read, write, edit, grep, stdin, ...
+    body: str  # Extracted meaningful payload: command string, file path, pattern, etc.
+
+
 class TranscriptMessage(NamedTuple):
     role: str
     content: str
+    tool_call: ToolCall | None = None
+    is_tool_result: bool = False
 
 
 class TranscriptParseResult(NamedTuple):
@@ -89,18 +98,71 @@ def _preview(value: str, *, limit: int = _MAX_PREVIEW) -> str:
     return f"{compact[: limit - 3].rstrip()}..."
 
 
-def _tool_use_summary(block: dict[str, object]) -> str:
+# Harness tool names that map to shell execution.
+_EXEC_TOOL_NAMES: frozenset[str] = frozenset({
+    "exec_command", "shell", "terminal", "run_command",
+})
+
+# Harness tool names for stdin interaction.
+_STDIN_TOOL_NAMES: frozenset[str] = frozenset({"write_stdin"})
+
+# Keys that carry the "interesting" payload in a Claude-style tool input dict.
+_TOOL_BODY_KEYS: tuple[str, ...] = (
+    "file_path", "path", "command", "pattern", "description", "skill",
+)
+
+
+def _normalize_tool(name: str, body: str) -> ToolCall:
+    """Normalize a raw tool name + body into a canonical ToolCall."""
+    lowered = name.strip().lower()
+
+    # Shell-execution equivalents → bash
+    if lowered == "bash":
+        return ToolCall(name="bash", body=body)
+    if lowered in _EXEC_TOOL_NAMES:
+        # Codex JSON body: {"cmd":"..."} → extract cmd
+        extracted = _extract_json_field(body, "cmd")
+        return ToolCall(name="bash", body=extracted or body)
+
+    # Stdin interaction → stdin
+    if lowered in _STDIN_TOOL_NAMES:
+        return ToolCall(name="stdin", body="")
+
+    # Standard file/search tools → lowercase canonical
+    for verb in ("read", "write", "edit", "grep"):
+        if lowered == verb:
+            return ToolCall(name=verb, body=body)
+
+    return ToolCall(name=lowered or "tool", body=body)
+
+
+def _extract_json_field(body: str, field: str) -> str | None:
+    """Try to extract a string field from a JSON body."""
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            value = parsed.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
+
+
+def _tool_use_summary(block: dict[str, object]) -> tuple[str, ToolCall]:
+    """Return (text_marker, normalized_tool_call) for a Claude tool_use block."""
     name = str(block.get("name", "tool")).strip() or "tool"
     tool_input = block.get("input")
     if not isinstance(tool_input, dict):
-        return f"[tool: {name}]"
+        return f"[tool: {name}]", _normalize_tool(name, "")
 
     input_payload = cast("dict[str, object]", tool_input)
-    for key in ("file_path", "path", "command", "pattern", "description", "skill"):
+    for key in _TOOL_BODY_KEYS:
         value = input_payload.get(key)
         if isinstance(value, str) and value.strip():
-            return f"[tool: {name} {_preview(value.strip())}]"
-    return f"[tool: {name}]"
+            body = value.strip()
+            return f"[tool: {name} {_preview(body)}]", _normalize_tool(name, body)
+    return f"[tool: {name}]", _normalize_tool(name, "")
 
 
 def _tool_result_summary(block: dict[str, object]) -> str:
@@ -145,10 +207,15 @@ def _extract_claude_content(role: str, content: object) -> list[TranscriptMessag
                 messages.append(TranscriptMessage(role=role, content=text))
             continue
         if role == "assistant" and block_type == "tool_use":
-            messages.append(TranscriptMessage(role=role, content=_tool_use_summary(block)))
+            marker, tool_call = _tool_use_summary(block)
+            messages.append(TranscriptMessage(
+                role=role, content=marker, tool_call=tool_call,
+            ))
             continue
         if role == "user" and block_type == "tool_result":
-            messages.append(TranscriptMessage(role=role, content=_tool_result_summary(block)))
+            messages.append(TranscriptMessage(
+                role=role, content=_tool_result_summary(block), is_tool_result=True,
+            ))
             continue
 
         text = text_from_value(block)
@@ -195,16 +262,21 @@ def _extract_codex_response_item(payload: dict[str, object]) -> list[TranscriptM
     if item_type == "function_call":
         name = str(payload.get("name", "tool")).strip() or "tool"
         arguments = text_from_value(payload.get("arguments"))
+        tool_call = _normalize_tool(name, arguments)
         rendered = f"[tool: {name}]"
         if arguments:
             rendered = f"[tool: {name} {_preview(arguments)}]"
-        return [TranscriptMessage(role="assistant", content=rendered)]
+        return [TranscriptMessage(role="assistant", content=rendered, tool_call=tool_call)]
 
     if item_type == "function_call_output":
         output = text_from_value(payload.get("output"))
         if output:
-            return [TranscriptMessage(role="user", content=f"[tool_result] {output}")]
-        return [TranscriptMessage(role="user", content="[tool_result]")]
+            return [TranscriptMessage(
+                role="user", content=f"[tool_result] {output}", is_tool_result=True,
+            )]
+        return [TranscriptMessage(
+            role="user", content="[tool_result]", is_tool_result=True,
+        )]
 
     return []
 
@@ -221,10 +293,17 @@ def _extract_codex_exec_item(item: dict[str, object]) -> list[TranscriptMessage]
         output = text_from_value(item.get("aggregated_output") or item.get("aggregatedOutput"))
         command = text_from_value(item.get("command"))
         if output:
-            return [TranscriptMessage(role="user", content=f"[tool_result] {output}")]
+            return [TranscriptMessage(
+                role="user", content=f"[tool_result] {output}", is_tool_result=True,
+            )]
         if command:
+            tool_call = ToolCall(name="bash", body=command)
             return [
-                TranscriptMessage(role="assistant", content=f"[tool: bash {_preview(command)}]")
+                TranscriptMessage(
+                    role="assistant",
+                    content=f"[tool: bash {_preview(command)}]",
+                    tool_call=tool_call,
+                )
             ]
 
     return []
@@ -275,7 +354,11 @@ class DefaultTranscriptEventParser(TranscriptEventParser):
             fallback_text = text_from_value(event.get("tool_use_result"))
             if role == "user" and fallback_text:
                 return (
-                    [TranscriptMessage(role="user", content=f"[tool_result] {fallback_text}")],
+                    [TranscriptMessage(
+                        role="user",
+                        content=f"[tool_result] {fallback_text}",
+                        is_tool_result=True,
+                    )],
                     is_boundary,
                 )
             return ([], is_boundary)
@@ -573,6 +656,7 @@ __all__ = [
     "HistoryJsonlTranscriptProvider",
     "JsonlTranscriptProvider",
     "OpenCodeStorageTranscriptProvider",
+    "ToolCall",
     "TranscriptEventParser",
     "TranscriptMessage",
     "TranscriptParseResult",

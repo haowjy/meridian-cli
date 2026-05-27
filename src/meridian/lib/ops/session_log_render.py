@@ -6,11 +6,12 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
+from meridian.lib.harness.transcript import ToolCall
+
 _CONTENT_PREVIEW_MAX_LINES = 80
 _CONTENT_PREVIEW_MAX_CHARS = 8000
 _TOOL_RESULT_HINT = "Use --no-truncate to expand tool outputs"
-_TOOL_CALL_RE = re.compile(r"^\[tool:\s*(?P<name>[^\]\s]+)(?:\s+(?P<body>.*))?\]$", re.DOTALL)
-_TOOL_RESULT_PREFIX = "[tool_result]"
+_TOOL_RESULT_PREFIX = "[tool_result]"  # Text marker prefix for tool results
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _COMMAND_BLOCK_RE = re.compile(
     r"(?:\s*<command-(?:name|args|message)>.*?</command-(?:name|args|message)>\s*)+",
@@ -40,6 +41,12 @@ class SessionLogRenderableMessage(Protocol):
 
     @property
     def content(self) -> str: ...
+
+    @property
+    def tool_call(self) -> ToolCall | None: ...
+
+    @property
+    def is_tool_result(self) -> bool: ...
 
 
 class SessionLogRenderableEntry(Protocol):
@@ -233,16 +240,8 @@ def _truncate_preview(content: str) -> str:
     return f"{preview}{separator}{marker}"
 
 
-def _tool_call_parts(content: str) -> tuple[str, str] | None:
-    match = _TOOL_CALL_RE.match(content.strip())
-    if match is None:
-        return None
-    name = match.group("name").strip()
-    body = (match.group("body") or "").strip()
-    return (name, body)
-
-
 def _tool_result_body(content: str) -> str | None:
+    """Extract tool result content from text marker (fallback for untyped messages)."""
     stripped = content.strip()
     if not stripped.startswith(_TOOL_RESULT_PREFIX):
         return None
@@ -311,29 +310,30 @@ def _indent_block(content: str, *, prefix: str = "  ") -> list[str]:
     return [f"{prefix}{line}" if line else prefix.rstrip() for line in content.splitlines()]
 
 
-def _tool_line(name: str, body: str) -> str:
-    normalized_name = name.strip() or "tool"
-    lowered = normalized_name.lower()
-    detail = " ".join(body.split())
-    if lowered == "bash":
-        command = detail or "bash"
-        return f"  $ {command}"
+def _tool_line(tool_call: ToolCall) -> str:
+    """Render a normalized tool call as a collapsed one-liner."""
+    name = tool_call.name
+    detail = " ".join(tool_call.body.split())
+
+    if name == "bash":
+        return f"  $ {detail or 'bash'}"
+
+    if name == "stdin":
+        return "  (stdin)"
 
     for verb in ("read", "write", "edit", "grep"):
-        if lowered == verb:
-            if detail:
-                return f"  {verb.title()} {detail}"
-            return f"  {verb.title()}"
+        if name == verb:
+            return f"  {verb.title()} {detail}" if detail else f"  {verb.title()}"
 
     if detail:
-        return f"  {normalized_name}: {detail}"
-    return f"  {normalized_name}"
+        return f"  {name}: {detail}"
+    return f"  {name}"
 
 
 def _tool_failed_reason(result_body: str) -> str | None:
     normalized = clean_content(result_body)
     exit_match = re.search(
-        r"(?:exit(?:ed)?(?:\s+status|\s+code)?|exit_code|\[exit_code\])\s*[:=]?\s*(\d+)",
+        r"(?:exit(?:ed)?(?:\s+(?:with\s+)?(?:status|code))?|exit_code|\[exit_code\])\s*[:=]?\s*(\d+)",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -355,15 +355,15 @@ def _render_collapsed_tools(
     index = 0
     while index < len(messages):
         message = messages[index]
-        tool_call = _tool_call_parts(message.content)
-        if tool_call is not None:
-            name, body = tool_call
+
+        if message.tool_call is not None:
+            tc = message.tool_call
             result_body: str | None = None
-            if index + 1 < len(messages):
+            if index + 1 < len(messages) and messages[index + 1].is_tool_result:
                 result_body = _tool_result_body(messages[index + 1].content)
-            rendered.append(_tool_line(name, body))
+            rendered.append(_tool_line(tc))
             collapsed = True
-            if result_body is not None and name.strip().lower() == "bash":
+            if result_body is not None and tc.name == "bash":
                 failure = _tool_failed_reason(result_body)
                 if failure is not None:
                     if failure.startswith("exit"):
@@ -378,12 +378,15 @@ def _render_collapsed_tools(
             index += 1
             continue
 
-        result_body = _tool_result_body(message.content)
-        if result_body is not None:
+        if message.is_tool_result:
             collapsed = True
-            summary = clean_content(result_body).splitlines()
-            first_line = summary[0].strip() if summary else ""
-            rendered.append(f"  (tool output): {first_line or '(no output)'}")
+            result_body = _tool_result_body(message.content)
+            if result_body is not None:
+                summary = clean_content(result_body).splitlines()
+                first_line = summary[0].strip() if summary else ""
+                rendered.append(f"  (tool output): {first_line or '(no output)'}")
+            else:
+                rendered.append("  (tool output): (no output)")
             index += 1
             continue
 
@@ -401,11 +404,10 @@ def _render_expanded_tools(messages: Sequence[SessionLogRenderableMessage]) -> l
     index = 0
     while index < len(messages):
         message = messages[index]
-        tool_call = _tool_call_parts(message.content)
-        if tool_call is not None:
-            name, body = tool_call
-            rendered.append(_tool_line(name, body))
-            if index + 1 < len(messages):
+
+        if message.tool_call is not None:
+            rendered.append(_tool_line(message.tool_call))
+            if index + 1 < len(messages) and messages[index + 1].is_tool_result:
                 result_body = _tool_result_body(messages[index + 1].content)
                 if result_body is not None:
                     rendered.extend(_indent_block(clean_content(result_body)))
@@ -414,10 +416,11 @@ def _render_expanded_tools(messages: Sequence[SessionLogRenderableMessage]) -> l
             index += 1
             continue
 
-        result_body = _tool_result_body(message.content)
-        if result_body is not None:
+        if message.is_tool_result:
+            result_body = _tool_result_body(message.content)
             rendered.append("  (tool output)")
-            rendered.extend(_indent_block(clean_content(result_body)))
+            if result_body is not None:
+                rendered.extend(_indent_block(clean_content(result_body)))
             index += 1
             continue
 
