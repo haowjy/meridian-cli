@@ -6,6 +6,7 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.ops.spawn.models import (
     SpawnActionOutput,
     SpawnDetailOutput,
+    SpawnStatusInput,
     SpawnWaitMultiOutput,
 )
 
@@ -167,6 +168,11 @@ def test_spawn_wait_multi_json_single_and_multi_projection() -> None:
     assert multi_wire["spawns"][1]["transcript_command"] == "meridian session log p2"
     assert multi_wire["spawns"][0]["report_body"] == "first report"
     assert multi_wire["spawns"][1]["report_body"] == "second report"
+
+
+def test_spawn_status_input_defaults_report_body_off() -> None:
+    parsed = SpawnStatusInput(spawn_id="p123")
+    assert parsed.include_report_body is False
 
 
 def test_spawn_action_wire_background_does_not_add_transcript_command() -> None:

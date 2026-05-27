@@ -73,6 +73,7 @@ from .models import (
     SpawnStatsChild,
     SpawnStatsInput,
     SpawnStatsOutput,
+    SpawnStatusInput,
     SpawnWaitInput,
     SpawnWaitMultiOutput,
     SpawnWrittenFilesInput,
@@ -868,6 +869,25 @@ def spawn_show_sync(
     )
 
 
+def spawn_status_sync(
+    payload: SpawnStatusInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnDetailOutput:
+    return spawn_show_sync(
+        SpawnShowInput(
+            spawn_id=payload.spawn_id,
+            include_report_body=payload.include_report_body,
+            project_root=payload.project_root,
+        ),
+        ctx=ctx,
+        sink=sink,
+        prepared=prepared,
+    )
+
+
 async def spawn_show(
     payload: SpawnShowInput,
     ctx: RuntimeContext | None = None,
@@ -876,6 +896,18 @@ async def spawn_show(
     prepared: RuntimeReadContext | None = None,
 ) -> SpawnDetailOutput:
     return await asyncio.to_thread(spawn_show_sync, payload, ctx=ctx, sink=sink, prepared=prepared)
+
+
+async def spawn_status(
+    payload: SpawnStatusInput,
+    ctx: RuntimeContext | None = None,
+    *,
+    sink: OutputSink | None = None,
+    prepared: RuntimeReadContext | None = None,
+) -> SpawnDetailOutput:
+    return await asyncio.to_thread(
+        spawn_status_sync, payload, ctx=ctx, sink=sink, prepared=prepared
+    )
 
 
 def spawn_files_sync(

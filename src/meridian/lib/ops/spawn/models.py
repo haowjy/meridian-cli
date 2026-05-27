@@ -676,6 +676,14 @@ class SpawnShowInput(BaseModel):
     project_root: str | None = None
 
 
+class SpawnStatusInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    spawn_id: str
+    include_report_body: bool = False
+    project_root: str | None = None
+
+
 class SpawnCancelInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -1292,6 +1300,7 @@ __all__ = [
     "SpawnShowInput",
     "SpawnStatsInput",
     "SpawnStatsOutput",
+    "SpawnStatusInput",
     "SpawnWaitInput",
     "SpawnWaitMultiOutput",
     "SpawnWrittenFilesInput",

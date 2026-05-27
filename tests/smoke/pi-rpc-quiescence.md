@@ -259,11 +259,11 @@ Expect:
 
 ```bash
 uv run meridian spawn --harness pi -m <pi-model> --bg -p "Reply OK and run no commands."
-meridian spawn show <spawn-id>
+meridian spawn show <spawn-id> --verbose
 ```
 
 Expect:
-- Output includes `Pi phase:` while running or after completion
+- `meridian spawn show --verbose` output includes `Pi phase:` while running or after completion
 - A hang is diagnosable as one named phase, for example
   `waiting_for_first_pi_event_after_prompt`,
   `waiting_for_continuation_completion`, `pi_notification_timeout`,
