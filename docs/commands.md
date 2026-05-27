@@ -94,9 +94,10 @@ meridian session log p123 --global --from 0 --limit 1           # read first ent
 meridian session log p123 --full --no-truncate     # full selected segment with full message content
 ```
 
-`spawn show` includes primary-session metadata when available from `primary_meta.json`:
-`kind`, `activity`, `managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
-`harness_session_id`, and `session_config_dir`.
+Primary-session metadata from `primary_meta.json` (`kind`, `activity`,
+`managed_backend`, `backend_pid`, `tui_pid`, `backend_port`,
+`harness_session_id`, `session_config_dir`) is available in
+`spawn show --verbose` and structured JSON output, not default moderate text.
 
 `spawn cancel-all` scopes cancellation to the calling spawn's subtree when invoked
 from inside a nested spawn (e.g., from an orchestrator agent). This prevents
