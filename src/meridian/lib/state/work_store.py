@@ -77,6 +77,7 @@ class WorkItem(BaseModel):
     status: str
     created_at: str
     archived_at: str | None = None
+    task_dir: str | None = None
     worktree: WorktreeMetadata = Field(default_factory=WorktreeMetadata)
 
     @property
@@ -290,6 +291,7 @@ def _read_or_initialize_status(
     default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
+    default_task_dir: str | None = None,
     default_worktree: WorktreeMetadata | None = None,
 ) -> dict[str, Any]:
     status_file = _status_path(work_dir)
@@ -305,6 +307,7 @@ def _read_or_initialize_status(
         "goal": default_goal,
         "created_at": created_fallback,
         "archived_at": archived_fallback if archived else None,
+        "task_dir": default_task_dir,
         "worktree": _worktree_payload(default_worktree),
     }
 
@@ -372,6 +375,27 @@ def _read_or_initialize_status(
     payload["worktree"] = _worktree_payload(worktree)
     changed = changed or worktree_changed
 
+    task_dir_value = raw.get("task_dir")
+    if isinstance(task_dir_value, str):
+        normalized_task_dir = task_dir_value.strip()
+        if normalized_task_dir:
+            normalized_task_dir = _normalize_task_dir_path(normalized_task_dir)
+            payload["task_dir"] = normalized_task_dir
+            if normalized_task_dir != task_dir_value:
+                changed = True
+        else:
+            payload["task_dir"] = None
+            changed = True
+    elif task_dir_value is None:
+        if worktree.path is not None:
+            payload["task_dir"] = _normalize_task_dir_path(worktree.path)
+            changed = True
+        else:
+            payload["task_dir"] = None
+    else:
+        payload["task_dir"] = None
+        changed = True
+
     if changed:
         atomic_write_text(status_file, _serialize_status(payload))
     return payload
@@ -386,6 +410,7 @@ def _work_item_from_dir(
     default_goal: str | None = None,
     default_created_at: str | None = None,
     default_archived_at: str | None = None,
+    default_task_dir: str | None = None,
     default_worktree: WorktreeMetadata | None = None,
 ) -> WorkItem:
     payload = _read_or_initialize_status(
@@ -396,6 +421,7 @@ def _work_item_from_dir(
         default_goal=default_goal,
         default_created_at=default_created_at,
         default_archived_at=default_archived_at,
+        default_task_dir=default_task_dir,
         default_worktree=default_worktree,
     )
     worktree_payload = payload.get("worktree")
@@ -411,6 +437,7 @@ def _work_item_from_dir(
         status=str(payload["status"]),
         created_at=str(payload["created_at"]),
         archived_at=payload["archived_at"] if isinstance(payload["archived_at"], str) else None,
+        task_dir=payload["task_dir"] if isinstance(payload.get("task_dir"), str) else None,
         worktree=worktree,
     )
 
@@ -459,6 +486,7 @@ def _status_payload(
     goal: str | None = None,
     created_at: str,
     archived_at: str | None,
+    task_dir: str | None,
     worktree: WorktreeMetadata | None = None,
 ) -> dict[str, Any]:
     return {
@@ -467,6 +495,7 @@ def _status_payload(
         "goal": goal,
         "created_at": created_at,
         "archived_at": archived_at,
+        "task_dir": task_dir,
         "worktree": _worktree_payload(worktree),
     }
 
@@ -501,6 +530,13 @@ def _normalize_worktree_path(path: str) -> str:
         return Path(path).expanduser().as_posix()
 
 
+def _normalize_task_dir_path(path: str) -> str:
+    try:
+        return Path(path).expanduser().resolve().as_posix()
+    except OSError:
+        return Path(path).expanduser().as_posix()
+
+
 def create_work_item(
     runtime_root: Path,
     label: str,
@@ -528,6 +564,7 @@ def create_work_item(
         goal=normalized_goal,
         created_at=created_at,
         archived_at=None,
+        task_dir=None,
         worktree=WorktreeMetadata(),
     )
     atomic_write_text(_status_path(active), _serialize_status(payload))
@@ -538,6 +575,7 @@ def create_work_item(
         status="open",
         created_at=created_at,
         archived_at=None,
+        task_dir=None,
         worktree=WorktreeMetadata(),
     )
 
@@ -754,6 +792,7 @@ def update_work_item(
         status=next_status,
         created_at=current.created_at,
         archived_at=None,
+        task_dir=current.task_dir,
         worktree=current.worktree,
     )
     atomic_write_text(
@@ -765,6 +804,58 @@ def update_work_item(
                 goal=updated.goal,
                 created_at=updated.created_at,
                 archived_at=None,
+                task_dir=updated.task_dir,
+                worktree=updated.worktree,
+            )
+        ),
+    )
+    return updated
+
+
+def update_work_item_task_dir(
+    runtime_root: Path,
+    work_id: str,
+    *,
+    task_dir: str | None,
+) -> WorkItem:
+    """Update only ``task_dir`` for an active work item."""
+
+    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    active_dir, archived_dir = _locate_dirs(paths, work_id)
+    _warn_both_locations(work_id, active_dir, archived_dir)
+    if active_dir is None:
+        if archived_dir is not None:
+            raise ValueError(
+                f"Work item '{work_id}' is archived and cannot be updated. Reopen it first."
+            )
+        raise ValueError(f"Work item '{work_id}' not found")
+
+    current = _work_item_from_dir(active_dir, archived=False)
+    normalized_task_dir = None
+    if task_dir is not None:
+        stripped_task_dir = task_dir.strip()
+        if stripped_task_dir:
+            normalized_task_dir = _normalize_task_dir_path(stripped_task_dir)
+    updated = WorkItem(
+        name=current.name,
+        description=current.description,
+        goal=current.goal,
+        status=current.status,
+        created_at=current.created_at,
+        archived_at=current.archived_at,
+        task_dir=normalized_task_dir,
+        worktree=current.worktree,
+    )
+    atomic_write_text(
+        _status_path(active_dir),
+        _serialize_status(
+            _status_payload(
+                status=updated.status,
+                description=updated.description,
+                goal=updated.goal,
+                created_at=updated.created_at,
+                archived_at=None,
+                task_dir=updated.task_dir,
                 worktree=updated.worktree,
             )
         ),
@@ -817,6 +908,7 @@ def update_work_item_worktree(
         status=current.status,
         created_at=current.created_at,
         archived_at=current.archived_at,
+        task_dir=current.task_dir,
         worktree=next_worktree,
     )
     atomic_write_text(
@@ -828,6 +920,7 @@ def update_work_item_worktree(
                 goal=updated.goal,
                 created_at=updated.created_at,
                 archived_at=None,
+                task_dir=updated.task_dir,
                 worktree=updated.worktree,
             )
         ),
@@ -869,6 +962,7 @@ def archive_work_item(
         status="done",
         created_at=current.created_at,
         archived_at=archived_at,
+        task_dir=current.task_dir,
         worktree=current.worktree.model_copy(update={"pending": False}),
     )
     atomic_write_text(
@@ -880,6 +974,7 @@ def archive_work_item(
                 goal=archived_item.goal,
                 created_at=archived_item.created_at,
                 archived_at=archived_item.archived_at,
+                task_dir=archived_item.task_dir,
                 worktree=archived_item.worktree,
             )
         ),
@@ -914,6 +1009,7 @@ def reopen_work_item(runtime_root: Path, work_id: str, *, status: str = "open") 
                 goal=current.goal,
                 created_at=current.created_at,
                 archived_at=None,
+                task_dir=current.task_dir,
                 worktree=current.worktree.model_copy(update={"pending": False}),
             )
         ),

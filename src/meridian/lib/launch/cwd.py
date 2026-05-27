@@ -1,4 +1,4 @@
-"""Shared child-process CWD policy for spawn launches."""
+"""Shared task-directory resolution policy for spawn launches."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from meridian.lib.state import work_store
 
 @dataclass(frozen=True)
 class TaskCwdResolution:
-    """Resolved task working-directory decision for one spawn."""
+    """Resolved task-directory decision for one spawn."""
 
     task_cwd: Path
     source: str
@@ -42,7 +42,7 @@ class LaunchDirectoryContext:
             authority_root=resolved_authority_root,
             logical_task_cwd=resolved_task_cwd,
             reference_anchor=resolved_task_cwd,
-            actual_process_cwd=resolved_task_cwd,
+            actual_process_cwd=resolved_authority_root,
             task_cwd_source=task_cwd_resolution.source,
             work_item=task_cwd_resolution.work_item,
         )
@@ -58,39 +58,33 @@ class LaunchDirectoryContext:
         return self.logical_task_cwd != self.authority_root
 
     def should_inject_task_cwd_instruction(self, surface: LaunchCompositionSurface) -> bool:
-        """Whether launch composition should tell the agent to cd into task cwd.
-
-        Child spawn tool cwd can vary by harness even when Meridian requests the
-        task cwd. Be conservative for all non-primary child launches with a
-        distinct task cwd; keep primary sessions quiet unless a future primary
-        flow needs explicit task-cwd steering.
-        """
+        """Whether launch composition should tell the agent to cd into task cwd."""
 
         return self.has_distinct_task_cwd and surface != LaunchCompositionSurface.PRIMARY
 
 
-def _active_worktree_path_for_item(
+def _active_task_dir_for_item(
     *,
     project_state_dir: Path,
     work_id: str,
 ) -> Path | None:
     item = work_store.get_active_work_item(project_state_dir, work_id)
-    if item is None or item.worktree_path is None:
+    if item is None or item.task_dir is None:
         return None
-    return Path(item.worktree_path).expanduser().resolve()
+    return Path(item.task_dir).expanduser().resolve()
 
 
-def _validated_worktree_path(
+def _validated_task_dir(
     *,
-    worktree_path: Path,
+    task_dir: Path,
     work_id: str,
 ) -> Path:
-    if worktree_path.is_dir():
-        return worktree_path
+    if task_dir.is_dir():
+        return task_dir
     raise ValueError(
-        f"Work item '{work_id}' has a configured worktree path that does not exist.\n"
-        f"  worktree_path: {worktree_path}\n"
-        "Use --no-worktree to launch from the authority root."
+        f"Work item '{work_id}' has a configured task_dir that does not exist.\n"
+        f"  task_dir: {task_dir}\n"
+        "Use --task-dir to set a valid directory for this work item."
     )
 
 
@@ -98,22 +92,33 @@ def resolve_task_cwd(
     authority_root: Path,
     *,
     project_state_dir: Path,
+    explicit_task_dir: str | Path | None = None,
     explicit_work_id: str | None = None,
     ambient_work_id: str | None = None,
     force_worktree: bool = False,
     force_no_worktree: bool = False,
 ) -> TaskCwdResolution:
-    """Resolve task cwd from work/worktree intent.
+    """Resolve task directory used for references and task instructions.
 
     Resolution priority:
-      1. --no-worktree
-      2. --worktree
-      3. explicit --work boundary
-      4. ambient work attachment
-      5. authority root default
+      1. explicit task-dir override
+      2. explicit work item task_dir
+      3. ambient work item task_dir
+      4. authority root default
     """
 
     resolved_authority_root = authority_root.resolve()
+    explicit_override = (str(explicit_task_dir).strip() if explicit_task_dir is not None else "")
+    if explicit_override:
+        selected_work_id = (
+            (explicit_work_id or "").strip() or (ambient_work_id or "").strip() or None
+        )
+        return TaskCwdResolution(
+            task_cwd=Path(explicit_override).expanduser().resolve(),
+            source="explicit-task-dir",
+            work_item=selected_work_id,
+        )
+
     if force_no_worktree:
         return TaskCwdResolution(
             task_cwd=resolved_authority_root,
@@ -131,18 +136,18 @@ def resolve_task_cwd(
                 "--worktree requires a selected work item. "
                 "Pass --work <item> or attach an active work item first."
             )
-        configured_path = _active_worktree_path_for_item(
+        configured_path = _active_task_dir_for_item(
             project_state_dir=project_state_dir,
             work_id=force_worktree_work_id,
         )
         if configured_path is None:
             raise ValueError(
                 f"--worktree requested, but work item '{force_worktree_work_id}' "
-                "has no configured worktree path."
+                "has no configured task_dir."
             )
         return TaskCwdResolution(
-            task_cwd=_validated_worktree_path(
-                worktree_path=configured_path,
+            task_cwd=_validated_task_dir(
+                task_dir=configured_path,
                 work_id=force_worktree_work_id,
             ),
             source="forced-worktree",
@@ -150,7 +155,7 @@ def resolve_task_cwd(
         )
 
     if selected_work_id is not None:
-        explicit_path = _active_worktree_path_for_item(
+        explicit_path = _active_task_dir_for_item(
             project_state_dir=project_state_dir,
             work_id=selected_work_id,
         )
@@ -161,16 +166,16 @@ def resolve_task_cwd(
                 work_item=selected_work_id,
             )
         return TaskCwdResolution(
-            task_cwd=_validated_worktree_path(
-                worktree_path=explicit_path,
+            task_cwd=_validated_task_dir(
+                task_dir=explicit_path,
                 work_id=selected_work_id,
             ),
-            source="explicit-work-worktree",
+            source="explicit-work-task-dir",
             work_item=selected_work_id,
         )
 
     if ambient_selected_work_id is not None:
-        ambient_path = _active_worktree_path_for_item(
+        ambient_path = _active_task_dir_for_item(
             project_state_dir=project_state_dir,
             work_id=ambient_selected_work_id,
         )
@@ -181,11 +186,11 @@ def resolve_task_cwd(
                 work_item=ambient_selected_work_id,
             )
         return TaskCwdResolution(
-            task_cwd=_validated_worktree_path(
-                worktree_path=ambient_path,
+            task_cwd=_validated_task_dir(
+                task_dir=ambient_path,
                 work_id=ambient_selected_work_id,
             ),
-            source="ambient-work-worktree",
+            source="ambient-work-task-dir",
             work_item=ambient_selected_work_id,
         )
 
@@ -205,16 +210,5 @@ def resolve_child_execution_cwd(
 ) -> Path:
     """Legacy wrapper used by older call sites."""
 
-    if worktree_path is not None:
-        return _validated_worktree_path(
-            worktree_path=worktree_path.expanduser().resolve(),
-            work_id=work_id or "<unknown>",
-        )
-    if project_state_dir is None:
-        return project_root.resolve()
-    resolution = resolve_task_cwd(
-        project_root,
-        project_state_dir=project_state_dir,
-        explicit_work_id=work_id,
-    )
-    return resolution.task_cwd
+    _ = (project_state_dir, work_id, worktree_path)
+    return project_root.resolve()

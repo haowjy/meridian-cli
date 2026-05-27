@@ -272,6 +272,10 @@ def test_build_launch_context_split_root_task_cwd_contract(
     final_env = runtime_ctx.binding.environment.final_env
     assert runtime_ctx.execution_cwd == execution_cwd
     assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_PROJECT_ROOT"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_TASK_DIR"] == execution_cwd.as_posix()
+    assert final_env["MERIDIAN_PROJECT_ROOT"] == tmp_path.as_posix()
+    assert final_env["MERIDIAN_TASK_DIR"] == execution_cwd.as_posix()
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
     if expect_task_cwd:

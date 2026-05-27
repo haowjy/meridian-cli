@@ -1712,6 +1712,8 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env["MERIDIAN_PROJECT_ROOT"] = resolved_control_root.as_posix()
+    child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if task_cwd is not None:
         child_context_env["MERIDIAN_TASK_CWD"] = task_cwd.as_posix()
     runtime_override_env = (

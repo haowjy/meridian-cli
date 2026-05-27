@@ -129,6 +129,7 @@ class SpawnCreateInput(SpawnLaunchOptions):
     skills: tuple[str, ...] = ()
     desc: str = ""
     work: str = ""
+    task_dir: str | None = None
     worktree: bool | None = None
     repo: str | None = None
     session: SessionRequest = SessionRequest()
