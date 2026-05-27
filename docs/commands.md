@@ -18,6 +18,7 @@ Full command surface. Use `--help` on any command for flags and options.
 | `meridian spawn list --primary` | Show only primary spawns (top-level sessions) |
 | `meridian spawn wait ID` | Block until a spawn completes; report body included by default, `--no-report` to suppress |
 | `meridian spawn show ID` | Read a spawn's report and status |
+| `meridian spawn status ID` | Read spawn status summary (report body off by default; add `--report` to include) |
 | `meridian spawn --continue ID -p "more"` | Resume a prior spawn with new input |
 | `meridian spawn --fork [REF] -p "next"` | Start a new spawn by forking while preserving launch identity (agent/model/skills) |
 | `meridian spawn --fork-fresh [REF] -p "next"` | Start a new spawn by forking and allowing launch identity changes (`-m`, `-a`, `--skills`) |
@@ -75,12 +76,17 @@ timestamps, paths, model) is hidden by default.
 | `--format json` | Structured JSON with report body and transcript command fields |
 | `--bg` | Spawn ID + wait instructions (unchanged) |
 
+`spawn show` and `spawn status` default to a moderate tier: status/model/duration plus actionable failure context.
+Use `--verbose` to include internal diagnostics (tokens, lifecycle fields, backend metadata, and other internals).
+
 Progressive disclosure:
 
 ```bash
 meridian spawn -a reviewer -p "task"              # compact: status + report
 meridian spawn -a reviewer -p "task" --metadata   # adds model/cost/tokens/path inline
-meridian spawn show p123                           # full detailed record (unchanged)
+meridian spawn show p123                           # moderate summary + report body
+meridian spawn status p123                         # moderate summary without report body
+meridian spawn show p123 --verbose                 # internal diagnostics view
 meridian session log p123                          # recent transcript entries (last 5, chronological, safe content previews)
 meridian session log p123 --full                   # full selected segment, including entry 0 prologue/handoff slot
 meridian session log p123 --segment current --from 0 --limit 1  # read just segment prologue/handoff slot

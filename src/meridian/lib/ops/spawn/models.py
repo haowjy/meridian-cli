@@ -779,6 +779,26 @@ class SpawnDetailOutput(BaseModel):
             return None
         return report_text
 
+    def _status_for_compact_or_moderate(self) -> str:
+        status_str = self.status
+        if self.status == "finalizing":
+            return "finalizing (cleanup in progress)"
+        if self.exit_code is not None and self.status == "failed":
+            status_str += f" (exit {self.exit_code})"
+        return status_str
+
+    def _failure_line_for_compact_or_moderate(self) -> tuple[str, str] | None:
+        failure_value = self.failure_reason
+        if failure_value is None:
+            return None
+        if failure_value == "orphan_finalization":
+            failure_value = (
+                "orphan_finalization (harness likely completed; "
+                "report.md may still contain useful content)"
+            )
+        label = "Warning" if self.status == "succeeded" else "Failure"
+        return label, failure_value
+
     def _report_suffix(self) -> str:
         report_text = self._normalized_report_body()
         if report_text is None:
@@ -908,9 +928,7 @@ class SpawnDetailOutput(BaseModel):
         return self._format_compact_text()
 
     def _format_compact_text(self) -> str:
-        status_str = self.status
-        if self.exit_code is not None and self.status == "failed":
-            status_str += f" (exit {self.exit_code})"
+        status_str = self._status_for_compact_or_moderate()
 
         meta_parts: list[str] = []
         if self.duration_secs is not None:
@@ -918,14 +936,10 @@ class SpawnDetailOutput(BaseModel):
         meta_suffix = f" ({', '.join(meta_parts)})" if meta_parts else ""
 
         lines = [f"{self.spawn_id} {status_str}{meta_suffix}"]
-        if self.failure_reason:
-            failure_value = self.failure_reason
-            if failure_value == "orphan_finalization":
-                failure_value = (
-                    "orphan_finalization (harness likely completed; "
-                    "report.md may still contain useful content)"
-                )
-            lines.append(f"Failure: {failure_value}")
+        failure_line = self._failure_line_for_compact_or_moderate()
+        if failure_line is not None:
+            label, value = failure_line
+            lines.append(f"{label}: {value}")
         if self._has_distinct_task_cwd():
             lines.append(self._task_dir_line())
 
@@ -941,9 +955,7 @@ class SpawnDetailOutput(BaseModel):
         return "\n".join(lines)
 
     def _format_moderate_text(self) -> str:
-        status_str = self.status
-        if self.exit_code is not None and self.status == "failed":
-            status_str += f" (exit {self.exit_code})"
+        status_str = self._status_for_compact_or_moderate()
 
         lines = [f"Spawn: {self.spawn_id}"]
         lines.append(f"Status: {status_str}")
@@ -957,6 +969,10 @@ class SpawnDetailOutput(BaseModel):
             lines.append(self._task_dir_line())
         if self.report_path is not None:
             lines.append(f"Report: {self.report_path}")
+        failure_line = self._failure_line_for_compact_or_moderate()
+        if failure_line is not None:
+            label, value = failure_line
+            lines.append(f"{label}: {value}")
 
         report_text = self._normalized_report_body()
         if report_text is not None:

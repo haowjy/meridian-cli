@@ -35,6 +35,7 @@ from meridian.lib.ops.spawn.api import (
     SpawnListInput,
     SpawnShowInput,
     SpawnStatsInput,
+    SpawnStatusInput,
     SpawnWaitInput,
     SpawnWrittenFilesInput,
     spawn_cancel_all_sync,
@@ -47,6 +48,7 @@ from meridian.lib.ops.spawn.api import (
     spawn_list_sync,
     spawn_show_sync,
     spawn_stats_sync,
+    spawn_status_sync,
     spawn_wait_sync,
 )
 from meridian.lib.ops.spawn.models import SpawnLaunchOptionUpdates, normalize_goal
@@ -685,8 +687,12 @@ def _spawn_show(
     _spawn_show_like(
         emit,
         spawn_ids=spawn_ids,
-        report=report,
         verbose=verbose,
+        build_input=lambda spawn_id: SpawnShowInput(
+            spawn_id=spawn_id,
+            include_report_body=report,
+        ),
+        handler=spawn_show_sync,
     )
 
 
@@ -711,8 +717,12 @@ def _spawn_status(
     _spawn_show_like(
         emit,
         spawn_ids=spawn_ids,
-        report=report,
         verbose=verbose,
+        build_input=lambda spawn_id: SpawnStatusInput(
+            spawn_id=spawn_id,
+            include_report_body=report,
+        ),
+        handler=spawn_status_sync,
     )
 
 
@@ -720,18 +730,17 @@ def _spawn_show_like(
     emit: Any,
     *,
     spawn_ids: tuple[str, ...],
-    report: bool,
     verbose: bool,
+    build_input: Callable[[str], SpawnShowInput | SpawnStatusInput],
+    handler: Callable[..., Any],
 ) -> None:
     sink = _current_output_sink()
+    prepared = _prepare_spawn_runtime_read()
     results = tuple(
-        spawn_show_sync(
-            SpawnShowInput(
-                spawn_id=spawn_id,
-                include_report_body=report,
-            ),
+        handler(
+            build_input(spawn_id),
             sink=sink,
-            prepared=_prepare_spawn_runtime_read(),
+            prepared=prepared,
         )
         for spawn_id in spawn_ids
     )

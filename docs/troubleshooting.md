@@ -156,7 +156,8 @@ meridian doctor
 After reconciliation, inspect the spawn:
 
 ```bash
-meridian spawn show ID          # check status, report, and error field
+meridian spawn show ID          # check status, report, and actionable failure context
+meridian spawn show ID --verbose # include internal diagnostics (error field, lifecycle internals)
 ```
 
 If `report.md` exists and looks complete, the work product is likely usable even though the spawn is marked `failed`. Relaunch only if the work wasn't done.

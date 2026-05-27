@@ -284,6 +284,7 @@ def test_spawn_detail_default_text_uses_moderate_tier() -> None:
         status="failed",
         duration_secs=2.5,
         exit_code=17,
+        failure_reason="runner_failed",
         work_id="feature-x",
         authority_root="/repo/main",
         task_cwd="/repo.worktrees/feature-x",
@@ -298,9 +299,24 @@ def test_spawn_detail_default_text_uses_moderate_tier() -> None:
     assert "Work: feature-x" in text
     assert "Spawn is instructed to implement in this task dir: /repo.worktrees/feature-x" in text
     assert "Report: /tmp/report.md" in text
+    assert "Failure: runner_failed" in text
     assert "done report" in text
     assert "Transcript: meridian session log p10" in text
     assert "Pi phase:" not in text
+
+
+def test_spawn_detail_moderate_text_keeps_finalizing_and_orphan_context() -> None:
+    detail = _make_spawn_detail(
+        spawn_id="p12",
+        status="finalizing",
+        failure_reason="orphan_finalization",
+        report_body=None,
+    )
+
+    text = detail.format_text()
+    assert "Status: finalizing (cleanup in progress)" in text
+    assert "Failure: orphan_finalization (harness likely completed; " in text
+    assert "report.md may still contain useful content)" in text
 
 
 def test_spawn_detail_verbose_text_retains_internal_fields() -> None:

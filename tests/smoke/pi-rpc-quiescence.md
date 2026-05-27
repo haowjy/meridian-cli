@@ -277,7 +277,7 @@ Run one successful primary launch and one successful spawned RPC launch with
 Expect:
 - Diagnostics identify whether runtime came from `PATH` or `MERIDIAN_PI_BINARY`
 - Auth/config remains Pi-owned; Meridian does not set a fake auth root
-- Spawned `spawn show` exposes a useful Pi phase during startup and cleanup
+- Spawned `spawn show --verbose` exposes a useful Pi phase during startup and cleanup
 
 ## S20-S22: Sidecar lifecycle ingestion and stderr isolation
 

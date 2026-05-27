@@ -12,6 +12,7 @@ from meridian.lib.ops.spawn.models import (
     SpawnListEntry,
     SpawnListOutput,
     SpawnShowInput,
+    SpawnStatusInput,
 )
 
 cli_main = importlib.import_module("meridian.cli.main")
@@ -199,7 +200,8 @@ def _spawn_detail_output(report_body: str | None = "report body") -> SpawnDetail
 def test_spawn_show_and_status_report_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    include_report: dict[str, bool] = {}
+    show_include_report: dict[str, bool] = {}
+    status_include_report: dict[str, bool] = {}
 
     def _fake_spawn_show_sync(
         payload: SpawnShowInput,
@@ -208,10 +210,21 @@ def test_spawn_show_and_status_report_defaults(
         prepared: Any | None = None,
     ) -> SpawnDetailOutput:
         _ = (sink, prepared)
-        include_report[payload.spawn_id] = payload.include_report_body
+        show_include_report[payload.spawn_id] = payload.include_report_body
+        return _spawn_detail_output("report body" if payload.include_report_body else None)
+
+    def _fake_spawn_status_sync(
+        payload: SpawnStatusInput,
+        *,
+        sink: object | None = None,
+        prepared: Any | None = None,
+    ) -> SpawnDetailOutput:
+        _ = (sink, prepared)
+        status_include_report[payload.spawn_id] = payload.include_report_body
         return _spawn_detail_output("report body" if payload.include_report_body else None)
 
     monkeypatch.setattr(spawn_cli, "spawn_show_sync", _fake_spawn_show_sync)
+    monkeypatch.setattr(spawn_cli, "spawn_status_sync", _fake_spawn_status_sync)
 
     with pytest.raises(SystemExit) as show_exit:
         cli_main.main(["spawn", "show", "p-show"])
@@ -223,9 +236,11 @@ def test_spawn_show_and_status_report_defaults(
     assert show_exit.value.code == 0
     assert status_exit.value.code == 0
     assert status_report_exit.value.code == 0
-    assert include_report["p-show"] is True
-    assert include_report["p-status"] is False
-    assert include_report["p-status-report"] is True
+    assert show_include_report["p-show"] is True
+    assert "p-status" not in show_include_report
+    assert "p-status-report" not in show_include_report
+    assert status_include_report["p-status"] is False
+    assert status_include_report["p-status-report"] is True
 
 
 def test_spawn_status_verbose_renders_internal_fields(
@@ -234,7 +249,7 @@ def test_spawn_status_verbose_renders_internal_fields(
 ) -> None:
     monkeypatch.setattr(
         spawn_cli,
-        "spawn_show_sync",
+        "spawn_status_sync",
         lambda *_args, **_kwargs: SpawnDetailOutput(
             spawn_id="p501",
             status="succeeded",
