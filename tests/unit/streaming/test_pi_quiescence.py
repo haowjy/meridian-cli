@@ -21,7 +21,8 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.spawn_manager import SpawnManager, _PiSubspawnTracker
+from meridian.lib.streaming.pi_drain import PiSubspawnTracker
+from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
 class _NoopControlServer:
@@ -106,7 +107,7 @@ def _pi_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
 
 
 def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     tracker.observe(
         _pi_event(
@@ -178,7 +179,7 @@ def test_pi_subspawn_tracker_invalidates_malformed_canonical_lifecycle(
     payload: dict[str, object],
     expected_error: str,
 ) -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     tracker.observe(_pi_event(event_type, payload))
 
@@ -188,7 +189,7 @@ def test_pi_subspawn_tracker_invalidates_malformed_canonical_lifecycle(
 
 
 def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     tracker.observe(
         _pi_event(
@@ -208,7 +209,7 @@ def test_pi_subspawn_tracker_ignores_noncanonical_parse_diagnostics() -> None:
 
 
 def test_pi_subspawn_tracker_deduplicates_canonical_events() -> None:
-    tracker = _PiSubspawnTracker.empty()
+    tracker = PiSubspawnTracker.empty()
 
     start = _pi_event(
         "meridian.subspawn.start",

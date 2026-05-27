@@ -36,9 +36,7 @@ from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
-    DrainAction,
     DrainPolicy,
-    PiRpcQuiescenceDrainPolicy,
     SingleTurnDrainPolicy,
 )
 from meridian.lib.streaming.event_observers import (
@@ -48,48 +46,8 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.pi_quiescence import PiQuiescenceTracker
+from meridian.lib.streaming.pi_drain import PiDrainCoordinator, PiSubspawnTracker
 from meridian.lib.streaming.types import InjectResult
-
-if TYPE_CHECKING:
-    from meridian.lib.harness.connections.base import (
-        ConnectionConfig,
-        HarnessConnection,
-    )
-    from meridian.lib.harness.semantics import TerminalEventOutcome
-    from meridian.lib.observability.debug_tracer import DebugTracer
-
-logger = logging.getLogger(__name__)
-InjectResultCallback = Callable[[InjectResult], None]
-
-_PI_CANONICAL_DEDUP_LIFECYCLE_EVENTS = pi_lifecycle.PI_CANONICAL_DEDUP_LIFECYCLE_EVENTS
-_PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES = pi_lifecycle.PI_CANONICAL_LIFECYCLE_TYPE_PREFIXES
-_PI_CANONICAL_NOTIFICATION_EVENTS = pi_lifecycle.PI_CANONICAL_NOTIFICATION_EVENTS
-_PI_CANONICAL_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_CANONICAL_SUBSPAWN_END_EVENTS
-_PI_CANONICAL_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_CANONICAL_SUBSPAWN_START_EVENTS
-_PI_LEGACY_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_LEGACY_SUBSPAWN_END_EVENTS
-_PI_LEGACY_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_LEGACY_SUBSPAWN_START_EVENTS
-_PI_NOTIFICATION_COMPLETED_EVENTS = pi_lifecycle.PI_NOTIFICATION_COMPLETED_EVENTS
-_PI_NOTIFICATION_DELIVERED_EVENTS = pi_lifecycle.PI_NOTIFICATION_DELIVERED_EVENTS
-_PI_NOTIFICATION_FAILED_EVENTS = pi_lifecycle.PI_NOTIFICATION_FAILED_EVENTS
-_PI_NOTIFICATION_QUEUED_EVENTS = pi_lifecycle.PI_NOTIFICATION_QUEUED_EVENTS
-_PI_PHASE_EVENT_TYPE = pi_lifecycle.PI_PHASE_EVENT_TYPE
-_PI_SUBSPAWN_END_EVENTS = pi_lifecycle.PI_SUBSPAWN_END_EVENTS
-_PI_SUBSPAWN_START_EVENTS = pi_lifecycle.PI_SUBSPAWN_START_EVENTS
-_PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION = pi_lifecycle.PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION
-_canonical_lifecycle_label = pi_lifecycle.canonical_pi_lifecycle_label
-_event_label_candidates = pi_lifecycle.pi_lifecycle_event_label_candidates
-_is_legacy_notification_label = pi_lifecycle.is_legacy_pi_notification_label
-_pi_correlation_id = pi_lifecycle.pi_correlation_id
-_pi_notification_failure_error = pi_lifecycle.pi_notification_failure_error
-_pi_notification_id = pi_lifecycle.pi_notification_id
-_pi_subspawn_id = pi_lifecycle.pi_subspawn_id
-_pi_subspawn_pgid = pi_lifecycle.pi_subspawn_pgid
-_pi_subspawn_pid = pi_lifecycle.pi_subspawn_pid
-_pi_wait_policy_is_tracked = pi_lifecycle.pi_wait_policy_is_tracked
-_unsupported_pi_schema_version_error = pi_lifecycle.unsupported_pi_schema_version_error
-
-_PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 1e-6
 
 StartConnectionPort = Callable[
     ["ConnectionConfig", ResolvedLaunchSpec],
@@ -124,26 +82,16 @@ class SpawnSession:
     control_actions: ControlActionCoordinator | None = None
 
 
-def _pi_notification_timeout_error(
-    pending: _PiPendingNotification,
-    *,
-    now_monotonic: float,
-) -> str:
-    timeout_seconds = 0.0
-    if pending.deadline_monotonic is not None:
-        timeout_seconds = max(0.0, pending.deadline_monotonic - pending.started_monotonic)
-    elapsed_seconds = max(0.0, now_monotonic - pending.started_monotonic)
-    return (
-        "pi_notification_timeout:"
-        f"id={pending.notification_id}:"
-        f"phase={pending.phase}:"
-        f"elapsed={elapsed_seconds:.3f}:"
-        f"timeout={timeout_seconds:.3f}"
+if TYPE_CHECKING:
+    from meridian.lib.harness.connections.base import (
+        ConnectionConfig,
+        HarnessConnection,
     )
+    from meridian.lib.harness.semantics import TerminalEventOutcome
+    from meridian.lib.observability.debug_tracer import DebugTracer
 
-
-def _pi_child_wave_timeout_error() -> str:
-    return "pi_child_wave_timeout"
+logger = logging.getLogger(__name__)
+InjectResultCallback = Callable[[InjectResult], None]
 
 
 def _safe_connection_session_id(connection: object) -> str | None:
@@ -154,334 +102,6 @@ def _safe_connection_session_id(connection: object) -> str | None:
     except Exception:
         return None
     return session_id if isinstance(session_id, str) and session_id.strip() else None
-
-
-@dataclass
-class _PiPendingNotification:
-    notification_id: str
-    phase: str
-    started_monotonic: float
-    deadline_monotonic: float | None = None
-
-
-@dataclass
-class _PiSubspawnTracker:
-    active_ids: set[str]
-    active_process_groups: dict[str, int]
-    canonical_event_keys: set[tuple[str, str, str]]
-    resolved_subspawn_ids: set[str]
-    anonymous_active_count: int = 0
-    pending_notifications: dict[str, _PiPendingNotification] | None = None
-    anonymous_pending_notifications: int = 0
-    notification_failure_error: str | None = None
-    notification_timeout_error: str | None = None
-    lifecycle_tracking_invalidated_error: str | None = None
-
-    @classmethod
-    def empty(cls) -> _PiSubspawnTracker:
-        return cls(
-            active_ids=set(),
-            active_process_groups={},
-            canonical_event_keys=set(),
-            resolved_subspawn_ids=set(),
-            pending_notifications={},
-        )
-
-    def observe(
-        self,
-        event: HarnessEvent,
-        *,
-        now_monotonic: float | None = None,
-        notification_timeout_seconds: float | None = None,
-    ) -> bool:
-        """Update tracker state from one Pi event.
-
-        Returns True when the event is a duplicate canonical lifecycle event and
-        should be treated as diagnostic-only by callers.
-        """
-        if event.harness_id != HarnessId.PI.value:
-            return False
-        observation_monotonic = now_monotonic if now_monotonic is not None else time.monotonic()
-
-        labels = _event_label_candidates(event)
-        label_set = set(labels)
-        lifecycle_schema_error = _unsupported_pi_schema_version_error(label_set, event.payload)
-        if lifecycle_schema_error is not None:
-            self.lifecycle_tracking_invalidated_error = lifecycle_schema_error
-            return False
-        if self._is_parse_error_for_canonical_lifecycle_event(event):
-            raw_type = event.payload.get("raw_type")
-            raw_type_text = raw_type if isinstance(raw_type, str) else "unknown"
-            self.lifecycle_tracking_invalidated_error = (
-                "pi_lifecycle_tracking_invalidated:"
-                f"unsupported_schema_event:{raw_type_text}"
-            )
-            return False
-        dedup_key = self._canonical_lifecycle_dedup_key(label_set, event.payload)
-        if dedup_key is not None:
-            if dedup_key in self.canonical_event_keys:
-                logger.debug(
-                    "Ignoring duplicate canonical Pi lifecycle event",
-                    extra={
-                        "event_type": dedup_key[0],
-                        "correlation_id": dedup_key[1],
-                        "event_specific_id": dedup_key[2],
-                    },
-                )
-                return True
-            self.canonical_event_keys.add(dedup_key)
-
-        is_subspawn_start = bool(label_set & _PI_SUBSPAWN_START_EVENTS)
-        if is_subspawn_start:
-            if not _pi_wait_policy_is_tracked(event.payload):
-                return False
-            has_canonical_label = bool(label_set & _PI_CANONICAL_SUBSPAWN_START_EVENTS)
-            has_legacy_label = bool(label_set & _PI_LEGACY_SUBSPAWN_START_EVENTS)
-            subspawn_id = _pi_subspawn_id(event.payload)
-            if subspawn_id is not None:
-                if subspawn_id in self.resolved_subspawn_ids:
-                    logger.debug(
-                        "Ignoring duplicate subspawn.start after terminal subspawn.end",
-                        extra={"subspawn_id": subspawn_id},
-                    )
-                    return False
-                self.active_ids.add(subspawn_id)
-                pgid = _pi_subspawn_pgid(event.payload)
-                pid = _pi_subspawn_pid(event.payload)
-                process_group_id = pgid if pgid is not None else pid
-                if process_group_id is not None:
-                    self.active_process_groups[subspawn_id] = process_group_id
-            elif has_canonical_label:
-                canonical_label = _canonical_lifecycle_label(
-                    label_set,
-                    _PI_CANONICAL_SUBSPAWN_START_EVENTS,
-                )
-                self.lifecycle_tracking_invalidated_error = (
-                    "pi_lifecycle_tracking_invalidated:"
-                    f"missing_subspawn_id:{canonical_label}"
-                )
-            elif has_legacy_label and not has_canonical_label:
-                self.anonymous_active_count += 1
-            return False
-
-        is_subspawn_end = bool(label_set & _PI_SUBSPAWN_END_EVENTS)
-        if is_subspawn_end:
-            if not _pi_wait_policy_is_tracked(event.payload):
-                return False
-            has_canonical_label = bool(label_set & _PI_CANONICAL_SUBSPAWN_END_EVENTS)
-            has_legacy_label = bool(label_set & _PI_LEGACY_SUBSPAWN_END_EVENTS)
-            subspawn_id = _pi_subspawn_id(event.payload)
-            if subspawn_id is not None:
-                if subspawn_id in self.resolved_subspawn_ids:
-                    logger.debug(
-                        "Ignoring duplicate subspawn.end after terminal subspawn.end",
-                        extra={"subspawn_id": subspawn_id},
-                    )
-                    return False
-                self.resolved_subspawn_ids.add(subspawn_id)
-                self.active_ids.discard(subspawn_id)
-                self.active_process_groups.pop(subspawn_id, None)
-                return False
-            if has_canonical_label:
-                canonical_label = _canonical_lifecycle_label(
-                    label_set,
-                    _PI_CANONICAL_SUBSPAWN_END_EVENTS,
-                )
-                self.lifecycle_tracking_invalidated_error = (
-                    "pi_lifecycle_tracking_invalidated:"
-                    f"missing_subspawn_id:{canonical_label}"
-                )
-                return False
-            if has_legacy_label and not has_canonical_label and self.anonymous_active_count > 0:
-                self.anonymous_active_count -= 1
-            return False
-
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None:
-            return False
-
-        is_notification_start = bool(
-            label_set & (_PI_NOTIFICATION_QUEUED_EVENTS | _PI_NOTIFICATION_DELIVERED_EVENTS)
-        )
-        if is_notification_start:
-            notification_id = _pi_notification_id(event.payload)
-            if notification_id is not None:
-                phase = (
-                    "delivered"
-                    if bool(label_set & _PI_NOTIFICATION_DELIVERED_EVENTS)
-                    else "queued"
-                )
-                current = pending_notifications.get(notification_id)
-                started_monotonic = (
-                    current.started_monotonic if current is not None else observation_monotonic
-                )
-                deadline_monotonic = (
-                    None
-                    if notification_timeout_seconds is None or notification_timeout_seconds <= 0
-                    else started_monotonic + notification_timeout_seconds
-                )
-                pending_notifications[notification_id] = _PiPendingNotification(
-                    notification_id=notification_id,
-                    phase=phase,
-                    started_monotonic=started_monotonic,
-                    deadline_monotonic=deadline_monotonic,
-                )
-            elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
-                canonical_label = _canonical_lifecycle_label(
-                    label_set,
-                    _PI_CANONICAL_NOTIFICATION_EVENTS,
-                )
-                self.lifecycle_tracking_invalidated_error = (
-                    "pi_lifecycle_tracking_invalidated:"
-                    f"missing_notification_id:{canonical_label}"
-                )
-            elif _is_legacy_notification_label(label_set):
-                self.anonymous_pending_notifications += 1
-            return False
-
-        is_notification_end = bool(
-            label_set & (_PI_NOTIFICATION_COMPLETED_EVENTS | _PI_NOTIFICATION_FAILED_EVENTS)
-        )
-        if is_notification_end:
-            notification_id = _pi_notification_id(event.payload)
-            if notification_id is not None:
-                pending_notifications.pop(notification_id, None)
-            elif label_set & _PI_CANONICAL_NOTIFICATION_EVENTS:
-                canonical_label = _canonical_lifecycle_label(
-                    label_set,
-                    _PI_CANONICAL_NOTIFICATION_EVENTS,
-                )
-                self.lifecycle_tracking_invalidated_error = (
-                    "pi_lifecycle_tracking_invalidated:"
-                    f"missing_notification_id:{canonical_label}"
-                )
-                return False
-            elif (
-                _is_legacy_notification_label(label_set)
-                and self.anonymous_pending_notifications > 0
-            ):
-                self.anonymous_pending_notifications -= 1
-            if label_set & _PI_NOTIFICATION_FAILED_EVENTS:
-                self.notification_failure_error = _pi_notification_failure_error(event.payload)
-        return False
-
-    def _canonical_lifecycle_dedup_key(
-        self,
-        labels: set[str],
-        payload: dict[str, object],
-    ) -> tuple[str, str, str] | None:
-        canonical_labels = sorted(
-            label for label in labels if label in _PI_CANONICAL_DEDUP_LIFECYCLE_EVENTS
-        )
-        if not canonical_labels:
-            return None
-        event_type = canonical_labels[0]
-        correlation_id = _pi_correlation_id(payload)
-        if correlation_id is None:
-            return None
-        event_specific_id = ""
-        if event_type.startswith("meridian.subspawn."):
-            subspawn_id = _pi_subspawn_id(payload)
-            if subspawn_id is not None:
-                event_specific_id = subspawn_id
-        elif event_type.startswith("meridian.notification."):
-            notification_id = _pi_notification_id(payload)
-            if notification_id is not None:
-                event_specific_id = notification_id
-        return (event_type, correlation_id, event_specific_id)
-
-    def _is_parse_error_for_canonical_lifecycle_event(self, event: HarnessEvent) -> bool:
-        labels = _event_label_candidates(event)
-        label_set = set(labels)
-        if "meridian.lifecycle.parse_error" not in label_set:
-            return False
-        raw_type = event.payload.get("raw_type")
-        if not isinstance(raw_type, str):
-            return False
-        if not raw_type.startswith(_PI_CANONICAL_LIFECYCLE_EVENT_PREFIXES):
-            return False
-        parse_error = event.payload.get("error")
-        return isinstance(parse_error, str) and parse_error == "unsupported_schema_version"
-
-    def has_pending(self) -> bool:
-        return bool(self.active_ids) or self.anonymous_active_count > 0
-
-    def active_tracked_count(self) -> int:
-        return len(self.active_ids) + self.anonymous_active_count
-
-    def active_tracked_pgid_candidates(self) -> tuple[int, ...]:
-        unique = {
-            pgid
-            for subspawn_id, pgid in self.active_process_groups.items()
-            if subspawn_id in self.active_ids and pgid > 0
-        }
-        return tuple(sorted(unique))
-
-    def clear_tracked_children_after_wave_timeout(self) -> int:
-        tracked_count = self.active_tracked_count()
-        self.active_ids.clear()
-        self.active_process_groups.clear()
-        self.anonymous_active_count = 0
-        return tracked_count
-
-    def has_pending_notifications(self) -> bool:
-        pending_notifications = self.pending_notifications
-        return bool(pending_notifications) or self.anonymous_pending_notifications > 0
-
-    def pending_notification_count(self) -> int:
-        pending_notifications = self.pending_notifications
-        return len(pending_notifications or ()) + self.anonymous_pending_notifications
-
-    def resolve_notification_on_terminal(self, event: HarnessEvent) -> str | None:
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None or not pending_notifications:
-            return None
-
-        notification_id = _pi_notification_id(event.payload)
-        if notification_id is not None and notification_id in pending_notifications:
-            pending_notifications.pop(notification_id, None)
-            return notification_id
-
-        delivered = [
-            pending.notification_id
-            for pending in pending_notifications.values()
-            if pending.phase == "delivered"
-        ]
-        if len(delivered) == 1:
-            resolved_id = delivered[0]
-            pending_notifications.pop(resolved_id, None)
-            return resolved_id
-        return None
-
-    def time_until_next_notification_timeout(self, now_monotonic: float) -> float | None:
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None:
-            return None
-        remaining: float | None = None
-        for pending in pending_notifications.values():
-            deadline = pending.deadline_monotonic
-            if deadline is None:
-                continue
-            current_remaining = deadline - now_monotonic
-            if remaining is None or current_remaining < remaining:
-                remaining = current_remaining
-        return remaining
-
-    def pop_expired_notification(self, now_monotonic: float) -> _PiPendingNotification | None:
-        pending_notifications = self.pending_notifications
-        if pending_notifications is None:
-            return None
-        expired: _PiPendingNotification | None = None
-        for pending in pending_notifications.values():
-            deadline = pending.deadline_monotonic
-            if deadline is None or deadline > now_monotonic:
-                continue
-            if expired is None or pending.started_monotonic < expired.started_monotonic:
-                expired = pending
-        if expired is None:
-            return None
-        pending_notifications.pop(expired.notification_id, None)
-        return expired
 
 
 def _ensure_harness_bootstrap() -> None:
@@ -779,178 +399,54 @@ class SpawnManager:
         """
 
         # Import at runtime to avoid circular import during module initialization.
-        from meridian.lib.harness.semantics import (
-            TerminalEventOutcome,
-            activity_transition,
-            terminal_outcome,
-        )
+        from meridian.lib.harness.semantics import activity_transition, terminal_outcome
+
+        def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+            self._emit_pi_phase_event(
+                spawn_id,
+                receiver,
+                phase=phase,
+                session_role=session_role,
+                **payload,
+            )
+
+        async def _terminate_tracked_pi_children(
+            tracker: PiSubspawnTracker,
+            reason: str,
+        ) -> None:
+            await self._terminate_pi_tracked_subspawns(spawn_id, tracker, reason=reason)
 
         consecutive_write_failures = 0
         max_consecutive_failures = 10
         drain_cancelled = False
         drain_error: Exception | None = None
         recorded_terminal_outcome: TerminalEventOutcome | None = None
-        last_successful_pi_terminal: TerminalEventOutcome | None = None
-        pi_quiescence_candidate: TerminalEventOutcome | None = None
-        pi_micro_drain_event_count = 0
-        pi_subspawn_tracker = _PiSubspawnTracker.empty()
-        pi_tracked_cleanup_reason: str | None = None
-        pi_session_seen = False
-        pi_session_phase_emitted = False
-        pi_waiting_child_count: int | None = None
-        pi_waiting_notification_count: int | None = None
-        pi_child_wave_deadline_monotonic: float | None = None
-        pi_child_wave_started_monotonic: float | None = None
-        pi_child_wave_timed_out = False
-        pi_child_wave_timeout_error: str | None = None
-        pi_child_wave_timeout_followup_deadline: float | None = None
-        is_pi_connection = receiver.harness_id == HarnessId.PI
-        normalized_pi_session_role = (pi_session_role or "").strip().lower()
-        pi_quiescence_tracker = PiQuiescenceTracker.for_connection(
+        pi_drain = PiDrainCoordinator.for_connection(
             runtime_root=self._runtime_root,
             spawn_id=spawn_id,
-            is_pi_connection=is_pi_connection,
-            session_role=normalized_pi_session_role,
+            receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
+            session_role=pi_session_role,
+            notification_timeout_seconds=notification_timeout_seconds,
+            child_wave_timeout_seconds=child_wave_timeout_seconds,
+            emit_phase=_emit_pi_phase,
         )
-        await pi_quiescence_tracker.start()
-
-        def _clear_child_wave_timer() -> None:
-            nonlocal pi_child_wave_deadline_monotonic, pi_child_wave_started_monotonic
-            pi_child_wave_deadline_monotonic = None
-            pi_child_wave_started_monotonic = None
-
-        def _has_pending_pi_children() -> bool:
-            return (
-                pi_subspawn_tracker.has_pending()
-                or pi_quiescence_tracker.has_pending_child_spawns()
-            )
-
-        def _pending_pi_child_count() -> int:
-            lifecycle_count = pi_subspawn_tracker.active_tracked_count()
-            return lifecycle_count or pi_quiescence_tracker.pending_child_spawn_count()
-
-        def _is_pi_quiescent() -> bool:
-            return (
-                pi_quiescence_tracker.is_quiescent()
-                and not pi_subspawn_tracker.has_pending()
-                and not pi_subspawn_tracker.has_pending_notifications()
-            )
-
-        def _emit_pi_waiting_phases_if_needed() -> None:
-            nonlocal pi_waiting_child_count, pi_waiting_notification_count
-            if not pi_quiescence_enabled:
-                return
-            waiting_for_children = _has_pending_pi_children()
-            child_count = _pending_pi_child_count()
-            if waiting_for_children:
-                if child_count != pi_waiting_child_count:
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="waiting_for_tracked_children",
-                        session_role=normalized_pi_session_role or None,
-                        active_tracked_count=child_count,
-                        anonymous_tracked_count=pi_subspawn_tracker.anonymous_active_count,
-                    )
-                pi_waiting_child_count = child_count
-            else:
-                pi_waiting_child_count = None
-
-            waiting_for_notifications = (
-                not waiting_for_children
-                and pi_subspawn_tracker.has_pending_notifications()
-            )
-            notification_count = pi_subspawn_tracker.pending_notification_count()
-            if waiting_for_notifications:
-                if notification_count != pi_waiting_notification_count:
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="waiting_for_notification_completion",
-                        session_role=normalized_pi_session_role or None,
-                        pending_notification_count=notification_count,
-                        anonymous_pending_notification_count=(
-                            pi_subspawn_tracker.anonymous_pending_notifications
-                        ),
-                    )
-                pi_waiting_notification_count = notification_count
-            else:
-                pi_waiting_notification_count = None
+        await pi_drain.start()
 
         policy = drain_policy
         if policy is None:
-            if is_pi_connection:
-                policy = PiRpcQuiescenceDrainPolicy(
-                    quiescence_check=pi_quiescence_tracker.is_quiescent,
-                )
-            else:
-                policy = SingleTurnDrainPolicy()
-        pi_quiescence_enabled = is_pi_connection and isinstance(policy, PiRpcQuiescenceDrainPolicy)
+            policy = (
+                pi_drain.default_policy()
+                if pi_drain.is_pi_connection
+                else SingleTurnDrainPolicy()
+            )
+        pi_drain.set_policy(policy)
+
         events_iter = receiver.events().__aiter__()
         pending_event_task: asyncio.Future[HarnessEvent] | None = None
-        if is_pi_connection:
-            self._emit_pi_phase_event(
-                spawn_id,
-                receiver,
-                phase="drain_started",
-                session_role=normalized_pi_session_role or None,
-            )
         try:
             while True:
                 try:
-                    next_timeout: float | None = None
-                    if pi_quiescence_enabled:
-                        if pi_quiescence_candidate is not None:
-                            next_timeout = _PI_MICRO_DRAIN_TIMEOUT_SECONDS
-                        else:
-                            now_monotonic: float = time.monotonic()
-                            notification_remaining = (
-                                pi_subspawn_tracker.time_until_next_notification_timeout(
-                                    now_monotonic
-                                )
-                            )
-                            if notification_remaining is not None:
-                                next_timeout = (
-                                    notification_remaining
-                                    if notification_remaining > 0
-                                    else _PI_MICRO_DRAIN_TIMEOUT_SECONDS
-                                )
-                            child_wave_remaining: float | None = None
-                            child_wave_deadline_monotonic: float | None = (
-                                pi_child_wave_deadline_monotonic
-                            )
-                            if (
-                                child_wave_deadline_monotonic is not None
-                                and pi_quiescence_tracker.parent_idle
-                                and _has_pending_pi_children()
-                            ):
-                                child_wave_remaining = child_wave_deadline_monotonic - now_monotonic
-                            if child_wave_remaining is not None:
-                                bounded_child_wave_remaining = (
-                                    child_wave_remaining
-                                    if child_wave_remaining > 0
-                                    else _PI_MICRO_DRAIN_TIMEOUT_SECONDS
-                                )
-                                if next_timeout is None:
-                                    next_timeout = bounded_child_wave_remaining
-                                else:
-                                    next_timeout = min(next_timeout, bounded_child_wave_remaining)
-                            followup_remaining: float | None = None
-                            followup_deadline_monotonic: float | None = (
-                                pi_child_wave_timeout_followup_deadline
-                            )
-                            if followup_deadline_monotonic is not None:
-                                followup_remaining = followup_deadline_monotonic - now_monotonic
-                            if followup_remaining is not None:
-                                bounded_followup_remaining = (
-                                    followup_remaining
-                                    if followup_remaining > 0
-                                    else _PI_MICRO_DRAIN_TIMEOUT_SECONDS
-                                )
-                                if next_timeout is None:
-                                    next_timeout = bounded_followup_remaining
-                                else:
-                                    next_timeout = min(next_timeout, bounded_followup_remaining)
+                    next_timeout = pi_drain.next_timeout()
                     if pending_event_task is None:
                         pending_event_task = asyncio.ensure_future(anext(events_iter))
                         # Give already-buffered/in-memory event iterators one loop tick before
@@ -966,178 +462,26 @@ class SpawnManager:
                     pending_event_task = None
                 except StopAsyncIteration:
                     pending_event_task = None
-                    if pi_quiescence_enabled and pi_quiescence_candidate is not None:
-                        recorded_terminal_outcome = pi_quiescence_candidate
+                    if pi_drain.quiescence_candidate is not None:
+                        recorded_terminal_outcome = pi_drain.quiescence_candidate
                     break
                 except TimeoutError:
-                    if not pi_quiescence_enabled:
-                        raise
-                    if pi_quiescence_candidate is not None:
-                        recorded_terminal_outcome = pi_quiescence_candidate
+                    timeout_outcome = await pi_drain.handle_timeout(
+                        _terminate_tracked_pi_children,
+                    )
+                    if timeout_outcome is not None:
+                        recorded_terminal_outcome = timeout_outcome
                         break
-                    now_monotonic: float = time.monotonic()
-                    expired_notification = pi_subspawn_tracker.pop_expired_notification(
-                        now_monotonic
-                    )
-                    if expired_notification is None:
-                        wave_timed_out = (
-                            pi_child_wave_deadline_monotonic is not None
-                            and pi_quiescence_tracker.parent_idle
-                            and _has_pending_pi_children()
-                            and now_monotonic >= pi_child_wave_deadline_monotonic
-                        )
-                        if wave_timed_out:
-                            if pi_tracked_cleanup_reason is None:
-                                await self._terminate_pi_tracked_subspawns(
-                                    spawn_id,
-                                    pi_subspawn_tracker,
-                                    reason="pi_child_wave_timeout",
-                                )
-                            tracked_count = (
-                                pi_subspawn_tracker.clear_tracked_children_after_wave_timeout()
-                                or pi_quiescence_tracker.pending_child_spawn_count()
-                            )
-                            pi_waiting_child_count = None
-                            pi_tracked_cleanup_reason = "pi_child_wave_timeout"
-                            child_wave_deadline_monotonic: float | None = (
-                                pi_child_wave_deadline_monotonic
-                            )
-                            elapsed_seconds = 0.0
-                            if pi_child_wave_started_monotonic is not None:
-                                elapsed_seconds = max(
-                                    0.0,
-                                    now_monotonic - pi_child_wave_started_monotonic,
-                                )
-                            timeout_seconds = 0.0
-                            if (
-                                child_wave_deadline_monotonic is not None
-                                and pi_child_wave_started_monotonic is not None
-                            ):
-                                timeout_seconds = max(
-                                    0.0,
-                                    child_wave_deadline_monotonic - pi_child_wave_started_monotonic,
-                                )
-                            self._emit_pi_phase_event(
-                                spawn_id,
-                                receiver,
-                                phase="pi_child_wave_timeout",
-                                session_role=normalized_pi_session_role or None,
-                                active_tracked_count=tracked_count,
-                                elapsed_seconds=elapsed_seconds,
-                                timeout_seconds=timeout_seconds,
-                            )
-                            _clear_child_wave_timer()
-                            pi_child_wave_timed_out = True
-                            pi_child_wave_timeout_error = _pi_child_wave_timeout_error()
-                            followup_timeout_seconds: float
-                            if (
-                                child_wave_timeout_seconds is not None
-                                and child_wave_timeout_seconds > 0
-                            ):
-                                followup_timeout_seconds = float(child_wave_timeout_seconds)
-                            else:
-                                followup_timeout_seconds = 300.0
-                            pi_child_wave_timeout_followup_deadline = (
-                                now_monotonic + followup_timeout_seconds
-                            )
-                            _emit_pi_waiting_phases_if_needed()
-                            continue
-                        if (
-                            pi_child_wave_timeout_followup_deadline is not None
-                            and now_monotonic >= pi_child_wave_timeout_followup_deadline
-                            and pi_child_wave_timed_out
-                            and pi_child_wave_timeout_error is not None
-                        ):
-                            recorded_terminal_outcome = TerminalEventOutcome(
-                                status="failed",
-                                exit_code=1,
-                                error=pi_child_wave_timeout_error,
-                            )
-                            break
-                        continue
-                    timeout_error = _pi_notification_timeout_error(
-                        expired_notification,
-                        now_monotonic=now_monotonic,
-                    )
-                    pi_subspawn_tracker.notification_timeout_error = timeout_error
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="pi_notification_timeout",
-                        session_role=normalized_pi_session_role or None,
-                        notification_id=expired_notification.notification_id,
-                        notification_phase=expired_notification.phase,
-                        timeout_seconds=(
-                            (
-                                expired_notification.deadline_monotonic
-                                - expired_notification.started_monotonic
-                            )
-                            if expired_notification.deadline_monotonic is not None
-                            else None
-                        ),
-                    )
-                    recorded_terminal_outcome = TerminalEventOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=timeout_error,
-                    )
-                    break
+                    continue
 
-                duplicate_canonical_lifecycle_event = pi_subspawn_tracker.observe(
+                transition = activity_transition(event) if pi_drain.is_pi_connection else None
+                duplicate_canonical_lifecycle_event = await pi_drain.observe_event(
                     event,
-                    now_monotonic=time.monotonic(),
-                    notification_timeout_seconds=notification_timeout_seconds,
+                    transition,
                 )
-                event_label_set = set(_event_label_candidates(event))
                 if duplicate_canonical_lifecycle_event:
                     continue
-                transition: str | None = None
-                if is_pi_connection:
-                    if event.event_type == "session":
-                        pi_session_seen = True
-                    if event.event_type == _PI_PHASE_EVENT_TYPE:
-                        phase_value = event.payload.get("phase")
-                        if phase_value in {"session_event_seen", "session_event_absent"}:
-                            pi_session_phase_emitted = True
-                            if phase_value == "session_event_seen":
-                                pi_session_seen = True
-                    transition = activity_transition(event)
-                    if transition == "turn_active":
-                        pi_quiescence_tracker.mark_turn_active()
-                        _clear_child_wave_timer()
-                    elif transition == "idle":
-                        await pi_quiescence_tracker.mark_idle()
-                        if (
-                            child_wave_timeout_seconds is not None
-                            and child_wave_timeout_seconds > 0
-                            and _has_pending_pi_children()
-                        ):
-                            wave_start = time.monotonic()
-                            pi_child_wave_started_monotonic = wave_start
-                            pi_child_wave_deadline_monotonic = (
-                                wave_start + child_wave_timeout_seconds
-                            )
-                if (
-                    is_pi_connection
-                    and pi_child_wave_timed_out
-                    and pi_child_wave_timeout_error is not None
-                ):
-                    saw_followup_signal = bool(
-                        event_label_set
-                        & (
-                            _PI_NOTIFICATION_QUEUED_EVENTS
-                            | _PI_NOTIFICATION_DELIVERED_EVENTS
-                            | _PI_NOTIFICATION_COMPLETED_EVENTS
-                            | _PI_NOTIFICATION_FAILED_EVENTS
-                        )
-                    )
-                    if saw_followup_signal:
-                        pi_child_wave_timed_out = False
-                        pi_child_wave_timeout_error = None
-                        pi_child_wave_timeout_followup_deadline = None
-                if not _has_pending_pi_children():
-                    _clear_child_wave_timer()
-                _emit_pi_waiting_phases_if_needed()
+
                 if tracer is not None:
                     tracer.emit(
                         "drain",
@@ -1192,122 +536,31 @@ class SpawnManager:
                             )
                             self._fan_out_event(spawn_id, event)
                             break
+
                 event_outcome = terminal_outcome(event)
                 self._fan_out_event(spawn_id, event)
-                if pi_quiescence_enabled and pi_quiescence_candidate is not None:
-                    pi_micro_drain_event_count += 1
-                    pi_quiescence_candidate = None
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="quiescence_micro_drain_extended",
-                        session_role=normalized_pi_session_role or None,
-                        event_type=event.event_type,
-                        micro_drain_events=pi_micro_drain_event_count,
-                    )
-                if (
-                    is_pi_connection
-                    and pi_subspawn_tracker.lifecycle_tracking_invalidated_error is not None
-                ):
-                    recorded_terminal_outcome = TerminalEventOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=pi_subspawn_tracker.lifecycle_tracking_invalidated_error,
-                    )
+                pi_drain.note_event_persisted(event)
+
+                pi_lifecycle_error = pi_drain.lifecycle_error_outcome()
+                if pi_lifecycle_error is not None:
+                    recorded_terminal_outcome = pi_lifecycle_error
                     break
+
                 if event_outcome is not None:
-                    action: DrainAction = policy.classify(event_outcome)
-                    if is_pi_connection and event_outcome.status == "succeeded":
-                        last_successful_pi_terminal = event_outcome
-                        completed_notification_id = (
-                            pi_subspawn_tracker.resolve_notification_on_terminal(event)
-                        )
-                        if completed_notification_id is not None:
-                            self._emit_pi_phase_event(
-                                spawn_id,
-                                receiver,
-                                phase="continuation_completed",
-                                session_role=normalized_pi_session_role or None,
-                                notification_id=completed_notification_id,
-                            )
-                        _emit_pi_waiting_phases_if_needed()
-                    if action.terminate:
-                        if pi_quiescence_enabled and event_outcome.status == "succeeded":
-                            if _is_pi_quiescent():
-                                pi_quiescence_candidate = event_outcome
-                                pi_micro_drain_event_count = 0
-                                self._emit_pi_phase_event(
-                                    spawn_id,
-                                    receiver,
-                                    phase="quiescence_micro_drain_started",
-                                    session_role=normalized_pi_session_role or None,
-                                )
-                            else:
-                                self._emit_pi_phase_event(
-                                    spawn_id,
-                                    receiver,
-                                    phase="quiescence_deferred",
-                                    session_role=normalized_pi_session_role or None,
-                                    active_tracked_count=_pending_pi_child_count(),
-                                    pending_notification_count=(
-                                        pi_subspawn_tracker.pending_notification_count()
-                                    ),
-                                )
-                        else:
-                            recorded_terminal_outcome = event_outcome
-                            break
-                    if action.emit_turn_boundary:
+                    action = policy.classify(event_outcome)
+                    pi_decision = pi_drain.handle_terminal_event(event, event_outcome, action)
+                    if pi_decision.recorded_outcome is not None:
+                        recorded_terminal_outcome = pi_decision.recorded_outcome
+                        break
+                    if pi_decision.emit_turn_boundary:
                         await self._fan_out_turn_boundary(spawn_id, event_outcome)
-                if (
-                    is_pi_connection
-                    and pi_subspawn_tracker.notification_failure_error is not None
-                    and pi_quiescence_tracker.parent_idle
-                    and not _has_pending_pi_children()
-                ):
-                    recorded_terminal_outcome = TerminalEventOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=pi_subspawn_tracker.notification_failure_error,
-                    )
+
+                pi_failure = pi_drain.failure_outcome_after_event()
+                if pi_failure is not None:
+                    recorded_terminal_outcome = pi_failure
                     break
-                if (
-                    is_pi_connection
-                    and pi_subspawn_tracker.notification_timeout_error is not None
-                ):
-                    recorded_terminal_outcome = TerminalEventOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=pi_subspawn_tracker.notification_timeout_error,
-                    )
-                    break
-                if (
-                    is_pi_connection
-                    and pi_child_wave_timed_out
-                    and pi_child_wave_timeout_error is not None
-                    and pi_child_wave_timeout_followup_deadline is not None
-                    and time.monotonic() >= pi_child_wave_timeout_followup_deadline
-                ):
-                    recorded_terminal_outcome = TerminalEventOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=cast("str", pi_child_wave_timeout_error),
-                    )
-                    break
-                if (
-                    pi_quiescence_enabled
-                    and pi_quiescence_candidate is None
-                    and recorded_terminal_outcome is None
-                    and last_successful_pi_terminal is not None
-                    and _is_pi_quiescent()
-                ):
-                    pi_quiescence_candidate = last_successful_pi_terminal
-                    pi_micro_drain_event_count = 0
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="quiescence_micro_drain_started",
-                        session_role=normalized_pi_session_role or None,
-                    )
+                if recorded_terminal_outcome is None:
+                    pi_drain.maybe_start_quiescence_after_event()
         except asyncio.CancelledError:
             drain_cancelled = True
             raise
@@ -1315,27 +568,16 @@ class SpawnManager:
             drain_error = exc
             raise
         finally:
-            pending_pi_children_at_exit = (
-                _has_pending_pi_children() if pi_quiescence_enabled else False
-            )
+            pending_pi_children_at_exit = pi_drain.pending_children_at_exit()
             if pending_event_task is not None and not pending_event_task.done():
                 pending_event_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await pending_event_task
-            await pi_quiescence_tracker.stop()
-            if (
-                is_pi_connection
-                and pi_subspawn_tracker.has_pending()
-                and pi_tracked_cleanup_reason is None
-            ):
-                await self._terminate_pi_tracked_subspawns(
-                    spawn_id,
-                    pi_subspawn_tracker,
-                    reason="pi_process_exit_with_tracked_children",
-                )
-                pi_tracked_cleanup_reason = "pi_process_exit_with_tracked_children"
+            await pi_drain.stop()
+            await pi_drain.cleanup_pending_children_at_exit(_terminate_tracked_pi_children)
             session = self._sessions.pop(spawn_id, None)
             if session is not None:
+                fallback_pi_error = pi_drain.fallback_error_without_recorded_outcome()
                 if drain_cancelled:
                     outcome = DrainOutcome(
                         status="cancelled",
@@ -1357,7 +599,7 @@ class SpawnManager:
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif (
-                    is_pi_connection
+                    pi_drain.is_pi_connection
                     and recorded_terminal_outcome is None
                     and pending_pi_children_at_exit
                 ):
@@ -1367,26 +609,11 @@ class SpawnManager:
                         error="pi_process_exited_with_tracked_children",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                elif (
-                    is_pi_connection
-                    and pi_subspawn_tracker.notification_failure_error is not None
-                    and recorded_terminal_outcome is None
-                ):
+                elif fallback_pi_error is not None and recorded_terminal_outcome is None:
                     outcome = DrainOutcome(
                         status="failed",
                         exit_code=1,
-                        error=pi_subspawn_tracker.notification_failure_error,
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif (
-                    is_pi_connection
-                    and pi_child_wave_timeout_error is not None
-                    and recorded_terminal_outcome is None
-                ):
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=cast("str", pi_child_wave_timeout_error),
+                        error=fallback_pi_error,
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
                 elif recorded_terminal_outcome is not None:
@@ -1403,25 +630,15 @@ class SpawnManager:
                         error="connection_closed_without_terminal_event",
                         duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
                     )
-                if is_pi_connection and not pi_session_phase_emitted:
-                    session_id = _safe_connection_session_id(receiver) if pi_session_seen else None
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="session_event_seen" if pi_session_seen else "session_event_absent",
-                        session_role=normalized_pi_session_role or None,
-                        session_id=session_id,
-                    )
-                if is_pi_connection:
-                    self._emit_pi_phase_event(
-                        spawn_id,
-                        receiver,
-                        phase="finalized",
-                        session_role=normalized_pi_session_role or None,
-                        status=outcome.status,
-                        exit_code=outcome.exit_code,
-                        error=outcome.error,
-                    )
+                session_id = (
+                    _safe_connection_session_id(receiver) if pi_drain.session_seen else None
+                )
+                pi_drain.emit_session_phase_if_needed(session_id)
+                pi_drain.emit_finalized(
+                    status=outcome.status,
+                    exit_code=outcome.exit_code,
+                    error=outcome.error,
+                )
                 self._resolve_completion_future(session, outcome)
                 cleanup_task = asyncio.create_task(
                     self._cleanup_completed_session(spawn_id, session)
@@ -1442,7 +659,7 @@ class SpawnManager:
     async def _terminate_pi_tracked_subspawns(
         self,
         spawn_id: SpawnId,
-        tracker: _PiSubspawnTracker,
+        tracker: PiSubspawnTracker,
         *,
         reason: str,
     ) -> None:
@@ -2009,17 +1226,17 @@ class SpawnManager:
         **data: object,
     ) -> None:
         payload: dict[str, object] = {
-            "type": _PI_PHASE_EVENT_TYPE,
+            "type": pi_lifecycle.PI_PHASE_EVENT_TYPE,
             "phase": phase,
             "spawn_id": str(spawn_id),
-            "schema_version": _PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
+            "schema_version": pi_lifecycle.PI_SUPPORTED_LIFECYCLE_SCHEMA_VERSION,
         }
         for key, value in data.items():
             if value is not None:
                 payload[key] = value
 
         event = HarnessEvent(
-            event_type=_PI_PHASE_EVENT_TYPE,
+            event_type=pi_lifecycle.PI_PHASE_EVENT_TYPE,
             harness_id=connection.harness_id.value,
             payload=payload,
             raw_text=None,
