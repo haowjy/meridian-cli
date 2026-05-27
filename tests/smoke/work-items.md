@@ -76,85 +76,56 @@ uv run meridian work rename original-name new-name
 ```
 - [ ] No `Traceback` in stderr (may exit 0 or non-zero depending on feature state)
 
-## work set-worktree / clear-worktree
+## work task-dir set / clear
 
 ```bash
-uv run meridian work start with-worktree-path
-mkdir -p "$SCRATCH/worktree-target"
-uv run meridian work set-worktree with-worktree-path "$SCRATCH/worktree-target"
-uv run meridian work show with-worktree-path --json
+uv run meridian work start with-task-dir
+mkdir -p "$SCRATCH/task-dir-target"
+uv run meridian work task-dir "$SCRATCH/task-dir-target"
+uv run meridian work show with-task-dir --json
 ```
 - [ ] Exit 0
-- [ ] JSON shows worktree path set to `$SCRATCH/worktree-target`
+- [ ] JSON shows `task_dir` set to `$SCRATCH/task-dir-target`
 
 ```bash
-uv run meridian work clear-worktree with-worktree-path
-uv run meridian work show with-worktree-path --json
+uv run meridian work task-dir --clear
+uv run meridian work show with-task-dir --json
 ```
 - [ ] Exit 0
-- [ ] JSON shows worktree path is null/empty
+- [ ] JSON shows `task_dir` is null/empty
 
-## work worktree show / ensure
-
-Managed ensure always uses Meridian's canonical path
-`<repo>.worktrees/<worktree-name>`. `--repo` selects the target repository only
-on first managed ensure; existing managed metadata is reused until cleared or
-migrated explicitly. Use `work set-worktree` only for existing/manual custom
-paths that Meridian should not own.
-
-```bash
-uv run meridian work start ensure-item --no-worktree
-uv run meridian work worktree ensure-item --json
-```
-- [ ] Exit 0
-- [ ] JSON shows configured status without creating a worktree
-
-```bash
-uv run meridian work worktree ensure-item --ensure --json
-```
-- [ ] Exit 0
-- [ ] JSON shows `ensured=true`
-- [ ] `worktree_path` is canonical (`<repo>.worktrees/ensure-item`)
-
-## work worktree --ensure creates temporary worktree when no active work
+## work task-dir print behavior
 
 ```bash
 uv run meridian work clear
-uv run meridian work worktree --ensure --repo . --json
-uv run meridian work worktree --json
+uv run meridian work task-dir
 ```
-- [ ] First command clears active work attachment
-- [ ] Ensure command exits 0 and returns `temporary=true`
-- [ ] Follow-up show reports the same tracked temporary worktree
-
-## work worktree --ensure (work-item form)
+- [ ] Exit 0
+- [ ] Prints project root when no active work item is attached
 
 ```bash
-uv run meridian work start ensure-worktree-item --no-worktree
-uv run meridian work worktree ensure-worktree-item --ensure
-uv run meridian work worktree ensure-worktree-item
+uv run meridian work start show-task-dir
+mkdir -p "$SCRATCH/show-task-dir"
+uv run meridian work task-dir "$SCRATCH/show-task-dir"
+uv run meridian work task-dir
 ```
-- [ ] Ensure command exits 0 and reports configured worktree path
-- [ ] Follow-up status command exits 0 and shows same worktree path
+- [ ] Exit 0
+- [ ] Prints `$SCRATCH/show-task-dir`
 
-```bash
-uv run meridian work clear
-uv run meridian work worktree
-```
-- [ ] Fails with guidance to run `meridian work start <name>` or pass a work id
-
-## manually assigned/shared worktree path is not removed by lifecycle
+## task_dir lifecycle is metadata-only (filesystem untouched)
 
 ```bash
 uv run meridian work start manual-a
 uv run meridian work start manual-b
-mkdir -p "$SCRATCH/shared-manual-worktree"
-uv run meridian work set-worktree manual-a "$SCRATCH/shared-manual-worktree"
-uv run meridian work set-worktree manual-b "$SCRATCH/shared-manual-worktree"
+mkdir -p "$SCRATCH/shared-task-dir"
+uv run meridian work switch manual-a
+uv run meridian work task-dir "$SCRATCH/shared-task-dir"
+uv run meridian work switch manual-b
+uv run meridian work task-dir "$SCRATCH/shared-task-dir"
 uv run meridian work done manual-a
-test -d "$SCRATCH/shared-manual-worktree"
+test -d "$SCRATCH/shared-task-dir"
 uv run meridian work delete manual-b
-test -d "$SCRATCH/shared-manual-worktree"
+test -d "$SCRATCH/shared-task-dir"
 ```
 - [ ] Both `test -d` checks pass
-- [ ] Lifecycle output says the path is manually assigned / not removed
+- [ ] Lifecycle output does not attempt to remove or mutate the shared directory

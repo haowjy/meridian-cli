@@ -135,94 +135,43 @@ uv run meridian spawn -a reviewer -p "Use kb ref" -f kb:domain/page.md --dry-run
 - [ ] Exit 0
 - [ ] JSON includes `task_cwd`, `reference_anchor`, `task_cwd_source`
 - [ ] JSON omits `authority_root`
-- [ ] `task_cwd_source == "authority-root"` in default no-worktree case
+- [ ] `task_cwd_source == "authority-root"` in default no-task-dir case
 
-## --work picks worktree task cwd and reference anchor
+## --work uses work-item task_dir for relative refs
 
 ```bash
-uv run meridian work start smoke-worktree
-WT=$(mktemp -d)
-echo "relative ref" > "$WT/notes.md"
-uv run meridian work set-worktree smoke-worktree "$WT"
-uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-worktree -f notes.md --dry-run --json
+uv run meridian work start smoke-task-dir
+TASK_DIR=$(mktemp -d)
+echo "relative ref" > "$TASK_DIR/notes.md"
+uv run meridian work task-dir "$TASK_DIR"
+uv run meridian spawn -a reviewer -p "use relative ref" --work smoke-task-dir -f notes.md --dry-run --json
 ```
 - [ ] Exit 0
-- [ ] `task_cwd` equals `$WT`
-- [ ] `reference_anchor` equals `$WT`
-- [ ] `task_cwd_source == "explicit-work-worktree"`
-- [ ] `task_cwd_work_item == "smoke-worktree"`
-- [ ] resolved `reference_files` entry points at `$WT/notes.md`
+- [ ] `task_cwd` equals `$TASK_DIR`
+- [ ] `reference_anchor` equals `$TASK_DIR`
+- [ ] `task_cwd_source == "explicit-work-task-dir"`
+- [ ] `task_cwd_work_item == "smoke-task-dir"`
+- [ ] resolved `reference_files` entry points at `$TASK_DIR/notes.md`
 
-## --worktree ensures managed worktree path when missing (dry-run only)
-
-`--worktree` means Meridian-managed canonical isolation at
-`<repo>.worktrees/<work-id>`. For a custom checkout path, launch from that
-checkout/worktree without `--worktree`.
+## --task-dir overrides work-item task_dir
 
 ```bash
-git -C "$SCRATCH" init --quiet
-uv run meridian work start ensure-worktree --no-worktree
-uv run meridian spawn -a reviewer -p "ensure missing worktree" --work ensure-worktree --worktree --dry-run --json
+OVERRIDE_DIR=$(mktemp -d)
+echo "override ref" > "$OVERRIDE_DIR/override.md"
+uv run meridian spawn -a reviewer -p "prefer explicit task dir" \
+  --work smoke-task-dir --task-dir "$OVERRIDE_DIR" -f override.md --dry-run --json
 ```
 - [ ] Exit 0
-- [ ] `task_cwd_source == "forced-worktree"`
-- [ ] `task_cwd == "${SCRATCH}.worktrees/ensure-worktree"`
-- [ ] `warning` mentions `Dry-run: would ensure worktree`
+- [ ] `task_cwd` equals `$OVERRIDE_DIR`
+- [ ] `task_cwd_source == "explicit-task-dir"`
+- [ ] resolved `reference_files` entry points at `$OVERRIDE_DIR/override.md`
 
-## --worktree with --repo selects external target repository
-
-```bash
-mkdir -p "$SCRATCH/../external-target"
-git -C "$SCRATCH/../external-target" init
-uv run meridian work start ensure-external --no-worktree
-uv run meridian spawn -a reviewer -p "ensure external worktree" \
-  --work ensure-external --worktree --repo ../external-target --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `task_cwd == "$(cd "$SCRATCH/../external-target/.." && pwd)/external-target.worktrees/ensure-external"`
-
-## --worktree uses ambient active work when --work is omitted
+## --task-dir requires existing directory
 
 ```bash
-uv run meridian work start ambient-worktree --no-worktree
-MERIDIAN_ACTIVE_WORK_ID=ambient-worktree \
-  uv run meridian spawn -a reviewer -p "ensure ambient worktree" --worktree --dry-run --json
+uv run meridian spawn -a reviewer -p "bad task dir" --task-dir "$SCRATCH/does-not-exist" --dry-run --json
 ```
-- [ ] Exit 0
-- [ ] `task_cwd_source == "forced-worktree"`
-- [ ] `task_cwd_work_item == "ambient-worktree"`
-- [ ] `task_cwd == "${SCRATCH}.worktrees/ambient-worktree"`
-- [ ] `reference_anchor == task_cwd`
-
-## Stale worktree fails unless --no-worktree
-
-```bash
-uv run meridian work start stale-worktree
-STALE="$SCRATCH/stale-worktree-path"
-mkdir -p "$STALE"
-uv run meridian work set-worktree stale-worktree "$STALE"
-rmdir "$STALE"
-uv run meridian spawn -a reviewer -p "should fail" --work stale-worktree --dry-run --json
-```
-- [ ] Fails with stale/missing worktree path error
-
-```bash
-uv run meridian spawn -a reviewer -p "bypass stale worktree" --work stale-worktree --no-worktree --dry-run --json
-```
-- [ ] Exit 0
-- [ ] `task_cwd_source == "forced-no-worktree"`
-
-## Missing manual assignment fails under --worktree
-
-```bash
-uv run meridian work start missing-manual --no-worktree
-MANUAL="$SCRATCH/missing-manual-worktree"
-mkdir -p "$MANUAL"
-uv run meridian work set-worktree missing-manual "$MANUAL"
-rmdir "$MANUAL"
-uv run meridian spawn -a reviewer -p "manual missing should fail" --work missing-manual --worktree --dry-run --json
-```
-- [ ] Fails with manual-assignment-missing guidance
+- [ ] Fails with `task_dir does not exist` guidance
 
 ```bash
 uv run meridian spawn -a reviewer -p "bad old prefix" -f @domain/page.md --dry-run --json

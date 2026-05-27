@@ -28,7 +28,6 @@ from meridian.lib.hooks.builtin.autosync_store import (
     write_conflict,
     write_sync_state,
 )
-from meridian.lib.ops.worktree_ops import git_subprocess_env
 from meridian.plugin_api import (
     Hook,
     HookContext,
@@ -54,6 +53,33 @@ _STASH_TIMEOUT_SECS = 30
 _DIFF_TIMEOUT_SECS = 30
 _MAX_ERROR_CHARS = 500
 _LOCK_TIMEOUT_SECS = 60.0
+
+_GIT_LOCAL_ENV_VARS: tuple[str, ...] = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
+
+
+def _git_subprocess_env() -> dict[str, str]:
+    """Return env for git subprocesses with repo-scoped overrides removed."""
+
+    env = os.environ.copy()
+    for key in _GIT_LOCAL_ENV_VARS:
+        env.pop(key, None)
+    return env
 
 
 @dataclass(frozen=True)
@@ -98,7 +124,7 @@ class GitAutosync:
                 text=True,
                 timeout=_REQUIREMENTS_TIMEOUT_SECS,
                 check=False,
-                env={**git_subprocess_env(), "LC_ALL": "C"},
+                env={**_git_subprocess_env(), "LC_ALL": "C"},
             )
         except FileNotFoundError:
             return False, "git CLI not found in PATH."
@@ -1168,7 +1194,7 @@ class GitAutosync:
             text=True,
             timeout=timeout,
             check=False,
-            env={**git_subprocess_env(), "LC_ALL": "C"},  # Locale-independent
+            env={**_git_subprocess_env(), "LC_ALL": "C"},  # Locale-independent
         )
 
     def _result(

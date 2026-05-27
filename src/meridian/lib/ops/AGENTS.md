@@ -45,7 +45,7 @@ spawn. The reaper also reads `MERIDIAN_DEPTH` and skips reaping when nested.
 `session_repair.py`.
 
 **Work and workspace:** `work_lifecycle.py`, `work_attachment.py`,
-`work_dashboard.py`, `workspace.py`, `worktree_lifecycle.py`, `worktree_ops.py`.
+`work_dashboard.py`, `workspace.py`.
 
 **Config and catalog:** `config.py`, `config_surface.py`, `catalog.py`, `mars.py`.
 
