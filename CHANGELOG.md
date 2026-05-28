@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-05-28
+
 ### Changed
 - Pi `/ps` and `/spawn` selectable task panels now use a full-screen covering overlay, avoiding redraw bleed-through from underlying Pi spinners/status while preserving whole-viewport UX.
 - Pi managed bash now keeps separate stdout/stderr log files behind the combined log, so `/ps` stream filters and tool details use the same source-of-truth logs.
