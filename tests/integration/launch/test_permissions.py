@@ -257,21 +257,6 @@ def test_inherit_child_env_blocks_meridian_runtime_dir() -> None:
     assert inherited["MERIDIAN_PI_STATE_DIR"] == "/resolved/runtime"
 
 
-def test_inherit_child_env_blocks_meridian_directory_explicit() -> None:
-    inherited = inherit_child_env(
-        base_env={
-            "PATH": "/usr/bin",
-            "MERIDIAN_DIRECTORY_EXPLICIT": "1",
-        },
-        env_overrides={
-            "MERIDIAN_PROJECT_DIR": "/repo",
-        },
-    )
-
-    assert "MERIDIAN_DIRECTORY_EXPLICIT" not in inherited
-    assert inherited["MERIDIAN_PROJECT_DIR"] == "/repo"
-
-
 def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
     runtime_root = "/resolved/runtime"
     child_env = build_harness_child_env(

@@ -148,9 +148,6 @@ def _write_hook_env_recorder(path: Path) -> None:
         "        {\n"
         '            "MERIDIAN_RUNTIME_DIR": os.environ.get("MERIDIAN_RUNTIME_DIR"),\n'
         '            "MERIDIAN_PROJECT_DIR": os.environ.get("MERIDIAN_PROJECT_DIR"),\n'
-        '            "MERIDIAN_DIRECTORY_EXPLICIT": os.environ.get(\n'
-        '                "MERIDIAN_DIRECTORY_EXPLICIT"\n'
-        "            ),\n"
         "        }\n"
         "    )\n"
         "    + '\\n',\n"
@@ -177,7 +174,6 @@ def test_hook_subprocess_env_strips_stale_runtime_dir(
     )
     stale_runtime = tmp_path / "stale-runtime"
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", stale_runtime.as_posix())
-    monkeypatch.setenv("MERIDIAN_DIRECTORY_EXPLICIT", "1")
     monkeypatch.chdir(project_root)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -186,7 +182,6 @@ def test_hook_subprocess_env_strips_stale_runtime_dir(
     assert exc_info.value.code == 0
     captured = json.loads(marker.read_text(encoding="utf-8"))
     assert captured["MERIDIAN_RUNTIME_DIR"] is None
-    assert captured["MERIDIAN_DIRECTORY_EXPLICIT"] is None
     assert captured["MERIDIAN_PROJECT_DIR"] == project_root.resolve().as_posix()
 
 

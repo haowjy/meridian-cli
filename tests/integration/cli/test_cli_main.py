@@ -33,7 +33,7 @@ def test_main_restores_directory_env_after_return(
 ) -> None:
     monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
     monkeypatch.setenv("MERIDIAN_PROJECT_DIR", "/prior/project")
-    monkeypatch.setenv("MERIDIAN_DIRECTORY_EXPLICIT", "1")
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", "/prior/runtime")
     monkeypatch.setattr(cli_main, "_install_cli_telemetry", lambda **_kwargs: None)
     monkeypatch.setattr(cli_main, "_maybe_schedule_background_repairs", lambda **_kwargs: None)
     monkeypatch.setattr(cli_main, "_emit_usage_command_invoked", lambda *_args, **_kwargs: None)
@@ -53,7 +53,7 @@ def test_main_restores_directory_env_after_return(
 
     assert exc_info.value.code == 0
     assert os.environ.get("MERIDIAN_PROJECT_DIR") == "/prior/project"
-    assert os.environ.get("MERIDIAN_DIRECTORY_EXPLICIT") == "1"
+    assert os.environ.get("MERIDIAN_RUNTIME_DIR") == "/prior/runtime"
 
 
 def test_background_repairs_pin_runtime_root_before_env_restore(
@@ -69,8 +69,8 @@ def test_background_repairs_pin_runtime_root_before_env_restore(
     expected_runtime = get_project_home("proj-repair")
 
     monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", stale_runtime.as_posix())
-    monkeypatch.setenv("MERIDIAN_DIRECTORY_EXPLICIT", "1")
+    # Simulate -C scope: MERIDIAN_RUNTIME_DIR is absent (unset by _directory_env_scope)
+    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
 
     captured: dict[str, Path | None] = {}
 
@@ -80,8 +80,6 @@ def test_background_repairs_pin_runtime_root_before_env_restore(
         runtime_root: Path | None = None,
     ) -> int:
         captured["locks"] = runtime_root
-        monkeypatch.delenv("MERIDIAN_DIRECTORY_EXPLICIT", raising=False)
-        monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
         assert runtime_root == expected_runtime
         return 0
 
@@ -132,14 +130,11 @@ def test_main_sets_directory_env_before_telemetry_install(
     stale_runtime = tmp_path / "stale-runtime"
     stale_runtime.mkdir()
     monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", stale_runtime.as_posix())
-    monkeypatch.delenv("MERIDIAN_DIRECTORY_EXPLICIT", raising=False)
     telemetry_env: dict[str, str | None] = {}
 
     def _capture_telemetry(**_kwargs: object) -> None:
         telemetry_env["MERIDIAN_PROJECT_DIR"] = os.environ.get("MERIDIAN_PROJECT_DIR")
-        telemetry_env["MERIDIAN_DIRECTORY_EXPLICIT"] = os.environ.get(
-            "MERIDIAN_DIRECTORY_EXPLICIT"
-        )
+        telemetry_env["MERIDIAN_RUNTIME_DIR"] = os.environ.get("MERIDIAN_RUNTIME_DIR")
 
     monkeypatch.setattr(cli_main, "_install_cli_telemetry", _capture_telemetry)
     monkeypatch.setattr(cli_main, "_maybe_schedule_background_repairs", lambda **_kwargs: None)
@@ -160,7 +155,8 @@ def test_main_sets_directory_env_before_telemetry_install(
 
     assert exc_info.value.code == 0
     assert telemetry_env["MERIDIAN_PROJECT_DIR"] == project.resolve().as_posix()
-    assert telemetry_env["MERIDIAN_DIRECTORY_EXPLICIT"] == "1"
+    # -C scope unsets stale MERIDIAN_RUNTIME_DIR so runtime derives from project identity
+    assert telemetry_env["MERIDIAN_RUNTIME_DIR"] is None
 
 
 def test_directory_flag_supplies_project_root_to_config_ops(

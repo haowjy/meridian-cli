@@ -91,19 +91,17 @@ def test_resolve_runtime_authority_ignores_runtime_env_when_flagged(
     assert authority.runtime_root == get_project_home("proj-flag")
 
 
-def test_resolve_runtime_authority_honors_directory_explicit_env(
+def test_resolve_runtime_authority_derives_when_runtime_dir_absent(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
+    """When -C scope unsets MERIDIAN_RUNTIME_DIR, runtime derives from project identity."""
     project_root = tmp_path / "repo"
     state_dir = project_root / ".meridian"
     state_dir.mkdir(parents=True)
     (state_dir / "id").write_text("proj-explicit", encoding="utf-8")
-    override = tmp_path / "override"
-    override.mkdir()
     monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
-    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", override.as_posix())
-    monkeypatch.setenv("MERIDIAN_DIRECTORY_EXPLICIT", "1")
+    monkeypatch.delenv("MERIDIAN_RUNTIME_DIR", raising=False)
 
     authority = resolve_runtime_authority_for_read(project_root)
 

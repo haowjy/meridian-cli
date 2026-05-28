@@ -25,8 +25,6 @@ BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
         "MERIDIAN_ACTIVE_WORK_DIR",
         # Runtime root is resolved at launch/bind; do not inherit parent override.
         "MERIDIAN_RUNTIME_DIR",
-        # Explicit -C/--directory is process-local CLI policy, not child scope.
-        "MERIDIAN_DIRECTORY_EXPLICIT",
     }
 )
 
