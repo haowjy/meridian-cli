@@ -3,6 +3,8 @@
 Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/). Versions `0.0.6` through `0.0.25` in git history only — changelog fell stale, resumed at `[Unreleased]`.
 
 ## [Unreleased]
+
+## [0.2.13] - 2026-05-28
 - bump mars to v0.7.6 to fix some model resolutions bugs
 
 ## [0.2.12] - 2026-05-28
