@@ -20,6 +20,16 @@ uv run meridian spawn -a reviewer -p "Write hello world" --dry-run --json
 - [ ] `model` field present
 - [ ] `terminal_surface_mode == "pty_mediated"`
 
+## Goal contract preview
+
+```bash
+uv run meridian spawn -a reviewer -p "run" --goal "ship phase 3" --dry-run --json
+```
+- [ ] Exit 0
+- [ ] `goal == "ship phase 3"`
+- [ ] `goal_contract_preview` includes `# Spawn Goal`
+- [ ] `goal_contract_preview` includes `ship phase 3`
+
 ## Model override
 
 ```bash

@@ -50,6 +50,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Removed `--worktree`/`--no-worktree`/`--repo` flags from `meridian spawn` and `meridian work start`.
 - Removed managed-worktree orchestration modules and temporary-worktree store from runtime paths.
 - Removed obsolete worktree ensure/lifecycle unit suites and replaced lifecycle coverage with task-dir focused tests.
+- Pruned trace-through unit tests around `spawn_service` / `spawn_api.build_create_payload` fakes whose only signal was field pass-through; behavioral claims moved to `tests/smoke/spawn-return-report.md` (split-root task_dir) and `tests/smoke/spawn-dry-run.md` (goal-contract preview).
 
 ## [0.2.10] - 2026-05-27
 

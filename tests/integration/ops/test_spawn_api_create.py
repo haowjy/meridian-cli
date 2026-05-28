@@ -7,7 +7,6 @@ Query/list/cancel/wait tests live in test_spawn_api_query.py.
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,7 +14,7 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
-from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnCreateInput
+from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.telemetry import init_telemetry
@@ -150,58 +149,6 @@ def test_spawn_create_with_prepared_skips_self_bootstrap(
     assert result.harness_id == "codex"
 
 
-def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    def _fake_build_create_payload(
-        payload: SpawnCreateInput,
-        runtime: object | None = None,
-        preflight_warning: str | None = None,
-        ctx: object | None = None,
-    ) -> SimpleNamespace:
-        request = SimpleNamespace(
-            harness=payload.harness or "codex",
-            model=payload.model,
-            warning=preflight_warning,
-            agent=payload.agent,
-            agent_metadata={},
-            skills=payload.skills,
-            skill_paths=(),
-            reference_files=(),
-            template_vars={},
-            context_from=(),
-            prompt=payload.prompt,
-            goal=payload.goal,
-            model_selection_requested_token=None,
-            model_selection_canonical_id=None,
-            model_selection_harness_provenance=None,
-            terminal_surface_mode=None,
-            cli_command=("codex",),
-        )
-        return SimpleNamespace(request=request, prepared=None)
-
-    monkeypatch.setattr(spawn_api, "build_create_payload", _fake_build_create_payload)
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            goal="ship phase 3",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        )
-    )
-
-    assert result.status == "dry-run"
-    assert result.goal == "ship phase 3"
-    goal_contract_preview = result.goal_contract_preview
-    assert goal_contract_preview is not None
-    assert "# Spawn Goal" in goal_contract_preview
-    assert "ship phase 3" in goal_contract_preview
-
-
 def test_spawn_create_dry_run_with_work_is_non_mutating(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -231,6 +178,10 @@ def test_spawn_create_dry_run_with_work_is_non_mutating(
 
     assert result.status == "dry-run"
     assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+    assert result.task_cwd_source == "explicit-work-authority-root"
+    assert result.task_cwd == project_root.as_posix()
+    assert result.reference_anchor == project_root.as_posix()
+    assert result.task_cwd_work_item == "new-work-item"
     assert result.warning is not None
     assert "would be created on launch" in result.warning
 
@@ -308,85 +259,3 @@ def test_spawn_create_dry_run_uses_ambient_work_item_task_dir(
     assert result.reference_anchor == ambient_task_dir.as_posix()
     assert result.task_cwd_work_item == work.name
 
-
-def test_spawn_create_dry_run_with_new_explicit_work_is_non_mutating(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    monkeypatch.chdir(project_root)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-    project_state_dir = resolve_project_paths(project_root).root_dir
-
-    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.4-mini",
-            work="new-work-item",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        )
-    )
-
-    assert result.status == "dry-run"
-    assert work_store.get_work_item(project_state_dir, "new-work-item") is None
-    assert result.task_cwd_source == "explicit-work-authority-root"
-    assert result.task_cwd == project_root.as_posix()
-    assert result.reference_anchor == project_root.as_posix()
-    assert result.task_cwd_work_item == "new-work-item"
-    assert result.warning is not None
-    assert "would be created on launch" in result.warning
-
-
-def test_spawn_create_real_with_task_dir_executes_without_worktree_ensure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
-    calls: list[str] = []
-    task_dir = tmp_path / "real-task-dir"
-    task_dir.mkdir(parents=True, exist_ok=True)
-
-    def _fake_build_create_payload(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        calls.append("build_payload")
-        return SimpleNamespace(request=SimpleNamespace(harness="codex"), prepared=None)
-
-    def _fake_execute_spawn_blocking(*_args: object, **_kwargs: object) -> SpawnActionOutput:
-        calls.append("execute")
-        return SpawnActionOutput(
-            command="spawn.create",
-            status="succeeded",
-            spawn_id="p1",
-            model="gpt-5.4-mini",
-            harness_id="codex",
-        )
-
-    monkeypatch.setattr(spawn_api, "build_create_payload", _fake_build_create_payload)
-    monkeypatch.setattr(spawn_api, "execute_spawn_blocking", _fake_execute_spawn_blocking)
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.4-mini",
-            harness="codex",
-            task_dir=task_dir.as_posix(),
-            project_root=project_root.as_posix(),
-        ),
-        prepared=prepared,
-    )
-
-    assert result.status == "succeeded"
-    assert calls == ["build_payload", "execute"]
