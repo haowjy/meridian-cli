@@ -10,7 +10,8 @@ export SMOKE_REPO="$(mktemp -d /tmp/meridian-from.XXXXXX)"
 git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
+cd "$REPO_ROOT"
+export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
 
 # Create a minimal agent for dry-run
 mkdir -p "$SMOKE_REPO/.mars/agents"
@@ -216,6 +217,6 @@ test $RC -ne 0 && grep -qi "not found" /tmp/meridian-from-invalid.err && \
 
 ```bash
 rm -rf "$SMOKE_REPO" /tmp/meridian-from-*.json /tmp/meridian-from-*.err
-unset MERIDIAN_PROJECT_DIR MERIDIAN_RUNTIME_DIR SMOKE_REPO
+unset MERIDIAN_PROJECT_DIR RUNTIME_ROOT SMOKE_REPO
 echo "PASS: cleanup complete"
 ```

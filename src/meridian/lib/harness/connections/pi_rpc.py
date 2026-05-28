@@ -37,15 +37,12 @@ from meridian.lib.harness.pi_lifecycle_events import (
     has_unsupported_pi_lifecycle_schema_version,
     redact_pi_command_for_history,
 )
-from meridian.lib.harness.pi_paths import (
-    pi_agent_dir_env_override,
-    pi_meridian_state_dir_env_override,
-)
+from meridian.lib.harness.pi_paths import pi_agent_dir_env_override
 from meridian.lib.harness.pi_runtime_resolver import (
     PiRuntimeResolutionError,
     resolve_pi_runtime,
 )
-from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS
+from meridian.lib.launch.constants import BASE_COMMAND_PI_SUBPROCESS, BLOCKED_CHILD_ENV_VARS
 from meridian.lib.launch.env import inherit_child_env
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.launch.report import compact_pi_failure_output
@@ -69,12 +66,7 @@ _PI_PHASE_EVENT_TYPE: Final[str] = "meridian.pi.lifecycle.phase"
 _PI_FIRST_EVENT_TIMEOUT_REASON: Final[str] = "pi_rpc_no_response_after_initial_prompt"
 _PI_SPAWNED_PROMPT_REQUIRED_REASON: Final[str] = "pi_rpc_spawned_prompt_required"
 _FIRST_STDOUT_AFTER_INITIAL_PROMPT_TIMEOUT_SECONDS: Final[float] = 30.0
-_BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = frozenset(
-    {
-        "MERIDIAN_ACTIVE_WORK_ID",
-        "MERIDIAN_ACTIVE_WORK_DIR",
-    }
-)
+_BLOCKED_CHILD_ENV_VARS: Final[frozenset[str]] = BLOCKED_CHILD_ENV_VARS
 _PI_SESSION_DIR_FLAG: Final[str] = "--session-dir"
 _PI_CHILD_WAVE_TIMEOUT_MS_ENV: Final[str] = "MERIDIAN_PI_CHILD_WAVE_TIMEOUT_MS"
 _PI_TASK_PING_INTERVAL_MS_ENV: Final[str] = "MERIDIAN_PI_TASK_PING_INTERVAL_MS"
@@ -456,11 +448,9 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             blocked=_BLOCKED_CHILD_ENV_VARS,
         )
         env.update(pi_agent_dir_env_override())
-        env.update(pi_meridian_state_dir_env_override(env=env))
         session_dir = env.get("PI_CODING_AGENT_SESSION_DIR", "").strip()
         if session_dir:
             command = self._apply_session_dir_arg(command, session_dir)
-            env["MERIDIAN_PI_STATE_DIR"] = session_dir
         launch_role = "spawned"
         if (self._launch_session_role or "").strip().lower() == "primary":
             launch_role = "primary"

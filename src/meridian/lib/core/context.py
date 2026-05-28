@@ -48,8 +48,6 @@ class RuntimeContext(BaseModel):
             overrides["MERIDIAN_SPAWN_ID"] = str(self.spawn_id)
         if self.project_root is not None:
             overrides["MERIDIAN_PROJECT_DIR"] = self.project_root.as_posix()
-        if self.runtime_root is not None:
-            overrides["MERIDIAN_RUNTIME_DIR"] = self.runtime_root.as_posix()
         if self.chat_id:
             overrides["MERIDIAN_CHAT_ID"] = self.chat_id
         if self.work_id:

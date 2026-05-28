@@ -7,12 +7,20 @@ from typing import Annotated, Any, Protocol
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.utils import cli_project_root_posix
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
 from meridian.lib.ops.session_log import SessionLogInput, session_log_sync
 from meridian.lib.ops.session_repair import SessionRepairInput, repair_session_reference_sync
 from meridian.lib.ops.session_search import SessionSearchInput, session_search_sync
+
+
+def _session_project_root(file_path: str | None) -> str | None:
+    """Return CLI project root unless a direct file path bypasses project establishment."""
+    if file_path and file_path.strip():
+        return None
+    return cli_project_root_posix()
 
 
 class Emitter(Protocol):
@@ -136,6 +144,7 @@ def _session_log(
             limit=limit,
             context=context,
             file_path=file_path,
+            project_root=_session_project_root(file_path),
         )
     )
     if raw:
@@ -173,6 +182,7 @@ def _session_export(
                 ref=ref,
                 file_path=file_path,
                 include_spawns=include_spawns,
+                project_root=_session_project_root(file_path),
             )
         )
     )
@@ -224,6 +234,7 @@ def _session_search(
                 work_id=work_id,
                 workspace=workspace,
                 global_scope=global_scope,
+                project_root=_session_project_root(file_path),
             )
         )
     )
@@ -242,6 +253,7 @@ def _session_repair(
         repair_session_reference_sync(
             SessionRepairInput(
                 ref=ref,
+                project_root=cli_project_root_posix(),
             )
         )
     )

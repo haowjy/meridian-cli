@@ -14,7 +14,6 @@ ALLOWED_CHILD_ENV_KEYS: frozenset[str] = frozenset(
         "MERIDIAN_SPAWN_ID",
         "MERIDIAN_PARENT_SPAWN_ID",
         "MERIDIAN_PROJECT_DIR",
-        "MERIDIAN_RUNTIME_DIR",
         "MERIDIAN_DEPTH",
         "MERIDIAN_CHAT_ID",
         "MERIDIAN_ACTIVE_WORK_ID",

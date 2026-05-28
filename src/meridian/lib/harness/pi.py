@@ -240,7 +240,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         record_effective_config_dir: RecordConfigDirFn | None = None,
     ) -> HarnessPrelaunchState:
         _ = (
-            runtime_root,
             spawn_id,
             session,
             resolved_harness_session_id,
@@ -274,17 +273,17 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             session_dir = scoped_session_dir
         agent_dir_overrides = pi_agent_dir_env_override()
         child_env.update(agent_dir_overrides)
-        state_dir_overrides = pi_meridian_state_dir_env_override(env=child_env)
+        state_dir_overrides = pi_meridian_state_dir_env_override(
+            env=child_env,
+            runtime_root=runtime_root,
+        )
         child_env.update(state_dir_overrides)
         env_overrides: dict[str, str] = {
             "MERIDIAN_PI_BINARY": resolved_runtime.binary_path,
             **agent_dir_overrides,
-            **state_dir_overrides,
         }
         if scoped_session_dir is not None:
             env_overrides["PI_CODING_AGENT_SESSION_DIR"] = scoped_session_dir
-            env_overrides["MERIDIAN_PI_STATE_DIR"] = scoped_session_dir
-            child_env["MERIDIAN_PI_STATE_DIR"] = scoped_session_dir
 
         return HarnessPrelaunchState(
             env_overrides=env_overrides,
@@ -328,7 +327,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return {
             **pi_agent_dir_env_override(),
             **pi_spawn_session_root_env_override(),
-            **pi_meridian_state_dir_env_override(),
         }
 
     def extract_usage(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> TokenUsage:

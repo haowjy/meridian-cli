@@ -10,8 +10,9 @@ export SMOKE_REPO="$(mktemp -d /tmp/meridian-state.XXXXXX)"
 git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
-mkdir -p "$MERIDIAN_RUNTIME_DIR/spawns"
+cd "$REPO_ROOT"
+export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
+mkdir -p "$RUNTIME_ROOT/spawns"
 cd "$REPO_ROOT"
 uv run meridian spawn -h >/dev/null 2>&1 && echo "PASS: state fixture setup complete" || echo "FAIL: state fixture setup failed"
 ```
@@ -19,8 +20,8 @@ uv run meridian spawn -h >/dev/null 2>&1 && echo "PASS: state fixture setup comp
 ### STATE-1. Core runtime directories exist [CRITICAL]
 
 ```bash
-test -d "$MERIDIAN_RUNTIME_DIR" && \
-test -d "$MERIDIAN_RUNTIME_DIR/spawns" && \
+test -d "$RUNTIME_ROOT" && \
+test -d "$RUNTIME_ROOT/spawns" && \
 echo "PASS: runtime root and spawns directory exist" || echo "FAIL: runtime state directories are incomplete"
 ```
 
@@ -32,7 +33,7 @@ import json, os
 from pathlib import Path
 from meridian.lib.state.spawn_store import start_spawn
 
-root = Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = Path(os.environ["RUNTIME_ROOT"])
 spawn_id = str(
     start_spawn(
         root,
@@ -61,7 +62,7 @@ PY
 ```bash
 uv run python - <<'PY'
 import json, os
-path = os.path.join(os.environ["MERIDIAN_RUNTIME_DIR"], "sessions.jsonl")
+path = os.path.join(os.environ["RUNTIME_ROOT"], "sessions.jsonl")
 if not os.path.exists(path):
     print("PASS: sessions.jsonl has not been created yet")
 else:
@@ -81,7 +82,7 @@ import os
 import pathlib
 import sys
 
-root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = pathlib.Path(os.environ["RUNTIME_ROOT"])
 lock_paths = sorted(root.glob("spawns/*/state.lock")) + sorted(root.glob("spawns/migration.lock"))
 if os.name == "nt":
     print("PASS: skipping POSIX flock probe on Windows")
@@ -100,7 +101,7 @@ PY
 ### STATE-5. No stale atomic temp files remain [NICE-TO-HAVE]
 
 ```bash
-if find "$MERIDIAN_RUNTIME_DIR" -name '.*.tmp' -print | grep -q .; then
+if find "$RUNTIME_ROOT" -name '.*.tmp' -print | grep -q .; then
   echo "FAIL: stale atomic temp files remain"
 else
   echo "PASS: no stale atomic temp files remain"
@@ -114,7 +115,7 @@ uv run python - <<'PY'
 import json, os, pathlib, subprocess, time
 from meridian.lib.state.spawn_store import start_spawn
 
-root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = pathlib.Path(os.environ["RUNTIME_ROOT"])
 spawn_id = "p-orphan-heartbeat-smoke"
 start_spawn(
     root,
@@ -158,7 +159,7 @@ uv run python - <<'PY'
 import json, os, pathlib, subprocess, uuid
 from meridian.lib.state.spawn_store import start_spawn
 
-root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = pathlib.Path(os.environ["RUNTIME_ROOT"])
 spawn_id = f"p-origin-cancel-smoke-{uuid.uuid4().hex[:8]}"
 start_spawn(
     root,
@@ -194,7 +195,7 @@ import json, os
 from pathlib import Path
 from meridian.lib.state.spawn_store import finalize_spawn, start_spawn
 
-root = Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = Path(os.environ["RUNTIME_ROOT"])
 spawn_id = str(
     start_spawn(
         root,
@@ -221,7 +222,7 @@ uv run python - <<'PY'
 import json, os, pathlib, subprocess, time
 from meridian.lib.state.spawn_store import start_spawn
 
-root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = pathlib.Path(os.environ["RUNTIME_ROOT"])
 spawn_id = "p-orphan-finalizing-stale-smoke"
 start_spawn(
     root,
@@ -264,7 +265,7 @@ uv run python - <<'PY'
 import json, os, pathlib, subprocess, time
 from meridian.lib.state.spawn_store import start_spawn
 
-root = pathlib.Path(os.environ["MERIDIAN_RUNTIME_DIR"])
+root = pathlib.Path(os.environ["RUNTIME_ROOT"])
 spawn_id = "p-orphan-finalizing-fresh-smoke"
 start_spawn(
     root,

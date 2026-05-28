@@ -70,12 +70,15 @@ class ResolvedContext:
         """Resolve and freeze canonical runtime context from ``MERIDIAN_*`` values.
 
         When *explicit_project_root* or *explicit_runtime_root* are supplied they
-        take precedence over the corresponding ``MERIDIAN_PROJECT_DIR`` /
-        ``MERIDIAN_RUNTIME_DIR`` environment variables, allowing callers to resolve
-        context without mutating process-global state.
+        take precedence over ``MERIDIAN_PROJECT_DIR``. ``runtime_root`` is derived
+        from ``project_root`` (``.meridian/id`` → user home) unless
+        *explicit_runtime_root* is supplied — inherited ``MERIDIAN_RUNTIME_DIR`` is
+        never read.
         """
 
         import os
+
+        from meridian.lib.state.runtime_root import derive_runtime_root_from_project
 
         backend_impl = backend or LocalFilesystemBackend()
 
@@ -83,7 +86,6 @@ class ResolvedContext:
         parent_spawn_id_raw = os.getenv("MERIDIAN_PARENT_SPAWN_ID", "").strip()
         depth_raw = os.getenv(MERIDIAN_DEPTH_ENV, "0").strip()
         project_root_raw = os.getenv("MERIDIAN_PROJECT_DIR", "").strip()
-        runtime_root_raw = os.getenv("MERIDIAN_RUNTIME_DIR", "").strip()
         chat_id_raw = os.getenv("MERIDIAN_CHAT_ID", "").strip()
         work_id_raw = os.getenv("MERIDIAN_ACTIVE_WORK_ID", "").strip()
         work_dir_raw = os.getenv("MERIDIAN_ACTIVE_WORK_DIR", "").strip()
@@ -98,13 +100,12 @@ class ResolvedContext:
             if project_root_raw
             else None
         )
-        runtime_root = (
-            explicit_runtime_root
-            if explicit_runtime_root is not None
-            else Path(runtime_root_raw)
-            if runtime_root_raw
-            else None
-        )
+        if explicit_runtime_root is not None:
+            runtime_root = explicit_runtime_root
+        elif project_root is not None:
+            runtime_root = derive_runtime_root_from_project(project_root)
+        else:
+            runtime_root = None
 
         # Authoritative work-ID precedence:
         # explicit override > MERIDIAN_ACTIVE_WORK_ID > session attachment.
@@ -182,8 +183,6 @@ class ResolvedContext:
             overrides["MERIDIAN_PARENT_SPAWN_ID"] = str(self.spawn_id)
         if self.project_root is not None:
             overrides["MERIDIAN_PROJECT_DIR"] = self.project_root.as_posix()
-        if self.runtime_root is not None:
-            overrides["MERIDIAN_RUNTIME_DIR"] = self.runtime_root.as_posix()
         if self.chat_id:
             overrides["MERIDIAN_CHAT_ID"] = self.chat_id
         if self.work_id:

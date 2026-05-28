@@ -28,6 +28,13 @@ def require_established_project_root() -> Path:
     return resolution.project_root
 
 
+
+def cli_project_root_posix() -> str:
+    """Return the established CLI project root as a POSIX string."""
+
+    return require_established_project_root().as_posix()
+
+
 @overload
 def parse_csv_list(
     raw: str | None,

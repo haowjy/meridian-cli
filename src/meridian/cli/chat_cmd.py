@@ -17,7 +17,10 @@ from uuid import uuid4
 
 from cyclopts import App, Parameter
 
-from meridian.cli.utils import parse_csv_list, require_established_project_root
+from meridian.cli.utils import (
+    parse_csv_list,
+    require_established_project_root,
+)
 from meridian.lib.bootstrap.services import (
     build_chat_entrypoint,
     prepare_for_runtime_read,

@@ -131,8 +131,58 @@ def test_nested_manual_hooks_ignore_inherited_roots_during_handler_execution(
         cli_main.main(argv)
 
     assert exc_info.value.code == 0
-    assert captured["env"] == (None, None)
+    assert captured["env"] == (None, parent_runtime.as_posix())
     assert captured["project_root"] == child_project.resolve().as_posix()
+
+
+def _write_hook_env_recorder(path: Path) -> None:
+    path.write_text(
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "_ = json.loads(sys.stdin.read())\n"
+        "target = Path(sys.argv[1])\n"
+        "target.write_text(\n"
+        "    json.dumps(\n"
+        "        {\n"
+        '            "MERIDIAN_RUNTIME_DIR": os.environ.get("MERIDIAN_RUNTIME_DIR"),\n'
+        '            "MERIDIAN_PROJECT_DIR": os.environ.get("MERIDIAN_PROJECT_DIR"),\n'
+        "        }\n"
+        "    )\n"
+        "    + '\\n',\n"
+        "    encoding='utf-8',\n"
+        ")\n",
+        encoding="utf-8",
+    )
+
+
+def test_hook_subprocess_env_strips_stale_runtime_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MERIDIAN_DEPTH", raising=False)
+    project_root = tmp_path / "hooks-env-project"
+    project_root.mkdir()
+    marker = tmp_path / "hook-env.json"
+    recorder = tmp_path / "record_hook_env.py"
+    _write_hook_env_recorder(recorder)
+    command = _python_command(recorder, marker.as_posix())
+    (project_root / "meridian.toml").write_text(
+        f"[[hooks]]\nname = 'record-finalized'\nevent = 'spawn.finalized'\ncommand = '{command}'\n",
+        encoding="utf-8",
+    )
+    stale_runtime = tmp_path / "stale-runtime"
+    monkeypatch.setenv("MERIDIAN_RUNTIME_DIR", stale_runtime.as_posix())
+    monkeypatch.chdir(project_root)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["hooks", "run", "record-finalized"])
+
+    assert exc_info.value.code == 0
+    captured = json.loads(marker.read_text(encoding="utf-8"))
+    assert captured["MERIDIAN_RUNTIME_DIR"] is None
+    assert captured["MERIDIAN_PROJECT_DIR"] == project_root.resolve().as_posix()
 
 
 def test_top_level_hooks_run_honors_runtime_override_in_hook_context(

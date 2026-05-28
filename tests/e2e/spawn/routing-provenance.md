@@ -10,7 +10,8 @@ export SMOKE_REPO="$(mktemp -d /tmp/meridian-routing.XXXXXX)"
 git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
+cd "$REPO_ROOT"
+export RUNTIME_ROOT="$(uv run python tests/e2e/resolve-runtime-root.py)"
 
 cat > "$SMOKE_REPO/mars.toml" <<'TOML'
 [settings]
@@ -134,6 +135,6 @@ rm -rf "$SMOKE_REPO" \
   /tmp/meridian-routing-provenance.json \
   /tmp/meridian-routing-provenance.txt \
   /tmp/meridian-routing-project-defaults.json
-unset MERIDIAN_PROJECT_DIR MERIDIAN_RUNTIME_DIR SMOKE_REPO REPO_ROOT
+unset MERIDIAN_PROJECT_DIR RUNTIME_ROOT SMOKE_REPO REPO_ROOT
 echo "PASS: cleanup complete"
 ```

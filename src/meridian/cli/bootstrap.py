@@ -74,6 +74,7 @@ class ParsedGlobalOptions:
     force_agent: bool
     force_human: bool
     directory: str | None
+    directory_explicit: bool = False
 
 
 def _first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
@@ -328,6 +329,7 @@ def extract_global_options(
         config_file=config_file,
         harness=harness,
         directory=directory,
+        directory_explicit=directory is not None,
         yes=yes,
         no_input=no_input,
         output_explicit=output_explicit,

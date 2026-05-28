@@ -12,7 +12,10 @@ from cyclopts import App, Parameter
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
-from meridian.cli.utils import parse_csv_list, require_established_project_root
+from meridian.cli.utils import (
+    parse_csv_list,
+    require_established_project_root,
+)
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,

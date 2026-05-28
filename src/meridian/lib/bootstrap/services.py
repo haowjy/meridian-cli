@@ -80,7 +80,9 @@ def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
     )
 
 
-def prepare_for_runtime_read(project_root: Path) -> RuntimeReadContext:
+def prepare_for_runtime_read(
+    project_root: Path,
+) -> RuntimeReadContext:
     """Prepare read-only runtime context without creating state."""
 
     authority = resolve_runtime_authority_for_read(project_root)
@@ -113,7 +115,9 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
     )
 
 
-def prepare_for_runtime_write(project_root: Path) -> RuntimeWriteContext:
+def prepare_for_runtime_write(
+    project_root: Path,
+) -> RuntimeWriteContext:
     """Prepare runtime write context, including UUID and runtime dirs."""
 
     authority = resolve_runtime_authority_for_write(project_root)
