@@ -67,7 +67,7 @@ from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
-from meridian.lib.core.depth import is_nested_meridian_process, is_root_side_effect_process
+from meridian.lib.core.depth import is_nested_meridian_process
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
 from meridian.lib.telemetry import emit_telemetry
@@ -927,41 +927,12 @@ def _maybe_schedule_background_repairs(
 ) -> None:
     """Schedule cheap per-project repairs on PRIMARY_LAUNCH in a daemon thread."""
 
-    if bootstrap_skipped:
-        return
-    if startup_class != StartupClass.PRIMARY_LAUNCH:
-        return
-    if project_root is None:
-        return
-    if not is_root_side_effect_process():
+    if bootstrap_skipped or startup_class != StartupClass.PRIMARY_LAUNCH or project_root is None:
         return
 
-    from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
+    from meridian.lib.ops.diag import schedule_background_repairs
 
-    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
-    if runtime_root is None:
-        return
-
-    import threading
-
-    def _run_repairs() -> None:
-        from contextlib import suppress
-
-        with suppress(Exception):
-            from meridian.lib.ops.diag import (
-                _repair_orphan_runs,  # pyright: ignore[reportPrivateUsage]
-                _repair_stale_session_locks,  # pyright: ignore[reportPrivateUsage]
-            )
-
-            _repair_stale_session_locks(project_root, runtime_root=runtime_root)
-            _repair_orphan_runs(project_root, runtime_root=runtime_root)
-
-    thread = threading.Thread(
-        target=_run_repairs,
-        name="meridian-background-repairs",
-        daemon=True,
-    )
-    thread.start()
+    schedule_background_repairs(project_root)
 
 
 def _print_agent_root_help() -> None:

@@ -183,6 +183,34 @@ def _repair_orphan_runs(
     return len(reconciled_orphans), reconciled_orphans
 
 
+def schedule_background_repairs(project_root: Path) -> None:
+    """Resolve runtime root and run stale-lock + orphan-run repairs in a daemon thread.
+
+    Callers gate on startup class and side-effect eligibility before calling.
+    """
+
+    if not is_root_side_effect_process():
+        return
+    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
+    if runtime_root is None:
+        return
+
+    import threading
+
+    def _run_repairs() -> None:
+        from contextlib import suppress
+
+        with suppress(Exception):
+            _repair_stale_session_locks(project_root, runtime_root=runtime_root)
+            _repair_orphan_runs(project_root, runtime_root=runtime_root)
+
+    threading.Thread(
+        target=_run_repairs,
+        name="meridian-background-repairs",
+        daemon=True,
+    ).start()
+
+
 def doctor_sync(payload: DoctorInput) -> DoctorOutput:
     authority = resolve_project_authority(payload.project_root)
     surface = build_config_surface(authority)
