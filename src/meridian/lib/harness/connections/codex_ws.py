@@ -1116,7 +1116,7 @@ class CodexConnection(HarnessConnection[ResolvedLaunchSpec]):
         config = self._config
         if config is None:
             raise RuntimeError("Codex connection config is unavailable")
-        return config.task_cwd or config.control_root
+        return config.control_root
 
     async def _send_bootstrap_turn_and_wait(self) -> None:
         """Send a minimal bootstrap turn and wait for completion.

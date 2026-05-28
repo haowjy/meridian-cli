@@ -76,85 +76,52 @@ uv run meridian work rename original-name new-name
 ```
 - [ ] No `Traceback` in stderr (may exit 0 or non-zero depending on feature state)
 
-## work set-worktree / clear-worktree
+## work start --task-dir sets metadata (non-session safe)
 
 ```bash
-uv run meridian work start with-worktree-path
-mkdir -p "$SCRATCH/worktree-target"
-uv run meridian work set-worktree with-worktree-path "$SCRATCH/worktree-target"
-uv run meridian work show with-worktree-path --json
+mkdir -p "$SCRATCH/task-dir-target"
+uv run meridian work start with-task-dir --task-dir "$SCRATCH/task-dir-target"
+uv run meridian work show with-task-dir --json
 ```
 - [ ] Exit 0
-- [ ] JSON shows worktree path set to `$SCRATCH/worktree-target`
+- [ ] JSON shows `task_dir` set to `$SCRATCH/task-dir-target`
+
+## work task-dir set / clear requires session-attached active work
 
 ```bash
-uv run meridian work clear-worktree with-worktree-path
-uv run meridian work show with-worktree-path --json
+mkdir -p "$SCRATCH/task-dir-target-2"
+uv run meridian work task-dir "$SCRATCH/task-dir-target-2"
 ```
-- [ ] Exit 0
-- [ ] JSON shows worktree path is null/empty
-
-## work worktree show / ensure
-
-Managed ensure always uses Meridian's canonical path
-`<repo>.worktrees/<worktree-name>`. `--repo` selects the target repository only
-on first managed ensure; existing managed metadata is reused until cleared or
-migrated explicitly. Use `work set-worktree` only for existing/manual custom
-paths that Meridian should not own.
+- [ ] Exits non-zero
+- [ ] Error mentions no active work item
 
 ```bash
-uv run meridian work start ensure-item --no-worktree
-uv run meridian work worktree ensure-item --json
+uv run meridian work task-dir --clear
 ```
-- [ ] Exit 0
-- [ ] JSON shows configured status without creating a worktree
+- [ ] Exits non-zero
+- [ ] Error mentions no active work item
 
-```bash
-uv run meridian work worktree ensure-item --ensure --json
-```
-- [ ] Exit 0
-- [ ] JSON shows `ensured=true`
-- [ ] `worktree_path` is canonical (`<repo>.worktrees/ensure-item`)
-
-## work worktree --ensure creates temporary worktree when no active work
+## work task-dir print behavior
 
 ```bash
 uv run meridian work clear
-uv run meridian work worktree --ensure --repo . --json
-uv run meridian work worktree --json
+uv run meridian work task-dir
 ```
-- [ ] First command clears active work attachment
-- [ ] Ensure command exits 0 and returns `temporary=true`
-- [ ] Follow-up show reports the same tracked temporary worktree
+- [ ] Exit 0
+- [ ] Prints project root when no active work item is attached
 
-## work worktree --ensure (work-item form)
+- [ ] (Set/clear form needs a session-attached active work item; use `work start --task-dir` in non-session shells.)
+
+## task_dir lifecycle is metadata-only (filesystem untouched)
 
 ```bash
-uv run meridian work start ensure-worktree-item --no-worktree
-uv run meridian work worktree ensure-worktree-item --ensure
-uv run meridian work worktree ensure-worktree-item
-```
-- [ ] Ensure command exits 0 and reports configured worktree path
-- [ ] Follow-up status command exits 0 and shows same worktree path
-
-```bash
-uv run meridian work clear
-uv run meridian work worktree
-```
-- [ ] Fails with guidance to run `meridian work start <name>` or pass a work id
-
-## manually assigned/shared worktree path is not removed by lifecycle
-
-```bash
-uv run meridian work start manual-a
-uv run meridian work start manual-b
-mkdir -p "$SCRATCH/shared-manual-worktree"
-uv run meridian work set-worktree manual-a "$SCRATCH/shared-manual-worktree"
-uv run meridian work set-worktree manual-b "$SCRATCH/shared-manual-worktree"
+mkdir -p "$SCRATCH/shared-task-dir"
+uv run meridian work start manual-a --task-dir "$SCRATCH/shared-task-dir"
+uv run meridian work start manual-b --task-dir "$SCRATCH/shared-task-dir"
 uv run meridian work done manual-a
-test -d "$SCRATCH/shared-manual-worktree"
+test -d "$SCRATCH/shared-task-dir"
 uv run meridian work delete manual-b
-test -d "$SCRATCH/shared-manual-worktree"
+test -d "$SCRATCH/shared-task-dir"
 ```
 - [ ] Both `test -d` checks pass
-- [ ] Lifecycle output says the path is manually assigned / not removed
+- [ ] Lifecycle output does not attempt to remove or mutate the shared directory

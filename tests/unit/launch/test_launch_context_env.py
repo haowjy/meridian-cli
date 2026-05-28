@@ -272,22 +272,28 @@ def test_build_launch_context_split_root_task_cwd_contract(
     final_env = runtime_ctx.binding.environment.final_env
     assert runtime_ctx.execution_cwd == execution_cwd
     assert bind_env["MERIDIAN_PROJECT_DIR"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_PROJECT_ROOT"] == tmp_path.as_posix()
+    assert bind_env["MERIDIAN_TASK_DIR"] == execution_cwd.as_posix()
+    assert final_env["MERIDIAN_PROJECT_ROOT"] == tmp_path.as_posix()
+    assert final_env["MERIDIAN_TASK_DIR"] == execution_cwd.as_posix()
     assert bind_env["MERIDIAN_CONTEXT_KB_DIR"] == (tmp_path / ".meridian" / "kb").as_posix()
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
+    assert runtime_ctx.binding.child_cwd == tmp_path
     if expect_task_cwd:
         assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
         assert bind_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
         assert final_env["MERIDIAN_TASK_CWD"] == execution_cwd.as_posix()
         system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
-        assert f"Your task working directory is: {execution_cwd.as_posix()}" in system_prompt
-        assert "Immediately `cd` into this directory" in system_prompt
+        assert "Use `MERIDIAN_PROJECT_ROOT` for project coordination files" in system_prompt
+        assert f"Use `MERIDIAN_TASK_DIR` ({execution_cwd.as_posix()})" in system_prompt
+        assert "Immediately `cd` into this directory" not in system_prompt
     else:
         assert runtime_ctx.binding.run_params.task_cwd is None
         assert "MERIDIAN_TASK_CWD" not in bind_env
         assert "MERIDIAN_TASK_CWD" not in final_env
 
 
-def test_build_launch_context_primary_does_not_inject_task_cwd_instruction(
+def test_build_launch_context_primary_injects_split_root_task_dir_guidance(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -316,9 +322,9 @@ def test_build_launch_context_primary_does_not_inject_task_cwd_instruction(
     )
 
     assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
-    assert "MERIDIAN_TASK_CWD" not in (
-        runtime_ctx.binding.run_params.appended_system_prompt or ""
-    )
+    system_prompt = runtime_ctx.binding.run_params.appended_system_prompt or ""
+    assert "Use `MERIDIAN_PROJECT_ROOT` for project coordination files" in system_prompt
+    assert f"Use `MERIDIAN_TASK_DIR` ({execution_cwd.as_posix()})" in system_prompt
 
 def test_build_launch_context_projects_external_task_cwd_for_active_harness_projection(
     monkeypatch: MonkeyPatch,
@@ -422,7 +428,7 @@ def test_build_launch_context_falls_back_for_harness_without_workspace_projectio
     warning_codes = {warning.code for warning in runtime_ctx.warnings}
     assert "task_cwd_not_projected" in warning_codes
     assert runtime_ctx.binding.run_params.task_cwd == outside_task_cwd.as_posix()
-    assert "MERIDIAN_TASK_CWD" in (runtime_ctx.binding.run_params.appended_system_prompt or "")
+    assert "MERIDIAN_TASK_DIR" in (runtime_ctx.binding.run_params.appended_system_prompt or "")
     assert runtime_ctx.binding.child_cwd == tmp_path
 
 
@@ -490,6 +496,7 @@ def test_build_launch_context_claude_preflight_uses_control_root_when_task_cwd_d
     assert runtime_ctx.binding.run_params.control_root == tmp_path.as_posix()
     assert runtime_ctx.binding.run_params.task_cwd == execution_cwd.as_posix()
     assert runtime_ctx.binding.run_params.extra_args == ("--user-tail", "1")
+    assert runtime_ctx.binding.child_cwd == tmp_path
 
 
 def test_build_launch_context_emits_child_spawn_id(

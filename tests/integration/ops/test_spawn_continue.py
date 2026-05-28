@@ -141,25 +141,25 @@ def test_spawn_continue_rejects_model_override_before_legacy_fallback_resolution
 
 
 @pytest.mark.parametrize(
-    ("updates", "flag"),
+    ("updates", "flag", "guidance"),
     [
-        ({"agent": "reviewer"}, "--agent"),
-        ({"skills": ("skill-override",)}, "--skills"),
-        ({"approval": "auto"}, "--approval"),
-        ({"sandbox": "workspace-write"}, "--sandbox"),
-        ({"effort": "high"}, "--effort"),
-        ({"autocompact": 5000}, "--autocompact"),
-        ({"autocompact_pct": 35}, "--autocompact-pct"),
-        ({"passthrough_args": ("--custom",)}, "--"),
-        ({"work": "other-work"}, "--work"),
-        ({"worktree": True}, "--worktree/--no-worktree"),
-        ({"repo": "../other"}, "--repo"),
+        ({"agent": "reviewer"}, "--agent", "--fork-fresh"),
+        ({"skills": ("skill-override",)}, "--skills", "--fork-fresh"),
+        ({"approval": "auto"}, "--approval", "--fork-fresh"),
+        ({"sandbox": "workspace-write"}, "--sandbox", "--fork-fresh"),
+        ({"effort": "high"}, "--effort", "--fork-fresh"),
+        ({"autocompact": 5000}, "--autocompact", "--fork-fresh"),
+        ({"autocompact_pct": 35}, "--autocompact-pct", "--fork-fresh"),
+        ({"passthrough_args": ("--custom",)}, "--", "--fork-fresh"),
+        ({"work": "other-work"}, "--work", "--fork-fresh"),
+        ({"task_dir": "../other"}, "--task-dir", "--fork --task-dir"),
     ],
 )
 def test_spawn_continue_rejects_policy_flags_without_snapshot(
     tmp_path: Path,
     updates: dict[str, object],
     flag: str,
+    guidance: str,
 ) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -178,7 +178,7 @@ def test_spawn_continue_rejects_policy_flags_without_snapshot(
 
     message = str(exc_info.value)
     assert flag in message
-    assert "--fork-fresh" in message
+    assert guidance in message
 
 
 def test_spawn_continue_rejects_policy_flags_when_snapshot_exists(tmp_path: Path) -> None:

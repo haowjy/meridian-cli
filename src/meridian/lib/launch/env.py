@@ -52,8 +52,9 @@ def _normalize_meridian_env(env: dict[str, str]) -> None:
 
     context_pattern = re.compile(r"^MERIDIAN_CONTEXT_[A-Z][A-Z0-9_]*_DIR$")
     to_drop: list[str] = []
+    normalize_keys = ("MERIDIAN_ACTIVE_WORK_DIR", "MERIDIAN_PROJECT_ROOT", "MERIDIAN_TASK_DIR")
     for key in env:
-        if key != "MERIDIAN_ACTIVE_WORK_DIR" and not context_pattern.match(key):
+        if key not in normalize_keys and not context_pattern.match(key):
             continue
         normalized = env[key].strip()
         if normalized:

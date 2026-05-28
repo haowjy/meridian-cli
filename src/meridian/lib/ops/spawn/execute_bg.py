@@ -18,7 +18,6 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.domain import Spawn, SpawnStatus
 from meridian.lib.core.types import ModelId, SpawnId
 from meridian.lib.harness.registry import get_default_harness_registry
-from meridian.lib.launch.cwd import resolve_child_execution_cwd
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import atomic_write_text
@@ -30,7 +29,7 @@ from meridian.lib.state.launch_boundary import (
     EVENT_WORKER_TAKEOVER_STARTED,
     record_launch_boundary_event,
 )
-from meridian.lib.state.paths import resolve_project_paths, resolve_spawn_log_dir
+from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.telemetry.bootstrap import TelemetryMode, TelemetryPlan, install
 from meridian.lib.telemetry.init import setup_telemetry
 from meridian.lib.telemetry.observer import register_spawn_telemetry_observer
@@ -69,13 +68,8 @@ def _resolve_background_execution_cwd(
     explicit_task_cwd = runtime_request.resolved_requested_task_cwd
     if explicit_task_cwd:
         return explicit_task_cwd
-    return str(
-        resolve_child_execution_cwd(
-            project_root=project_root,
-            project_state_dir=resolve_project_paths(project_root).root_dir,
-            work_id=work_id,
-        )
-    )
+    _ = work_id
+    return project_root.as_posix()
 
 
 def _cleanup_background_runtime_artifacts(log_dir: Path) -> None:

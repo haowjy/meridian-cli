@@ -27,28 +27,24 @@ from meridian.lib.ops.work_dashboard import (
 )
 from meridian.lib.ops.work_lifecycle import (
     WorkClearInput,
-    WorkClearWorktreeInput,
     WorkDeleteInput,
     WorkDeleteOutput,
     WorkDoneInput,
     WorkRenameInput,
     WorkReopenInput,
-    WorkSetWorktreeInput,
     WorkStartInput,
     WorkSwitchInput,
+    WorkTaskDirInput,
     WorkUpdateInput,
-    WorkWorktreeInput,
     work_clear_sync,
-    work_clear_worktree_sync,
     work_delete_sync,
     work_done_sync,
     work_rename_sync,
     work_reopen_sync,
-    work_set_worktree_sync,
     work_start_sync,
     work_switch_sync,
+    work_task_dir_sync,
     work_update_sync,
-    work_worktree_sync,
 )
 
 Emitter = Callable[[Any], None]
@@ -76,34 +72,17 @@ def _work_start(
         str | None,
         Parameter(name="--goal", help="Optional overarching work goal."),
     ] = None,
-    worktree: Annotated[
-        bool | None,
-        Parameter(
-            name="--worktree",
-            help="Ensure Meridian-managed canonical isolation for this work item.",
-        ),
-    ] = None,
-    no_worktree: Annotated[
-        bool,
-        Parameter(name="--no-worktree", help="Skip worktree creation even if default is set."),
-    ] = False,
-    repo: Annotated[
+    task_dir: Annotated[
         str | None,
         Parameter(
-            name="--repo",
-            help="Target implementation repository path or [workspace.<name>] alias.",
+            name="--task-dir",
+            help=(
+                "Set the source-code edit directory for the new work item. "
+                "Spawns resolve relative -f paths against this directory."
+            ),
         ),
     ] = None,
 ) -> None:
-    # Resolve explicit worktree intent from the two flags.
-    # --no-worktree wins over --worktree if both are passed (degenerate case).
-    worktree_intent: bool | None
-    if no_worktree:
-        worktree_intent = False
-    elif worktree:
-        worktree_intent = True
-    else:
-        worktree_intent = None  # defer to config default
     emit(
         work_start_sync(
             WorkStartInput(
@@ -111,8 +90,7 @@ def _work_start(
                 description=description,
                 goal=goal,
                 chat_id=_runtime_chat_id(),
-                worktree=worktree_intent,
-                repo=repo,
+                task_dir=task_dir,
             )
         )
     )
@@ -213,15 +191,8 @@ def _work_done(
         str,
         Parameter(help="Work item id."),
     ],
-    force: Annotated[
-        bool,
-        Parameter(
-            name="--force",
-            help="Remove worktree even if the branch has unpushed commits.",
-        ),
-    ] = False,
 ) -> None:
-    emit(work_done_sync(WorkDoneInput(work_id=work_id, force=force)))
+    emit(work_done_sync(WorkDoneInput(work_id=work_id)))
 
 
 def _work_delete(
@@ -269,17 +240,12 @@ def _work_rename(
         str,
         Parameter(help="New name (slug) for the work item."),
     ],
-    worktree: Annotated[
-        bool,
-        Parameter(name="--worktree", help="Also move the git worktree and rename its branch."),
-    ] = False,
 ) -> None:
     emit(
         work_rename_sync(
             WorkRenameInput(
                 work_id=work_id,
                 new_name=new_name,
-                rename_worktree=worktree,
                 chat_id=_runtime_chat_id(),
             )
         )
@@ -290,61 +256,37 @@ def _work_clear(emit: Emitter) -> None:
     emit(work_clear_sync(WorkClearInput(chat_id=_runtime_chat_id())))
 
 
-def _work_worktree(
+def _work_task_dir(
     emit: Emitter,
-    work_id: Annotated[
-        str,
-        Parameter(help="Optional work item id. Defaults to active work for this session."),
-    ] = "",
-    ensure: Annotated[
-        bool,
-        Parameter(
-            name="--ensure",
-            help="Create/recover Meridian's canonical managed worktree if needed.",
-        ),
-    ] = False,
-    repo: Annotated[
+    task_dir: Annotated[
         str | None,
         Parameter(
-            name="--repo",
-            help="Target implementation repository path or [workspace.<name>] alias.",
+            help=(
+                "Directory to set as task_dir. Omit to print resolved task_dir. "
+                "Set requires an active work item attached to this session."
+            )
         ),
     ] = None,
+    clear: Annotated[
+        bool,
+        Parameter(
+            name="--clear",
+            help=(
+                "Unset task_dir for the active work item (reverts to project root). "
+                "Requires a session-attached active work item."
+            ),
+        ),
+    ] = False,
 ) -> None:
     emit(
-        work_worktree_sync(
-            WorkWorktreeInput(
-                work_id=work_id,
-                ensure=ensure,
-                repo=repo,
+        work_task_dir_sync(
+            WorkTaskDirInput(
+                task_dir=task_dir,
+                clear=clear,
                 chat_id=_runtime_chat_id(),
             )
         )
     )
-
-
-def _work_set_worktree(
-    emit: Emitter,
-    work_id: Annotated[
-        str,
-        Parameter(help="Work item id."),
-    ],
-    path: Annotated[
-        str,
-        Parameter(help="Existing directory to assign as this work item's worktree path."),
-    ],
-) -> None:
-    emit(work_set_worktree_sync(WorkSetWorktreeInput(work_id=work_id, path=path)))
-
-
-def _work_clear_worktree(
-    emit: Emitter,
-    work_id: Annotated[
-        str,
-        Parameter(help="Work item id."),
-    ],
-) -> None:
-    emit(work_clear_worktree_sync(WorkClearWorktreeInput(work_id=work_id)))
 
 
 def _work_current(emit: Emitter) -> None:
@@ -372,9 +314,7 @@ def register_work_commands(app: App, emit: Emitter) -> tuple[set[str], dict[str,
         "meridian.work.reopen": lambda: partial(_work_reopen, emit),
         "meridian.work.rename": lambda: partial(_work_rename, emit),
         "meridian.work.clear": lambda: partial(_work_clear, emit),
-        "meridian.work.worktree": lambda: partial(_work_worktree, emit),
-        "meridian.work.set-worktree": lambda: partial(_work_set_worktree, emit),
-        "meridian.work.clear-worktree": lambda: partial(_work_clear_worktree, emit),
+        "meridian.work.task-dir": lambda: partial(_work_task_dir, emit),
     }
     return register_extension_cli_group(
         app,

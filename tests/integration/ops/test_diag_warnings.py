@@ -242,3 +242,18 @@ def test_doctor_surfaces_workspace_unknown_and_missing_root_warnings(
     assert missing.payload == {
         "roots": [(project_root / "missing-root").resolve().as_posix()],
     }
+
+
+def test_doctor_warns_when_legacy_worktree_temp_dir_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _create_project_root(tmp_path)
+    _create_agent_skill_dirs(project_root)
+    runtime_root = resolve_project_runtime_root_for_write(project_root)
+    (runtime_root / "worktree-temp").mkdir(parents=True, exist_ok=True)
+
+    result = _run_doctor_without_upgrade_noise(project_root, monkeypatch)
+
+    warning = _warning_by_code(result, "legacy_worktree_temp_dir")
+    assert warning.payload == {"path": (runtime_root / "worktree-temp").as_posix()}

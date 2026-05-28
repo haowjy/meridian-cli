@@ -558,11 +558,10 @@ def materialize_launch_artifacts(
     task_cwd_instruction = ""
     if task_cwd and inject_task_cwd_instruction:
         task_cwd_instruction = (
-            "\n\n# Task Working Directory\n"
-            f"Your task working directory is: {task_cwd}\n\n"
-            "**Immediately `cd` into this directory before any filesystem operations.**\n\n"
-            f"```bash\ncd {task_cwd}\n```\n\n"
-            "The `MERIDIAN_TASK_CWD` environment variable contains this path.\n"
+            "\n\n# Source-edit directory\n"
+            "Use `MERIDIAN_PROJECT_ROOT` for project coordination files and harness context.\n"
+            f"Use `MERIDIAN_TASK_DIR` ({task_cwd}) for source-code operations "
+            "including git, edits, and builds.\n"
         )
     effective_appended_system = prompt_payload.appended_system_prompt or ""
     if task_cwd_instruction:
@@ -1512,9 +1511,9 @@ def bind_launch_context(
     task_cwd = (
         directory_context.logical_task_cwd if directory_context.has_distinct_task_cwd else None
     )
-    child_cwd = directory_context.logical_task_cwd
-    if harness.id == HarnessId.CLAUDE and directory_context.has_distinct_task_cwd:
-        child_cwd = resolved_control_root
+    # Invariant: harness subprocess cwd always stays at control_root.
+    # Distinct task directories are exposed via task_cwd/env/instructions only.
+    child_cwd = resolved_control_root
     try:
         preflight = harness.preflight(
             execution_cwd=resolved_control_root,
@@ -1600,12 +1599,6 @@ def bind_launch_context(
             update={"warning": summarize_composition_warnings(composition_warnings)}
         )
 
-    if (
-        task_cwd is not None
-        and task_cwd_projection_missing
-        and workspace_projection.applicability != "active"
-    ):
-        child_cwd = resolved_control_root
     directory_context = directory_context.with_actual_process_cwd(child_cwd)
 
     model = (resolved_request.model or "").strip()
@@ -1712,6 +1705,8 @@ def bind_launch_context(
     # Informational: tells the child its own harness for yield timing.
     # Not a policy override — from_env() does not read it back.
     child_context_env["MERIDIAN_HARNESS"] = harness.id.value
+    child_context_env["MERIDIAN_PROJECT_ROOT"] = resolved_control_root.as_posix()
+    child_context_env["MERIDIAN_TASK_DIR"] = directory_context.logical_task_cwd.as_posix()
     if task_cwd is not None:
         child_context_env["MERIDIAN_TASK_CWD"] = task_cwd.as_posix()
     runtime_override_env = (

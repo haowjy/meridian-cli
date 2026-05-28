@@ -44,6 +44,7 @@ Common `spawn` flags:
 | `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
 | `--desc "label"` | Human-readable label in dashboards |
 | `--work SLUG` | Attach to a specific work item |
+| `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
 | `--approval MODE` | `default` \| `confirm` \| `auto` \| `yolo` |
@@ -133,9 +134,11 @@ For managed Codex primary startup behavior, see [codex-tui-passthrough.md](codex
 | ------- | ----------- |
 | `meridian work` | Dashboard — active work items and spawns |
 | `meridian work start LABEL` | Create a work item if missing, or switch to it |
+| `meridian work start LABEL --task-dir PATH` | Create/switch and set task directory for source edits |
 | `meridian work list` | List all work items |
 | `meridian work show SLUG` | Show one work item, its directory, and attached spawns |
 | `meridian work switch SLUG` | Set active work item |
+| `meridian work task-dir [PATH\|--clear]` | Show/set/clear active work-item task directory |
 | `meridian work done SLUG` | Mark a work item done and archive its scratch directory |
 | `meridian work sessions SLUG` | List sessions attached to a work item |
 

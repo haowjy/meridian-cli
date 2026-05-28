@@ -120,6 +120,52 @@ def test_spawn_goal_rejects_empty_value(
     assert captured.err == "error: --goal cannot be empty\n"
 
 
+def test_spawn_continue_rejects_task_dir_override(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "--human",
+                "spawn",
+                "--continue",
+                "p123",
+                "-p",
+                "follow-up",
+                "--task-dir",
+                ".",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--continue does not accept --task-dir" in captured.err
+
+
+@pytest.mark.parametrize("legacy_flag", ["--worktree", "--repo"])
+def test_spawn_rejects_removed_worktree_flags(
+    legacy_flag: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(spawn_cli.sys, "stdin", _FakeStdin("", is_tty=True))
+    args = ["--human", "spawn", "-p", "literal", "--dry-run", legacy_flag]
+    if legacy_flag == "--repo":
+        args.append(".")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(args)
+
+    assert exc_info.value.code != 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert legacy_flag in captured.err
+
+
 def test_spawn_runtime_error_is_reported_without_traceback(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -109,10 +109,9 @@ def _resolve_execution_contract(
         execution_cwd = resolve_task_cwd(
             project_paths.project_root,
             project_state_dir=resolve_project_paths(project_paths.project_root).root_dir,
+            explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
             ambient_work_id=None if explicit_work_id else ambient_work_id,
-            force_worktree=payload.worktree is True,
-            force_no_worktree=payload.worktree is False,
         ).task_cwd
 
     work_id = (

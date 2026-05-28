@@ -140,7 +140,7 @@ async def _capture_codex_launch_cwd(
 
 
 @pytest.mark.asyncio
-async def test_codex_connection_launches_subprocess_from_task_cwd_when_provided(
+async def test_codex_connection_launches_subprocess_from_control_root_when_task_cwd_provided(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -156,7 +156,7 @@ async def test_codex_connection_launches_subprocess_from_task_cwd_when_provided(
         ws_port=19091,
     )
 
-    assert captured_cwd == str(task_cwd)
+    assert captured_cwd == str(control_root)
 
 
 @pytest.mark.asyncio
@@ -177,7 +177,9 @@ async def test_codex_connection_launches_subprocess_from_control_root_without_ta
     assert captured_cwd == str(control_root)
 
 
-def test_codex_managed_bootstrap_request_uses_task_cwd_when_provided(tmp_path: Path) -> None:
+def test_codex_managed_bootstrap_request_uses_control_root_when_task_cwd_provided(
+    tmp_path: Path,
+) -> None:
     control_root = tmp_path / "project"
     control_root.mkdir(parents=True)
     task_cwd = tmp_path / "task"
@@ -195,7 +197,7 @@ def test_codex_managed_bootstrap_request_uses_task_cwd_when_provided(tmp_path: P
     method, payload = connection._thread_bootstrap_request(_build_spec())
 
     assert method == "thread/start"
-    assert payload["cwd"] == str(task_cwd)
+    assert payload["cwd"] == str(control_root)
 
 
 def test_codex_managed_bootstrap_request_uses_control_root_without_task_cwd(tmp_path: Path) -> None:
@@ -217,7 +219,7 @@ def test_codex_managed_bootstrap_request_uses_control_root_without_task_cwd(tmp_
     assert payload["cwd"] == str(control_root)
 
 
-def test_codex_rollout_materialization_uses_task_cwd_when_provided(
+def test_codex_rollout_materialization_uses_control_root_when_task_cwd_provided(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -263,6 +265,6 @@ def test_codex_rollout_materialization_uses_task_cwd_when_provided(
 
     assert captured == {
         "codex_home": codex_home,
-        "project_root": task_cwd,
+        "project_root": control_root,
         "session_id": "thread-1",
     }

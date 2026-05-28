@@ -11,6 +11,15 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi `/ps` and `/spawn` row inspection now opens a centered log overlay with follow, scroll, top/bottom, and refresh controls instead of replacing the whole panel.
 - Pi `/ps` and `/spawn` now share a full-screen selectable UI with row preview, colored key hints, `j/k` navigation, `enter` action, `c` clear, and `r` refresh.
 - Pi `/ps` now sorts running bash tasks before completed tasks.
+- Spawn task-directory resolution now prioritizes explicit `task_dir`, then explicit/ambient work-item `task_dir`, then authority root fallback.
+- Launch directory model now keeps subprocess cwd at authority root while task references/instructions anchor to logical task dir.
+- Codex and Pi managed connection launches now always bind subprocess/thread cwd to project control root, even when `MERIDIAN_TASK_DIR` differs.
+- Env normalization now trims and validates `MERIDIAN_PROJECT_ROOT`/`MERIDIAN_TASK_DIR` alongside existing Meridian context directory vars.
+- `meridian work` lifecycle ops are now metadata-only for `task_dir`; done/delete/reopen/rename/update-done no longer mutate task-dir filesystem targets.
+- `spawn --continue` now rejects `--task-dir` with fork guidance, while `spawn --fork --task-dir` is allowed.
+- `meridian doctor` now reports lingering `worktree-temp/` runtime directories as legacy informational cleanup.
+- Spawn launch guidance now teaches split-root behavior (`MERIDIAN_PROJECT_ROOT` + `MERIDIAN_TASK_DIR`) for both primary and child launches; removed injected "cd task dir" instruction text.
+- `meridian work`/`meridian work show` text output now surfaces `task_dir` and hides legacy worktree status from default text UI.
 
 ### Added
 - Global `-C` / `--directory` flag to override project root resolution from CWD. Precedence: `-C` > `MERIDIAN_PROJECT_DIR` > CWD walk-up.
@@ -18,6 +27,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi `/ps:clear` and `/spawn:clear` hide finished task rows from the current Pi session panels.
 - Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.
 - `timeouts.pi_child_wave_timeout_seconds` and `timeouts.pi_task_ping_interval_seconds` in `meridian.toml` / env (`MERIDIAN_PI_CHILD_WAVE_TIMEOUT_SECONDS`, `MERIDIAN_PI_TASK_PING_INTERVAL_SECONDS`).
+- Spawn create payload now carries explicit `task_dir` intent for launch resolution.
+- Work item status now persists top-level `task_dir`, with lazy migration from legacy `worktree.path` on read.
+- Launch bind env now exports `MERIDIAN_PROJECT_ROOT` and `MERIDIAN_TASK_DIR` to child sessions.
+- Added `meridian work task-dir` to print/set/clear active work-item task directory.
+- Added `--task-dir` on `meridian work start` and `meridian spawn` create/fork flows.
 
 ### Fixed
 - `meridian session log <pi-spawn>` now renders Pi RPC `message_end` transcript events, including prompt text, assistant text, tool calls/results, and custom follow-up pings.
@@ -27,6 +41,16 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - OpenCode report extraction no longer returns raw `session.idle` envelopes when assistant text arrives via `message.part.updated` or `opencode.db` session storage.
 - Pi auth/prompt failures now persist `report.md` with `# Spawn failed` (`source=pi_failure`) instead of `# Auto-extracted Report`.
 - Streaming Pi launches scope `PI_CODING_AGENT_SESSION_DIR` per spawn only for **spawned** RPC sessions; primary sessions keep the configured session root.
+- `meridian mars` passthrough now injects `--root` from `MERIDIAN_PROJECT_DIR` when set, so nested mars inside a spawn uses the launcher's project instead of cwd.
+- `spawn --task-dir` / `spawn --fork --task-dir` now fail early when the override path is missing or not a directory.
+- `work start --task-dir` now validates the path before creating/reopening/mutating work items.
+
+### Removed
+- Removed `meridian work worktree`, `work set-worktree`, and `work clear-worktree` command surfaces.
+- Removed `--worktree`/`--no-worktree`/`--repo` flags from `meridian spawn` and `meridian work start`.
+- Removed managed-worktree orchestration modules and temporary-worktree store from runtime paths.
+- Removed obsolete worktree ensure/lifecycle unit suites and replaced lifecycle coverage with task-dir focused tests.
+- Pruned trace-through unit tests around `spawn_service` / `spawn_api.build_create_payload` fakes whose only signal was field pass-through; durable split-root and goal-preview contracts now use focused model/service tests, with smoke guides for runtime verification.
 
 ## [0.2.10] - 2026-05-27
 

@@ -480,7 +480,7 @@ class PiRpcConnection(HarnessConnection[ResolvedLaunchSpec]):
             raise ConnectionNotReady(str(exc)) from exc
         command[0] = resolved_runtime.binary_path
         self._launch_command = tuple(command)
-        self._launch_cwd = str(config.task_cwd or config.control_root)
+        self._launch_cwd = str(config.control_root)
 
         try:
             self._process = await asyncio.create_subprocess_exec(

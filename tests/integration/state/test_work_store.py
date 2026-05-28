@@ -15,7 +15,6 @@ from meridian.lib.state.work_store import (
     reopen_work_item,
     slugify,
     update_work_item,
-    update_work_item_worktree,
 )
 
 
@@ -190,59 +189,3 @@ def test_rename_work_item_rejects_invalid_name_collision_and_missing_source(tmp_
 
     with pytest.raises(ValueError, match="not found"):
         rename_work_item(runtime_root, "nonexistent", "new-name")
-
-
-def test_work_item_worktree_metadata_uses_nested_schema_and_preserves_branch_on_rename(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    item = create_work_item(runtime_root, "rename-me")
-
-    update_work_item_worktree(
-        runtime_root,
-        item.name,
-        path="/tmp/repo.worktrees/rename-me",
-        branch="feature/original-branch",
-        pending=True,
-    )
-    renamed = rename_work_item(runtime_root, item.name, "renamed-item")
-
-    assert renamed.worktree_path == "/tmp/repo.worktrees/rename-me"
-    assert renamed.worktree_branch == "feature/original-branch"
-    assert renamed.worktree_pending is True
-
-    status_payload = json.loads(
-        (runtime_root / "work" / renamed.name / "__status.json").read_text(encoding="utf-8")
-    )
-    assert "worktree_path" not in status_payload
-    assert "worktree_pending" not in status_payload
-    assert status_payload["worktree"] == {
-        "path": "/tmp/repo.worktrees/rename-me",
-        "branch": "feature/original-branch",
-        "repo_path": None,
-        "name": None,
-        "pending": True,
-        "managed": False,
-    }
-
-
-def test_legacy_worktree_payload_without_managed_infers_managed_and_rewrites(
-    tmp_path: Path,
-) -> None:
-    runtime_root = _state_root(tmp_path)
-    item = create_work_item(runtime_root, "legacy-managed-inference")
-    status_path = runtime_root / "work" / item.name / "__status.json"
-    payload = json.loads(status_path.read_text(encoding="utf-8"))
-    payload["worktree"] = {
-        "path": "/tmp/legacy-worktree",
-        "branch": "feature/legacy-worktree",
-        "pending": False,
-    }
-    status_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-
-    loaded = get_work_item(runtime_root, item.name)
-    assert loaded is not None
-    assert loaded.worktree_managed is True
-
-    rewritten = json.loads(status_path.read_text(encoding="utf-8"))
-    assert rewritten["worktree"]["managed"] is True

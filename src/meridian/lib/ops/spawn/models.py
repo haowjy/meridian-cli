@@ -129,8 +129,7 @@ class SpawnCreateInput(SpawnLaunchOptions):
     skills: tuple[str, ...] = ()
     desc: str = ""
     work: str = ""
-    worktree: bool | None = None
-    repo: str | None = None
+    task_dir: str | None = None
     session: SessionRequest = SessionRequest()
     launch_policy_snapshot: LaunchPolicySnapshot | None = None
 
@@ -1127,8 +1126,7 @@ class SpawnContinueInput(SpawnLaunchOptions):
     goal: str | None = None
     desc: str = ""
     work: str = ""
-    worktree: bool | None = None
-    repo: str | None = None
+    task_dir: str | None = None
     fork: bool = False
 
     @field_validator("goal", mode="before")
@@ -1151,8 +1149,7 @@ class SpawnForkInput(SpawnLaunchOptions):
     goal: str | None = None
     desc: str = ""
     work: str = ""
-    worktree: bool | None = None
-    repo: str | None = None
+    task_dir: str | None = None
 
     @field_validator("goal", mode="before")
     @classmethod

@@ -209,10 +209,10 @@ def test_build_create_payload_kb_reference_uses_authority_kb_dir_with_external_t
     work = work_store.create_work_item(project_state_dir, "feature-x", "", None)
     external_task_cwd = tmp_path / "external-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
-    work_store.update_work_item_worktree(
+    work_store.update_work_item_task_dir(
         project_state_dir,
         work.name,
-        path=external_task_cwd.as_posix(),
+        task_dir=external_task_cwd.as_posix(),
     )
 
     authority_kb_file = resolve_kb_dir(project_root) / "domain" / "decision.md"
@@ -256,10 +256,10 @@ def test_build_create_payload_relative_reference_resolves_from_selected_worktree
     work = work_store.create_work_item(project_state_dir, "feature-x", "", None)
     external_task_cwd = tmp_path / "feature-worktree"
     external_task_cwd.mkdir(parents=True, exist_ok=True)
-    work_store.update_work_item_worktree(
+    work_store.update_work_item_task_dir(
         project_state_dir,
         work.name,
-        path=external_task_cwd.as_posix(),
+        task_dir=external_task_cwd.as_posix(),
     )
     reference_file = external_task_cwd / "notes.md"
     reference_file.write_text("worktree notes", encoding="utf-8")
@@ -278,6 +278,6 @@ def test_build_create_payload_relative_reference_resolves_from_selected_worktree
 
     assert prepared.task_cwd == external_task_cwd.as_posix()
     assert prepared.reference_anchor == external_task_cwd.as_posix()
-    assert prepared.task_cwd_source == "explicit-work-worktree"
+    assert prepared.task_cwd_source == "explicit-work-task-dir"
     assert prepared.task_cwd_work_item == work.name
     assert tuple(Path(path) for path in prepared.reference_files) == (reference_file.resolve(),)

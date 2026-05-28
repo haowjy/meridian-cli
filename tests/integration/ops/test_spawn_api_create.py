@@ -7,7 +7,6 @@ Query/list/cancel/wait tests live in test_spawn_api_query.py.
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,11 +14,9 @@ import meridian.lib.ops.spawn.api as spawn_api
 from meridian.lib.bootstrap.services import prepare_for_runtime_write
 from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
-from meridian.lib.ops.spawn.models import SpawnActionOutput, SpawnCreateInput
-from meridian.lib.ops.worktree_ops import resolve_worktree_path
+from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths
-from meridian.lib.state.work_store import WorktreeMetadata
 from meridian.lib.telemetry import init_telemetry
 from tests.support.fakes import RecordingTelemetrySink, wait_for_telemetry
 from tests.support.launch import stub_bundle_request_and_resolve
@@ -152,59 +149,6 @@ def test_spawn_create_with_prepared_skips_self_bootstrap(
     assert result.harness_id == "codex"
 
 
-def test_spawn_create_dry_run_surfaces_goal_and_contract_preview(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    def _fake_build_create_payload(
-        payload: SpawnCreateInput,
-        runtime: object | None = None,
-        preflight_warning: str | None = None,
-        ctx: object | None = None,
-        forced_task_cwd_resolution: object | None = None,
-    ) -> SimpleNamespace:
-        request = SimpleNamespace(
-            harness=payload.harness or "codex",
-            model=payload.model,
-            warning=preflight_warning,
-            agent=payload.agent,
-            agent_metadata={},
-            skills=payload.skills,
-            skill_paths=(),
-            reference_files=(),
-            template_vars={},
-            context_from=(),
-            prompt=payload.prompt,
-            goal=payload.goal,
-            model_selection_requested_token=None,
-            model_selection_canonical_id=None,
-            model_selection_harness_provenance=None,
-            terminal_surface_mode=None,
-            cli_command=("codex",),
-        )
-        return SimpleNamespace(request=request, prepared=None)
-
-    monkeypatch.setattr(spawn_api, "build_create_payload", _fake_build_create_payload)
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            goal="ship phase 3",
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        )
-    )
-
-    assert result.status == "dry-run"
-    assert result.goal == "ship phase 3"
-    goal_contract_preview = result.goal_contract_preview
-    assert goal_contract_preview is not None
-    assert "# Spawn Goal" in goal_contract_preview
-    assert "ship phase 3" in goal_contract_preview
-
-
 def test_spawn_create_dry_run_with_work_is_non_mutating(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -234,11 +178,15 @@ def test_spawn_create_dry_run_with_work_is_non_mutating(
 
     assert result.status == "dry-run"
     assert work_store.get_work_item(project_state_dir, "new-work-item") is None
+    assert result.task_cwd_source == "explicit-work-authority-root"
+    assert result.task_cwd == project_root.as_posix()
+    assert result.reference_anchor == project_root.as_posix()
+    assert result.task_cwd_work_item == "new-work-item"
     assert result.warning is not None
     assert "would be created on launch" in result.warning
 
 
-def test_spawn_create_dry_run_worktree_forces_canonical_task_cwd(
+def test_spawn_create_dry_run_uses_explicit_task_dir_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,40 +200,26 @@ def test_spawn_create_dry_run_worktree_forces_canonical_task_cwd(
         model="gpt-5.4-mini",
         harness=HarnessId.CODEX,
     )
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    work = work_store.create_work_item(project_state_dir, "ensure-worktree", "", None)
-    canonical_path = resolve_worktree_path(project_root, work.name)
-    work_store.update_work_item_worktree(
-        project_state_dir,
-        work.name,
-        path=canonical_path.as_posix(),
-        branch=f"feature/{work.name}",
-        repo_path=project_root.as_posix(),
-        name=work.name,
-        pending=True,
-        managed=True,
-    )
+    task_dir = tmp_path / "task-override"
+    task_dir.mkdir(parents=True, exist_ok=True)
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
             prompt="run",
             model="gpt-5.4-mini",
-            work=work.name,
-            worktree=True,
+            task_dir=task_dir.as_posix(),
             project_root=project_root.as_posix(),
             dry_run=True,
         )
     )
 
     assert result.status == "dry-run"
-    assert result.task_cwd_source == "forced-worktree"
-    assert result.task_cwd == canonical_path.as_posix()
-    assert result.reference_anchor == canonical_path.as_posix()
-    assert result.task_cwd_work_item == work.name
-    assert "Pending marker present" in (result.warning or "")
+    assert result.task_cwd_source == "explicit-task-dir"
+    assert result.task_cwd == task_dir.as_posix()
+    assert result.reference_anchor == task_dir.as_posix()
 
 
-def test_spawn_create_dry_run_worktree_uses_ambient_work_item(
+def test_spawn_create_dry_run_uses_ambient_work_item_task_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -300,14 +234,19 @@ def test_spawn_create_dry_run_worktree_uses_ambient_work_item(
         harness=HarnessId.CODEX,
     )
     project_state_dir = resolve_project_paths(project_root).root_dir
-    work = work_store.create_work_item(project_state_dir, "ambient-worktree", "", None)
-    canonical_path = resolve_worktree_path(project_root, work.name)
+    work = work_store.create_work_item(project_state_dir, "ambient-task-dir", "", None)
+    ambient_task_dir = tmp_path / "ambient-task-dir"
+    ambient_task_dir.mkdir(parents=True, exist_ok=True)
+    work_store.update_work_item_task_dir(
+        project_state_dir,
+        work.name,
+        task_dir=ambient_task_dir.as_posix(),
+    )
 
     result = spawn_api.spawn_create_sync(
         SpawnCreateInput(
             prompt="run",
             model="gpt-5.4-mini",
-            worktree=True,
             project_root=project_root.as_posix(),
             dry_run=True,
         ),
@@ -315,107 +254,8 @@ def test_spawn_create_dry_run_worktree_uses_ambient_work_item(
     )
 
     assert result.status == "dry-run"
-    assert result.task_cwd_source == "forced-worktree"
-    assert result.task_cwd == canonical_path.as_posix()
-    assert result.reference_anchor == canonical_path.as_posix()
+    assert result.task_cwd_source == "ambient-work-task-dir"
+    assert result.task_cwd == ambient_task_dir.as_posix()
+    assert result.reference_anchor == ambient_task_dir.as_posix()
     assert result.task_cwd_work_item == work.name
-    updated = work_store.get_work_item(project_state_dir, work.name)
-    assert updated is not None
-    assert updated.worktree == WorktreeMetadata()
 
-
-def test_spawn_create_dry_run_worktree_with_new_explicit_work_is_non_mutating(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    monkeypatch.chdir(project_root)
-    stub_bundle_request_and_resolve(
-        monkeypatch,
-        model="gpt-5.4-mini",
-        harness=HarnessId.CODEX,
-    )
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    canonical_path = resolve_worktree_path(project_root, "new-worktree")
-
-    assert work_store.get_work_item(project_state_dir, "new-worktree") is None
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.4-mini",
-            work="new-worktree",
-            worktree=True,
-            project_root=project_root.as_posix(),
-            dry_run=True,
-        )
-    )
-
-    assert result.status == "dry-run"
-    assert work_store.get_work_item(project_state_dir, "new-worktree") is None
-    assert result.task_cwd_source == "forced-worktree"
-    assert result.task_cwd == canonical_path.as_posix()
-    assert result.reference_anchor == canonical_path.as_posix()
-    assert result.task_cwd_work_item == "new-worktree"
-    assert result.warning is not None
-    assert "would be created on launch" in result.warning
-    assert "managed worktree" in result.warning
-
-
-def test_spawn_create_real_worktree_creates_explicit_work_before_ensure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = tmp_path / "repo"
-    project_root.mkdir()
-    (project_root / ".git").mkdir()
-    (project_root / "mars.toml").write_text("", encoding="utf-8")
-    prepared = prepare_for_runtime_write(project_root)
-    project_state_dir = resolve_project_paths(project_root).root_dir
-    calls: list[str] = []
-
-    assert work_store.get_work_item(project_state_dir, "real-worktree") is None
-
-    def _fake_ensure_worktree(**kwargs: object) -> SimpleNamespace:
-        calls.append("ensure_worktree")
-        work_id = kwargs["work_id"]
-        assert work_id == "real-worktree"
-        assert work_store.get_work_item(project_state_dir, "real-worktree") is not None
-        return SimpleNamespace(warning=None, worktree_path=project_root / "unused")
-
-    def _fake_build_create_payload(*_args: object, **_kwargs: object) -> SimpleNamespace:
-        calls.append("build_payload")
-        return SimpleNamespace(request=SimpleNamespace(harness="codex"), prepared=None)
-
-    def _fake_execute_spawn_blocking(*_args: object, **_kwargs: object) -> SpawnActionOutput:
-        calls.append("execute")
-        return SpawnActionOutput(
-            command="spawn.create",
-            status="succeeded",
-            spawn_id="p1",
-            model="gpt-5.4-mini",
-            harness_id="codex",
-        )
-
-    monkeypatch.setattr(spawn_api, "ensure_work_item_worktree", _fake_ensure_worktree)
-    monkeypatch.setattr(spawn_api, "build_create_payload", _fake_build_create_payload)
-    monkeypatch.setattr(spawn_api, "execute_spawn_blocking", _fake_execute_spawn_blocking)
-
-    result = spawn_api.spawn_create_sync(
-        SpawnCreateInput(
-            prompt="run",
-            model="gpt-5.4-mini",
-            harness="codex",
-            work="real-worktree",
-            worktree=True,
-            project_root=project_root.as_posix(),
-        ),
-        prepared=prepared,
-    )
-
-    assert result.status == "succeeded"
-    assert calls == ["ensure_worktree", "build_payload", "execute"]
-    assert work_store.get_work_item(project_state_dir, "real-worktree") is not None
