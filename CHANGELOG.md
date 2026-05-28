@@ -13,6 +13,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi `/ps` now sorts running bash tasks before completed tasks.
 
 ### Added
+- Global `-C` / `--directory` flag to override project root resolution from CWD. Precedence: `-C` > `MERIDIAN_PROJECT_DIR` > CWD walk-up.
 - Pi tracked background bash sends a one-shot follow-up ping after the configured task-ping interval, so stale long-running work can be killed, waited, or detached instead of silently blocking quiescence.
 - Pi `/ps:clear` and `/spawn:clear` hide finished task rows from the current Pi session panels.
 - Pi harness launch reads `[harness.pi]` from the launch config snapshot (`SpawnParams.pi_harness_profile`) instead of ambient project-root discovery during `resolve_launch_spec()`.

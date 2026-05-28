@@ -131,13 +131,14 @@ def _render_human_root_help() -> str:
 Multi-agent orchestration across Claude, Codex, and OpenCode.
 
 Options:
-  --help, -h        Show this message and exit.
-  --version, -v     Show the application version.
-  --json            Emit command output as JSON.
-  --format TEXT     Set output format: text or json.
-  --config TEXT     Path to a user config TOML overlay.
-  --harness TEXT    Force harness id (claude, codex, cursor, opencode, or pi).
-  --model, -m TEXT  Model id or alias for primary harness.
+  --help, -h            Show this message and exit.
+  --version, -v         Show the application version.
+  --json                Emit command output as JSON.
+  --format TEXT         Set output format: text or json.
+  --config TEXT         Path to a user config TOML overlay.
+  -C, --directory PATH  Resolve project root from this path instead of CWD.
+  --harness TEXT        Force harness id (claude, codex, cursor, opencode, or pi).
+  --model, -m TEXT      Model id or alias for primary harness.
 
 Commands:
 {command_lines}

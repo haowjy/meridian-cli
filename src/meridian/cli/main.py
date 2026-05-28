@@ -154,6 +154,10 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
     if parsed.output_explicit:
         explicit_format = cast("OutputFormat", parsed.output_format)
 
+    project_root: Path | None = None
+    if parsed.directory is not None:
+        project_root = Path(parsed.directory).expanduser().resolve()
+
     return cleaned, GlobalOptions(
         output=OutputConfig(format=cast("OutputFormat", parsed.output_format)),
         config_file=parsed.config_file,
@@ -164,6 +168,7 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         force_agent=parsed.force_agent,
         force_human=parsed.force_human,
         explicit_format=explicit_format,
+        project_root=project_root,
     )
 
 
@@ -246,6 +251,13 @@ def root(
     config_file: Annotated[
         str | None,
         Parameter(name="--config", help="Path to a user config TOML overlay."),
+    ] = None,
+    directory: Annotated[
+        str | None,
+        Parameter(
+            name=["-C", "--directory"],
+            help="Resolve project root from this path instead of CWD.",
+        ),
     ] = None,
     yes: Annotated[
         bool,
@@ -1024,16 +1036,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     # and reject invalid --dry-run combinations before any startup writes.
     if _bootstrap_setup_requested(cleaned_args):
         state_requirement = StateRequirement.NONE
-    project_root = None
+    # Install options early so require_established_project_root() sees project_root
+    # from -C / --directory during bootstrap resolution.
+    _pre_bootstrap_token = _GLOBAL_OPTIONS.set(options)
+    bootstrap_project_root = None
     with manual_hook_authority_scope(
         suppress=should_suppress_manual_hook_authority(argv=cleaned_args)
     ):
         if not bootstrap_skipped:
-            project_root = maybe_bootstrap_runtime_state(
+            bootstrap_project_root = maybe_bootstrap_runtime_state(
                 cleaned_args,
                 agent_mode=agent_mode_enabled(),
                 state_requirement=state_requirement,
             )
+    _GLOBAL_OPTIONS.reset(_pre_bootstrap_token)
+    # Prefer bootstrap's resolved root; fall back to -C path if bootstrap was skipped/no-op.
+    project_root = (
+        bootstrap_project_root if bootstrap_project_root is not None else options.project_root
+    )
     _install_cli_telemetry(
         telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
         startup_class=startup_class,

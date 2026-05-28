@@ -33,6 +33,8 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "--sandbox",
         "--approval",
         "--timeout",
+        "-C",
+        "--directory",
     }
 )
 _TOP_LEVEL_BOOL_FLAGS = frozenset(
@@ -71,6 +73,7 @@ class ParsedGlobalOptions:
     output_explicit: bool
     force_agent: bool
     force_human: bool
+    directory: str | None
 
 
 def _first_positional_token_with_index(argv: Sequence[str]) -> tuple[int, str] | None:
@@ -162,6 +165,7 @@ def extract_global_options(
     output_format: str | None = None
     config_file: str | None = None
     harness: str | None = None
+    directory: str | None = None
     yes = False
     no_input = False
     output_explicit = False
@@ -212,6 +216,20 @@ def extract_global_options(
             config_file = arg.partition("=")[2].strip()
             if not config_file:
                 raise SystemExit("--config requires a non-empty value")
+            index += 1
+            continue
+        if arg in {"-C", "--directory"}:
+            if index + 1 >= len(argv):
+                raise SystemExit(f"{arg} requires a value")
+            directory = argv[index + 1].strip()
+            if not directory:
+                raise SystemExit(f"{arg} requires a non-empty value")
+            index += 2
+            continue
+        if arg.startswith("--directory="):
+            directory = arg.partition("=")[2].strip()
+            if not directory:
+                raise SystemExit("--directory requires a non-empty value")
             index += 1
             continue
         if arg == "--harness":
@@ -309,6 +327,7 @@ def extract_global_options(
         output_format=normalize_output_format(output_format, json_mode),
         config_file=config_file,
         harness=harness,
+        directory=directory,
         yes=yes,
         no_input=no_input,
         output_explicit=output_explicit,

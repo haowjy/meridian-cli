@@ -119,6 +119,17 @@ Legacy meridian-managed source files are no longer used and are safe to delete:
 
 Spawns support 4 approval modes: `default` (harness decides), `confirm` (user approves each tool call), `auto` (auto-approve safe operations), `yolo` (approve everything). Set via `--approval` flag or profile YAML.
 
+### Project Resolution
+
+Meridian resolves the project root by walking up from CWD looking for `.mars/`, `meridian.toml`, `.meridian/id`, or `.git`. Override with `-C <path>` / `--directory <path>` (global flag, before any subcommand) or `MERIDIAN_PROJECT_DIR` env var. Precedence: `-C` flag > `MERIDIAN_PROJECT_DIR` > CWD walk-up.
+
+Use `-C` when operating on a sibling repo from a different CWD:
+
+```bash
+meridian -C ~/gitrepos/mars-agents session log c8
+meridian -C ~/gitrepos/meridian-cli spawn list
+```
+
 ### Config Precedence
 
 CLI flags > ENV vars > YAML profile > Project config > User config > harness default.
