@@ -10,5 +10,6 @@ targets = [
     ".cursor",
     ".codex",
     ".opencode",
+    ".pi",
 ]
 models_cache_ttl_hours = 24
