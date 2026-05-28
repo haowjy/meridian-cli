@@ -211,6 +211,20 @@ def test_spawn_action_dry_run_exposes_matched_policy_rule() -> None:
     assert "Matched policy rule: settings:2" in text
 
 
+def test_spawn_action_dry_run_wire_includes_goal_contract_preview() -> None:
+    output = SpawnActionOutput(
+        command="spawn.create",
+        status="dry-run",
+        goal="ship phase 3",
+    )
+
+    wire = output.to_wire()
+
+    assert wire["goal"] == "ship phase 3"
+    assert "# Spawn Goal" in str(wire["goal_contract_preview"])
+    assert "ship phase 3" in str(wire["goal_contract_preview"])
+
+
 def test_spawn_action_dry_run_exposes_task_cwd_fields() -> None:
     output = SpawnActionOutput(
         command="spawn.create",
