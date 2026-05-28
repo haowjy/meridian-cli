@@ -115,7 +115,6 @@ def test_background_repairs_pin_runtime_root_before_env_restore(
         startup_class=StartupClass.PRIMARY_LAUNCH,
         project_root=project,
         bootstrap_skipped=False,
-        ignore_runtime_env=True,
     )
 
     assert captured["locks"] == expected_runtime

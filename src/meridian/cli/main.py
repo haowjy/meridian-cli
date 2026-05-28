@@ -3,7 +3,8 @@
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, cast
@@ -923,7 +924,6 @@ def _maybe_schedule_background_repairs(
     startup_class: StartupClass,
     project_root: Path | None,
     bootstrap_skipped: bool,
-    ignore_runtime_env: bool = False,
 ) -> None:
     """Schedule cheap per-project repairs on PRIMARY_LAUNCH in a daemon thread."""
 
@@ -938,10 +938,7 @@ def _maybe_schedule_background_repairs(
 
     from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
 
-    runtime_root = resolve_runtime_authority_for_write(
-        project_root,
-        ignore_runtime_env=ignore_runtime_env,
-    ).runtime_root
+    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
     if runtime_root is None:
         return
 
@@ -969,6 +966,32 @@ def _maybe_schedule_background_repairs(
 
 def _print_agent_root_help() -> None:
     print(_AGENT_ROOT_HELP, end="")
+
+
+@contextmanager
+def _directory_env_scope(
+    project_root: Path | None,
+    directory_explicit: bool,
+) -> Generator[None, None, None]:
+    """Set ``MERIDIAN_PROJECT_DIR`` / ``MERIDIAN_DIRECTORY_EXPLICIT`` and restore on exit."""
+
+    keys = ("MERIDIAN_PROJECT_DIR", "MERIDIAN_DIRECTORY_EXPLICIT")
+    saved = {key: os.environ.get(key) for key in keys}
+    if project_root is not None:
+        os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
+    if directory_explicit:
+        os.environ["MERIDIAN_DIRECTORY_EXPLICIT"] = "1"
+    else:
+        os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
+    try:
+        yield
+    finally:
+        for key in keys:
+            prior = saved[key]
+            if prior is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prior
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -1066,37 +1089,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     project_root = (
         bootstrap_project_root if bootstrap_project_root is not None else options.project_root
     )
-    prior_project_dir = os.environ.get("MERIDIAN_PROJECT_DIR")
-    had_prior_project_dir = "MERIDIAN_PROJECT_DIR" in os.environ
-    prior_directory_explicit = os.environ.get("MERIDIAN_DIRECTORY_EXPLICIT")
-    had_prior_directory_explicit = "MERIDIAN_DIRECTORY_EXPLICIT" in os.environ
-
-    def _apply_cli_directory_env() -> None:
-        if project_root is not None:
-            os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
-        if options.directory_explicit:
-            os.environ["MERIDIAN_DIRECTORY_EXPLICIT"] = "1"
-        else:
-            os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
-
-    def _restore_cli_directory_env() -> None:
-        if had_prior_project_dir:
-            if prior_project_dir is None:
-                os.environ.pop("MERIDIAN_PROJECT_DIR", None)
-            else:
-                os.environ["MERIDIAN_PROJECT_DIR"] = prior_project_dir
-        else:
-            os.environ.pop("MERIDIAN_PROJECT_DIR", None)
-        if had_prior_directory_explicit:
-            if prior_directory_explicit is None:
-                os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
-            else:
-                os.environ["MERIDIAN_DIRECTORY_EXPLICIT"] = prior_directory_explicit
-        else:
-            os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
-
-    _apply_cli_directory_env()
-    try:
+    with _directory_env_scope(project_root, options.directory_explicit):
         _install_cli_telemetry(
             telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
             startup_class=startup_class,
@@ -1106,7 +1099,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             startup_class=startup_class,
             project_root=project_root,
             bootstrap_skipped=bootstrap_skipped,
-            ignore_runtime_env=options.directory_explicit,
         )
         _emit_usage_command_invoked(cleaned_args)
 
@@ -1127,5 +1119,3 @@ def main(argv: Sequence[str] | None = None) -> None:
         finally:
             flush_sink(active_sink)
             _GLOBAL_OPTIONS.reset(token)
-    finally:
-        _restore_cli_directory_env()

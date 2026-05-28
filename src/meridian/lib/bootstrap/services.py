@@ -82,15 +82,10 @@ def prepare_for_project_read(project_root: Path) -> ProjectReadContext:
 
 def prepare_for_runtime_read(
     project_root: Path,
-    *,
-    ignore_runtime_env: bool = False,
 ) -> RuntimeReadContext:
     """Prepare read-only runtime context without creating state."""
 
-    authority = resolve_runtime_authority_for_read(
-        project_root,
-        ignore_runtime_env=ignore_runtime_env,
-    )
+    authority = resolve_runtime_authority_for_read(project_root)
     project_context = ProjectReadContext(
         authority=authority,
         project_root=authority.project_root,
@@ -122,15 +117,10 @@ def prepare_for_project_write(project_root: Path) -> ProjectWriteContext:
 
 def prepare_for_runtime_write(
     project_root: Path,
-    *,
-    ignore_runtime_env: bool = False,
 ) -> RuntimeWriteContext:
     """Prepare runtime write context, including UUID and runtime dirs."""
 
-    authority = resolve_runtime_authority_for_write(
-        project_root,
-        ignore_runtime_env=ignore_runtime_env,
-    )
+    authority = resolve_runtime_authority_for_write(project_root)
     project_state.ensure_project_dirs(authority.project_root)
     project_state.ensure_project_gitignore(authority.project_root)
     runtime_root = runtime_state.ensure_runtime_root(

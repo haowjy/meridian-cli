@@ -5,10 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
-from meridian.cli.utils import (
-    ignore_runtime_env_override,
-    require_established_project_root,
-)
+from meridian.cli.utils import require_established_project_root
 from meridian.lib.bootstrap.services import (
     build_spawn_application_service,
     build_spawn_lifecycle_service_from_roots,
@@ -50,10 +47,7 @@ async def streaming_serve(
         supported = ", ".join(item.value for item in HarnessId)
         raise ValueError(f"unsupported harness '{harness}'. Supported: {supported}") from exc
 
-    prepared = prepare_for_runtime_write(
-        require_established_project_root(),
-        ignore_runtime_env=ignore_runtime_env_override(),
-    )
+    prepared = prepare_for_runtime_write(require_established_project_root())
     project_root = prepared.project_root
     if prepared.runtime_root is None:
         raise ValueError("Prepared runtime write context is missing runtime root.")

@@ -20,6 +20,7 @@ from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.sink import NullSink, OutputSink
 from meridian.lib.state.artifact_store import LocalStore
 from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.runtime_root import root_has_runtime_state as _root_has_runtime_state
 from meridian.lib.state.user_paths import (
     get_or_create_project_id,
     get_project_home,
@@ -73,19 +74,6 @@ def _runtime_dir_env_override_applies(*, ignore_runtime_env: bool = False) -> bo
     from meridian.lib.core.depth import is_nested_meridian_process
 
     return not is_nested_meridian_process()
-
-
-def _root_has_runtime_state(runtime_root: Path) -> bool:
-    return any(
-        path.exists()
-        for path in (
-            runtime_root / "spawns.jsonl",
-            runtime_root / "sessions.jsonl",
-            runtime_root / "spawns",
-            runtime_root / "sessions",
-            runtime_root / "telemetry",
-        )
-    )
 
 
 def async_from_sync(sync_fn: Callable[P, T]) -> Callable[P, Coroutine[Any, Any, T]]:

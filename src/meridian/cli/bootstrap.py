@@ -401,18 +401,15 @@ def maybe_bootstrap_runtime_state(
             return None
 
         project_root = require_established_project_root()
-        from meridian.cli.main import get_global_options
-
-        ignore_runtime_env = get_global_options().directory_explicit
 
         if requirement == StateRequirement.PROJECT_READ:
             prepare_for_project_read(project_root)
         elif requirement == StateRequirement.RUNTIME_READ:
-            prepare_for_runtime_read(project_root, ignore_runtime_env=ignore_runtime_env)
+            prepare_for_runtime_read(project_root)
         elif requirement == StateRequirement.PROJECT_WRITE:
             prepare_for_project_write(project_root)
         elif requirement == StateRequirement.RUNTIME_WRITE:
-            prepare_for_runtime_write(project_root, ignore_runtime_env=ignore_runtime_env)
+            prepare_for_runtime_write(project_root)
 
         return project_root
     except Exception:

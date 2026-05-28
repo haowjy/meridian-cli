@@ -43,9 +43,9 @@ def _make_auto_handler_from_spec(
             return None
 
     def auto_handler() -> None:
-        from meridian.cli.utils import implicit_ops_payload
+        from meridian.cli.utils import cli_project_root_posix
 
-        emit(sync_handler(implicit_ops_payload()))
+        emit(sync_handler({"project_root": cli_project_root_posix()}))
 
     return auto_handler
 

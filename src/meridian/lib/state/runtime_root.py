@@ -14,7 +14,7 @@ from meridian.lib.state.user_paths import (
 )
 
 
-def _root_has_runtime_state(runtime_root: Path) -> bool:
+def root_has_runtime_state(runtime_root: Path) -> bool:
     return any(
         path.exists()
         for path in (
@@ -43,14 +43,14 @@ def derive_runtime_root_from_project(
     if project_id is not None:
         candidate_runtime_root = get_project_home(project_id)
         if (
-            not _root_has_runtime_state(candidate_runtime_root)
-            and _root_has_runtime_state(project_state_dir)
+            not root_has_runtime_state(candidate_runtime_root)
+            and root_has_runtime_state(project_state_dir)
         ):
             return project_state_dir
         return candidate_runtime_root
-    if _root_has_runtime_state(project_state_dir):
+    if root_has_runtime_state(project_state_dir):
         return project_state_dir
     return None
 
 
-__all__ = ["derive_runtime_root_from_project"]
+__all__ = ["derive_runtime_root_from_project", "root_has_runtime_state"]

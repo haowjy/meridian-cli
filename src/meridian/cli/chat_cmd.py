@@ -18,7 +18,6 @@ from uuid import uuid4
 from cyclopts import App, Parameter
 
 from meridian.cli.utils import (
-    ignore_runtime_env_override,
     parse_csv_list,
     require_established_project_root,
 )
@@ -365,10 +364,7 @@ def run_chat_server(
     )
     _emit_chat_policy_warnings(policy_snapshot.warnings, output)
     if entrypoint is None:
-        prepared = prepare_for_runtime_write(
-            project_root,
-            ignore_runtime_env=ignore_runtime_env_override(),
-        )
+        prepared = prepare_for_runtime_write(project_root)
         entrypoint = build_chat_entrypoint(prepared)
     project_root = _chat_project_root(entrypoint)
     runtime = build_chat_runtime_from_entrypoint(
@@ -509,10 +505,7 @@ def run_chat_server(
 def _prepare_chat_runtime_read_entrypoint() -> ChatEntryPoint:
     """Prepare the minimal chat entrypoint seam for read-only chat clients."""
 
-    prepared = prepare_for_runtime_read(
-        require_established_project_root(),
-        ignore_runtime_env=ignore_runtime_env_override(),
-    )
+    prepared = prepare_for_runtime_read(require_established_project_root())
     return build_chat_entrypoint(prepared)
 
 
