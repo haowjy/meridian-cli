@@ -10,7 +10,17 @@ export SMOKE_REPO="$(mktemp -d /tmp/meridian-from.XXXXXX)"
 git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
+cd "$REPO_ROOT"
+export RUNTIME_ROOT="$(uv run python - <<'PY'
+import os
+from pathlib import Path
+from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.user_paths import get_or_create_project_id, get_project_home
+
+state_dir = resolve_project_paths(Path(os.environ["SMOKE_REPO"])).root_dir
+print(get_project_home(get_or_create_project_id(state_dir)))
+PY
+)"
 
 # Create a minimal agent for dry-run
 mkdir -p "$SMOKE_REPO/.mars/agents"
@@ -216,6 +226,6 @@ test $RC -ne 0 && grep -qi "not found" /tmp/meridian-from-invalid.err && \
 
 ```bash
 rm -rf "$SMOKE_REPO" /tmp/meridian-from-*.json /tmp/meridian-from-*.err
-unset MERIDIAN_PROJECT_DIR MERIDIAN_RUNTIME_DIR SMOKE_REPO
+unset MERIDIAN_PROJECT_DIR RUNTIME_ROOT SMOKE_REPO
 echo "PASS: cleanup complete"
 ```

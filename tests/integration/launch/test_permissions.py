@@ -5,6 +5,7 @@ import pytest
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.adapter import SpawnParams
 from meridian.lib.harness.claude import ClaudeAdapter
+from meridian.lib.harness.pi import PiAdapter
 from meridian.lib.harness.projections.permission_flags import resolve_permission_flags
 from meridian.lib.launch.env import (
     build_harness_child_env,
@@ -22,7 +23,6 @@ from meridian.lib.safety.permissions import (
 
 _MERIDIAN_RUNTIME_KEYS = (
     "MERIDIAN_PROJECT_DIR",
-    "MERIDIAN_RUNTIME_DIR",
     "MERIDIAN_DEPTH",
     "MERIDIAN_CHAT_ID",
     "MERIDIAN_CONTEXT_KB_DIR",
@@ -240,6 +240,61 @@ def test_build_harness_child_env_inherits_allowed_vars_and_blocks_adapter_vars()
     assert "CLAUDECODE" not in child_env
 
 
+def test_inherit_child_env_blocks_meridian_runtime_dir() -> None:
+    inherited = inherit_child_env(
+        base_env={
+            "PATH": "/usr/bin",
+            "MERIDIAN_RUNTIME_DIR": "/stale/runtime",
+        },
+        env_overrides={
+            "MERIDIAN_PROJECT_DIR": "/repo",
+            "MERIDIAN_PI_STATE_DIR": "/resolved/runtime",
+        },
+    )
+
+    assert "MERIDIAN_RUNTIME_DIR" not in inherited
+    assert inherited["MERIDIAN_PROJECT_DIR"] == "/repo"
+    assert inherited["MERIDIAN_PI_STATE_DIR"] == "/resolved/runtime"
+
+
+def test_inherit_child_env_blocks_meridian_directory_explicit() -> None:
+    inherited = inherit_child_env(
+        base_env={
+            "PATH": "/usr/bin",
+            "MERIDIAN_DIRECTORY_EXPLICIT": "1",
+        },
+        env_overrides={
+            "MERIDIAN_PROJECT_DIR": "/repo",
+        },
+    )
+
+    assert "MERIDIAN_DIRECTORY_EXPLICIT" not in inherited
+    assert inherited["MERIDIAN_PROJECT_DIR"] == "/repo"
+
+
+def test_build_harness_child_env_pi_state_dir_from_runtime_root() -> None:
+    runtime_root = "/resolved/runtime"
+    child_env = build_harness_child_env(
+        base_env={
+            "PATH": "/usr/bin",
+            "MERIDIAN_PI_STATE_DIR": "/stale/pi-state",
+            "MERIDIAN_RUNTIME_DIR": "/stale/runtime",
+        },
+        adapter=PiAdapter(),
+        run_params=SpawnParams(prompt="test", model=ModelId("openai-codex/gpt-5.4-mini")),
+        permission_config=PermissionConfig(),
+        runtime_env_overrides={
+            "MERIDIAN_PI_STATE_DIR": runtime_root,
+            "MERIDIAN_PROJECT_DIR": "/repo",
+        },
+    )
+
+    assert child_env["MERIDIAN_PI_STATE_DIR"] == runtime_root
+    assert child_env["MERIDIAN_PROJECT_DIR"] == "/repo"
+    assert "MERIDIAN_RUNTIME_DIR" not in child_env
+    assert "PI_CODING_AGENT_SESSION_DIR" in child_env
+
+
 def test_inherit_child_env_runtime_overrides_win() -> None:
     inherited = inherit_child_env(
         base_env={
@@ -277,7 +332,6 @@ def test_merge_env_overrides_rejects_meridian_keys_from_plan_and_preflight() -> 
 def test_merge_env_overrides_accepts_runtime_meridian_keys() -> None:
     runtime_overrides = {
         "MERIDIAN_PROJECT_DIR": "/repo",
-        "MERIDIAN_RUNTIME_DIR": "/repo/.meridian",
         "MERIDIAN_DEPTH": "2",
         "MERIDIAN_CHAT_ID": "c-parent",
         "MERIDIAN_CONTEXT_KB_DIR": "/repo/.meridian/kb",

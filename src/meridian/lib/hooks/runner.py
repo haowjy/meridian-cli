@@ -93,6 +93,8 @@ class ExternalHookRunner:
             )
 
         env = {**os.environ, **context.to_env()}
+        env.pop("MERIDIAN_RUNTIME_DIR", None)
+        env.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
         start = time.monotonic()
         process: subprocess.Popen[bytes] | None = None
 

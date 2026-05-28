@@ -94,6 +94,7 @@ class GlobalOptions(BaseModel):
     sink: OutputSink | None = None
     explicit_format: OutputFormat | None = None
     project_root: Path | None = None
+    directory_explicit: bool = False
 
 
 _GLOBAL_OPTIONS: ContextVar[GlobalOptions | None] = ContextVar("_GLOBAL_OPTIONS", default=None)
@@ -169,6 +170,7 @@ def _extract_global_options(argv: Sequence[str]) -> tuple[list[str], GlobalOptio
         force_human=parsed.force_human,
         explicit_format=explicit_format,
         project_root=project_root,
+        directory_explicit=parsed.directory_explicit,
     )
 
 
@@ -921,6 +923,7 @@ def _maybe_schedule_background_repairs(
     startup_class: StartupClass,
     project_root: Path | None,
     bootstrap_skipped: bool,
+    ignore_runtime_env: bool = False,
 ) -> None:
     """Schedule cheap per-project repairs on PRIMARY_LAUNCH in a daemon thread."""
 
@@ -931,6 +934,15 @@ def _maybe_schedule_background_repairs(
     if project_root is None:
         return
     if not is_root_side_effect_process():
+        return
+
+    from meridian.lib.ops.runtime import resolve_runtime_authority_for_write
+
+    runtime_root = resolve_runtime_authority_for_write(
+        project_root,
+        ignore_runtime_env=ignore_runtime_env,
+    ).runtime_root
+    if runtime_root is None:
         return
 
     import threading
@@ -944,8 +956,8 @@ def _maybe_schedule_background_repairs(
                 _repair_stale_session_locks,  # pyright: ignore[reportPrivateUsage]
             )
 
-            _repair_stale_session_locks(project_root)
-            _repair_orphan_runs(project_root)
+            _repair_stale_session_locks(project_root, runtime_root=runtime_root)
+            _repair_orphan_runs(project_root, runtime_root=runtime_root)
 
     thread = threading.Thread(
         target=_run_repairs,
@@ -1054,32 +1066,66 @@ def main(argv: Sequence[str] | None = None) -> None:
     project_root = (
         bootstrap_project_root if bootstrap_project_root is not None else options.project_root
     )
-    _install_cli_telemetry(
-        telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
-        startup_class=startup_class,
-        project_root=project_root,
-    )
-    _maybe_schedule_background_repairs(
-        startup_class=startup_class,
-        project_root=project_root,
-        bootstrap_skipped=bootstrap_skipped,
-    )
-    _emit_usage_command_invoked(cleaned_args)
+    prior_project_dir = os.environ.get("MERIDIAN_PROJECT_DIR")
+    had_prior_project_dir = "MERIDIAN_PROJECT_DIR" in os.environ
+    prior_directory_explicit = os.environ.get("MERIDIAN_DIRECTORY_EXPLICIT")
+    had_prior_directory_explicit = "MERIDIAN_DIRECTORY_EXPLICIT" in os.environ
 
-    active_sink = create_sink(options.output)
-    options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
-    token = _GLOBAL_OPTIONS.set(options)
+    def _apply_cli_directory_env() -> None:
+        if project_root is not None:
+            os.environ["MERIDIAN_PROJECT_DIR"] = project_root.as_posix()
+        if options.directory_explicit:
+            os.environ["MERIDIAN_DIRECTORY_EXPLICIT"] = "1"
+        else:
+            os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
+
+    def _restore_cli_directory_env() -> None:
+        if had_prior_project_dir:
+            if prior_project_dir is None:
+                os.environ.pop("MERIDIAN_PROJECT_DIR", None)
+            else:
+                os.environ["MERIDIAN_PROJECT_DIR"] = prior_project_dir
+        else:
+            os.environ.pop("MERIDIAN_PROJECT_DIR", None)
+        if had_prior_directory_explicit:
+            if prior_directory_explicit is None:
+                os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
+            else:
+                os.environ["MERIDIAN_DIRECTORY_EXPLICIT"] = prior_directory_explicit
+        else:
+            os.environ.pop("MERIDIAN_DIRECTORY_EXPLICIT", None)
+
+    _apply_cli_directory_env()
     try:
-        _register_commands_for_invocation(cleaned_args, agent_mode=effective_agent_mode)
-        with temporary_config_env(options.config_file):
-            try:
-                app(cleaned_args)
-            except SystemExit:
-                raise
-            except TimeoutError as exc:
-                _emit_error(_operation_error_message(exc), exit_code=124)
-            except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
-                _emit_error(_operation_error_message(exc))
+        _install_cli_telemetry(
+            telemetry_mode=descriptor.telemetry_mode if descriptor is not None else None,
+            startup_class=startup_class,
+            project_root=project_root,
+        )
+        _maybe_schedule_background_repairs(
+            startup_class=startup_class,
+            project_root=project_root,
+            bootstrap_skipped=bootstrap_skipped,
+            ignore_runtime_env=options.directory_explicit,
+        )
+        _emit_usage_command_invoked(cleaned_args)
+
+        active_sink = create_sink(options.output)
+        options = options.model_copy(update={"project_root": project_root, "sink": active_sink})
+        token = _GLOBAL_OPTIONS.set(options)
+        try:
+            _register_commands_for_invocation(cleaned_args, agent_mode=effective_agent_mode)
+            with temporary_config_env(options.config_file):
+                try:
+                    app(cleaned_args)
+                except SystemExit:
+                    raise
+                except TimeoutError as exc:
+                    _emit_error(_operation_error_message(exc), exit_code=124)
+                except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
+                    _emit_error(_operation_error_message(exc))
+        finally:
+            flush_sink(active_sink)
+            _GLOBAL_OPTIONS.reset(token)
     finally:
-        flush_sink(active_sink)
-        _GLOBAL_OPTIONS.reset(token)
+        _restore_cli_directory_env()

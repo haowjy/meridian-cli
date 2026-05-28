@@ -19,6 +19,7 @@ Use these guides when the test:
 | `adversarial.md` | Intentionally open-ended adversarial exploration |
 | `fork.md` | Real harness lineage with --fork (partially automatable via dry-run) |
 | `models-cache-auto-refresh.md` | Network/cache freshness behavior |
+| `project-resolution.md` | `-C`/`MERIDIAN_PROJECT_DIR` project selection with stale runtime env |
 | `state-integrity.md` | Reconciliation after manual state corruption |
 | `streaming-adapter-parity.md` | Cross-harness streaming behavior |
 | `spawn/lifecycle.md` | Background spawn lifecycle with working harness |
@@ -56,6 +57,15 @@ export SMOKE_REPO="$(mktemp -d)"
 git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
 cd "$REPO_ROOT"
+export RUNTIME_ROOT="$(uv run python - <<'PY'
+import os
+from pathlib import Path
+from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.user_paths import get_or_create_project_id, get_project_home
+
+state_dir = resolve_project_paths(Path(os.environ["SMOKE_REPO"])).root_dir
+print(get_project_home(get_or_create_project_id(state_dir)))
+PY
+)"
 ```

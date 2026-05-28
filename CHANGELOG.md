@@ -7,6 +7,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.11] - 2026-05-28
 
 ### Changed
+- Stop auto-propagating `MERIDIAN_RUNTIME_DIR` to child processes; `MERIDIAN_PROJECT_DIR` is the single inherited project anchor. Runtime root derives from `.meridian/id` → user home (read paths fall back to repo-local `.meridian/`).
+- `-C` / `--directory` ignores explicit `MERIDIAN_RUNTIME_DIR` override; nested Meridian processes ignore it too. Power-user override remains for top-level invocations.
+- Pi extension state paths prefer `MERIDIAN_PI_STATE_DIR` (always set at Pi launch from resolved runtime root); TypeScript `pi_state_paths.ts` no longer reads `MERIDIAN_RUNTIME_DIR`.
 - Pi `/ps` and `/spawn` selectable task panels now use a full-screen covering overlay, avoiding redraw bleed-through from underlying Pi spinners/status while preserving whole-viewport UX.
 - Pi managed bash now keeps separate stdout/stderr log files behind the combined log, so `/ps` stream filters and tool details use the same source-of-truth logs.
 - Pi `/ps` bash row inspection now supports `s` to switch combined/stdout/stderr log streams.
@@ -36,6 +39,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added `--task-dir` on `meridian work start` and `meridian spawn` create/fork flows.
 
 ### Fixed
+- Global `-C` / `--directory` now drives `session log`, `config show`, and other auto-wired ops (not only bootstrap); explicit directory sets `MERIDIAN_DIRECTORY_EXPLICIT` so stale `MERIDIAN_RUNTIME_DIR` cannot override the target project.
+- External hook subprocess env no longer inherits stale parent `MERIDIAN_RUNTIME_DIR`; hook JSON context remains authoritative.
+- `streaming-serve` reuses prepared runtime authority instead of re-resolving via `build_runtime()`.
+- Pi launch no longer maps `MERIDIAN_PI_STATE_DIR` to per-spawn session dirs; session scoping stays on `PI_CODING_AGENT_SESSION_DIR` only.
 - `meridian session log <pi-spawn>` now renders Pi RPC `message_end` transcript events, including prompt text, assistant text, tool calls/results, and custom follow-up pings.
 - Pi full-screen task panels no longer request a render from `invalidate()`, avoiding self-sustaining `/ps` flicker.
 - Pi `$` foreground bash no longer writes to Pi's closed foreground output stream after `/ps:b` backgrounds a still-chatty command.

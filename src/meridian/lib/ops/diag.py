@@ -145,23 +145,39 @@ def _check_legacy_worktree_temp(runtime_root: Path) -> DoctorWarning | None:
     )
 
 
-def _repair_stale_session_locks(project_root: Path) -> int:
-    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
-    if runtime_root is None:
+def _repair_stale_session_locks(
+    project_root: Path,
+    *,
+    runtime_root: Path | None = None,
+) -> int:
+    resolved_runtime_root = runtime_root
+    if resolved_runtime_root is None:
+        resolved_runtime_root = resolve_runtime_authority_for_write(
+            project_root
+        ).runtime_root
+    if resolved_runtime_root is None:
         raise ValueError("Doctor lock repair requires a runtime root.")
-    cleanup = cleanup_stale_sessions(runtime_root)
+    cleanup = cleanup_stale_sessions(resolved_runtime_root)
     return len(cleanup.cleaned_ids)
 
 
-def _repair_orphan_runs(project_root: Path) -> tuple[int, tuple[str, ...]]:
+def _repair_orphan_runs(
+    project_root: Path,
+    *,
+    runtime_root: Path | None = None,
+) -> tuple[int, tuple[str, ...]]:
     from meridian.lib.state.reaper import reconcile_spawns
 
-    runtime_root = resolve_runtime_authority_for_write(project_root).runtime_root
-    if runtime_root is None:
+    resolved_runtime_root = runtime_root
+    if resolved_runtime_root is None:
+        resolved_runtime_root = resolve_runtime_authority_for_write(
+            project_root
+        ).runtime_root
+    if resolved_runtime_root is None:
         raise ValueError("Doctor orphan-run repair requires a runtime root.")
-    spawns = spawn_store.list_spawns(runtime_root)
+    spawns = spawn_store.list_spawns(resolved_runtime_root)
     running_before = {s.id for s in spawns if is_active_spawn_status(s.status)}
-    reconciled = reconcile_spawns(project_root, runtime_root, spawns)
+    reconciled = reconcile_spawns(project_root, resolved_runtime_root, spawns)
     running_after = {s.id for s in reconciled if is_active_spawn_status(s.status)}
     reconciled_orphans = tuple(sorted(running_before - running_after))
     return len(reconciled_orphans), reconciled_orphans

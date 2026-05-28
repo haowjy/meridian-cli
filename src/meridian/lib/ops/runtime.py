@@ -51,6 +51,30 @@ def _runtime_override_env_root(project_root: Path) -> Path | None:
     return candidate if candidate.is_absolute() else project_root / candidate
 
 
+def _coalesce_ignore_runtime_env(ignore_runtime_env: bool | None) -> bool:
+    """Resolve whether ``MERIDIAN_RUNTIME_DIR`` may override derived runtime roots."""
+
+    if ignore_runtime_env is not None:
+        return ignore_runtime_env
+    explicit_flag = os.getenv("MERIDIAN_DIRECTORY_EXPLICIT", "").strip().lower()
+    return explicit_flag in {"1", "true", "yes"}
+
+
+def _runtime_dir_env_override_applies(*, ignore_runtime_env: bool = False) -> bool:
+    """Return whether ``MERIDIAN_RUNTIME_DIR`` may override derived runtime roots.
+
+    Power-user override applies only at the primary Meridian root. Nested
+    processes derive runtime from ``MERIDIAN_PROJECT_DIR``; ``-C`` forces the
+    same derivation for the explicit project target.
+    """
+
+    if ignore_runtime_env:
+        return False
+    from meridian.lib.core.depth import is_nested_meridian_process
+
+    return not is_nested_meridian_process()
+
+
 def _root_has_runtime_state(runtime_root: Path) -> bool:
     return any(
         path.exists()
@@ -172,20 +196,20 @@ def resolve_runtime_authority_for_read(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
+    ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
     """Resolve project/runtime authority for read-only callers."""
 
+    ignore_runtime_env = _coalesce_ignore_runtime_env(ignore_runtime_env)
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override_root = _runtime_override_env_root(authority.project_root)
+    override_root = (
+        _runtime_override_env_root(authority.project_root)
+        if _runtime_dir_env_override_applies(ignore_runtime_env=ignore_runtime_env)
+        else None
+    )
     project_id = read_project_id(authority.project_state_dir)
     if override_root is not None:
         runtime_root = override_root
-        if (
-            runtime_root != authority.project_state_dir
-            and not _root_has_runtime_state(runtime_root)
-            and _root_has_runtime_state(authority.project_state_dir)
-        ):
-            runtime_root = authority.project_state_dir
     elif project_id is not None:
         candidate_runtime_root = get_project_home(project_id)
         runtime_root = (
@@ -224,11 +248,17 @@ def resolve_runtime_authority_for_write(
     project_root: str | Path | None = None,
     *,
     execution_cwd: Path | None = None,
+    ignore_runtime_env: bool | None = None,
 ) -> RuntimeAuthoritySnapshot:
     """Resolve project/runtime authority for mutating callers."""
 
+    ignore_runtime_env = _coalesce_ignore_runtime_env(ignore_runtime_env)
     authority = resolve_project_authority(project_root, execution_cwd=execution_cwd)
-    override = _runtime_override_env_root(authority.project_root)
+    override = (
+        _runtime_override_env_root(authority.project_root)
+        if _runtime_dir_env_override_applies(ignore_runtime_env=ignore_runtime_env)
+        else None
+    )
     runtime_root = override or get_project_home(
         get_or_create_project_id(authority.project_state_dir)
     )

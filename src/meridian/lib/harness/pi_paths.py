@@ -62,9 +62,6 @@ def resolve_meridian_pi_state_dir(*, env: Mapping[str, str] | None = None) -> Pa
         explicit = env.get(_MERIDIAN_PI_STATE_DIR_ENV, "").strip()
         if explicit:
             return Path(explicit).expanduser()
-        session_dir = env.get(_PI_SESSION_DIR_ENV, "").strip()
-        if session_dir:
-            return Path(session_dir).expanduser()
     return get_user_home() / "meridian-pi" / "state"
 
 
@@ -104,9 +101,12 @@ def pi_spawn_session_root_env_override() -> dict[str, str]:
 def pi_meridian_state_dir_env_override(
     *,
     env: Mapping[str, str] | None = None,
+    runtime_root: Path | None = None,
 ) -> dict[str, str]:
     """Env override for extension runtime state (tasks, spawn-watch tree)."""
 
+    if runtime_root is not None:
+        return {_MERIDIAN_PI_STATE_DIR_ENV: str(runtime_root)}
     return {_MERIDIAN_PI_STATE_DIR_ENV: str(resolve_meridian_pi_state_dir(env=env))}
 
 

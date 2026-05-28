@@ -28,6 +28,28 @@ def require_established_project_root() -> Path:
     return resolution.project_root
 
 
+def ignore_runtime_env_override() -> bool:
+    """Return whether ``-C`` / ``--directory`` should suppress ``MERIDIAN_RUNTIME_DIR``."""
+
+    from meridian.cli.main import get_global_options
+
+    return get_global_options().directory_explicit
+
+
+def implicit_ops_payload() -> dict[str, str]:
+    """Build implicit operation input fields from established CLI project root."""
+
+    return {"project_root": require_established_project_root().as_posix()}
+
+
+def implicit_session_ops_payload(*, file_path: str | None = None) -> dict[str, str]:
+    """Build implicit session op fields; direct ``--file`` skips project establishment."""
+
+    if file_path and file_path.strip():
+        return {}
+    return implicit_ops_payload()
+
+
 @overload
 def parse_csv_list(
     raw: str | None,

@@ -8,10 +8,7 @@ from contextlib import contextmanager
 
 from meridian.lib.core.depth import is_nested_meridian_process
 
-_MANUAL_HOOK_ENV_OVERRIDES: tuple[str, ...] = (
-    "MERIDIAN_PROJECT_DIR",
-    "MERIDIAN_RUNTIME_DIR",
-)
+_MANUAL_HOOK_ENV_OVERRIDES: tuple[str, ...] = ("MERIDIAN_PROJECT_DIR",)
 
 
 def is_manual_hooks_invocation(argv: Sequence[str]) -> bool:
@@ -29,10 +26,10 @@ def should_suppress_manual_hook_authority(
     *,
     env: Mapping[str, str] | None = None,
 ) -> bool:
-    """Return whether inherited project/runtime env should be ignored.
+    """Return whether inherited project env should be ignored.
 
     We only suppress env overrides for nested manual hooks invocations so
-    top-level callers can still target explicit project/runtime roots via env.
+    top-level callers can still target explicit project roots via env.
     """
 
     source = os.environ if env is None else env

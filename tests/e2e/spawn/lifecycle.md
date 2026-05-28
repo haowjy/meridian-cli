@@ -10,8 +10,18 @@ export SMOKE_REPO="$(mktemp -d /tmp/meridian-lifecycle.XXXXXX)"
 git -C "$SMOKE_REPO" init --quiet
 for var in $(env | awk -F= '/^MERIDIAN_/ {print $1}'); do unset "$var"; done
 export MERIDIAN_PROJECT_DIR="$SMOKE_REPO"
-export MERIDIAN_RUNTIME_DIR="$SMOKE_REPO/.meridian"
-mkdir -p "$SMOKE_REPO/.mars/agents"
+cd "$REPO_ROOT"
+export RUNTIME_ROOT="$(uv run python - <<'PY'
+import os
+from pathlib import Path
+from meridian.lib.state.paths import resolve_project_paths
+from meridian.lib.state.user_paths import get_or_create_project_id, get_project_home
+
+state_dir = resolve_project_paths(Path(os.environ["SMOKE_REPO"])).root_dir
+print(get_project_home(get_or_create_project_id(state_dir)))
+PY
+)"
+mkdir -p "$RUNTIME_ROOT/spawns" "$SMOKE_REPO/.mars/agents"
 cat > "$SMOKE_REPO/.mars/agents/reviewer.md" <<'AGENT'
 # Reviewer
 
@@ -82,7 +92,7 @@ from pathlib import Path
 spawn_id = open('/tmp/meridian-lifecycle-create.json', encoding='utf-8').read()
 doc = json.loads(spawn_id)
 spawn_id = doc['spawn_id']
-root = Path(os.environ['MERIDIAN_RUNTIME_DIR'])
+root = Path(os.environ['RUNTIME_ROOT'])
 state_path = root / 'spawns' / spawn_id / 'state.json'
 prompt_path = root / 'spawns' / spawn_id / 'starting-prompt.md'
 state = json.loads(state_path.read_text(encoding='utf-8'))
@@ -104,7 +114,7 @@ print((json.load(open('/tmp/meridian-lifecycle-create.json'))['spawn_id']))
 PY
 )" && \
 uv run meridian spawn report show "$SPAWN_ID" > /tmp/meridian-lifecycle-report-show.txt && \
-test -s "$MERIDIAN_RUNTIME_DIR/spawns/$SPAWN_ID/report.md" && \
+test -s "$RUNTIME_ROOT/spawns/$SPAWN_ID/report.md" && \
 test -s /tmp/meridian-lifecycle-report-show.txt && \
 echo "PASS: report.md exists and report show returned content" || echo "FAIL: report persistence or report show failed"
 ```
@@ -126,7 +136,7 @@ import json, os, subprocess
 from pathlib import Path
 from meridian.lib.state.spawn_store import start_spawn
 
-root = Path(os.environ['MERIDIAN_RUNTIME_DIR'])
+root = Path(os.environ['RUNTIME_ROOT'])
 spawn_id = str(
     start_spawn(
         root,
@@ -165,7 +175,7 @@ import os
 from pathlib import Path
 from meridian.lib.state.spawn_store import start_spawn
 
-root = Path(os.environ['MERIDIAN_RUNTIME_DIR'])
+root = Path(os.environ['RUNTIME_ROOT'])
 start_spawn(
     root,
     spawn_id='p-finalizing-filter-smoke',
@@ -207,7 +217,7 @@ from meridian.lib.state.spawn_store import (
     update_spawn,
 )
 
-runtime_root = Path(os.environ['MERIDIAN_RUNTIME_DIR'])
+runtime_root = Path(os.environ['RUNTIME_ROOT'])
 spawn_id = str(
     start_spawn(
         runtime_root,

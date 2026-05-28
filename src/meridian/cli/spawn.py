@@ -12,7 +12,11 @@ from cyclopts import App, Parameter
 from meridian.cli.argv_normalization import validate_fork_mode
 from meridian.cli.ext_registration import register_extension_cli_group
 from meridian.cli.spawn_inject import inject_message
-from meridian.cli.utils import parse_csv_list, require_established_project_root
+from meridian.cli.utils import (
+    ignore_runtime_env_override,
+    parse_csv_list,
+    require_established_project_root,
+)
 from meridian.lib.bootstrap.services import (
     RuntimeReadContext,
     RuntimeWriteContext,
@@ -75,11 +79,17 @@ def _current_output_sink() -> Any:
 
 
 def _prepare_spawn_runtime_read() -> RuntimeReadContext:
-    return prepare_for_runtime_read(require_established_project_root())
+    return prepare_for_runtime_read(
+        require_established_project_root(),
+        ignore_runtime_env=ignore_runtime_env_override(),
+    )
 
 
 def _prepare_spawn_runtime_write() -> RuntimeWriteContext:
-    return prepare_for_runtime_write(require_established_project_root())
+    return prepare_for_runtime_write(
+        require_established_project_root(),
+        ignore_runtime_env=ignore_runtime_env_override(),
+    )
 
 
 def _spawn_create_exit_code(result: SpawnActionOutput) -> int:

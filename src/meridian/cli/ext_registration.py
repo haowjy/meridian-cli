@@ -43,7 +43,9 @@ def _make_auto_handler_from_spec(
             return None
 
     def auto_handler() -> None:
-        emit(sync_handler({}))
+        from meridian.cli.utils import implicit_ops_payload
+
+        emit(sync_handler(implicit_ops_payload()))
 
     return auto_handler
 

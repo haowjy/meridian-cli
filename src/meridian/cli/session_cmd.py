@@ -7,6 +7,7 @@ from typing import Annotated, Any, Protocol
 from cyclopts import App, Parameter
 
 from meridian.cli.ext_registration import register_extension_cli_group
+from meridian.cli.utils import implicit_ops_payload, implicit_session_ops_payload
 from meridian.lib.core.util import FormatContext
 from meridian.lib.extensions.registry import get_first_party_registry
 from meridian.lib.ops.session_export import SessionExportInput, session_export_sync
@@ -136,6 +137,7 @@ def _session_log(
             limit=limit,
             context=context,
             file_path=file_path,
+            **implicit_session_ops_payload(file_path=file_path),
         )
     )
     if raw:
@@ -173,6 +175,7 @@ def _session_export(
                 ref=ref,
                 file_path=file_path,
                 include_spawns=include_spawns,
+                **implicit_session_ops_payload(file_path=file_path),
             )
         )
     )
@@ -224,6 +227,7 @@ def _session_search(
                 work_id=work_id,
                 workspace=workspace,
                 global_scope=global_scope,
+                **implicit_session_ops_payload(file_path=file_path),
             )
         )
     )
@@ -242,6 +246,7 @@ def _session_repair(
         repair_session_reference_sync(
             SessionRepairInput(
                 ref=ref,
+                **implicit_ops_payload(),
             )
         )
     )
