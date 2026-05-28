@@ -50,7 +50,7 @@ def test_meridian_pi_state_dir_defaults_without_session_dir() -> None:
 def test_pi_meridian_state_dir_env_override_uses_explicit_runtime_root() -> None:
     runtime_root = Path("/resolved/runtime")
     assert pi_meridian_state_dir_env_override(runtime_root=runtime_root) == {
-        "MERIDIAN_PI_STATE_DIR": "/resolved/runtime"
+        "MERIDIAN_PI_STATE_DIR": str(runtime_root)
     }
 
 
