@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _HARNESS_NAME: Final[str] = HarnessId.CURSOR.value
 _PROCESS_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
+_STDOUT_READLINE_LIMIT: Final[int] = 128 * 1024 * 1024  # 128 MiB — match claude_ws.py
 
 
 class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -117,6 +118,7 @@ class CursorSubprocessConnection(HarnessConnection[ResolvedLaunchSpec]):
                 stdin=DEVNULL,
                 stdout=PIPE,
                 stderr=self._stderr_handle,
+                limit=_STDOUT_READLINE_LIMIT,
             )
             self._set_state("connected")
         except Exception:
