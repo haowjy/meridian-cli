@@ -981,11 +981,21 @@ def _resolve_spawn_prepare_projection(
         )
         agent_profile_body = f"# Agent Profile\n\n{rendered_agent_body}"
 
-    agent_inventory_prompt, context_prompt = build_launch_context_documents(
-        project_root=project_paths.project_root,
-        alias_catalog=policy.alias_catalog,
-        active_work_dir=active_work_dir,
-    )
+    # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
+    if policy.bundle_inventory_prompt:
+        agent_inventory_prompt: str | None = policy.bundle_inventory_prompt
+        _, context_prompt = build_launch_context_documents(
+            project_root=project_paths.project_root,
+            alias_catalog=policy.alias_catalog,
+            active_work_dir=active_work_dir,
+            include_inventory=False,
+        )
+    else:
+        agent_inventory_prompt, context_prompt = build_launch_context_documents(
+            project_root=project_paths.project_root,
+            alias_catalog=policy.alias_catalog,
+            active_work_dir=active_work_dir,
+        )
 
     resolved_work_id = (request.work_id_hint or "").strip() or (
         active_work_dir.name if active_work_dir is not None else ""
@@ -1045,11 +1055,21 @@ def _resolve_primary_projection(
     agent_inventory_prompt: str | None = None
     context_prompt: str | None = None
     if session_mode != "resume":
-        agent_inventory_prompt, context_prompt = build_launch_context_documents(
-            project_root=project_paths.project_root,
-            alias_catalog=policy.alias_catalog,
-            active_work_dir=active_work_dir,
-        )
+        # Prefer the pre-built, pre-filtered inventory prompt from the bundle.
+        if policy.bundle_inventory_prompt:
+            agent_inventory_prompt = policy.bundle_inventory_prompt
+            _, context_prompt = build_launch_context_documents(
+                project_root=project_paths.project_root,
+                alias_catalog=policy.alias_catalog,
+                active_work_dir=active_work_dir,
+                include_inventory=False,
+            )
+        else:
+            agent_inventory_prompt, context_prompt = build_launch_context_documents(
+                project_root=project_paths.project_root,
+                alias_catalog=policy.alias_catalog,
+                active_work_dir=active_work_dir,
+            )
 
     seed = harness.seed_session(
         is_resume=session_mode == "resume",

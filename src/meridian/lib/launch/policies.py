@@ -126,6 +126,7 @@ class ResolvedLaunchPolicy:
     fallback_chain: tuple[dict[str, object], ...] = ()
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
+    bundle_inventory_prompt: str | None = None
 
 
 ResolvedPolicies = ResolvedLaunchPolicy
