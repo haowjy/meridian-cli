@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import type { ExtensionAPI, MessageRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { openLogOverlay } from "../../shared/log_overlay";
@@ -14,7 +13,6 @@ import { formatDurationSecs, renderTable } from "../../shared/ui";
 import type { BashRecord } from "../../shared/schemas";
 import { BashRuntime, type BashListRow, type BashManageParams, type BashParams } from "./bash_runtime";
 
-const FOREGROUND_BASH_HINT_CUSTOM_TYPE = "meridian:foreground-bash-hint";
 const FOREGROUND_BASH_HINT_TEXT = "/ps to manage tasks · /ps:b to run in background";
 
 function isBashListRow(value: unknown): value is BashListRow {
@@ -131,50 +129,21 @@ const BASH_PANEL_COLUMNS: SelectablePanelColumn<BashPanelRow>[] = [
   { header: "COMMAND", width: 56, render: (row) => row.command },
 ];
 
-type PiWithForegroundHint = ExtensionAPI & {
-  sendMessage?: (
-    message: { customType?: string; content: string; display?: boolean; details?: Record<string, unknown> },
-    options?: { triggerTurn?: boolean; excludeFromContext?: boolean },
-  ) => void | Promise<void>;
-  registerMessageRenderer?: <Details>(
-    customType: string,
-    renderer: (
-      message: { content: string; details?: Details },
-      options: MessageRenderOptions,
-      theme: Theme,
-    ) => Text,
-  ) => void;
-};
+/** Captured UI context for widget-only foreground hints (no conversation injection). */
+let capturedSetWidget: ((key: string, content: string[] | undefined) => void) | null = null;
+let activeForegroundCount = 0;
 
-const hintedForegroundBashIds = new Set<string>();
-let lastForegroundHintMs = 0;
-const FOREGROUND_HINT_DEBOUNCE_MS = 5_000;
-
-function setupForegroundBashHint(pi: PiWithForegroundHint): void {
-  pi.registerMessageRenderer?.<{ taskId: string; hintText: string }>(
-    FOREGROUND_BASH_HINT_CUSTOM_TYPE,
-    (message, _options, theme) => new Text(theme.fg("dim", message.details?.hintText ?? message.content), 0, 0),
-  );
+function showForegroundHint(): void {
+  activeForegroundCount += 1;
+  if (activeForegroundCount === 1 && capturedSetWidget) {
+    capturedSetWidget("managed-bash", [FOREGROUND_BASH_HINT_TEXT]);
+  }
 }
 
-function postForegroundBashHint(pi: PiWithForegroundHint, bashId: string): void {
-  if (hintedForegroundBashIds.has(bashId)) return;
-  hintedForegroundBashIds.add(bashId);
-  const now = Date.now();
-  if (now - lastForegroundHintMs < FOREGROUND_HINT_DEBOUNCE_MS) return;
-  lastForegroundHintMs = now;
-  try {
-    void pi.sendMessage?.(
-      {
-        customType: FOREGROUND_BASH_HINT_CUSTOM_TYPE,
-        content: "",
-        display: true,
-        details: { taskId: bashId, hintText: FOREGROUND_BASH_HINT_TEXT },
-      },
-      { triggerTurn: false, excludeFromContext: true },
-    );
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes("stale")) throw error;
+function clearForegroundHint(): void {
+  activeForegroundCount = Math.max(0, activeForegroundCount - 1);
+  if (activeForegroundCount === 0 && capturedSetWidget) {
+    capturedSetWidget("managed-bash", undefined);
   }
 }
 
@@ -233,15 +202,23 @@ function splitUserBashBackground(command: string): { background: boolean; execCo
 }
 
 export default function managedBashExtension(pi: ExtensionAPI): void {
-  const hintPi = pi as PiWithForegroundHint;
-  setupForegroundBashHint(hintPi);
   const runtime = new BashRuntime({
-    onForegroundStart: (bashId) => postForegroundBashHint(hintPi, bashId),
+    onForegroundStart: () => showForegroundHint(),
+    onForegroundStop: () => clearForegroundHint(),
     onBackgroundPing: (record) => sendBackgroundPing(pi, record),
   });
 
+  // Capture setWidget from the first event context that provides UI.
+  pi.on?.("agent_start", (_event, ctx) => {
+    if (!capturedSetWidget && ctx?.ui?.setWidget) {
+      capturedSetWidget = (key: string, content: string[] | undefined) => ctx.ui.setWidget(key, content);
+    }
+  });
+
   pi.on?.("session_shutdown", async () => {
-    hintedForegroundBashIds.clear();
+    activeForegroundCount = 0;
+    if (capturedSetWidget) capturedSetWidget("managed-bash", undefined);
+    capturedSetWidget = null;
     await runtime.shutdown();
   });
 
