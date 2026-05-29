@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-05-29
+
 ### Changed
 - Bump mars-agents to v0.7.7 — fixes duplicate items in `mars list`/`why`/`doctor`, overlay model override now pivots harness on provider mismatch instead of hard-failing
 
