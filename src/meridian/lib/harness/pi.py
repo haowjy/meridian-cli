@@ -339,30 +339,18 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
         return PI_EXTRACTOR.extract_report(artifacts, spawn_id)
 
     def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
-        normalized_session_id = session_id.strip()
-        if not normalized_session_id:
+        _ = project_root  # pi sessions are user-scoped, not project-scoped
+        normalized = session_id.strip()
+        if not normalized:
             return None
-        session_root = resolve_pi_spawn_session_root()
-        if not session_root.is_dir():
+        root = resolve_pi_spawn_session_root()
+        if not root.is_dir():
             return None
-        # Primary sessions: {timestamp}_{session_id}.jsonl directly in root
-        for candidate in session_root.glob(f"*_{normalized_session_id}.jsonl"):
-            if candidate.is_file():
-                return candidate
-        # Exact match (session_id.jsonl)
-        exact = session_root / f"{normalized_session_id}.jsonl"
-        if exact.is_file():
-            return exact
-        # Spawn-scoped sessions: {session_root}/{spawn_id}/{timestamp}_{session_id}.jsonl
-        for subdir in session_root.iterdir():
-            if not subdir.is_dir():
-                continue
-            for candidate in subdir.glob(f"*_{normalized_session_id}.jsonl"):
+        # {timestamp}_{id}.jsonl in root, or {spawn_id}/{timestamp}_{id}.jsonl
+        for pattern in (f"*_{normalized}.jsonl", f"*/*_{normalized}.jsonl"):
+            for candidate in root.glob(pattern):
                 if candidate.is_file():
                     return candidate
-            exact_sub = subdir / f"{normalized_session_id}.jsonl"
-            if exact_sub.is_file():
-                return exact_sub
         return None
 
     def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
