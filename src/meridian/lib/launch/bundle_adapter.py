@@ -58,6 +58,7 @@ class _BundlePromptDocument:
     name: str
     content: str
     skill_type: str
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,7 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
         name = _normalize_str(typed_item.get("name"))
         content = _normalize_str(typed_item.get("content"))
         skill_type = _normalize_str(typed_item.get("skill_type"))
+        detail = _normalize_str(typed_item.get("detail"))
         if not kind or not name or not content:
             continue
         documents.append(
@@ -137,6 +139,7 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
                 name=name,
                 content=content,
                 skill_type=skill_type,
+                detail=detail,
             )
         )
     return tuple(documents)
@@ -498,6 +501,7 @@ def bundle_to_resolved_policy(
         fallback_chain=(),
         warnings=warnings,
         alias_catalog=alias_catalog,
+        bundle_inventory_prompt=bundle.prompt_surface_inventory_prompt or None,
     )
 
 

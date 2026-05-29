@@ -25,6 +25,7 @@ type SandboxMode = Literal[
 type ApprovalMode = Literal[
     "default",
     "auto",
+    "never",
     "yolo",
     "confirm",
 ]
@@ -43,6 +44,7 @@ _APPROVAL_MODES: frozenset[ApprovalMode] = frozenset(
     {
         "default",
         "auto",
+        "never",
         "yolo",
         "confirm",
     }

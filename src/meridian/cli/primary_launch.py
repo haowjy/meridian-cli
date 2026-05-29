@@ -169,7 +169,7 @@ def run_primary_launch(
     fork_target_requested = raw_fork_target or None
     fork_fresh_target_requested = raw_fork_fresh_target or None
     context_from_requested = (raw_from_target,) if raw_from_target else ()
-    resolved_approval = approval if approval is not None else ("yolo" if yolo else "default")
+    resolved_approval = approval if approval is not None else ("never" if yolo else "default")
 
     fork_resolution = validate_fork_mode(
         fork_from=fork_target_requested,
