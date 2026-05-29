@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-05-29
+
 ### Fixed
 - Background-repairs thread import deadlock on Python 3.13+ — `meridian-background-repairs` raced with main-thread harness bootstrap to import `connections.base`, triggering `_ModuleLock` deadlock ~60% of the time. Eagerly import `reaper` before spawning the thread.
 - Pi `session log` now resolves pi harness session files — `PiAdapter.resolve_session_file` searches `meridian-pi/sessions/` for `*_{session_id}.jsonl` patterns, including spawn-scoped subdirectories. Previously returned "not found" even when the file existed.
