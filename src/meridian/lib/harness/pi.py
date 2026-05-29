@@ -338,6 +338,33 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return PI_EXTRACTOR.extract_report(artifacts, spawn_id)
 
+    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
+        _ = project_root  # pi sessions are user-scoped, not project-scoped
+        normalized = session_id.strip()
+        if not normalized:
+            return None
+        root = resolve_pi_spawn_session_root()
+        if not root.is_dir():
+            return None
+        # {timestamp}_{id}.jsonl in root, or {spawn_id}/{timestamp}_{id}.jsonl
+        for pattern in (f"*_{normalized}.jsonl", f"*/*_{normalized}.jsonl"):
+            for candidate in root.glob(pattern):
+                if candidate.is_file():
+                    return candidate
+        return None
+
+    def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
+        normalized_session_ref = session_ref.strip()
+        if not normalized_session_ref:
+            return False
+        return (
+            self.resolve_session_file(
+                project_root=project_root,
+                session_id=normalized_session_ref,
+            )
+            is not None
+        )
+
     def detect_primary_session_id(
         self,
         *,

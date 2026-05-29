@@ -4,6 +4,11 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Background-repairs thread import deadlock on Python 3.13+ — `meridian-background-repairs` raced with main-thread harness bootstrap to import `connections.base`, triggering `_ModuleLock` deadlock ~60% of the time. Eagerly import `reaper` before spawning the thread.
+- Pi `session log` now resolves pi harness session files — `PiAdapter.resolve_session_file` searches `meridian-pi/sessions/` for `*_{session_id}.jsonl` patterns, including spawn-scoped subdirectories. Previously returned "not found" even when the file existed.
+- Pi managed-bash foreground hint debounced to 5s minimum interval — prevents self-conversation loop where hint messages trigger continuous model turns without user input. Observed with deepseek-v4-flash producing 47 assistant turns from 1 user message.
+
 ## [0.2.14] - 2026-05-29
 
 ### Changed
