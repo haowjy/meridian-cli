@@ -269,9 +269,7 @@ def _raise_bundle_error(*, stdout: str, stderr: str, returncode: int | None = No
     prefix = "Mars launch-bundle failed"
     if returncode is not None:
         prefix = f"{prefix} (exit {returncode})"
-    raise RuntimeError(
-        f"{prefix}: {message}. Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
-    )
+    raise RuntimeError(f"{prefix}: {message}")
 
 
 def _parse_bundle_payload(

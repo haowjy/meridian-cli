@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Bump mars-agents to v0.7.7 — fixes duplicate items in `mars list`/`why`/`doctor`, overlay model override now pivots harness on provider mismatch instead of hard-failing
+
+### Fixed
+- Stop appending "Meridian requires mars >= X.Y.Z" to every mars launch-bundle error. Version hint now only appears for genuinely version-related errors (missing binary, schema mismatch, unrecognized command).
+
 ## [0.2.13] - 2026-05-28
 - bump mars to v0.7.6 to fix some model resolutions bugs
 
