@@ -147,6 +147,8 @@ type PiWithForegroundHint = ExtensionAPI & {
 };
 
 const hintedForegroundBashIds = new Set<string>();
+let lastForegroundHintMs = 0;
+const FOREGROUND_HINT_DEBOUNCE_MS = 5_000;
 
 function setupForegroundBashHint(pi: PiWithForegroundHint): void {
   pi.registerMessageRenderer?.<{ taskId: string; hintText: string }>(
@@ -158,6 +160,9 @@ function setupForegroundBashHint(pi: PiWithForegroundHint): void {
 function postForegroundBashHint(pi: PiWithForegroundHint, bashId: string): void {
   if (hintedForegroundBashIds.has(bashId)) return;
   hintedForegroundBashIds.add(bashId);
+  const now = Date.now();
+  if (now - lastForegroundHintMs < FOREGROUND_HINT_DEBOUNCE_MS) return;
+  lastForegroundHintMs = now;
   try {
     void pi.sendMessage?.(
       {

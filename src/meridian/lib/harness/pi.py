@@ -338,6 +338,45 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
     def extract_report(self, artifacts: ArtifactStore, spawn_id: SpawnId) -> str | None:
         return PI_EXTRACTOR.extract_report(artifacts, spawn_id)
 
+    def resolve_session_file(self, *, project_root: Path, session_id: str) -> Path | None:
+        normalized_session_id = session_id.strip()
+        if not normalized_session_id:
+            return None
+        session_root = resolve_pi_spawn_session_root()
+        if not session_root.is_dir():
+            return None
+        # Primary sessions: {timestamp}_{session_id}.jsonl directly in root
+        for candidate in session_root.glob(f"*_{normalized_session_id}.jsonl"):
+            if candidate.is_file():
+                return candidate
+        # Exact match (session_id.jsonl)
+        exact = session_root / f"{normalized_session_id}.jsonl"
+        if exact.is_file():
+            return exact
+        # Spawn-scoped sessions: {session_root}/{spawn_id}/{timestamp}_{session_id}.jsonl
+        for subdir in session_root.iterdir():
+            if not subdir.is_dir():
+                continue
+            for candidate in subdir.glob(f"*_{normalized_session_id}.jsonl"):
+                if candidate.is_file():
+                    return candidate
+            exact_sub = subdir / f"{normalized_session_id}.jsonl"
+            if exact_sub.is_file():
+                return exact_sub
+        return None
+
+    def owns_untracked_session(self, *, project_root: Path, session_ref: str) -> bool:
+        normalized_session_ref = session_ref.strip()
+        if not normalized_session_ref:
+            return False
+        return (
+            self.resolve_session_file(
+                project_root=project_root,
+                session_id=normalized_session_ref,
+            )
+            is not None
+        )
+
     def detect_primary_session_id(
         self,
         *,
