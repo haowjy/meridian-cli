@@ -374,7 +374,7 @@ def root(
         str | None,
         Parameter(
             name="--approval",
-            help="Approval mode: default, confirm, auto, yolo. Overrides agent profile.",
+            help="Approval mode: default, confirm, auto, never. Overrides agent profile.",
         ),
     ] = None,
     timeout: Annotated[

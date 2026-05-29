@@ -91,7 +91,7 @@ def _chat(
     ] = (),
     approval: Annotated[
         str | None,
-        Parameter(name="--approval", help="Approval mode: default, confirm, auto, yolo."),
+        Parameter(name="--approval", help="Approval mode: default, confirm, auto, never."),
     ] = None,
     sandbox: Annotated[
         str | None,
@@ -114,7 +114,7 @@ def _chat(
     ] = None,
     yolo: Annotated[
         bool,
-        Parameter(name="--yolo", help="Shorthand for --approval yolo."),
+        Parameter(name="--yolo", help="Shorthand for --approval never."),
     ] = False,
     port: Annotated[int, Parameter(name="--port", help="Port to bind; 0 auto-assigns.")] = 0,
     host: Annotated[
@@ -171,9 +171,9 @@ def _chat(
     effective_harness = harness or get_global_options().harness
     if yolo and approval is not None:
         raise ValueError(
-            "Cannot use --yolo with --approval (--yolo is shorthand for --approval yolo)."
+            "Cannot use --yolo with --approval (--yolo is shorthand for --approval never)."
         )
-    resolved_approval = approval if approval is not None else ("yolo" if yolo else None)
+    resolved_approval = approval if approval is not None else ("never" if yolo else None)
     parsed_skills: list[str] = []
     for token in skills:
         parsed_skills.extend(parse_csv_list(token, field_name="skills"))

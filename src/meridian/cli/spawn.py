@@ -337,7 +337,7 @@ def _spawn_create(
         str | None,
         Parameter(
             name="--approval",
-            help="Approval mode: default, confirm, auto, yolo. Overrides agent profile.",
+            help="Approval mode: default, confirm, auto, never. Overrides agent profile.",
         ),
     ] = None,
     autocompact: Annotated[
@@ -443,9 +443,9 @@ def _spawn_create(
     # Resolve --yolo / --approval interaction.
     if yolo and approval is not None:
         raise ValueError(
-            "Cannot use --yolo with --approval (--yolo is shorthand for --approval yolo)."
+            "Cannot use --yolo with --approval (--yolo is shorthand for --approval never)."
         )
-    resolved_approval = approval if approval is not None else ("yolo" if yolo else None)
+    resolved_approval = approval if approval is not None else ("never" if yolo else None)
     parsed_skills = parse_csv_list(skills, field_name="skills")
     resolved_goal = normalize_goal(goal)
 

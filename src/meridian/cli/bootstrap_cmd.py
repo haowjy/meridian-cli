@@ -55,7 +55,7 @@ def register_bootstrap_command(
         ] = False,
         approval: Annotated[
             str | None,
-            Parameter(name="--approval", help="Approval mode: default, confirm, auto, yolo."),
+            Parameter(name="--approval", help="Approval mode: default, confirm, auto, never."),
         ] = None,
         autocompact: Annotated[
             int | None,

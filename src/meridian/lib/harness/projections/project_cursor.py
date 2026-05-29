@@ -49,7 +49,7 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
 
 def _project_approval_flags(spec: ResolvedLaunchSpec) -> tuple[str, ...]:
     approval_mode = spec.permission_resolver.config.approval
-    if approval_mode == "yolo":
+    if approval_mode in ("yolo", "never"):
         return ("--yolo",)
     if approval_mode == "auto":
         return ("--force",)

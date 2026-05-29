@@ -60,7 +60,7 @@ def _validate_autocompact_pct_value(v: object) -> object:
 
 AutocompactValue = Annotated[int | None, BeforeValidator(_validate_autocompact_value)]
 AutocompactPctValue = Annotated[int | None, BeforeValidator(_validate_autocompact_pct_value)]
-KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "yolo"})
+KNOWN_APPROVAL_VALUES = frozenset({"default", "confirm", "auto", "never", "yolo"})
 
 
 def _validate_effort_value(v: object) -> object:
@@ -88,6 +88,9 @@ def _validate_approval_value(v: object) -> object:
         return None
     if normalized not in KNOWN_APPROVAL_VALUES:
         raise ValueError(f"expected one of {sorted(KNOWN_APPROVAL_VALUES)}, got {v!r}")
+    # Normalize deprecated spelling to canonical value.
+    if normalized == "yolo":
+        return "never"
     return normalized
 
 

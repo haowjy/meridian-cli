@@ -11,6 +11,7 @@ _APPROVAL_POLICY_BY_MODE: dict[str, str | None] = {
     "default": None,
     "auto": "on-request",
     "confirm": "untrusted",
+    "never": "never",
     "yolo": "never",
 }
 

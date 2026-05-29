@@ -40,7 +40,7 @@ def _permission_flags_for_harness(
         return ()
 
     # New harness families that need approval/sandbox projection belong here.
-    if config.approval == "yolo":
+    if config.approval in ("yolo", "never"):
         if harness_id == HarnessId.CLAUDE:
             return ("--dangerously-skip-permissions",)
         if harness_id == HarnessId.CODEX:
