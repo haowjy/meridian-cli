@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Stop appending "Meridian requires mars >= X.Y.Z" to every mars launch-bundle error. Version hint now only appears for genuinely version-related errors (missing binary, schema mismatch, unrecognized command).
+- Fix 9 pyright warnings in settings.py, transcript.py, report.py — proper type narrowing for parsed JSON dicts/lists.
 
 ## [0.2.13] - 2026-05-28
 - bump mars to v0.7.6 to fix some model resolutions bugs

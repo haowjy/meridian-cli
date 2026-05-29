@@ -313,7 +313,7 @@ def _extract_last_assistant_message(output_lines: str) -> str | None:
         elif isinstance(payload_obj, dict):
             if _is_opencode_control_payload(cast("dict[str, object]", payload_obj)):
                 continue
-        assistants = _assistant_texts(payload_obj)
+        assistants = _assistant_texts(cast("object", payload_obj))
         if assistants:
             last_assistant = assistants[-1].strip()
             continue

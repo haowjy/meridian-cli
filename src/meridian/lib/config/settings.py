@@ -370,9 +370,10 @@ def _normalize_harness_table(
                             f"expected array, got "
                             f"{type(harness_value).__name__} ({harness_value!r})."
                         )
+                    items = cast("list[object]", harness_value)
                     harness_values["extra_extension_paths"] = [
                         str(item).strip()
-                        for item in harness_value
+                        for item in items
                         if str(item).strip()
                     ]
                     continue
@@ -384,7 +385,8 @@ def _normalize_harness_table(
                             f"{type(harness_value).__name__} ({harness_value!r})."
                         )
                     nested: dict[str, object] = {}
-                    enabled = harness_value.get("enabled")
+                    table = cast("dict[str, object]", harness_value)
+                    enabled = table.get("enabled")
                     if enabled is not None:
                         if not isinstance(enabled, bool):
                             raise ValueError(

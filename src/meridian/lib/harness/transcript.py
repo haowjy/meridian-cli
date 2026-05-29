@@ -139,9 +139,9 @@ def _normalize_tool(name: str, body: str) -> ToolCall:
 def _extract_json_field(body: str, field: str) -> str | None:
     """Try to extract a string field from a JSON body."""
     try:
-        parsed = json.loads(body)
+        parsed: object = json.loads(body)
         if isinstance(parsed, dict):
-            value = parsed.get(field)
+            value: object = cast("dict[str, object]", parsed).get(field)
             if isinstance(value, str) and value.strip():
                 return value.strip()
     except (json.JSONDecodeError, TypeError, ValueError):
