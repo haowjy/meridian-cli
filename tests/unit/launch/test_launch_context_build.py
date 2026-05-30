@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.launch_policy_snapshot import LaunchPolicySnapshot
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
 from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
@@ -21,7 +21,7 @@ from meridian.lib.launch.request import (
     LaunchRuntime,
     SpawnRequest,
 )
-from tests.support.fixtures import write_agent, write_skill
+from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
 if TYPE_CHECKING:
@@ -277,12 +277,6 @@ def test_primary_launch_policy_snapshot_persists_loaded_skills(
     tmp_path: Path,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
-    skill_path = write_skill(
-        tmp_path,
-        "testing-principles",
-        body="# testing-principles\n\nBe consistent.\n",
-        description="testing-principles skill",
-    )
     write_agent(
         tmp_path,
         name="coder",
@@ -294,6 +288,13 @@ def test_primary_launch_policy_snapshot_persists_loaded_skills(
         monkeypatch,
         model="gpt-5.4",
         harness=HarnessId.CODEX,
+        skills_loaded=(
+            LoadedSkillEntry(
+                name="testing-principles",
+                skill_type="principle",
+                body="# testing-principles\n\nBe consistent.",
+            ),
+        ),
     )
     request = SpawnRequest(
         model="gpt-5.4",
@@ -317,16 +318,12 @@ def test_primary_launch_policy_snapshot_persists_loaded_skills(
     snapshot = runtime_ctx.resolved_request.launch_policy_snapshot
     assert snapshot is not None
     assert snapshot.skills == ("testing-principles",)
-    assert snapshot.skill_paths == (str(skill_path.resolve()),)
-    assert snapshot.loaded_skills == (
-        SkillContent(
-            name="testing-principles",
-            description="testing-principles skill",
-            path=str(skill_path.resolve()),
-            content=skill_path.read_text(encoding="utf-8"),
-            skill_type="reference",
-        ),
-    )
+    # Skill path is synthetic (from bundle, not disk)
+    assert snapshot.skill_paths
+    assert ".mars/skills/testing-principles/SKILL.md" in snapshot.skill_paths[0]
+    assert snapshot.loaded_skills[0].name == "testing-principles"
+    assert snapshot.loaded_skills[0].content == "# testing-principles\n\nBe consistent."
+    assert snapshot.loaded_skills[0].skill_type == "principle"
 
 
 def test_direct_launch_context_synthesizes_policy_snapshot(tmp_path: Path) -> None:

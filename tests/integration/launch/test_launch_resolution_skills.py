@@ -11,6 +11,7 @@ import pytest
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
 from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
@@ -19,7 +20,7 @@ from meridian.lib.launch.plan import (
     build_primary_spawn_request,
 )
 from meridian.lib.launch.types import LaunchRequest
-from tests.support.fixtures import write_agent, write_skill
+from tests.support.fixtures import write_agent
 
 pytestmark = pytest.mark.slow
 
@@ -51,13 +52,16 @@ class _FakeBundleResult:
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()
+    skills_loaded: tuple[LoadedSkillEntry, ...] = ()
     skills_available: tuple[AvailableSkillEntry, ...] = ()
+    skills_missing: tuple[str, ...] = ()
 
 
 def _stub_bundle_resolution(
     monkeypatch: pytest.MonkeyPatch,
     *,
     resolution: _BundleResolution,
+    skills_loaded: tuple[LoadedSkillEntry, ...] = (),
 ) -> None:
     def _fake_request_and_resolve(
         request: bundle_adapter.BundleRequest,
@@ -72,15 +76,21 @@ def _stub_bundle_resolution(
             harness_model=None,
             execution_policy=ResolvedExecutionPolicy(),
             provenance={"model_source": "cli", "harness_source": "cli"},
+            skills_loaded=skills_loaded,
         )
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)
 
 
-def test_launch_skill_variants_use_alias_then_canonical_then_harness(
+def test_launch_skill_content_flows_from_bundle_to_composition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Bundle-provided skill content flows through policy → composition.
+
+    Variant resolution (alias → canonical → harness) is mars's responsibility.
+    Meridian-cli consumes whatever mars resolved and sent in skills.loaded[].
+    """
     _write_minimal_mars_config(tmp_path)
     _stub_bundle_resolution(
         monkeypatch,
@@ -89,6 +99,13 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
             model_token="alias-token",
             harness=HarnessId.CODEX,
         ),
+        skills_loaded=(
+            LoadedSkillEntry(
+                name="variant-skill",
+                skill_type="reference",
+                body="Resolved variant body from mars",
+            ),
+        ),
     )
     write_agent(
         tmp_path,
@@ -96,19 +113,6 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
         model="alias-token",
         skills=["variant-skill"],
     )
-    write_skill(tmp_path, "variant-skill", body="Base body", description="Base metadata")
-    skill_root = tmp_path / ".mars" / "skills" / "variant-skill"
-    token_variant = skill_root / "variants" / "codex" / "alias-token" / "SKILL.md"
-    token_variant.parent.mkdir(parents=True)
-    token_variant.write_text(
-        "---\nname: ignored-token\ndescription: ignored\n---\n\nAlias token body",
-        encoding="utf-8",
-    )
-    canonical_variant = skill_root / "variants" / "codex" / "canonical-id" / "SKILL.md"
-    canonical_variant.parent.mkdir(parents=True)
-    canonical_variant.write_text("Canonical body", encoding="utf-8")
-    harness_variant = skill_root / "variants" / "codex" / "SKILL.md"
-    harness_variant.write_text("Harness body", encoding="utf-8")
 
     preview = build_launch_context(
         spawn_id="dry-run-variant-alias",
@@ -120,83 +124,75 @@ def test_launch_skill_variants_use_alias_then_canonical_then_harness(
         dry_run=True,
     )
 
-    system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
     # Codex declares supports_native_skills=True, so skill content is suppressed
-    # from supplemental_documents. Skill variant resolution still picks the right path.
-    assert "Alias token body" not in system_prompt
-    assert "Canonical body" not in system_prompt
-    assert "Harness body" not in system_prompt
-    assert preview.resolved_request.skill_paths == (token_variant.resolve().as_posix(),)
+    # from the system prompt (it goes via native skill injection).
+    system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
+    assert "Resolved variant body from mars" not in system_prompt
+    # Skill path is synthetic (from bundle, not disk)
+    assert preview.resolved_request.skill_paths
+    assert ".mars/skills/variant-skill/SKILL.md" in preview.resolved_request.skill_paths[0]
 
 
-def test_launch_skill_variants_fall_back_to_canonical_then_harness_and_exact_only(
+def test_bundle_skill_content_renders_via_append_for_native_skill_harness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Native-skill harness (Claude) delivers bundle skill body via append-system-prompt."""
+    from meridian.lib.launch.request import (
+        LaunchArgvIntent,
+        LaunchCompositionSurface,
+        LaunchRuntime,
+        SpawnRequest,
+    )
+
     _write_minimal_mars_config(tmp_path)
     _stub_bundle_resolution(
         monkeypatch,
         resolution=_BundleResolution(
-            model="canonical-id",
-            model_token="alias-token",
-            harness=HarnessId.CODEX,
+            model="claude-sonnet-4-5",
+            model_token="sonnet",
+            harness=HarnessId.CLAUDE,
+        ),
+        skills_loaded=(
+            LoadedSkillEntry(
+                name="my-principle",
+                skill_type="principle",
+                body="Always prefer simplicity over cleverness.",
+            ),
         ),
     )
     write_agent(
         tmp_path,
         name="dev-orchestrator",
-        model="alias-token",
-        skills=["variant-skill"],
+        model="sonnet",
+        skills=["my-principle"],
     )
-    write_skill(tmp_path, "variant-skill", body="Base body")
-    skill_root = tmp_path / ".mars" / "skills" / "variant-skill"
-    prefix_variant = skill_root / "variants" / "codex" / "alias" / "SKILL.md"
-    prefix_variant.parent.mkdir(parents=True)
-    prefix_variant.write_text("Prefix body", encoding="utf-8")
-    canonical_variant = skill_root / "variants" / "codex" / "canonical-id" / "SKILL.md"
-    canonical_variant.parent.mkdir(parents=True)
-    canonical_variant.write_text("Canonical body", encoding="utf-8")
-    harness_variant = skill_root / "variants" / "codex" / "SKILL.md"
-    harness_variant.write_text("Harness body", encoding="utf-8")
 
-    canonical_preview = build_launch_context(
-        spawn_id="dry-run-variant-canonical",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model="alias-token", agent="dev-orchestrator")
+    preview = build_launch_context(
+        spawn_id="dry-run-claude-skill-spawn",
+        request=SpawnRequest(
+            prompt="do the task",
+            prompt_is_composed=False,
+            model="sonnet",
+            harness="claude",
+            agent="dev-orchestrator",
         ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(tmp_path / ".meridian").as_posix(),
+            project_paths_project_root=tmp_path.as_posix(),
+            project_paths_execution_cwd=tmp_path.as_posix(),
+        ),
         harness_registry=get_default_harness_registry(),
         dry_run=True,
     )
-    canonical_prompt = (
-        canonical_preview.projected_content.system_prompt
-        if canonical_preview.projected_content
-        else ""
-    )
-    # Codex declares supports_native_skills=True, so skill content is suppressed.
-    # Variant resolution still picks canonical over prefix.
-    assert "Canonical body" not in canonical_prompt
-    assert "Prefix body" not in canonical_prompt
-    assert canonical_preview.resolved_request.skill_paths == (
-        canonical_variant.resolve().as_posix(),
-    )
 
-    canonical_variant.unlink()
-    harness_preview = build_launch_context(
-        spawn_id="dry-run-variant-harness",
-        request=build_primary_spawn_request(
-            request=LaunchRequest(model="alias-token", agent="dev-orchestrator")
-        ),
-        runtime=build_primary_launch_runtime(project_root=tmp_path),
-        harness_registry=get_default_harness_registry(),
-        dry_run=True,
-    )
-    harness_prompt = (
-        harness_preview.projected_content.system_prompt if harness_preview.projected_content else ""
-    )
-    # Skill content suppressed for native-skill harness; variant resolution still correct.
-    assert "Harness body" not in harness_prompt
-    assert "Prefix body" not in harness_prompt
-    assert harness_preview.resolved_request.skill_paths == (
-        harness_variant.resolve().as_posix(),
-    )
+    # Claude delivers skills via --append-system-prompt, not in main system_prompt
+    system_prompt = preview.projected_content.system_prompt if preview.projected_content else ""
+    assert "Always prefer simplicity over cleverness." not in system_prompt
+    assert preview.binding.run_params.appended_system_prompt is not None
+    appended = preview.binding.run_params.appended_system_prompt
+    assert "Always prefer simplicity over cleverness." in appended
+    assert preview.resolved_request.skill_paths
+    assert ".mars/skills/my-principle/SKILL.md" in preview.resolved_request.skill_paths[0]

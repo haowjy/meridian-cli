@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from meridian.lib.catalog.agent import AgentProfile
 from meridian.lib.catalog.catalog_session import CatalogSession
 from meridian.lib.catalog.model_aliases import AliasEntry
 from meridian.lib.config.settings import MeridianConfig
+from meridian.lib.core.domain import SkillContent
 from meridian.lib.core.overrides import (
     EXECUTION_POLICY_FIELDS,
     ExecutionPolicyField,
@@ -22,6 +24,7 @@ from meridian.lib.harness.registry import HarnessRegistry
 from meridian.lib.tools import ToolsField
 
 from . import bundle_adapter
+from .bundle_adapter import LoadedSkillEntry
 from .compiler import (
     FieldProvenance,
     match_model_policy,
@@ -42,7 +45,6 @@ from .resolve import (
     ResolvedSkills,
     dedupe_skill_names,
     load_agent_profile_with_fallback,
-    resolve_skills_from_profile,
     validate_harness_compatibility,
 )
 
@@ -50,6 +52,39 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_EXECUTION_POLICY_FIELDS: frozenset[ExecutionPolicyField] = frozenset(
     EXECUTION_POLICY_FIELDS
 )
+
+
+def _build_resolved_skills_from_bundle(
+    loaded_entries: tuple[LoadedSkillEntry, ...],
+    *,
+    missing: tuple[str, ...],
+    project_root: Path,
+) -> ResolvedSkills:
+    """Construct ResolvedSkills directly from bundle skill data.
+
+    Mars owns the .mars/ directory schema and skill loading. Meridian consumes
+    the structured bundle output without reaching into .mars/skills/ on disk.
+    """
+    loaded_skills: list[SkillContent] = []
+    for entry in loaded_entries:
+        if not entry.body:
+            continue
+        # Synthetic path for downstream heading rendering and snapshot persistence.
+        synthetic_path = (project_root / ".mars" / "skills" / entry.name / "SKILL.md").as_posix()
+        loaded_skills.append(
+            SkillContent(
+                name=entry.name,
+                description="",
+                content=entry.body,
+                path=synthetic_path,
+                skill_type=entry.skill_type,
+            )
+        )
+    return ResolvedSkills(
+        skill_names=tuple(entry.name for entry in loaded_entries),
+        loaded_skills=tuple(loaded_skills),
+        missing_skills=missing,
+    )
 
 
 @dataclass(frozen=True)
@@ -460,13 +495,10 @@ def _resolve_policy_from_bundle(surface: SurfacePolicyInput) -> ResolvedLaunchPo
         timeout=resolved_execution_policy_overrides.timeout,
     )
 
-    resolved_skills = resolve_skills_from_profile(
-        profile_skills=resolved_skill_names,
+    resolved_skills = _build_resolved_skills_from_bundle(
+        bundle_result.skills_loaded,
+        missing=bundle_result.skills_missing,
         project_root=project_root,
-        readonly=surface.skills_readonly,
-        harness_id=resolved_harness.value,
-        selected_model_token=model_selection.selected_model_token,
-        canonical_model_id=model_selection.canonical_model_id,
     )
 
     bundle_model_warning = "\n".join(bundle_result.warnings).strip() or None

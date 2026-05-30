@@ -54,6 +54,15 @@ class BundleRequest:
 
 
 @dataclass(frozen=True)
+class LoadedSkillEntry:
+    """Structured loaded skill from the bundle (name + type + body)."""
+
+    name: str
+    skill_type: str
+    body: str
+
+
+@dataclass(frozen=True)
 class _BundlePromptDocument:
     kind: str
     name: str
@@ -77,7 +86,7 @@ class _BundleResult:
     tools_allowed: tuple[str, ...]
     tools_disallowed: tuple[str, ...]
     tools_mcp: tuple[str, ...]
-    skills_loaded: tuple[str, ...]
+    skills_loaded: tuple[LoadedSkillEntry, ...]
     skills_available: tuple[AvailableSkillEntry, ...]
     skills_missing: tuple[str, ...]
 
@@ -147,23 +156,29 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
     return tuple(documents)
 
 
-def _parse_skills_loaded(raw: object) -> tuple[str, ...]:
+def _parse_skills_loaded(raw: object) -> tuple[LoadedSkillEntry, ...]:
     """Parse skills loaded field — handles both v2 flat strings and v3 structured objects."""
     if not isinstance(raw, list):
         return ()
-    loaded_names: list[str] = []
+    entries: list[LoadedSkillEntry] = []
     for item in cast("list[object]", raw):
         if isinstance(item, str):
-            # v2: flat list of skill name strings
+            # v2: flat list of skill name strings (no body available)
             normalized = item.strip()
             if normalized:
-                loaded_names.append(normalized)
+                entries.append(LoadedSkillEntry(name=normalized, skill_type="reference", body=""))
         elif isinstance(item, dict):
-            # v3: list of {name, skill_type, content} objects
-            name = _normalize_str(cast("dict[str, object]", item).get("name"))
+            # v3: list of {name, skill_type, body/content} objects
+            item_dict = cast("dict[str, object]", item)
+            name = _normalize_str(item_dict.get("name"))
             if name:
-                loaded_names.append(name)
-    return tuple(loaded_names)
+                skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
+                # "body" is canonical (mars >= 0.8); "content" is compat (mars 0.7.x)
+                body = _normalize_str(item_dict.get("body")) or _normalize_str(
+                    item_dict.get("content")
+                )
+                entries.append(LoadedSkillEntry(name=name, skill_type=skill_type, body=body))
+    return tuple(entries)
 
 
 def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
@@ -551,6 +566,7 @@ def bundle_to_resolved_policy(
 
 __all__ = [
     "BundleRequest",
+    "LoadedSkillEntry",
     "bundle_to_resolved_policy",
     "request_and_resolve",
 ]

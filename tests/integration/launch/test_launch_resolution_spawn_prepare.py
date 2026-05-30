@@ -10,6 +10,7 @@ import pytest
 from meridian.lib.core.execution_policy import ResolvedExecutionPolicy
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
+from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.request import (
     LaunchArgvIntent,
@@ -18,7 +19,7 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
-from tests.support.fixtures import write_agent, write_skill
+from tests.support.fixtures import write_agent
 from tests.support.launch import stub_bundle_request_and_resolve
 
 pytestmark = pytest.mark.slow
@@ -198,12 +199,13 @@ def test_spawn_prepare_claude_projects_skills_inventory_and_report_to_system_pro
         monkeypatch,
         model="claude-sonnet-4-5",
         harness=HarnessId.CLAUDE,
-    )
-    write_skill(
-        tmp_path,
-        "verification",
-        body="Use verification checklist.",
-        description="Verification helper",
+        skills_loaded=(
+            LoadedSkillEntry(
+                name="verification",
+                skill_type="reference",
+                body="Use verification checklist.",
+            ),
+        ),
     )
     write_agent(
         tmp_path,
@@ -280,12 +282,13 @@ def test_spawn_prepare_claude_continue_session_keeps_skills_in_system_prompt(
         monkeypatch,
         model="claude-sonnet-4-5",
         harness=HarnessId.CLAUDE,
-    )
-    write_skill(
-        tmp_path,
-        "verification",
-        body="Use verification checklist.",
-        description="Verification helper",
+        skills_loaded=(
+            LoadedSkillEntry(
+                name="verification",
+                skill_type="reference",
+                body="Use verification checklist.",
+            ),
+        ),
     )
     write_agent(
         tmp_path,
