@@ -171,7 +171,9 @@ class PiDiskWatcher:
                         self._candidate_child_spawn_ids.discard(path.name)
                         self._child_spawn_ids.add(path.name)
                         found_new = True
-                    elif not state_path.exists() or not data:
+                    elif _is_allocated_spawn_dir_name(path.name) and (
+                        not state_path.exists() or not data
+                    ):
                         self._candidate_child_spawn_ids.add(path.name)
                         found_new = True
             if found_new:
@@ -203,7 +205,9 @@ class PiDiskWatcher:
             if parent_id == self._current_spawn_id:
                 self._candidate_child_spawn_ids.discard(child.name)
                 self._child_spawn_ids.add(child.name)
-            elif child.name.startswith("p") and (not state_path.exists() or not data):
+            elif _is_allocated_spawn_dir_name(child.name) and (
+                not state_path.exists() or not data
+            ):
                 self._candidate_child_spawn_ids.add(child.name)
 
     def _resolve_candidate_child_spawns(self) -> None:
@@ -259,6 +263,10 @@ class PiDiskWatcher:
 def _consume_task_result(task: asyncio.Task[None]) -> None:
     with suppress(asyncio.CancelledError, Exception):
         task.result()
+
+
+def _is_allocated_spawn_dir_name(name: str) -> bool:
+    return len(name) > 1 and name[0] == "p" and name[1:].isdigit()
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

@@ -116,13 +116,13 @@ async def test_wait_for_change_polls_late_child_state_after_directory_event(
         0.05,
     )
     parent_id = SpawnId("p-parent")
-    child_dir = tmp_path / "spawns" / "p-child"
+    child_dir = tmp_path / "spawns" / "p123"
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
     try:
         child_dir.mkdir(parents=True)
-        watcher._candidate_child_spawn_ids.add("p-child")
+        watcher._candidate_child_spawn_ids.add("p123")
         watcher._refresh_cached_state()
         await asyncio.wait_for(watcher.wait_for_change(), timeout=1.0)
         assert watcher.has_pending_child_spawns() is True
@@ -132,10 +132,10 @@ async def test_wait_for_change_polls_late_child_state_after_directory_event(
         assert not wait_task.done()
         _write_json(
             child_dir / "state.json",
-            {"id": "p-child", "parent_id": str(parent_id), "status": "running"},
+            {"id": "p123", "parent_id": str(parent_id), "status": "running"},
         )
         await asyncio.wait_for(wait_task, timeout=1.0)
-        assert watcher._child_spawn_ids == {"p-child"}
+        assert watcher._child_spawn_ids == {"p123"}
         assert watcher._candidate_child_spawn_ids == set()
         assert watcher.has_pending_child_spawns() is True
     finally:
@@ -147,7 +147,7 @@ async def test_force_rescan_tracks_unresolved_child_directory_as_pending(
     tmp_path: Path,
 ) -> None:
     parent_id = SpawnId("p-parent")
-    child_dir = tmp_path / "spawns" / "p-child"
+    child_dir = tmp_path / "spawns" / "p123"
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
@@ -160,7 +160,7 @@ async def test_force_rescan_tracks_unresolved_child_directory_as_pending(
 
         _write_json(
             child_dir / "state.json",
-            {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
+            {"id": "p123", "parent_id": str(parent_id), "status": "succeeded"},
         )
         await watcher.force_rescan()
 
@@ -174,7 +174,7 @@ async def test_force_rescan_tracks_empty_child_state_as_unresolved(
     tmp_path: Path,
 ) -> None:
     parent_id = SpawnId("p-parent")
-    child_state = tmp_path / "spawns" / "p-child" / "state.json"
+    child_state = tmp_path / "spawns" / "p123" / "state.json"
     _write_json(child_state, {})
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
@@ -191,7 +191,7 @@ async def test_candidate_child_directory_deleted_clears_pending(
     tmp_path: Path,
 ) -> None:
     parent_id = SpawnId("p-parent")
-    child_dir = tmp_path / "spawns" / "p-child"
+    child_dir = tmp_path / "spawns" / "p123"
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
@@ -203,6 +203,25 @@ async def test_candidate_child_directory_deleted_clears_pending(
         child_dir.rmdir()
         await watcher.force_rescan()
         assert watcher.has_pending_child_spawns() is False
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_force_rescan_ignores_stale_non_allocated_unresolved_dir(
+    tmp_path: Path,
+) -> None:
+    parent_id = SpawnId("p-parent")
+    child_dir = tmp_path / "spawns" / "p-child"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        child_dir.mkdir(parents=True)
+        await watcher.force_rescan()
+
+        assert watcher.has_pending_child_spawns() is False
+        assert watcher.pending_child_spawn_count() == 0
     finally:
         await watcher.stop()
 

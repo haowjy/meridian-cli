@@ -693,7 +693,7 @@ async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
     await coordinator.quiescence_tracker.mark_idle()
     terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
     coordinator.start_micro_drain(terminal)
-    (tmp_path / "spawns" / "p-late-child").mkdir(parents=True)
+    (tmp_path / "spawns" / "p123").mkdir(parents=True)
 
     async def _noop_terminate(
         tracker: PiSubspawnTracker,
