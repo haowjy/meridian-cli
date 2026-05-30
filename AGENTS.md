@@ -35,7 +35,7 @@ No real users, no real user data. No backwards compatibility needed — complete
 - **State Root**: User-level `~/.meridian/` (via `get_user_home()`) is the primary state root — spawns, sessions, work items. Project-level `.meridian/` holds project identity and package config. Migration toward user-level is intentional and ongoing.
 - **Harness Adapters**: `src/meridian/lib/harness/` — per-harness command building, output extraction, materialization. Adding a harness = one adapter file + registration.
 - **State Layer**: `src/meridian/lib/state/` — path resolution, spawn store, session store. Atomic writes via tmp+rename, `fcntl.flock` for concurrency.
-- **Package Sync**: `meridian mars ...` — package resolution and `.agents/` materialization are delegated to mars.
+- **Package Sync**: `meridian mars ...` — package resolution and configured target materialization are delegated to mars.
 - **Profiles & Skills**: Agent profiles (YAML markdown) define capabilities, model, and skills. Skills load fresh on launch/resume (survives compaction).
 
 ## Dev Workflow
@@ -84,7 +84,7 @@ Catalog/config modules (`meridian.lib.catalog.*`, `meridian.lib.config.*`) use s
 
 ### Editing Agents & Skills
 
-**NEVER edit `.agents/` directly** — it is generated output, overwritten by `meridian mars sync`. Edit the source package repos directly in sibling checkouts. Preferred local layout:
+**NEVER edit generated target directories directly** (for this repo: `.claude/agents/`, `.claude/skills/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`) — they are generated output, overwritten by `meridian mars sync`. Edit the source package repos directly in sibling checkouts. Preferred local layout:
 
 - `../meridian-cli` (this repo)
 - `../meridian-web` — general-purpose agent frontend (Apache-2.0). Makefile `frontend` target expects this at `$MERIDIAN_WEB` (default `../meridian-web`).
@@ -104,7 +104,7 @@ Canonical workflow:
 1. Edit in the standalone source repo (for example `../prompts/meridian-base/skills/meridian-spawn/SKILL.md`)
 2. Commit and push the source repo change
 3. Update package refs in this repo if needed with `meridian mars add ...`
-4. Run `meridian mars sync` to regenerate `.agents/`
+4. Run `meridian mars sync` to regenerate the configured targets
 
 ### Upgrading from Legacy Sources State
 
@@ -262,7 +262,7 @@ Lists open issues on `haowjy/meridian-cli`, excludes issues labelled `future`, a
 ## Related Repos
 
 - **meridian-web** (`../meridian-web/`): General-purpose agent frontend. React 19 + Vite + TypeScript + shadcn/ui + Zustand. Apache-2.0. Run with `make dev` (starts both backend and frontend) or `make frontend` (frontend only). Override path with `MERIDIAN_WEB` env var or `.env` file.
-- **mars-agents** (`../mars-agents/`): Standalone agent package manager for `.agents/`. Rust CLI, binary name `mars`. Meridian invokes it via `meridian mars ...` for project package setup and sync. Repo: `meridian-flow/mars-agents`.
+- **mars-agents** (`../mars-agents/`): Standalone agent package manager for mars packages and target materialization. Rust CLI, binary name `mars`. Meridian invokes it via `meridian mars ...` for project package setup and sync. Repo: `meridian-flow/mars-agents`.
 
 ### Cross-Platform Paths
 

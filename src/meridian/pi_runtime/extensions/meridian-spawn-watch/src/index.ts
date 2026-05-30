@@ -50,6 +50,7 @@ const TERMINAL_NOTIFIED = new Set<string>();
 const DEBOUNCE_MS = 200;
 const MAX_WAVE_WAIT_MS = 2_000;
 const BASH_SPAWN_CORRELATION_GRACE_MS = 2_500;
+const FALLBACK_SCAN_MS = 5_000;
 
 class SpawnWatchRuntime {
   private readonly currentSpawnId = currentSpawnIdFromEnv();
@@ -66,36 +67,61 @@ class SpawnWatchRuntime {
   private readonly childSpawnIds = new Set<string>();
   private readonly childWatchers = new Map<string, FSWatcher>();
   private readonly candidateWatchers = new Map<string, FSWatcher>();
-  private watchers: FSWatcher[] = [];
+  private watchers: Array<FSWatcher | null> = [];
   private debounce: NodeJS.Timeout | null = null;
   private maxWave: NodeJS.Timeout | null = null;
   private scanScheduled: NodeJS.Timeout | null = null;
+  private fallbackScanInterval: NodeJS.Timeout | null = null;
+  private readonly fallbackScanReasons = new Set<string>();
   private readonly bashGraceTimers = new Map<string, NodeJS.Timeout>();
+  private topLevelWatcherAlive = false;
+  private running = false;
   private scanRunning = false;
   private scanAgain = false;
 
   constructor(private readonly pi: PiWithMessages) {}
 
   start(): void {
+    this.running = true;
     mkdirSync(this.spawnsDir, { recursive: true });
     mkdirSync(this.ownSpawnDir, { recursive: true });
     mkdirSync(this.bashDir, { recursive: true });
-    this.watchers.push(this.watchTopLevelSpawnsDir());
-    this.watchers.push(this.watchDirectory(this.ownSpawnDir, () => this.requestScan()));
-    this.watchers.push(this.watchDirectory(this.bashDir, () => this.requestScan()));
+
+    const topLevelWatcher = this.watchTopLevelSpawnsDir();
+    this.addWatcher(topLevelWatcher);
+    this.setTopLevelWatcherAlive(topLevelWatcher !== null);
+
+    const ownSpawnWatcher = this.watchDirectory(this.ownSpawnDir, () => this.requestScan(), {
+      onError: () => this.enableFallbackScan("own-spawn-dir"),
+    });
+    this.addWatcher(ownSpawnWatcher);
+    if (!ownSpawnWatcher) this.enableFallbackScan("own-spawn-dir");
+
+    const bashWatcher = this.watchDirectory(this.bashDir, () => this.requestScan(), {
+      onError: () => this.enableFallbackScan("bash-dir"),
+    });
+    this.addWatcher(bashWatcher);
+    if (!bashWatcher) this.enableFallbackScan("bash-dir");
     void this.discoverExistingChildren().then(() => this.scan());
   }
 
   stop(): void {
-    for (const watcher of this.watchers) watcher.close();
+    this.running = false;
+    for (const watcher of this.watchers) {
+      if (watcher) this.closeWatcher(watcher, "session watcher");
+    }
     this.watchers = [];
-    for (const watcher of this.childWatchers.values()) watcher.close();
+    for (const watcher of this.childWatchers.values()) this.closeWatcher(watcher, "child spawn watcher");
     this.childWatchers.clear();
-    for (const watcher of this.candidateWatchers.values()) watcher.close();
+    for (const watcher of this.candidateWatchers.values()) this.closeWatcher(watcher, "candidate spawn watcher");
     this.candidateWatchers.clear();
     if (this.debounce) clearTimeout(this.debounce);
     if (this.maxWave) clearTimeout(this.maxWave);
     if (this.scanScheduled) clearTimeout(this.scanScheduled);
+    if (this.fallbackScanInterval) clearInterval(this.fallbackScanInterval);
+    this.fallbackScanInterval = null;
+    this.fallbackScanReasons.clear();
+    this.topLevelWatcherAlive = false;
     for (const timer of this.bashGraceTimers.values()) clearTimeout(timer);
     this.bashGraceTimers.clear();
   }
@@ -126,39 +152,87 @@ class SpawnWatchRuntime {
     return terminalStates.length;
   }
 
-  private watchTopLevelSpawnsDir(): FSWatcher {
-    return this.watchDirectory(this.spawnsDir, (_eventType, filename) => {
-      const name = filename ? path.basename(filename.toString()) : "";
-      if (name.startsWith("p")) {
-        void this.discoverChild(name).then((adopted) => {
-          if (!adopted) this.watchCandidateSpawnDir(name);
-          this.requestScan();
-        });
-        return;
-      }
-      this.requestScan();
-    });
+  private watchTopLevelSpawnsDir(): FSWatcher | null {
+    let watcher: FSWatcher | null = null;
+    watcher = this.watchDirectory(
+      this.spawnsDir,
+      (_eventType, filename) => {
+        const name = filename ? path.basename(filename.toString()) : "";
+        if (name.startsWith("p")) {
+          void this.discoverChild(name).then((adopted) => {
+            if (!adopted) this.watchCandidateSpawnDir(name);
+            this.requestScan();
+          });
+          return;
+        }
+        this.requestScan();
+      },
+      {
+        onError: () => {
+          if (watcher) this.removeWatcher(watcher);
+          this.setTopLevelWatcherAlive(false);
+        },
+      },
+    );
+    return watcher;
   }
 
   private watchChildSpawnDir(spawnId: string): void {
-    if (this.childWatchers.has(spawnId)) return;
+    const fallbackReason = `child:${spawnId}`;
+    if (this.childWatchers.has(spawnId) || this.fallbackScanReasons.has(fallbackReason)) return;
     const dir = path.join(this.spawnsDir, spawnId);
     if (!existsSync(dir)) return;
-    const watcher = this.watchDirectory(dir, (_eventType, filename) => {
-      const name = filename?.toString() ?? "";
-      if (!name || name === "state.json") this.requestScan();
-    });
+    let watcher: FSWatcher | null = null;
+    watcher = this.watchDirectory(
+      dir,
+      (_eventType, filename) => {
+        const name = filename?.toString() ?? "";
+        if (!name || name === "state.json") this.requestScan();
+      },
+      {
+        onError: () => {
+          if (watcher && this.childWatchers.get(spawnId) === watcher) this.childWatchers.delete(spawnId);
+          this.enableFallbackScan(fallbackReason);
+        },
+      },
+    );
+    if (!watcher) {
+      this.enableFallbackScan(fallbackReason);
+      return;
+    }
     this.childWatchers.set(spawnId, watcher);
   }
 
   private watchCandidateSpawnDir(spawnId: string): void {
-    if (this.childSpawnIds.has(spawnId) || this.candidateWatchers.has(spawnId)) return;
+    const fallbackReason = `candidate:${spawnId}`;
+    if (
+      this.childSpawnIds.has(spawnId) ||
+      this.candidateWatchers.has(spawnId) ||
+      this.fallbackScanReasons.has(fallbackReason)
+    ) {
+      return;
+    }
     const dir = path.join(this.spawnsDir, spawnId);
     if (!existsSync(dir)) return;
-    const watcher = this.watchDirectory(dir, (_eventType, filename) => {
-      const name = filename?.toString() ?? "";
-      if (!name || name === "state.json") void this.resolveCandidate(spawnId);
-    });
+    let watcher: FSWatcher | null = null;
+    watcher = this.watchDirectory(
+      dir,
+      (_eventType, filename) => {
+        const name = filename?.toString() ?? "";
+        if (!name || name === "state.json") void this.resolveCandidate(spawnId);
+      },
+      {
+        onError: () => {
+          if (watcher && this.candidateWatchers.get(spawnId) === watcher) this.candidateWatchers.delete(spawnId);
+          this.enableFallbackScan(fallbackReason);
+        },
+      },
+    );
+    if (!watcher) {
+      this.enableFallbackScan(fallbackReason);
+      void this.resolveCandidate(spawnId);
+      return;
+    }
     this.candidateWatchers.set(spawnId, watcher);
     void this.resolveCandidate(spawnId);
   }
@@ -166,11 +240,76 @@ class SpawnWatchRuntime {
   private watchDirectory(
     dir: string,
     onChange: (eventType: string, filename: string | Buffer | null) => void,
-  ): FSWatcher {
-    mkdirSync(dir, { recursive: true });
-    const watcher = watch(dir, { recursive: false }, onChange);
-    watcher.unref();
-    return watcher;
+    options: { onError?: (error: unknown) => void } = {},
+  ): FSWatcher | null {
+    try {
+      mkdirSync(dir, { recursive: true });
+      const watcher = watch(dir, { recursive: false }, onChange);
+      watcher.on("error", (error) => {
+        this.logWarning(`watcher error for ${dir}: ${this.formatError(error)}`);
+        this.closeWatcher(watcher, `watcher for ${dir}`);
+        options.onError?.(error);
+      });
+      watcher.unref();
+      return watcher;
+    } catch (error) {
+      this.logWarning(`failed to watch ${dir}: ${this.formatError(error)}; falling back to polling where available`);
+      return null;
+    }
+  }
+
+  private addWatcher(watcher: FSWatcher | null): void {
+    if (watcher) this.watchers.push(watcher);
+  }
+
+  private removeWatcher(watcher: FSWatcher): void {
+    this.watchers = this.watchers.filter((candidate) => candidate !== watcher);
+  }
+
+  private setTopLevelWatcherAlive(alive: boolean): void {
+    this.topLevelWatcherAlive = alive;
+    if (alive) {
+      this.disableFallbackScan("top-level-spawns-dir");
+      return;
+    }
+    this.enableFallbackScan("top-level-spawns-dir");
+  }
+
+  private enableFallbackScan(reason: string): void {
+    if (!this.running) return;
+    const wasEmpty = this.fallbackScanReasons.size === 0;
+    this.fallbackScanReasons.add(reason);
+    if (!wasEmpty || this.fallbackScanInterval) return;
+    this.fallbackScanInterval = setInterval(() => this.requestScan(), FALLBACK_SCAN_MS);
+    this.fallbackScanInterval.unref();
+    this.requestScan();
+  }
+
+  private disableFallbackScan(reason: string): void {
+    this.fallbackScanReasons.delete(reason);
+    if (this.fallbackScanReasons.size > 0 || !this.fallbackScanInterval) return;
+    clearInterval(this.fallbackScanInterval);
+    this.fallbackScanInterval = null;
+  }
+
+  private closeWatcher(watcher: FSWatcher, context: string): void {
+    try {
+      watcher.close();
+    } catch (error) {
+      this.logWarning(`failed to close ${context}: ${this.formatError(error)}`);
+    }
+  }
+
+  private logWarning(message: string): void {
+    process.stderr.write(`[meridian-spawn-watch] warning: ${message}\n`);
+  }
+
+  private formatError(error: unknown): string {
+    if (error instanceof Error) {
+      const code = typeof (error as NodeJS.ErrnoException).code === "string" ? ` ${(error as NodeJS.ErrnoException).code}` : "";
+      return `${error.name}${code}: ${error.message}`;
+    }
+    return String(error);
   }
 
   private requestScan(): void {
@@ -199,6 +338,7 @@ class SpawnWatchRuntime {
   }
 
   private async scanSpawns(): Promise<void> {
+    if (!this.topLevelWatcherAlive || this.fallbackScanInterval) await this.discoverExistingChildren();
     const suppressed = await this.readSuppressedSpawnIds();
     for (const state of await this.rows()) {
       if (!isTerminalSpawnStatus(state.status)) continue;
@@ -377,11 +517,14 @@ class SpawnWatchRuntime {
   private adoptChild(spawnId: string): void {
     this.childSpawnIds.add(spawnId);
     this.watchChildSpawnDir(spawnId);
+    this.disableFallbackScan(`candidate:${spawnId}`);
   }
 
   private closeCandidate(spawnId: string): void {
-    this.candidateWatchers.get(spawnId)?.close();
+    const watcher = this.candidateWatchers.get(spawnId);
+    if (watcher) this.closeWatcher(watcher, "candidate spawn watcher");
     this.candidateWatchers.delete(spawnId);
+    this.disableFallbackScan(`candidate:${spawnId}`);
   }
 
   private async readChildSpawnStates(): Promise<SpawnStateFile[]> {

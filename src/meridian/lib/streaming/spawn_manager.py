@@ -318,17 +318,6 @@ class SpawnManager:
         self._history_writers[spawn_id] = HarnessHistoryWriter(self._history_path(spawn_id))
         if on_event is not None:
             self.register_observer(spawn_id, CallbackObserver(on_event))
-        drain_task = asyncio.create_task(
-            self._drain_loop(
-                spawn_id,
-                connection,
-                tracer,
-                drain_policy=resolved_policy,
-                pi_session_role=pi_session_role,
-                notification_timeout_seconds=config.pi_notification_timeout_seconds,
-                child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
-            )
-        )
         control_server = self._control_server_factory(
             spawn_id,
             self._spawn_dir(spawn_id) / "control.sock",
@@ -341,13 +330,24 @@ class SpawnManager:
             if tracer is not None:
                 tracer.close()
             await self._observers.shutdown(spawn_id)
-            drain_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await drain_task
+            self._history_writers.pop(spawn_id, None)
+            with suppress(Exception):
+                await control_server.stop()
             with suppress(Exception):
                 await connection.stop()
             raise
 
+        drain_task = asyncio.create_task(
+            self._drain_loop(
+                spawn_id,
+                connection,
+                tracer,
+                drain_policy=resolved_policy,
+                pi_session_role=pi_session_role,
+                notification_timeout_seconds=config.pi_notification_timeout_seconds,
+                child_wave_timeout_seconds=config.pi_child_wave_timeout_seconds,
+            )
+        )
         self._sessions[spawn_id] = SpawnSession(
             connection=connection,
             drain_task=drain_task,
@@ -452,6 +452,21 @@ class SpawnManager:
                         # Give already-buffered/in-memory event iterators one loop tick before
                         # applying tiny policy timeouts such as Pi micro-drain.
                         await asyncio.sleep(0)
+                    if (
+                        pi_drain.quiescence_candidate is not None
+                        and not pending_event_task.done()
+                    ):
+                        # Pi micro-drain is a scheduler-yield boundary, not a real wait.
+                        # Resolving it explicitly avoids relying on sub-millisecond
+                        # wait_for() timers, which can leave an idle spawned Pi session
+                        # parked forever after quiescence_micro_drain_started.
+                        timeout_outcome = await pi_drain.handle_timeout(
+                            _terminate_tracked_pi_children,
+                        )
+                        if timeout_outcome is not None:
+                            recorded_terminal_outcome = timeout_outcome
+                            break
+                        continue
                     if next_timeout is not None:
                         event = await asyncio.wait_for(
                             asyncio.shield(pending_event_task),
