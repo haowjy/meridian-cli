@@ -104,6 +104,10 @@ class PiDiskWatcher:
                 self._delivered_change_generation = self._change_generation
                 return
             if event is self._state_changed:
+                # Replace the stale-set Event. asyncio.Event.set() is sticky, so a
+                # previously-delivered generation leaves the event object set and
+                # event.wait() returns immediately on the next call. Replacing it
+                # here prevents a false wakeup on the next loop iteration.
                 self._state_changed = asyncio.Event()
 
     def _quiescence_disk_snapshot(self) -> _QuiescenceDiskSnapshot:

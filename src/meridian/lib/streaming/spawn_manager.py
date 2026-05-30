@@ -457,7 +457,7 @@ class SpawnManager:
                     if pi_drain.quiescence_enabled:
                         if pending_disk_task is None or pending_disk_task.done():
                             pending_disk_task = asyncio.create_task(
-                                pi_drain.quiescence_tracker.wait_for_disk_change()
+                                pi_drain.wait_for_disk_change()
                             )
                         wait_tasks.add(pending_disk_task)
                     if next_timeout is not None:
@@ -474,6 +474,9 @@ class SpawnManager:
                         if pending_event_task in done:
                             if pending_disk_task is not None and pending_disk_task in done:
                                 pending_disk_task = None
+                                # Defer disk reevaluation until after this event is persisted
+                                # and observed — a simultaneous subspawn terminal event must
+                                # be folded into quiescence state before we reevaluate.
                                 disk_change_ready_after_event = True
                             if timeout_task is not None and not timeout_task.done():
                                 timeout_task.cancel()
@@ -490,8 +493,6 @@ class SpawnManager:
                             await pi_drain.reevaluate_after_disk_change()
                             continue
                         else:
-                            if pending_disk_task is not None and pending_disk_task.done():
-                                pending_disk_task = None
                             timeout_outcome = await pi_drain.handle_timeout(
                                 _terminate_tracked_pi_children,
                             )
@@ -572,6 +573,8 @@ class SpawnManager:
                 self._fan_out_event(spawn_id, event)
                 pi_drain.note_event_persisted(event)
                 if disk_change_ready_after_event:
+                    # Disk change arrived concurrently with this event; reevaluate now
+                    # that the event has been persisted and observers notified.
                     await pi_drain.reevaluate_after_disk_change()
 
                 pi_lifecycle_error = pi_drain.lifecycle_error_outcome()

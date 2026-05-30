@@ -728,6 +728,9 @@ class PiDrainCoordinator:
         if self.is_pi_connection:
             self._emit("finalized", status=status, exit_code=exit_code, error=error)
 
+    async def wait_for_disk_change(self) -> None:
+        await self.quiescence_tracker.wait_for_disk_change()
+
     def has_pending_children(self) -> bool:
         return self.tracker.has_pending() or self.quiescence_tracker.has_pending_child_spawns()
 
