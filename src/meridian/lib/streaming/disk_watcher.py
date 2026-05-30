@@ -197,12 +197,13 @@ class PiDiskWatcher:
                 continue
             if child.name in self._child_spawn_ids:
                 continue
-            data = _read_json_object(child / "state.json")
+            state_path = child / "state.json"
+            data = _read_json_object(state_path)
             parent_id = data.get("parent_id")
             if parent_id == self._current_spawn_id:
                 self._candidate_child_spawn_ids.discard(child.name)
                 self._child_spawn_ids.add(child.name)
-            elif child.name.startswith("p") and not (child / "state.json").exists():
+            elif child.name.startswith("p") and (not state_path.exists() or not data):
                 self._candidate_child_spawn_ids.add(child.name)
 
     def _resolve_candidate_child_spawns(self) -> None:
@@ -213,7 +214,7 @@ class PiDiskWatcher:
             if parent_id == self._current_spawn_id:
                 self._candidate_child_spawn_ids.discard(spawn_id)
                 self._child_spawn_ids.add(spawn_id)
-            elif state_path.exists() and data:
+            elif not state_path.parent.exists() or (state_path.exists() and data):
                 self._candidate_child_spawn_ids.discard(spawn_id)
 
     def _scan_pending_child_spawn_count(self) -> int:

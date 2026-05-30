@@ -170,6 +170,44 @@ async def test_force_rescan_tracks_unresolved_child_directory_as_pending(
 
 
 @pytest.mark.asyncio
+async def test_force_rescan_tracks_empty_child_state_as_unresolved(
+    tmp_path: Path,
+) -> None:
+    parent_id = SpawnId("p-parent")
+    child_state = tmp_path / "spawns" / "p-child" / "state.json"
+    _write_json(child_state, {})
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        assert watcher.has_pending_child_spawns() is True
+        assert watcher.pending_child_spawn_count() == 1
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_candidate_child_directory_deleted_clears_pending(
+    tmp_path: Path,
+) -> None:
+    parent_id = SpawnId("p-parent")
+    child_dir = tmp_path / "spawns" / "p-child"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        child_dir.mkdir(parents=True)
+        await watcher.force_rescan()
+        assert watcher.has_pending_child_spawns() is True
+
+        child_dir.rmdir()
+        await watcher.force_rescan()
+        assert watcher.has_pending_child_spawns() is False
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
 async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
