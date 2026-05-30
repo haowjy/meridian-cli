@@ -54,7 +54,7 @@ _pi_subspawn_pid = pi_lifecycle.pi_subspawn_pid
 _pi_wait_policy_is_tracked = pi_lifecycle.pi_wait_policy_is_tracked
 _unsupported_pi_schema_version_error = pi_lifecycle.unsupported_pi_schema_version_error
 
-PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 1e-6
+PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
 
 EmitPiPhase = Callable[..., None]
 TerminatePiChildren = Callable[["PiSubspawnTracker", str], Awaitable[None]]

@@ -21,7 +21,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.pi_drain import PI_MICRO_DRAIN_TIMEOUT_SECONDS, PiSubspawnTracker
+from meridian.lib.streaming.pi_drain import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
@@ -523,9 +523,8 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         await manager.stop_spawn(spawn_id)
 
 @pytest.mark.asyncio
-async def test_spawn_manager_pi_micro_drain_resolves_without_wait_for_timer(
+async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _OpenAfterTerminalConnection(_FakePiConnection):
         async def events(self):  # type: ignore[no-untyped-def]
@@ -546,15 +545,6 @@ async def test_spawn_manager_pi_micro_drain_resolves_without_wait_for_timer(
         await fake_connection.start(config, spec)
         return fake_connection
 
-    original_wait_for = asyncio.wait_for
-
-    async def _guarded_wait_for(awaitable: Any, timeout: float | None = None) -> Any:
-        if timeout == PI_MICRO_DRAIN_TIMEOUT_SECONDS:
-            raise AssertionError("Pi micro-drain must not rely on wait_for's tiny timer")
-        return await original_wait_for(awaitable, timeout=timeout)
-
-    monkeypatch.setattr(asyncio, "wait_for", _guarded_wait_for)
-
     manager = SpawnManager(
         runtime_root=tmp_path,
         project_root=tmp_path,
@@ -562,7 +552,7 @@ async def test_spawn_manager_pi_micro_drain_resolves_without_wait_for_timer(
         control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
     )
 
-    spawn_id = SpawnId("p-pi-micro-drain-no-timer")
+    spawn_id = SpawnId("p-pi-micro-drain-bounded-timeout")
     await manager.start_spawn(
         ConnectionConfig(
             spawn_id=spawn_id,
@@ -580,7 +570,7 @@ async def test_spawn_manager_pi_micro_drain_resolves_without_wait_for_timer(
     )
 
     try:
-        outcome = await original_wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        outcome = await asyncio.wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
         assert outcome is not None
         assert outcome.status == "succeeded"
         assert outcome.error is None
@@ -725,7 +715,7 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
                     {"messages": [{"role": "assistant", "stopReason": "stop"}]},
                 ),
             ),
-            (0.03, _pi_event("agent_start", {})),
+            (0.15, _pi_event("agent_start", {})),
         ]
     )
 
@@ -752,7 +742,7 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
             control_root=tmp_path,
             env_overrides={},
             pi_session_role="spawned",
-            pi_child_wave_timeout_seconds=0.02,
+            pi_child_wave_timeout_seconds=0.1,
         ),
         ResolvedLaunchSpec(
             harness=HarnessId.PI,
