@@ -16,7 +16,8 @@ from meridian.lib.harness.connections.base import ConnectionConfig, HarnessConne
 from meridian.lib.harness.semantics import TerminalEventOutcome
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator, PiSubspawnTracker
+from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
 from tests.unit.streaming.pi_quiescence_test_helpers import (
     FakePiConnection as _FakePiConnection,

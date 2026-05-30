@@ -52,7 +52,8 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator, PiSubspawnTracker
+from meridian.lib.streaming.pi_drain import PiDrainCoordinator
+from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.types import InjectResult
 
 StartConnectionPort = Callable[
