@@ -17,6 +17,47 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def test_try_adopt_candidate_stops_for_settled_non_child_spawn(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    standalone_dir = tmp_path / "spawns" / "p-standalone"
+    standalone_dir.mkdir(parents=True)
+    _write_json(
+        standalone_dir / "state.json",
+        {"id": "p-standalone", "status": "running"},
+    )
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    assert watcher._try_adopt_candidate("p-standalone", standalone_dir) is True
+    assert "p-standalone" not in watcher._child_spawn_ids
+
+
+def test_try_adopt_candidate_stops_for_other_parent_spawn(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    other_child_dir = tmp_path / "spawns" / "p-other-child"
+    other_child_dir.mkdir(parents=True)
+    _write_json(
+        other_child_dir / "state.json",
+        {"id": "p-other-child", "parent_id": "p-other-parent", "status": "running"},
+    )
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    assert watcher._try_adopt_candidate("p-other-child", other_child_dir) is True
+    assert "p-other-child" not in watcher._child_spawn_ids
+
+
+def test_try_adopt_candidate_keeps_watching_until_state_settles(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    candidate_dir = tmp_path / "spawns" / "p-new"
+    candidate_dir.mkdir(parents=True)
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    assert watcher._try_adopt_candidate("p-new", candidate_dir) is False
+
+    _write_json(candidate_dir / "state.json", {"id": "p-new", "status": "running"})
+    assert watcher._try_adopt_candidate("p-new", candidate_dir) is True
+    assert "p-new" not in watcher._child_spawn_ids
+
+
 @pytest.mark.asyncio
 async def test_pi_disk_watcher_tracks_child_spawn_state_from_disk(tmp_path: Path) -> None:
     parent_id = SpawnId("p-parent")
