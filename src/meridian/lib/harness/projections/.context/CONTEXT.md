@@ -13,7 +13,7 @@ project_codex_streaming.py  → CodexLaunchSpec → args + env   (codex app-serv
 project_opencode_subprocess.py → OpenCodeLaunchSpec → args + env  (opencode run)
 project_opencode_streaming.py  → OpenCodeLaunchSpec → args + env  (opencode serve)
 project_cursor.py          → ResolvedLaunchSpec → args        (cursor agent)
-project_pi_rpc.py          → ResolvedLaunchSpec → args + env (pi rpc --mode rpc)
+project_pi_rpc.py          → ResolvedLaunchSpec → args + env (pi --mode rpc)
 project_pi_native_tui.py   → ResolvedLaunchSpec → args + env (pi native TUI, primary only)
 pi_extension_projection.py → (extension dist artifacts → per-launch materialization, no spec dependency)
 ```

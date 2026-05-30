@@ -133,7 +133,7 @@ meridian spawn wait <spawn-id>
 
 Expect:
 - Stale shaping applies only after grace windows: startup grace (~15s) and
-  recent-activity grace (~120s heartbeat/history/lifecycle mtime). Before those
+  recent-activity grace (~120s heartbeat/history/spawn-record/bash-record mtime). Before those
   windows expire, nested wait/show can still report `running`.
 - Wait does not hang forever in nested mode
 - `spawn show`/`spawn wait` resolves using read-only stale detection
@@ -142,6 +142,27 @@ Expect:
 - On-disk spawn row is not reconciler-finalized by the nested read path; verify
   `<runtime-root>/spawns/<spawn-id>/state.json` still has active status
   (`"status":"running"`) after nested `spawn wait` returns synthetic failed
+
+## S6d: Local-source nested Pi spawn is tracked by disk state
+
+Use local source for both parent and child so this exercises the in-worktree Pi drain
+path, not the installed Meridian binary:
+
+```bash
+PROJECT=$PWD
+MERIDIAN_HOME=$(mktemp -d) timeout 240s uv run meridian -C "$PROJECT" --harness pi spawn \
+  -m gpt-5.4-mini \
+  -p "Run exactly this command as a tracked child spawn and wait for it to finish: uv run meridian -C '$PROJECT' --harness pi spawn -m gpt-5.4-mini -p 'Reply exactly NESTED_CHILD_OK and run no commands.' --timeout 1 --format json. After the child completes, reply exactly PARENT_AFTER_CHILD_OK and include the child spawn id. Do not run any other commands." \
+  --timeout 4 --format json
+```
+
+Expect:
+
+- Parent spawn succeeds and reports `PARENT_AFTER_CHILD_OK`
+- Child spawn succeeds and reports `NESTED_CHILD_OK`
+- Child `state.json` has `parent_id` equal to the parent spawn id
+- Child `state.json` has `originating_bash_id: "b-*"` when launched through Pi's managed bash tool
+- Parent history shows quiescence/finalization only after the child record is terminal
 
 ## S7: Primary Pi native TUI wrapper
 
@@ -196,7 +217,7 @@ Expect:
 - POSIX cleanup attempts tracked process-group termination when pid/pgid metadata exists
 - Detached jobs are not killed by the cleanup path
 
-## S11: Malformed lifecycle event fails closed
+## S11: Malformed disk coordination state fails closed
 
 **Automated coverage:** `tests/unit/harness/test_pi_integration.py` and
 `tests/unit/streaming/test_pi_quiescence.py` (malformed disk-backed coordination state).
@@ -322,7 +343,7 @@ Expect when exercising manually:
 - Detached children do not block quiescence
 - Tracked timeouts finalize the spawn without waiting on detached jobs
 
-## S29-S32: Primary lifecycle extension remains non-invasive
+## S29-S32: Primary spawn-watch extension remains non-invasive
 
 ```bash
 uv run meridian --harness pi -m <pi-model>
@@ -331,13 +352,13 @@ uv run meridian --harness pi -m <pi-model>
 From the native TUI, start `meridian spawn` child work and wait for completion.
 
 Expect:
-- Primary argv loads `meridian-spawn-watch` only (not `managed-bash`), `--mode rpc`, or `--no-extensions`
+- Primary argv loads `meridian-spawn-watch` only (not `managed-bash`, `--mode rpc`, or `--no-extensions`)
 - Child completion can trigger a native Pi follow-up/notification
 - Primary does not auto-finalize or exit at quiescence; user remains in the TUI
 - Coordination state is written to disk-backed Pi files, not stdio
-- Raw lifecycle JSON (`parent_spawn_id`, `correlation_id`, `emitted_at_ms`,
+- Raw coordination JSON (`parent_id`, `originating_bash_id`, notification markers,
   `meridian.notification.*`, etc.) does **not** appear in the visible TUI
-- Primary lifecycle diagnostics, if captured, are diagnostic-only and do not drive spawned quiescence
+- Primary diagnostics, if captured, are diagnostic-only and do not drive spawned quiescence
 
 ## S33-S36: Primary Pi session identity and continue/fork
 

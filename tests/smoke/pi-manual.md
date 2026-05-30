@@ -6,6 +6,9 @@ Short checklist before deeper Pi RPC scenarios (`pi-rpc-quiescence.md`). Use a *
 installed `pi` on `PATH` — not a stub script or `MERIDIAN_PI_BINARY` pointed at a fake
 binary.
 
+For the nested local-source parent/child quiescence check, use
+`pi-rpc-quiescence.md` S6d after this gate passes.
+
 ## Setup
 
 ```bash

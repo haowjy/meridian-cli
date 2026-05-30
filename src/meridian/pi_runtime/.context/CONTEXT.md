@@ -3,124 +3,141 @@
 ## Architecture
 
 Meridian-owned TypeScript extensions that run inside the Pi harness process. Pi is the
-first harness with an in-process extension architecture — other harnesses (Claude,
-Codex, OpenCode) are opaque subprocesses. Extensions give Meridian a seam for
-observability and coordination that doesn't exist in the Pi CLI natively.
+first harness with an in-process extension architecture — other harnesses are opaque
+subprocesses. Extensions give Meridian a seam for observability and coordination that
+Pi's native CLI does not expose.
+
+The coordination boundary is **disk state the extensions write and Python observes**.
+Pi stdout remains the JSON-RPC transport; background-work and child-spawn authority does
+not travel over stdout and does not use a separate JSONL event tailer.
 
 ### Directory Layout
 
 ```
 pi_runtime/
-├── package.json              # pnpm workspace root, build scripts, "meridian-pi-extensions"
+├── package.json              # extension build/test scripts, "meridian-pi-extensions"
 ├── pnpm-workspace.yaml       # declares packages=[], allows esbuild builds
 ├── pnpm-lock.yaml            # exact dependency tree
-├── bin/                      # (reserved for future Pi runtime binaries)
 ├── dist/                     # build output: splatted entrypoints
 │   └── extensions/
 │       ├── managed-bash/index.js
-│       └── meridian-lifecycle/index.js
+│       └── meridian-spawn-watch/index.js
 └── extensions/
     ├── types.ts              # shared TS types (ExtensionAPI, ToolRegistration)
-    ├── shared/
-    │   └── lifecycle_sidecar.ts  # JSONL file writer for lifecycle events
+    ├── shared/               # ids, json files, panels, pi state paths, meridian CLI helpers
     ├── managed-bash/
-    │   └── src/index.ts      # bash tool override, tracked/detached jobs
-    └── meridian-lifecycle/
-        └── src/index.ts      # lifecycle event bus consumer, wave/notification logic
+    │   └── src/index.ts      # bash/bash_manage override, b-* records, /ps* UI
+    └── meridian-spawn-watch/
+        └── src/index.ts      # spawn disk watcher, implicit-wait notifications, /spawn* UI
 ```
+
+### Extension Responsibilities
+
+| Extension | Owns | Writes / observes |
+|---|---|---|
+| `managed-bash` | `bash` / `bash_manage`, tracked vs detached bash records, `/ps*` slash commands, `MERIDIAN_PI_BASH_ID` injection into child processes | `runtime_root/pi-bash/<spawn-id>/bash-records.json` and bash logs |
+| `meridian-spawn-watch` | correlated spawn discovery, `/spawn*` slash commands, implicit-wait `sendMessage({triggerTurn: true})` notifications | watches `runtime_root/spawns/<child>/state.json`, reads `originating_bash_id`, writes `runtime_root/pi-bash/<spawn-id>/last-notification.json` |
+
+`managed-bash` is the mechanism extension. `meridian-spawn-watch` is the policy extension.
+Keep that split: shell task execution and task record persistence belong in managed-bash;
+child-spawn observation and notification behavior belong in spawn-watch.
 
 ### Build Pipeline
 
 `npm run build:extensions` runs three scripts in sequence:
-1. `build:extensions:clean` — `rmSync('./dist/extensions', { recursive: true, force: true })`
-2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single file output
-3. `build:extensions:meridian-lifecycle` — same for `meridian-lifecycle/src/index.ts`
 
-`tsup` is the bundler (esbuild under the hood). No splitting — each extension is a
-self-contained `.js` file. The `--clean` flag in each `tsup` invocation cleans only that
-extension's output directory.
+1. `build:extensions:clean` — removes `./dist/extensions`
+2. `build:extensions:managed-bash` — `tsup` bundles `managed-bash/src/index.ts` → ESM, Node 20, single-file output
+3. `build:extensions:meridian-spawn-watch` — bundles `meridian-spawn-watch/src/index.ts` the same way
 
-Output goes to `dist/extensions/`. The Python-side `pi_extension_projection.py` copies
-these built artifacts to a user-level state directory per launch (under
-`~/.meridian/meridian-pi/agent/extensions/<launch-id>/`). This prevents stale cached
-extensions across launches.
+`npm run verify:extensions` rebuilds and runs Vitest coverage for the extension sources.
+
+Output goes to `dist/extensions/`. Python launch projection resolves entrypoints with
+`pi_extension_projection.py`, preferring the repo build output during local development
+and falling back to the installed bundle root from `pi_paths.resolve_meridian_pi_extension_root()`.
+A missing bundle raises `PiExtensionProjectionError` with the build command.
 
 ### Extension Loading
 
-Pi loads extensions via `-e <path>` CLI flags. Meridian passes per-launch materialized
-paths from `pi_extension_projection.py`:
-- **spawned mode**: both extensions loaded (managed-bash + meridian-lifecycle)
-- **primary mode**: only meridian-lifecycle loaded (no bash tool override for primary)
+Pi loads extensions via explicit `-e <path>` CLI flags. Meridian launches with
+`--no-extensions` and then adds only the selected Meridian bundles, so ambient user
+extensions do not change spawn behavior.
+
+- **spawned RPC mode**: `managed-bash` + `meridian-spawn-watch`
+- **primary native TUI mode**: `meridian-spawn-watch` only; no bash override and no spawned-session auto-stop
+
+Role-specific behavior is gated by environment, including `MERIDIAN_PI_SESSION_ROLE` and
+`MERIDIAN_PI_STATE_DIR`.
 
 ## Contracts
 
-### Lifecycle Sidecar (shared/lifecycle_sidecar.ts)
+### Disk-State Coordination
 
-`createLifecycleSidecarWriter(role)` opens a JSONL file for append. The file path comes
-from `MERIDIAN_PI_LIFECYCLE_EVENT_FILE` env var — set by `prepare_pi_lifecycle_event_file()`
-in the Python layer before spawn.
+The Python streaming layer treats these files as authoritative quiescence inputs:
 
-- **role=spawned**: env var is required — throws if missing or unopenable
-- **role=primary**: env var is optional — returns a noop writer if missing
-- Writes `JSON.stringify(event) + "\n"` synchronously via `writeSync`. Synchronous write
-  is intentional: JSONL integrity requires no interleaving; async writes across extension
-  boundaries would require a shared mutex.
-- Errors are silently swallowed — no stdout/stderr fallback for machine events
+- `runtime_root/spawns/<child>/state.json` — child spawn status and `parent_id`
+- `runtime_root/pi-bash/<parent>/bash-records.json` — tracked/detached bash records
+- `runtime_root/pi-bash/<parent>/last-notification.json` — last implicit-wait notification marker
 
-### ExtensionAPI (types.ts)
+Writes must use the shared JSON-file helpers so readers never observe half-written JSON.
+Readers tolerate truncation/missing files and re-check disk before final quiescence.
 
-Shared TypeScript interface between Pi harness and extensions:
+### ExtensionAPI (`types.ts`)
+
+Shared TypeScript interface between Pi and extensions:
+
 - `registerTool(definition)` — register a tool with name, description, input schema, and call handler
-- `registerHook(name, handler)` — register a lifecycle hook
-- `session.on(event, handler)` — subscribe to session events (used for `tool_result`, `agent_end`, etc.)
-- `session.sendMessage(message, options)` — send a message to the parent session (used for wave notifications)
+- `registerHook(name, handler)` — register lifecycle hooks where Pi exposes them
+- `session.on(event, handler)` — subscribe to session events
+- `session.sendMessage(message, options)` — send an agent follow-up message; spawn-watch uses this for implicit-wait notifications
 
-### MERIDIAN_SPAWN_COMMAND_PATTERN
+### Spawn Correlation
 
-Both extensions share the regex `/\bmeridian\s+spawn\b/` to detect when a bash command
-contains a `meridian spawn` invocation. This is the bridge between the bash tool and the
-lifecycle extension: managed-bash emits `meridian:subspawn:start`/`end` internal events,
-and meridian-lifecycle consumes them to track child spawn lifecycle.
+`managed-bash` injects `MERIDIAN_PI_BASH_ID=b-*` into every child process. If that
+process runs `meridian spawn` (directly, through `uv run meridian`, or through a wrapper),
+Meridian's spawn store persists the value as `originating_bash_id` on the child spawn
+record. `meridian-spawn-watch` reads disk state and uses that field to scope `/spawn`
+rows and notifications to the current Pi session.
+
+Do not reintroduce argv parsing as the authority. Env propagation plus spawn-record writes
+are the stable bridge.
 
 ### Build Invariant
 
-Extensions must be built before spawn. The Python projection layer raises
-`PiExtensionProjectionError` if `dist/extensions/<name>/index.js` is missing.
-The error message directs to `cd src/meridian/pi_runtime && npm run build:extensions`.
+Extensions must be built before Pi launch. The projection layer raises
+`PiExtensionProjectionError` if `dist/extensions/<name>/index.js` and the installed bundle
+copy are both missing.
 
 ## Rationale
 
 ### Why In-Process Extensions
 
-The Pi protocol (JSON-RPC over stdio) has no built-in mechanism for tracking child
-process lifecycle, notification delivery, or quiescence detection. Instead of wrapping
-Pi in an outer subprocess with PTY capture (like Claude), Meridian ships extensions that
-run inside the Pi process itself. This gives first-class access to session events
-(`tool_result`, `agent_end`, `session_start`, `session_shutdown`) and the ability to
-send follow-up messages via `session.sendMessage()`.
+Pi's RPC protocol gives Meridian a bidirectional JSON-RPC session, but not enough native
+surface for background task tracking, child-spawn correlation, or follow-up notification
+policy. In-process extensions can override tools, observe session events, and call
+`sendMessage()` without wrapping Pi in a fake terminal or scraping stdout.
+
+### Why Disk Instead of Sidecar Events
+
+Current Pi coordination is state-based:
+
+- extension writes durable task/spawn/notification state;
+- `PiDiskWatcher` wakes the Python drain loop on changes;
+- `PiQuiescenceTracker` evaluates current state before finalization.
+
+State files survive crashes and work for nested `uv run meridian ... spawn` commands
+without the parent needing to parse command strings or receive every event in order.
 
 ### Why TypeScript
 
 Pi's extension system is TypeScript-native. Bundling with tsup/esbuild produces ESM
-output targeting Node 20, which is the Pi runtime's Node version. No transpilation to
-JavaScript by hand — the bundler handles module resolution and tree-shaking.
-
-### Sidecar vs Inline Events
-
-Lifecycle events are written to a sidecar JSONL file, NOT emitted on stdout. Pi's stdout
-is the JSON-RPC transport channel — mixing lifecycle events into it would pollute the
-protocol stream. The sidecar file is tailed incrementally by `PiLifecycleEventTailer` in
-the Python layer (see [connections/pi_lifecycle_file.py](../../lib/harness/connections/pi_lifecycle_file.py)).
-
-### Synchronous Writes in Sidecar
-
-`writeSync` is used because (a) the sidecar is a low-throughput append-only file and
-(b) async writes from different extensions could interleave mid-line, producing broken
-JSON. A shared mutex would add complexity with no throughput benefit.
+output targeting Node 20, which matches Pi's runtime. Extension imports must stay at
+package roots (`@earendil-works/pi-tui`, `@earendil-works/pi-coding-agent`) because
+subpath imports break under Pi's extension loader.
 
 ## Related .context/
 
-- [../../lib/harness/.context/CONTEXT.md](../../lib/harness/.context/CONTEXT.md) — PiAdapter, runtime resolution, lifecycle event parsing
-- [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — `pi_extension_projection.py` copies built artifacts
-- [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — `PiLifecycleEventTailer` reads the sidecar
-- [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — quiescence drain policy consumes lifecycle events
+- [../../lib/harness/.context/CONTEXT.md](../../lib/harness/.context/CONTEXT.md) — PiAdapter, runtime resolution, quiescence completion model
+- [../../lib/harness/projections/.context/CONTEXT.md](../../lib/harness/projections/.context/CONTEXT.md) — extension entrypoint projection
+- [../../lib/harness/connections/.context/CONTEXT.md](../../lib/harness/connections/.context/CONTEXT.md) — Pi RPC JSON-RPC transport
+- [../../lib/streaming/.context/CONTEXT.md](../../lib/streaming/.context/CONTEXT.md) — Pi drain/quiescence policy consumes disk-backed state

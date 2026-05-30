@@ -6,8 +6,9 @@ core mechanism that moves events from the harness outward to persistence, observ
 and the subscriber queue.
 
 Mostly mechanism. Generic terminal behavior lives in `DrainPolicy`; Pi spawned-session
-quiescence is the explicit exception, isolated in `pi_drain.py` so Pi child-wave,
-notification, and disk-state policy does not sprawl through `SpawnManager`.
+quiescence is the explicit exception. Keep Pi child-wave, notification, disk-state,
+and tracked-process cleanup policy behind the Pi coordinator/tracker modules instead
+of growing `SpawnManager`.
 
 ## Mental Model
 
@@ -69,9 +70,15 @@ means the manager died or the spawn is orphaned.
 
 ## Entry Points
 
-- `spawn_manager.py` — `SpawnManager`: generic live-spawn lifecycle and event drain
+- `spawn_manager.py` — `SpawnManager`: public live-spawn registry/control API
+- `spawn_dispatch.py` — connection creation/start dispatch
+- `spawn_drain_loop.py` — event drain, persistence/observer/fan-out ordering, outcome priority
+- `spawn_session.py` — `SpawnSession`, `DrainOutcome`
 - `pi_drain.py` — `PiDrainCoordinator`: Pi spawned-session quiescence policy
+- `pi_subspawn_tracker.py` — Pi child-spawn, notification, and wave tracking
 - `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi background-work state
+- `drain_wait.py` — bounded drain/cleanup wait helpers
+- `pi_process_cleanup.py` — tracked Pi child process cleanup
 - `drain_policy.py` — `DrainPolicy`, `SingleTurnDrainPolicy`, `PersistentDrainPolicy`
 - `control_socket.py` — per-spawn inject endpoint
 - `event_observers.py` — `EventObserverRegistry`, `EventObserver`, `CallbackObserver`
