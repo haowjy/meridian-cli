@@ -283,19 +283,26 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
     if not available_skills:
         return ""
 
-    lines = ["# Available Skills", "", "Load these when needed."]
-    type_groups: tuple[tuple[str, str], ...] = (
-        ("Principles", "principle"),
-        ("Guardrails", "guardrail"),
-        ("Mode-shift", "mode-shift"),
-        ("Checkpoint", "checkpoint"),
+    lines = [
+        "# Available Skills",
+        "",
+        "These skills are registered but not yet loaded. "
+        "Load them when the situation calls for their guidance — "
+        "they exist because this agent benefits from them regularly.",
+    ]
+    type_groups: tuple[tuple[str, str, str], ...] = (
+        ("Principles", "principle", "Core operating constraints — override other guidance."),
+        ("Guardrails", "guardrail", "Safety and quality boundaries."),
+        ("Mode-shift", "mode-shift", "Change operating posture when loaded."),
+        ("Checkpoint", "checkpoint", "Verification gates — load at decision points."),
     )
-    known_types = {t for _, t in type_groups}
+    known_types = {t for _, t, _ in type_groups}
 
-    for label, type_key in type_groups:
+    for label, type_key, description in type_groups:
         group = [s for s in available_skills if s.skill_type == type_key]
         if group:
             lines.append(f"\n## {label}")
+            lines.append(f"{description}")
             for skill in group:
                 lines.append(f"- {skill.name}")
 
