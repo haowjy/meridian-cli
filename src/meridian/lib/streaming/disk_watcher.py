@@ -3,6 +3,9 @@
 Pi background-work coordination is file-backed: spawn records under ``spawns/`` and
 managed bash records under ``pi-bash/<spawn-id>/``. This watcher keeps a cached
 view and can force a synchronous rescan before quiescence decisions.
+
+Child discovery is O(children), not O(total spawns). Known children are polled
+on demand via ``force_rescan()`` — no per-child inotify watchers.
 """
 
 from __future__ import annotations
@@ -35,8 +38,6 @@ class PiDiskWatcher:
         self._last_notification_ts: float | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._child_spawn_ids: set[str] = set()
-        self._child_tasks: dict[str, asyncio.Task[None]] = {}
-        self._candidate_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def start(self) -> None:
         self._spawns_dir.mkdir(parents=True, exist_ok=True)
@@ -48,19 +49,16 @@ class PiDiskWatcher:
         ]
 
     async def stop(self) -> None:
-        tasks = [*self._tasks, *self._child_tasks.values(), *self._candidate_tasks.values()]
-        for task in tasks:
+        for task in self._tasks:
             task.cancel()
-        if tasks:
-            done, pending = await asyncio.wait(tasks, timeout=0.2)
+        if self._tasks:
+            done, pending = await asyncio.wait(self._tasks, timeout=0.2)
             for task in done:
                 with suppress(asyncio.CancelledError, Exception):
                     task.result()
             for task in pending:
                 task.add_done_callback(_consume_task_result)
         self._tasks = []
-        self._child_tasks = {}
-        self._candidate_tasks = {}
 
     async def force_rescan(self) -> None:
         self._refresh_cached_state(discover=True)
@@ -86,70 +84,51 @@ class PiDiskWatcher:
         return self._last_notification_ts
 
     async def _watch_spawns_dir(self) -> None:
+        """Watch for new child directories appearing under spawns/.
+
+        Only reacts to directory-level changes (new spawn created). Does NOT
+        create per-directory watchers — child state is polled on demand via
+        ``force_rescan()`` when the parent goes idle.
+        """
         async for changes in awatch(self._spawns_dir, recursive=False):
+            found_new = False
             for _change, raw_path in changes:
                 path = Path(str(raw_path))
-                if path.parent == self._spawns_dir and path.name.startswith("p"):
-                    self._watch_candidate_spawn_dir(path.name, path)
-            self._refresh_cached_state()
+                if (
+                    path.parent == self._spawns_dir
+                    and path.name.startswith("p")
+                    and path.name not in self._child_spawn_ids
+                    and path.is_dir()
+                ):
+                    # Check if this new directory is our child.
+                    data = _read_json_object(path / "state.json")
+                    if data.get("parent_id") == self._current_spawn_id:
+                        self._child_spawn_ids.add(path.name)
+                        found_new = True
+            if found_new:
+                self._refresh_cached_state()
 
     async def _watch_bash_dir(self) -> None:
         async for _changes in awatch(self._bash_dir, recursive=False):
             self._refresh_cached_state()
 
-    async def _watch_child_spawn_dir(self, spawn_id: str, directory: Path) -> None:
-        async for _changes in awatch(directory, recursive=False):
-            data = _read_json_object(directory / "state.json")
-            if data.get("parent_id") != self._current_spawn_id:
-                self._child_spawn_ids.discard(spawn_id)
-                return
-            self._refresh_cached_state()
-
-    def _watch_candidate_spawn_dir(self, spawn_id: str, directory: Path) -> None:
-        if spawn_id in self._child_spawn_ids or spawn_id in self._candidate_tasks:
-            return
-        if not directory.is_dir():
-            return
-        task = asyncio.create_task(self._watch_candidate_until_resolved(spawn_id, directory))
-        self._candidate_tasks[spawn_id] = task
-        task.add_done_callback(lambda _task: self._candidate_tasks.pop(spawn_id, None))
-
-    async def _watch_candidate_until_resolved(self, spawn_id: str, directory: Path) -> None:
-        if self._try_adopt_candidate(spawn_id, directory):
-            return
-        async for _changes in awatch(directory, recursive=False):
-            if self._try_adopt_candidate(spawn_id, directory):
-                return
-
-    def _try_adopt_candidate(self, spawn_id: str, directory: Path) -> bool:
-        data = _read_json_object(directory / "state.json")
-        parent_id = data.get("parent_id")
-        if parent_id == self._current_spawn_id:
-            self._child_spawn_ids.add(spawn_id)
-            if spawn_id not in self._child_tasks:
-                self._child_tasks[spawn_id] = asyncio.create_task(
-                    self._watch_child_spawn_dir(spawn_id, directory)
-                )
-            self._refresh_cached_state()
-            return True
-        # state.json exists and is non-empty — parent_id is settled (or absent).
-        return bool(data)
-
     def _discover_child_spawns(self) -> None:
+        """One-time O(N) scan at startup to find existing children.
+
+        After startup, new children are detected reactively via
+        ``_watch_spawns_dir`` when their directory first appears.
+        """
         if not self._spawns_dir.is_dir():
             return
         for child in self._spawns_dir.iterdir():
             if not child.is_dir():
                 continue
+            if child.name in self._child_spawn_ids:
+                continue
             data = _read_json_object(child / "state.json")
             if data.get("parent_id") != self._current_spawn_id:
                 continue
-            spawn_id = child.name
-            self._child_spawn_ids.add(spawn_id)
-            if spawn_id not in self._child_tasks:
-                self._child_tasks[spawn_id] = asyncio.create_task(
-                    self._watch_child_spawn_dir(spawn_id, child)
-                )
+            self._child_spawn_ids.add(child.name)
 
     def _scan_pending_child_spawn_count(self) -> int:
         count = 0

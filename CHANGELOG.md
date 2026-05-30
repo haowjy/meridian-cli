@@ -8,6 +8,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Pi spawns hanging permanently at quiescence_micro_drain_started — replaced fragile sleep(0)+task.done() heuristic with bounded 50ms asyncio.wait_for timeout. Also fixed O(N) disk watcher creating indefinite awatch tasks for standalone spawn directories (3000+ watchers in production).
 - Pi extension artifacts (managed-bash, meridian-spawn-watch) missing from PyPI wheel — `release.yml` ran `uv build` without building extensions first. Every Pi spawn failed with `Missing Pi extension artifact`. Added Node.js setup, extension build, and wheel contents verification to the release workflow.
 
+### Changed
+- PiDiskWatcher no longer creates per-directory inotify watchers for child or candidate spawns. Children are discovered once at startup (O(N) scan) and polled on demand via `force_rescan()`. New children detected reactively when their directory appears under `spawns/`. Eliminates 3000+ `awatch` tasks that created event-loop pressure.
+
 ## [0.2.16] - 2026-05-30
 
 ## [0.2.15] - 2026-05-29

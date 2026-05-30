@@ -17,45 +17,53 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_try_adopt_candidate_stops_for_settled_non_child_spawn(tmp_path: Path) -> None:
+def test_discover_only_finds_own_children(tmp_path: Path) -> None:
+    """_discover_child_spawns skips dirs with wrong or missing parent_id."""
     parent_id = SpawnId("p-parent")
-    standalone_dir = tmp_path / "spawns" / "p-standalone"
-    standalone_dir.mkdir(parents=True)
+    spawns_dir = tmp_path / "spawns"
+
+    # Our child.
     _write_json(
-        standalone_dir / "state.json",
+        spawns_dir / "p-child" / "state.json",
+        {"id": "p-child", "parent_id": "p-parent", "status": "running"},
+    )
+    # Standalone spawn (no parent_id).
+    _write_json(
+        spawns_dir / "p-standalone" / "state.json",
         {"id": "p-standalone", "status": "running"},
     )
-
-    watcher = PiDiskWatcher(tmp_path, parent_id)
-    assert watcher._try_adopt_candidate("p-standalone", standalone_dir) is True
-    assert "p-standalone" not in watcher._child_spawn_ids
-
-
-def test_try_adopt_candidate_stops_for_other_parent_spawn(tmp_path: Path) -> None:
-    parent_id = SpawnId("p-parent")
-    other_child_dir = tmp_path / "spawns" / "p-other-child"
-    other_child_dir.mkdir(parents=True)
+    # Another parent's child.
     _write_json(
-        other_child_dir / "state.json",
-        {"id": "p-other-child", "parent_id": "p-other-parent", "status": "running"},
+        spawns_dir / "p-other" / "state.json",
+        {"id": "p-other", "parent_id": "p-other-parent", "status": "running"},
     )
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
-    assert watcher._try_adopt_candidate("p-other-child", other_child_dir) is True
-    assert "p-other-child" not in watcher._child_spawn_ids
+    watcher._discover_child_spawns()
+
+    assert watcher._child_spawn_ids == {"p-child"}
 
 
-def test_try_adopt_candidate_keeps_watching_until_state_settles(tmp_path: Path) -> None:
+def test_discover_skips_terminal_children_in_count(tmp_path: Path) -> None:
+    """_scan_pending_child_spawn_count excludes terminal children."""
     parent_id = SpawnId("p-parent")
-    candidate_dir = tmp_path / "spawns" / "p-new"
-    candidate_dir.mkdir(parents=True)
+    spawns_dir = tmp_path / "spawns"
+
+    _write_json(
+        spawns_dir / "p-running" / "state.json",
+        {"id": "p-running", "parent_id": "p-parent", "status": "running"},
+    )
+    _write_json(
+        spawns_dir / "p-done" / "state.json",
+        {"id": "p-done", "parent_id": "p-parent", "status": "succeeded"},
+    )
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
-    assert watcher._try_adopt_candidate("p-new", candidate_dir) is False
+    watcher._discover_child_spawns()
+    count = watcher._scan_pending_child_spawn_count()
 
-    _write_json(candidate_dir / "state.json", {"id": "p-new", "status": "running"})
-    assert watcher._try_adopt_candidate("p-new", candidate_dir) is True
-    assert "p-new" not in watcher._child_spawn_ids
+    assert watcher._child_spawn_ids == {"p-running", "p-done"}
+    assert count == 1
 
 
 @pytest.mark.asyncio
@@ -123,5 +131,29 @@ async def test_pi_disk_watcher_tracks_bash_and_notification_files(tmp_path: Path
         await watcher.force_rescan()
 
         assert watcher.has_tracked_bash_bg() is False
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_no_watcher_tasks_for_non_child_spawns(tmp_path: Path) -> None:
+    """After start, only spawns_dir and bash_dir watchers exist — no per-child tasks."""
+    parent_id = SpawnId("p-parent")
+    spawns_dir = tmp_path / "spawns"
+
+    # Create 10 standalone spawn dirs — none are children.
+    for i in range(10):
+        _write_json(
+            spawns_dir / f"p-other-{i}" / "state.json",
+            {"id": f"p-other-{i}", "status": "succeeded"},
+        )
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        # Only 2 background tasks: spawns_dir watcher + bash_dir watcher.
+        assert len(watcher._tasks) == 2
+        assert watcher._child_spawn_ids == set()
+        assert watcher.has_pending_child_spawns() is False
     finally:
         await watcher.stop()
