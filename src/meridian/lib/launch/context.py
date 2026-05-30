@@ -1110,6 +1110,22 @@ def _resolve_primary_projection(
         reference_anchor=project_paths.execution_cwd,
     )
 
+    resolved_work_id = (request.work_id_hint or "").strip() or (
+        active_work_dir.name if active_work_dir is not None else ""
+    )
+    work_goal: str | None = None
+    if resolved_work_id:
+        project_state_dir = resolve_project_paths(project_paths.project_root).root_dir
+        work_item = work_store.get_work_item(project_state_dir, resolved_work_id)
+        if work_item is not None:
+            work_goal = work_item.goal
+    completion_contract = build_goal_instruction(request.goal)
+    work_goal_instruction = build_work_goal_instruction(work_goal)
+    if completion_contract and work_goal_instruction:
+        completion_contract = f"{work_goal_instruction}\n\n{completion_contract}"
+    elif work_goal_instruction:
+        completion_contract = work_goal_instruction
+
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
@@ -1117,7 +1133,7 @@ def _resolve_primary_projection(
             report_instruction="",
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
-            completion_contract="",
+            completion_contract=completion_contract,
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
             reference_items=task_ctx.reference_items,

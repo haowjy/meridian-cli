@@ -70,6 +70,8 @@ def build_primary_spawn_request(
     normalized_session = _normalize_primary_session(request)
     if prompt is not None:
         base_prompt = prompt
+    elif request.prompt is not None:
+        base_prompt = request.prompt
     elif _requires_primary_synthetic_prompt(request):
         base_prompt = build_primary_prompt(request)
     else:
@@ -81,11 +83,14 @@ def build_primary_spawn_request(
         model=(request.model or "").strip() or None,
         harness=(request.harness or "").strip() or None,
         agent=(request.agent or "").strip() or None,
+        skills=request.skills,
         extra_args=request.passthrough_args,
         supplemental_prompt_documents=request.supplemental_prompt_documents,
         context_from=request.context_from,
+        reference_files=request.reference_files,
         execution_policy=request.execution_policy,
         session=normalized_session,
+        goal=request.goal,
         work_id_hint=(request.work_id or "").strip() or None,
     )
 

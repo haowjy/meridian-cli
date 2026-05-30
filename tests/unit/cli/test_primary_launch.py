@@ -107,6 +107,52 @@ def test_run_primary_launch_bare_from_resolves_to_context_from(
     assert request.session.continue_fork is False
 
 
+def test_run_primary_launch_forwards_primary_spawn_parity_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    reference = project_root / "design.md"
+    reference.write_text("design notes", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+
+    primary_launch.run_primary_launch(
+        project_root=project_root,
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        model="",
+        harness=None,
+        agent="tech-lead",
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+        reference_files=("design.md",),
+        prompt="Review the design.",
+        skills=("planning", "dev-principles"),
+        goal="  Converge on requirements  ",
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.reference_files == (reference.as_posix(),)
+    assert request.prompt == "Review the design."
+    assert request.skills == ("planning", "dev-principles")
+    assert request.goal == "Converge on requirements"
+
+
 def test_run_primary_launch_from_with_continue_reports_conflict_before_inference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
