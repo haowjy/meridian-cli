@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `meridian -C <dir> mars ...` now scopes mars passthrough to `<dir>` instead of inherited `MERIDIAN_PROJECT_DIR`.
+- Release packaging now verifies every Pi extension source entrypoint has a matching built `dist/extensions/<name>/index.js` in both wheel and sdist artifacts, and fails on stale extra extension bundles.
 - Pi disk wakeups no longer lose pre-signaled changes before the drain loop subscribes.
 - Pi child directories with late `state.json` writes now block quiescence until resolved, then wake the drain loop through bounded polling.
 - Pi disk-only child work now re-arms child-wave timeout while parent is idle.
