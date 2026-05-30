@@ -1117,7 +1117,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if cleaned_args and cleaned_args[0] == "mars":
         _emit_usage_command_invoked(cleaned_args)
-        _run_mars_passthrough(cleaned_args[1:], output_format=options.output.format)
+        with _directory_env_scope(options.project_root, options.directory_explicit):
+            _run_mars_passthrough(cleaned_args[1:], output_format=options.output.format)
 
     if effective_agent_mode and (not cleaned_args or _is_root_help_request(cleaned_args)):
         _print_agent_root_help()

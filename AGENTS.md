@@ -136,9 +136,17 @@ Spawns support 4 approval modes: `default` (harness decides), `confirm` (user ap
 
 Meridian resolves the project root by walking up from CWD looking for `.mars/`, `meridian.toml`, `.meridian/id`, or `.git`. Override with `-C <path>` / `--directory <path>` (global flag, before any subcommand) or `MERIDIAN_PROJECT_DIR` env var. Precedence: `-C` flag > `MERIDIAN_PROJECT_DIR` > CWD walk-up.
 
-Use `-C` when operating on a sibling repo from a different CWD:
+Inside Meridian-managed sessions, spawns resolve a logical task dir:
+`MERIDIAN_TASK_DIR` points at the checkout where source work happens, and
+relative launch references are anchored there. Project authority remains
+separate: `MERIDIAN_PROJECT_DIR` stays anchored to the session project root
+(often the control repo) for state, profiles, and context. Nested `meridian ...`
+commands use project-root resolution, where `MERIDIAN_PROJECT_DIR` wins over
+CWD. Use `-C <task-dir>` whenever a Meridian command should operate on a
+different checkout, especially `meridian mars ...` passthrough commands:
 
 ```bash
+meridian -C "$MERIDIAN_TASK_DIR" mars sync
 meridian -C ~/gitrepos/mars-agents session log c8
 meridian -C ~/gitrepos/meridian-cli spawn list
 ```

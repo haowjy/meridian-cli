@@ -4,7 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `AGENTS.md`: clarify split between `MERIDIAN_TASK_DIR` and inherited `MERIDIAN_PROJECT_DIR`; use `meridian -C "$MERIDIAN_TASK_DIR" ...` for nested Meridian commands targeting task checkouts.
+- `mars.toml`: use canonical `haowjy/meridian-prompter` dependency URL.
+
 ### Fixed
+- `meridian -C <dir> mars ...` now scopes mars passthrough to `<dir>` instead of inherited `MERIDIAN_PROJECT_DIR`.
 - Pi disk wakeups no longer lose pre-signaled changes before the drain loop subscribes.
 - Pi child directories with late `state.json` writes now block quiescence until resolved, then wake the drain loop through bounded polling.
 - Pi disk-only child work now re-arms child-wave timeout while parent is idle.
