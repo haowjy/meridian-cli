@@ -132,7 +132,8 @@ class PiDiskWatcher:
                 )
             self._refresh_cached_state()
             return True
-        return bool(isinstance(parent_id, str) and parent_id)
+        # state.json exists and is non-empty — parent_id is settled (or absent).
+        return bool(data)
 
     def _discover_child_spawns(self) -> None:
         if not self._spawns_dir.is_dir():
