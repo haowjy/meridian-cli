@@ -55,6 +55,8 @@ _pi_wait_policy_is_tracked = pi_lifecycle.pi_wait_policy_is_tracked
 _unsupported_pi_schema_version_error = pi_lifecycle.unsupported_pi_schema_version_error
 
 PI_MICRO_DRAIN_TIMEOUT_SECONDS: float = 0.05
+# Non-zero floor to prevent tight loops on expired deadlines.
+_PI_TIMEOUT_FLOOR_SECONDS: float = 0.001
 
 EmitPiPhase = Callable[..., None]
 TerminatePiChildren = Callable[["PiSubspawnTracker", str], Awaitable[None]]
@@ -479,7 +481,7 @@ class PiDrainCoordinator:
         now_monotonic = time.monotonic()
         next_timeout = self.tracker.time_until_next_notification_timeout(now_monotonic)
         if next_timeout is not None and next_timeout <= 0:
-            next_timeout = PI_MICRO_DRAIN_TIMEOUT_SECONDS
+            next_timeout = _PI_TIMEOUT_FLOOR_SECONDS
 
         child_wave_remaining = self._child_wave_remaining(now_monotonic)
         if child_wave_remaining is not None:
@@ -819,14 +821,14 @@ class PiDrainCoordinator:
         ):
             return None
         remaining = deadline - now_monotonic
-        return remaining if remaining > 0 else PI_MICRO_DRAIN_TIMEOUT_SECONDS
+        return remaining if remaining > 0 else _PI_TIMEOUT_FLOOR_SECONDS
 
     def _followup_remaining(self, now_monotonic: float) -> float | None:
         deadline = self.child_wave_timeout_followup_deadline
         if deadline is None:
             return None
         remaining = deadline - now_monotonic
-        return remaining if remaining > 0 else PI_MICRO_DRAIN_TIMEOUT_SECONDS
+        return remaining if remaining > 0 else _PI_TIMEOUT_FLOOR_SECONDS
 
     def _child_wave_timed_out(self, now_monotonic: float) -> bool:
         return (
@@ -879,7 +881,7 @@ def _pi_child_wave_timeout_error() -> str:
 
 
 def _min_timeout(current: float | None, candidate: float) -> float:
-    bounded = candidate if candidate > 0 else PI_MICRO_DRAIN_TIMEOUT_SECONDS
+    bounded = candidate if candidate > 0 else _PI_TIMEOUT_FLOOR_SECONDS
     return bounded if current is None else min(current, bounded)
 
 
