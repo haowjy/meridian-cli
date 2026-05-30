@@ -67,6 +67,19 @@ Hook policy:
 
 **NEVER manually create or push git tags matching `v*`.** Tags come from CI after normal pushes to main.
 
+### Pull Requests
+
+When creating or updating a GitHub PR, read `.github/pull_request_template.md` and fill every section. Do not use any other PR body format — the built-in generic format is wrong for this project. Sections: why, goal, summary, resulting behavior, work item, verification, knowledge updates, spawn trace, release label, cleanup. Keep the PR body current as the branch evolves.
+
+Always set a `release:*` label on the PR before merging:
+
+| Label | Effect |
+|---|---|
+| `release:patch` | Stable patch bump (default for most work) |
+| `release:skip` | No release for this merge |
+
+No label = no auto-release. Forgetting the label means the work ships without a version bump.
+
 ### Release workflow
 
 ```bash
