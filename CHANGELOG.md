@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi extension artifacts (managed-bash, meridian-spawn-watch) missing from PyPI wheel — `release.yml` ran `uv build` without building extensions first. Every Pi spawn failed with `Missing Pi extension artifact`. Added Node.js setup, extension build, and wheel contents verification to the release workflow.
+
 ## [0.2.16] - 2026-05-30
 
 ## [0.2.15] - 2026-05-29
