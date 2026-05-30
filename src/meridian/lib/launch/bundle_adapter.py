@@ -35,7 +35,7 @@ def _resolve_mars_min_version() -> str:
 
 
 _MARS_BUNDLE_MIN_VERSION = _resolve_mars_min_version()
-_SUPPORTED_BUNDLE_SCHEMA_VERSION = 2
+_SUPPORTED_BUNDLE_SCHEMA_VERSIONS = (2, 3)
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,7 @@ class _BundleResult:
     tools_disallowed: tuple[str, ...]
     tools_mcp: tuple[str, ...]
     skills_loaded: tuple[str, ...]
+    skills_available: tuple[str, ...]
     skills_missing: tuple[str, ...]
 
 
@@ -143,6 +144,41 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
             )
         )
     return tuple(documents)
+
+
+def _parse_skills_loaded(raw: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Parse skills loaded field — handles both v2 flat strings and v3 structured objects.
+
+    Returns (loaded_names, available_names).
+    """
+    if not isinstance(raw, list):
+        return (), ()
+    loaded_names: list[str] = []
+    for item in cast("list[object]", raw):
+        if isinstance(item, str):
+            # v2: flat list of skill name strings
+            normalized = item.strip()
+            if normalized:
+                loaded_names.append(normalized)
+        elif isinstance(item, dict):
+            # v3: list of {name, skill_type, content} objects
+            name = _normalize_str(cast("dict[str, object]", item).get("name"))
+            if name:
+                loaded_names.append(name)
+    return tuple(loaded_names), ()
+
+
+def _parse_skills_available(raw: object) -> tuple[str, ...]:
+    """Parse v3 skills.available field — list of {name, skill_type, description} objects."""
+    if not isinstance(raw, list):
+        return ()
+    names: list[str] = []
+    for item in cast("list[object]", raw):
+        if isinstance(item, dict):
+            name = _normalize_str(cast("dict[str, object]", item).get("name"))
+            if name:
+                names.append(name)
+    return tuple(names)
 
 
 def _bundle_schema_error(message: str) -> RuntimeError:
@@ -283,10 +319,10 @@ def _parse_bundle_payload(
     version = payload.get("version")
     if isinstance(version, bool) or not isinstance(version, int):
         raise _bundle_schema_error("missing numeric 'version'")
-    if version != _SUPPORTED_BUNDLE_SCHEMA_VERSION:
+    if version not in _SUPPORTED_BUNDLE_SCHEMA_VERSIONS:
         raise RuntimeError(
             "Mars launch-bundle schema version "
-            f"{version} is unsupported. Expected {_SUPPORTED_BUNDLE_SCHEMA_VERSION}. "
+            f"{version} is unsupported. Expected one of {_SUPPORTED_BUNDLE_SCHEMA_VERSIONS}. "
             f"Meridian requires mars >= {_MARS_BUNDLE_MIN_VERSION}."
         )
 
@@ -310,7 +346,13 @@ def _parse_bundle_payload(
 
     prompt_surface = _optional_object_field(payload, "prompt_surface")
     tools = _optional_object_field(payload, "tools")
-    skills_metadata = _optional_object_field(payload, "skills_metadata")
+
+    # v3: "skills" with structured loaded[]/available[]; v2: "skills_metadata" with flat strings
+    skills_obj = _optional_object_field(payload, "skills") or _optional_object_field(
+        payload, "skills_metadata"
+    )
+    skills_loaded, _ = _parse_skills_loaded(skills_obj.get("loaded"))
+    skills_available = _parse_skills_available(skills_obj.get("available"))
 
     return _BundleResult(
         model=model,
@@ -328,8 +370,9 @@ def _parse_bundle_payload(
         tools_allowed=_as_str_tuple(tools.get("allowed")),
         tools_disallowed=_as_str_tuple(tools.get("disallowed")),
         tools_mcp=_as_str_tuple(tools.get("mcp")),
-        skills_loaded=_as_str_tuple(skills_metadata.get("loaded")),
-        skills_missing=_as_str_tuple(skills_metadata.get("missing")),
+        skills_loaded=skills_loaded,
+        skills_available=skills_available,
+        skills_missing=_as_str_tuple(skills_obj.get("missing")),
     )
 
 
