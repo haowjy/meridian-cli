@@ -245,8 +245,8 @@ def _spawn_create(
                 "Inherit context from a prior spawn or chat/session.\n"
                 "Spawn refs include the spawn report and files touched;\n"
                 "chat refs point at the session log and primary spawn.\n"
-                "Repeatable. Use when the new spawn needs prior\n"
-                "conversation context."
+                "Repeatable. Also inherits the source's work item as a\n"
+                "fallback when neither --work nor ambient session provides one."
             ),
             negative_iterable=(),
         ),
@@ -278,7 +278,13 @@ def _spawn_create(
     ] = None,
     work: Annotated[
         str,
-        Parameter(name="--work", help="Associate the spawn with a work item id."),
+        Parameter(
+            name="--work",
+            help=(
+                "Associate the spawn with a work item id. Takes precedence\n"
+                "over ambient session work and --from inheritance."
+            ),
+        ),
     ] = "",
     task_dir: Annotated[
         str | None,

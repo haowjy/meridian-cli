@@ -114,6 +114,9 @@ def build_create_payload(
                 ).strip() or None
             except Exception:
                 ambient_work_id = None
+        # Work item precedence: --work (explicit) > ambient session > --from inheritance.
+        # --from is a last-resort fallback — only inherits work when neither the user
+        # nor the current session provides one.
         if ambient_work_id is None and explicit_work_id is None:
             ambient_work_id = _first_context_from_work_id(project_root, payload.context_from)
         project_state_dir = resolve_project_paths(project_root).root_dir
