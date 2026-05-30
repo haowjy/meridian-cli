@@ -10,7 +10,9 @@ from meridian.lib.core.overrides import RuntimeOverrides
 from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
 from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
+from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.context import build_launch_policy_snapshot
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
@@ -37,6 +39,9 @@ class _FakeBundleResult:
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()
+    skills_loaded: tuple[LoadedSkillEntry, ...] = ()
+    skills_available: tuple[AvailableSkillEntry, ...] = ()
+    skills_missing: tuple[str, ...] = ()
 
 
 def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:
@@ -626,6 +631,13 @@ def test_snapshot_replay_uses_persisted_loaded_skills_after_live_catalog_changes
             harness_model="gpt-5.4",
             execution_policy=ResolvedExecutionPolicy(approval="auto"),
             provenance={"harness_source": "provider"},
+            skills_loaded=(
+                LoadedSkillEntry(
+                    name="testing-principles",
+                    skill_type="principle",
+                    body="# testing-principles\n\nBe consistent.",
+                ),
+            ),
         ),
     )
     monkeypatch.setattr(CatalogSession, "alias_map", lambda self: {})
@@ -660,7 +672,7 @@ def test_snapshot_replay_uses_persisted_loaded_skills_after_live_catalog_changes
     skill_path.unlink()
 
     monkeypatch.setattr(
-        "meridian.lib.launch.policies.resolve_skills_from_profile",
+        "meridian.lib.launch.policy_snapshot.resolve_skills_from_profile",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("snapshot replay should not re-resolve live skill catalog")
         ),
@@ -688,5 +700,7 @@ def test_snapshot_replay_uses_persisted_loaded_skills_after_live_catalog_changes
     assert replayed_policy.resolved_skills.skill_names == ("testing-principles",)
     assert replayed_policy.resolved_skills.loaded_skills == original_skills
     assert replayed_policy.resolved_skills.loaded_skills[0].name == "testing-principles"
-    assert replayed_policy.resolved_skills.loaded_skills[0].path == str(skill_path)
+    # Path is synthetic (from bundle) — the snapshot preserves whatever path was set at capture time
+    replayed_skill = replayed_policy.resolved_skills.loaded_skills[0]
+    assert ".mars/skills/testing-principles/SKILL.md" in replayed_skill.path
     assert replayed_policy.resolved_skills.loaded_skills[0].content == original_skills[0].content

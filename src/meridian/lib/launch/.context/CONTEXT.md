@@ -363,17 +363,42 @@ rationale lives in [concepts/session-initiation.md](../../../../../../../../.mer
 at this layer, the rule is simply to keep `--from` blocks in user-turn context
 blocks and out of `SystemInstruction`.
 
+### Skill Loading — Bundle as Sole Interface
+
+Skill content comes from the Mars launch-bundle JSON (`skills.loaded[]`), not from
+reading `.mars/skills/` on disk. Mars owns the `.mars/` directory schema, skill
+variant resolution, and compilation. Meridian consumes the structured output:
+
+```
+Mars launch-bundle → skills.loaded[{name, skill_type, body}]
+                          │
+                          ▼
+_build_resolved_skills_from_bundle()  ← policies.py
+                          │
+                          ▼
+ResolvedSkills.loaded_skills: tuple[SkillContent, ...]
+```
+
+`_build_resolved_skills_from_bundle` in `policies.py` constructs `SkillContent`
+objects with synthetic paths (`project_root/.mars/skills/{name}/SKILL.md`) for
+downstream heading rendering and snapshot persistence. The parser handles both
+`body` (mars >=0.8) and `content` (mars 0.7.x) field names for backward compat.
+
+**`resolve_skills_from_profile()` still exists** for the snapshot replay path
+(`policy_snapshot.py`) — when replaying from a persisted snapshot whose
+`loaded_skills` field is empty (pre-bundle snapshots), it falls back to disk
+loading. New snapshots always persist `loaded_skills`, so this path is legacy compat.
+
 ### Skill Injection Channels
 
-There are two distinct channels for delivering skill content to agents. They are
-controlled by separate capability flags and must not be conflated:
+Two distinct channels deliver loaded skill content to agents. They are controlled
+by separate capability flags and must not be conflated:
 
 **Channel 1 — `supplemental_documents`** (prompt-embedded):
 Populated by `compose_skill_prompt_documents()` in `_resolve_spawn_prepare_projection()`
 and `_resolve_primary_projection()`. **Gated on `not harness.capabilities.supports_native_skills`.**
 When the harness supports native skills (currently Claude, Codex, and OpenCode), this
-channel is suppressed — `supplemental_documents` is set to an empty tuple. Skills reach
-the agent via Mars-materialized native channels instead.
+channel is suppressed — `supplemental_documents` is set to an empty tuple.
 
 **Channel 2 — `append-system-prompt`** (Claude spawns only):
 Populated by `compose_skill_injections()` in `_prepare_spawn_surface()` when

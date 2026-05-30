@@ -174,6 +174,9 @@ def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> 
     )
 
     rendered = render_system_instruction_blocks(content)
+    # Composition order: profile, goal, skills sorted by type (principles first,
+    # then guardrails, then reference/other), bootstrap, inventory, context,
+    # report, passthrough. No principle bookend at the end.
     expected_sequence = (
         "PROFILE",
         "GOAL",
@@ -185,11 +188,14 @@ def test_system_instruction_renders_reordered_blocks_and_skill_type_groups() -> 
         "INVENTORY",
         "CONTEXT",
         "REPORT",
-        "PRINCIPLE-A",
-        "PRINCIPLE-B",
         "PASSTHROUGH",
     )
     cursor = -1
     for part in expected_sequence:
         cursor = rendered.find(part, cursor + 1)
-        assert cursor != -1
+        assert cursor != -1, f"Expected '{part}' after position {cursor} in rendered output"
+    # Principle bookend is gone — principles should NOT appear after REPORT
+    report_pos = rendered.find("REPORT")
+    passthrough_pos = rendered.find("PASSTHROUGH")
+    between = rendered[report_pos:passthrough_pos]
+    assert "PRINCIPLE-A" not in between

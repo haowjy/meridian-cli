@@ -5,6 +5,8 @@ from typing import Any
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.bundle_adapter import LoadedSkillEntry
+from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 
 
@@ -21,6 +23,9 @@ class FakeBundleResult:
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()
+    skills_loaded: tuple[LoadedSkillEntry, ...] = ()
+    skills_available: tuple[AvailableSkillEntry, ...] = ()
+    skills_missing: tuple[str, ...] = ()
 
 
 def stub_bundle_request_and_resolve(
@@ -36,6 +41,7 @@ def stub_bundle_request_and_resolve(
     tools_allowed: tuple[str, ...] = (),
     tools_disallowed: tuple[str, ...] = (),
     tools_mcp: tuple[str, ...] = (),
+    skills_loaded: tuple[LoadedSkillEntry, ...] = (),
 ) -> list[bundle_adapter.BundleRequest]:
     captured_requests: list[bundle_adapter.BundleRequest] = []
 
@@ -63,6 +69,7 @@ def stub_bundle_request_and_resolve(
             tools_allowed=tools_allowed,
             tools_disallowed=tools_disallowed,
             tools_mcp=tools_mcp,
+            skills_loaded=skills_loaded,
         )
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", _fake_request_and_resolve)

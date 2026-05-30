@@ -150,8 +150,12 @@ def _work_sessions(
         bool,
         Parameter(name="--all", help="Include historical sessions."),
     ] = False,
+    primary: Annotated[
+        bool,
+        Parameter(name="--primary", help="Show only the primary handoff chain."),
+    ] = False,
 ) -> None:
-    emit(work_sessions_sync(WorkSessionsInput(work_id=work_id, all=all)))
+    emit(work_sessions_sync(WorkSessionsInput(work_id=work_id, all=all, primary=primary)))
 
 
 def _work_update(
