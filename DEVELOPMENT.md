@@ -41,6 +41,11 @@ Snapshot install from the current checkout:
 uv tool install --force . --no-cache --reinstall
 ```
 
+> `uv tool install` does **not** build Pi extensions. If your spawns use the
+> `pi` harness, build them first (see [Pi Extensions](#pi-extensions)) — the
+> wheel only bakes in whatever `dist/extensions/*` already exists on disk, so a
+> missing build ships no extensions and a stale build ships old behavior.
+
 Editable install:
 
 ```bash
@@ -53,6 +58,46 @@ Then verify the installed tool:
 meridian --version
 uv tool list
 ```
+
+## Pi Extensions
+
+The `pi` harness loads two bundled extensions — `managed-bash` and
+`meridian-spawn-watch` — from TypeScript sources under
+`src/meridian/pi_runtime/extensions/`. They are bundled to ESM with `tsup` into
+`src/meridian/pi_runtime/dist/extensions/<name>/index.js`.
+
+`dist/` is gitignored, and nothing in the Python toolchain builds it — neither
+`uv sync`, `uv build`, nor `uv tool install` runs the bundler. Build it
+explicitly:
+
+```bash
+corepack enable                       # provides pnpm
+cd src/meridian/pi_runtime
+pnpm install --frozen-lockfile        # first time, or after a lockfile change
+pnpm run build:extensions             # bundle TS -> dist/extensions/*.js
+```
+
+Rebuild after editing any `.ts` under `extensions/`. To build and run the
+extension tests in one step:
+
+```bash
+pnpm run verify:extensions            # build + vitest
+```
+
+When this matters:
+
+- **Local dev with `uv run meridian`** — the launcher resolves extensions from
+  the source-tree `dist/` first, so a rebuild takes effect immediately with no
+  reinstall.
+- **`uv tool install` from the checkout** — build first, then install. A missing
+  build ships no extensions and `pi` spawns fail at launch with
+  `PiExtensionProjectionError`; a stale build silently ships old behavior. The
+  wheel picks up `dist/extensions/*` via `[tool.hatch.build] artifacts` in
+  `pyproject.toml`.
+- **PyPI releases** — no action needed. `release-on-merge.yml` and every
+  `meridian-ci.yml` job run `pnpm run build:extensions` from source before
+  building the wheel, so published wheels always carry freshly-built extensions.
+  Do not commit `dist/`.
 
 ## Test
 
