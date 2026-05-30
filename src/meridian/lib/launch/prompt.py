@@ -136,6 +136,18 @@ def build_goal_instruction(goal: str | None) -> str:
     )
 
 
+def build_spawn_preamble(launch_mode: str | None) -> str:
+    """Render launch-mode behavioral framing for spawned subagents."""
+
+    if launch_mode == "background":
+        return (
+            "# Spawn Context\n\n"
+            "You were spawned to complete a specific objective. Work autonomously. "
+            "Only escalate if blocked."
+        )
+    return ""
+
+
 def build_work_goal_instruction(work_goal: str | None) -> str:
     if work_goal is None:
         return ""
@@ -486,6 +498,7 @@ __all__ = [
     "build_goal_instruction",
     "build_launch_context_documents",
     "build_report_instruction",
+    "build_spawn_preamble",
     "build_work_goal_instruction",
     "compose_run_prompt",
     "compose_run_prompt_text",

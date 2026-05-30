@@ -12,7 +12,7 @@ from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
 from meridian.lib.ops.spawn import context_ref
 from meridian.lib.ops.spawn.models import SpawnCreateInput
-from meridian.lib.ops.spawn.prepare import build_create_payload
+from meridian.lib.ops.spawn.prepare import SpawnCreateArtifacts, build_create_payload
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from tests.support.launch import FakeBundleResult
@@ -65,6 +65,23 @@ def _stub_context_from_work(
         )
 
     monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
+
+
+def _prompt_surface_text(artifacts: SpawnCreateArtifacts) -> str:
+    prepared = artifacts.prepared
+    request = artifacts.request
+    projected = prepared.projected_content
+    return "\n".join(
+        part
+        for part in (
+            request.prompt,
+            request.prompt_payload.appended_system_prompt,
+            request.prompt_payload.user_turn_content,
+            projected.system_prompt if projected is not None else None,
+            projected.user_turn_content if projected is not None else None,
+        )
+        if part
+    )
 
 
 def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,6 +167,38 @@ def test_build_create_payload_work_precedence_over_context_from(
     assert explicit.request.task_cwd_source == "explicit-work-authority-root"
     assert ambient.request.task_cwd_work_item == "ambient-work"
     assert ambient.request.task_cwd_source == "ambient-work-authority-root"
+
+
+def test_background_spawn_prompt_includes_launch_preamble(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_bundle_adapter(monkeypatch)
+    _, runtime = _prepare_codex_runtime(tmp_path)
+
+    background = build_create_payload(
+        SpawnCreateInput(
+            prompt="implement the task",
+            project_root=tmp_path.as_posix(),
+            background=True,
+        ),
+        runtime=runtime,
+    )
+    foreground = build_create_payload(
+        SpawnCreateInput(
+            prompt="implement the task",
+            project_root=tmp_path.as_posix(),
+            background=False,
+        ),
+        runtime=runtime,
+    )
+
+    preamble = (
+        "You were spawned to complete a specific objective. Work autonomously. "
+        "Only escalate if blocked."
+    )
+    assert preamble in _prompt_surface_text(background)
+    assert preamble not in _prompt_surface_text(foreground)
 
 
 def test_build_create_payload_does_not_forward_meridian_primary_or_legacy_defaults_to_bundle(

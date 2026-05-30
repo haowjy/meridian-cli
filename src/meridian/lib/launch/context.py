@@ -59,6 +59,7 @@ from meridian.lib.state.paths import (
     resolve_work_scratch_dir_for_project,
 )
 from meridian.lib.state.session_store import get_session_active_work_id
+from meridian.lib.state.spawn.model import LaunchMode
 from meridian.lib.telemetry import emit_telemetry
 from meridian.lib.tools import ToolsField
 from meridian.plugin_api.git import resolve_clone_path
@@ -94,6 +95,7 @@ from .prompt import (
     build_goal_instruction,
     build_launch_context_documents,
     build_report_instruction,
+    build_spawn_preamble,
     build_work_goal_instruction,
     compose_skill_injections,
     compose_skill_prompt_documents,
@@ -946,6 +948,7 @@ def _resolve_spawn_prepare_projection(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
+    launch_mode: LaunchMode | None = None,
 ) -> PreparedLaunchContent:
     profile = policy.profile
     harness = policy.adapter
@@ -1021,6 +1024,7 @@ def _resolve_spawn_prepare_projection(
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
             completion_contract=completion_contract,
+            launch_preamble=build_spawn_preamble(launch_mode),
             passthrough_system_fragments=(),
             user_task_prompt=cleaned_user_prompt,
             reference_items=task_ctx.reference_items,
@@ -1143,6 +1147,7 @@ def _prepare_spawn_surface(
     project_paths: ProjectConfigPaths,
     active_work_dir: Path | None,
     policy: ResolvedLaunchPolicy,
+    launch_mode: LaunchMode | None = None,
 ) -> tuple[PreparedLaunchContent, ResolvedContinuation]:
     content = PreparedLaunchContent(
         final_prompt=request.prompt,
@@ -1155,6 +1160,7 @@ def _prepare_spawn_surface(
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policy,
+            launch_mode=launch_mode,
         )
 
     prompt_policy = policy.adapter.run_prompt_policy()
@@ -1244,6 +1250,7 @@ def prepare_launch_surface(
     request: SpawnRequest,
     runtime: LaunchRuntime,
     prepared_policy: PreparedPolicySurface,
+    launch_mode: LaunchMode | None = None,
 ) -> PreparedLaunchSurface:
     """Resolve the expensive, spawn-stable launch surface."""
     project_paths = prepared_policy.project_paths
@@ -1272,6 +1279,7 @@ def prepare_launch_surface(
             project_paths=project_paths,
             active_work_dir=active_work_dir,
             policy=policies,
+            launch_mode=launch_mode,
         )
         seed_harness_session_id = continuation.harness_session_id
     elif runtime.composition_surface == LaunchCompositionSurface.PRIMARY:

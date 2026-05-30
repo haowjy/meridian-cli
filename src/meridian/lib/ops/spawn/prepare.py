@@ -26,6 +26,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
+from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
 from meridian.lib.utils.time import minutes_to_seconds
 
 from ..runtime import (
@@ -212,6 +213,9 @@ def build_create_payload(
             runtime=preview_runtime,
             harness_registry=harness_registry,
             dry_run=composition_dry_run,
+            launch_mode=(
+                BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE
+            ),
         )
         if composition_dry_run:
             preview_context = bind_spawn_launch_context(

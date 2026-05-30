@@ -23,6 +23,7 @@ from meridian.lib.launch.reference import (
 
 # Named canonical orders for SYSTEM_INSTRUCTION composition.
 SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
+    "launch_preamble",
     "agent_profile_body",
     "completion_contract",
     "supplemental_documents",
@@ -155,6 +156,9 @@ class ComposedLaunchContent:
 
     completion_contract: str = ""
     """Deterministic bounded completion contract text (spawn goal)."""
+
+    launch_preamble: str = ""
+    """Launch-mode-specific behavioral framing."""
 
 
 @dataclass(frozen=True)

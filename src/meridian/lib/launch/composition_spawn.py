@@ -19,6 +19,7 @@ from meridian.lib.launch.context import (
     prepare_launch_surface,
 )
 from meridian.lib.launch.request import LaunchRuntime, SpawnRequest
+from meridian.lib.state.spawn.model import LaunchMode
 
 
 def compose_spawn_launch_surface(
@@ -28,6 +29,7 @@ def compose_spawn_launch_surface(
     harness_registry: HarnessRegistry,
     dry_run: bool,
     runtime_work_id: str | None = None,
+    launch_mode: LaunchMode | None = None,
     cache: MarsResultCache | None = None,
 ) -> PreparedLaunchSurface:
     """Policy + Mars + surface. No bind."""
@@ -60,6 +62,7 @@ def compose_spawn_launch_surface(
         request=request,
         runtime=runtime,
         prepared_policy=prepared_policy,
+        launch_mode=launch_mode,
     )
 
 
