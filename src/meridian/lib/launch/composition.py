@@ -274,6 +274,23 @@ def join_content_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
+_SKILL_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "principle": "Override other guidance when loaded.",
+    "guardrail": "Load before acting in sensitive areas.",
+    "mode-shift": "Change how you operate when loaded.",
+    "checkpoint": "Load at decision points to verify before continuing.",
+}
+
+
+def _loaded_skill_type_header(skill_type: str) -> str:
+    """Return a group header for a cluster of loaded skills of the same type."""
+    label = skill_type.capitalize()
+    desc = _SKILL_TYPE_DESCRIPTIONS.get(skill_type)
+    if desc:
+        return f"## {label}\n{desc}"
+    return f"## {label}"
+
+
 def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, ...]) -> str:
     """Render the available skills listing — names only, grouped by type.
 
@@ -288,34 +305,30 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
         "",
         "Not yet loaded. Load proactively when the task fits.",
     ]
-    type_groups: tuple[tuple[str, str, str], ...] = (
-        ("Principles", "principle", "Override other guidance when loaded."),
-        ("Guardrails", "guardrail", "Load before acting in sensitive areas."),
-        ("Mode-shift", "mode-shift", "Change how you operate when loaded."),
-        ("Checkpoint", "checkpoint", "Load at decision points to verify before continuing."),
-    )
-    known_types = {t for _, t, _ in type_groups}
+    # Render order: known types first (sorted), then remaining by first-seen order.
+    known_type_order = ("principle", "guardrail", "mode-shift", "checkpoint")
 
-    for label, type_key, description in type_groups:
+    # Collect all distinct types preserving order: known first, then rest.
+    seen_types: list[str] = []
+    for t in known_type_order:
+        if any(s.skill_type == t for s in available_skills):
+            seen_types.append(t)
+    for s in available_skills:
+        if s.skill_type not in seen_types:
+            seen_types.append(s.skill_type)
+
+    for type_key in seen_types:
         group = [s for s in available_skills if s.skill_type == type_key]
-        if group:
+        if not group:
+            continue
+        label = type_key.capitalize()
+        desc = _SKILL_TYPE_DESCRIPTIONS.get(type_key)
+        if desc:
+            lines.append(f"\n## {label}\n{desc}")
+        else:
             lines.append(f"\n## {label}")
-            lines.append(f"{description}")
-            for skill in group:
-                lines.append(f"- {skill.name}")
-
-    # Remaining types: each gets its own heading, no description.
-    other = [s for s in available_skills if s.skill_type not in known_types]
-    if other:
-        seen_types: list[str] = []
-        for s in other:
-            if s.skill_type not in seen_types:
-                seen_types.append(s.skill_type)
-        for type_key in seen_types:
-            group = [s for s in other if s.skill_type == type_key]
-            lines.append(f"\n## {type_key.capitalize()}")
-            for skill in group:
-                lines.append(f"- {skill.name}")
+        for skill in group:
+            lines.append(f"- {skill.name}")
 
     return "\n".join(lines)
 
@@ -346,12 +359,16 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:
         if field_name == "supplemental_documents":
-            # Auto-loaded skills: full content, sorted by type (principles first)
-            # Skills already have their own `# Skill: name` heading; we don't
-            # add intermediate heading levels that would break the hierarchy.
+            # Auto-loaded skills: full content, grouped by type with headers.
             if ordered_skill_documents:
+                current_type: str | None = None
                 for doc in ordered_skill_documents:
                     if doc.content.strip():
+                        if doc.skill_type != current_type:
+                            current_type = doc.skill_type
+                            header = _loaded_skill_type_header(current_type)
+                            if header:
+                                ordered_blocks.append(header)
                         ordered_blocks.append(doc.content.strip())
             # Bootstrap documents after skills
             ordered_blocks.extend(document.content for document in bootstrap_documents)
