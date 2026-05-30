@@ -59,6 +59,9 @@ class PiQuiescenceTracker:
     async def mark_idle(self) -> None:
         self._parent_idle = True
         self._parent_idle_epoch = time.time()
+        await self.refresh_disk_state()
+
+    async def refresh_disk_state(self) -> None:
         if self._disk_watcher is not None:
             await self._disk_watcher.force_rescan()
 

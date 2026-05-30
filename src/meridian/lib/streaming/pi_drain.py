@@ -670,6 +670,28 @@ class PiDrainCoordinator:
         ):
             self.start_micro_drain(self.last_successful_terminal)
 
+    async def reevaluate_after_disk_change(self) -> None:
+        if not self.quiescence_enabled:
+            return
+        if self.quiescence_tracker.parent_idle:
+            await self.quiescence_tracker.mark_idle()
+        else:
+            await self.quiescence_tracker.refresh_disk_state()
+            return
+        if (
+            self.child_wave_timeout_seconds is not None
+            and self.child_wave_timeout_seconds > 0
+            and self.has_pending_children()
+            and self.child_wave_deadline_monotonic is None
+        ):
+            wave_start = time.monotonic()
+            self.child_wave_started_monotonic = wave_start
+            self.child_wave_deadline_monotonic = wave_start + self.child_wave_timeout_seconds
+        if not self.has_pending_children():
+            self._clear_child_wave_timer()
+        self.emit_waiting_phases_if_needed()
+        self.maybe_start_quiescence_after_event()
+
     def pending_children_at_exit(self) -> bool:
         return self.quiescence_enabled and self.has_pending_children()
 

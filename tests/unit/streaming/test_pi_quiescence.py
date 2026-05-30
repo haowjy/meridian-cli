@@ -594,6 +594,10 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.streaming.pi_drain.PI_MICRO_DRAIN_TIMEOUT_SECONDS",
+        0.2,
+    )
     disk_wakeup = asyncio.Event()
 
     async def _fake_wait_for_disk_change(self: object) -> None:
@@ -659,6 +663,7 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     try:
         completion = asyncio.create_task(manager.wait_for_completion(spawn_id))
         await asyncio.sleep(0.05)
+        assert not completion.done()
         _write_json(
             child_state,
             {"id": "p-disk-wait", "parent_id": str(spawn_id), "status": "succeeded"},
@@ -681,6 +686,63 @@ async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
         assert "quiescence_micro_drain_started" in phases
     finally:
         await manager.stop_spawn(spawn_id)
+
+
+@pytest.mark.asyncio
+async def test_disk_change_reevaluation_starts_child_wave_while_parent_idle(
+    tmp_path: Path,
+) -> None:
+    phases: list[dict[str, object]] = []
+
+    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        phases.append({"phase": phase, **payload})
+        _ = session_role
+
+    spawn_id = SpawnId("p-disk-child-wave")
+    connection = _FakePiConnection([])
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+    coordinator = PiDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=spawn_id,
+        receiver=connection,
+        session_role="spawned",
+        notification_timeout_seconds=None,
+        child_wave_timeout_seconds=1.0,
+        emit_phase=emit_phase,
+    )
+    await coordinator.start()
+    coordinator.quiescence_enabled = True
+    await coordinator.quiescence_tracker.mark_idle()
+    _write_json(
+        tmp_path / "spawns" / "p-late-child" / "state.json",
+        {"id": "p-late-child", "parent_id": str(spawn_id), "status": "running"},
+    )
+
+    try:
+        await coordinator.reevaluate_after_disk_change()
+        assert coordinator.child_wave_deadline_monotonic is not None
+        assert coordinator.pending_child_count() == 1
+        assert any(
+            phase.get("phase") == "waiting_for_tracked_children"
+            and phase.get("active_tracked_count") == 1
+            for phase in phases
+        )
+    finally:
+        await coordinator.stop()
 
 
 @pytest.mark.asyncio

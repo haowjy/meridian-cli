@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -75,9 +76,68 @@ async def test_wait_for_change_wakes_on_refresh(tmp_path: Path) -> None:
     try:
         wait_task = asyncio.create_task(watcher.wait_for_change())
         await asyncio.sleep(0)
+        assert not wait_task.done()
         _write_json(marker_path, {"ts_epoch_secs": 2.0})
-        watcher._refresh_cached_state()
+        await watcher.force_rescan()
         await asyncio.wait_for(wait_task, timeout=1.0)
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_change_observes_pre_signaled_refresh(tmp_path: Path) -> None:
+    parent_id = SpawnId("p-parent")
+    marker_path = tmp_path / "pi-bash" / str(parent_id) / "last-notification.json"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        _write_json(marker_path, {"ts_epoch_secs": 1.0})
+        await watcher.force_rescan()
+        await asyncio.wait_for(watcher.wait_for_change(), timeout=1.0)
+
+        wait_task = asyncio.create_task(watcher.wait_for_change())
+        await asyncio.sleep(0)
+        assert not wait_task.done()
+        wait_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await wait_task
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_change_polls_late_child_state_after_directory_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "meridian.lib.streaming.disk_watcher._PENDING_DISK_POLL_INTERVAL_SECONDS",
+        0.05,
+    )
+    parent_id = SpawnId("p-parent")
+    child_dir = tmp_path / "spawns" / "p-child"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        child_dir.mkdir(parents=True)
+        watcher._candidate_child_spawn_ids.add("p-child")
+        watcher._refresh_cached_state()
+        await asyncio.wait_for(watcher.wait_for_change(), timeout=1.0)
+        assert watcher.has_pending_child_spawns() is True
+
+        wait_task = asyncio.create_task(watcher.wait_for_change())
+        await asyncio.sleep(0)
+        assert not wait_task.done()
+        _write_json(
+            child_dir / "state.json",
+            {"id": "p-child", "parent_id": str(parent_id), "status": "running"},
+        )
+        await asyncio.wait_for(wait_task, timeout=1.0)
+        assert watcher._child_spawn_ids == {"p-child"}
+        assert watcher._candidate_child_spawn_ids == set()
+        assert watcher.has_pending_child_spawns() is True
     finally:
         await watcher.stop()
 
@@ -104,7 +164,8 @@ async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
     try:
         assert watcher.has_pending_child_spawns() is True
         wait_task = asyncio.create_task(watcher.wait_for_change())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)
+        assert not wait_task.done()
         _write_json(
             child_state,
             {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},

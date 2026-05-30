@@ -4,6 +4,12 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi disk wakeups no longer lose pre-signaled changes before the drain loop subscribes.
+- Pi child directories with late `state.json` writes now block quiescence until resolved, then wake the drain loop through bounded polling.
+- Pi disk-only child work now re-arms child-wave timeout while parent is idle.
+- Pi drain loop now processes ready harness events before timeout completions, avoiding dropped terminal-adjacent events.
+
 ## [0.2.17] - 2026-05-30
 
 ### Fixed
