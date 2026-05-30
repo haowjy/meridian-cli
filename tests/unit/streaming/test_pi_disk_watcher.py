@@ -247,20 +247,23 @@ async def test_pi_disk_watcher_tracks_bash_and_notification_files(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_no_watcher_tasks_for_non_child_spawns(tmp_path: Path) -> None:
-    """After start, only spawns_dir and bash_dir watchers exist — no per-child tasks."""
+    """Non-child spawn dirs must never spawn per-child watcher tasks."""
     parent_id = SpawnId("p-parent")
     spawns_dir = tmp_path / "spawns"
-
-    for i in range(10):
-        _write_json(
-            spawns_dir / f"p-other-{i}" / "state.json",
-            {"id": f"p-other-{i}", "status": "succeeded"},
-        )
 
     watcher = PiDiskWatcher(tmp_path, parent_id)
     await watcher.start()
     try:
-        assert len(watcher._tasks) == 2
+        baseline_task_count = len(watcher._tasks)
+
+        for i in range(10):
+            _write_json(
+                spawns_dir / f"p-other-{i}" / "state.json",
+                {"id": f"p-other-{i}", "status": "succeeded"},
+            )
+        await watcher.force_rescan()
+
+        assert len(watcher._tasks) == baseline_task_count
         assert watcher._child_spawn_ids == set()
         assert watcher.has_pending_child_spawns() is False
     finally:
