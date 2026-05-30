@@ -64,7 +64,7 @@ environments silently skip auto-resolve aliases.
 - `catalog_session.py` — `CatalogSession`: per-operation facade; start here
 - `model_aliases.py` — `AliasEntry`, `MarsResultCache`, mars subprocess integration
 - `agent.py` — `AgentProfile`, agent frontmatter parsing for `.mars/agents/*.md`
-- `skill.py` — skill YAML/markdown parsing for `.mars/skills/*/SKILL.md`
+- `skill.py` — skill YAML/markdown parsing for `.mars/skills/*/SKILL.md` (legacy compat; primary path uses mars launch-bundle)
 
 ## Usage Pattern
 

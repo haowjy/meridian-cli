@@ -172,7 +172,10 @@ Migrate by ordering `model-policies` rules directly and adding
 
 ## Skills and Skill Variants
 
-When Meridian launches an agent, it loads the skills listed in `skills:` and injects them into the system prompt. Skills are read from `.mars/skills/`.
+When Meridian launches an agent, skill content comes from the Mars launch-bundle JSON
+(`skills.loaded[]`), not from reading `.mars/skills/` on disk. Mars owns the `.mars/`
+directory schema, skill variant resolution, and compilation. Meridian consumes the
+structured bundle output.
 
 ```yaml
 skills:
@@ -182,14 +185,25 @@ skills:
 
 `shared-workspace` guidance should set the work item's source-edit directory with `meridian work start ... --task-dir <path>` or `meridian work task-dir <path>` (for example, pointing at a `git worktree add` directory).
 
-**Variant selection.** Skills can ship harness- or model-specific body overrides in a `variants/` subdirectory. Meridian selects the best matching variant at launch time using a 4-step specificity ladder:
+**Bundle interface.** Mars resolves skills through the launch-bundle subcommand and
+delivers structured data to meridian:
 
-1. `variants/<harness>/<model-alias>/SKILL.md` — model alias + harness
-2. `variants/<harness>/<model-canonical-id>/SKILL.md` — canonical model ID + harness
-3. `variants/<harness>/SKILL.md` — harness level only
-4. Base `SKILL.md` — default
+```
+Mars launch-bundle → skills.loaded[{name, skill_type, body}]
+                          │
+                          ▼
+_build_resolved_skills_from_bundle()  → ResolvedSkills.loaded_skills
+```
 
-The base skill's frontmatter metadata is always authoritative; a variant only replaces the instruction body. Variant selection is transparent — the profile doesn't need to declare which variants a skill supports.
+Meridian receives already-resolved content and:
+- Renders type-group headers (`## Principle`, `## Guardrail`, etc.) for loaded skills
+- Groups available (on-demand) skills by type with descriptions and a load nudge
+- Uses synthetic paths for snapshot persistence compatibility
+
+**Variant selection** (harness- or model-specific body overrides from a `variants/`
+subdirectory) is now Mars's responsibility. Meridian receives the final resolved
+content — no variant resolution runs in meridian-cli at launch time. The specificity
+ladder still applies but resolution happens inside Mars, not meridian-cli.
 
 See [mars docs: skill-compilation.md](https://github.com/meridian-flow/mars-agents/blob/main/docs/config/skill-compilation.md) for the skill authoring format.
 

@@ -5,6 +5,13 @@ Turns a `SpawnRequest` into a running process. Does not own policy decisions (wh
 to spawn) or harness specifics (how to build argv for Claude/Codex) — it owns the
 composition seam that wires them together.
 
+## Skill Loading
+
+Skill content comes from the Mars launch-bundle JSON (`skills.loaded[].{name, skill_type, body}`),
+not from reading `.mars/skills/` on disk. `_build_resolved_skills_from_bundle()` in `policies.py`
+constructs `ResolvedSkills` from bundle data. `resolve_skills_from_profile()` is kept only for
+legacy snapshot replay when a persisted snapshot's `loaded_skills` field is empty.
+
 ## The Composition Seam (Invariant I-1)
 
 All launch state assembly — argv, env, permissions, prompt, workspace roots — happens
