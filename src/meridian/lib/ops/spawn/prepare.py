@@ -26,6 +26,7 @@ from meridian.lib.launch.request import (
 from meridian.lib.launch.resolve import parse_duration_seconds
 from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
+from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
 from meridian.lib.utils.time import minutes_to_seconds
 
 from ..runtime import (
@@ -38,6 +39,20 @@ from ..runtime import (
 from .models import SpawnCreateInput
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
+
+
+def _first_context_from_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
+    """Return the first work item attached to resolved ``--from`` context refs."""
+
+    if not refs:
+        return None
+    from meridian.lib.ops.spawn.context_ref import resolve_context_ref
+
+    for ref in refs:
+        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
+        if work_id:
+            return work_id
+    return None
 
 
 @dataclass(frozen=True)
@@ -99,6 +114,11 @@ def build_create_payload(
                 ).strip() or None
             except Exception:
                 ambient_work_id = None
+        # Work item precedence: --work (explicit) > ambient session > --from inheritance.
+        # --from is a last-resort fallback — only inherits work when neither the user
+        # nor the current session provides one.
+        if ambient_work_id is None and explicit_work_id is None:
+            ambient_work_id = _first_context_from_work_id(project_root, payload.context_from)
         project_state_dir = resolve_project_paths(project_root).root_dir
         task_cwd_resolution = resolve_task_cwd(
             project_root,
@@ -196,6 +216,9 @@ def build_create_payload(
             runtime=preview_runtime,
             harness_registry=harness_registry,
             dry_run=composition_dry_run,
+            launch_mode=(
+                BACKGROUND_LAUNCH_MODE if payload.background else FOREGROUND_LAUNCH_MODE
+            ),
         )
         if composition_dry_run:
             preview_context = bind_spawn_launch_context(

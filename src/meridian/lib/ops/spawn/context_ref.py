@@ -38,6 +38,7 @@ class SpawnContextRef(BaseModel):
     written_files: tuple[str, ...] = ()
     harness_session_id: str | None = None
     chat_id: str | None = None
+    work_id: str | None = None
 
 
 class SessionContextRef(BaseModel):
@@ -53,6 +54,7 @@ class SessionContextRef(BaseModel):
     model: str
     harness: str
     harness_session_id: str | None = None
+    work_id: str | None = None
 
 
 type ContextRef = SpawnContextRef | SessionContextRef
@@ -106,7 +108,7 @@ def resolve_context_ref(project_root: Path, ref: str) -> ContextRef:
         return _spawn_context_ref(spawn_row, project_root)
     if _SESSION_REF_RE.fullmatch(normalized) or _is_tracked_session(project_root, normalized):
         primary_row = _select_primary_spawn_for_session(project_root, normalized)
-        return _session_context_ref(primary_row)
+        return _session_context_ref(primary_row, project_root)
 
     spawn_id = resolve_spawn_reference(project_root, normalized)
     row = read_spawn_row(project_root, spawn_id)
@@ -127,13 +129,18 @@ def _spawn_context_ref(row: SpawnRecord, project_root: Path) -> SpawnContextRef:
         written_files=_load_written_files(project_root, row.id),
         harness_session_id=row.harness_session_id,
         chat_id=row.chat_id,
+        work_id=(row.work_id or "").strip() or None,
     )
 
 
-def _session_context_ref(primary_row: SpawnRecord) -> SessionContextRef:
+def _session_context_ref(primary_row: SpawnRecord, project_root: Path) -> SessionContextRef:
     chat_id = (primary_row.chat_id or "").strip()
     if not chat_id:
         raise ValueError(f"Primary spawn '{primary_row.id}' has no associated session")
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    work_id = (
+        session_store.get_session_active_work_id(runtime_root, chat_id) or ""
+    ).strip() or None
     return SessionContextRef(
         chat_id=chat_id,
         primary_spawn_id=primary_row.id,
@@ -142,6 +149,7 @@ def _session_context_ref(primary_row: SpawnRecord) -> SessionContextRef:
         model=primary_row.model or "",
         harness=primary_row.harness or "",
         harness_session_id=primary_row.harness_session_id,
+        work_id=work_id,
     )
 
 

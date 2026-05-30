@@ -14,8 +14,11 @@ from meridian.lib.core.util import FormatContext
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import LaunchRequest, SessionMode, launch_primary
 from meridian.lib.launch.composition import PromptDocument
+from meridian.lib.launch.reference import validate_reference_paths
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.spawn.models import normalize_goal
+from meridian.lib.state.paths import resolve_kb_dir
 
 
 class PrimaryLaunchOutput(BaseModel):
@@ -130,9 +133,12 @@ def run_primary_launch(
     timeout: float | None,
     dry_run: bool,
     passthrough: tuple[str, ...],
+    reference_files: tuple[str, ...] = (),
+    prompt: str | None = None,
+    skills: tuple[str, ...] = (),
+    goal: str | None = None,
     supplemental_prompt_documents: tuple[PromptDocument, ...] = (),
     include_bootstrap_documents: bool = False,
-    prompt: str | None = None,
 ) -> PrimaryLaunchOutput:
     def _result_message(*, exit_code: int) -> str:
         if dry_run:
@@ -178,6 +184,7 @@ def run_primary_launch(
         context_from=context_from_requested,
         agent=agent,
         model=model,
+        skills=",".join(skills) if skills else None,
     )
     fork_target = fork_resolution.fork_ref
     fork_fresh_target = fork_resolution.fork_fresh_ref
@@ -206,6 +213,8 @@ def run_primary_launch(
             raise ValueError("Cannot combine --continue with --model.")
         if agent is not None and agent.strip():
             raise ValueError("Cannot combine --continue with --agent.")
+        if skills:
+            raise ValueError("Cannot combine --continue with --skills.")
         resolved_continue = resolve_session_target(
             project_root=project_root, continue_ref=resume_target
         )
@@ -305,6 +314,16 @@ def run_primary_launch(
         if requested_work_id is None and resolved_fork.source_work_id is not None:
             requested_work_id = resolved_fork.source_work_id
 
+    validated_reference_files = tuple(
+        path.as_posix()
+        for path in validate_reference_paths(
+            reference_files,
+            reference_anchor=project_root,
+            kb_dir=resolve_kb_dir(project_root),
+        )
+    )
+    resolved_goal = normalize_goal(goal)
+
     launch_result = launch_primary(
         project_root=project_root,
         request=LaunchRequest(
@@ -322,6 +341,10 @@ def run_primary_launch(
             supplemental_prompt_documents=supplemental_prompt_documents,
             include_bootstrap_documents=include_bootstrap_documents,
             context_from=fork_resolution.resolved_context_from,
+            reference_files=validated_reference_files,
+            prompt=prompt,
+            skills=skills,
+            goal=resolved_goal,
             dry_run=dry_run,
             execution_policy=ResolvedExecutionPolicy(
                 approval=resolved_approval if resolved_approval != "default" else None,

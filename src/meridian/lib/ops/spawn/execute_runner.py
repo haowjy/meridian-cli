@@ -276,6 +276,7 @@ async def _prepare_execution_handoff(
                 harness_registry=runtime.harness_registry,
                 dry_run=False,
                 runtime_work_id=runtime_work_id,
+                launch_mode=spawn_record.launch_mode if spawn_record is not None else None,
                 cache=mars_cache,
             )
         elif prepared is not None:

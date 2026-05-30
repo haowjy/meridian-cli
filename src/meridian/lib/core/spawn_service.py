@@ -318,6 +318,7 @@ class SpawnApplicationService:
             harness_registry=payload.harness_registry,
             dry_run=False,
             runtime_work_id=(payload.work_id or "").strip() or None,
+            launch_mode=payload.launch_mode,
             cache=mars_cache,
         )
 

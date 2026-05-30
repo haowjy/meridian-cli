@@ -67,6 +67,7 @@ from meridian.cli.startup.catalog import COMMAND_CATALOG
 from meridian.cli.startup.classify import classify_invocation
 from meridian.cli.startup.policy import StartupClass, StateRequirement
 from meridian.cli.startup.policy import TelemetryMode as StartupTelemetryMode
+from meridian.cli.utils import parse_csv_list
 from meridian.lib.core.depth import is_nested_meridian_process
 from meridian.lib.core.sink import OutputSink
 from meridian.lib.core.util import FormatContext
@@ -241,6 +242,47 @@ def _interactive_terminal_attached() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _read_primary_prompt_from_stdin(*, explicit_prompt_file_stdin: bool) -> str:
+    if sys.stdin.isatty():
+        if explicit_prompt_file_stdin:
+            raise ValueError("--prompt-file - requires stdin to be piped or redirected")
+        raise ValueError("prompt stdin requires stdin to be piped or redirected")
+    try:
+        prompt_text = sys.stdin.read()
+    except UnicodeDecodeError as exc:
+        raise ValueError("prompt stdin is not valid UTF-8") from exc
+    if not prompt_text:
+        raise ValueError("prompt stdin is empty")
+    return prompt_text
+
+
+def _read_primary_prompt_from_file(prompt_file: str) -> str:
+    if not prompt_file.strip():
+        raise ValueError("prompt file path is empty")
+    prompt_path = Path(prompt_file)
+    try:
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ValueError(f"prompt file not found: {prompt_file}") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"prompt file is not valid UTF-8: {prompt_file}") from exc
+    if not prompt_text:
+        raise ValueError(f"prompt file is empty: {prompt_file}")
+    return prompt_text
+
+
+def _resolve_primary_prompt(prompt: str | None, prompt_file: str | None) -> str | None:
+    if prompt is not None and prompt_file is not None:
+        raise ValueError("cannot specify both -p and --prompt-file")
+    if prompt is not None:
+        return prompt
+    if prompt_file is not None:
+        if prompt_file == "-":
+            return _read_primary_prompt_from_stdin(explicit_prompt_file_stdin=True)
+        return _read_primary_prompt_from_file(prompt_file)
+    return None
+
+
 @app.default
 def root(
     json_mode: Annotated[
@@ -319,6 +361,44 @@ def root(
             ),
         ),
     ] = None,
+    references: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name=["--file", "-f"],
+            help="Reference files to include in primary prompt context (repeatable).",
+            negative_iterable=(),
+        ),
+    ] = (),
+    prompt_file: Annotated[
+        str | None,
+        Parameter(
+            name="--prompt-file",
+            help="Read primary prompt text from a file. Use '-' to read stdin.",
+            allow_leading_hyphen=True,
+        ),
+    ] = None,
+    prompt: Annotated[
+        str | None,
+        Parameter(
+            name=["-p", "--prompt"],
+            help="Inline literal primary prompt text.",
+        ),
+    ] = None,
+    skills: Annotated[
+        tuple[str, ...],
+        Parameter(
+            name="--skills",
+            help="Comma-separated skill overrides for the primary agent. Repeatable.",
+            negative_iterable=(),
+        ),
+    ] = (),
+    goal: Annotated[
+        str | None,
+        Parameter(
+            name="--goal",
+            help="Completion goal injected as a bounded completion contract.",
+        ),
+    ] = None,
     model: Annotated[
         str,
         Parameter(name=["--model", "-m"], help="Model id or alias for primary harness."),
@@ -391,6 +471,11 @@ def root(
     if yolo and approval is not None:
         raise ValueError("Cannot combine --yolo with --approval.")
 
+    resolved_prompt = _resolve_primary_prompt(prompt, prompt_file)
+    parsed_skills: list[str] = []
+    for token in skills:
+        parsed_skills.extend(parse_csv_list(token, field_name="skills"))
+
     if _GLOBAL_OPTIONS.get() is None:
         resolved = normalize_output_format(requested=output_format, json_mode=json_mode)
         _GLOBAL_OPTIONS.set(
@@ -428,6 +513,10 @@ def root(
         sandbox=sandbox,
         timeout=timeout,
         dry_run=dry_run,
+        reference_files=tuple(references),
+        prompt=resolved_prompt,
+        skills=tuple(parsed_skills),
+        goal=goal,
         # See _split_passthrough_args() for why this reads from GlobalOptions.
         passthrough=get_global_options().passthrough_args,
     )
@@ -500,7 +589,11 @@ def _run_primary_launch(
     sandbox: str | None,
     timeout: float | None,
     dry_run: bool,
-    passthrough: tuple[str, ...],
+    reference_files: tuple[str, ...] = (),
+    prompt: str | None = None,
+    skills: tuple[str, ...] = (),
+    goal: str | None = None,
+    passthrough: tuple[str, ...] = (),
 ) -> None:
     from meridian.cli import primary_launch
 
@@ -523,6 +616,10 @@ def _run_primary_launch(
             timeout=timeout,
             dry_run=dry_run,
             passthrough=passthrough,
+            reference_files=reference_files,
+            prompt=prompt,
+            skills=skills,
+            goal=goal,
         )
     )
 

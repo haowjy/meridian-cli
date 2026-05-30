@@ -41,9 +41,9 @@ Common `spawn` flags:
 | `-f FILE` | Attach context file (repeatable) |
 | `--fork [REF]` | Fork into a new session while preserving source agent/model/skills (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
 | `--fork-fresh [REF]` | Fork into a new session and allow `-m`, `-a`, and `--skills` overrides (`REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions) |
-| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. |
+| `--from [REF]` | Start a new spawn seeded with prior context from a spawn ref (`p123`) or chat/session ref (`c123`). `REF` defaults to `$MERIDIAN_SPAWN_ID` inside Meridian sessions. Does not fork transcript lineage. Also inherits the source's work item as a fallback (see Work Precedence below). |
 | `--desc "label"` | Human-readable label in dashboards |
-| `--work SLUG` | Attach to a specific work item |
+| `--work SLUG` | Attach to a specific work item (overrides ambient and --from inheritance) |
 | `--task-dir PATH` | Override source-edit directory for this spawn/fork (must exist) |
 | `--profile NAME` | `spawn list` only: filter by stored agent/profile name |
 | `--primary` | `spawn list` only: include only `kind=primary` spawns |
@@ -61,6 +61,16 @@ Common `spawn` flags:
 `--fork-fresh` is the identity-changing variant. It is useful for role/model swaps, but can reduce prompt-cache locality because the profile/system prompt may change.
 
 Session initiation modes: `--continue` resumes the same transcript, `--fork` branches with identity lock, `--fork-fresh` branches with identity overrides, and `--from [REF]` starts an independent transcript seeded by references only.
+
+#### Work Precedence
+
+When a spawn resolves which work item to attach to, precedence is:
+
+1. **`--work`** (explicit) — always wins
+2. **Ambient session** — the active work item of the current session
+3. **`--from` inheritance** — the work item attached to the referenced spawn/session
+
+`--from` only inherits work as a last-resort fallback. If you pass `--work`, or the current session already has an active work item, `--from` does not override it. This means you can safely use `--from` for context without accidentally pulling in a different work item.
 
 ### Spawn Output
 
