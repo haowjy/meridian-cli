@@ -20,7 +20,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.spawn_manager import _select_dispatch_transport, dispatch_start
+from meridian.lib.streaming.spawn_dispatch import dispatch_start, select_dispatch_transport
 
 
 class _FakeConnection(HarnessConnection[ResolvedLaunchSpec]):
@@ -132,17 +132,17 @@ async def test_dispatch_start_uses_contract_transport_for_cursor(
     }
 
 
-def test_select_dispatch_transport_single_declared_returns_it() -> None:
+def testselect_dispatch_transport_single_declared_returns_it() -> None:
     """Single declared transport is returned unchanged regardless of type."""
-    assert _select_dispatch_transport((TransportId.SUBPROCESS,)) == TransportId.SUBPROCESS
-    assert _select_dispatch_transport((TransportId.STREAMING,)) == TransportId.STREAMING
+    assert select_dispatch_transport((TransportId.SUBPROCESS,)) == TransportId.SUBPROCESS
+    assert select_dispatch_transport((TransportId.STREAMING,)) == TransportId.STREAMING
 
 
-def test_select_dispatch_transport_multiple_with_streaming_returns_streaming() -> None:
+def testselect_dispatch_transport_multiple_with_streaming_returns_streaming() -> None:
     """When multiple transports are declared and STREAMING is among them, STREAMING wins."""
-    result = _select_dispatch_transport((TransportId.SUBPROCESS, TransportId.STREAMING))
+    result = select_dispatch_transport((TransportId.SUBPROCESS, TransportId.STREAMING))
     assert result == TransportId.STREAMING
 
     # Order should not matter.
-    result_reversed = _select_dispatch_transport((TransportId.STREAMING, TransportId.SUBPROCESS))
+    result_reversed = select_dispatch_transport((TransportId.STREAMING, TransportId.SUBPROCESS))
     assert result_reversed == TransportId.STREAMING
