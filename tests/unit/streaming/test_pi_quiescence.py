@@ -21,7 +21,7 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.pi_drain import PiSubspawnTracker
+from meridian.lib.streaming.pi_drain import PI_MICRO_DRAIN_TIMEOUT_SECONDS, PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
 
 
@@ -521,6 +521,86 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         )
     finally:
         await manager.stop_spawn(spawn_id)
+
+@pytest.mark.asyncio
+async def test_spawn_manager_pi_micro_drain_resolves_without_wait_for_timer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _OpenAfterTerminalConnection(_FakePiConnection):
+        async def events(self):  # type: ignore[no-untyped-def]
+            yield _pi_event("session", {"id": "ses-pi"})
+            yield _pi_event("turn_end", {"type": "turn_end"})
+            yield _pi_event(
+                "agent_end",
+                {"messages": [{"role": "assistant", "stopReason": "stop"}]},
+            )
+            await asyncio.sleep(60)
+
+    fake_connection = _OpenAfterTerminalConnection([])
+
+    async def _start_connection(
+        config: ConnectionConfig,
+        spec: ResolvedLaunchSpec,
+    ) -> HarnessConnection[Any]:
+        await fake_connection.start(config, spec)
+        return fake_connection
+
+    original_wait_for = asyncio.wait_for
+
+    async def _guarded_wait_for(awaitable: Any, timeout: float | None = None) -> Any:
+        if timeout == PI_MICRO_DRAIN_TIMEOUT_SECONDS:
+            raise AssertionError("Pi micro-drain must not rely on wait_for's tiny timer")
+        return await original_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", _guarded_wait_for)
+
+    manager = SpawnManager(
+        runtime_root=tmp_path,
+        project_root=tmp_path,
+        start_connection=_start_connection,
+        control_server_factory=lambda _spawn_id, _socket_path, _manager: _NoopControlServer(),
+    )
+
+    spawn_id = SpawnId("p-pi-micro-drain-no-timer")
+    await manager.start_spawn(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    try:
+        outcome = await original_wait_for(manager.wait_for_completion(spawn_id), timeout=1.0)
+        assert outcome is not None
+        assert outcome.status == "succeeded"
+        assert outcome.error is None
+
+        history_path = tmp_path / "spawns" / str(spawn_id) / "history.jsonl"
+        history = [
+            json.loads(line)
+            for line in history_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        phases = [
+            event.get("payload", {}).get("phase")
+            for event in history
+            if event.get("event_type") == "meridian.pi.lifecycle.phase"
+        ]
+        assert "quiescence_micro_drain_started" in phases
+        assert "finalized" in phases
+    finally:
+        await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_child_wave_timeout_cleans_tracked_children_and_fails(

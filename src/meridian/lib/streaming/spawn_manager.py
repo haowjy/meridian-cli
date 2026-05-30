@@ -452,6 +452,21 @@ class SpawnManager:
                         # Give already-buffered/in-memory event iterators one loop tick before
                         # applying tiny policy timeouts such as Pi micro-drain.
                         await asyncio.sleep(0)
+                    if (
+                        pi_drain.quiescence_candidate is not None
+                        and not pending_event_task.done()
+                    ):
+                        # Pi micro-drain is a scheduler-yield boundary, not a real wait.
+                        # Resolving it explicitly avoids relying on sub-millisecond
+                        # wait_for() timers, which can leave an idle spawned Pi session
+                        # parked forever after quiescence_micro_drain_started.
+                        timeout_outcome = await pi_drain.handle_timeout(
+                            _terminate_tracked_pi_children,
+                        )
+                        if timeout_outcome is not None:
+                            recorded_terminal_outcome = timeout_outcome
+                            break
+                        continue
                     if next_timeout is not None:
                         event = await asyncio.wait_for(
                             asyncio.shield(pending_event_task),
