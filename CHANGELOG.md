@@ -10,6 +10,10 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `meridian -C <dir> mars ...` now scopes mars passthrough to `<dir>` instead of inherited `MERIDIAN_PROJECT_DIR`.
+
+## [0.2.17] - 2026-05-30
+
+### Fixed
 - Pi spawns hanging permanently at quiescence_micro_drain_started — replaced fragile sleep(0)+task.done() heuristic with bounded 50ms asyncio.wait_for timeout. Also fixed O(N) disk watcher creating indefinite awatch tasks for standalone spawn directories (3000+ watchers in production).
 - Pi extension artifacts (managed-bash, meridian-spawn-watch) missing from PyPI wheel — `release.yml` ran `uv build` without building extensions first. Every Pi spawn failed with `Missing Pi extension artifact`. Added Node.js setup, extension build, and wheel contents verification to the release workflow.
 
