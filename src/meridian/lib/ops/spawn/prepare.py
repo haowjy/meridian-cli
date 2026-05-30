@@ -40,6 +40,20 @@ from .models import SpawnCreateInput
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
 
 
+def _first_context_from_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
+    """Return the first work item attached to resolved ``--from`` context refs."""
+
+    if not refs:
+        return None
+    from meridian.lib.ops.spawn.context_ref import resolve_context_ref
+
+    for ref in refs:
+        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
+        if work_id:
+            return work_id
+    return None
+
+
 @dataclass(frozen=True)
 class SpawnCreateArtifacts:
     """Resolved spawn request plus expensive prepared surface for bind-only execute."""
@@ -99,6 +113,8 @@ def build_create_payload(
                 ).strip() or None
             except Exception:
                 ambient_work_id = None
+        if ambient_work_id is None and explicit_work_id is None:
+            ambient_work_id = _first_context_from_work_id(project_root, payload.context_from)
         project_state_dir = resolve_project_paths(project_root).root_dir
         task_cwd_resolution = resolve_task_cwd(
             project_root,

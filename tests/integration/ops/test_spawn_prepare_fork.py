@@ -3,12 +3,14 @@ from pathlib import Path
 import pytest
 
 from meridian.lib.config.settings import load_config
+from meridian.lib.core.context import RuntimeContext
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.runtime import build_runtime_from_root_and_config
+from meridian.lib.ops.spawn import context_ref
 from meridian.lib.ops.spawn.models import SpawnCreateInput
 from meridian.lib.ops.spawn.prepare import build_create_payload
 from meridian.lib.state import work_store
@@ -44,6 +46,27 @@ def _prepare_codex_runtime(project_root: Path):
     )
 
 
+def _stub_context_from_work(
+    monkeypatch: pytest.MonkeyPatch,
+    work_id: str | None,
+    *,
+    spawn_id: str = "p123",
+) -> None:
+    def fake_resolve_context_ref(project_root: Path, ref: str) -> context_ref.ContextRef:
+        _ = (project_root, ref)
+        return context_ref.SpawnContextRef(
+            spawn_id=spawn_id,
+            status="succeeded",
+            agent="coder",
+            desc="prior task",
+            model="gpt-5.5",
+            harness="codex",
+            work_id=work_id,
+        )
+
+    monkeypatch.setattr(context_ref, "resolve_context_ref", fake_resolve_context_ref)
+
+
 def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     model_routes = {
         "claude-sonnet-4.5": ("claude-sonnet-4.5", HarnessId.CLAUDE),
@@ -71,6 +94,62 @@ def _stub_bundle_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(bundle_adapter, "request_and_resolve", fake_request)
+
+
+def test_build_create_payload_inherits_work_from_context_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_bundle_adapter(monkeypatch)
+    _stub_context_from_work(monkeypatch, "feature-x")
+    _, runtime = _prepare_codex_runtime(tmp_path)
+
+    artifacts = build_create_payload(
+        SpawnCreateInput(
+            prompt="continue from prior spawn",
+            project_root=tmp_path.as_posix(),
+            context_from=("p123",),
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(),
+    )
+
+    assert artifacts.request.task_cwd_work_item == "feature-x"
+    assert artifacts.request.task_cwd_source == "ambient-work-authority-root"
+
+
+def test_build_create_payload_work_precedence_over_context_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_bundle_adapter(monkeypatch)
+    _stub_context_from_work(monkeypatch, "from-work")
+    _, runtime = _prepare_codex_runtime(tmp_path)
+
+    explicit = build_create_payload(
+        SpawnCreateInput(
+            prompt="continue from prior spawn",
+            project_root=tmp_path.as_posix(),
+            context_from=("p123",),
+            work="explicit-work",
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(),
+    )
+    ambient = build_create_payload(
+        SpawnCreateInput(
+            prompt="continue from prior spawn",
+            project_root=tmp_path.as_posix(),
+            context_from=("p123",),
+        ),
+        runtime=runtime,
+        ctx=RuntimeContext(work_id="ambient-work"),
+    )
+
+    assert explicit.request.task_cwd_work_item == "explicit-work"
+    assert explicit.request.task_cwd_source == "explicit-work-authority-root"
+    assert ambient.request.task_cwd_work_item == "ambient-work"
+    assert ambient.request.task_cwd_source == "ambient-work-authority-root"
 
 
 def test_build_create_payload_does_not_forward_meridian_primary_or_legacy_defaults_to_bundle(
