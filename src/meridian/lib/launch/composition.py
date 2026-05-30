@@ -304,12 +304,18 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
             for skill in group:
                 lines.append(f"- {skill.name}")
 
-    # Remaining (reference and unknown types)
+    # Remaining types: each gets its own heading, no description.
     other = [s for s in available_skills if s.skill_type not in known_types]
     if other:
-        lines.append("")
-        for skill in other:
-            lines.append(f"- {skill.name}")
+        seen_types: list[str] = []
+        for s in other:
+            if s.skill_type not in seen_types:
+                seen_types.append(s.skill_type)
+        for type_key in seen_types:
+            group = [s for s in other if s.skill_type == type_key]
+            lines.append(f"\n## {type_key.capitalize()}")
+            for skill in group:
+                lines.append(f"- {skill.name}")
 
     return "\n".join(lines)
 
