@@ -286,15 +286,13 @@ def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, 
     lines = [
         "# Available Skills",
         "",
-        "These skills are registered but not yet loaded. "
-        "Load them when the situation calls for their guidance — "
-        "they exist because this agent benefits from them regularly.",
+        "Not yet loaded. Load proactively when the task fits.",
     ]
     type_groups: tuple[tuple[str, str, str], ...] = (
-        ("Principles", "principle", "Core operating constraints — override other guidance."),
-        ("Guardrails", "guardrail", "Safety and quality boundaries."),
-        ("Mode-shift", "mode-shift", "Change operating posture when loaded."),
-        ("Checkpoint", "checkpoint", "Verification gates — load at decision points."),
+        ("Principles", "principle", "Override other guidance when loaded."),
+        ("Guardrails", "guardrail", "Load before acting in sensitive areas."),
+        ("Mode-shift", "mode-shift", "Change how you operate when loaded."),
+        ("Checkpoint", "checkpoint", "Load at decision points to verify before continuing."),
     )
     known_types = {t for _, t, _ in type_groups}
 
