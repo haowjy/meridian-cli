@@ -80,8 +80,32 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Build Pi extensions
+        run: |
+          corepack enable
+          cd src/meridian/pi_runtime && pnpm install --frozen-lockfile && pnpm run build:extensions
+
       - name: Build distributions
         run: uv build --no-sources
+
+      - name: Verify Pi extensions in wheel
+        run: |
+          python3 -c "
+          import zipfile, sys
+          whl = next(p for p in __import__('pathlib').Path('dist').glob('*.whl'))
+          with zipfile.ZipFile(whl) as z:
+              ext_files = [n for n in z.namelist() if 'pi_runtime/dist/extensions/' in n]
+              if not ext_files:
+                  print('::error::Wheel is missing Pi extension artifacts', file=sys.stderr)
+                  sys.exit(1)
+              for f in ext_files:
+                  print(f'  included: {f}')
+          "
 
       - name: Validate wheel artifact
         run: |
