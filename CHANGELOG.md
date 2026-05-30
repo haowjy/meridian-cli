@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Pi spawns hanging permanently at quiescence_micro_drain_started — replaced fragile sleep(0)+task.done() heuristic with bounded 50ms asyncio.wait_for timeout. Also fixed O(N) disk watcher creating indefinite awatch tasks for standalone spawn directories (3000+ watchers in production).
+
 ## [0.2.16] - 2026-05-30
 
 ## [0.2.15] - 2026-05-29
