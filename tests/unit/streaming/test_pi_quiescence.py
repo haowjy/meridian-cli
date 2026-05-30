@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -572,6 +573,68 @@ async def test_micro_drain_timeout_rechecks_disk_before_accepting(tmp_path: Path
     _write_json(
         tmp_path / "spawns" / "p-disk-child" / "state.json",
         {"id": "p-disk-child", "parent_id": str(spawn_id), "status": "running"},
+    )
+
+    async def _noop_terminate(
+        tracker: PiSubspawnTracker,
+        reason: str,
+    ) -> None:
+        _ = tracker, reason
+
+    try:
+        result = await coordinator.handle_timeout(_noop_terminate)
+        assert result is None
+        assert coordinator.quiescence_candidate is None
+        assert "quiescence_micro_drain_cancelled" in phases
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
+    tmp_path: Path,
+) -> None:
+    phases: list[str] = []
+
+    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        _ = session_role, payload
+        phases.append(phase)
+
+    spawn_id = SpawnId("p-micro-drain-notification")
+    connection = _FakePiConnection([])
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+
+    coordinator = PiDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=spawn_id,
+        receiver=connection,
+        session_role="spawned",
+        notification_timeout_seconds=None,
+        child_wave_timeout_seconds=None,
+        emit_phase=emit_phase,
+    )
+    await coordinator.start()
+    coordinator.quiescence_enabled = True
+    await coordinator.quiescence_tracker.mark_idle()
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
+    coordinator.start_micro_drain(terminal)
+    _write_json(
+        tmp_path / "pi-bash" / str(spawn_id) / "last-notification.json",
+        {"ts_epoch_secs": time.time()},
     )
 
     async def _noop_terminate(

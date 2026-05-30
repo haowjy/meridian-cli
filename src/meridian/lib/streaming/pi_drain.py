@@ -500,7 +500,7 @@ class PiDrainCoordinator:
         if not self.quiescence_enabled:
             raise TimeoutError
         if self.quiescence_candidate is not None:
-            await self.quiescence_tracker.mark_idle()
+            await self.quiescence_tracker.refresh_disk_state()
             if self.is_quiescent():
                 return self.quiescence_candidate
             self._emit(
@@ -673,10 +673,8 @@ class PiDrainCoordinator:
     async def reevaluate_after_disk_change(self) -> None:
         if not self.quiescence_enabled:
             return
-        if self.quiescence_tracker.parent_idle:
-            await self.quiescence_tracker.mark_idle()
-        else:
-            await self.quiescence_tracker.refresh_disk_state()
+        await self.quiescence_tracker.refresh_disk_state()
+        if not self.quiescence_tracker.parent_idle:
             return
         if (
             self.child_wave_timeout_seconds is not None
