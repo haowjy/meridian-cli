@@ -258,6 +258,35 @@ def test_main_skips_fork_normalization_for_mars_passthrough(
     assert captured["output_format"] == "text"
 
 
+def test_main_directory_flag_scopes_mars_passthrough_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "task"
+    project.mkdir()
+    monkeypatch.setenv("MERIDIAN_PROJECT_DIR", "/prior/project")
+    monkeypatch.setattr(cli_main, "_emit_usage_command_invoked", lambda *_a, **_k: None)
+    captured: dict[str, str | None] = {}
+
+    def _fake_run_mars_passthrough(
+        args: list[str],
+        *,
+        output_format: str | None = None,
+    ) -> None:
+        captured["project_dir"] = os.environ.get("MERIDIAN_PROJECT_DIR")
+        captured["args"] = " ".join(args)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(cli_main, "_run_mars_passthrough", _fake_run_mars_passthrough)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["-C", project.as_posix(), "mars", "sync"])
+
+    assert exc_info.value.code == 0
+    assert captured["project_dir"] == project.resolve().as_posix()
+    assert os.environ.get("MERIDIAN_PROJECT_DIR") == "/prior/project"
+
+
 def test_main_pi_primary_launch_dry_run_is_supported(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
