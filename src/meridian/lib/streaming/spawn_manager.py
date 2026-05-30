@@ -94,6 +94,15 @@ logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
 
 
+async def _cancel_timeout_task(task: asyncio.Task[None] | None) -> None:
+    """Cancel a drain-loop timeout task if still running and swallow the CancelledError."""
+    if task is None or task.done():
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
 def _safe_connection_session_id(connection: object) -> str | None:
     """Read optional connection session_id without assuming full HarnessConnection shape."""
 
@@ -478,18 +487,12 @@ class SpawnManager:
                                 # and observed — a simultaneous subspawn terminal event must
                                 # be folded into quiescence state before we reevaluate.
                                 disk_change_ready_after_event = True
-                            if timeout_task is not None and not timeout_task.done():
-                                timeout_task.cancel()
-                                with suppress(asyncio.CancelledError):
-                                    await timeout_task
+                            await _cancel_timeout_task(timeout_task)
                             event = pending_event_task.result()
                             pending_event_task = None
                         elif pending_disk_task is not None and pending_disk_task in done:
                             pending_disk_task = None
-                            if timeout_task is not None and not timeout_task.done():
-                                timeout_task.cancel()
-                                with suppress(asyncio.CancelledError):
-                                    await timeout_task
+                            await _cancel_timeout_task(timeout_task)
                             await pi_drain.reevaluate_after_disk_change()
                             continue
                         else:
@@ -501,10 +504,7 @@ class SpawnManager:
                                 break
                             continue
                 except StopAsyncIteration:
-                    if timeout_task is not None and not timeout_task.done():
-                        timeout_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await timeout_task
+                    await _cancel_timeout_task(timeout_task)
                     pending_event_task = None
                     if pi_drain.quiescence_candidate is not None:
                         recorded_terminal_outcome = pi_drain.quiescence_candidate

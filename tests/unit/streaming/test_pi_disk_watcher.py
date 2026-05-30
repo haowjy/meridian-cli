@@ -352,3 +352,35 @@ async def test_no_watcher_tasks_for_non_child_spawns(tmp_path: Path) -> None:
         assert watcher.has_pending_child_spawns() is False
     finally:
         await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_candidate_resolves_to_wrong_parent_is_discarded(tmp_path: Path) -> None:
+    """Candidate dir whose state.json resolves to a different parent is discarded, not pending."""
+    parent_id = SpawnId("p-parent")
+    child_dir = tmp_path / "spawns" / "p123"
+
+    # Directory exists but no state.json yet — numeric name qualifies as a candidate.
+    child_dir.mkdir(parents=True)
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        # Candidate should be tracked as pending while state is unresolved.
+        assert watcher.has_pending_child_spawns() is True
+        assert watcher.pending_child_spawn_count() == 1
+
+        # Now state.json appears but claims a different parent entirely.
+        _write_json(
+            child_dir / "state.json",
+            {"id": "p123", "parent_id": "p-unrelated-parent", "status": "running"},
+        )
+        await watcher.force_rescan()
+
+        # Candidate must be discarded — it belongs to another parent.
+        assert watcher.has_pending_child_spawns() is False
+        assert watcher.pending_child_spawn_count() == 0
+        assert "p123" not in watcher._candidate_child_spawn_ids
+        assert "p123" not in watcher._child_spawn_ids
+    finally:
+        await watcher.stop()
