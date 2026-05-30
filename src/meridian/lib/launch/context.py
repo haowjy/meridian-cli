@@ -1019,6 +1019,7 @@ def _resolve_spawn_prepare_projection(
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
+            available_skills=policy.bundle_available_skills,
             agent_profile_body=agent_profile_body,
             report_instruction=build_report_instruction(),
             inventory_prompt=agent_inventory_prompt or "",
@@ -1129,6 +1130,7 @@ def _resolve_primary_projection(
     projected = harness.project_content(
         ComposedLaunchContent(
             supplemental_documents=supplemental_documents,
+            available_skills=policy.bundle_available_skills,
             agent_profile_body=agent_profile_body,
             report_instruction="",
             inventory_prompt=agent_inventory_prompt or "",

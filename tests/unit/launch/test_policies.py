@@ -11,6 +11,7 @@ from meridian.lib.core.types import HarnessId, ModelId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch import bundle_adapter
 from meridian.lib.launch.compiler import ModelPolicyRule, ProvenanceLevel
+from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.context import build_launch_policy_snapshot
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 from meridian.lib.launch.policies import (
@@ -37,6 +38,7 @@ class _FakeBundleResult:
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()
+    skills_available: tuple[AvailableSkillEntry, ...] = ()
 
 
 def _write_agent_profile(project_root: Path, *, name: str, frontmatter: str) -> None:

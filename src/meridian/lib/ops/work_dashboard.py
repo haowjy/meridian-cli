@@ -330,6 +330,7 @@ class WorkSessionsInput(BaseModel):
 
     work_id: str = ""
     all: bool = False
+    primary: bool = False
     project_root: str | None = None
 
 
@@ -339,13 +340,15 @@ class WorkSessionsOutput(BaseModel):
     work_id: str
     sessions: tuple[WorkSessionItem, ...] = ()
     all: bool = False
+    primary: bool = False
 
     def format_text(self, ctx: FormatContext | None = None) -> str:
         _ = ctx
         lines = _format_session_rows(self.sessions, indent="")
-        if not self.all:
+        if not self.all and not self.primary:
             lines.append("")
             lines.append("Use --all to include historical sessions.")
+            lines.append("Use --primary to show only the primary handoff chain.")
         return "\n".join(lines)
 
 
@@ -381,6 +384,7 @@ def _work_sessions_for_work_id(
     work_id: str,
     *,
     include_all: bool,
+    primary_only: bool = False,
 ) -> tuple[WorkSessionItem, ...]:
     active_chat_ids = set(session_store.list_active_sessions(runtime_root))
     chat_ids = work_session_chat_ids(
@@ -390,6 +394,8 @@ def _work_sessions_for_work_id(
         include_all=include_all,
     )
     records = session_store.get_session_records(runtime_root, chat_ids)
+    if primary_only:
+        records = [r for r in records if r.kind == "primary"]
     records.sort(key=lambda record: (record.started_at, record.chat_id))
     return tuple(
         WorkSessionItem(
@@ -584,9 +590,11 @@ def work_sessions_sync(
             project_root,
             runtime_state_root,
             item.name,
-            include_all=payload.all,
+            include_all=payload.all or payload.primary,
+            primary_only=payload.primary,
         ),
         all=payload.all,
+        primary=payload.primary,
     )
 
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch import bundle_adapter
+from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy
 
 
@@ -21,6 +22,7 @@ class FakeBundleResult:
     tools_allowed: tuple[str, ...] = ()
     tools_disallowed: tuple[str, ...] = ()
     tools_mcp: tuple[str, ...] = ()
+    skills_available: tuple[AvailableSkillEntry, ...] = ()
 
 
 def stub_bundle_request_and_resolve(

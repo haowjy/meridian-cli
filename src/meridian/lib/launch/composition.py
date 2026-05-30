@@ -27,10 +27,10 @@ SYSTEM_INSTRUCTION_BLOCK_ORDER: tuple[str, ...] = (
     "agent_profile_body",
     "completion_contract",
     "supplemental_documents",
+    "available_skills_listing",
     "inventory_prompt",
     "context_prompt",
     "report_instruction",
-    "principle_bookend",
     # passthrough_system_fragments appended last
 )
 
@@ -40,6 +40,14 @@ INLINE_BLOCK_ORDER: tuple[str, ...] = (
     "task_context",
     "user_task_prompt",
 )
+
+
+@dataclass(frozen=True)
+class AvailableSkillEntry:
+    """Lightweight entry for an on-demand skill (name + type only)."""
+
+    name: str
+    skill_type: str = "reference"
 
 
 @dataclass(frozen=True)
@@ -160,6 +168,9 @@ class ComposedLaunchContent:
     launch_preamble: str = ""
     """Launch-mode-specific behavioral framing."""
 
+    available_skills: tuple[AvailableSkillEntry, ...] = ()
+    """On-demand skills listed by name in the prompt (not loaded until triggered)."""
+
 
 @dataclass(frozen=True)
 class ProjectedContent:
@@ -263,12 +274,49 @@ def join_content_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
 
 
+def _render_available_skills_block(available_skills: tuple[AvailableSkillEntry, ...]) -> str:
+    """Render the available skills listing — names only, grouped by type.
+
+    NOTE: mars-agents has a parallel implementation in `src/build/prompt.rs`
+    (compose_system_instruction). Keep format in sync.
+    """
+    if not available_skills:
+        return ""
+
+    lines = ["# Available Skills", "", "Load these when needed."]
+    type_groups: tuple[tuple[str, str], ...] = (
+        ("Principles", "principle"),
+        ("Guardrails", "guardrail"),
+        ("Mode-shift", "mode-shift"),
+        ("Checkpoint", "checkpoint"),
+    )
+    known_types = {t for _, t in type_groups}
+
+    for label, type_key in type_groups:
+        group = [s for s in available_skills if s.skill_type == type_key]
+        if group:
+            lines.append(f"\n## {label}")
+            for skill in group:
+                lines.append(f"- {skill.name}")
+
+    # Remaining (reference and unknown types)
+    other = [s for s in available_skills if s.skill_type not in known_types]
+    if other:
+        lines.append("")
+        for skill in other:
+            lines.append(f"- {skill.name}")
+
+    return "\n".join(lines)
+
+
 def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     """Render SYSTEM_INSTRUCTION blocks in canonical order.
 
-    Order: agent_profile_body, completion_contract, supplemental documents
-    (skill type sorted then bootstrap), inventory_prompt, context_prompt,
-    report_instruction, principle skill bookend, then passthrough fragments.
+    Order: agent_profile_body, completion_contract, auto-loaded skills
+    (grouped by type: principles first, then guardrails, then others,
+    then bootstrap), available skills listing (names only),
+    inventory_prompt, context_prompt, report_instruction,
+    then passthrough fragments.
     """
     skill_type_priority = {"principle": 0, "guardrail": 1, "reference": 2}
     skill_documents = tuple(
@@ -283,18 +331,24 @@ def render_system_instruction_blocks(content: ComposedLaunchContent) -> str:
     bootstrap_documents = tuple(
         document for document in content.supplemental_documents if document.kind == "bootstrap"
     )
-    principle_documents = tuple(
-        document for document in ordered_skill_documents if document.skill_type == "principle"
-    )
 
     ordered_blocks: list[str] = []
     for field_name in SYSTEM_INSTRUCTION_BLOCK_ORDER:
         if field_name == "supplemental_documents":
-            ordered_blocks.extend(document.content for document in ordered_skill_documents)
+            # Auto-loaded skills: full content, sorted by type (principles first)
+            # Skills already have their own `# Skill: name` heading; we don't
+            # add intermediate heading levels that would break the hierarchy.
+            if ordered_skill_documents:
+                for doc in ordered_skill_documents:
+                    if doc.content.strip():
+                        ordered_blocks.append(doc.content.strip())
+            # Bootstrap documents after skills
             ordered_blocks.extend(document.content for document in bootstrap_documents)
             continue
-        if field_name == "principle_bookend":
-            ordered_blocks.extend(document.content for document in principle_documents)
+        if field_name == "available_skills_listing":
+            listing = _render_available_skills_block(content.available_skills)
+            if listing:
+                ordered_blocks.append(listing)
             continue
         ordered_blocks.append(getattr(content, field_name))
     return join_content_blocks(*ordered_blocks, *content.passthrough_system_fragments)
@@ -354,6 +408,7 @@ def project_inline_content(content: ComposedLaunchContent) -> ProjectedContent:
 __all__ = [
     "INLINE_BLOCK_ORDER",
     "SYSTEM_INSTRUCTION_BLOCK_ORDER",
+    "AvailableSkillEntry",
     "ComposedLaunchContent",
     "InlineFileReferenceContribution",
     "ProjectedContent",

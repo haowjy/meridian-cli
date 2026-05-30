@@ -26,6 +26,7 @@ from .compiler import (
     FieldProvenance,
     match_model_policy,
 )
+from .composition import AvailableSkillEntry
 from .launch_types import (
     CompositionWarning,
     ResolvedExecutionPolicy,
@@ -127,6 +128,8 @@ class ResolvedLaunchPolicy:
     warnings: tuple[CompositionWarning, ...] = ()
     alias_catalog: dict[str, AliasEntry] | None = None
     bundle_inventory_prompt: str | None = None
+    bundle_available_skills: tuple[AvailableSkillEntry, ...] = ()
+    """Available skill entries from bundle (on-demand, not loaded at launch)."""
 
 
 ResolvedPolicies = ResolvedLaunchPolicy

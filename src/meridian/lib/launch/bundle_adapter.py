@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 
 from meridian.lib.core.types import HarnessId
 from meridian.lib.launch.compiler import FieldProvenance, ProvenanceLevel
+from meridian.lib.launch.composition import AvailableSkillEntry
 from meridian.lib.launch.launch_types import (
     CompositionWarning,
     ResolvedExecutionPolicy,
@@ -77,7 +78,7 @@ class _BundleResult:
     tools_disallowed: tuple[str, ...]
     tools_mcp: tuple[str, ...]
     skills_loaded: tuple[str, ...]
-    skills_available: tuple[str, ...]
+    skills_available: tuple[AvailableSkillEntry, ...]
     skills_missing: tuple[str, ...]
 
 
@@ -146,13 +147,10 @@ def _parse_prompt_documents(raw: object) -> tuple[_BundlePromptDocument, ...]:
     return tuple(documents)
 
 
-def _parse_skills_loaded(raw: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Parse skills loaded field — handles both v2 flat strings and v3 structured objects.
-
-    Returns (loaded_names, available_names).
-    """
+def _parse_skills_loaded(raw: object) -> tuple[str, ...]:
+    """Parse skills loaded field — handles both v2 flat strings and v3 structured objects."""
     if not isinstance(raw, list):
-        return (), ()
+        return ()
     loaded_names: list[str] = []
     for item in cast("list[object]", raw):
         if isinstance(item, str):
@@ -165,20 +163,22 @@ def _parse_skills_loaded(raw: object) -> tuple[tuple[str, ...], tuple[str, ...]]
             name = _normalize_str(cast("dict[str, object]", item).get("name"))
             if name:
                 loaded_names.append(name)
-    return tuple(loaded_names), ()
+    return tuple(loaded_names)
 
 
-def _parse_skills_available(raw: object) -> tuple[str, ...]:
+def _parse_skills_available(raw: object) -> tuple[AvailableSkillEntry, ...]:
     """Parse v3 skills.available field — list of {name, skill_type, description} objects."""
     if not isinstance(raw, list):
         return ()
-    names: list[str] = []
+    entries: list[AvailableSkillEntry] = []
     for item in cast("list[object]", raw):
         if isinstance(item, dict):
-            name = _normalize_str(cast("dict[str, object]", item).get("name"))
+            item_dict = cast("dict[str, object]", item)
+            name = _normalize_str(item_dict.get("name"))
+            skill_type = _normalize_str(item_dict.get("skill_type")) or "reference"
             if name:
-                names.append(name)
-    return tuple(names)
+                entries.append(AvailableSkillEntry(name=name, skill_type=skill_type))
+    return tuple(entries)
 
 
 def _bundle_schema_error(message: str) -> RuntimeError:
@@ -351,7 +351,7 @@ def _parse_bundle_payload(
     skills_obj = _optional_object_field(payload, "skills") or _optional_object_field(
         payload, "skills_metadata"
     )
-    skills_loaded, _ = _parse_skills_loaded(skills_obj.get("loaded"))
+    skills_loaded = _parse_skills_loaded(skills_obj.get("loaded"))
     skills_available = _parse_skills_available(skills_obj.get("available"))
 
     return _BundleResult(
@@ -545,6 +545,7 @@ def bundle_to_resolved_policy(
         warnings=warnings,
         alias_catalog=alias_catalog,
         bundle_inventory_prompt=bundle.prompt_surface_inventory_prompt or None,
+        bundle_available_skills=bundle.skills_available,
     )
 
 
