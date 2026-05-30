@@ -54,12 +54,22 @@ class DrainInputWaiter:
         try:
             if self._pending_event_task is None:
                 self._pending_event_task = asyncio.ensure_future(anext(self._events_iter))
+            if self._pending_event_task.done():
+                disk_change_ready_after_event = self._consume_ready_disk_change()
+                event = self._pending_event_task.result()
+                self._pending_event_task = None
+                return DrainEventWake(event, disk_change_ready_after_event)
+
             wait_tasks: set[asyncio.Future[Any]] = {self._pending_event_task}
             if self._pi_drain.quiescence_enabled:
-                if self._pending_disk_task is None or self._pending_disk_task.done():
+                if self._pending_disk_task is None:
                     self._pending_disk_task = asyncio.create_task(
                         self._pi_drain.wait_for_disk_change()
                     )
+                elif self._pending_disk_task.done():
+                    self._pending_disk_task.result()
+                    self._pending_disk_task = None
+                    return DrainDiskChangeWake()
                 wait_tasks.add(self._pending_disk_task)
             if timeout_seconds is not None:
                 timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
@@ -75,24 +85,27 @@ class DrainInputWaiter:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if self._pending_event_task in done:
-                disk_change_ready_after_event = (
-                    self._pending_disk_task is not None and self._pending_disk_task in done
-                )
-                if disk_change_ready_after_event:
-                    self._pending_disk_task = None
-                await _cancel_task(timeout_task)
+                disk_change_ready_after_event = self._consume_ready_disk_change()
                 event = self._pending_event_task.result()
                 self._pending_event_task = None
                 return DrainEventWake(event, disk_change_ready_after_event)
             if self._pending_disk_task is not None and self._pending_disk_task in done:
+                self._pending_disk_task.result()
                 self._pending_disk_task = None
-                await _cancel_task(timeout_task)
                 return DrainDiskChangeWake()
             return DrainTimeoutWake()
         except StopAsyncIteration:
-            await _cancel_task(timeout_task)
             self._pending_event_task = None
             return DrainClosedWake()
+        finally:
+            await _cancel_task(timeout_task)
+
+    def _consume_ready_disk_change(self) -> bool:
+        if self._pending_disk_task is None or not self._pending_disk_task.done():
+            return False
+        self._pending_disk_task.result()
+        self._pending_disk_task = None
+        return True
 
     async def close(self) -> None:
         await _cancel_task(self._pending_event_task)

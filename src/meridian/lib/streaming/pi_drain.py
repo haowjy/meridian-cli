@@ -730,8 +730,10 @@ class PiDrainCoordinator:
         return self.tracker.has_pending() or self.quiescence_tracker.has_pending_child_spawns()
 
     def pending_child_count(self) -> int:
-        lifecycle_count = self.tracker.active_tracked_count()
-        return lifecycle_count or self.quiescence_tracker.pending_child_spawn_count()
+        return (
+            self.tracker.active_tracked_count()
+            + self.quiescence_tracker.pending_child_spawn_count()
+        )
 
     def is_quiescent(self) -> bool:
         return (
@@ -807,7 +809,7 @@ class PiDrainCoordinator:
             await terminate_children(self.tracker, "pi_child_wave_timeout")
         tracked_count = (
             self.tracker.clear_tracked_children_after_wave_timeout()
-            or self.quiescence_tracker.pending_child_spawn_count()
+            + self.quiescence_tracker.pending_child_spawn_count()
         )
         self.waiting_child_count = None
         self.tracked_cleanup_reason = "pi_child_wave_timeout"

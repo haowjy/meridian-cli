@@ -221,6 +221,58 @@ async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
 
 
 @pytest.mark.asyncio
+async def test_pending_child_count_sums_lifecycle_and_disk_children(
+    tmp_path: Path,
+) -> None:
+    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        _ = phase, session_role, payload
+
+    spawn_id = SpawnId("p-mixed-child-count")
+    connection = _FakePiConnection([])
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+    coordinator = PiDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=spawn_id,
+        receiver=connection,
+        session_role="spawned",
+        notification_timeout_seconds=None,
+        child_wave_timeout_seconds=1.0,
+        emit_phase=emit_phase,
+    )
+    await coordinator.start()
+    coordinator.quiescence_enabled = True
+    coordinator.tracker.active_ids.add("lifecycle-child")
+    _write_json(
+        tmp_path / "spawns" / "p-disk-child-count" / "state.json",
+        {
+            "id": "p-disk-child-count",
+            "parent_id": str(spawn_id),
+            "status": "running",
+        },
+    )
+
+    try:
+        await coordinator.quiescence_tracker.refresh_disk_state()
+        assert coordinator.pending_child_count() == 2
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
