@@ -94,6 +94,7 @@ from .policy_snapshot import build_launch_policy_snapshot
 from .prompt import (
     build_goal_instruction,
     build_launch_context_documents,
+    build_primary_preamble,
     build_report_instruction,
     build_spawn_preamble,
     build_work_goal_instruction,
@@ -1136,6 +1137,7 @@ def _resolve_primary_projection(
             inventory_prompt=agent_inventory_prompt or "",
             context_prompt=context_prompt or "",
             completion_contract=completion_contract,
+            launch_preamble=build_primary_preamble(),
             passthrough_system_fragments=passthrough_system_fragments,
             user_task_prompt=request.prompt,
             reference_items=task_ctx.reference_items,

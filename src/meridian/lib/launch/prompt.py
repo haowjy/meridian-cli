@@ -141,11 +141,27 @@ def build_spawn_preamble(launch_mode: str | None) -> str:
 
     if launch_mode == "background":
         return (
-            "# Spawn Context\n\n"
-            "You were spawned to complete a specific objective. Work autonomously. "
-            "Only escalate if blocked."
+            "# Session Context\n\n"
+            "This is a **sub-agent session**. You are not talking to the user. "
+            "Your final output is a structured report consumed by your parent agent. "
+            "Work autonomously toward your objective. Only escalate if blocked."
+        )
+    if launch_mode == "foreground":
+        return (
+            "# Session Context\n\n"
+            "This is a **sub-agent session**. You are not talking to the user. "
+            "Your final output is a structured report consumed by your parent agent."
         )
     return ""
+
+
+def build_primary_preamble() -> str:
+    """Render session-context framing for primary (user-facing) sessions."""
+
+    return (
+        "# Session Context\n\n"
+        "This is a **primary session**. You are talking directly to the user."
+    )
 
 
 def build_work_goal_instruction(work_goal: str | None) -> str:
@@ -497,6 +513,7 @@ __all__ = [
     "build_context_prompt",
     "build_goal_instruction",
     "build_launch_context_documents",
+    "build_primary_preamble",
     "build_report_instruction",
     "build_spawn_preamble",
     "build_work_goal_instruction",
