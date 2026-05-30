@@ -51,9 +51,13 @@ class PiDiskWatcher:
         tasks = [*self._tasks, *self._child_tasks.values(), *self._candidate_tasks.values()]
         for task in tasks:
             task.cancel()
-        for task in tasks:
-            with suppress(asyncio.CancelledError):
-                await task
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=0.2)
+            for task in done:
+                with suppress(asyncio.CancelledError, Exception):
+                    task.result()
+            for task in pending:
+                task.add_done_callback(_consume_task_result)
         self._tasks = []
         self._child_tasks = {}
         self._candidate_tasks = {}
@@ -183,6 +187,11 @@ class PiDiskWatcher:
         if isinstance(raw, int | float):
             return float(raw)
         return None
+
+
+def _consume_task_result(task: asyncio.Task[None]) -> None:
+    with suppress(asyncio.CancelledError, Exception):
+        task.result()
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

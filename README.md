@@ -101,8 +101,8 @@ graph TB
     User([You]) --> Primary["meridian<br/>(primary session)"]
 
     subgraph Packages
-        Sources["git sources"] -->|"mars add/sync"| Agents[".agents/"]
-        Agents -->|"mars link"| Tool[".claude/ · .cursor/"]
+        Sources["git sources"] -->|"mars add/sync"| Store[".mars/"]
+        Store -->|"materialize targets"| Tool[".claude/ · .cursor/ · .codex/ · .opencode/ · .pi/"]
     end
 
     subgraph Runtime
