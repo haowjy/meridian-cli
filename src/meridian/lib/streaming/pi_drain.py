@@ -508,6 +508,7 @@ class PiDrainCoordinator:
                 reason="disk_state_changed",
             )
             self.quiescence_candidate = None
+            self._update_idle_waiting_state()
             return None
 
         now_monotonic = time.monotonic()
@@ -557,14 +558,7 @@ class PiDrainCoordinator:
             self._clear_child_wave_timer()
         elif transition == "idle":
             await self.quiescence_tracker.mark_idle()
-            if (
-                self.child_wave_timeout_seconds is not None
-                and self.child_wave_timeout_seconds > 0
-                and self.has_pending_children()
-            ):
-                wave_start = time.monotonic()
-                self.child_wave_started_monotonic = wave_start
-                self.child_wave_deadline_monotonic = wave_start + self.child_wave_timeout_seconds
+            self._update_idle_waiting_state()
 
         if (
             self.child_wave_timed_out
@@ -676,6 +670,10 @@ class PiDrainCoordinator:
         await self.quiescence_tracker.refresh_disk_state()
         if not self.quiescence_tracker.parent_idle:
             return
+        self._update_idle_waiting_state()
+        self.maybe_start_quiescence_after_event()
+
+    def _update_idle_waiting_state(self) -> None:
         if (
             self.child_wave_timeout_seconds is not None
             and self.child_wave_timeout_seconds > 0
@@ -688,7 +686,6 @@ class PiDrainCoordinator:
         if not self.has_pending_children():
             self._clear_child_wave_timer()
         self.emit_waiting_phases_if_needed()
-        self.maybe_start_quiescence_after_event()
 
     def pending_children_at_exit(self) -> bool:
         return self.quiescence_enabled and self.has_pending_children()

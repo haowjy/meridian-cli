@@ -143,6 +143,33 @@ async def test_wait_for_change_polls_late_child_state_after_directory_event(
 
 
 @pytest.mark.asyncio
+async def test_force_rescan_tracks_unresolved_child_directory_as_pending(
+    tmp_path: Path,
+) -> None:
+    parent_id = SpawnId("p-parent")
+    child_dir = tmp_path / "spawns" / "p-child"
+
+    watcher = PiDiskWatcher(tmp_path, parent_id)
+    await watcher.start()
+    try:
+        child_dir.mkdir(parents=True)
+        await watcher.force_rescan()
+
+        assert watcher.has_pending_child_spawns() is True
+        assert watcher.pending_child_spawn_count() == 1
+
+        _write_json(
+            child_dir / "state.json",
+            {"id": "p-child", "parent_id": str(parent_id), "status": "succeeded"},
+        )
+        await watcher.force_rescan()
+
+        assert watcher.has_pending_child_spawns() is False
+    finally:
+        await watcher.stop()
+
+
+@pytest.mark.asyncio
 async def test_wait_for_change_wakes_on_child_terminal_without_manual_rescan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -653,6 +653,70 @@ async def test_micro_drain_recheck_preserves_idle_epoch_for_notifications(
 
 
 @pytest.mark.asyncio
+async def test_micro_drain_cancel_arms_child_wave_for_rescan_discovered_child(
+    tmp_path: Path,
+) -> None:
+    phases: list[dict[str, object]] = []
+
+    def emit_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
+        phases.append({"phase": phase, **payload})
+        _ = session_role
+
+    spawn_id = SpawnId("p-micro-drain-child-wave")
+    connection = _FakePiConnection([])
+    await connection.start(
+        ConnectionConfig(
+            spawn_id=spawn_id,
+            harness_id=HarnessId.PI,
+            prompt="hello",
+            control_root=tmp_path,
+            env_overrides={},
+            pi_session_role="spawned",
+        ),
+        ResolvedLaunchSpec(
+            harness=HarnessId.PI,
+            prompt="hello",
+            permission_resolver=UnsafeNoOpPermissionResolver(_suppress_warning=True),
+        ),
+    )
+    coordinator = PiDrainCoordinator.for_connection(
+        runtime_root=tmp_path,
+        spawn_id=spawn_id,
+        receiver=connection,
+        session_role="spawned",
+        notification_timeout_seconds=None,
+        child_wave_timeout_seconds=1.0,
+        emit_phase=emit_phase,
+    )
+    await coordinator.start()
+    coordinator.quiescence_enabled = True
+    await coordinator.quiescence_tracker.mark_idle()
+    terminal = TerminalEventOutcome(status="succeeded", exit_code=0, error=None)
+    coordinator.start_micro_drain(terminal)
+    (tmp_path / "spawns" / "p-late-child").mkdir(parents=True)
+
+    async def _noop_terminate(
+        tracker: PiSubspawnTracker,
+        reason: str,
+    ) -> None:
+        _ = tracker, reason
+
+    try:
+        result = await coordinator.handle_timeout(_noop_terminate)
+        assert result is None
+        assert coordinator.quiescence_candidate is None
+        assert coordinator.child_wave_deadline_monotonic is not None
+        assert coordinator.pending_child_count() == 1
+        assert any(
+            phase.get("phase") == "waiting_for_tracked_children"
+            and phase.get("active_tracked_count") == 1
+            for phase in phases
+        )
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
 async def test_spawn_manager_pi_drain_loop_reevaluates_on_disk_wakeup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

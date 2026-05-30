@@ -160,6 +160,7 @@ class PiDiskWatcher:
                 if (
                     path.parent == self._spawns_dir
                     and path.name.startswith("p")
+                    and path.name != self._current_spawn_id
                     and path.name not in self._child_spawn_ids
                     and path.is_dir()
                 ):
@@ -192,6 +193,8 @@ class PiDiskWatcher:
         for child in self._spawns_dir.iterdir():
             if not child.is_dir():
                 continue
+            if child.name == self._current_spawn_id:
+                continue
             if child.name in self._child_spawn_ids:
                 continue
             data = _read_json_object(child / "state.json")
@@ -199,6 +202,8 @@ class PiDiskWatcher:
             if parent_id == self._current_spawn_id:
                 self._candidate_child_spawn_ids.discard(child.name)
                 self._child_spawn_ids.add(child.name)
+            elif child.name.startswith("p") and not (child / "state.json").exists():
+                self._candidate_child_spawn_ids.add(child.name)
 
     def _resolve_candidate_child_spawns(self) -> None:
         for spawn_id in list(self._candidate_child_spawn_ids):
