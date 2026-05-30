@@ -500,7 +500,15 @@ class PiDrainCoordinator:
         if not self.quiescence_enabled:
             raise TimeoutError
         if self.quiescence_candidate is not None:
-            return self.quiescence_candidate
+            await self.quiescence_tracker.mark_idle()
+            if self.is_quiescent():
+                return self.quiescence_candidate
+            self._emit(
+                "quiescence_micro_drain_cancelled",
+                reason="disk_state_changed",
+            )
+            self.quiescence_candidate = None
+            return None
 
         now_monotonic = time.monotonic()
         expired_notification = self.tracker.pop_expired_notification(now_monotonic)

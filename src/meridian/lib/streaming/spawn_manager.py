@@ -443,33 +443,61 @@ class SpawnManager:
 
         events_iter = receiver.events().__aiter__()
         pending_event_task: asyncio.Future[HarnessEvent] | None = None
+        pending_disk_task: asyncio.Task[None] | None = None
         try:
             while True:
                 try:
                     next_timeout = pi_drain.next_timeout()
                     if pending_event_task is None:
                         pending_event_task = asyncio.ensure_future(anext(events_iter))
+                    wait_tasks: set[asyncio.Future[Any]] = {pending_event_task}
+                    timeout_task: asyncio.Task[None] | None = None
+                    if pi_drain.quiescence_enabled:
+                        if pending_disk_task is None or pending_disk_task.done():
+                            pending_disk_task = asyncio.create_task(
+                                pi_drain.quiescence_tracker.wait_for_disk_change()
+                            )
+                        wait_tasks.add(pending_disk_task)
                     if next_timeout is not None:
-                        event = await asyncio.wait_for(
-                            asyncio.shield(pending_event_task),
-                            timeout=next_timeout,
-                        )
-                    else:
+                        timeout_task = asyncio.create_task(asyncio.sleep(next_timeout))
+                        wait_tasks.add(timeout_task)
+                    if len(wait_tasks) == 1:
                         event = await pending_event_task
-                    pending_event_task = None
+                        pending_event_task = None
+                    else:
+                        done, _pending = await asyncio.wait(
+                            wait_tasks,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if timeout_task is not None and timeout_task in done:
+                            if pending_disk_task is not None and pending_disk_task.done():
+                                pending_disk_task = None
+                            timeout_outcome = await pi_drain.handle_timeout(
+                                _terminate_tracked_pi_children,
+                            )
+                            if timeout_outcome is not None:
+                                recorded_terminal_outcome = timeout_outcome
+                                break
+                            continue
+                        if pending_disk_task is not None and pending_disk_task in done:
+                            pending_disk_task = None
+                            if timeout_task is not None and not timeout_task.done():
+                                timeout_task.cancel()
+                                with suppress(asyncio.CancelledError):
+                                    await timeout_task
+                            pi_drain.maybe_start_quiescence_after_event()
+                            continue
+                        if timeout_task is not None and not timeout_task.done():
+                            timeout_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await timeout_task
+                        event = pending_event_task.result()
+                        pending_event_task = None
                 except StopAsyncIteration:
                     pending_event_task = None
                     if pi_drain.quiescence_candidate is not None:
                         recorded_terminal_outcome = pi_drain.quiescence_candidate
                     break
-                except TimeoutError:
-                    timeout_outcome = await pi_drain.handle_timeout(
-                        _terminate_tracked_pi_children,
-                    )
-                    if timeout_outcome is not None:
-                        recorded_terminal_outcome = timeout_outcome
-                        break
-                    continue
 
                 transition = activity_transition(event) if pi_drain.is_pi_connection else None
                 duplicate_canonical_lifecycle_event = await pi_drain.observe_event(
@@ -570,6 +598,10 @@ class SpawnManager:
                 pending_event_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await pending_event_task
+            if pending_disk_task is not None and not pending_disk_task.done():
+                pending_disk_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pending_disk_task
             await pi_drain.stop()
             await pi_drain.cleanup_pending_children_at_exit(_terminate_tracked_pi_children)
             session = self._sessions.pop(spawn_id, None)

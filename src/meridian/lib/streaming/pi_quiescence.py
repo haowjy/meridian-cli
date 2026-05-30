@@ -62,6 +62,10 @@ class PiQuiescenceTracker:
         if self._disk_watcher is not None:
             await self._disk_watcher.force_rescan()
 
+    async def wait_for_disk_change(self) -> None:
+        if self._disk_watcher is not None:
+            await self._disk_watcher.wait_for_change()
+
     def has_pending_child_spawns(self) -> bool:
         return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())
 
