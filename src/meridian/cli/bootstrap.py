@@ -36,6 +36,7 @@ _TOP_LEVEL_VALUE_FLAGS = frozenset(
         "-a",
         "--work",
         "--autocompact",
+        "--autocompact-pct",
         "--effort",
         "--sandbox",
         "--approval",
