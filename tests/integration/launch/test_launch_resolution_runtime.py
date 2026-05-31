@@ -13,6 +13,8 @@ from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
 )
+from meridian.lib.launch import LaunchRequest as PrimaryLaunchRequest
+from meridian.lib.launch import launch_primary
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
 from meridian.lib.launch.plan import (
@@ -22,6 +24,7 @@ from meridian.lib.launch.plan import (
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
+from meridian.lib.state import work_store
 from tests.support.fixtures import write_agent, write_skill
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -268,6 +271,47 @@ def test_codex_primary_projection_omits_synthetic_user_turn_without_input(
 
     assert preview.binding.run_params.prompt.strip()
     assert preview.binding.run_params.user_turn_content is None
+
+
+def test_primary_launch_resolves_reference_files_from_work_task_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    task_dir = tmp_path / "task"
+    project_root.mkdir()
+    task_dir.mkdir()
+    _write_minimal_mars_config(project_root)
+    (project_root / "task-only.txt").write_text("project shadow", encoding="utf-8")
+    (task_dir / "task-only.txt").write_text("task marker", encoding="utf-8")
+    work_store.ensure_work_item_metadata(project_root / ".meridian", "task-work")
+    work_store.update_work_item_task_dir(
+        project_root / ".meridian",
+        "task-work",
+        task_dir=task_dir.as_posix(),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            work_id="task-work",
+            reference_files=("task-only.txt",),
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    prompt = result.command[-1]
+    assert (task_dir / "task-only.txt").as_posix() in prompt
+    assert "task marker" in prompt
+    assert "project shadow" not in prompt
 
 
 @pytest.mark.parametrize(

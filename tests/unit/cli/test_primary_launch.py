@@ -272,7 +272,8 @@ def test_run_primary_launch_forwards_primary_spawn_parity_fields(
     )
 
     request = cast("LaunchRequest", captured["request"])
-    assert request.reference_files == (reference.as_posix(),)
+    assert reference.is_file()
+    assert request.reference_files == ("design.md",)
     assert request.prompt == "Review the design."
     assert request.skills == ("planning", "dev-principles")
     assert request.goal == "Converge on requirements"
