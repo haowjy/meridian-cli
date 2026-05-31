@@ -614,6 +614,47 @@ def materialize_launch_artifacts(
     )
 
 
+def _resolve_deny_headless_harnesses(
+    runtime: LaunchRuntime,
+    project_paths: ProjectConfigPaths,
+) -> tuple[str, ...]:
+    """Resolve ``[spawn].deny_headless_harnesses`` from config."""
+    if runtime.config_snapshot:
+        try:
+            return tuple(
+                MeridianConfig.model_validate(
+                    runtime.config_snapshot
+                ).deny_headless_harnesses
+            )
+        except Exception:
+            pass
+    return tuple(load_config(project_paths.project_root).deny_headless_harnesses)
+
+
+_CLAUDE_DELEGATION_GUIDANCE = (
+    "\n\n# Delegation\n"
+    "Prefer Agent() for agents in your agents menu — in-process, fast, visible.\n"
+    "Use `meridian spawn` for agents not in the menu or when you need session\n"
+    "tracking / cross-harness models. Use `/handoff` when the user takes the baton.\n"
+)
+
+
+def _inject_claude_delegation_guidance(
+    prompt_payload: PreparedPromptPayload,
+    *,
+    project_root: Path,
+) -> PreparedPromptPayload:
+    """Append delegation guidance when Claude has native agents available."""
+    claude_agents_dir = project_root / ".claude" / "agents"
+    if not claude_agents_dir.is_dir() or not any(claude_agents_dir.iterdir()):
+        return prompt_payload
+    existing = prompt_payload.appended_system_prompt or ""
+    return replace(
+        prompt_payload,
+        appended_system_prompt=(existing + _CLAUDE_DELEGATION_GUIDANCE).lstrip(),
+    )
+
+
 def _missing_continue_session_error(source_ref: str | None) -> str:
     normalized_source = (source_ref or "").strip()
     if normalized_source:
@@ -1686,6 +1727,16 @@ def bind_launch_context(
                 }
             )
 
+    if (
+        runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
+        and harness.id.value in _resolve_deny_headless_harnesses(runtime, project_paths)
+    ):
+        raise ValueError(
+            f"Headless spawns on the '{harness.id.value}' harness are denied by "
+            f"'[spawn] deny_headless_harnesses' in meridian.toml. "
+            f"Use the native Agent() tool from a Claude primary session, or /handoff."
+        )
+
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
     inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
         runtime.composition_surface
@@ -1706,6 +1757,10 @@ def bind_launch_context(
         if harness.id == HarnessId.CLAUDE
         else False
     )
+    if harness.id == HarnessId.CLAUDE:
+        prompt_payload = _inject_claude_delegation_guidance(
+            prompt_payload, project_root=project_root
+        )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,

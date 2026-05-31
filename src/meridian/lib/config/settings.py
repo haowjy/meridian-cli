@@ -1364,6 +1364,14 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_MIN_WAIT_YIELD_SECONDS",),
         ),
     ] = 30.0
+    deny_headless_harnesses: Annotated[
+        tuple[str, ...],
+        config_field(
+            "spawn.deny_headless_harnesses",
+            value_kind="str_list",
+            file_aliases=(file_alias("spawn", "deny_headless_harnesses"),),
+        ),
+    ] = ()
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
