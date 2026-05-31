@@ -345,6 +345,15 @@ def _normalize_harness_table(
                         )
                     harness_values["wait_yield_seconds"] = float(harness_value)
                     continue
+                if key == "claude" and harness_key == "allow_builtin_agents":
+                    if not isinstance(harness_value, bool):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.allow_builtin_agents': "
+                            f"expected bool, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["allow_builtin_agents"] = harness_value
+                    continue
                 if key == "pi" and harness_key == "disable_managed_bash":
                     if not isinstance(harness_value, bool):
                         raise ValueError(
@@ -1154,6 +1163,7 @@ class HarnessProfileConfig(BaseModel):
 
 
 class ClaudeHarnessProfileConfig(HarnessProfileConfig):
+    allow_builtin_agents: bool = False
     model: Annotated[
         str,
         config_field(
@@ -1558,6 +1568,23 @@ def resolve_pi_harness_profile_for_launch(
         base_profile=base_profile,
         project_root=project_root if base_profile is None else None,
     )
+
+
+def resolve_claude_allow_builtin_agents_for_launch(
+    *,
+    config_snapshot: dict[str, object] | None,
+    project_root: Path,
+) -> bool:
+    """Resolve ``[harness.claude].allow_builtin_agents`` from a launch config snapshot."""
+
+    if config_snapshot:
+        try:
+            return bool(
+                MeridianConfig.model_validate(config_snapshot).harness.claude.allow_builtin_agents
+            )
+        except Exception:
+            pass
+    return bool(load_config(project_root).harness.claude.allow_builtin_agents)
 
 
 def resolve_pi_disable_managed_bash() -> bool:
