@@ -116,7 +116,6 @@ class PiAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "context_from_payload",
             "reference_items",
             "task_cwd",
-            "claude_allow_builtin_agents",
         }
     )
 

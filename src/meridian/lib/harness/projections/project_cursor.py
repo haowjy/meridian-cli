@@ -43,7 +43,6 @@ _DELEGATED_FIELDS: frozenset[str] = frozenset(
         "reference_items",
         "pi_extension_entrypoints",
         "load_all_pi_extensions",
-        "disallowed_tools",
     }
 )
 

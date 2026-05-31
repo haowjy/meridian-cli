@@ -286,7 +286,6 @@ class CodexAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "reference_items",
             "task_cwd",
             "pi_harness_profile",
-            "claude_allow_builtin_agents",
         }
     )
 

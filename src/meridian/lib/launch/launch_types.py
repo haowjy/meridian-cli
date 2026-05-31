@@ -106,7 +106,6 @@ class ResolvedLaunchSpec(BaseModel):
     # Claude only
     agents_payload: str | None = None
     prompt_file_path: str | None = None
-    disallowed_tools: tuple[str, ...] = ()
 
     # Claude + Codex
     user_turn_content: str | None = None
