@@ -220,12 +220,22 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
         harness=HarnessId.CLAUDE,
     )
     write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4")
-    monkeypatch.setattr(context_ref, "resolve_context_ref", lambda _root, _ref: object())
-    monkeypatch.setattr(context_ref, "resolved_context_ref_value", lambda _ref: "p999")
+
+    def _resolve_context_ref(_root: Path, _ref: str) -> object:
+        return object()
+
+    def _resolved_context_ref_value(_ref: object) -> str:
+        return "p999"
+
+    def _render_context_refs(_refs: object) -> str:
+        return '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>'
+
+    monkeypatch.setattr(context_ref, "resolve_context_ref", _resolve_context_ref)
+    monkeypatch.setattr(context_ref, "resolved_context_ref_value", _resolved_context_ref_value)
     monkeypatch.setattr(
         context_ref,
         "render_context_refs",
-        lambda _refs: '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>',
+        _render_context_refs,
     )
 
     preview = build_launch_context(
@@ -312,6 +322,26 @@ def test_primary_launch_resolves_reference_files_from_work_task_dir(
     assert (task_dir / "task-only.txt").as_posix() in prompt
     assert "task marker" in prompt
     assert "project shadow" not in prompt
+
+
+def test_primary_launch_invalid_reference_does_not_create_explicit_work(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        launch_primary(
+            project_root=project_root,
+            request=PrimaryLaunchRequest(
+                work_id="new-work",
+                reference_files=("missing.txt",),
+                dry_run=True,
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+    assert not (project_root / ".meridian" / "work").exists()
 
 
 @pytest.mark.parametrize(
@@ -408,7 +438,11 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
-    monkeypatch.setattr(cursor_harness.shutil, "which", lambda _command: "/usr/bin/cursor")
+
+    def _which(_command: str) -> str:
+        return "/usr/bin/cursor"
+
+    monkeypatch.setattr(cursor_harness.shutil, "which", _which)
     captured_requests = stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-opus-4-7",
