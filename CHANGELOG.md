@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-05-31
+
 ### Changed
 - `AGENTS.md`: clarify split between `MERIDIAN_TASK_DIR` and inherited `MERIDIAN_PROJECT_DIR`; use `meridian -C "$MERIDIAN_TASK_DIR" ...` for nested Meridian commands targeting task checkouts.
 - `mars.toml`: use canonical `haowjy/meridian-prompter` dependency URL.
