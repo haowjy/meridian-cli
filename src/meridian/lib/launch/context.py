@@ -1738,7 +1738,8 @@ def bind_launch_context(
         raise ValueError(
             f"Headless spawns on the '{harness.id.value}' harness are denied by "
             f"'[spawn] deny_headless_harnesses' in meridian.toml. "
-            f"Use the native Agent() tool from a Claude primary session, or /handoff."
+            f"Use a native primary session for the {harness.id.value} harness, "
+            "or change the setting in meridian.toml."
         )
 
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
