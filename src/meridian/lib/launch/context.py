@@ -1761,7 +1761,10 @@ def bind_launch_context(
         if harness.id == HarnessId.CLAUDE
         else False
     )
-    if harness.id == HarnessId.CLAUDE:
+    if (
+        harness.id == HarnessId.CLAUDE
+        and runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    ):
         prompt_payload = _inject_claude_delegation_guidance(
             prompt_payload, project_root=project_root
         )
