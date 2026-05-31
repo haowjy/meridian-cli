@@ -38,7 +38,7 @@ Per-harness commands:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: stdin/stdout NDJSON (not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects
-  `--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose)` by default
+  `--disallowedTools Agent(Explore),Agent(Plan),Agent(general-purpose)` by default
   so sessions use custom Meridian agents instead of Claude's built-in subagents.
   Gated by `[harness.claude] allow_builtin_agents` (bool, default `false`).
   The builtin denials merge into permission-derived `--disallowedTools` via

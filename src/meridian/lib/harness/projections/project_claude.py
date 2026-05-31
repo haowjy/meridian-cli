@@ -33,6 +33,7 @@ _PROJECTED_FIELDS: frozenset[str] = frozenset(
         "prompt",
         "prompt_file_path",
         "user_turn_content",
+        "disallowed_tools",
     }
 )
 
@@ -179,6 +180,10 @@ def project_claude_spec_to_cli_args(
 
     permission_flags = resolve_permission_flags(spec.permission_resolver, HarnessId.CLAUDE)
     permission_tail, allowed_tools, disallowed_tools = _extract_claude_tool_flags(permission_flags)
+    spec_disallowed: list[str] = []
+    for entry in spec.disallowed_tools:
+        spec_disallowed.extend(split_csv_entries(entry))
+    disallowed_tools = dedupe_nonempty((*disallowed_tools, *spec_disallowed))
     allowed_tools = dedupe_nonempty((*allowed_tools, *parent_allowed_tools))
     command.extend(permission_tail)
     if allowed_tools:

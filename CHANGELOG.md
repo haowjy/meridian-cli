@@ -7,9 +7,13 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.19] - 2026-05-31
 
 ### Added
-- Claude adapter denies built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default via `--disallowedTools` injection. Opt out with `[claude] allow_builtin_agents = true` in `meridian.toml`.
+- Claude adapter denies built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(general-purpose)`) by default via `--disallowedTools` injection. Opt out with `[claude] allow_builtin_agents = true` in `meridian.toml`.
 
 ### Fixed
+- Headless harness deny errors now name the denied harness without Claude-specific remediation.
+- Claude delegation guidance now appears only for primary launches, not headless spawns.
+- Claude delegation guidance probe now ignores optional `.claude/agents` filesystem errors.
+- `[spawn].deny_headless_harnesses` now loads from TOML instead of being ignored.
 - Codex primary `--from`/`-f`/`-p` now forwards primary user-turn content into the attached TUI; empty launches keep Codex's bootstrap-only idle default.
 - Primary `meridian --from REF` now inherits source work item when no `--work` or ambient work is active.
 

@@ -23,6 +23,7 @@ from meridian.lib.config.settings import (
     MeridianConfig,
     PiHarnessProfileConfig,
     load_config,
+    resolve_claude_allow_builtin_agents_for_launch,
     resolve_pi_harness_profile_for_launch,
 )
 from meridian.lib.config.workspace import get_projectable_roots
@@ -555,6 +556,7 @@ def materialize_launch_artifacts(
     approval: str | None = None,
     unsafe_no_permissions: bool = False,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
+    claude_allow_builtin_agents: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -595,6 +597,7 @@ def materialize_launch_artifacts(
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
+        claude_allow_builtin_agents=claude_allow_builtin_agents,
     )
     permission_config, perms = resolve_permission_pipeline(
         sandbox=sandbox,
@@ -608,6 +611,51 @@ def materialize_launch_artifacts(
         permission_config=permission_config,
         perms=perms,
         spec=spec,
+    )
+
+
+def _resolve_deny_headless_harnesses(
+    runtime: LaunchRuntime,
+    project_paths: ProjectConfigPaths,
+) -> tuple[str, ...]:
+    """Resolve ``[spawn].deny_headless_harnesses`` from config."""
+    if runtime.config_snapshot:
+        try:
+            return tuple(
+                MeridianConfig.model_validate(
+                    runtime.config_snapshot
+                ).deny_headless_harnesses
+            )
+        except Exception:
+            pass
+    return tuple(load_config(project_paths.project_root).deny_headless_harnesses)
+
+
+_CLAUDE_DELEGATION_GUIDANCE = (
+    "\n\n# Delegation\n"
+    "Prefer Agent() for agents in your agents menu — in-process, fast, visible.\n"
+    "Use `meridian spawn` for agents not in the menu or when you need session\n"
+    "tracking / cross-harness models. Use `/handoff` when the user takes the baton.\n"
+)
+
+
+def _inject_claude_delegation_guidance(
+    prompt_payload: PreparedPromptPayload,
+    *,
+    project_root: Path,
+) -> PreparedPromptPayload:
+    """Append delegation guidance when Claude has native agents available."""
+    claude_agents_dir = project_root / ".claude" / "agents"
+    try:
+        has_claude_agents = claude_agents_dir.is_dir() and any(claude_agents_dir.iterdir())
+    except OSError:
+        return prompt_payload
+    if not has_claude_agents:
+        return prompt_payload
+    existing = prompt_payload.appended_system_prompt or ""
+    return replace(
+        prompt_payload,
+        appended_system_prompt=(existing + _CLAUDE_DELEGATION_GUIDANCE).lstrip(),
     )
 
 
@@ -1683,6 +1731,17 @@ def bind_launch_context(
                 }
             )
 
+    if (
+        runtime.composition_surface == LaunchCompositionSurface.SPAWN_PREPARE
+        and harness.id.value in _resolve_deny_headless_harnesses(runtime, project_paths)
+    ):
+        raise ValueError(
+            f"Headless spawns on the '{harness.id.value}' harness are denied by "
+            f"'[spawn] deny_headless_harnesses' in meridian.toml. "
+            f"Use a native primary session for the {harness.id.value} harness, "
+            "or change the setting in meridian.toml."
+        )
+
     is_primary_launch = runtime.composition_surface == LaunchCompositionSurface.PRIMARY
     inject_task_cwd_instruction = directory_context.should_inject_task_cwd_instruction(
         runtime.composition_surface
@@ -1695,6 +1754,21 @@ def bind_launch_context(
         if harness.id == HarnessId.PI
         else None
     )
+    claude_allow_builtin_agents = (
+        resolve_claude_allow_builtin_agents_for_launch(
+            config_snapshot=runtime.config_snapshot,
+            project_root=project_paths.project_root,
+        )
+        if harness.id == HarnessId.CLAUDE
+        else False
+    )
+    if (
+        harness.id == HarnessId.CLAUDE
+        and runtime.composition_surface == LaunchCompositionSurface.PRIMARY
+    ):
+        prompt_payload = _inject_claude_delegation_guidance(
+            prompt_payload, project_root=project_root
+        )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,
@@ -1724,6 +1798,7 @@ def bind_launch_context(
         approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
         pi_harness_profile=pi_harness_profile,
+        claude_allow_builtin_agents=claude_allow_builtin_agents,
     )
     run_params = materialized.run_params
 

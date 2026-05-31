@@ -345,6 +345,15 @@ def _normalize_harness_table(
                         )
                     harness_values["wait_yield_seconds"] = float(harness_value)
                     continue
+                if key == "claude" and harness_key == "allow_builtin_agents":
+                    if not isinstance(harness_value, bool):
+                        raise ValueError(
+                            f"Invalid value for '{source}.{key}.allow_builtin_agents': "
+                            f"expected bool, got "
+                            f"{type(harness_value).__name__} ({harness_value!r})."
+                        )
+                    harness_values["allow_builtin_agents"] = harness_value
+                    continue
                 if key == "pi" and harness_key == "disable_managed_bash":
                     if not isinstance(harness_value, bool):
                         raise ValueError(
@@ -425,6 +434,9 @@ def _normalize_spawn_table(raw_value: object, *, source: str) -> dict[str, objec
 
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
+        if key == "deny_headless_harnesses":
+            values[key] = _parse_toml_list(raw_value=value, source=f"{source}.{key}")
+            continue
         if key not in {"default_wait_yield_seconds", "min_wait_yield_seconds"}:
             logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
             continue
@@ -1154,6 +1166,7 @@ class HarnessProfileConfig(BaseModel):
 
 
 class ClaudeHarnessProfileConfig(HarnessProfileConfig):
+    allow_builtin_agents: bool = False
     model: Annotated[
         str,
         config_field(
@@ -1354,6 +1367,14 @@ class MeridianConfig(BaseSettings):
             env_vars=("MERIDIAN_MIN_WAIT_YIELD_SECONDS",),
         ),
     ] = 30.0
+    deny_headless_harnesses: Annotated[
+        tuple[str, ...],
+        config_field(
+            "spawn.deny_headless_harnesses",
+            value_kind="str_list",
+            file_aliases=(file_alias("spawn", "deny_headless_harnesses"),),
+        ),
+    ] = ()
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     primary: PrimaryConfig = Field(default_factory=PrimaryConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -1558,6 +1579,23 @@ def resolve_pi_harness_profile_for_launch(
         base_profile=base_profile,
         project_root=project_root if base_profile is None else None,
     )
+
+
+def resolve_claude_allow_builtin_agents_for_launch(
+    *,
+    config_snapshot: dict[str, object] | None,
+    project_root: Path,
+) -> bool:
+    """Resolve ``[harness.claude].allow_builtin_agents`` from a launch config snapshot."""
+
+    if config_snapshot:
+        try:
+            return bool(
+                MeridianConfig.model_validate(config_snapshot).harness.claude.allow_builtin_agents
+            )
+        except Exception:
+            pass
+    return bool(load_config(project_root).harness.claude.allow_builtin_agents)
 
 
 def resolve_pi_disable_managed_bash() -> bool:

@@ -379,3 +379,45 @@ def test_spawn_prepare_claude_projects_profile_auto_approval_without_cli_overrid
     argv = preview.binding.argv
     assert "--permission-mode" in argv
     assert "acceptEdits" in argv
+
+
+def test_spawn_prepare_headless_deny_error_names_denied_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    (tmp_path / "meridian.toml").write_text(
+        "[spawn]\n"
+        'deny_headless_harnesses = ["codex"]\n',
+        encoding="utf-8",
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4",
+        harness=HarnessId.CODEX,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        build_launch_context(
+            spawn_id="dry-run-codex-spawn-denied",
+            request=SpawnRequest(
+                prompt="task",
+                prompt_is_composed=False,
+                model="gpt-5.4",
+                harness="codex",
+            ),
+            runtime=LaunchRuntime(
+                argv_intent=LaunchArgvIntent.REQUIRED,
+                composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+                runtime_root=(tmp_path / ".meridian").as_posix(),
+                project_paths_project_root=tmp_path.as_posix(),
+                project_paths_execution_cwd=tmp_path.as_posix(),
+            ),
+            harness_registry=get_default_harness_registry(),
+            dry_run=True,
+        )
+
+    message = str(exc_info.value)
+    assert "Headless spawns on the 'codex' harness are denied" in message
+    assert "native primary session for the codex harness" in message
+    assert "Claude primary session" not in message

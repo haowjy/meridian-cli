@@ -71,7 +71,7 @@ Claude profile includes:
 - `[harness.claude] wait_yield_seconds` — polling interval (float, env:
   `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`)
 - `[harness.claude] allow_builtin_agents` — whether to permit Claude's built-in
-  subagents (Explore, Plan, General-purpose). Default `false` — Meridian denies them
+  subagents (Explore, Plan, general-purpose). Default `false` — Meridian denies them
   so sessions use custom Meridian agents exclusively. Set `true` to opt out.
 
 ## Depth

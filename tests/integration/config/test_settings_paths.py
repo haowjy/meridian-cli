@@ -153,6 +153,25 @@ def test_load_config_reads_harness_wait_yield_settings(tmp_path: Path) -> None:
     assert config.default_model_for_harness("codex") == "gpt-5.4"
 
 
+def test_load_config_reads_spawn_deny_headless_harnesses(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    config_path = project_root / "meridian.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[spawn]",
+                'deny_headless_harnesses = ["claude", "pi"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(project_root, resolve_models=False)
+
+    assert config.deny_headless_harnesses == ("claude", "pi")
+
+
 def test_load_config_reads_pi_disable_managed_bash(tmp_path: Path) -> None:
     project_root = tmp_path / "repo"
     project_root.mkdir()
@@ -348,4 +367,3 @@ def test_runtime_authority_for_read_falls_back_to_project_state_in_plain_directo
     assert authority.project_root == project_root.resolve()
     assert authority.runtime_root == runtime_root.resolve()
     assert authority.runtime_root_source in {"project-state", "project-state-fallback"}
-

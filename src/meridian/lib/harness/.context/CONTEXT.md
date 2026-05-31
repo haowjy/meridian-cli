@@ -39,7 +39,7 @@ Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
 - **Claude built-in agent denial**: Meridian injects `--disallowedTools
-  Agent(Explore),Agent(Plan),Agent(General-purpose)` by default. Gated by
+  Agent(Explore),Agent(Plan),Agent(general-purpose)` by default. Gated by
   `[harness.claude] allow_builtin_agents` (bool, default `false`). The denials
   merge into permission-derived `--disallowedTools` via `dedupe_nonempty()`.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
@@ -190,9 +190,9 @@ value. Windows does not support PTY — Claude primary uses a fallback detection
 
 ### Claude: Built-in Subagent Denial
 
-Claude Code ships with three built-in subagents: Explore, Plan, and General-purpose.
+Claude Code ships with three built-in subagents: Explore, Plan, and general-purpose.
 These conflict with Meridian's own agent system. Meridian injects
-`--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose)` by default
+`--disallowedTools Agent(Explore),Agent(Plan),Agent(general-purpose)` by default
 so Claude sessions use custom Meridian agents exclusively. The behavior is gated by
 `[harness.claude] allow_builtin_agents` (bool, default `false`).
 
@@ -205,7 +205,7 @@ permission-derived `--disallowedTools` so exactly one flag is emitted.
 This is implemented as a Meridian platform policy (harness adapter injection),
 not as a per-agent `disallowed-tools` field. This means individual agent profiles
 no longer need to carry deny entries like
-`disallowed-tools: [Agent(Explore), Agent(Plan), Agent(General-purpose)]` —
+`disallowed-tools: [Agent(Explore), Agent(Plan), Agent(general-purpose)]` —
 they're inherited from the harness adapter.
 
 ### Claude: System-Prompt File Channel
