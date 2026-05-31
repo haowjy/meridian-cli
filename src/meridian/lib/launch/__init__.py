@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.launch_types import summarize_composition_warnings
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
@@ -111,18 +112,41 @@ def launch_primary(
 
     resolved_project_root = Path(runtime.resolved_config_root).expanduser().resolve()
     runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    runtime_context = resolve_runtime_context(
+        project_root=resolved_project_root,
+        runtime_root=runtime_root,
+    )
+    ambient_work_id = None if resolved_work_id is not None else runtime_context.work_id
+    project_state_dir = resolve_project_paths(resolved_project_root).root_dir
+    task_cwd_resolution = resolve_task_cwd(
+        resolved_project_root,
+        project_state_dir=project_state_dir,
+        explicit_work_id=resolved_work_id,
+        ambient_work_id=ambient_work_id,
+    )
+    runtime = runtime.model_copy(
+        update={
+            "requested_task_cwd": task_cwd_resolution.task_cwd.as_posix(),
+            "project_paths_execution_cwd": task_cwd_resolution.task_cwd.as_posix(),
+        }
+    )
     active_work_dir = (
         resolve_work_scratch_dir_for_project(
             resolved_project_root,
             resolved_work_id,
         )
         if resolved_work_id is not None
-        else resolve_runtime_context(
-            project_root=resolved_project_root,
-            runtime_root=runtime_root,
-        ).work_dir
+        else runtime_context.work_dir
     )
-    spawn_request = build_primary_spawn_request(request=request)
+    spawn_request = build_primary_spawn_request(request=request).model_copy(
+        update={
+            "authority_root": resolved_project_root.as_posix(),
+            "task_cwd": task_cwd_resolution.task_cwd.as_posix(),
+            "reference_anchor": task_cwd_resolution.task_cwd.as_posix(),
+            "task_cwd_source": task_cwd_resolution.source,
+            "task_cwd_work_item": task_cwd_resolution.work_item,
+        }
+    )
     prepared_policy = compile_prepared_policy_surface(
         request=spawn_request,
         runtime=runtime,

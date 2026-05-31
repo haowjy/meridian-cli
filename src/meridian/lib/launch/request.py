@@ -79,6 +79,7 @@ class SpawnRequest(BaseModel):
     # Prompt / agent / skills
     prompt: str
     prompt_is_composed: bool = True
+    primary_prompt_is_synthetic: bool = False
     model: str | None = None
     harness: str | None = None
     agent: str | None = None

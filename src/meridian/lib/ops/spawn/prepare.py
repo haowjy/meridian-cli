@@ -127,6 +127,8 @@ def build_create_payload(
         timeout_secs = minutes_to_seconds(payload.timeout)
         kill_grace_secs = minutes_to_seconds(config.kill_grace_minutes) or 0.0
 
+        resolved_work_id_hint = explicit_work_id or ambient_work_id
+
         raw_request = SpawnRequest(
             prompt=payload.prompt,
             prompt_is_composed=False,
@@ -169,7 +171,7 @@ def build_create_payload(
             reference_files=tuple(str(p) for p in validated_paths),
             template_vars=parsed_template_vars,
             goal=payload.goal,
-            work_id_hint=payload.work.strip() or None,
+            work_id_hint=resolved_work_id_hint,
             warning=preflight_warning.strip() if preflight_warning is not None else None,
             authority_root=directory_context.authority_root.as_posix(),
             task_cwd=directory_context.logical_task_cwd.as_posix(),

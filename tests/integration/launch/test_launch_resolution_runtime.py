@@ -87,8 +87,23 @@ def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
 
     if requires_initial_prompt:
         assert spawn_request.prompt == build_primary_prompt(request)
+        assert spawn_request.primary_prompt_is_synthetic is True
     else:
         assert spawn_request.prompt == ""
+        assert spawn_request.primary_prompt_is_synthetic is False
+
+
+def test_build_primary_spawn_request_uses_context_as_initial_prompt() -> None:
+    request = LaunchRequest(
+        model="test-model",
+        harness=HarnessId.CODEX.value,
+        context_from=("p123",),
+    )
+
+    spawn_request = build_primary_spawn_request(request=request)
+
+    assert spawn_request.prompt == ""
+    assert spawn_request.primary_prompt_is_synthetic is False
 
 
 def test_build_primary_spawn_request_copies_context_from() -> None:
@@ -228,6 +243,31 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     assert "prior context" in preview.projected_content.user_turn_content
     assert "prior context" not in preview.projected_content.system_prompt
     assert preview.resolved_request.context_from == ("p999",)
+
+
+def test_codex_primary_projection_omits_synthetic_user_turn_without_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-primary-codex-empty",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model="gpt-5.4-mini", harness=HarnessId.CODEX.value)
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.binding.run_params.prompt.strip()
+    assert preview.binding.run_params.user_turn_content is None
 
 
 @pytest.mark.parametrize(
