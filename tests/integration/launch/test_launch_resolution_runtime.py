@@ -342,6 +342,7 @@ def test_primary_launch_invalid_reference_does_not_create_explicit_work(
         )
 
     assert not (project_root / ".meridian" / "work").exists()
+    assert not (project_root / ".meridian" / "id").exists()
 
 
 @pytest.mark.parametrize(
