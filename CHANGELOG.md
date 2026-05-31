@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Claude adapter denies built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default via `--disallowedTools` injection. Opt out with `[claude] allow_builtin_agents = true` in `meridian.toml`.
+
 ### Fixed
 - Codex primary `--from`/`-f`/`-p` now forwards primary user-turn content into the attached TUI; empty launches keep Codex's bootstrap-only idle default.
 - Primary `meridian --from REF` now inherits source work item when no `--work` or ambient work is active.

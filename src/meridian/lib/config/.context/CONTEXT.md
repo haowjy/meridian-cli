@@ -104,6 +104,20 @@ For `replace`, the entire section from the higher-precedence file wins.
 use `structlog` here. The launch diagnostic boundary (`capture_library_diagnostics()`)
 captures stdlib warnings during spawn; structlog bypasses it and leaks to stderr.
 
+## Launch-Time Harness Profile Resolution
+
+Some harness profile fields are resolved at launch time rather than at config load
+time. These follow the same pattern: ambient config snapshot → launch-time env override:
+
+- `resolve_pi_harness_profile_for_launch()` — resolves `[harness.pi]` (managed bash,
+  load_all_extensions, background_tasks, spawn_watch)
+- `resolve_claude_allow_builtin_agents_for_launch()` — resolves
+  `[harness.claude] allow_builtin_agents` from the launch config snapshot, falling
+  back to `load_config()` if the snapshot is absent or invalid
+
+Both are called from `bind_launch_context()` in `lib/launch/context.py` and threaded
+into the harness adapter's `resolve_launch_spec()`.
+
 ## Schema Metadata (`schema.py`)
 
 `config_field(canonical_key, value_kind=..., file_aliases=..., env_vars=...)` attaches
