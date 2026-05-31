@@ -23,6 +23,7 @@ from meridian.lib.config.settings import (
     MeridianConfig,
     PiHarnessProfileConfig,
     load_config,
+    resolve_claude_allow_builtin_agents_for_launch,
     resolve_pi_harness_profile_for_launch,
 )
 from meridian.lib.config.workspace import get_projectable_roots
@@ -555,6 +556,7 @@ def materialize_launch_artifacts(
     approval: str | None = None,
     unsafe_no_permissions: bool = False,
     pi_harness_profile: PiHarnessProfileConfig | None = None,
+    claude_allow_builtin_agents: bool = False,
 ) -> MaterializedLaunchArtifacts:
     """Build shared run/spec/permission launch artifacts."""
 
@@ -595,6 +597,7 @@ def materialize_launch_artifacts(
         reference_items=reference_items,
         user_turn_content=prompt_payload.user_turn_content,
         pi_harness_profile=pi_harness_profile,
+        claude_allow_builtin_agents=claude_allow_builtin_agents,
     )
     permission_config, perms = resolve_permission_pipeline(
         sandbox=sandbox,
@@ -1695,6 +1698,14 @@ def bind_launch_context(
         if harness.id == HarnessId.PI
         else None
     )
+    claude_allow_builtin_agents = (
+        resolve_claude_allow_builtin_agents_for_launch(
+            config_snapshot=runtime.config_snapshot,
+            project_root=project_paths.project_root,
+        )
+        if harness.id == HarnessId.CLAUDE
+        else False
+    )
     materialized = materialize_launch_artifacts(
         harness=harness,
         prompt=resolved_request.prompt,
@@ -1724,6 +1735,7 @@ def bind_launch_context(
         approval=resolved_request.execution_policy.approval,
         unsafe_no_permissions=runtime.unsafe_no_permissions,
         pi_harness_profile=pi_harness_profile,
+        claude_allow_builtin_agents=claude_allow_builtin_agents,
     )
     run_params = materialized.run_params
 

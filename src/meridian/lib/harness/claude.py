@@ -265,6 +265,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "mcp_tools",
             "projected_roots",
             "user_turn_content",
+            "claude_allow_builtin_agents",
         }
     )
     _EXPLICITLY_IGNORED_FIELDS: ClassVar[frozenset[str]] = frozenset(
@@ -374,6 +375,9 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             prompt_file_path = str(Path(run.control_root) / "system-prompt.md")
         # Extract user_turn_content from run params if available
         user_turn_content = getattr(run, "user_turn_content", None)
+        disallowed_tools: tuple[str, ...] = ()
+        if not run.claude_allow_builtin_agents:
+            disallowed_tools = ("Agent(Explore),Agent(Plan),Agent(General-purpose)",)
         return ResolvedLaunchSpec(
             harness=HarnessId.CLAUDE,
             model=str(run.model).strip() if run.model else None,
@@ -391,6 +395,7 @@ class ClaudeAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             agent_name=run.agent,
             prompt_file_path=prompt_file_path,
             user_turn_content=user_turn_content,
+            disallowed_tools=disallowed_tools,
         )
 
     def preflight(

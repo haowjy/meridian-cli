@@ -75,6 +75,7 @@ class CursorAdapter(BaseHarnessAdapter[ResolvedLaunchSpec]):
             "continue_fork",
             "effort",
             "pi_harness_profile",
+            "claude_allow_builtin_agents",
         }
     )
 
