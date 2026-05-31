@@ -10,6 +10,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - Codex primary `--from`/`-f`/`-p` now forwards primary user-turn content into the attached TUI; empty launches keep Codex's bootstrap-only idle default.
 - Primary `meridian --from REF` now inherits source work item when no `--work` or ambient work is active.
+- Root primary launches no longer treat spaced `--prompt-file PATH` values as unknown commands during startup classification.
 
 ## [0.2.18] - 2026-05-31
 

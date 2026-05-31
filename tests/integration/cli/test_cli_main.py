@@ -348,6 +348,50 @@ def test_directory_flag_supplies_project_root_to_primary_launch(
     assert captured["project_root"] == project.resolve()
 
 
+def test_primary_launch_prompt_file_value_is_not_treated_as_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    prompt_file = tmp_path / "handoff.md"
+    prompt_file.write_text("ship the database layer", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(
+        cli_main,
+        "maybe_bootstrap_runtime_state",
+        lambda *_args, **_kwargs: project,
+    )
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(
+            [
+                "-a",
+                "gpt-dev",
+                "--work",
+                "v3-fullstack-rebuild",
+                "--prompt-file",
+                prompt_file.as_posix(),
+                "--from",
+                "c105",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+    assert captured["agent"] == "gpt-dev"
+    assert captured["work"] == "v3-fullstack-rebuild"
+    assert captured["prompt"] == "ship the database layer"
+    assert captured["from_ref"] == "c105"
+
+
 def test_bootstrap_with_setup_runs_init_flow_and_passes_project_root_to_primary_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
