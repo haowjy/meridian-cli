@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-05-31
+
 ### Added
 - Claude adapter denies built-in subagents (`Agent(Explore)`, `Agent(Plan)`, `Agent(General-purpose)`) by default via `--disallowedTools` injection. Opt out with `[claude] allow_builtin_agents = true` in `meridian.toml`.
 
