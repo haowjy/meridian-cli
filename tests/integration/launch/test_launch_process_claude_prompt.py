@@ -19,7 +19,11 @@ from meridian.lib.config.settings import load_config
 from meridian.lib.core.types import HarnessId
 from meridian.lib.harness.registry import get_default_harness_registry
 from meridian.lib.launch.constants import OUTPUT_FILENAME
-from meridian.lib.launch.context import build_launch_context
+from meridian.lib.launch.context import (
+    PreparedPromptPayload,
+    _inject_claude_delegation_guidance,
+    build_launch_context,
+)
 from meridian.lib.launch.process.primary_attach import PrimaryAttachOutcome
 from meridian.lib.launch.process.runner import run_harness_process
 from meridian.lib.launch.request import (
@@ -85,6 +89,27 @@ def _build_primary_launch_context(
         dry_run=True,
     )
     return launch_context, harness_registry
+
+
+def test_claude_delegation_guidance_ignores_agent_dir_probe_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    agents_dir = tmp_path / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    payload = PreparedPromptPayload(appended_system_prompt="existing")
+
+    def _raise_on_iterdir(self: Path) -> Any:
+        if self == agents_dir:
+            raise PermissionError("sandbox denied")
+        return iter(())
+
+    monkeypatch.setattr(Path, "iterdir", _raise_on_iterdir)
+
+    assert (
+        _inject_claude_delegation_guidance(payload, project_root=tmp_path)
+        is payload
+    )
 
 
 @pytest.mark.slow
