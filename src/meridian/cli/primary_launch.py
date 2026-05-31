@@ -17,6 +17,8 @@ from meridian.lib.launch.composition import PromptDocument
 from meridian.lib.launch.reference import validate_reference_paths
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import resolve_session_reference
+from meridian.lib.ops.runtime import resolve_runtime_root_for_read
+from meridian.lib.ops.spawn.context_ref import resolve_context_ref
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state.paths import resolve_kb_dir
 
@@ -85,6 +87,24 @@ class _ResolvedSessionTarget(BaseModel):
 
 
 ResolvedSessionTarget = _ResolvedSessionTarget
+
+
+def _ambient_work_id(project_root: Path) -> str | None:
+    from meridian.lib.core.context import resolve_runtime_context
+
+    runtime_root = resolve_runtime_root_for_read(project_root)
+    return (
+        resolve_runtime_context(project_root=project_root, runtime_root=runtime_root).work_id
+        or ""
+    ).strip() or None
+
+
+def _first_context_from_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
+    for ref in refs:
+        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
+        if work_id:
+            return work_id
+    return None
 
 
 def resolve_session_target(
@@ -208,6 +228,15 @@ def run_primary_launch(
     requested_model = model
     requested_agent = agent
     requested_work_id = work.strip() or None
+    if (
+        requested_work_id is None
+        and fork_resolution.resolved_context_from
+        and _ambient_work_id(project_root) is None
+    ):
+        requested_work_id = _first_context_from_work_id(
+            project_root,
+            fork_resolution.resolved_context_from,
+        )
     if resume_target is not None:
         if model.strip():
             raise ValueError("Cannot combine --continue with --model.")

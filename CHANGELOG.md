@@ -11,6 +11,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `mars.toml`: use canonical `haowjy/meridian-prompter` dependency URL.
 
 ### Fixed
+- Primary `meridian --from REF` now inherits source work item when no `--work` or ambient work is active.
 - `meridian -C <dir> mars ...` now scopes mars passthrough to `<dir>` instead of inherited `MERIDIAN_PROJECT_DIR`.
 - Release packaging now verifies every Pi extension source entrypoint has a matching built `dist/extensions/<name>/index.js` in both wheel and sdist artifacts, and fails on stale extra extension bundles.
 - Pi disk wakeups no longer lose pre-signaled changes before the drain loop subscribes.

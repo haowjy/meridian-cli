@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -79,7 +80,11 @@ def test_run_primary_launch_bare_from_resolves_to_context_from(
         captured.update(kwargs)
         return LaunchResult(command=("meridian",), exit_code=0)
 
+    def _no_context_work(_root: Path, _ref: str) -> SimpleNamespace:
+        return SimpleNamespace(work_id=None)
+
     monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+    monkeypatch.setattr(primary_launch, "resolve_context_ref", _no_context_work)
 
     primary_launch.run_primary_launch(
         project_root=Path.cwd(),
@@ -105,6 +110,127 @@ def test_run_primary_launch_bare_from_resolves_to_context_from(
     assert request.context_from == ("p42",)
     assert request.session.requested_harness_session_id is None
     assert request.session.continue_fork is False
+
+
+def test_run_primary_launch_from_inherits_source_work_when_no_ambient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    def _no_ambient_work(_project_root: Path) -> None:
+        return None
+
+    def _context_work(_root: Path, _ref: str) -> SimpleNamespace:
+        return SimpleNamespace(work_id="feature-x")
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+    monkeypatch.setattr(primary_launch, "_ambient_work_id", _no_ambient_work)
+    monkeypatch.setattr(primary_launch, "resolve_context_ref", _context_work)
+
+    primary_launch.run_primary_launch(
+        project_root=Path.cwd(),
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="p123",
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.work_id == "feature-x"
+
+
+def test_run_primary_launch_from_keeps_explicit_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    def _no_ambient_work(_project_root: Path) -> None:
+        return None
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+    monkeypatch.setattr(primary_launch, "_ambient_work_id", _no_ambient_work)
+
+    primary_launch.run_primary_launch(
+        project_root=Path.cwd(),
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="p123",
+        model="",
+        harness=None,
+        agent=None,
+        work="explicit-work",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.work_id == "explicit-work"
+
+
+def test_run_primary_launch_from_keeps_ambient_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    def _ambient_work(_project_root: Path) -> str:
+        return "ambient-work"
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+    monkeypatch.setattr(primary_launch, "_ambient_work_id", _ambient_work)
+
+    primary_launch.run_primary_launch(
+        project_root=Path.cwd(),
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="p123",
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.work_id is None
 
 
 def test_run_primary_launch_forwards_primary_spawn_parity_fields(
