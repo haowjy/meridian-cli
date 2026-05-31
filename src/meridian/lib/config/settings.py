@@ -434,6 +434,9 @@ def _normalize_spawn_table(raw_value: object, *, source: str) -> dict[str, objec
 
     values: dict[str, object] = {}
     for key, value in cast("dict[str, object]", raw_value).items():
+        if key == "deny_headless_harnesses":
+            values[key] = _parse_toml_list(raw_value=value, source=f"{source}.{key}")
+            continue
         if key not in {"default_wait_yield_seconds", "min_wait_yield_seconds"}:
             logger.warning("Ignoring unknown Meridian config key '%s.%s'.", source, key)
             continue
