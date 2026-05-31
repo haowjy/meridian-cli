@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from meridian.lib.launch.launch_types import summarize_composition_warnings
+from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
 
@@ -78,7 +79,9 @@ def launch_primary(
     """Launch the primary agent process and wait for exit."""
 
     from meridian.lib.catalog.catalog_session import CatalogSession
+    from meridian.lib.config.project_root import resolve_project_root_resolution
     from meridian.lib.core.context import resolve_runtime_context
+    from meridian.lib.ops.runtime import resolve_runtime_root_for_read
 
     from .context import (
         RuntimeBindings,
@@ -90,11 +93,31 @@ def launch_primary(
     from .process import run_harness_process
     from .types import LaunchResult
 
-    runtime = build_primary_launch_runtime(project_root=project_root, execution_cwd=project_root)
+    resolved_project_root = resolve_project_root_resolution(project_root).project_root
+    preview_work_id = _preview_work_id_for_launch(request)
+    runtime_root_for_context = resolve_runtime_root_for_read(resolved_project_root)
+    runtime_context = resolve_runtime_context(
+        project_root=resolved_project_root,
+        runtime_root=runtime_root_for_context,
+    )
+    ambient_work_id = None if preview_work_id is not None else runtime_context.work_id
+    project_state_dir = resolve_project_paths(resolved_project_root).root_dir
+    launch_resolution = resolve_launch_inputs(
+        authority_root=resolved_project_root,
+        project_state_dir=project_state_dir,
+        context_from=request.context_from,
+        reference_files=request.reference_files,
+        explicit_work_id=preview_work_id,
+        ambient_work_id=ambient_work_id,
+    )
+
+    runtime = build_primary_launch_runtime(
+        project_root=resolved_project_root,
+        execution_cwd=resolved_project_root,
+    )
     if request.include_bootstrap_documents:
         from meridian.lib.catalog.bootstrap import BootstrapRegistry
 
-        resolved_project_root = Path(runtime.resolved_config_root)
         request = request.model_copy(
             update={
                 "supplemental_prompt_documents": (
@@ -106,23 +129,24 @@ def launch_primary(
     resolved_work_id = (
         _preview_work_id_for_launch(request)
         if request.dry_run
-        else _resolve_work_id_for_launch(project_root, request)
+        else _resolve_work_id_for_launch(resolved_project_root, request)
     )
 
-    resolved_project_root = Path(runtime.resolved_config_root).expanduser().resolve()
-    runtime_root = Path(runtime.runtime_root).expanduser().resolve()
+    runtime = runtime.model_copy(update=launch_resolution.runtime_updates)
+    effective_work_id = resolved_work_id or launch_resolution.effective_work_id
     active_work_dir = (
         resolve_work_scratch_dir_for_project(
             resolved_project_root,
-            resolved_work_id,
+            effective_work_id,
         )
-        if resolved_work_id is not None
-        else resolve_runtime_context(
-            project_root=resolved_project_root,
-            runtime_root=runtime_root,
-        ).work_dir
+        if effective_work_id is not None
+        else runtime_context.work_dir
     )
-    spawn_request = build_primary_spawn_request(request=request)
+    request_updates = dict(launch_resolution.request_updates)
+    request_updates["work_id_hint"] = effective_work_id
+    spawn_request = build_primary_spawn_request(request=request).model_copy(
+        update=request_updates
+    )
     prepared_policy = compile_prepared_policy_surface(
         request=spawn_request,
         runtime=runtime,
@@ -142,7 +166,7 @@ def launch_primary(
         bindings=RuntimeBindings(
             spawn_id="dry-run-primary",
             report_output_path=Path(runtime.report_output_path or "report.md"),
-            runtime_work_id=resolved_work_id,
+            runtime_work_id=effective_work_id,
             dry_run=True,
         ),
         runtime=runtime,

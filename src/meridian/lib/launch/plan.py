@@ -70,16 +70,24 @@ def build_primary_spawn_request(
     normalized_session = _normalize_primary_session(request)
     if prompt is not None:
         base_prompt = prompt
+        primary_prompt_is_synthetic = False
     elif request.prompt is not None:
         base_prompt = request.prompt
+        primary_prompt_is_synthetic = False
+    elif request.context_from or request.reference_files:
+        base_prompt = ""
+        primary_prompt_is_synthetic = False
     elif _requires_primary_synthetic_prompt(request):
         base_prompt = build_primary_prompt(request)
+        primary_prompt_is_synthetic = True
     else:
         base_prompt = ""
+        primary_prompt_is_synthetic = False
 
     return SpawnRequest(
         prompt=base_prompt,
         prompt_is_composed=False,
+        primary_prompt_is_synthetic=primary_prompt_is_synthetic,
         model=(request.model or "").strip() or None,
         harness=(request.harness or "").strip() or None,
         agent=(request.agent or "").strip() or None,

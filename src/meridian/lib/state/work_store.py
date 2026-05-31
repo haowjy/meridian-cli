@@ -640,10 +640,18 @@ def get_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
     return None
 
 
-def get_active_work_item(runtime_root: Path, work_id: str) -> WorkItem | None:
+def get_active_work_item(
+    runtime_root: Path,
+    work_id: str,
+    *,
+    create_project_uuid: bool = True,
+) -> WorkItem | None:
     """Load one active work item."""
 
-    paths = _project_paths_for_work_store(runtime_root, create_project_uuid=True)
+    paths = _project_paths_for_work_store(
+        runtime_root,
+        create_project_uuid=create_project_uuid,
+    )
     active_dir = _active_dir(paths, work_id)
     if not active_dir.is_dir():
         return None

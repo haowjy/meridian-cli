@@ -320,6 +320,34 @@ def test_main_pi_primary_launch_dry_run_is_supported(
     assert "--mode rpc" not in captured.out
 
 
+def test_directory_flag_supplies_project_root_to_primary_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        cli_main,
+        "maybe_bootstrap_runtime_state",
+        lambda *_args, **_kwargs: project,
+    )
+
+    def _fake_primary_launch(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return primary_launch.PrimaryLaunchOutput(message="ok", exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "run_primary_launch", _fake_primary_launch)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.main(["-C", project.as_posix(), "--dry-run"])
+
+    assert exc_info.value.code == 0
+    assert captured["project_root"] == project.resolve()
+
+
 def test_bootstrap_with_setup_runs_init_flow_and_passes_project_root_to_primary_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

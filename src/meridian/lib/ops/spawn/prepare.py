@@ -13,9 +13,8 @@ from meridian.lib.launch.composition_spawn import (
     compose_spawn_launch_surface,
 )
 from meridian.lib.launch.context import PreparedLaunchSurface, RuntimeBindings
-from meridian.lib.launch.cwd import LaunchDirectoryContext, resolve_task_cwd
 from meridian.lib.launch.plan import build_spawn_mars_runtime
-from meridian.lib.launch.reference import parse_template_assignments, validate_reference_paths
+from meridian.lib.launch.reference import parse_template_assignments
 from meridian.lib.launch.request import (
     ExecutionBudget,
     LaunchArgvIntent,
@@ -23,8 +22,9 @@ from meridian.lib.launch.request import (
     SessionRequest,
     SpawnRequest,
 )
+from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.launch.resolve import parse_duration_seconds
-from meridian.lib.state.paths import resolve_kb_dir, resolve_project_paths
+from meridian.lib.state.paths import resolve_project_paths
 from meridian.lib.state.session_store import get_session_active_work_id
 from meridian.lib.state.spawn.model import BACKGROUND_LAUNCH_MODE, FOREGROUND_LAUNCH_MODE
 from meridian.lib.utils.time import minutes_to_seconds
@@ -39,20 +39,6 @@ from ..runtime import (
 from .models import SpawnCreateInput
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
-
-
-def _first_context_from_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
-    """Return the first work item attached to resolved ``--from`` context refs."""
-
-    if not refs:
-        return None
-    from meridian.lib.ops.spawn.context_ref import resolve_context_ref
-
-    for ref in refs:
-        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
-        if work_id:
-            return work_id
-    return None
 
 
 @dataclass(frozen=True)
@@ -114,31 +100,21 @@ def build_create_payload(
                 ).strip() or None
             except Exception:
                 ambient_work_id = None
-        # Work item precedence: --work (explicit) > ambient session > --from inheritance.
-        # --from is a last-resort fallback — only inherits work when neither the user
-        # nor the current session provides one.
-        if ambient_work_id is None and explicit_work_id is None:
-            ambient_work_id = _first_context_from_work_id(project_root, payload.context_from)
         project_state_dir = resolve_project_paths(project_root).root_dir
-        task_cwd_resolution = resolve_task_cwd(
-            project_root,
+        launch_resolution = resolve_launch_inputs(
+            authority_root=project_root,
             project_state_dir=project_state_dir,
+            context_from=payload.context_from,
+            reference_files=tuple(str(path) for path in payload.files),
             explicit_task_dir=payload.task_dir,
             explicit_work_id=explicit_work_id,
             ambient_work_id=ambient_work_id,
         )
-        directory_context = LaunchDirectoryContext.from_task_cwd_resolution(
-            authority_root=project_root,
-            task_cwd_resolution=task_cwd_resolution,
-        )
-        validated_paths = validate_reference_paths(
-            payload.files,
-            reference_anchor=directory_context.reference_anchor,
-            kb_dir=resolve_kb_dir(project_root),
-        )
         parsed_template_vars = parse_template_assignments(payload.template_vars)
         timeout_secs = minutes_to_seconds(payload.timeout)
         kill_grace_secs = minutes_to_seconds(config.kill_grace_minutes) or 0.0
+
+        resolved_work_id_hint = launch_resolution.effective_work_id
 
         raw_request = SpawnRequest(
             prompt=payload.prompt,
@@ -179,16 +155,18 @@ def build_create_payload(
                 continue_source_ref=payload.session.continue_source_ref,
             ),
             context_from=payload.context_from,
-            reference_files=tuple(str(p) for p in validated_paths),
+            reference_files=tuple(
+                path.as_posix() for path in launch_resolution.reference_files
+            ),
             template_vars=parsed_template_vars,
             goal=payload.goal,
-            work_id_hint=payload.work.strip() or None,
+            work_id_hint=resolved_work_id_hint,
             warning=preflight_warning.strip() if preflight_warning is not None else None,
-            authority_root=directory_context.authority_root.as_posix(),
-            task_cwd=directory_context.logical_task_cwd.as_posix(),
-            reference_anchor=directory_context.reference_anchor.as_posix(),
-            task_cwd_source=directory_context.task_cwd_source,
-            task_cwd_work_item=directory_context.work_item,
+            authority_root=launch_resolution.directory_context.authority_root.as_posix(),
+            task_cwd=launch_resolution.directory_context.logical_task_cwd.as_posix(),
+            reference_anchor=launch_resolution.directory_context.reference_anchor.as_posix(),
+            task_cwd_source=launch_resolution.directory_context.task_cwd_source,
+            task_cwd_work_item=launch_resolution.directory_context.work_item,
             launch_policy_snapshot=payload.launch_policy_snapshot,
             pi_task_ping_interval_seconds=parse_duration_seconds(payload.task_ping_interval),
             pi_task_ping_reset_on_activity=payload.task_ping_reset_on_activity,
@@ -203,7 +181,7 @@ def build_create_payload(
             runtime=mars_runtime_source,
             runtime_root=runtime_root,
             control_root=project_root,
-            execution_cwd=directory_context.logical_task_cwd.as_posix(),
+            execution_cwd=launch_resolution.directory_context.logical_task_cwd.as_posix(),
             argv_intent=(
                 LaunchArgvIntent.REQUIRED
                 if composition_dry_run

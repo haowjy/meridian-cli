@@ -107,6 +107,113 @@ def test_run_primary_launch_bare_from_resolves_to_context_from(
     assert request.session.continue_fork is False
 
 
+def test_run_primary_launch_from_leaves_work_resolution_to_launch_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+
+    primary_launch.run_primary_launch(
+        project_root=Path.cwd(),
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="p123",
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.context_from == ("p123",)
+    assert request.work_id is None
+
+
+def test_run_primary_launch_from_keeps_explicit_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+
+    primary_launch.run_primary_launch(
+        project_root=Path.cwd(),
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="p123",
+        model="",
+        harness=None,
+        agent=None,
+        work="explicit-work",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.work_id == "explicit-work"
+
+
+def test_run_primary_launch_from_does_not_materialize_ambient_work_in_cli_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_launch_primary(**kwargs: object) -> LaunchResult:
+        captured.update(kwargs)
+        return LaunchResult(command=("meridian",), exit_code=0)
+
+    monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
+
+    primary_launch.run_primary_launch(
+        project_root=Path.cwd(),
+        continue_ref=None,
+        fork_ref=None,
+        fork_fresh_ref=None,
+        from_ref="p123",
+        model="",
+        harness=None,
+        agent=None,
+        work="",
+        yolo=False,
+        approval=None,
+        autocompact=None,
+        effort=None,
+        sandbox=None,
+        timeout=None,
+        dry_run=True,
+        passthrough=(),
+    )
+
+    request = cast("LaunchRequest", captured["request"])
+    assert request.context_from == ("p123",)
+    assert request.work_id is None
+
+
 def test_run_primary_launch_forwards_primary_spawn_parity_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -147,7 +254,8 @@ def test_run_primary_launch_forwards_primary_spawn_parity_fields(
     )
 
     request = cast("LaunchRequest", captured["request"])
-    assert request.reference_files == (reference.as_posix(),)
+    assert reference.is_file()
+    assert request.reference_files == ("design.md",)
     assert request.prompt == "Review the design."
     assert request.skills == ("planning", "dev-principles")
     assert request.goal == "Converge on requirements"
@@ -227,15 +335,18 @@ def test_run_primary_launch_from_with_fork_reports_conflict_before_inference(
 def test_run_primary_launch_unresolved_harness_message_uses_fork_fresh_ref(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        primary_launch,
-        "resolve_session_target",
-        lambda **_kwargs: primary_launch.ResolvedSessionTarget(
+    def _resolve_session_target(**_kwargs: object) -> primary_launch.ResolvedSessionTarget:
+        return primary_launch.ResolvedSessionTarget(
             harness_session_id=None,
             chat_id=None,
             harness=None,
             tracked=False,
-        ),
+        )
+
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_target",
+        _resolve_session_target,
     )
 
     with pytest.raises(
@@ -297,15 +408,18 @@ def test_run_primary_launch_continue_reports_pi_never_created_session(
         ),
     )
 
-    monkeypatch.setattr(
-        primary_launch,
-        "resolve_session_target",
-        lambda **_kwargs: primary_launch.ResolvedSessionTarget(
+    def _resolve_session_target(**_kwargs: object) -> primary_launch.ResolvedSessionTarget:
+        return primary_launch.ResolvedSessionTarget(
             harness_session_id=None,
             chat_id="c201",
             harness="pi",
             tracked=True,
-        ),
+        )
+
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_target",
+        _resolve_session_target,
     )
 
     with pytest.raises(
@@ -369,15 +483,18 @@ def test_run_primary_launch_continue_reports_pi_discovery_failure_detail(
         ),
     )
 
-    monkeypatch.setattr(
-        primary_launch,
-        "resolve_session_target",
-        lambda **_kwargs: primary_launch.ResolvedSessionTarget(
+    def _resolve_session_target(**_kwargs: object) -> primary_launch.ResolvedSessionTarget:
+        return primary_launch.ResolvedSessionTarget(
             harness_session_id=None,
             chat_id="c301",
             harness="pi",
             tracked=True,
-        ),
+        )
+
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_target",
+        _resolve_session_target,
     )
 
     with pytest.raises(
@@ -423,10 +540,8 @@ def test_run_primary_launch_carries_source_pi_session_dir_to_session_request(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    monkeypatch.setattr(
-        primary_launch,
-        "resolve_session_target",
-        lambda **_kwargs: primary_launch.ResolvedSessionTarget(
+    def _resolve_session_target(**_kwargs: object) -> primary_launch.ResolvedSessionTarget:
+        return primary_launch.ResolvedSessionTarget(
             harness_session_id="ses-pi-source",
             chat_id="c410",
             harness="pi",
@@ -437,7 +552,12 @@ def test_run_primary_launch_carries_source_pi_session_dir_to_session_request(
             source_execution_cwd="/tmp/task",
             source_pi_session_dir="/tmp/pi-sessions/custom",
             tracked=True,
-        ),
+        )
+
+    monkeypatch.setattr(
+        primary_launch,
+        "resolve_session_target",
+        _resolve_session_target,
     )
 
     def _fake_launch_primary(**kwargs: object) -> LaunchResult:

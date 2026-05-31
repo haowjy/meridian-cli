@@ -62,6 +62,18 @@ and formatting. Use `preserving_edit.py` when editing config programmatically.
 - `context_config.py` — `ContextConfig`, `ContextSourceType`: context path schema
 - `catalog.py` — `build_option_catalog()`: introspects `MeridianConfig` for CLI/docs
 
+### Harness Profile Config Settings
+
+Per-harness profile configs under `HarnessConfig` expose TOML-settable fields. The
+Claude profile includes:
+
+- `[harness.claude] model` — default model (string, env: `MERIDIAN_HARNESS_MODEL_CLAUDE`)
+- `[harness.claude] wait_yield_seconds` — polling interval (float, env:
+  `MERIDIAN_HARNESS_WAIT_YIELD_SECONDS_CLAUDE`)
+- `[harness.claude] allow_builtin_agents` — whether to permit Claude's built-in
+  subagents (Explore, Plan, General-purpose). Default `false` — Meridian denies them
+  so sessions use custom Meridian agents exclusively. Set `true` to opt out.
+
 ## Depth
 
 → [.context/CONTEXT.md](.context/CONTEXT.md) — ContextVar thread-local pattern,

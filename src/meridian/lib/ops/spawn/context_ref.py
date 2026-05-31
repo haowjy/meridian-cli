@@ -161,6 +161,16 @@ def resolved_context_ref_value(ref: ContextRef) -> str:
     return ref.spawn_id
 
 
+def first_context_ref_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
+    """Return the first work item attached to resolved ``--from`` context refs."""
+
+    for ref in refs:
+        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
+        if work_id:
+            return work_id
+    return None
+
+
 def _render_context_ref(ref: ContextRef) -> str:
     status = ref.status or "unknown"
     agent = ref.agent or "n/a"
@@ -229,6 +239,7 @@ __all__ = [
     "ContextRef",
     "SessionContextRef",
     "SpawnContextRef",
+    "first_context_ref_work_id",
     "render_context_refs",
     "resolve_context_ref",
     "resolved_context_ref_value",

@@ -38,6 +38,10 @@ for streaming app server and `meridian chat`.
 Per-harness mapping:
 - Claude subprocess: `claude -p --output-format stream-json --verbose -`
 - Claude connection: `claude -p --input-format stream-json --output-format stream-json --verbose` (stdin/stdout NDJSON, not WebSocket despite `claude_ws.py` name)
+- **Claude built-in agent denial**: Meridian injects `--disallowedTools
+  Agent(Explore),Agent(Plan),Agent(General-purpose)` by default. Gated by
+  `[harness.claude] allow_builtin_agents` (bool, default `false`). The denials
+  merge into permission-derived `--disallowedTools` via `dedupe_nonempty()`.
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
@@ -183,6 +187,26 @@ uses `pty.openpty()` (POSIX) to observe this output without the harness knowing
 it's captured. This is the minimum-intrusive mechanism for an otherwise unobservable
 value. Windows does not support PTY — Claude primary uses a fallback detection path
 (`session_detection.py`) on Windows.
+
+### Claude: Built-in Subagent Denial
+
+Claude Code ships with three built-in subagents: Explore, Plan, and General-purpose.
+These conflict with Meridian's own agent system. Meridian injects
+`--disallowedTools Agent(Explore),Agent(Plan),Agent(General-purpose)` by default
+so Claude sessions use custom Meridian agents exclusively. The behavior is gated by
+`[harness.claude] allow_builtin_agents` (bool, default `false`).
+
+The flag is resolved in `bind_launch_context()` via
+`resolve_claude_allow_builtin_agents_for_launch()`, threaded through
+`SpawnParams.claude_allow_builtin_agents` → `ResolvedLaunchSpec.disallowed_tools`,
+and projected by `project_claude.py`. The builtin denials merge into
+permission-derived `--disallowedTools` so exactly one flag is emitted.
+
+This is implemented as a Meridian platform policy (harness adapter injection),
+not as a per-agent `disallowed-tools` field. This means individual agent profiles
+no longer need to carry deny entries like
+`disallowed-tools: [Agent(Explore), Agent(Plan), Agent(General-purpose)]` —
+they're inherited from the harness adapter.
 
 ### Claude: System-Prompt File Channel
 

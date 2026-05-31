@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -1145,12 +1145,16 @@ def _resolve_primary_projection(
         )
     )
 
+    prompt_payload = prepare_prompt_payload(projected_content=projected)
+    if request.primary_prompt_is_synthetic:
+        prompt_payload = replace(prompt_payload, user_turn_content=None)
+
     return (
         PreparedLaunchContent(
             final_prompt=projected.user_turn_content.strip() or request.prompt,
             resolved_context_from=task_ctx.resolved_context_from,
             loaded_references=task_ctx.reference_items,
-            prompt_payload=prepare_prompt_payload(projected_content=projected),
+            prompt_payload=prompt_payload,
             projected_content=projected,
             agent_inventory_prompt=agent_inventory_prompt,
             context_prompt=context_prompt,

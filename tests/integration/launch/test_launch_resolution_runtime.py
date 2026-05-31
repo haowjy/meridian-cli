@@ -13,6 +13,8 @@ from meridian.lib.harness.registry import (
     HarnessRegistry,
     get_default_harness_registry,
 )
+from meridian.lib.launch import LaunchRequest as PrimaryLaunchRequest
+from meridian.lib.launch import launch_primary
 from meridian.lib.launch.context import build_launch_context
 from meridian.lib.launch.launch_types import ResolvedExecutionPolicy, TerminalSurfaceMode
 from meridian.lib.launch.plan import (
@@ -22,6 +24,7 @@ from meridian.lib.launch.plan import (
 from meridian.lib.launch.request import LaunchCompositionSurface
 from meridian.lib.launch.types import LaunchRequest, build_primary_prompt
 from meridian.lib.ops.spawn import context_ref
+from meridian.lib.state import work_store
 from tests.support.fixtures import write_agent, write_skill
 from tests.support.launch import stub_bundle_request_and_resolve
 
@@ -87,8 +90,23 @@ def test_build_primary_spawn_request_only_uses_synthetic_prompt_when_required(
 
     if requires_initial_prompt:
         assert spawn_request.prompt == build_primary_prompt(request)
+        assert spawn_request.primary_prompt_is_synthetic is True
     else:
         assert spawn_request.prompt == ""
+        assert spawn_request.primary_prompt_is_synthetic is False
+
+
+def test_build_primary_spawn_request_uses_context_as_initial_prompt() -> None:
+    request = LaunchRequest(
+        model="test-model",
+        harness=HarnessId.CODEX.value,
+        context_from=("p123",),
+    )
+
+    spawn_request = build_primary_spawn_request(request=request)
+
+    assert spawn_request.prompt == ""
+    assert spawn_request.primary_prompt_is_synthetic is False
 
 
 def test_build_primary_spawn_request_copies_context_from() -> None:
@@ -202,12 +220,22 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
         harness=HarnessId.CLAUDE,
     )
     write_agent(tmp_path, name="dev-orchestrator", model="claude-sonnet-4")
-    monkeypatch.setattr(context_ref, "resolve_context_ref", lambda _root, _ref: object())
-    monkeypatch.setattr(context_ref, "resolved_context_ref_value", lambda _ref: "p999")
+
+    def _resolve_context_ref(_root: Path, _ref: str) -> object:
+        return object()
+
+    def _resolved_context_ref_value(_ref: object) -> str:
+        return "p999"
+
+    def _render_context_refs(_refs: object) -> str:
+        return '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>'
+
+    monkeypatch.setattr(context_ref, "resolve_context_ref", _resolve_context_ref)
+    monkeypatch.setattr(context_ref, "resolved_context_ref_value", _resolved_context_ref_value)
     monkeypatch.setattr(
         context_ref,
         "render_context_refs",
-        lambda _refs: '<prior-spawn-context spawn="p999">prior context</prior-spawn-context>',
+        _render_context_refs,
     )
 
     preview = build_launch_context(
@@ -228,6 +256,93 @@ def test_primary_projection_places_from_context_in_user_turn_not_system_prompt(
     assert "prior context" in preview.projected_content.user_turn_content
     assert "prior context" not in preview.projected_content.system_prompt
     assert preview.resolved_request.context_from == ("p999",)
+
+
+def test_codex_primary_projection_omits_synthetic_user_turn_without_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_minimal_mars_config(tmp_path)
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    preview = build_launch_context(
+        spawn_id="dry-run-primary-codex-empty",
+        request=build_primary_spawn_request(
+            request=LaunchRequest(model="gpt-5.4-mini", harness=HarnessId.CODEX.value)
+        ),
+        runtime=build_primary_launch_runtime(project_root=tmp_path),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+
+    assert preview.binding.run_params.prompt.strip()
+    assert preview.binding.run_params.user_turn_content is None
+
+
+def test_primary_launch_resolves_reference_files_from_work_task_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    task_dir = tmp_path / "task"
+    project_root.mkdir()
+    task_dir.mkdir()
+    _write_minimal_mars_config(project_root)
+    (project_root / "task-only.txt").write_text("project shadow", encoding="utf-8")
+    (task_dir / "task-only.txt").write_text("task marker", encoding="utf-8")
+    work_store.ensure_work_item_metadata(project_root / ".meridian", "task-work")
+    work_store.update_work_item_task_dir(
+        project_root / ".meridian",
+        "task-work",
+        task_dir=task_dir.as_posix(),
+    )
+    stub_bundle_request_and_resolve(
+        monkeypatch,
+        model="gpt-5.4-mini",
+        harness=HarnessId.CODEX,
+    )
+
+    result = launch_primary(
+        project_root=project_root,
+        request=PrimaryLaunchRequest(
+            model="gpt-5.4-mini",
+            harness=HarnessId.CODEX.value,
+            work_id="task-work",
+            reference_files=("task-only.txt",),
+            dry_run=True,
+        ),
+        harness_registry=get_default_harness_registry(),
+    )
+
+    prompt = result.command[-1]
+    assert (task_dir / "task-only.txt").as_posix() in prompt
+    assert "task marker" in prompt
+    assert "project shadow" not in prompt
+
+
+def test_primary_launch_invalid_reference_does_not_create_explicit_work(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    with pytest.raises(FileNotFoundError):
+        launch_primary(
+            project_root=project_root,
+            request=PrimaryLaunchRequest(
+                work_id="new-work",
+                reference_files=("missing.txt",),
+                dry_run=True,
+            ),
+            harness_registry=get_default_harness_registry(),
+        )
+
+    assert not (project_root / ".meridian" / "work").exists()
+    assert not (project_root / ".meridian" / "id").exists()
 
 
 @pytest.mark.parametrize(
@@ -324,7 +439,11 @@ def test_spawn_prepare_cursor_uses_bundle_harness_model_verbatim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _write_minimal_mars_config(tmp_path)
-    monkeypatch.setattr(cursor_harness.shutil, "which", lambda _command: "/usr/bin/cursor")
+
+    def _which(_command: str) -> str:
+        return "/usr/bin/cursor"
+
+    monkeypatch.setattr(cursor_harness.shutil, "which", _which)
     captured_requests = stub_bundle_request_and_resolve(
         monkeypatch,
         model="claude-opus-4-7",

@@ -38,6 +38,12 @@ bind_launch_context()                 ← env, cwd, spec, argv, permissions
 LaunchContext                         ← complete at construction; ready to run
 ```
 
+Before callers enter this pipeline, they must resolve the shared launch-input
+surface with `resolution.py:resolve_launch_inputs()`. That seam owns work
+precedence, `--from` work inheritance, task cwd selection, reference anchoring,
+and `-f` validation. Primary and spawn may differ in prompt/session projection,
+but they should not hand-roll directory or reference resolution.
+
 **Why the split?** The primary CLI path calls `bind_launch_context()` twice: once
 with `dry_run=True` for `--dry-run` display, then again with real spawn ID and paths.
 `prepare_launch_surface()` is expensive and safe to call once. `bind_launch_context()`

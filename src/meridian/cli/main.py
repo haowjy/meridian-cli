@@ -599,6 +599,7 @@ def _run_primary_launch(
 
     emit(
         primary_launch.run_primary_launch(
+            project_root=get_global_options().project_root,
             continue_ref=continue_ref,
             fork_ref=fork_ref,
             fork_fresh_ref=fork_fresh_ref,
