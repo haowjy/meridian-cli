@@ -112,6 +112,44 @@ def test_claude_delegation_guidance_ignores_agent_dir_probe_errors(
     )
 
 
+def test_claude_delegation_guidance_is_primary_only(tmp_path: Path) -> None:
+    project_root = tmp_path / "claude-guidance"
+    project_root.mkdir()
+    agents_dir = project_root / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "reviewer.md").write_text("# reviewer\n", encoding="utf-8")
+
+    primary_context, _ = _build_primary_launch_context(
+        project_root=project_root,
+        harness_id=HarnessId.CLAUDE,
+        model="claude-sonnet-4-5",
+    )
+    primary_system_prompt = primary_context.binding.run_params.appended_system_prompt or ""
+
+    spawn_context = build_launch_context(
+        spawn_id="dry-run-claude-spawn-guidance",
+        request=SpawnRequest(
+            prompt="spawn prompt",
+            prompt_is_composed=False,
+            model="claude-sonnet-4-5",
+            harness=HarnessId.CLAUDE.value,
+        ),
+        runtime=LaunchRuntime(
+            argv_intent=LaunchArgvIntent.REQUIRED,
+            composition_surface=LaunchCompositionSurface.SPAWN_PREPARE,
+            runtime_root=(project_root / ".meridian").as_posix(),
+            project_paths_project_root=project_root.as_posix(),
+            project_paths_execution_cwd=project_root.as_posix(),
+        ),
+        harness_registry=get_default_harness_registry(),
+        dry_run=True,
+    )
+    spawn_system_prompt = spawn_context.binding.run_params.appended_system_prompt or ""
+
+    assert "# Delegation" in primary_system_prompt
+    assert "# Delegation" not in spawn_system_prompt
+
+
 @pytest.mark.slow
 def test_run_harness_process_writes_prompt_file_before_primary_launch(
     monkeypatch: pytest.MonkeyPatch,
