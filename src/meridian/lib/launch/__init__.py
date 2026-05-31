@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from meridian.lib.launch.cwd import resolve_task_cwd
 from meridian.lib.launch.launch_types import summarize_composition_warnings
+from meridian.lib.launch.resolution import resolve_launch_inputs
 from meridian.lib.state import work_store
 from meridian.lib.state.paths import resolve_project_paths, resolve_work_scratch_dir_for_project
 
@@ -118,34 +118,26 @@ def launch_primary(
     )
     ambient_work_id = None if resolved_work_id is not None else runtime_context.work_id
     project_state_dir = resolve_project_paths(resolved_project_root).root_dir
-    task_cwd_resolution = resolve_task_cwd(
-        resolved_project_root,
+    launch_resolution = resolve_launch_inputs(
+        authority_root=resolved_project_root,
         project_state_dir=project_state_dir,
+        context_from=request.context_from,
+        reference_files=request.reference_files,
         explicit_work_id=resolved_work_id,
         ambient_work_id=ambient_work_id,
     )
-    runtime = runtime.model_copy(
-        update={
-            "requested_task_cwd": task_cwd_resolution.task_cwd.as_posix(),
-            "project_paths_execution_cwd": task_cwd_resolution.task_cwd.as_posix(),
-        }
-    )
+    runtime = runtime.model_copy(update=launch_resolution.runtime_updates)
+    effective_work_id = launch_resolution.effective_work_id
     active_work_dir = (
         resolve_work_scratch_dir_for_project(
             resolved_project_root,
-            resolved_work_id,
+            effective_work_id,
         )
-        if resolved_work_id is not None
+        if effective_work_id is not None
         else runtime_context.work_dir
     )
     spawn_request = build_primary_spawn_request(request=request).model_copy(
-        update={
-            "authority_root": resolved_project_root.as_posix(),
-            "task_cwd": task_cwd_resolution.task_cwd.as_posix(),
-            "reference_anchor": task_cwd_resolution.task_cwd.as_posix(),
-            "task_cwd_source": task_cwd_resolution.source,
-            "task_cwd_work_item": task_cwd_resolution.work_item,
-        }
+        update=launch_resolution.request_updates
     )
     prepared_policy = compile_prepared_policy_surface(
         request=spawn_request,
@@ -166,7 +158,7 @@ def launch_primary(
         bindings=RuntimeBindings(
             spawn_id="dry-run-primary",
             report_output_path=Path(runtime.report_output_path or "report.md"),
-            runtime_work_id=resolved_work_id,
+            runtime_work_id=effective_work_id,
             dry_run=True,
         ),
         runtime=runtime,
