@@ -5,12 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import signal
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,26 +15,21 @@ import psutil
 
 from meridian.lib.core.domain import SpawnStatus
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
-from meridian.lib.core.types import HarnessId, SpawnId, TransportId
+from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness import pi_lifecycle_events as pi_lifecycle
-from meridian.lib.harness.bundle import get_harness_bundle
 from meridian.lib.harness.connections.base import HarnessEvent
 from meridian.lib.harness.control_action import (
     ControlActionCoordinator,
     ControlActionType,
 )
-from meridian.lib.harness.errors import HarnessBinaryNotFound
-from meridian.lib.harness.permission_broker import PermissionBroker
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.state import spawn_store
 from meridian.lib.state.atomic import append_text_line
 from meridian.lib.state.history import HarnessHistoryWriter
-from meridian.lib.state.paths import resolve_spawn_log_dir
 from meridian.lib.streaming.control_socket import ControlSocketServer
 from meridian.lib.streaming.drain_policy import (
     TURN_BOUNDARY_EVENT_TYPE,
     DrainPolicy,
-    SingleTurnDrainPolicy,
 )
 from meridian.lib.streaming.event_observers import (
     CallbackObserver,
@@ -46,7 +38,9 @@ from meridian.lib.streaming.event_observers import (
     HarnessEventCallback,
 )
 from meridian.lib.streaming.heartbeat import heartbeat_loop
-from meridian.lib.streaming.pi_drain import PiDrainCoordinator, PiSubspawnTracker
+from meridian.lib.streaming.spawn_dispatch import dispatch_start
+from meridian.lib.streaming.spawn_drain_loop import SpawnDrainLoop
+from meridian.lib.streaming.spawn_session import DrainOutcome, SpawnSession
 from meridian.lib.streaming.types import InjectResult
 
 StartConnectionPort = Callable[
@@ -54,32 +48,6 @@ StartConnectionPort = Callable[
     Awaitable["HarnessConnection[Any]"],
 ]
 ControlServerFactory = Callable[[SpawnId, Path, "SpawnManager"], ControlSocketServer]
-
-
-@dataclass(frozen=True)
-class DrainOutcome:
-    """Terminal drain result for one spawn session."""
-
-    status: SpawnStatus
-    exit_code: int
-    error: str | None = None
-    duration_secs: float = 0.0
-
-
-@dataclass
-class SpawnSession:
-    """Live resources associated with one running spawn."""
-
-    connection: HarnessConnection[Any]
-    drain_task: asyncio.Task[None]
-    subscriber: asyncio.Queue[HarnessEvent | None] | None
-    control_server: ControlSocketServer
-    started_monotonic: float
-    completion_future: asyncio.Future[DrainOutcome]
-    debug_tracer: DebugTracer | None = None
-    cancel_sent: bool = False
-    cancel_event_emitted: bool = False
-    control_actions: ControlActionCoordinator | None = None
 
 
 if TYPE_CHECKING:
@@ -92,92 +60,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 InjectResultCallback = Callable[[InjectResult], None]
-
-
-def _safe_connection_session_id(connection: object) -> str | None:
-    """Read optional connection session_id without assuming full HarnessConnection shape."""
-
-    try:
-        session_id = cast("Any", connection).session_id
-    except Exception:
-        return None
-    return session_id if isinstance(session_id, str) and session_id.strip() else None
-
-
-def _ensure_harness_bootstrap() -> None:
-    from meridian.lib.harness import ensure_bootstrap
-
-    ensure_bootstrap()
-
-
-async def dispatch_start(
-    config: ConnectionConfig,
-    spec: ResolvedLaunchSpec,
-) -> HarnessConnection[Any]:
-    """Dispatch one start call through bundle lookup and runtime type guard."""
-
-    from meridian.lib.harness.connections import get_connection_class
-
-    _ensure_harness_bootstrap()
-    bundle = get_harness_bundle(config.harness_id)
-    if not isinstance(spec, bundle.spec_cls):
-        raise TypeError(
-            f"HarnessBundle invariant violated: adapter for "
-            f"{bundle.harness_id} returned {type(spec).__name__}, "
-            f"expected {bundle.spec_cls.__name__}"
-        )
-
-    declared_transports = bundle.adapter.contract.transport.transport_ids
-    transport_id = _select_dispatch_transport(declared_transports)
-    connection_class = get_connection_class(config.harness_id, transport_id)
-    request_handler: PermissionBroker | None = None
-    connection_ref: dict[str, HarnessConnection[Any]] = {}
-
-    async def _runtime_event_sink(event: HarnessEvent) -> None:
-        await connection_ref["connection"].inject_runtime_event(event)
-
-    if config.harness_id is HarnessId.CODEX:
-        request_handler = PermissionBroker(
-            spawn_dir=resolve_spawn_log_dir(config.control_root, config.spawn_id),
-            event_sink=_runtime_event_sink,
-            auto_reject_runtime_requests=True,
-        )
-
-    connection: HarnessConnection[Any]
-    if request_handler is not None:
-        connection_factory = cast(
-            "Callable[..., HarnessConnection[Any]]",
-            connection_class,
-        )
-        try:
-            connection = connection_factory(request_handler=request_handler)
-        except TypeError:
-            connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
-    else:
-        connection = cast("Callable[[], HarnessConnection[Any]]", connection_class)()
-
-    connection_ref["connection"] = connection
-
-    try:
-        await connection.start(config, spec)
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        raise HarnessBinaryNotFound.from_os_error(
-            harness_id=config.harness_id,
-            error=exc,
-        ) from exc
-    return connection
-
-
-def _select_dispatch_transport(
-    declared_transports: tuple[TransportId, ...],
-) -> TransportId:
-    """Choose dispatch transport from adapter contract declarations."""
-
-    if len(declared_transports) == 1:
-        return declared_transports[0]
-    if TransportId.STREAMING in declared_transports:
-        return TransportId.STREAMING
-    return declared_transports[0]
 
 
 def _default_control_server_factory(
@@ -392,378 +274,28 @@ class SpawnManager:
         notification_timeout_seconds: float | None = None,
         child_wave_timeout_seconds: float | None = None,
     ) -> None:
-        """Durably append each harness event and fan out to the active subscriber.
 
-        Writes a stable event envelope to history.jsonl so event type and harness
-        identity are preserved even when the payload itself omits that metadata.
-        """
-
-        # Import at runtime to avoid circular import during module initialization.
-        from meridian.lib.harness.semantics import activity_transition, terminal_outcome
-
-        def _emit_pi_phase(*, phase: str, session_role: str | None, **payload: object) -> None:
-            self._emit_pi_phase_event(
-                spawn_id,
-                receiver,
-                phase=phase,
-                session_role=session_role,
-                **payload,
-            )
-
-        async def _terminate_tracked_pi_children(
-            tracker: PiSubspawnTracker,
-            reason: str,
-        ) -> None:
-            await self._terminate_pi_tracked_subspawns(spawn_id, tracker, reason=reason)
-
-        consecutive_write_failures = 0
-        max_consecutive_failures = 10
-        drain_cancelled = False
-        drain_error: Exception | None = None
-        recorded_terminal_outcome: TerminalEventOutcome | None = None
-        pi_drain = PiDrainCoordinator.for_connection(
+        drain_loop = SpawnDrainLoop(
             runtime_root=self._runtime_root,
+            sessions=self._sessions,
+            history_writers=self._history_writers,
+            observers=self._observers,
+            cleanup_tasks=self._cleanup_tasks,
+            cleanup_completed_session=self._cleanup_completed_session,
+            resolve_completion_future=self._resolve_completion_future,
+            fan_out_event=self._fan_out_event,
+            fan_out_turn_boundary=self._fan_out_turn_boundary,
+            emit_pi_phase_event=self._emit_pi_phase_event,
+        )
+        await drain_loop.run(
             spawn_id=spawn_id,
-            receiver=cast("HarnessConnection[ResolvedLaunchSpec]", receiver),
-            session_role=pi_session_role,
+            receiver=receiver,
+            drain_policy=drain_policy,
+            tracer=tracer,
+            pi_session_role=pi_session_role,
             notification_timeout_seconds=notification_timeout_seconds,
             child_wave_timeout_seconds=child_wave_timeout_seconds,
-            emit_phase=_emit_pi_phase,
         )
-        await pi_drain.start()
-
-        policy = drain_policy
-        if policy is None:
-            policy = (
-                pi_drain.default_policy()
-                if pi_drain.is_pi_connection
-                else SingleTurnDrainPolicy()
-            )
-        pi_drain.set_policy(policy)
-
-        events_iter = receiver.events().__aiter__()
-        pending_event_task: asyncio.Future[HarnessEvent] | None = None
-        try:
-            while True:
-                try:
-                    next_timeout = pi_drain.next_timeout()
-                    if pending_event_task is None:
-                        pending_event_task = asyncio.ensure_future(anext(events_iter))
-                    if next_timeout is not None:
-                        event = await asyncio.wait_for(
-                            asyncio.shield(pending_event_task),
-                            timeout=next_timeout,
-                        )
-                    else:
-                        event = await pending_event_task
-                    pending_event_task = None
-                except StopAsyncIteration:
-                    pending_event_task = None
-                    if pi_drain.quiescence_candidate is not None:
-                        recorded_terminal_outcome = pi_drain.quiescence_candidate
-                    break
-                except TimeoutError:
-                    timeout_outcome = await pi_drain.handle_timeout(
-                        _terminate_tracked_pi_children,
-                    )
-                    if timeout_outcome is not None:
-                        recorded_terminal_outcome = timeout_outcome
-                        break
-                    continue
-
-                transition = activity_transition(event) if pi_drain.is_pi_connection else None
-                duplicate_canonical_lifecycle_event = await pi_drain.observe_event(
-                    event,
-                    transition,
-                )
-                if duplicate_canonical_lifecycle_event:
-                    continue
-
-                if tracer is not None:
-                    tracer.emit(
-                        "drain",
-                        "event_received",
-                        direction="inbound",
-                        data={"event_type": event.event_type, "harness_id": event.harness_id},
-                    )
-                history_writer = self._history_writers.get(spawn_id)
-                if history_writer is not None:
-                    try:
-                        write_result = history_writer.write(event)
-                        if not write_result.success:
-                            raise RuntimeError(write_result.error or "history write failed")
-                        consecutive_write_failures = 0
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "event_persisted",
-                                data={"event_type": event.event_type},
-                            )
-                        self._observers.dispatch(spawn_id, event)
-                    except Exception as persist_exc:
-                        consecutive_write_failures += 1
-                        if tracer is not None:
-                            tracer.emit(
-                                "drain",
-                                "persist_error",
-                                data={
-                                    "event_type": event.event_type,
-                                    "error": str(persist_exc),
-                                    "consecutive_failures": consecutive_write_failures,
-                                },
-                            )
-                        logger.warning(
-                            "Failed to persist event for spawn %s (%d/%d consecutive failures)",
-                            spawn_id,
-                            consecutive_write_failures,
-                            max_consecutive_failures,
-                            exc_info=True,
-                        )
-                        if consecutive_write_failures >= max_consecutive_failures:
-                            logger.error(
-                                (
-                                    "Aborting drain loop for spawn %s after %d "
-                                    "consecutive write failures"
-                                ),
-                                spawn_id,
-                                max_consecutive_failures,
-                            )
-                            drain_error = RuntimeError(
-                                "Aborted drain loop after repeated output persistence failures"
-                            )
-                            self._fan_out_event(spawn_id, event)
-                            break
-
-                event_outcome = terminal_outcome(event)
-                self._fan_out_event(spawn_id, event)
-                pi_drain.note_event_persisted(event)
-
-                pi_lifecycle_error = pi_drain.lifecycle_error_outcome()
-                if pi_lifecycle_error is not None:
-                    recorded_terminal_outcome = pi_lifecycle_error
-                    break
-
-                if event_outcome is not None:
-                    action = policy.classify(event_outcome)
-                    pi_decision = pi_drain.handle_terminal_event(event, event_outcome, action)
-                    if pi_decision.recorded_outcome is not None:
-                        recorded_terminal_outcome = pi_decision.recorded_outcome
-                        break
-                    if pi_decision.emit_turn_boundary:
-                        await self._fan_out_turn_boundary(spawn_id, event_outcome)
-
-                pi_failure = pi_drain.failure_outcome_after_event()
-                if pi_failure is not None:
-                    recorded_terminal_outcome = pi_failure
-                    break
-                if recorded_terminal_outcome is None:
-                    pi_drain.maybe_start_quiescence_after_event()
-        except asyncio.CancelledError:
-            drain_cancelled = True
-            raise
-        except Exception as exc:
-            drain_error = exc
-            raise
-        finally:
-            pending_pi_children_at_exit = pi_drain.pending_children_at_exit()
-            if pending_event_task is not None and not pending_event_task.done():
-                pending_event_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await pending_event_task
-            await pi_drain.stop()
-            await pi_drain.cleanup_pending_children_at_exit(_terminate_tracked_pi_children)
-            session = self._sessions.pop(spawn_id, None)
-            if session is not None:
-                fallback_pi_error = pi_drain.fallback_error_without_recorded_outcome()
-                if drain_cancelled:
-                    outcome = DrainOutcome(
-                        status="cancelled",
-                        exit_code=1,
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif drain_error is not None:
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=str(drain_error),
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif session.cancel_sent:
-                    outcome = DrainOutcome(
-                        status="cancelled",
-                        exit_code=143,
-                        error="cancelled",
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif (
-                    pi_drain.is_pi_connection
-                    and recorded_terminal_outcome is None
-                    and pending_pi_children_at_exit
-                ):
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error="pi_process_exited_with_tracked_children",
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif fallback_pi_error is not None and recorded_terminal_outcome is None:
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error=fallback_pi_error,
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                elif recorded_terminal_outcome is not None:
-                    outcome = DrainOutcome(
-                        status=recorded_terminal_outcome.status,
-                        exit_code=recorded_terminal_outcome.exit_code,
-                        error=recorded_terminal_outcome.error,
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                else:
-                    outcome = DrainOutcome(
-                        status="failed",
-                        exit_code=1,
-                        error="connection_closed_without_terminal_event",
-                        duration_secs=max(0.0, time.monotonic() - session.started_monotonic),
-                    )
-                session_id = (
-                    _safe_connection_session_id(receiver) if pi_drain.session_seen else None
-                )
-                pi_drain.emit_session_phase_if_needed(session_id)
-                pi_drain.emit_finalized(
-                    status=outcome.status,
-                    exit_code=outcome.exit_code,
-                    error=outcome.error,
-                )
-                self._resolve_completion_future(session, outcome)
-                cleanup_task = asyncio.create_task(
-                    self._cleanup_completed_session(spawn_id, session)
-                )
-                self._cleanup_tasks.add(cleanup_task)
-                cleanup_task.add_done_callback(self._cleanup_tasks.discard)
-            self._observers.complete(spawn_id)
-            if session is not None and session.subscriber is not None:
-                while True:
-                    try:
-                        session.subscriber.put_nowait(None)
-                        break
-                    except asyncio.QueueFull:
-                        with suppress(asyncio.QueueEmpty):
-                            session.subscriber.get_nowait()
-                        continue
-
-    async def _terminate_pi_tracked_subspawns(
-        self,
-        spawn_id: SpawnId,
-        tracker: PiSubspawnTracker,
-        *,
-        reason: str,
-    ) -> None:
-        pgids = tracker.active_tracked_pgid_candidates()
-        if not pgids:
-            logger.warning(
-                "Pi spawn %s ended with tracked children but no pid/pgid metadata for cleanup",
-                spawn_id,
-            )
-            return
-
-        for pgid in pgids:
-            if os.name == "nt":
-                await self._terminate_process_tree_fallback(
-                    spawn_id=spawn_id,
-                    process_id=pgid,
-                    reason=reason,
-                )
-            else:
-                await self._terminate_posix_process_group(
-                    spawn_id=spawn_id,
-                    process_group_id=pgid,
-                    reason=reason,
-                )
-
-    async def _terminate_process_tree_fallback(
-        self,
-        *,
-        spawn_id: SpawnId,
-        process_id: int,
-        reason: str,
-    ) -> None:
-        if process_id <= 0:
-            return
-
-        try:
-            from meridian.lib.platform.process_scope.fallback import terminate_tree_sync
-
-            await asyncio.to_thread(
-                terminate_tree_sync,
-                pid=process_id,
-                grace_secs=5.0,
-                reason=reason,
-                scope_id=f"pi-subspawn:{spawn_id}",
-                degraded_fallback=True,
-            )
-        except Exception:
-            logger.warning(
-                "Failed fallback cleanup for Pi child process %d (spawn %s, reason=%s)",
-                process_id,
-                spawn_id,
-                reason,
-                exc_info=True,
-            )
-
-    async def _terminate_posix_process_group(
-        self,
-        *,
-        spawn_id: SpawnId,
-        process_group_id: int,
-        reason: str,
-    ) -> None:
-        if os.name == "nt" or process_group_id <= 0:
-            return
-
-        try:
-            os.killpg(process_group_id, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        except (PermissionError, OSError):
-            logger.warning(
-                "Failed SIGTERM cleanup for Pi child process group %d (spawn %s, reason=%s)",
-                process_group_id,
-                spawn_id,
-                reason,
-                exc_info=True,
-            )
-            return
-
-        await asyncio.sleep(0.25)
-
-        try:
-            os.killpg(process_group_id, 0)
-        except ProcessLookupError:
-            return
-        except (PermissionError, OSError):
-            logger.warning(
-                "Failed liveness check for Pi child process group %d (spawn %s, reason=%s)",
-                process_group_id,
-                spawn_id,
-                reason,
-                exc_info=True,
-            )
-            return
-
-        try:
-            os.killpg(process_group_id, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        except (PermissionError, OSError):
-            logger.warning(
-                "Failed SIGKILL cleanup for Pi child process group %d (spawn %s, reason=%s)",
-                process_group_id,
-                spawn_id,
-                reason,
-                exc_info=True,
-            )
 
     def subscribe(self, spawn_id: SpawnId) -> asyncio.Queue[HarnessEvent | None] | None:
         """Attach one subscriber queue to the spawn, or return None if unavailable."""

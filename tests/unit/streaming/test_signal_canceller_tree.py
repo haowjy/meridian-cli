@@ -232,3 +232,93 @@ async def test_cancel_cli_spawn_scope_aware_path_terminates_unreleased_scopes_on
     assert released_ids == ["backend", "sidecar"]
     mock_tree.assert_not_called()
     assert outcome.status == "cancelled"
+
+
+class _FakeSpawnManager:
+    """Minimal fake for SignalCanceller._manager; records stop_spawn calls."""
+
+    def __init__(self) -> None:
+        self.stop_spawn_calls: list[dict[str, object]] = []
+
+    async def stop_spawn(
+        self,
+        spawn_id: SpawnId,
+        *,
+        status: str = "cancelled",
+        exit_code: int = 1,
+        error: str | None = None,
+        prefer_drain_outcome: bool = False,
+    ) -> None:
+        self.stop_spawn_calls.append(
+            {
+                "spawn_id": str(spawn_id),
+                "status": status,
+                "exit_code": exit_code,
+                "error": error,
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancel_app_spawn_manager_path_resolves_from_terminal_record(
+    tmp_path: Path,
+) -> None:
+    """_cancel_app_spawn with a manager stops the spawn and resolves from the terminal record."""
+    spawn_id = SpawnId("s-test")
+    running_record = _make_record(launch_mode="app", runner_pid=None)
+    cancelled_record = _make_record(
+        status="cancelled",
+        launch_mode="app",
+        runner_pid=None,
+        exit_code=130,
+        terminal_origin="cancel",
+    )
+
+    fake_manager = _FakeSpawnManager()
+    canceller = SignalCanceller(
+        runtime_root=tmp_path,
+        grace_seconds=2.0,
+        manager=fake_manager,  # type: ignore[arg-type]
+    )
+
+    with patch(
+        "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
+        return_value=cancelled_record,
+    ):
+        outcome = await canceller._cancel_app_spawn(spawn_id, running_record)
+
+    assert fake_manager.stop_spawn_calls == [
+        {"spawn_id": "s-test", "status": "cancelled", "exit_code": 143, "error": "cancelled"}
+    ]
+    assert outcome.status == "cancelled"
+    assert outcome.exit_code == 130
+    assert outcome.origin == "cancel"
+    assert outcome.finalizing is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_app_spawn_manager_path_returns_finalizing_when_terminal_never_arrives(
+    tmp_path: Path,
+) -> None:
+    """_cancel_app_spawn returns finalizing when terminal state does not arrive in time."""
+    spawn_id = SpawnId("s-test")
+    running_record = _make_record(launch_mode="app", runner_pid=None)
+
+    fake_manager = _FakeSpawnManager()
+    canceller = SignalCanceller(
+        runtime_root=tmp_path,
+        grace_seconds=0.0,  # deadline expires immediately
+        manager=fake_manager,  # type: ignore[arg-type]
+    )
+
+    with patch(
+        "meridian.lib.streaming.signal_canceller.spawn_store.get_spawn",
+        return_value=running_record,  # still running — terminal never lands
+    ):
+        outcome = await canceller._cancel_app_spawn(spawn_id, running_record)
+
+    assert fake_manager.stop_spawn_calls  # stop_spawn was called
+    assert fake_manager.stop_spawn_calls[0]["status"] == "cancelled"
+    assert fake_manager.stop_spawn_calls[0]["exit_code"] == 143
+    assert outcome.status == "finalizing"
+    assert outcome.finalizing is True

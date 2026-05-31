@@ -22,6 +22,18 @@ SpawnSession
   └─ control_actions: ControlActionCoordinator
 ```
 
+The implementation is split by responsibility:
+
+- `spawn_manager.py` — public registry/control API and generic live-spawn lifecycle
+- `spawn_dispatch.py` — connection creation/start dispatch
+- `spawn_drain_loop.py` — drain loop, persistence/observer/fan-out ordering, outcome priority
+- `spawn_session.py` — `SpawnSession` and `DrainOutcome` carriers
+- `pi_drain.py` — Pi spawned-session quiescence coordinator
+- `pi_subspawn_tracker.py` — Pi child-spawn and notification tracking
+- `disk_watcher.py` / `pi_quiescence.py` — disk-backed Pi quiescence inputs
+- `drain_wait.py` — bounded wait helpers for drain/cleanup paths
+- `pi_process_cleanup.py` — tracked Pi child process cleanup
+
 ## Contracts
 
 ### Drain Loop Ordering
@@ -64,7 +76,7 @@ from different event loops.
 ```
 start_spawn()
   → dispatch_start()           — creates HarnessConnection, calls connection.start()
-  → _drain_loop()              — asyncio.Task, until terminal or error
+  → SpawnDrainLoop.run()       — asyncio.Task, until terminal or error
   → ControlSocketServer.start() — binds per-spawn control endpoint
   → _start_heartbeat()         — asyncio.Task, touches sentinel every 30s
 ```
@@ -144,6 +156,12 @@ live in `pi_drain.py:PiDrainCoordinator`.
 behavior to `PiDrainCoordinator` unless the change is purely generic event persistence,
 observer dispatch, subscriber fan-out, heartbeat, or control-socket handling.
 
+`PiSubspawnTracker` owns the mutable child-spawn view inside the coordinator. It filters
+unresolved stale candidates to numeric allocated-looking `p*` directories, tracks
+active child ids, preserves idle epochs across disk wakeups, and marks whether a child
+wave needs re-arming. `PiDrainCoordinator` uses that summarized state to make deadline
+and finalization decisions.
+
 ### Disk State Authority
 
 Pi extensions coordinate with Python through disk files:
@@ -154,6 +172,11 @@ Pi extensions coordinate with Python through disk files:
 
 Stdout lifecycle-like messages are diagnostic. They are not the state authority for
 quiescence.
+
+Disk changes are not passive. `PiDiskWatcher` wakes the drain loop when a watched file
+changes, and the drain loop re-evaluates quiescence on those wakeups. Terminal-event
+micro-drain re-checks disk before accepting success so a just-written child row,
+bash update, or notification marker cannot be missed.
 
 ### Child Wave Timeout
 
@@ -168,7 +191,8 @@ When a terminal event arrives but quiescence is not yet confirmed, `PiDrainCoord
 enters micro-drain mode. It gives already-buffered or just-written disk/event activity a
 short chance to arrive before accepting the terminal event as the final outcome. This
 covers races where child state or notification markers land immediately after
-`agent_end`.
+`agent_end`. Micro-drain is disk-aware: timeout alone is not enough to finalize until
+the latest disk-backed state has been read.
 
 ### Pi Phase Events
 
@@ -195,7 +219,8 @@ These are written to `history.jsonl` alongside harness events and are visible in
 
 When the Pi process exits with active tracked children (crashed, killed, or otherwise
 terminated before quiescence), `PiDrainCoordinator` coordinates cleanup through the
-tracked child process metadata it has observed:
+tracked child process metadata it has observed. Process cleanup lives in
+`pi_process_cleanup.py` so `SpawnManager` does not own Pi-specific process-tree policy:
 
 - **POSIX**: iterates captured process group IDs, sends `SIGTERM` via `os.killpg()`,
   waits 250ms, confirms liveness with `os.killpg(pgid, 0)`, then sends `SIGKILL` if

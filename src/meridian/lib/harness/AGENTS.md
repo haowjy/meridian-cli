@@ -40,7 +40,7 @@ Per-harness commands:
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
-- Pi subprocess/connection: `pi rpc --mode rpc` (JSON-RPC stdio; Pi has no subprocess-only path — the RPC mode is the connection)
+- Pi subprocess/connection: `pi --mode rpc` (JSON-RPC stdio; Pi has no subprocess-only path — the RPC mode is the connection)
 
 ## Bootstrap Sequence Is Load-Bearing
 
@@ -103,7 +103,7 @@ unique — always check `event.harness_id`. `turn/completed` is Codex; OpenCode 
 
 ## Adding a Harness
 
-Full guide: [`docs/harness-integration.md`](../../../docs/harness-integration.md) —
+Full guide: [`docs/harness-integration.md`](../../../../docs/harness-integration.md) —
 end-to-end with Pi as the worked example. Covers probing, adapter, projection,
 extraction, connection, semantics, wrapper/runtime, session parity, model/catalog,
 and verification.

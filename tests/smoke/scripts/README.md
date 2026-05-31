@@ -17,7 +17,8 @@ before working through a guide; they do **not** run or assert test scenarios.
 ```
 
 Pi-specific manual gate: `tests/smoke/pi-manual.md`. Deep RPC scenarios:
-`tests/smoke/pi-rpc-quiescence.md`.
+`tests/smoke/pi-rpc-quiescence.md`, including the nested local-source parent/child
+quiescence check.
 
 ---
 

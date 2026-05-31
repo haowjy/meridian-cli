@@ -3,6 +3,11 @@
 Pi background-work coordination is file-backed: spawn records under ``spawns/`` and
 managed bash records under ``pi-bash/<spawn-id>/``. This watcher keeps a cached
 view and can force a synchronous rescan before quiescence decisions.
+
+Child discovery is O(children), not O(total spawns). Directory events discover
+new children; a bounded poll observes known child terminal transitions and
+new child directories whose ``state.json`` was written after the directory.
+No per-child inotify watchers are created.
 """
 
 from __future__ import annotations
@@ -17,6 +22,14 @@ from watchfiles import awatch  # pyright: ignore[reportUnknownVariableType]
 
 from meridian.lib.core.spawn_lifecycle import TERMINAL_SPAWN_STATUSES
 from meridian.lib.core.types import SpawnId
+
+# Bounded poll while known or unresolved children may still be pending. ``awatch``
+# on ``spawns/`` is non-recursive, so ``spawns/<child>/state.json`` updates do
+# not wake the watcher; polling observes terminal transitions and late state
+# writes without per-child tasks.
+_PENDING_DISK_POLL_INTERVAL_SECONDS = 0.25
+
+_QuiescenceDiskSnapshot = tuple[int, int, bool, bool, float | None]
 
 
 class PiDiskWatcher:
@@ -35,43 +48,91 @@ class PiDiskWatcher:
         self._last_notification_ts: float | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._child_spawn_ids: set[str] = set()
-        self._child_tasks: dict[str, asyncio.Task[None]] = {}
-        self._candidate_tasks: dict[str, asyncio.Task[None]] = {}
+        self._candidate_child_spawn_ids: set[str] = set()
+        self._state_changed = asyncio.Event()
+        self._change_generation = 0
+        self._delivered_change_generation = 0
 
     async def start(self) -> None:
         self._spawns_dir.mkdir(parents=True, exist_ok=True)
         self._bash_dir.mkdir(parents=True, exist_ok=True)
         await self.force_rescan()
+        self._delivered_change_generation = self._change_generation
+        self._state_changed = asyncio.Event()
         self._tasks = [
             asyncio.create_task(self._watch_spawns_dir()),
             asyncio.create_task(self._watch_bash_dir()),
         ]
 
     async def stop(self) -> None:
-        tasks = [*self._tasks, *self._child_tasks.values(), *self._candidate_tasks.values()]
-        for task in tasks:
+        for task in self._tasks:
             task.cancel()
-        if tasks:
-            done, pending = await asyncio.wait(tasks, timeout=0.2)
+        if self._tasks:
+            done, pending = await asyncio.wait(self._tasks, timeout=0.2)
             for task in done:
                 with suppress(asyncio.CancelledError, Exception):
                     task.result()
             for task in pending:
                 task.add_done_callback(_consume_task_result)
         self._tasks = []
-        self._child_tasks = {}
-        self._candidate_tasks = {}
 
     async def force_rescan(self) -> None:
         self._refresh_cached_state(discover=True)
 
-    def _refresh_cached_state(self, *, discover: bool = False) -> None:
+    async def wait_for_change(self) -> None:
+        """Wait until disk-backed quiescence inputs change."""
+        while True:
+            if self._change_generation > self._delivered_change_generation:
+                self._delivered_change_generation = self._change_generation
+                return
+            event = self._state_changed
+            poll_interval = (
+                _PENDING_DISK_POLL_INTERVAL_SECONDS
+                if self._pending_child_spawns or self._candidate_child_spawn_ids
+                else None
+            )
+            if poll_interval is not None:
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=poll_interval)
+                except TimeoutError:
+                    self._refresh_cached_state(discover=False)
+                    continue
+            else:
+                await event.wait()
+
+            if self._change_generation > self._delivered_change_generation:
+                self._delivered_change_generation = self._change_generation
+                return
+            if event is self._state_changed:
+                # Replace the stale-set Event. asyncio.Event.set() is sticky, so a
+                # previously-delivered generation leaves the event object set and
+                # event.wait() returns immediately on the next call. Replacing it
+                # here prevents a false wakeup on the next loop iteration.
+                self._state_changed = asyncio.Event()
+
+    def _quiescence_disk_snapshot(self) -> _QuiescenceDiskSnapshot:
+        return (
+            self._pending_child_spawn_count,
+            len(self._candidate_child_spawn_ids),
+            self._pending_child_spawns,
+            self._tracked_bash_bg,
+            self._last_notification_ts,
+        )
+
+    def _refresh_cached_state(self, *, discover: bool = False) -> bool:
+        prior = self._quiescence_disk_snapshot()
         if discover:
             self._discover_child_spawns()
+        self._resolve_candidate_child_spawns()
         self._pending_child_spawn_count = self._scan_pending_child_spawn_count()
         self._pending_child_spawns = self._pending_child_spawn_count > 0
         self._tracked_bash_bg = self._scan_tracked_bash_bg()
         self._last_notification_ts = self._read_last_notification_ts()
+        changed = self._quiescence_disk_snapshot() != prior
+        if changed:
+            self._change_generation += 1
+            self._state_changed.set()
+        return changed
 
     def has_pending_child_spawns(self) -> bool:
         return self._pending_child_spawns
@@ -86,70 +147,79 @@ class PiDiskWatcher:
         return self._last_notification_ts
 
     async def _watch_spawns_dir(self) -> None:
+        """Watch for new child directories under spawns/.
+
+        Directory events discover child candidates. Known-child ``state.json``
+        updates are observed by bounded polling because the watch is
+        non-recursive.
+        """
         async for changes in awatch(self._spawns_dir, recursive=False):
+            found_new = False
             for _change, raw_path in changes:
                 path = Path(str(raw_path))
-                if path.parent == self._spawns_dir and path.name.startswith("p"):
-                    self._watch_candidate_spawn_dir(path.name, path)
-            self._refresh_cached_state()
+                if (
+                    path.parent == self._spawns_dir
+                    and path.name.startswith("p")
+                    and path.name != self._current_spawn_id
+                    and path.name not in self._child_spawn_ids
+                    and path.is_dir()
+                ):
+                    # If state.json isn't written yet, force_rescan() at next idle catches it.
+                    state_path = path / "state.json"
+                    data = _read_json_object(state_path)
+                    if data.get("parent_id") == self._current_spawn_id:
+                        self._candidate_child_spawn_ids.discard(path.name)
+                        self._child_spawn_ids.add(path.name)
+                        found_new = True
+                    elif _is_allocated_spawn_dir_name(path.name) and (
+                        not state_path.exists() or not data
+                    ):
+                        self._candidate_child_spawn_ids.add(path.name)
+                        found_new = True
+            if found_new:
+                self._refresh_cached_state()
 
     async def _watch_bash_dir(self) -> None:
         async for _changes in awatch(self._bash_dir, recursive=False):
             self._refresh_cached_state()
 
-    async def _watch_child_spawn_dir(self, spawn_id: str, directory: Path) -> None:
-        async for _changes in awatch(directory, recursive=False):
-            data = _read_json_object(directory / "state.json")
-            if data.get("parent_id") != self._current_spawn_id:
-                self._child_spawn_ids.discard(spawn_id)
-                return
-            self._refresh_cached_state()
-
-    def _watch_candidate_spawn_dir(self, spawn_id: str, directory: Path) -> None:
-        if spawn_id in self._child_spawn_ids or spawn_id in self._candidate_tasks:
-            return
-        if not directory.is_dir():
-            return
-        task = asyncio.create_task(self._watch_candidate_until_resolved(spawn_id, directory))
-        self._candidate_tasks[spawn_id] = task
-        task.add_done_callback(lambda _task: self._candidate_tasks.pop(spawn_id, None))
-
-    async def _watch_candidate_until_resolved(self, spawn_id: str, directory: Path) -> None:
-        if self._try_adopt_candidate(spawn_id, directory):
-            return
-        async for _changes in awatch(directory, recursive=False):
-            if self._try_adopt_candidate(spawn_id, directory):
-                return
-
-    def _try_adopt_candidate(self, spawn_id: str, directory: Path) -> bool:
-        data = _read_json_object(directory / "state.json")
-        parent_id = data.get("parent_id")
-        if parent_id == self._current_spawn_id:
-            self._child_spawn_ids.add(spawn_id)
-            if spawn_id not in self._child_tasks:
-                self._child_tasks[spawn_id] = asyncio.create_task(
-                    self._watch_child_spawn_dir(spawn_id, directory)
-                )
-            self._refresh_cached_state()
-            return True
-        # state.json exists and is non-empty — parent_id is settled (or absent).
-        return bool(data)
-
     def _discover_child_spawns(self) -> None:
+        """Scan spawns/ for children not yet in _child_spawn_ids.
+
+        O(N) on first run, near-free after (skips known children).
+        Also called on every force_rescan() to catch directories missed
+        by the inotify watcher (e.g. state.json not yet written).
+        """
         if not self._spawns_dir.is_dir():
             return
         for child in self._spawns_dir.iterdir():
             if not child.is_dir():
                 continue
-            data = _read_json_object(child / "state.json")
-            if data.get("parent_id") != self._current_spawn_id:
+            if child.name == self._current_spawn_id:
                 continue
-            spawn_id = child.name
-            self._child_spawn_ids.add(spawn_id)
-            if spawn_id not in self._child_tasks:
-                self._child_tasks[spawn_id] = asyncio.create_task(
-                    self._watch_child_spawn_dir(spawn_id, child)
-                )
+            if child.name in self._child_spawn_ids:
+                continue
+            state_path = child / "state.json"
+            data = _read_json_object(state_path)
+            parent_id = data.get("parent_id")
+            if parent_id == self._current_spawn_id:
+                self._candidate_child_spawn_ids.discard(child.name)
+                self._child_spawn_ids.add(child.name)
+            elif _is_allocated_spawn_dir_name(child.name) and (
+                not state_path.exists() or not data
+            ):
+                self._candidate_child_spawn_ids.add(child.name)
+
+    def _resolve_candidate_child_spawns(self) -> None:
+        for spawn_id in list(self._candidate_child_spawn_ids):
+            state_path = self._spawns_dir / spawn_id / "state.json"
+            data = _read_json_object(state_path)
+            parent_id = data.get("parent_id")
+            if parent_id == self._current_spawn_id:
+                self._candidate_child_spawn_ids.discard(spawn_id)
+                self._child_spawn_ids.add(spawn_id)
+            elif not state_path.parent.exists() or (state_path.exists() and data):
+                self._candidate_child_spawn_ids.discard(spawn_id)
 
     def _scan_pending_child_spawn_count(self) -> int:
         count = 0
@@ -162,7 +232,7 @@ class PiDiskWatcher:
             status = data.get("status")
             if not isinstance(status, str) or status not in TERMINAL_SPAWN_STATUSES:
                 count += 1
-        return count
+        return count + len(self._candidate_child_spawn_ids)
 
     def _scan_tracked_bash_bg(self) -> bool:
         data = _read_json_object(self._bash_records_path)
@@ -193,6 +263,10 @@ class PiDiskWatcher:
 def _consume_task_result(task: asyncio.Task[None]) -> None:
     with suppress(asyncio.CancelledError, Exception):
         task.result()
+
+
+def _is_allocated_spawn_dir_name(name: str) -> bool:
+    return len(name) > 1 and name[0] == "p" and name[1:].isdigit()
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

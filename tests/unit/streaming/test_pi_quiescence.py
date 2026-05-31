@@ -12,7 +12,6 @@ import pytest
 
 from meridian.lib.core.types import HarnessId, SpawnId
 from meridian.lib.harness.connections.base import (
-    ConnectionCapabilities,
     ConnectionConfig,
     HarnessConnection,
     HarnessEvent,
@@ -21,89 +20,17 @@ from meridian.lib.harness.connections.base import (
 )
 from meridian.lib.launch.launch_types import ResolvedLaunchSpec
 from meridian.lib.safety.permissions import UnsafeNoOpPermissionResolver
-from meridian.lib.streaming.pi_drain import PiSubspawnTracker
+from meridian.lib.streaming.pi_subspawn_tracker import PiSubspawnTracker
 from meridian.lib.streaming.spawn_manager import SpawnManager
-
-
-class _NoopControlServer:
-    endpoint = None
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-
-class _FakePiConnection(HarnessConnection[ResolvedLaunchSpec]):
-    def __init__(self, events: list[HarnessEvent]) -> None:
-        self._events = events
-        self._spawn_id = SpawnId("")
-        self._state = "created"
-        self.stop_reasons: list[str | None] = []
-
-    @property
-    def state(self) -> str:
-        return self._state
-
-    @property
-    def harness_id(self) -> HarnessId:
-        return HarnessId.PI
-
-    @property
-    def spawn_id(self) -> SpawnId:
-        return self._spawn_id
-
-    @property
-    def capabilities(self) -> ConnectionCapabilities:
-        return ConnectionCapabilities(
-            mid_turn_injection="queue",
-            supports_steer=True,
-            supports_cancel=True,
-            runtime_model_switch=False,
-            structured_reasoning=True,
-        )
-
-    @property
-    def session_id(self) -> str | None:
-        return "ses-pi"
-
-    @property
-    def subprocess_pid(self) -> int | None:
-        return 4242
-
-    async def start(self, config: ConnectionConfig, spec: ResolvedLaunchSpec) -> None:
-        _ = spec
-        self._spawn_id = config.spawn_id
-        self._state = "connected"
-
-    async def stop(
-        self,
-        *,
-        reason: str | None = None,
-        progress: StopProgressCallback | None = None,
-    ) -> StopResult:
-        _ = progress
-        self.stop_reasons.append(reason)
-        self._state = "stopped"
-        return StopResult()
-
-    def health(self) -> bool:
-        return self._state == "connected"
-
-    async def send_user_message(self, text: str) -> None:
-        _ = text
-
-    async def send_cancel(self) -> None:
-        return None
-
-    async def events(self):  # type: ignore[no-untyped-def]
-        for event in self._events:
-            yield event
-
-
-def _pi_event(event_type: str, payload: dict[str, object]) -> HarnessEvent:
-    return HarnessEvent(event_type=event_type, harness_id="pi", payload=payload)
+from tests.unit.streaming.pi_quiescence_test_helpers import (
+    FakePiConnection as _FakePiConnection,
+)
+from tests.unit.streaming.pi_quiescence_test_helpers import (
+    NoopControlServer as _NoopControlServer,
+)
+from tests.unit.streaming.pi_quiescence_test_helpers import (
+    pi_event as _pi_event,
+)
 
 
 def test_pi_subspawn_tracker_tracks_only_blocking_children_and_notifications() -> None:
@@ -333,8 +260,7 @@ async def test_spawn_manager_pi_quiescence_stops_spawned_after_notification_comp
             event
             for event in history
             if event.get("event_type") == "meridian.pi.lifecycle.phase"
-            and event.get("payload", {}).get("phase")
-            == "waiting_for_notification_completion"
+            and event.get("payload", {}).get("phase") == "waiting_for_notification_completion"
         ]
         assert waiting_for_children
         assert waiting_for_children[-1]["payload"]["active_tracked_count"] == 1
@@ -521,6 +447,7 @@ async def test_spawn_manager_pi_cleanup_escalation_does_not_block_terminal_succe
         )
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_micro_drain_resolves_with_bounded_timeout(
@@ -758,6 +685,7 @@ async def test_spawn_manager_pi_child_wave_timeout_not_cleared_by_turn_active(
         assert outcome.error == "pi_child_wave_timeout"
     finally:
         await manager.stop_spawn(spawn_id)
+
 
 @pytest.mark.asyncio
 async def test_spawn_manager_pi_notification_failure_marks_spawn_failed(tmp_path: Path) -> None:

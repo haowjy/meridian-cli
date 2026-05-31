@@ -59,8 +59,15 @@ class PiQuiescenceTracker:
     async def mark_idle(self) -> None:
         self._parent_idle = True
         self._parent_idle_epoch = time.time()
+        await self.refresh_disk_state()
+
+    async def refresh_disk_state(self) -> None:
         if self._disk_watcher is not None:
             await self._disk_watcher.force_rescan()
+
+    async def wait_for_disk_change(self) -> None:
+        if self._disk_watcher is not None:
+            await self._disk_watcher.wait_for_change()
 
     def has_pending_child_spawns(self) -> bool:
         return bool(self._disk_watcher and self._disk_watcher.has_pending_child_spawns())

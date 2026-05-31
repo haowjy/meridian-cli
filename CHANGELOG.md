@@ -10,12 +10,22 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - `meridian -C <dir> mars ...` now scopes mars passthrough to `<dir>` instead of inherited `MERIDIAN_PROJECT_DIR`.
+- Release packaging now verifies every Pi extension source entrypoint has a matching built `dist/extensions/<name>/index.js` in both wheel and sdist artifacts, and fails on stale extra extension bundles.
+- Pi disk wakeups no longer lose pre-signaled changes before the drain loop subscribes.
+- Pi child directories with late `state.json` writes now block quiescence until resolved, then wake the drain loop through bounded polling.
+- Pi disk-only child work now re-arms child-wave timeout while parent is idle.
+- Pi drain loop now processes ready harness events before timeout completions, avoiding dropped terminal-adjacent events.
 
 ## [0.2.17] - 2026-05-30
 
 ### Fixed
+- Pi micro-drain accepts terminal only after disk quiescence recheck — stale disk state cancels micro-drain with `quiescence_micro_drain_cancelled` instead of completing early.
+- Pi drain loop wakes on disk-state changes — `PiDiskWatcher.wait_for_change()` signals drain to re-evaluate quiescence without waiting for harness events.
 - Pi spawns hanging permanently at quiescence_micro_drain_started — replaced fragile sleep(0)+task.done() heuristic with bounded 50ms asyncio.wait_for timeout. Also fixed O(N) disk watcher creating indefinite awatch tasks for standalone spawn directories (3000+ watchers in production).
 - Pi extension artifacts (managed-bash, meridian-spawn-watch) missing from PyPI wheel — `release.yml` ran `uv build` without building extensions first. Every Pi spawn failed with `Missing Pi extension artifact`. Added Node.js setup, extension build, and wheel contents verification to the release workflow.
+
+### Changed
+- PiDiskWatcher no longer creates per-directory inotify watchers for child or candidate spawns. Children are discovered once at startup (O(N) scan) and polled on demand via `force_rescan()`. New children detected reactively when their directory appears under `spawns/`. Eliminates 3000+ `awatch` tasks that created event-loop pressure.
 
 ## [0.2.16] - 2026-05-30
 

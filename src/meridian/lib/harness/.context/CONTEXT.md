@@ -41,7 +41,7 @@ Per-harness mapping:
 - Codex subprocess: `codex exec --json`; connection: `codex app-server` (real WebSocket, JSON-RPC 2.0)
 - OpenCode subprocess: `opencode run`; connection: `opencode serve` (HTTP+SSE)
 - Cursor subprocess: `cursor agent <prompt>` (stdout NDJSON, no connection path — subprocess-only)
-- Pi subprocess/connection: `pi rpc --mode rpc` (JSON-RPC stdio); Pi has no subprocess-only path — the RPC mode is the connection
+- Pi subprocess/connection: `pi --mode rpc` (JSON-RPC stdio); Pi has no subprocess-only path — the RPC mode is the connection
 
 ### Pi: Extension-Based Architecture
 
