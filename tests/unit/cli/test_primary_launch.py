@@ -1,6 +1,5 @@
 import re
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -80,11 +79,11 @@ def test_run_primary_launch_bare_from_resolves_to_context_from(
         captured.update(kwargs)
         return LaunchResult(command=("meridian",), exit_code=0)
 
-    def _no_context_work(_root: Path, _ref: str) -> SimpleNamespace:
-        return SimpleNamespace(work_id=None)
+    def _no_context_work(_root: Path, _refs: tuple[str, ...]) -> None:
+        return None
 
     monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
-    monkeypatch.setattr(primary_launch, "resolve_context_ref", _no_context_work)
+    monkeypatch.setattr(primary_launch, "first_context_ref_work_id", _no_context_work)
 
     primary_launch.run_primary_launch(
         project_root=Path.cwd(),
@@ -124,12 +123,12 @@ def test_run_primary_launch_from_inherits_source_work_when_no_ambient(
     def _no_ambient_work(_project_root: Path) -> None:
         return None
 
-    def _context_work(_root: Path, _ref: str) -> SimpleNamespace:
-        return SimpleNamespace(work_id="feature-x")
+    def _context_work(_root: Path, _refs: tuple[str, ...]) -> str:
+        return "feature-x"
 
     monkeypatch.setattr(primary_launch, "launch_primary", _fake_launch_primary)
     monkeypatch.setattr(primary_launch, "_ambient_work_id", _no_ambient_work)
-    monkeypatch.setattr(primary_launch, "resolve_context_ref", _context_work)
+    monkeypatch.setattr(primary_launch, "first_context_ref_work_id", _context_work)
 
     primary_launch.run_primary_launch(
         project_root=Path.cwd(),

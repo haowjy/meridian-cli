@@ -36,23 +36,10 @@ from ..runtime import (
     resolve_runtime_authority_for_read,
     runtime_context,
 )
+from .context_ref import first_context_ref_work_id
 from .models import SpawnCreateInput
 
 _DRY_RUN_REPORT_PATH = "<spawn-report-path>"
-
-
-def _first_context_from_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
-    """Return the first work item attached to resolved ``--from`` context refs."""
-
-    if not refs:
-        return None
-    from meridian.lib.ops.spawn.context_ref import resolve_context_ref
-
-    for ref in refs:
-        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
-        if work_id:
-            return work_id
-    return None
 
 
 @dataclass(frozen=True)
@@ -118,7 +105,7 @@ def build_create_payload(
         # --from is a last-resort fallback — only inherits work when neither the user
         # nor the current session provides one.
         if ambient_work_id is None and explicit_work_id is None:
-            ambient_work_id = _first_context_from_work_id(project_root, payload.context_from)
+            ambient_work_id = first_context_ref_work_id(project_root, payload.context_from)
         project_state_dir = resolve_project_paths(project_root).root_dir
         task_cwd_resolution = resolve_task_cwd(
             project_root,

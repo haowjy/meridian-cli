@@ -18,7 +18,7 @@ from meridian.lib.launch.reference import validate_reference_paths
 from meridian.lib.launch.request import SessionRequest
 from meridian.lib.ops.reference import resolve_session_reference
 from meridian.lib.ops.runtime import resolve_runtime_root_for_read
-from meridian.lib.ops.spawn.context_ref import resolve_context_ref
+from meridian.lib.ops.spawn.context_ref import first_context_ref_work_id
 from meridian.lib.ops.spawn.models import normalize_goal
 from meridian.lib.state.paths import resolve_kb_dir
 
@@ -97,14 +97,6 @@ def _ambient_work_id(project_root: Path) -> str | None:
         resolve_runtime_context(project_root=project_root, runtime_root=runtime_root).work_id
         or ""
     ).strip() or None
-
-
-def _first_context_from_work_id(project_root: Path, refs: tuple[str, ...]) -> str | None:
-    for ref in refs:
-        work_id = (resolve_context_ref(project_root, ref).work_id or "").strip()
-        if work_id:
-            return work_id
-    return None
 
 
 def resolve_session_target(
@@ -233,7 +225,7 @@ def run_primary_launch(
         and fork_resolution.resolved_context_from
         and _ambient_work_id(project_root) is None
     ):
-        requested_work_id = _first_context_from_work_id(
+        requested_work_id = first_context_ref_work_id(
             project_root,
             fork_resolution.resolved_context_from,
         )
