@@ -646,7 +646,11 @@ def _inject_claude_delegation_guidance(
 ) -> PreparedPromptPayload:
     """Append delegation guidance when Claude has native agents available."""
     claude_agents_dir = project_root / ".claude" / "agents"
-    if not claude_agents_dir.is_dir() or not any(claude_agents_dir.iterdir()):
+    try:
+        has_claude_agents = claude_agents_dir.is_dir() and any(claude_agents_dir.iterdir())
+    except OSError:
+        return prompt_payload
+    if not has_claude_agents:
         return prompt_payload
     existing = prompt_payload.appended_system_prompt or ""
     return replace(
