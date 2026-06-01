@@ -4,6 +4,9 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Codex fresh-session bootstrap turn now says `Meridian started`.
+
 ## [0.2.22] - 2026-06-01
 
 ### Fixed
