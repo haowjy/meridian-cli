@@ -79,7 +79,7 @@ _ADDRESS_IN_USE_MARKERS: Final[tuple[str, ...]] = (
     "eaddrinuse",
 )
 _BOOTSTRAP_TURN_PROMPT: Final[str] = (
-    "Meridian bootstrap. Acknowledge readiness only; do not perform a user task."
+    "Meridian started"
 )
 
 
