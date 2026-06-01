@@ -63,7 +63,7 @@ templates = [
 ]
 
 [build-system]
-requires = ["hatchling>=1.25.0"]
+requires = ["hatchling>=1.25.0,<1.28"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
