@@ -96,6 +96,9 @@ jobs:
       - name: Verify Pi extensions in distributions
         run: uv run --no-sync python scripts/verify-pi-extension-artifacts.py dist
 
+      - name: Verify release metadata
+        run: uv run --no-sync python scripts/verify-release-metadata.py dist
+
       - name: Validate wheel artifact
         run: |
           uv run --isolated --no-project --with dist/*.whl meridian --version

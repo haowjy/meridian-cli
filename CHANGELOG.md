@@ -5,7 +5,7 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
-- Release builds cap hatchling below 1.28 so wheel/sdist metadata stays PyPI-publisher compatible.
+- Release builds pin hatchling 1.27.0 and verify wheel/sdist metadata stays PyPI-publisher compatible.
 
 ## [0.2.21] - 2026-06-01
 
