@@ -4,6 +4,8 @@ Caveman style. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-06-01
+
 ### Fixed
 - Release builds pin hatchling 1.27.0 and verify wheel/sdist metadata stays PyPI-publisher compatible.
 
