@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SpawnWatchRuntime } from "./index";
+import { rememberSpawnOriginBashIds } from "../../shared/spawn_origins";
 import type { BashRecord, BashRecordsFile } from "../../shared/schemas";
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -33,6 +34,7 @@ type SpawnWatchRuntimeInternals = SpawnWatchRuntime & {
   slowDiscoveryPolling(): void;
   fallbackScanInterval: NodeJS.Timeout | null;
   discoveryScanInterval: NodeJS.Timeout | null;
+  missingStateFirstSeenMs: Map<string, number>;
 };
 
 function bashRecord(bashId: string, overrides: Partial<BashRecord> = {}): BashRecord {
@@ -231,6 +233,21 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
     }
   });
 
+  it("picks up origin sidecar ids written after the first scan", async () => {
+    const { runtimeRoot, runtime } = await makeRuntime();
+    try {
+      await writeSpawnState(runtimeRoot, "p2001", { originBashId: "b-late", status: "running" });
+
+      expect(await runtime.rows()).toEqual([]);
+
+      await rememberSpawnOriginBashIds(["b-late"], "p-parent");
+      expect((await runtime.rows()).map((state) => state.id)).toEqual(["p2001"]);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
 
   it("withholds bash completion while discovery polling may still find a spawn", async () => {
     const { runtimeRoot, runtime, internals } = await makeRuntime();
@@ -242,11 +259,32 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       internals.running = true;
 
       await internals.scanBashRecords();
-      expect(internals.pending.has("b-origin")).toBe(false);
+      expect(internals.pending.has("b-timeout")).toBe(false);
 
       await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
       await internals.scanBashRecords();
-      expect(internals.pending.has("b-origin")).toBe(false);
+      expect(internals.pending.has("b-timeout")).toBe(false);
+    } finally {
+      runtime.stop();
+      await rm(runtimeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("releases bash completion when expected spawn state never appears", async () => {
+    const { runtimeRoot, runtime, internals } = await makeRuntime();
+    try {
+      await writeBashRecords(runtimeRoot, "p-parent", [
+        await bashRecordWithSpawnOutput(runtimeRoot, "b-timeout", "p1003"),
+      ]);
+      internals.running = true;
+
+      await internals.scanBashRecords();
+      expect(internals.pending.has("b-timeout")).toBe(false);
+
+      internals.missingStateFirstSeenMs.set("p1003", Date.now() - 16_000);
+      internals.slowDiscoveryPolling();
+      await internals.scanBashRecords();
+      expect(internals.pending.get("b-timeout")?.kind).toBe("bash");
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -337,7 +375,7 @@ describe("SpawnWatchRuntime bash-origin spawn tracking", () => {
       await writeSpawnState(runtimeRoot, "p1001", { originBashId: "b-origin", status: "running" });
 
       await internals.scanBashRecords();
-      expect(internals.pending.has("b-origin")).toBe(false);
+      expect(internals.pending.has("b-timeout")).toBe(false);
     } finally {
       runtime.stop();
       await rm(runtimeRoot, { recursive: true, force: true });

@@ -69,9 +69,10 @@ export class SpawnWatchRuntime {
   private readonly clearedSpawnIds = new Set<string>();
   private readonly originBashIds = new Set<string>();
   private readonly missingStateSpawnIds = new Set<string>();
+  private readonly missingStateFirstSeenMs = new Map<string, number>();
+  private readonly abandonedMissingStateSpawnIds = new Set<string>();
   private readonly expectedSpawnIdsByBashId = new Map<string, Set<string>>();
   private clearedLoaded = false;
-  private originsLoaded = false;
   private watchers: Array<FSWatcher | null> = [];
   private debounce: NodeJS.Timeout | null = null;
   private maxWave: NodeJS.Timeout | null = null;
@@ -232,6 +233,7 @@ export class SpawnWatchRuntime {
       return;
     }
     this.disableFallbackScan("spawn-discovery");
+    this.requestScan();
   }
 
   private stopDiscoveryPolling(): void {
@@ -247,21 +249,40 @@ export class SpawnWatchRuntime {
     let foundNewMissingState = false;
     const expectedSpawnIds = new Set([...this.expectedSpawnIdsByBashId.values()].flatMap((ids) => [...ids]));
     for (const spawnId of expectedSpawnIds) {
-      if (existsSync(this.spawnStatePath(spawnId))) {
+      if (this.abandonedMissingStateSpawnIds.has(spawnId) || existsSync(this.spawnStatePath(spawnId))) {
         this.missingStateSpawnIds.delete(spawnId);
+        this.missingStateFirstSeenMs.delete(spawnId);
       } else if (!this.missingStateSpawnIds.has(spawnId)) {
         this.missingStateSpawnIds.add(spawnId);
+        this.missingStateFirstSeenMs.set(spawnId, Date.now());
         foundNewMissingState = true;
       }
     }
+    this.expireMissingStateSpawnIds();
     for (const spawnId of [...this.missingStateSpawnIds]) {
-      if (!expectedSpawnIds.has(spawnId) || existsSync(this.spawnStatePath(spawnId))) {
+      if (
+        !expectedSpawnIds.has(spawnId) ||
+        this.abandonedMissingStateSpawnIds.has(spawnId) ||
+        existsSync(this.spawnStatePath(spawnId))
+      ) {
         this.missingStateSpawnIds.delete(spawnId);
+        this.missingStateFirstSeenMs.delete(spawnId);
       }
     }
     if (foundNewMissingState) this.enableDiscoveryPolling();
     if (this.missingStateSpawnIds.size === 0 && this.fallbackScanReasons.has("spawn-discovery")) {
       this.stopDiscoveryPolling();
+    }
+  }
+
+  private expireMissingStateSpawnIds(): void {
+    const now = Date.now();
+    for (const spawnId of [...this.missingStateSpawnIds]) {
+      const firstSeen = this.missingStateFirstSeenMs.get(spawnId) ?? now;
+      if (now - firstSeen < SPAWN_DISCOVERY_POLL_MS) continue;
+      this.missingStateSpawnIds.delete(spawnId);
+      this.missingStateFirstSeenMs.delete(spawnId);
+      this.abandonedMissingStateSpawnIds.add(spawnId);
     }
   }
 
@@ -484,13 +505,16 @@ export class SpawnWatchRuntime {
       if (!name.startsWith("p")) continue;
       if (!existsSync(path.join(this.spawnsDir, name))) {
         this.missingStateSpawnIds.delete(name);
+        this.missingStateFirstSeenMs.delete(name);
         continue;
       }
       const state = await this.readSpawnState(name);
       if (state) {
         this.missingStateSpawnIds.delete(name);
-      } else {
+        this.missingStateFirstSeenMs.delete(name);
+      } else if (!this.abandonedMissingStateSpawnIds.has(name)) {
         this.missingStateSpawnIds.add(name);
+        if (!this.missingStateFirstSeenMs.has(name)) this.missingStateFirstSeenMs.set(name, Date.now());
       }
       if (typeof state?.originating_bash_id === "string" && originBashIds.has(state.originating_bash_id)) {
         states.push(state);
@@ -503,20 +527,18 @@ export class SpawnWatchRuntime {
   }
 
   private async readOriginBashIds(): Promise<Set<string>> {
-    await this.loadOriginBashIds();
+    await this.refreshOriginBashIds();
     const file = await readJsonFile<BashRecordsFile | null>(this.bashRecordsPath, null);
     await this.rememberOriginBashIds(Object.keys(file?.records ?? {}));
     return new Set(this.originBashIds);
   }
 
-  private async loadOriginBashIds(): Promise<void> {
-    if (this.originsLoaded) return;
+  private async refreshOriginBashIds(): Promise<void> {
     for (const id of await readSpawnOriginBashIds(this.currentSpawnId)) this.originBashIds.add(id);
-    this.originsLoaded = true;
   }
 
   private async rememberOriginBashIds(ids: string[]): Promise<void> {
-    await this.loadOriginBashIds();
+    await this.refreshOriginBashIds();
     for (const id of ids) {
       if (typeof id === "string" && id.length > 0) this.originBashIds.add(id);
     }
